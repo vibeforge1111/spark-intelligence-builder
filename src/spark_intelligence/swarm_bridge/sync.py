@@ -1,0 +1,433 @@
+from __future__ import annotations
+
+import importlib
+import json
+import os
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
+from spark_intelligence.state.db import StateDB
+
+
+@dataclass
+class SwarmStatus:
+    configured: bool
+    researcher_ready: bool
+    payload_ready: bool
+    api_ready: bool
+    runtime_root: str | None
+    researcher_runtime_root: str | None
+    researcher_config_path: str | None
+    api_url: str | None
+    workspace_id: str | None
+    access_token_env: str | None
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "configured": self.configured,
+                "researcher_ready": self.researcher_ready,
+                "payload_ready": self.payload_ready,
+                "api_ready": self.api_ready,
+                "runtime_root": self.runtime_root,
+                "researcher_runtime_root": self.researcher_runtime_root,
+                "researcher_config_path": self.researcher_config_path,
+                "api_url": self.api_url,
+                "workspace_id": self.workspace_id,
+                "access_token_env": self.access_token_env,
+            },
+            indent=2,
+        )
+
+    def to_text(self) -> str:
+        return "\n".join(
+            [
+                f"Swarm configured: {'yes' if self.configured else 'no'}",
+                f"- researcher_ready: {'yes' if self.researcher_ready else 'no'}",
+                f"- payload_ready: {'yes' if self.payload_ready else 'no'}",
+                f"- api_ready: {'yes' if self.api_ready else 'no'}",
+                f"- runtime_root: {self.runtime_root or 'missing'}",
+                f"- researcher_runtime_root: {self.researcher_runtime_root or 'missing'}",
+                f"- researcher_config_path: {self.researcher_config_path or 'missing'}",
+                f"- api_url: {self.api_url or 'missing'}",
+                f"- workspace_id: {self.workspace_id or 'missing'}",
+                f"- access_token_env: {self.access_token_env or 'missing'}",
+            ]
+        )
+
+
+@dataclass
+class SwarmSyncResult:
+    ok: bool
+    mode: str
+    message: str
+    payload_path: str | None
+    api_url: str | None
+    workspace_id: str | None
+    accepted: bool | None
+    response_body: dict[str, Any] | None
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "ok": self.ok,
+                "mode": self.mode,
+                "message": self.message,
+                "payload_path": self.payload_path,
+                "api_url": self.api_url,
+                "workspace_id": self.workspace_id,
+                "accepted": self.accepted,
+                "response_body": self.response_body,
+            },
+            indent=2,
+        )
+
+    def to_text(self) -> str:
+        lines = [f"Swarm sync: {'ok' if self.ok else 'failed'}", f"- mode: {self.mode}", f"- message: {self.message}"]
+        if self.payload_path:
+            lines.append(f"- payload_path: {self.payload_path}")
+        if self.api_url:
+            lines.append(f"- api_url: {self.api_url}")
+        if self.workspace_id:
+            lines.append(f"- workspace_id: {self.workspace_id}")
+        if self.accepted is not None:
+            lines.append(f"- accepted: {'yes' if self.accepted else 'no'}")
+        if self.response_body is not None:
+            lines.append(f"- response_body: {json.dumps(self.response_body, sort_keys=True)}")
+        return "\n".join(lines)
+
+
+def swarm_status(config_manager: ConfigManager) -> SwarmStatus:
+    runtime_root, _ = _discover_swarm_runtime_root(config_manager)
+    researcher_root, _ = discover_researcher_runtime_root(config_manager)
+    researcher_config_path = resolve_researcher_config_path(config_manager, researcher_root) if researcher_root else None
+    api_url = _resolve_swarm_api_url(config_manager)
+    workspace_id = _resolve_swarm_workspace_id(config_manager)
+    access_token_env = _resolve_swarm_access_token_env(config_manager)
+    access_token = _resolve_swarm_access_token(config_manager)
+    researcher_ready = bool(researcher_root and researcher_config_path and researcher_config_path.exists())
+    payload_ready = researcher_ready and _researcher_has_ledger(researcher_config_path)
+    api_ready = bool(api_url and workspace_id and access_token)
+    return SwarmStatus(
+        configured=bool(runtime_root or api_url or workspace_id or access_token_env),
+        researcher_ready=researcher_ready,
+        payload_ready=payload_ready,
+        api_ready=api_ready,
+        runtime_root=str(runtime_root) if runtime_root else None,
+        researcher_runtime_root=str(researcher_root) if researcher_root else None,
+        researcher_config_path=str(researcher_config_path) if researcher_config_path else None,
+        api_url=api_url,
+        workspace_id=workspace_id,
+        access_token_env=access_token_env,
+    )
+
+
+def sync_swarm_collective(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    dry_run: bool = False,
+) -> SwarmSyncResult:
+    status = swarm_status(config_manager)
+    if not status.researcher_ready or not status.researcher_config_path or not status.researcher_runtime_root:
+        return SwarmSyncResult(
+            ok=False,
+            mode="researcher_missing",
+            message="Spark Researcher runtime/config is missing; cannot build a Swarm payload.",
+            payload_path=None,
+            api_url=status.api_url,
+            workspace_id=status.workspace_id,
+            accepted=None,
+            response_body=None,
+        )
+
+    researcher_root = Path(status.researcher_runtime_root)
+    researcher_config_path = Path(status.researcher_config_path)
+    workspace_id = status.workspace_id
+    if not workspace_id:
+        return SwarmSyncResult(
+            ok=False,
+            mode="workspace_id_missing",
+            message="spark.swarm.workspace_id is required before Swarm sync.",
+            payload_path=None,
+            api_url=status.api_url,
+            workspace_id=None,
+            accepted=None,
+            response_body=None,
+        )
+
+    payload, payload_path = _build_collective_payload(
+        config_manager=config_manager,
+        researcher_root=researcher_root,
+        researcher_config_path=researcher_config_path,
+        workspace_id=workspace_id,
+    )
+    _record_swarm_sync_state(
+        state_db,
+        mode="payload_built",
+        payload_path=str(payload_path),
+        api_url=status.api_url,
+        workspace_id=workspace_id,
+        accepted=None,
+    )
+
+    if dry_run:
+        return SwarmSyncResult(
+            ok=True,
+            mode="dry_run",
+            message="Built the latest Spark Swarm collective payload without uploading it.",
+            payload_path=str(payload_path),
+            api_url=status.api_url,
+            workspace_id=workspace_id,
+            accepted=None,
+            response_body={"payload_keys": sorted(payload.keys())},
+        )
+
+    api_url = status.api_url
+    access_token = _resolve_swarm_access_token(config_manager)
+    if not api_url or not access_token:
+        return SwarmSyncResult(
+            ok=False,
+            mode="api_not_configured",
+            message="Swarm API URL or access token is missing; payload was built but not uploaded.",
+            payload_path=str(payload_path),
+            api_url=api_url,
+            workspace_id=workspace_id,
+            accepted=None,
+            response_body=None,
+        )
+
+    try:
+        response_body = _post_collective_payload(api_url=api_url, workspace_id=workspace_id, access_token=access_token, payload=payload)
+    except urllib.error.HTTPError as exc:
+        body = _read_http_error_body(exc)
+        _record_swarm_sync_state(
+            state_db,
+            mode="http_error",
+            payload_path=str(payload_path),
+            api_url=api_url,
+            workspace_id=workspace_id,
+            accepted=False,
+        )
+        return SwarmSyncResult(
+            ok=False,
+            mode="http_error",
+            message=f"Swarm API rejected the sync with HTTP {exc.code}.",
+            payload_path=str(payload_path),
+            api_url=api_url,
+            workspace_id=workspace_id,
+            accepted=False,
+            response_body=body,
+        )
+    except urllib.error.URLError as exc:
+        _record_swarm_sync_state(
+            state_db,
+            mode="network_error",
+            payload_path=str(payload_path),
+            api_url=api_url,
+            workspace_id=workspace_id,
+            accepted=False,
+        )
+        return SwarmSyncResult(
+            ok=False,
+            mode="network_error",
+            message=f"Could not reach Swarm API: {exc.reason}",
+            payload_path=str(payload_path),
+            api_url=api_url,
+            workspace_id=workspace_id,
+            accepted=False,
+            response_body=None,
+        )
+
+    accepted = bool(response_body.get("accepted"))
+    _record_swarm_sync_state(
+        state_db,
+        mode="uploaded",
+        payload_path=str(payload_path),
+        api_url=api_url,
+        workspace_id=workspace_id,
+        accepted=accepted,
+    )
+    return SwarmSyncResult(
+        ok=accepted,
+        mode="uploaded",
+        message="Uploaded the latest Spark Researcher collective payload to Spark Swarm.",
+        payload_path=str(payload_path),
+        api_url=api_url,
+        workspace_id=workspace_id,
+        accepted=accepted,
+        response_body=response_body,
+    )
+
+
+def _discover_swarm_runtime_root(config_manager: ConfigManager) -> tuple[Path | None, str]:
+    configured_root = config_manager.get_path("spark.swarm.runtime_root")
+    if configured_root:
+        path = Path(str(configured_root)).expanduser()
+        return (path if path.exists() else None, "configured")
+    autodetect = Path.home() / "Desktop" / "spark-swarm"
+    if autodetect.exists():
+        return autodetect, "autodiscovered"
+    return None, "missing"
+
+
+def _resolve_swarm_api_url(config_manager: ConfigManager) -> str | None:
+    configured = config_manager.get_path("spark.swarm.api_url")
+    if configured:
+        return str(configured).rstrip("/")
+    return None
+
+
+def _resolve_swarm_workspace_id(config_manager: ConfigManager) -> str | None:
+    configured = config_manager.get_path("spark.swarm.workspace_id")
+    if configured:
+        return str(configured)
+    env_value = config_manager.read_env_map().get("SPARK_SWARM_WORKSPACE_ID")
+    return env_value or None
+
+
+def _resolve_swarm_access_token_env(config_manager: ConfigManager) -> str | None:
+    configured = config_manager.get_path("spark.swarm.access_token_env")
+    if configured:
+        return str(configured)
+    env_map = config_manager.read_env_map()
+    if "SPARK_SWARM_ACCESS_TOKEN" in env_map:
+        return "SPARK_SWARM_ACCESS_TOKEN"
+    return None
+
+
+def _resolve_swarm_access_token(config_manager: ConfigManager) -> str | None:
+    env_ref = _resolve_swarm_access_token_env(config_manager)
+    if not env_ref:
+        return None
+    return config_manager.read_env_map().get(env_ref)
+
+
+def _researcher_has_ledger(config_path: Path) -> bool:
+    try:
+        resolve_runtime_root = _import_researcher_symbol(config_path.parent.resolve(), "spark_researcher.paths", "resolve_runtime_root")
+        ledger_path = _import_researcher_symbol(config_path.parent.resolve(), "spark_researcher.paths", "ledger_path")
+        runtime_root = resolve_runtime_root(config_path)
+        return ledger_path(runtime_root).exists()
+    except Exception:
+        return False
+
+
+def _build_collective_payload(
+    *,
+    config_manager: ConfigManager,
+    researcher_root: Path,
+    researcher_config_path: Path,
+    workspace_id: str,
+) -> tuple[dict[str, Any], Path]:
+    load_config = _import_researcher_symbol(researcher_root, "spark_researcher.config", "load_config")
+    resolve_runtime_root = _import_researcher_symbol(researcher_root, "spark_researcher.paths", "resolve_runtime_root")
+    write_payload = _import_researcher_symbol(
+        researcher_root,
+        "spark_researcher.collective",
+        "write_spark_swarm_collective_payload_from_latest",
+    )
+
+    config = load_config(researcher_config_path)
+    runtime_root = resolve_runtime_root(researcher_config_path)
+    with _temporary_env("SPARK_SWARM_WORKSPACE_ID", workspace_id):
+        export_info = write_payload(researcher_root, runtime_root, config)
+    payload_path = Path(str(export_info["payload_path"]))
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    return payload, payload_path
+
+
+def _post_collective_payload(
+    *,
+    api_url: str,
+    workspace_id: str,
+    access_token: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    request = urllib.request.Request(
+        url=urllib.parse.urljoin(f"{api_url}/", f"api/workspaces/{workspace_id}/collective/sync"),
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        raw = response.read().decode("utf-8")
+    return json.loads(raw) if raw.strip() else {}
+
+
+def _record_swarm_sync_state(
+    state_db: StateDB,
+    *,
+    mode: str,
+    payload_path: str,
+    api_url: str | None,
+    workspace_id: str | None,
+    accepted: bool | None,
+) -> None:
+    with state_db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO runtime_state(state_key, value)
+            VALUES ('swarm:last_sync', ?)
+            ON CONFLICT(state_key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
+            """,
+            (
+                json.dumps(
+                    {
+                        "mode": mode,
+                        "payload_path": payload_path,
+                        "api_url": api_url,
+                        "workspace_id": workspace_id,
+                        "accepted": accepted,
+                    },
+                    sort_keys=True,
+                ),
+            ),
+        )
+        conn.commit()
+
+
+def _import_researcher_symbol(runtime_root: Path, module_name: str, symbol: str):
+    src_root = runtime_root / "src"
+    if str(src_root) not in sys.path:
+        sys.path.insert(0, str(src_root))
+    module = importlib.import_module(module_name)
+    return getattr(module, symbol)
+
+
+def _read_http_error_body(exc: urllib.error.HTTPError) -> dict[str, Any] | None:
+    try:
+        raw = exc.read().decode("utf-8")
+    except Exception:
+        return None
+    if not raw.strip():
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"raw": raw}
+
+
+@contextmanager
+def _temporary_env(key: str, value: str):
+    previous = os.environ.get(key)
+    os.environ[key] = value
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = previous

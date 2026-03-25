@@ -20,7 +20,7 @@ class ResearcherBridgeResult:
     config_path: str | None
 
 
-def _discover_researcher_root(config_manager: ConfigManager) -> tuple[Path | None, str]:
+def discover_researcher_runtime_root(config_manager: ConfigManager) -> tuple[Path | None, str]:
     config = config_manager.load()
     configured_root = config.get("spark", {}).get("researcher", {}).get("runtime_root")
     if configured_root:
@@ -33,7 +33,7 @@ def _discover_researcher_root(config_manager: ConfigManager) -> tuple[Path | Non
     return None, "missing"
 
 
-def _resolve_researcher_config_path(config_manager: ConfigManager, runtime_root: Path) -> Path:
+def resolve_researcher_config_path(config_manager: ConfigManager, runtime_root: Path) -> Path:
     config = config_manager.load()
     configured_path = config.get("spark", {}).get("researcher", {}).get("config_path")
     if configured_path:
@@ -79,9 +79,9 @@ def build_researcher_reply(
     channel_kind: str,
     user_message: str,
 ) -> ResearcherBridgeResult:
-    runtime_root, runtime_source = _discover_researcher_root(config_manager)
+    runtime_root, runtime_source = discover_researcher_runtime_root(config_manager)
     if runtime_root is not None:
-        config_path = _resolve_researcher_config_path(config_manager, runtime_root)
+        config_path = resolve_researcher_config_path(config_manager, runtime_root)
         if config_path.exists():
             try:
                 build_advisory = _import_build_advisory(runtime_root)
@@ -121,5 +121,5 @@ def build_researcher_reply(
         trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
         mode="stub",
         runtime_root=str(runtime_root) if runtime_root else None,
-        config_path=str(_resolve_researcher_config_path(config_manager, runtime_root)) if runtime_root else None,
+        config_path=str(resolve_researcher_config_path(config_manager, runtime_root)) if runtime_root else None,
     )

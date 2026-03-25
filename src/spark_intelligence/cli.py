@@ -22,6 +22,7 @@ from spark_intelligence.identity.service import (
 )
 from spark_intelligence.jobs.service import jobs_list, jobs_tick
 from spark_intelligence.state.db import StateDB
+from spark_intelligence.swarm_bridge import swarm_status, sync_swarm_collective
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -103,6 +104,30 @@ def build_parser() -> argparse.ArgumentParser:
     config_unset_parser = config_subparsers.add_parser("unset", help="Remove one config value")
     config_unset_parser.add_argument("path", help="Dot-path under config.yaml")
     config_unset_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+
+    swarm_parser = subparsers.add_parser("swarm", help="Inspect and sync Spark Swarm bridge state")
+    swarm_subparsers = swarm_parser.add_subparsers(dest="swarm_command", required=True)
+    swarm_status_parser = swarm_subparsers.add_parser("status", help="Show Spark Swarm bridge readiness")
+    swarm_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    swarm_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    swarm_configure_parser = swarm_subparsers.add_parser("configure", help="Configure Spark Swarm API settings")
+    swarm_configure_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    swarm_configure_parser.add_argument("--api-url", help="Base URL for the Spark Swarm API")
+    swarm_configure_parser.add_argument("--workspace-id", help="Workspace id used by Spark Swarm")
+    swarm_configure_parser.add_argument("--access-token", help="Access token for the Spark Swarm API")
+    swarm_configure_parser.add_argument(
+        "--access-token-env",
+        default="SPARK_SWARM_ACCESS_TOKEN",
+        help="Env var name used to store the Spark Swarm access token",
+    )
+    swarm_configure_parser.add_argument("--runtime-root", help="Override local spark-swarm repo path")
+    swarm_sync_parser = swarm_subparsers.add_parser(
+        "sync",
+        help="Build the latest Spark Researcher collective payload and sync it to Spark Swarm",
+    )
+    swarm_sync_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    swarm_sync_parser.add_argument("--dry-run", action="store_true", help="Build the payload without uploading it")
+    swarm_sync_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     jobs_parser = subparsers.add_parser("jobs", help="Inspect and execute jobs")
     jobs_subparsers = jobs_parser.add_subparsers(dest="jobs_command", required=True)
@@ -292,6 +317,47 @@ def handle_config_unset(args: argparse.Namespace) -> int:
     return 1
 
 
+def handle_swarm_status(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    status = swarm_status(config_manager)
+    print(status.to_json() if args.json else status.to_text())
+    return 0 if status.payload_ready else 1
+
+
+def handle_swarm_configure(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    if args.api_url:
+        config_manager.set_path("spark.swarm.api_url", args.api_url.rstrip("/"))
+    if args.workspace_id:
+        config_manager.set_path("spark.swarm.workspace_id", args.workspace_id)
+        config_manager.upsert_env_secret("SPARK_SWARM_WORKSPACE_ID", args.workspace_id)
+    if args.runtime_root:
+        config_manager.set_path("spark.swarm.runtime_root", str(Path(args.runtime_root).expanduser()))
+    if args.access_token:
+        config_manager.upsert_env_secret(args.access_token_env, args.access_token)
+        config_manager.set_path("spark.swarm.access_token_env", args.access_token_env)
+    elif args.access_token_env:
+        config_manager.set_path("spark.swarm.access_token_env", args.access_token_env)
+    print("Spark Swarm bridge config updated.")
+    print("Recommended checks:")
+    print("  1. spark-intelligence swarm status")
+    print("  2. spark-intelligence swarm sync --dry-run")
+    print("  3. spark-intelligence swarm sync")
+    return 0
+
+
+def handle_swarm_sync(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = sync_swarm_collective(config_manager=config_manager, state_db=state_db, dry_run=args.dry_run)
+    print(result.to_json() if args.json else result.to_text())
+    return 0 if result.ok else 1
+
+
 def handle_jobs_tick(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -402,6 +468,12 @@ def main(argv: list[str] | None = None) -> int:
         return handle_config_set(args)
     if args.command == "config" and args.config_command == "unset":
         return handle_config_unset(args)
+    if args.command == "swarm" and args.swarm_command == "status":
+        return handle_swarm_status(args)
+    if args.command == "swarm" and args.swarm_command == "configure":
+        return handle_swarm_configure(args)
+    if args.command == "swarm" and args.swarm_command == "sync":
+        return handle_swarm_sync(args)
     if args.command == "jobs" and args.jobs_command == "tick":
         return handle_jobs_tick(args)
     if args.command == "jobs" and args.jobs_command == "list":

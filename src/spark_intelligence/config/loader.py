@@ -62,7 +62,13 @@ class ConfigManager:
             "jobs": {"scheduler": {"enabled": True, "tick_seconds": 60}},
             "spark": {
                 "researcher": {"enabled": True, "runtime_root": None},
-                "swarm": {"enabled": True, "runtime_root": None},
+                "swarm": {
+                    "enabled": True,
+                    "runtime_root": None,
+                    "api_url": None,
+                    "workspace_id": None,
+                    "access_token_env": None,
+                },
                 "chips": {"roots": []},
                 "specialization_paths": {"roots": []},
             },

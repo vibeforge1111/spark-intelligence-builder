@@ -75,6 +75,7 @@ spark-intelligence setup
 spark-intelligence auth connect openai --api-key <key> --model <model>
 spark-intelligence channel add telegram --bot-token <token> --allowed-user <id>
 spark-intelligence config set spark.researcher.runtime_root "C:/Users/USER/Desktop/spark-researcher"
+spark-intelligence swarm configure --api-url https://your-swarm-host --workspace-id <workspace_id> --access-token <token>
 spark-intelligence doctor
 spark-intelligence agent inspect
 spark-intelligence pairings list
@@ -98,4 +99,13 @@ spark-intelligence config show
 spark-intelligence config show --path spark.researcher --json
 spark-intelligence config set spark.researcher.config_path "C:/Users/USER/Desktop/spark-researcher/spark-researcher.project.json"
 spark-intelligence config unset spark.researcher.config_path
+```
+
+Spark Swarm stays manual-first in v1. The builder can export the latest real collective payload from `spark-researcher` and sync it without absorbing Swarm internals:
+
+```bash
+spark-intelligence swarm status
+spark-intelligence swarm configure --api-url https://your-swarm-host --workspace-id <workspace_id> --access-token <token>
+spark-intelligence swarm sync --dry-run
+spark-intelligence swarm sync
 ```
