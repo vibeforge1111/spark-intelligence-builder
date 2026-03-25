@@ -251,7 +251,11 @@ def simulate_telegram_update(
                 "last_seen_at": _utc_now_iso(),
             },
         )
-    outbound_text = _pairing_reply_text(resolution.response_text, inbound_text=normalized.text)
+    outbound_text = _resolution_reply_text(
+        decision=resolution.decision,
+        default_text=resolution.response_text,
+        inbound_text=normalized.text,
+    )
     if resolution.allowed and resolution.agent_id and resolution.human_id and resolution.session_id:
         bridge_result = build_researcher_reply(
             config_manager=config_manager,
@@ -417,12 +421,15 @@ def poll_telegram_updates_once(
 
         if resolution.decision == "pending_pairing":
             pending_pairing_count += 1
-            pairing_text = _pairing_reply_text(resolution.response_text, inbound_text=normalized.text)
             send_result = _send_telegram_reply(
                 config_manager=config_manager,
                 client=client,
                 chat_id=normalized.chat_id,
-                text=pairing_text,
+                text=_resolution_reply_text(
+                    decision=resolution.decision,
+                    default_text=resolution.response_text,
+                    inbound_text=normalized.text,
+                ),
                 event="telegram_pending_pairing_outbound",
                 update_id=normalized.update_id,
                 telegram_user_id=normalized.telegram_user_id,
@@ -443,7 +450,13 @@ def poll_telegram_updates_once(
                     "telegram_user_id": normalized.telegram_user_id,
                     "chat_id": normalized.chat_id,
                     "session_id": resolution.session_id,
-                    "response_preview": _preview_text(pairing_text),
+                    "response_preview": _preview_text(
+                        _resolution_reply_text(
+                            decision=resolution.decision,
+                            default_text=resolution.response_text,
+                            inbound_text=normalized.text,
+                        )
+                    ),
                     "delivery_ok": send_result["ok"],
                     "delivery_error": send_result["error"],
                     "guardrail_actions": send_result["guardrail_actions"],
@@ -452,20 +465,44 @@ def poll_telegram_updates_once(
             continue
 
         if not resolution.allowed or not resolution.agent_id or not resolution.human_id or not resolution.session_id:
-            ignored_count += 1
+            denied_text = _resolution_reply_text(
+                decision=resolution.decision,
+                default_text=resolution.response_text,
+                inbound_text=normalized.text,
+            )
+            send_result = _send_telegram_reply(
+                config_manager=config_manager,
+                client=client,
+                chat_id=normalized.chat_id,
+                text=denied_text,
+                event="telegram_denied_outbound",
+                update_id=normalized.update_id,
+                telegram_user_id=normalized.telegram_user_id,
+                session_id=resolution.session_id,
+                decision=resolution.decision,
+                bridge_mode=None,
+                trace_ref=None,
+            )
             if resolution.decision == "held":
                 held_count += 1
             elif resolution.decision not in {"ignored"}:
                 blocked_count += 1
+            if send_result["ok"]:
+                sent_count += 1
+            else:
+                failed_send_count += 1
             append_gateway_trace(
                 config_manager,
                 {
-                    "event": "telegram_update_blocked",
+                    "event": "telegram_update_denied",
                     "update_id": normalized.update_id,
                     "telegram_user_id": normalized.telegram_user_id,
                     "chat_id": normalized.chat_id,
                     "decision": resolution.decision,
-                    "response_preview": _preview_text(resolution.response_text),
+                    "response_preview": _preview_text(denied_text),
+                    "delivery_ok": send_result["ok"],
+                    "delivery_error": send_result["error"],
+                    "guardrail_actions": send_result["guardrail_actions"],
                 },
             )
             continue
@@ -653,6 +690,25 @@ def _pairing_reply_text(default_text: str, *, inbound_text: str) -> str:
             "Spark Intelligence received your start request. "
             "This Telegram account is waiting for operator approval before the agent will respond here."
         )
+    return default_text
+
+
+def _resolution_reply_text(*, decision: str, default_text: str, inbound_text: str) -> str:
+    normalized = inbound_text.strip().lower()
+    if decision == "pending_pairing":
+        return _pairing_reply_text(default_text, inbound_text=inbound_text)
+    if decision == "held":
+        if normalized in {"/start", "start"}:
+            return "Spark Intelligence received your start request, but this Telegram account is currently on hold pending operator review."
+        return "This Telegram account is currently on hold pending operator review before the agent can reply here."
+    if decision == "revoked":
+        return "This Telegram account is no longer paired with Spark Intelligence. Contact the operator if this is unexpected."
+    if decision == "channel_paused":
+        return "Spark Intelligence is temporarily paused for this Telegram channel. Try again later."
+    if decision == "channel_disabled":
+        return "Spark Intelligence is currently disabled for this Telegram channel."
+    if decision == "blocked" and normalized in {"/start", "start"}:
+        return "This Telegram account is not currently paired with Spark Intelligence. Ask the operator to allowlist this account or enable pairing mode."
     return default_text
 
 
