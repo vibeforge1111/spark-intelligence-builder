@@ -48,6 +48,7 @@ from spark_intelligence.identity.service import (
     list_pairings,
     list_sessions,
     pairing_summary,
+    revoke_latest_pairing,
     review_pairings,
     revoke_pairing,
     revoke_session,
@@ -165,6 +166,13 @@ def build_parser() -> argparse.ArgumentParser:
     operator_hold_latest_parser.add_argument("channel_id", choices=["telegram", "discord", "whatsapp"])
     operator_hold_latest_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     operator_hold_latest_parser.add_argument("--reason", help="Short audit reason for holding this request")
+    operator_revoke_latest_parser = operator_subparsers.add_parser(
+        "revoke-latest",
+        help="Revoke the newest pending or held pairing for a channel",
+    )
+    operator_revoke_latest_parser.add_argument("channel_id", choices=["telegram", "discord", "whatsapp"])
+    operator_revoke_latest_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    operator_revoke_latest_parser.add_argument("--reason", help="Short audit reason for revoking this request")
     operator_hold_pairing_parser = operator_subparsers.add_parser("hold-pairing", help="Mark a pairing request as held")
     operator_hold_pairing_parser.add_argument("channel_id")
     operator_hold_pairing_parser.add_argument("external_user_id")
@@ -569,6 +577,26 @@ def handle_operator_hold_latest(args: argparse.Namespace) -> int:
     log_operator_event(
         state_db=state_db,
         action="hold_latest_pairing",
+        target_kind="pairing",
+        target_ref=args.channel_id,
+        reason=args.reason,
+    )
+    print(result)
+    return 0
+
+
+def handle_operator_revoke_latest(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = revoke_latest_pairing(
+        state_db=state_db,
+        channel_id=args.channel_id,
+    )
+    log_operator_event(
+        state_db=state_db,
+        action="revoke_latest_pairing",
         target_kind="pairing",
         target_ref=args.channel_id,
         reason=args.reason,
@@ -1365,6 +1393,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_operator_approve_latest(args)
     if args.command == "operator" and args.operator_command == "hold-latest":
         return handle_operator_hold_latest(args)
+    if args.command == "operator" and args.operator_command == "revoke-latest":
+        return handle_operator_revoke_latest(args)
     if args.command == "operator" and args.operator_command == "hold-pairing":
         return handle_operator_hold_pairing(args)
     if args.command == "operator" and args.operator_command == "set-channel":

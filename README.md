@@ -177,6 +177,7 @@ spark-intelligence operator hold-pairing telegram 123456
 spark-intelligence operator approve-pairing telegram 123456
 spark-intelligence operator approve-latest telegram
 spark-intelligence operator hold-latest telegram
+spark-intelligence operator revoke-latest telegram
 spark-intelligence operator inbox
 spark-intelligence operator security
 spark-intelligence operator history
@@ -187,6 +188,7 @@ spark-intelligence operator history
 Telegram pending pairings now also carry lightweight local context, so `operator review-pairings` can show the most recent Telegram username, chat id, and last inbound message preview.
 `operator review-pairings` now also supports lightweight `--channel-id`, `--status`, and `--limit` filters so the queue stays usable once there are multiple channels or repeated onboarding attempts.
 `operator pairing-summary telegram` provides a compact channel-level view of pending, held, approved, and revoked pairing state in one command.
+`operator revoke-latest telegram` provides the same fast-path ergonomics as approve/hold for denying the newest pending or held Telegram request without touching approved pairings.
 After approval, the first successful Telegram reply also carries a one-time "pairing approved" welcome so the user gets a cleaner handoff into the active agent.
 Held, revoked, paused, disabled, and generic blocked Telegram DMs now also return explicit user-facing replies instead of failing silently.
 `gateway traces` and `gateway outbound` now support lightweight filters like `--channel-id`, `--event`, `--user`, and `--delivery` so Telegram onboarding failures can be narrowed quickly without another dashboard.

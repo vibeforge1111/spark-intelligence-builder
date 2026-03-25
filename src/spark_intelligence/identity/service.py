@@ -655,6 +655,37 @@ def hold_latest_pairing(
     )
 
 
+def revoke_latest_pairing(
+    *,
+    state_db: StateDB,
+    channel_id: str,
+    revoked_by: str = LOCAL_OPERATOR_HUMAN_ID,
+) -> str:
+    _require_operator(state_db, revoked_by)
+    with state_db.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT external_user_id
+            FROM pairing_records
+            WHERE channel_id = ? AND status IN ('pending', 'held')
+            ORDER BY
+                CASE status WHEN 'pending' THEN 0 WHEN 'held' THEN 1 ELSE 2 END,
+                updated_at DESC,
+                external_user_id DESC
+            LIMIT 1
+            """,
+            (channel_id,),
+        ).fetchone()
+    if not row:
+        raise ValueError(f"No pending or held pairing found for channel '{channel_id}'.")
+    return revoke_pairing(
+        state_db=state_db,
+        channel_id=channel_id,
+        external_user_id=str(row["external_user_id"]),
+        revoked_by=revoked_by,
+    )
+
+
 def consume_pairing_welcome(
     *,
     state_db: StateDB,
