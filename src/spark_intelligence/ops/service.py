@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.gateway.tracing import read_gateway_traces, read_outbound_audit
 from spark_intelligence.identity.service import LOCAL_OPERATOR_HUMAN_ID
 from spark_intelligence.identity.service import review_pairings
 from spark_intelligence.researcher_bridge import researcher_bridge_status
@@ -63,6 +64,38 @@ class OperatorInboxReport:
                     f"command={item['recommended_command']}"
                 )
 
+        return "\n".join(lines)
+
+
+@dataclass
+class OperatorSecurityReport:
+    payload: dict[str, Any]
+
+    def to_json(self) -> str:
+        return json.dumps(self.payload, indent=2)
+
+    def to_text(self) -> str:
+        counts = self.payload["counts"]
+        lines = ["Operator security summary:"]
+        lines.append(
+            "- counts: "
+            f"bridge_alerts={counts['bridge_alerts']} "
+            f"channel_alerts={counts['channel_alerts']} "
+            f"duplicates={counts['duplicate_updates']} "
+            f"rate_limited={counts['rate_limited_updates']} "
+            f"delivery_failures={counts['delivery_failures']} "
+            f"guardrail_hits={counts['guardrail_hits']}"
+        )
+        items = self.payload.get("items") or []
+        if not items:
+            lines.append("- status: no recent security actions required")
+            return "\n".join(lines)
+        lines.append("- actions:")
+        for item in items:
+            lines.append(
+                f"  [{item['priority']}] {item['summary']} "
+                f"command={item['recommended_command']}"
+            )
         return "\n".join(lines)
 
 
@@ -152,6 +185,62 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
         "items": items,
     }
     return OperatorInboxReport(payload=payload)
+
+
+def build_operator_security_report(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    limit: int = 100,
+) -> OperatorSecurityReport:
+    channel_alerts = _load_channel_alerts(state_db)
+    bridge_alerts = _build_bridge_alerts(config_manager=config_manager, state_db=state_db)
+    traces = read_gateway_traces(config_manager, limit=limit)
+    outbound = read_outbound_audit(config_manager, limit=limit)
+
+    duplicate_updates = [trace for trace in traces if trace.get("event") == "telegram_update_duplicate"]
+    rate_limited_updates = [trace for trace in traces if trace.get("event") == "telegram_rate_limited"]
+    delivery_failures = [record for record in outbound if record.get("delivery_ok") is False]
+    guardrail_hits = [record for record in outbound if record.get("guardrail_actions")]
+    secret_reply_blocks = [
+        record for record in outbound if "block_secret_like_reply" in (record.get("guardrail_actions") or [])
+    ]
+    truncated_replies = [
+        record for record in outbound if "truncate_reply" in (record.get("guardrail_actions") or [])
+    ]
+
+    items = _build_security_items(
+        bridge_alerts=bridge_alerts,
+        channel_alerts=channel_alerts,
+        duplicate_updates=duplicate_updates,
+        rate_limited_updates=rate_limited_updates,
+        delivery_failures=delivery_failures,
+        secret_reply_blocks=secret_reply_blocks,
+        truncated_replies=truncated_replies,
+    )
+    payload = {
+        "counts": {
+            "bridge_alerts": len(bridge_alerts),
+            "channel_alerts": len(channel_alerts),
+            "duplicate_updates": len(duplicate_updates),
+            "rate_limited_updates": len(rate_limited_updates),
+            "delivery_failures": len(delivery_failures),
+            "guardrail_hits": len(guardrail_hits),
+            "secret_reply_blocks": len(secret_reply_blocks),
+            "truncated_replies": len(truncated_replies),
+        },
+        "bridge_alerts": bridge_alerts,
+        "channel_alerts": channel_alerts,
+        "recent": {
+            "duplicates": duplicate_updates,
+            "rate_limited": rate_limited_updates,
+            "delivery_failures": delivery_failures,
+            "guardrail_hits": guardrail_hits,
+        },
+        "items": items,
+        "log_limit": limit,
+    }
+    return OperatorSecurityReport(payload=payload)
 
 
 def _load_channel_alerts(state_db: StateDB) -> list[dict[str, Any]]:
@@ -336,6 +425,109 @@ def _build_inbox_items(
         )
 
     items.sort(key=lambda item: (int(item["sort_order"]), str(item["item_ref"])))
+    for item in items:
+        item.pop("sort_order", None)
+    return items
+
+
+def _build_security_items(
+    *,
+    bridge_alerts: list[dict[str, Any]],
+    channel_alerts: list[dict[str, Any]],
+    duplicate_updates: list[dict[str, Any]],
+    rate_limited_updates: list[dict[str, Any]],
+    delivery_failures: list[dict[str, Any]],
+    secret_reply_blocks: list[dict[str, Any]],
+    truncated_replies: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+
+    severity_order = {"critical": 10, "high": 20, "warning": 30, "medium": 40, "info": 50}
+
+    for row in bridge_alerts:
+        bridge = str(row["bridge"])
+        severity = str(row["severity"])
+        status = str(row["status"])
+        recommended_command = f"spark-intelligence operator set-bridge {bridge} enabled"
+        if bridge == "researcher" and status == "bridge_error":
+            recommended_command = "spark-intelligence researcher status"
+        if bridge == "swarm" and status in {"http_error", "network_error", "api_not_configured", "unavailable"}:
+            recommended_command = "spark-intelligence swarm status"
+        items.append(
+            {
+                "priority": "high" if severity == "critical" else severity,
+                "sort_order": severity_order.get("high" if severity == "critical" else severity, 60),
+                "summary": row["summary"],
+                "recommended_command": recommended_command,
+            }
+        )
+
+    for row in channel_alerts:
+        channel_id = str(row["channel_id"])
+        status = str(row["status"])
+        items.append(
+            {
+                "priority": "medium" if status == "paused" else "high",
+                "sort_order": severity_order.get("medium" if status == "paused" else "high", 60),
+                "summary": f"Channel {channel_id} remains {status}; ingress is constrained.",
+                "recommended_command": f"spark-intelligence operator set-channel {channel_id} enabled",
+            }
+        )
+
+    if delivery_failures:
+        latest = delivery_failures[-1]
+        items.append(
+            {
+                "priority": "high",
+                "sort_order": severity_order["high"],
+                "summary": f"{len(delivery_failures)} outbound delivery attempt(s) failed in recent logs.",
+                "recommended_command": "spark-intelligence gateway outbound --limit 20",
+            }
+        )
+
+    if rate_limited_updates:
+        latest = rate_limited_updates[-1]
+        user_ref = latest.get("telegram_user_id", "unknown")
+        items.append(
+            {
+                "priority": "medium",
+                "sort_order": severity_order["medium"],
+                "summary": f"Recent rate limiting triggered for Telegram user {user_ref}.",
+                "recommended_command": "spark-intelligence gateway traces --limit 20",
+            }
+        )
+
+    if duplicate_updates:
+        items.append(
+            {
+                "priority": "info",
+                "sort_order": severity_order["info"],
+                "summary": f"Recent duplicate Telegram update suppression count: {len(duplicate_updates)}.",
+                "recommended_command": "spark-intelligence gateway traces --limit 20",
+            }
+        )
+
+    if secret_reply_blocks:
+        items.append(
+            {
+                "priority": "high",
+                "sort_order": severity_order["high"],
+                "summary": f"Secret-like outbound reply blocking triggered {len(secret_reply_blocks)} time(s).",
+                "recommended_command": "spark-intelligence gateway outbound --limit 20",
+            }
+        )
+
+    if truncated_replies:
+        items.append(
+            {
+                "priority": "medium",
+                "sort_order": severity_order["medium"],
+                "summary": f"Oversized outbound replies were truncated {len(truncated_replies)} time(s).",
+                "recommended_command": "spark-intelligence gateway outbound --limit 20",
+            }
+        )
+
+    items.sort(key=lambda item: (int(item["sort_order"]), item["summary"]))
     for item in items:
         item.pop("sort_order", None)
     return items

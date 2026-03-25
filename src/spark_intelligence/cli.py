@@ -42,7 +42,7 @@ from spark_intelligence.identity.service import (
     revoke_session,
 )
 from spark_intelligence.jobs.service import jobs_list, jobs_tick
-from spark_intelligence.ops import build_operator_inbox, list_operator_events, log_operator_event
+from spark_intelligence.ops import build_operator_inbox, build_operator_security_report, list_operator_events, log_operator_event
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
 from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.state.db import StateDB
@@ -146,6 +146,10 @@ def build_parser() -> argparse.ArgumentParser:
     operator_inbox_parser = operator_subparsers.add_parser("inbox", help="Show actionable operator items")
     operator_inbox_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     operator_inbox_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    operator_security_parser = operator_subparsers.add_parser("security", help="Show recent security-relevant operator state")
+    operator_security_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    operator_security_parser.add_argument("--limit", type=int, default=100, help="Number of recent trace/audit events to scan")
+    operator_security_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     gateway_parser = subparsers.add_parser("gateway", help="Gateway operations")
     gateway_subparsers = gateway_parser.add_subparsers(dest="gateway_command", required=True)
@@ -473,6 +477,16 @@ def handle_operator_inbox(args: argparse.Namespace) -> int:
     config_manager.bootstrap()
     state_db.initialize()
     report = build_operator_inbox(config_manager=config_manager, state_db=state_db)
+    print(report.to_json() if args.json else report.to_text())
+    return 0
+
+
+def handle_operator_security(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    report = build_operator_security_report(config_manager=config_manager, state_db=state_db, limit=args.limit)
     print(report.to_json() if args.json else report.to_text())
     return 0
 
@@ -1035,6 +1049,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_operator_history(args)
     if args.command == "operator" and args.operator_command == "inbox":
         return handle_operator_inbox(args)
+    if args.command == "operator" and args.operator_command == "security":
+        return handle_operator_security(args)
     if args.command == "gateway" and args.gateway_command == "start":
         return handle_gateway_start(args)
     if args.command == "gateway" and args.gateway_command == "status":
