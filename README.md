@@ -81,8 +81,9 @@ spark-intelligence sessions list
 spark-intelligence gateway start
 ```
 
-Telegram runtime simulation is available for local verification before real polling lands:
+Telegram runtime verification is available in two forms:
 
 ```bash
 spark-intelligence gateway simulate-telegram-update ./sample-update.json
+spark-intelligence gateway start --once --poll-timeout-seconds 0
 ```

@@ -5,7 +5,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from spark_intelligence.adapters.telegram.runtime import build_telegram_runtime_summary, simulate_telegram_update
+from spark_intelligence.adapters.telegram.client import TelegramBotApiClient
+from spark_intelligence.adapters.telegram.runtime import (
+    build_telegram_runtime_summary,
+    poll_telegram_updates_once,
+    simulate_telegram_update,
+)
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import run_doctor
 from spark_intelligence.state.db import StateDB
@@ -56,14 +61,47 @@ def gateway_status(config_manager: ConfigManager, state_db: StateDB) -> GatewayS
     )
 
 
-def gateway_start(config_manager: ConfigManager, state_db: StateDB) -> str:
+def gateway_start(
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    *,
+    once: bool = False,
+    max_cycles: int | None = None,
+    poll_timeout_seconds: int = 5,
+) -> str:
     status = gateway_status(config_manager, state_db)
     lines = ["Spark Intelligence gateway start"]
     lines.append(status.to_text())
     lines.append("")
-    lines.append("This is the Phase 0 foreground runtime stub.")
-    lines.append("Telegram normalization and DM authorization routing are wired for simulation.")
-    lines.append("Next implementation steps: real long-poll loop and Spark Researcher bridge.")
+    config = config_manager.load()
+    telegram_record = config.get("channels", {}).get("records", {}).get("telegram")
+    if not telegram_record:
+        lines.append("No Telegram adapter configured. Gateway is idle.")
+        return "\n".join(lines)
+
+    auth_ref = telegram_record.get("auth_ref")
+    env_map = config_manager.read_env_map()
+    token = env_map.get(auth_ref) if auth_ref else None
+    if not token:
+        lines.append("Telegram auth ref is missing or unresolved. Gateway did not start polling.")
+        return "\n".join(lines)
+
+    client = TelegramBotApiClient(token=token)
+    me = client.get_me().get("result", {})
+    lines.append(f"Telegram bot authenticated: @{me.get('username', 'unknown')}")
+
+    cycles = 1 if once else (max_cycles or 1)
+    for cycle in range(cycles):
+        poll_result = poll_telegram_updates_once(
+            config_manager=config_manager,
+            state_db=state_db,
+            client=client,
+            timeout_seconds=poll_timeout_seconds,
+        )
+        lines.append(f"Cycle {cycle + 1}:")
+        lines.extend(f"  {line}" for line in poll_result.to_text().splitlines())
+        if once:
+            break
     return "\n".join(lines)
 
 

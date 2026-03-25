@@ -129,6 +129,13 @@ SCHEMA_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS runtime_state (
+        state_key TEXT PRIMARY KEY,
+        value TEXT,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS job_records (
         job_id TEXT PRIMARY KEY,
         job_kind TEXT NOT NULL,

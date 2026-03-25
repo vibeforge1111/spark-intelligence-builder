@@ -36,6 +36,14 @@ def build_parser() -> argparse.ArgumentParser:
     gateway_subparsers = gateway_parser.add_subparsers(dest="gateway_command", required=True)
     gateway_start_parser = gateway_subparsers.add_parser("start", help="Start foreground gateway")
     gateway_start_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    gateway_start_parser.add_argument("--once", action="store_true", help="Run one poll cycle and exit")
+    gateway_start_parser.add_argument("--max-cycles", type=int, help="Limit gateway poll cycles")
+    gateway_start_parser.add_argument(
+        "--poll-timeout-seconds",
+        type=int,
+        default=5,
+        help="Telegram polling timeout in seconds",
+    )
     gateway_status_parser = gateway_subparsers.add_parser("status", help="Inspect gateway readiness")
     gateway_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     gateway_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
@@ -140,7 +148,15 @@ def handle_doctor(args: argparse.Namespace) -> int:
 def handle_gateway_start(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
-    report = gateway_start(config_manager, state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    report = gateway_start(
+        config_manager,
+        state_db,
+        once=args.once,
+        max_cycles=args.max_cycles,
+        poll_timeout_seconds=args.poll_timeout_seconds,
+    )
     print(report)
     return 0
 
