@@ -31,6 +31,15 @@ Identify:
 
 If it does not need scheduling, do not turn it into a job.
 
+Before proceeding, classify it as exactly one of:
+
+- scheduled work
+- event-driven work
+- governing-loop work
+- operator-invoked repair work
+
+If it belongs to the Spark governing loop, stop and say so explicitly.
+
 ### 2. Force It Through The Central Harness
 
 Check:
@@ -74,6 +83,17 @@ At minimum, consider:
 - one non-retryable failure
 - one stale lock recovery path
 
+### 6. Define The Repair Path
+
+Every meaningful job design should answer:
+
+- how the operator inspects it
+- how the operator re-runs it safely
+- how stale state is detected
+- whether `doctor` should surface it
+
+If the answer is "restart the process and hope," the design is weak.
+
 ## Anti-Patterns
 
 - a job implemented as a hidden background thread
@@ -82,16 +102,20 @@ At minimum, consider:
 - duplicate scheduler loops
 - many timers instead of one due-job loop
 - jobs that mutate state without leaving records
+- cron-shaped work that should stay inline or event-driven
+- job designs with no doctor or repair story
 
 ## Output Template
 
 ```text
 Job Owner:
 Why This Should Exist:
+Work Classification:
 Trigger Type:
 Canonical Payload:
 Idempotence Rule:
 Retry Policy:
+Doctor Path:
 Locking Rule:
 Failure Visibility:
 Smoke Tests:
@@ -104,3 +128,4 @@ Why This Does Not Create A Competing Subsystem:
 - the job cannot be made idempotent enough to retry safely
 - the design hides state outside the canonical job store
 - the job depends on foreign runtime behavior we do not control
+- the work is actually part of the Spark governing loop

@@ -19,6 +19,7 @@ Use this skill when work touches:
 
 - `docs/PRD_SPARK_INTELLIGENCE_V1.md`
 - `docs/ARCHITECTURE_SPARK_INTELLIGENCE_V1.md`
+- `docs/CODING_RULESET_V1.md`
 - `docs/SPARK_INTELLIGENCE_PROMPT_BIBLE.md`
 
 Then read:
@@ -55,7 +56,8 @@ Ask these questions on every decision:
 3. Keep Spark Intelligence as the runtime shell, not the owner of all intelligence.
 4. Use chips and paths as modular attachments.
 5. Preserve one persistent agent identity across channels.
-6. Check whether the proposal improves collective intelligence and moddability without increasing chaos.
+6. Distinguish governing-loop work from scheduled harness work.
+7. Check whether the proposal improves collective intelligence and moddability without increasing chaos.
 
 If ownership is unclear, use the system ownership map in `references/system-map.md` before recommending any new module or feature.
 
@@ -77,6 +79,7 @@ Return these explicitly:
 - Keep specialization in chips and paths.
 - Keep memory ownership with the memory chip.
 - Keep Spark Intelligence lightweight enough to stay maintainable.
+- Do not cron-shape ecosystem evolution when the behavior belongs in Spark's governing loop.
 
 ## Default Deliverable
 

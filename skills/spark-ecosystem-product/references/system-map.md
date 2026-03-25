@@ -12,6 +12,7 @@ Owns:
 - session and identity mapping
 - runtime orchestration
 - chip and path attachment
+- true scheduled work through the shared job harness
 
 ### Spark Researcher
 
@@ -21,6 +22,7 @@ Owns:
 - reasoning loop
 - execution planning
 - base agent continuity
+- governing-loop execution shape
 
 ### Spark Swarm
 
@@ -63,6 +65,7 @@ For every product decision, answer:
 3. Does it improve retention or only increase surface area?
 4. Does it fit the lego-piece architecture?
 5. Does it make the user experience feel like one coherent evolving agent?
+6. Is this actually scheduled work, or am I incorrectly turning Spark logic into cron?
 
 ## Output Template
 
@@ -83,3 +86,4 @@ Collective Intelligence Impact:
 - domain chips reduced to branding only
 - specialization paths that do not actually change behavior
 - product ideas that fragment the one-agent identity
+- turning governing-loop behavior into adapter-owned cron jobs

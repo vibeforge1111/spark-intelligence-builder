@@ -112,8 +112,75 @@ Main improvements from the smoke-test pass:
 - subsystem ownership and anti-patterns are clearer
 - repeated use should be more consistent
 
+## Second Pass
+
+The second pass focused on three questions:
+
+- do the skills encode enough Spark-system doctrine on their own
+- do they distinguish cron from governing-loop work clearly enough
+- do they point to an explicit coding ruleset rather than relying on ambient repo context
+
+### New Gaps Found
+
+#### 1. Repo-Level Coding Rules Were Still Implicit
+
+Gap:
+
+- maintainability doctrine existed across architecture and prompts
+- there was no dedicated coding ruleset document that future reviews could anchor to
+
+Fix applied:
+
+- added `docs/CODING_RULESET_V1.md`
+- added `skills/maintainable-engineering/references/coding-rules.md`
+- updated `maintainable-engineering` to read the new coding-rules reference
+
+#### 2. Reliable Job Harnesses Needed A Stronger "Not Everything Is Cron" Rule
+
+Gap:
+
+- the skill already covered scheduler discipline
+- it did not strongly enough force the operator to classify work as scheduled, event-driven, governing-loop, or repair work
+
+Fix applied:
+
+- updated `reliable-job-harnesses` to read the coding ruleset
+- added explicit governing-loop distinction
+- added doctor-path requirements
+- expanded anti-patterns and output template in `references/workflow.md`
+
+#### 3. Spark Ecosystem Product Needed Tighter Ownership For Scheduled Work
+
+Gap:
+
+- system ownership was clear at a high level
+- it was still possible to drift into putting Spark evolution behavior inside cron just because the feature recurred
+
+Fix applied:
+
+- updated `spark-ecosystem-product` to read the coding ruleset
+- added explicit governing-loop vs scheduled-work guidance
+- updated the system map to assign true scheduled work to Spark Intelligence and governing-loop execution shape to Spark Researcher
+
+## Result After Second Pass
+
+The skills are now more opinionated in the right places:
+
+- coding rules are explicit instead of ambient
+- cron discipline is harder to misuse
+- Spark ownership boundaries are clearer under repeated product pressure
+
+The repo now has a stronger ladder:
+
+- architecture
+- coding rules
+- harness spec
+- skill references
+- smoke-test report
+
 ## Remaining Improvement Opportunities
 
 - add `agents/openai.yaml` for skill discovery metadata
 - add example transcripts for one or two skills
 - add a simple local validation script for skill completeness checks
+- add a small simulated harness scenario pack for skill-level dry runs
