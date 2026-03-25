@@ -52,6 +52,7 @@ This repo currently includes:
 - [docs/DOMAIN_CHIP_ATTACHMENT_CONTRACT_V1.md](./docs/DOMAIN_CHIP_ATTACHMENT_CONTRACT_V1.md)
 - [docs/IMPLEMENTATION_READINESS_AUDIT_2026-03-25.md](./docs/IMPLEMENTATION_READINESS_AUDIT_2026-03-25.md)
 - [docs/IMPLEMENTATION_PLAN_V1.md](./docs/IMPLEMENTATION_PLAN_V1.md)
+- [docs/IMPLEMENTATION_STATUS_2026-03-26.md](./docs/IMPLEMENTATION_STATUS_2026-03-26.md)
 
 Key repo skills:
 
@@ -67,7 +68,7 @@ Validation support:
 - `python scripts/validate_skills.py`
 - [scenario-packs/reliable-job-harnesses/README.md](./scenario-packs/reliable-job-harnesses/README.md)
 
-Current Phase 0 runtime shell:
+Current runtime shell:
 
 ```bash
 pip install -e .
@@ -210,3 +211,32 @@ Telegram runtime health is also persisted locally now:
 - cleaner `/start` pairing response for first-contact users
 
 That health flows into `gateway status`, `operator inbox`, and `operator security` so Telegram problems stay visible without another background subsystem.
+
+## Current Status
+
+The repo is now beyond pure planning.
+
+The current build already includes:
+
+- working package and CLI
+- canonical config and SQLite state
+- Telegram live runtime
+- Spark Researcher bridge
+- Spark Swarm sync and evaluation bridge
+- attachment snapshot support for chips and specialization paths
+- operator pairing, audit, and review controls
+
+Today’s implementation summary is recorded in [docs/IMPLEMENTATION_STATUS_2026-03-26.md](./docs/IMPLEMENTATION_STATUS_2026-03-26.md).
+
+## Tomorrow Start
+
+Tomorrow should start with stabilization, not more channel breadth.
+
+The exact first move is:
+
+1. create a lightweight `tests/` suite
+2. lock down Telegram pairing and operator-control regressions
+3. lock down filtered trace/outbound/history surfaces
+4. add failure-path tests for Telegram auth, polling, duplicates, and rate limits
+
+Do not start with live Discord or WhatsApp runtime work before that.

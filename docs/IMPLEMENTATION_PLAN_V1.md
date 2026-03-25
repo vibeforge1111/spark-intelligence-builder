@@ -14,6 +14,25 @@ The goal is to materialize:
 
 without losing the maintainability and security doctrine already written in this repo.
 
+## 1.1 Current Status As Of 2026-03-26
+
+The repo has already moved well past pure scaffolding.
+
+What is now implemented:
+
+- package and CLI entrypoint
+- canonical config and SQLite state bootstrap
+- identity, pairing, session, and operator control layers
+- Telegram long-poll runtime
+- Spark Researcher bridge
+- Spark Swarm sync/evaluation bridge
+- external chip/path attachment snapshot wiring
+- local audit, inbox, security, trace, and outbound surfaces
+
+So the implementation path is no longer "start the first slice from scratch."
+
+The implementation path is now "stabilize and harden the first slice before expanding breadth."
+
 ## 2. Build Rule
 
 Build one narrow, production-shaped slice first.
@@ -78,6 +97,8 @@ src/
 
 ### Phase 0: Package And CLI Skeleton
 
+Status: completed
+
 Goal:
 
 - create the executable package and minimal command tree
@@ -99,6 +120,8 @@ Exit criteria:
 - runtime control remains operator-only
 
 ### Phase 1: Config And State Layer
+
+Status: completed
 
 Goal:
 
@@ -126,6 +149,8 @@ Exit criteria:
 
 ### Phase 2: Identity And Pairing Core
 
+Status: completed
+
 Goal:
 
 - implement the canonical identity and session model
@@ -152,6 +177,8 @@ Exit criteria:
 
 ### Phase 3: Provider And Auth Layer
 
+Status: completed for the first provider path
+
 Goal:
 
 - implement model-provider configuration and validation
@@ -174,6 +201,8 @@ Exit criteria:
 - no secret leakage in logs
 
 ### Phase 4: Telegram Adapter
+
+Status: completed for the first live runtime path
 
 Goal:
 
@@ -201,6 +230,8 @@ Exit criteria:
 
 ### Phase 5: Spark Researcher Bridge
 
+Status: completed for the current vertical slice
+
 Goal:
 
 - implement the narrow Spark Researcher integration bridge
@@ -223,6 +254,8 @@ Exit criteria:
 - Spark Researcher remains an external system boundary, not copied logic
 
 ### Phase 6: Doctor, Health, And Harness
+
+Status: partially completed
 
 Goal:
 
@@ -249,7 +282,15 @@ Exit criteria:
 - failures are legible
 - hidden background-runtime drift is detectable
 
+Remaining work inside this phase:
+
+- replace mostly manual verification with repeatable regression coverage
+- add a lightweight `tests/` suite for the current Telegram/operator slice
+- cover failure-path persistence and observability surfaces with automated checks
+
 ### Phase 7: Security Hardening Pass
+
+Status: partially completed at the doctrine level, not yet complete at the implementation-test level
 
 Goal:
 
@@ -297,6 +338,8 @@ The first slice should have short smoke tests for:
 - exact session binding survives adapter restart
 - Telegram adapter failure is visible without taking down unrelated state
 - Spark Researcher bridge works without local fallback duplication
+
+As of 2026-03-26, these smoke tests should become the next actual implementation work, not a later aspiration.
 
 ## 8. Security Review Gates
 
@@ -350,3 +393,41 @@ The correct first implementation is:
 - one doctorable runtime shell
 
 That is the smallest serious version of Spark Intelligence.
+
+## 11. Tomorrow Start Order
+
+Tomorrow should begin from the current build, not from documentation assumptions.
+
+The exact order should be:
+
+1. create `tests/` and choose the lightest viable local test runner
+2. add Telegram pairing/operator regression tests:
+   - pending pairing
+   - hold latest
+   - approve latest
+   - revoke latest
+   - revoked user reply
+3. add observability regression tests:
+   - filtered `gateway traces`
+   - filtered `gateway outbound`
+   - filtered `operator review-pairings`
+   - filtered `operator history`
+4. add Telegram failure-path tests:
+   - auth failure persistence
+   - poll failure persistence
+   - duplicate suppression
+   - rate limiting
+5. only after those land, decide whether the next slice is:
+   - richer doctor output
+   - Telegram runtime polish
+   - or live runtime work for another adapter
+
+## 12. Tomorrow Non-Goals
+
+Do not start tomorrow with:
+
+- live Discord runtime
+- live WhatsApp runtime
+- webhook-first Telegram
+- new memory ownership inside this repo
+- copied Spark Researcher or Spark Swarm internals
