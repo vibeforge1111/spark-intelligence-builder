@@ -23,6 +23,10 @@ def add_channel(
         env_key = "TELEGRAM_BOT_TOKEN"
         config_manager.upsert_env_secret(env_key, bot_token)
         auth_ref = env_key
+    if channel_kind == "discord" and bot_token:
+        env_key = "DISCORD_BOT_TOKEN"
+        config_manager.upsert_env_secret(env_key, bot_token)
+        auth_ref = env_key
 
     config["channels"]["records"][channel_id] = {
         "channel_kind": channel_kind,

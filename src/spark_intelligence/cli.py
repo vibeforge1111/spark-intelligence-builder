@@ -26,6 +26,7 @@ from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import run_doctor
 from spark_intelligence.gateway.runtime import (
     gateway_outbound_view,
+    gateway_simulate_discord_message,
     gateway_simulate_telegram_update,
     gateway_start,
     gateway_status,
@@ -178,6 +179,13 @@ def build_parser() -> argparse.ArgumentParser:
     gateway_simulate_parser.add_argument("update_file", help="Path to a Telegram update JSON file")
     gateway_simulate_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     gateway_simulate_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    gateway_simulate_discord_parser = gateway_subparsers.add_parser(
+        "simulate-discord-message",
+        help="Simulate one Discord DM message through normalization and authorization routing",
+    )
+    gateway_simulate_discord_parser.add_argument("message_file", help="Path to a Discord message JSON file")
+    gateway_simulate_discord_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    gateway_simulate_discord_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     gateway_traces_parser = gateway_subparsers.add_parser("traces", help="Show recent gateway traces")
     gateway_traces_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     gateway_traces_parser.add_argument("--limit", type=int, default=20, help="Number of trace events to show")
@@ -190,10 +198,10 @@ def build_parser() -> argparse.ArgumentParser:
     channel_parser = subparsers.add_parser("channel", help="Manage channel adapters")
     channel_subparsers = channel_parser.add_subparsers(dest="channel_command", required=True)
     channel_add_parser = channel_subparsers.add_parser("add", help="Add a channel adapter")
-    channel_add_parser.add_argument("channel_kind", choices=["telegram"], help="Adapter kind")
+    channel_add_parser.add_argument("channel_kind", choices=["telegram", "discord"], help="Adapter kind")
     channel_add_parser.add_argument("--home", help="Override Spark Intelligence home directory")
-    channel_add_parser.add_argument("--bot-token", help="Telegram bot token")
-    channel_add_parser.add_argument("--allowed-user", action="append", default=[], help="Allowed Telegram user id")
+    channel_add_parser.add_argument("--bot-token", help="Adapter bot token")
+    channel_add_parser.add_argument("--allowed-user", action="append", default=[], help="Allowed adapter user id")
     channel_add_parser.add_argument(
         "--pairing-mode",
         choices=["allowlist", "pairing"],
@@ -573,6 +581,22 @@ def handle_gateway_simulate_telegram_update(args: argparse.Namespace) -> int:
             config_manager,
             state_db,
             Path(args.update_file),
+            as_json=args.json,
+        )
+    )
+    return 0
+
+
+def handle_gateway_simulate_discord_message(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    print(
+        gateway_simulate_discord_message(
+            config_manager,
+            state_db,
+            Path(args.message_file),
             as_json=args.json,
         )
     )
@@ -1057,6 +1081,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_gateway_status(args)
     if args.command == "gateway" and args.gateway_command == "simulate-telegram-update":
         return handle_gateway_simulate_telegram_update(args)
+    if args.command == "gateway" and args.gateway_command == "simulate-discord-message":
+        return handle_gateway_simulate_discord_message(args)
     if args.command == "gateway" and args.gateway_command == "traces":
         return handle_gateway_traces(args)
     if args.command == "gateway" and args.gateway_command == "outbound":
