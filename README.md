@@ -18,6 +18,7 @@ This repo currently includes:
 - [docs/SPARK_INTELLIGENCE_PROMPT_BIBLE.md](./docs/SPARK_INTELLIGENCE_PROMPT_BIBLE.md)
 - [docs/CRON_JOB_HARNESS_SPEC_V1.md](./docs/CRON_JOB_HARNESS_SPEC_V1.md)
 - [docs/IMPORT_AND_MIGRATION_SPEC_V1.md](./docs/IMPORT_AND_MIGRATION_SPEC_V1.md)
+- [docs/CODING_RULESET_V1.md](./docs/CODING_RULESET_V1.md)
 
 Key repo skills:
 

@@ -24,6 +24,7 @@ Use this skill when work touches:
 Then read:
 
 - `references/review-framework.md`
+- `references/coding-rules.md`
 
 ## Core Doctrine
 
@@ -35,6 +36,8 @@ Prefer:
 - thin adapters
 - small modules
 - explicit state transitions
+- doctor-first repair
+- one governing loop where Spark logic requires it
 - boring code that ages well
 
 Reject:
@@ -96,6 +99,7 @@ When reviewing docs:
 - Memory doctrine belongs to the memory chip, not random modules.
 - The gateway should not become the real product.
 - The runtime should remain lightweight enough to install quickly and debug locally.
+- Do not turn Spark flywheels into cron jobs unless the work is truly time-based.
 
 ## Default Deliverable
 

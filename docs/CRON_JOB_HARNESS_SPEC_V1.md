@@ -62,6 +62,17 @@ Every important job should be runnable on demand from the CLI.
 
 v1 should avoid external schedulers, message brokers, and separate queue platforms unless they solve a real problem we actually have.
 
+### 2.7 Governing Loop Discipline
+
+Not every recurring activity should become a cron job.
+
+Spark systems already distinguish between:
+
+- one governing flywheel for intelligence evolution
+- true scheduled work for time-based operations
+
+Spark Intelligence should preserve that distinction.
+
 ## 3. Competitive Learning
 
 This spec is informed by patterns and failure signals from OpenClaw and Hermes.
@@ -139,6 +150,17 @@ It should not own:
 - memory doctrine
 - arbitrary app-specific background systems outside the job contract
 
+It also should not absorb the Spark governing loop.
+
+If the work is really:
+
+- bottleneck classification
+- iterative improvement routing
+- memory refresh inside Spark logic
+- specialization-path evolution
+
+then it belongs in the Spark loop model, not in cron.
+
 ## 5. Job Types
 
 ### 5.1 Scheduled Jobs
@@ -184,6 +206,16 @@ Examples:
 - re-run migration
 - retry failed delivery
 - trigger smoke-safe probe
+
+## 5.6 What Is Not A Job
+
+The following should not be modeled as standalone cron jobs by default:
+
+- the core Spark reasoning pass
+- specialization-path evolution logic
+- chip intelligence updates that belong to the Spark governing loop
+- inline follow-up work that can run safely in the same request path
+- adapter behavior that should be event-driven
 
 ## 6. Job Ownership Model
 
@@ -415,6 +447,14 @@ Recommended checks:
 - disabled critical jobs
 - duplicate scheduler detection
 
+Recommended operator commands in v1:
+
+- `spark-intelligence health`
+- `spark-intelligence doctor`
+- `spark-intelligence jobs list`
+- `spark-intelligence jobs inspect <job-id>`
+- `spark-intelligence jobs run <job-id>`
+
 ## 14. Anti-Patterns To Reject
 
 ### 14.1 Per-Job Timers Everywhere
@@ -440,6 +480,15 @@ Retries must be centrally visible.
 ### 14.6 State Forking
 
 A job must not keep private state that disagrees with the canonical job store.
+
+### 14.7 Cron-Shaping The Wrong Work
+
+Do not use scheduled jobs as a substitute for:
+
+- proper event handling
+- the Spark governing loop
+- explicit state transitions
+- operator-invoked repair flows
 
 ## 15. Import and Migration Jobs
 
@@ -551,3 +600,8 @@ It should borrow:
 - Hermes' cleaner shared runtime discipline
 
 But it should remain more lightweight than both by default.
+
+The key discipline is:
+
+- one scheduler for true scheduled work
+- no scheduler creep into the Spark governing loop
