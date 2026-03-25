@@ -81,6 +81,7 @@ That means:
 - sensible defaults out of the box
 - import paths for users coming from OpenClaw and Hermes
 - no requirement to hand-edit ten different systems before first use
+- no requirement to install Docker or a custom process manager
 
 ### 2.9 One Obvious Way
 
@@ -175,6 +176,22 @@ That means:
 - replayable workflows
 - explicit diagnostics
 - deterministic startup validation
+
+### 4.6 Native Over Homegrown Supervision
+
+If Spark Intelligence needs keep-running behavior, prefer the operating system's native scheduler or service primitives over a bundled daemon manager.
+
+Prefer:
+
+- a foreground runtime
+- run-to-completion commands
+- optional native wrappers that call those commands
+
+Reject:
+
+- custom daemon orchestration inside the product
+- detached child-process trees used as supervision
+- hidden shell relaunch loops
 
 ### 4.5 Gstack Decision Discipline
 
@@ -726,6 +743,7 @@ This should be lightweight. For v1:
 - prefer one internal scheduler over an external job platform
 - prefer SQLite-backed job metadata over a separate queue service
 - prefer explicit retry policy over many background daemons
+- prefer native OS scheduling wrappers over a custom daemon manager when keep-running behavior is needed
 
 Recommended v1 smoke targets:
 
@@ -749,6 +767,7 @@ Recommended shape:
 - `spark-intelligence setup`
 - `spark-intelligence doctor`
 - `spark-intelligence gateway start`
+- optional `spark-intelligence install-autostart`
 
 The installer should:
 
@@ -756,6 +775,19 @@ The installer should:
 - avoid optional heavy dependencies by default
 - install adapter dependencies only when the user enables that adapter
 - validate the environment before declaring success
+- prefer native autostart registration over shipping a custom daemon layer
+
+Recommended keep-running methodology:
+
+- default: foreground gateway for active sessions
+- scheduled jobs: `spark-intelligence jobs tick`
+- optional autostart: install a native wrapper that runs a Spark Intelligence command
+
+Examples:
+
+- macOS: LaunchAgent calling Spark Intelligence commands
+- Linux: `systemd --user` unit and timer
+- Windows: Task Scheduler entries
 
 ### 13.7 Adapter Budget
 
@@ -810,7 +842,6 @@ Do not import mystery state.
 
 - one always-on gateway as the control plane
 - onboarding wizard as the main setup path
-- daemon/service install as part of onboarding
 - multi-channel architecture with one source of truth
 - pairing and per-channel DM safety defaults
 - optional dashboard for operator visibility
@@ -832,8 +863,13 @@ These are strong enough that we should intentionally copy the shape:
 - `setup -> configure -> start gateway -> doctor`
 - adapter-per-platform architecture
 - explicit allowlists and pairing flow
-- service installation for always-on messaging runtime
 - one shared identity/session mapping layer
+
+Refined Spark version of this pattern:
+
+- foreground-first runtime
+- optional native autostart install
+- no bundled daemon manager
 
 What not to yoink:
 

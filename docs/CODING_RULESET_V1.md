@@ -178,6 +178,7 @@ Every scheduled job must have:
 - a retry policy
 - a visible status
 - a manual run path
+- a path that can run to completion without a custom daemon layer
 
 ### 6.3 No Private Retry Universes
 
@@ -201,6 +202,18 @@ When the scheduler or jobs misbehave, the first-class answer should be diagnosis
 - run a manual smoke-safe replay
 
 Do not normalize rebooting random processes until the issue disappears.
+
+### 6.5 Native Supervision Over Homegrown Process Tricks
+
+Do not treat detached child processes, shell watchdog loops, or bundled daemon managers as the foundation of reliability.
+
+Prefer:
+
+- foreground commands
+- run-to-completion commands
+- OS-native scheduler or service registration only when necessary
+
+If the system needs keep-running behavior, the native wrapper should call the same Spark Intelligence commands the operator can run manually.
 
 ## 7. Module Design Rules
 

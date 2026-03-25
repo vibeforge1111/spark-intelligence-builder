@@ -292,6 +292,38 @@ Do not add:
 - separate scheduler service
 - job system split across multiple storage backends
 
+## 8.5 Process Methodology
+
+The harness should avoid homegrown daemon management.
+
+v1 should prefer this order:
+
+1. foreground runtime when the operator is actively using the gateway
+2. OS-native scheduler or supervisor integration when the operator wants keep-running behavior
+3. no bundled custom daemon manager
+
+Why:
+
+- Node timers are not a durable scheduling guarantee
+- detached child-process tricks are hard to inspect and easy to orphan
+- OS-native schedulers are already installed and better understood by operators
+
+Source signals:
+
+- Node.js documents that timer callbacks are not guaranteed to fire at an exact time
+- Node.js also documents that detached child processes require special handling with `stdio` and `unref()` to survive parent exit
+- Apple recommends on-demand `launchd` launching rather than non-launch-on-demand daemons
+- `systemd` timers can persist missed calendar runs with `Persistent=`
+- Windows `schtasks` schedules commands periodically and can also start tasks on demand
+
+Sources:
+
+- [Node.js Timers](https://nodejs.org/download/release/v22.4.1/docs/api/timers.html)
+- [Node.js Child Process](https://nodejs.org/api/child_process.html)
+- [Apple launchd guide](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html)
+- [systemd.timer](https://www.freedesktop.org/software/systemd/man/devel/systemd.timer.html)
+- [Microsoft schtasks](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/schtasks)
+
 ## 9. Scheduler Model
 
 The scheduler should run inside the main runtime process in v1.
@@ -302,6 +334,12 @@ Recommended model:
 - one due-job selector
 - one execution path
 - one locking strategy
+
+This means:
+
+- one in-process scheduler while the gateway is running
+- one `jobs tick` or equivalent run-to-completion command for external wakeups
+- no separate Node-based daemon tree that tries to supervise itself
 
 ### 9.1 Due Job Selection
 
@@ -378,6 +416,7 @@ Every important job should support a manual run path.
 Recommended CLI shape:
 
 - `spark-intelligence jobs list`
+- `spark-intelligence jobs tick`
 - `spark-intelligence jobs run <job-id>`
 - `spark-intelligence jobs retry <job-id>`
 - `spark-intelligence jobs disable <job-id>`
@@ -388,6 +427,15 @@ Manual execution should:
 - use the same codepath as scheduled execution
 - not bypass validation
 - mark results in the same job store
+
+`jobs tick` is especially important.
+
+It gives us one run-to-completion entrypoint that can be called by:
+
+- the foreground gateway runtime
+- a LaunchAgent
+- a `systemd --user` timer
+- Windows Task Scheduler
 
 ## 12. Observability
 
@@ -452,6 +500,7 @@ Recommended operator commands in v1:
 - `spark-intelligence health`
 - `spark-intelligence doctor`
 - `spark-intelligence jobs list`
+- `spark-intelligence jobs tick`
 - `spark-intelligence jobs inspect <job-id>`
 - `spark-intelligence jobs run <job-id>`
 
@@ -468,6 +517,17 @@ Do not have one scheduler in the gateway, another in an adapter, and another in 
 ### 14.3 Silent Background Threads
 
 If a background loop exists, it must be visible and owned.
+
+### 14.3.1 Homegrown Daemon Managers
+
+Do not build our own long-running process manager around:
+
+- detached Node child processes
+- shell loops that relaunch forever
+- hidden watchdog scripts
+- bundled PM-style supervision layers
+
+If keep-running behavior is needed, prefer OS-native supervision or scheduling.
 
 ### 14.4 Job Logic Inside Adapters
 
@@ -590,6 +650,21 @@ One scheduler.
 One store.
 One retry policy framework.
 
+### 18.3 Runtime Shape
+
+Recommended runtime shape:
+
+- foreground `gateway start` for active use
+- foreground `jobs tick` for one-shot scheduled execution
+- optional native installer commands that register:
+  - `launchd` LaunchAgent on macOS
+  - `systemd --user` service and timer on Linux
+  - `schtasks` entries on Windows
+
+These native wrappers should invoke Spark Intelligence commands.
+
+They should not introduce a second runtime model.
+
 ## 19. Final Decision
 
 Spark Intelligence v1 should have a small, central, SQLite-backed job harness with one scheduler and strong smoke coverage.
@@ -605,3 +680,4 @@ The key discipline is:
 
 - one scheduler for true scheduled work
 - no scheduler creep into the Spark governing loop
+- native supervision only when needed, not a homegrown daemon stack
