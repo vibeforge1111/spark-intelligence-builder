@@ -38,6 +38,8 @@ class AttachmentRecord:
 
 @dataclass
 class AttachmentScanResult:
+    chip_source: str
+    path_source: str
     chip_roots: list[str]
     path_roots: list[str]
     records: list[AttachmentRecord]
@@ -46,6 +48,8 @@ class AttachmentScanResult:
     def to_json(self) -> str:
         return json.dumps(
             {
+                "chip_source": self.chip_source,
+                "path_source": self.path_source,
                 "chip_roots": self.chip_roots,
                 "path_roots": self.path_roots,
                 "warnings": self.warnings,
@@ -56,8 +60,12 @@ class AttachmentScanResult:
 
     def to_text(self) -> str:
         lines = ["Attachment scan"]
-        lines.append(f"- chip_roots: {', '.join(self.chip_roots) if self.chip_roots else 'none'}")
-        lines.append(f"- path_roots: {', '.join(self.path_roots) if self.path_roots else 'none'}")
+        lines.append(
+            f"- chip_roots ({self.chip_source}): {', '.join(self.chip_roots) if self.chip_roots else 'none'}"
+        )
+        lines.append(
+            f"- path_roots ({self.path_source}): {', '.join(self.path_roots) if self.path_roots else 'none'}"
+        )
         lines.append(f"- records: {len(self.records)}")
         if self.warnings:
             lines.append(f"- warnings: {len(self.warnings)}")
@@ -79,6 +87,8 @@ def attachment_status(config_manager: ConfigManager) -> AttachmentScanResult:
     records.sort(key=lambda item: (item.kind, item.key))
     _append_duplicate_warnings(records, warnings)
     return AttachmentScanResult(
+        chip_source=chip_source,
+        path_source=path_source,
         chip_roots=[str(path) for path in chip_roots],
         path_roots=[str(path) for path in path_roots],
         records=records,
@@ -91,6 +101,8 @@ def list_attachments(config_manager: ConfigManager, *, kind: str = "all") -> Att
     if kind == "all":
         return result
     return AttachmentScanResult(
+        chip_source=result.chip_source,
+        path_source=result.path_source,
         chip_roots=result.chip_roots,
         path_roots=result.path_roots,
         warnings=result.warnings,

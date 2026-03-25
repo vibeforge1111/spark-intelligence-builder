@@ -83,7 +83,7 @@ spark-intelligence sessions list
 spark-intelligence gateway start
 ```
 
-`setup` now auto-detects local `spark-researcher` and `spark-swarm` repos on the Desktop when they are present. It can also wire hosted Swarm access in one command:
+`setup` now auto-detects local `spark-researcher`, `spark-swarm`, domain-chip, and specialization-path repos on the Desktop when they are present. It can also wire hosted Swarm access in one command:
 
 ```bash
 spark-intelligence setup \
@@ -127,4 +127,5 @@ spark-intelligence attachments list --kind chip
 spark-intelligence attachments list --kind path --json
 spark-intelligence attachments add-root chips "C:/Users/USER/Desktop/domain-chip-content"
 spark-intelligence attachments add-root paths "C:/Users/USER/Desktop/specialization-path-startup-operator"
+spark-intelligence agent inspect
 ```

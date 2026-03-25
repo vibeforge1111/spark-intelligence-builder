@@ -25,6 +25,14 @@ class IdentityReport:
             f"- providers: {', '.join(self.payload['providers']) if self.payload['providers'] else 'none'}",
             f"- channels: {', '.join(self.payload['channels']) if self.payload['channels'] else 'none'}",
         ]
+        attachments = self.payload.get("attachments")
+        if isinstance(attachments, dict):
+            lines.append(
+                "- attachments: "
+                f"{attachments.get('chip_count', 0)} chips ({attachments.get('chip_source', 'unknown')}), "
+                f"{attachments.get('path_count', 0)} paths ({attachments.get('path_source', 'unknown')}), "
+                f"warnings={attachments.get('warning_count', 0)}"
+            )
         return "\n".join(lines)
 
     def to_json(self) -> str:

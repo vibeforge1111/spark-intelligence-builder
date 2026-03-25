@@ -474,6 +474,14 @@ def _apply_setup_integrations(config_manager: ConfigManager, args: argparse.Name
         if args.swarm_access_token:
             notes.append(f"stored spark.swarm access token in {args.swarm_access_token_env}")
 
+    attachment_scan = attachment_status(config_manager)
+    if attachment_scan.chip_source == "autodiscovered" and attachment_scan.chip_roots:
+        config_manager.set_path("spark.chips.roots", attachment_scan.chip_roots)
+        notes.append(f"autoconnected {len(attachment_scan.chip_roots)} chip root(s)")
+    if attachment_scan.path_source == "autodiscovered" and attachment_scan.path_roots:
+        config_manager.set_path("spark.specialization_paths.roots", attachment_scan.path_roots)
+        notes.append(f"autoconnected {len(attachment_scan.path_roots)} specialization path root(s)")
+
     return notes
 
 
@@ -526,6 +534,14 @@ def handle_agent_inspect(args: argparse.Namespace) -> int:
     state_db.initialize()
     owner = config_manager.load().get("workspace", {}).get("owner_human_id", "local-operator")
     report = agent_inspect(state_db=state_db, workspace_owner=owner)
+    attachments = attachment_status(config_manager)
+    report.payload["attachments"] = {
+        "chip_source": attachments.chip_source,
+        "path_source": attachments.path_source,
+        "chip_count": len([record for record in attachments.records if record.kind == "chip"]),
+        "path_count": len([record for record in attachments.records if record.kind == "path"]),
+        "warning_count": len(attachments.warnings),
+    }
     if args.json:
         print(report.to_json())
     else:
