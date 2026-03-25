@@ -167,3 +167,5 @@ Telegram ingress now also applies lightweight runtime guardrails:
 - duplicate update suppression
 - per-user rate limiting
 - outbound reply truncation and secret-like reply blocking
+
+Those guardrails now live in shared gateway helpers so future adapters can inherit the same local-first safety behavior instead of re-implementing it.

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
-import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -10,6 +8,12 @@ from urllib.error import HTTPError, URLError
 from spark_intelligence.adapters.telegram.client import TelegramBotApiClient
 from spark_intelligence.adapters.telegram.normalize import normalize_telegram_update
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.gateway.guardrails import (
+    apply_inbound_rate_limit,
+    is_duplicate_event,
+    load_channel_security_policy,
+    prepare_outbound_text,
+)
 from spark_intelligence.gateway.tracing import append_gateway_trace, append_outbound_audit
 from spark_intelligence.identity.service import resolve_inbound_dm
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply, record_researcher_bridge_result
@@ -205,7 +209,12 @@ def poll_telegram_updates_once(
     for update in updates:
         normalized = normalize_telegram_update(update, channel_id="telegram")
         next_offset = normalized.update_id + 1
-        if _is_duplicate_update(state_db=state_db, update_id=normalized.update_id, window_size=policy["duplicate_window_size"]):
+        if is_duplicate_event(
+            state_db=state_db,
+            channel_id="telegram",
+            event_id=normalized.update_id,
+            window_size=policy["duplicate_window_size"],
+        ):
             ignored_count += 1
             append_gateway_trace(
                 config_manager,
@@ -230,9 +239,10 @@ def poll_telegram_updates_once(
                 },
             )
             continue
-        rate_limit = _apply_inbound_rate_limit(
+        rate_limit = apply_inbound_rate_limit(
             state_db=state_db,
-            telegram_user_id=normalized.telegram_user_id,
+            channel_id="telegram",
+            external_user_id=normalized.telegram_user_id,
             limit_per_minute=policy["max_messages_per_minute"],
             notice_cooldown_seconds=policy["rate_limit_notice_cooldown_seconds"],
         )
@@ -414,61 +424,17 @@ def poll_telegram_updates_once(
 
 
 def _telegram_security_policy(config_manager: ConfigManager) -> dict[str, Any]:
-    configured = config_manager.get_path("security.telegram", default={}) or {}
-    return {
-        "duplicate_window_size": int(configured.get("duplicate_window_size", 128)),
-        "max_messages_per_minute": int(configured.get("max_messages_per_minute", 6)),
-        "rate_limit_notice_cooldown_seconds": int(configured.get("rate_limit_notice_cooldown_seconds", 30)),
-        "max_reply_chars": int(configured.get("max_reply_chars", 3500)),
-        "redact_secret_like_replies": bool(configured.get("redact_secret_like_replies", True)),
-    }
-
-
-def _is_duplicate_update(*, state_db: StateDB, update_id: int, window_size: int) -> bool:
-    state_key = "telegram:recent_update_ids"
-    recent_ids = _load_json_list(state_db=state_db, state_key=state_key)
-    if update_id in recent_ids:
-        return True
-    trimmed = (recent_ids + [update_id])[-max(window_size, 1) :]
-    _set_runtime_state_value(state_db=state_db, state_key=state_key, value=json.dumps(trimmed))
-    return False
-
-
-def _apply_inbound_rate_limit(
-    *,
-    state_db: StateDB,
-    telegram_user_id: str,
-    limit_per_minute: int,
-    notice_cooldown_seconds: int,
-) -> dict[str, Any]:
-    state_key = f"telegram:rate_limit:{telegram_user_id}"
-    raw = _load_json_object(state_db=state_db, state_key=state_key)
-    now = int(time.time())
-    timestamps = [int(item) for item in raw.get("timestamps", []) if isinstance(item, (int, float))]
-    timestamps = [item for item in timestamps if item > now - 60]
-    last_notice_at = int(raw.get("last_notice_at", 0) or 0)
-    if len(timestamps) >= max(limit_per_minute, 1):
-        retry_after_seconds = max(1, 60 - (now - timestamps[0]))
-        notice_allowed = now - last_notice_at >= max(notice_cooldown_seconds, 1)
-        if notice_allowed:
-            last_notice_at = now
-        _set_runtime_state_value(
-            state_db=state_db,
-            state_key=state_key,
-            value=json.dumps({"timestamps": timestamps, "last_notice_at": last_notice_at}, sort_keys=True),
-        )
-        return {
-            "allowed": False,
-            "retry_after_seconds": retry_after_seconds,
-            "notice_allowed": notice_allowed,
-        }
-    timestamps.append(now)
-    _set_runtime_state_value(
-        state_db=state_db,
-        state_key=state_key,
-        value=json.dumps({"timestamps": timestamps, "last_notice_at": last_notice_at}, sort_keys=True),
+    return load_channel_security_policy(
+        config_manager,
+        channel_id="telegram",
+        defaults={
+            "duplicate_window_size": 128,
+            "max_messages_per_minute": 6,
+            "rate_limit_notice_cooldown_seconds": 30,
+            "max_reply_chars": 3500,
+            "redact_secret_like_replies": True,
+        },
     )
-    return {"allowed": True, "retry_after_seconds": 0, "notice_allowed": False}
 
 
 def _send_telegram_reply(
@@ -486,7 +452,7 @@ def _send_telegram_reply(
     trace_ref: str | None,
 ) -> dict[str, Any]:
     policy = _telegram_security_policy(config_manager)
-    guarded = _prepare_outbound_text(
+    guarded = prepare_outbound_text(
         text=text,
         bridge_mode=bridge_mode,
         max_reply_chars=policy["max_reply_chars"],
@@ -527,85 +493,8 @@ def _send_telegram_reply(
     return {"ok": ok, "error": error, "guardrail_actions": guarded["actions"]}
 
 
-def _prepare_outbound_text(
-    *,
-    text: str,
-    bridge_mode: str | None,
-    max_reply_chars: int,
-    redact_secret_like_replies: bool,
-) -> dict[str, Any]:
-    actions: list[str] = []
-    cleaned = "".join(character for character in text if character == "\n" or character == "\t" or ord(character) >= 32)
-    cleaned = cleaned.replace("\r\n", "\n").replace("\r", "\n").strip()
-    if cleaned != text:
-        actions.append("sanitize_control_chars")
-    if bridge_mode == "bridge_error":
-        cleaned = "Spark Intelligence hit an internal bridge error. The operator can inspect local gateway traces."
-        actions.append("replace_bridge_error")
-    if redact_secret_like_replies and _looks_secret_like(cleaned):
-        cleaned = "Spark Intelligence withheld this reply because it appeared to contain sensitive credential material. The operator can inspect local traces."
-        actions.append("block_secret_like_reply")
-    if len(cleaned) > max(max_reply_chars, 32):
-        cleaned = f"{cleaned[: max(max_reply_chars, 32) - 28].rstrip()}\n\n[truncated for Telegram delivery]"
-        actions.append("truncate_reply")
-    if not cleaned:
-        cleaned = "Spark Intelligence produced an empty reply."
-        actions.append("replace_empty_reply")
-    return {"text": cleaned, "actions": actions}
-
-
-def _looks_secret_like(text: str) -> bool:
-    patterns = [
-        r"(?i)bearer\s+[A-Za-z0-9._-]{20,}",
-        r"(?m)^[A-Z0-9_]{3,}=(?:ghp_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,}|[0-9]{7,}:[A-Za-z0-9_-]{20,})$",
-        r"ghp_[A-Za-z0-9]{20,}",
-        r"sk-[A-Za-z0-9]{20,}",
-        r"\b[0-9]{7,}:[A-Za-z0-9_-]{20,}\b",
-    ]
-    return any(re.search(pattern, text) for pattern in patterns)
-
-
 def _preview_text(text: str, *, limit: int = 160) -> str:
     compact = " ".join(text.split())
     if len(compact) <= limit:
         return compact
     return f"{compact[: limit - 3]}..."
-
-
-def _load_json_list(*, state_db: StateDB, state_key: str) -> list[int]:
-    with state_db.connect() as conn:
-        row = conn.execute("SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (state_key,)).fetchone()
-    if not row or row["value"] is None:
-        return []
-    try:
-        payload = json.loads(str(row["value"]))
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(payload, list):
-        return []
-    return [int(item) for item in payload if isinstance(item, (int, float))]
-
-
-def _load_json_object(*, state_db: StateDB, state_key: str) -> dict[str, Any]:
-    with state_db.connect() as conn:
-        row = conn.execute("SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (state_key,)).fetchone()
-    if not row or row["value"] is None:
-        return {}
-    try:
-        payload = json.loads(str(row["value"]))
-    except json.JSONDecodeError:
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
-def _set_runtime_state_value(*, state_db: StateDB, state_key: str, value: str) -> None:
-    with state_db.connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO runtime_state(state_key, value)
-            VALUES (?, ?)
-            ON CONFLICT(state_key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
-            """,
-            (state_key, value),
-        )
-        conn.commit()
