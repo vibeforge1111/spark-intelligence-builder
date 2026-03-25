@@ -26,7 +26,7 @@ def add_channel(
 
     config["channels"]["records"][channel_id] = {
         "channel_kind": channel_kind,
-        "status": "configured",
+        "status": "enabled",
         "pairing_mode": pairing_mode,
         "auth_ref": auth_ref,
         "allowed_users": allowed_users,
@@ -45,7 +45,7 @@ def add_channel(
                 auth_ref=excluded.auth_ref,
                 updated_at=CURRENT_TIMESTAMP
             """,
-            (channel_id, channel_kind, "configured", pairing_mode, auth_ref),
+            (channel_id, channel_kind, "enabled", pairing_mode, auth_ref),
         )
         conn.commit()
 
@@ -58,3 +58,38 @@ def add_channel(
         )
 
     return f"Configured channel '{channel_kind}' with pairing mode '{pairing_mode}'."
+
+
+def set_channel_status(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    channel_id: str,
+    status: str,
+) -> str:
+    config = config_manager.load()
+    records = config.setdefault("channels", {}).setdefault("records", {})
+    record = records.get(channel_id)
+    if not isinstance(record, dict):
+        raise ValueError(f"Unknown channel '{channel_id}'.")
+    record["status"] = status
+    config_manager.save(config)
+
+    with state_db.connect() as conn:
+        row = conn.execute(
+            "SELECT channel_kind, pairing_mode, auth_ref FROM channel_installations WHERE channel_id = ? LIMIT 1",
+            (channel_id,),
+        ).fetchone()
+        if not row:
+            raise ValueError(f"Unknown channel installation '{channel_id}'.")
+        conn.execute(
+            """
+            UPDATE channel_installations
+            SET status = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE channel_id = ?
+            """,
+            (status, channel_id),
+        )
+        conn.commit()
+
+    return f"Set channel '{channel_id}' status = {status}"

@@ -21,7 +21,7 @@ from spark_intelligence.attachments import (
     unpin_chip,
 )
 from spark_intelligence.auth.service import connect_provider
-from spark_intelligence.channel.service import add_channel
+from spark_intelligence.channel.service import add_channel, set_channel_status
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import run_doctor
 from spark_intelligence.gateway.runtime import gateway_simulate_telegram_update, gateway_start, gateway_status, gateway_trace_view
@@ -128,6 +128,11 @@ def build_parser() -> argparse.ArgumentParser:
     operator_hold_pairing_parser.add_argument("external_user_id")
     operator_hold_pairing_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     operator_hold_pairing_parser.add_argument("--reason", help="Short audit reason for holding this request")
+    operator_set_channel_parser = operator_subparsers.add_parser("set-channel", help="Set channel ingress state")
+    operator_set_channel_parser.add_argument("channel_id")
+    operator_set_channel_parser.add_argument("mode", choices=["enabled", "paused", "disabled"])
+    operator_set_channel_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    operator_set_channel_parser.add_argument("--reason", help="Short audit reason for this change")
     operator_history_parser = operator_subparsers.add_parser("history", help="Show recent operator actions")
     operator_history_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     operator_history_parser.add_argument("--limit", type=int, default=20, help="Number of events to show")
@@ -411,6 +416,29 @@ def handle_operator_hold_pairing(args: argparse.Namespace) -> int:
         target_kind="pairing",
         target_ref=f"{args.channel_id}:{args.external_user_id}",
         reason=args.reason,
+    )
+    print(result)
+    return 0
+
+
+def handle_operator_set_channel(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = set_channel_status(
+        config_manager=config_manager,
+        state_db=state_db,
+        channel_id=args.channel_id,
+        status=args.mode,
+    )
+    log_operator_event(
+        state_db=state_db,
+        action="set_channel",
+        target_kind="channel",
+        target_ref=args.channel_id,
+        reason=args.reason,
+        details={"status": args.mode},
     )
     print(result)
     return 0
@@ -971,6 +999,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_operator_approve_pairing(args)
     if args.command == "operator" and args.operator_command == "hold-pairing":
         return handle_operator_hold_pairing(args)
+    if args.command == "operator" and args.operator_command == "set-channel":
+        return handle_operator_set_channel(args)
     if args.command == "operator" and args.operator_command == "history":
         return handle_operator_history(args)
     if args.command == "gateway" and args.gateway_command == "start":

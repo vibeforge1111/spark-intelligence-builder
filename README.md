@@ -150,6 +150,7 @@ spark-intelligence researcher status --json
 ```bash
 spark-intelligence operator set-bridge researcher enabled
 spark-intelligence operator set-bridge swarm disabled
+spark-intelligence operator set-channel telegram paused
 spark-intelligence operator review-pairings
 spark-intelligence operator hold-pairing telegram 123456
 spark-intelligence operator approve-pairing telegram 123456

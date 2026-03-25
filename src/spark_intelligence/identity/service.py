@@ -212,7 +212,7 @@ def resolve_inbound_dm(
 
     with state_db.connect() as conn:
         channel_row = conn.execute(
-            "SELECT channel_id, pairing_mode FROM channel_installations WHERE channel_id = ? LIMIT 1",
+            "SELECT channel_id, pairing_mode, status FROM channel_installations WHERE channel_id = ? LIMIT 1",
             (channel_id,),
         ).fetchone()
         if not channel_row:
@@ -223,6 +223,26 @@ def resolve_inbound_dm(
                 agent_id=None,
                 session_id=None,
                 response_text="Channel is not configured.",
+            )
+
+        channel_status = str(channel_row["status"] or "enabled")
+        if channel_status == "disabled":
+            return InboundResolution(
+                allowed=False,
+                decision="channel_disabled",
+                human_id=None,
+                agent_id=None,
+                session_id=None,
+                response_text="This channel is disabled by the operator.",
+            )
+        if channel_status == "paused":
+            return InboundResolution(
+                allowed=False,
+                decision="channel_paused",
+                human_id=None,
+                agent_id=None,
+                session_id=None,
+                response_text="This channel is temporarily paused by the operator.",
             )
 
         allow_row = conn.execute(

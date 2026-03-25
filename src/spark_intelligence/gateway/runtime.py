@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import urllib.error
 from dataclasses import dataclass
 from pathlib import Path
 from time import sleep
@@ -50,10 +51,16 @@ class GatewayStatus:
 def gateway_status(config_manager: ConfigManager, state_db: StateDB) -> GatewayStatus:
     config = config_manager.load()
     provider_records = list(config.get("providers", {}).get("records", {}).keys())
-    channel_records = list(config.get("channels", {}).get("records", {}).keys())
+    raw_channel_records = config.get("channels", {}).get("records", {})
+    channel_records = list(raw_channel_records.keys())
+    active_channel_records = [
+        channel_id
+        for channel_id, record in raw_channel_records.items()
+        if isinstance(record, dict) and str(record.get("status") or "enabled") in {"enabled", "configured"}
+    ]
     doctor_report = run_doctor(config_manager, state_db)
     telegram_summary = build_telegram_runtime_summary(config_manager, state_db)
-    ready = bool(provider_records) and bool(channel_records) and doctor_report.ok
+    ready = bool(provider_records) and bool(active_channel_records) and doctor_report.ok
     return GatewayStatus(
         ready=ready,
         configured_channels=channel_records,
@@ -81,6 +88,14 @@ def gateway_start(
     if not telegram_record:
         lines.append("No Telegram adapter configured. Gateway is idle.")
         return "\n".join(lines)
+    telegram_summary = build_telegram_runtime_summary(config_manager, state_db)
+    telegram_status = str(telegram_summary.status or "enabled")
+    if telegram_status == "disabled":
+        lines.append("Telegram adapter is disabled by operator. Gateway did not start polling.")
+        return "\n".join(lines)
+    if telegram_status == "paused":
+        lines.append("Telegram adapter is paused by operator. Gateway did not start polling.")
+        return "\n".join(lines)
 
     auth_ref = telegram_record.get("auth_ref")
     env_map = config_manager.read_env_map()
@@ -90,7 +105,14 @@ def gateway_start(
         return "\n".join(lines)
 
     client = TelegramBotApiClient(token=token)
-    me = client.get_me().get("result", {})
+    try:
+        me = client.get_me().get("result", {})
+    except urllib.error.HTTPError as exc:
+        lines.append(f"Telegram auth check failed with HTTP {exc.code}. Gateway did not start polling.")
+        return "\n".join(lines)
+    except urllib.error.URLError as exc:
+        lines.append(f"Telegram auth check failed: {exc.reason}. Gateway did not start polling.")
+        return "\n".join(lines)
     lines.append(f"Telegram bot authenticated: @{me.get('username', 'unknown')}")
     lines.append(f"Gateway trace log: {config_manager.paths.logs_dir / 'gateway-trace.jsonl'}")
 

@@ -17,6 +17,7 @@ from spark_intelligence.state.db import StateDB
 class TelegramRuntimeSummary:
     channel_id: str
     configured: bool
+    status: str | None
     pairing_mode: str | None
     auth_ref: str | None
     allowed_user_count: int
@@ -25,7 +26,7 @@ class TelegramRuntimeSummary:
         if not self.configured:
             return "- telegram: not configured"
         return (
-            f"- telegram: configured pairing_mode={self.pairing_mode} "
+            f"- telegram: status={self.status or 'unknown'} pairing_mode={self.pairing_mode} "
             f"auth_ref={self.auth_ref or 'missing'} allowed_users={self.allowed_user_count}"
         )
 
@@ -79,6 +80,7 @@ def build_telegram_runtime_summary(config_manager: ConfigManager, state_db: Stat
         return TelegramRuntimeSummary(
             channel_id="telegram",
             configured=False,
+            status=None,
             pairing_mode=None,
             auth_ref=None,
             allowed_user_count=0,
@@ -88,12 +90,21 @@ def build_telegram_runtime_summary(config_manager: ConfigManager, state_db: Stat
         count = conn.execute(
             "SELECT COUNT(*) AS c FROM allowlist_entries WHERE channel_id = 'telegram'"
         ).fetchone()["c"]
+        installation = conn.execute(
+            """
+            SELECT status, pairing_mode, auth_ref
+            FROM channel_installations
+            WHERE channel_id = 'telegram'
+            LIMIT 1
+            """
+        ).fetchone()
 
     return TelegramRuntimeSummary(
         channel_id="telegram",
         configured=True,
-        pairing_mode=record.get("pairing_mode"),
-        auth_ref=record.get("auth_ref"),
+        status=(installation["status"] if installation else record.get("status")),
+        pairing_mode=(installation["pairing_mode"] if installation else record.get("pairing_mode")),
+        auth_ref=(installation["auth_ref"] if installation else record.get("auth_ref")),
         allowed_user_count=count,
     )
 
