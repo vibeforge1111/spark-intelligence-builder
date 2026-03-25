@@ -178,6 +178,19 @@ The repo now has a stronger ladder:
 - skill references
 - smoke-test report
 
+## Validation Layer Follow-Up
+
+After the second pass, the repo gained a lightweight validation layer:
+
+- `python scripts/validate_skills.py`
+- `scenario-packs/reliable-job-harnesses/`
+
+First validation run found one real structural gap:
+
+- `agent-landscape-analysis` was missing a `## Core Doctrine` section
+
+That gap was fixed, and the validator now passes across all four skills.
+
 ## Remaining Improvement Opportunities
 
 - add `agents/openai.yaml` for skill discovery metadata

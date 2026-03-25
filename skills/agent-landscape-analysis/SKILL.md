@@ -21,11 +21,30 @@ Use this skill when work touches:
 - `docs/ARCHITECTURE_SPARK_INTELLIGENCE_V1.md`
 - `docs/CRON_JOB_HARNESS_SPEC_V1.md`
 - `docs/IMPORT_AND_MIGRATION_SPEC_V1.md`
+- `docs/CODING_RULESET_V1.md`
 - `docs/SPARK_INTELLIGENCE_PROMPT_BIBLE.md`
 
 Then read:
 
 - `references/comparison-playbook.md`
+
+## Core Doctrine
+
+The goal is not imitation.
+
+The goal is disciplined comparison that helps Spark Intelligence become:
+
+- lighter than sprawling competitors
+- more maintainable than flashy competitors
+- stronger on repair and operator trust
+- more faithful to Spark subsystem boundaries
+
+Prefer:
+
+- official evidence
+- subsystem-by-subsystem judgment
+- borrowing patterns without copying competing system sprawl
+- product clarity over benchmark theater
 
 ## External Research Rule
 

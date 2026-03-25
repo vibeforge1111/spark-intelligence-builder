@@ -19,6 +19,7 @@ This repo currently includes:
 - [docs/CRON_JOB_HARNESS_SPEC_V1.md](./docs/CRON_JOB_HARNESS_SPEC_V1.md)
 - [docs/IMPORT_AND_MIGRATION_SPEC_V1.md](./docs/IMPORT_AND_MIGRATION_SPEC_V1.md)
 - [docs/CODING_RULESET_V1.md](./docs/CODING_RULESET_V1.md)
+- [docs/SKILL_VALIDATION_GUIDE.md](./docs/SKILL_VALIDATION_GUIDE.md)
 
 Key repo skills:
 
@@ -26,3 +27,8 @@ Key repo skills:
 - [skills/maintainable-engineering/SKILL.md](./skills/maintainable-engineering/SKILL.md)
 - [skills/spark-ecosystem-product/SKILL.md](./skills/spark-ecosystem-product/SKILL.md)
 - [skills/agent-landscape-analysis/SKILL.md](./skills/agent-landscape-analysis/SKILL.md)
+
+Validation support:
+
+- `python scripts/validate_skills.py`
+- [scenario-packs/reliable-job-harnesses/README.md](./scenario-packs/reliable-job-harnesses/README.md)
