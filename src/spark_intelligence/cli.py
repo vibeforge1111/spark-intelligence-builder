@@ -26,6 +26,7 @@ from spark_intelligence.channel.service import (
     inspect_telegram_bot_token,
     render_telegram_botfather_guide,
     set_channel_status,
+    test_configured_telegram_channel,
 )
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import run_doctor
@@ -249,6 +250,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip remote token validation. Useful only for offline setup or scripted recovery.",
     )
+    channel_test_parser = channel_subparsers.add_parser(
+        "test",
+        help="Run lightweight diagnostics for one configured channel",
+    )
+    channel_test_parser.add_argument("channel_kind", choices=["telegram"], help="Configured channel to test")
+    channel_test_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    channel_test_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     attachments_parser = subparsers.add_parser("attachments", help="Inspect and manage chip/path attachment roots")
     attachments_subparsers = attachments_parser.add_subparsers(dest="attachments_command", required=True)
@@ -783,6 +791,22 @@ def handle_channel_telegram_onboard(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_channel_test(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    if args.channel_kind == "telegram":
+        report = test_configured_telegram_channel(
+            config_manager=config_manager,
+            state_db=state_db,
+        )
+        print(report.to_json() if args.json else report.to_text())
+        return 0 if report.ok else 1
+    print(f"Unsupported channel test target: {args.channel_kind}", file=sys.stderr)
+    return 2
+
+
 def handle_attachments_status(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
@@ -1242,6 +1266,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_channel_add(args)
     if args.command == "channel" and args.channel_command == "telegram-onboard":
         return handle_channel_telegram_onboard(args)
+    if args.command == "channel" and args.channel_command == "test":
+        return handle_channel_test(args)
     if args.command == "attachments" and args.attachments_command == "status":
         return handle_attachments_status(args)
     if args.command == "attachments" and args.attachments_command == "list":

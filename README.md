@@ -103,9 +103,11 @@ Telegram setup is BotFather-first and DM-first. The guided path is:
 spark-intelligence channel telegram-onboard
 spark-intelligence channel telegram-onboard --bot-token <token> --allowed-user <telegram_user_id>
 spark-intelligence channel add telegram --bot-token <token> --allowed-user <telegram_user_id>
+spark-intelligence channel test telegram
 ```
 
 `channel telegram-onboard` prints the BotFather steps when no token is provided, and validates the token before storing it when a token is provided. `channel add telegram` stays scriptable, but now validates the token by default unless `--skip-validate` is explicitly used.
+`channel test telegram` rechecks the stored token, refreshes Telegram auth health, and shows the configured bot identity and pairing posture without starting the gateway.
 
 Telegram runtime verification is available in two forms:
 

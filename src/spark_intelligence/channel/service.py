@@ -5,6 +5,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 
 from spark_intelligence.adapters.telegram.client import TelegramBotApiClient, Transport
+from spark_intelligence.adapters.telegram.runtime import record_telegram_auth_result
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.identity.service import approve_pairing
 from spark_intelligence.state.db import StateDB
@@ -28,6 +29,46 @@ class TelegramBotProfile:
             "can_read_all_group_messages": self.can_read_all_group_messages,
             "supports_inline_queries": self.supports_inline_queries,
         }
+
+
+@dataclass
+class TelegramChannelTestReport:
+    ok: bool
+    configured: bool
+    auth_ref: str | None
+    pairing_mode: str | None
+    allowed_user_count: int
+    bot_profile: dict[str, object] | None
+    detail: str
+
+    def to_text(self) -> str:
+        lines = ["Telegram channel test"]
+        lines.append(f"- configured: {'yes' if self.configured else 'no'}")
+        lines.append(f"- auth_ref: {self.auth_ref or 'missing'}")
+        lines.append(f"- pairing_mode: {self.pairing_mode or 'unknown'}")
+        lines.append(f"- allowed_users: {self.allowed_user_count}")
+        if self.bot_profile:
+            lines.append(f"- bot_username: @{self.bot_profile.get('username') or 'unknown'}")
+            lines.append(f"- bot_id: {self.bot_profile.get('bot_id') or 'unknown'}")
+            lines.append(f"- first_name: {self.bot_profile.get('first_name') or 'unknown'}")
+        lines.append(f"- result: {self.detail}")
+        return "\n".join(lines)
+
+    def to_json(self) -> str:
+        import json
+
+        return json.dumps(
+            {
+                "ok": self.ok,
+                "configured": self.configured,
+                "auth_ref": self.auth_ref,
+                "pairing_mode": self.pairing_mode,
+                "allowed_user_count": self.allowed_user_count,
+                "bot_profile": self.bot_profile,
+                "detail": self.detail,
+            },
+            indent=2,
+        )
 
 
 def inspect_telegram_bot_token(
@@ -187,6 +228,79 @@ def set_channel_status(
         conn.commit()
 
     return f"Set channel '{channel_id}' status = {status}"
+
+
+def test_configured_telegram_channel(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    transport: Transport | None = None,
+) -> TelegramChannelTestReport:
+    config = config_manager.load()
+    record = config.get("channels", {}).get("records", {}).get("telegram")
+    if not isinstance(record, dict):
+        return TelegramChannelTestReport(
+            ok=False,
+            configured=False,
+            auth_ref=None,
+            pairing_mode=None,
+            allowed_user_count=0,
+            bot_profile=None,
+            detail="Telegram channel is not configured.",
+        )
+
+    auth_ref = record.get("auth_ref")
+    env_map = config_manager.read_env_map()
+    token = env_map.get(auth_ref) if auth_ref else None
+    with state_db.connect() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) AS c FROM allowlist_entries WHERE channel_id = 'telegram'"
+        ).fetchone()["c"]
+    if not token:
+        record_telegram_auth_result(
+            state_db=state_db,
+            status="missing",
+            error="Telegram auth ref is missing or unresolved.",
+        )
+        return TelegramChannelTestReport(
+            ok=False,
+            configured=True,
+            auth_ref=str(auth_ref) if auth_ref else None,
+            pairing_mode=str(record.get("pairing_mode")) if record.get("pairing_mode") else None,
+            allowed_user_count=int(count),
+            bot_profile=None,
+            detail="Telegram auth ref is missing or unresolved.",
+        )
+
+    try:
+        profile = inspect_telegram_bot_token(token, transport=transport)
+    except RuntimeError as exc:
+        record_telegram_auth_result(state_db=state_db, status="failed", error=str(exc))
+        return TelegramChannelTestReport(
+            ok=False,
+            configured=True,
+            auth_ref=str(auth_ref) if auth_ref else None,
+            pairing_mode=str(record.get("pairing_mode")) if record.get("pairing_mode") else None,
+            allowed_user_count=int(count),
+            bot_profile=None,
+            detail=str(exc),
+        )
+
+    record_telegram_auth_result(
+        state_db=state_db,
+        status="ok",
+        bot_username=profile.username,
+        error=None,
+    )
+    return TelegramChannelTestReport(
+        ok=True,
+        configured=True,
+        auth_ref=str(auth_ref) if auth_ref else None,
+        pairing_mode=str(record.get("pairing_mode")) if record.get("pairing_mode") else None,
+        allowed_user_count=int(count),
+        bot_profile=profile.to_dict(),
+        detail="Telegram auth check passed.",
+    )
 
 
 def _to_optional_bool(value: object) -> bool | None:
