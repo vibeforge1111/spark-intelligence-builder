@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
@@ -39,6 +40,44 @@ from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_status, sync_swarm_collective
 
 
+@dataclass
+class SystemStatus:
+    doctor_ok: bool
+    gateway_ready: bool
+    researcher_available: bool
+    swarm_payload_ready: bool
+    attachment_warning_count: int
+    payload: dict
+
+    def to_json(self) -> str:
+        return json.dumps(self.payload, indent=2)
+
+    def to_text(self) -> str:
+        lines = ["Spark Intelligence status"]
+        lines.append(f"- doctor: {'ok' if self.doctor_ok else 'degraded'}")
+        lines.append(f"- gateway: {'ready' if self.gateway_ready else 'not_ready'}")
+        lines.append(f"- researcher: {'available' if self.researcher_available else 'missing'}")
+        lines.append(f"- swarm: {'payload_ready' if self.swarm_payload_ready else 'not_ready'}")
+        lines.append(
+            f"- attachments: {self.payload['attachments']['record_count']} records "
+            f"warnings={self.attachment_warning_count}"
+        )
+        lines.append(
+            f"- active chips: {', '.join(self.payload['attachments']['active_chip_keys']) if self.payload['attachments']['active_chip_keys'] else 'none'}"
+        )
+        lines.append(f"- active path: {self.payload['attachments']['active_path_key'] or 'none'}")
+        lines.append(
+            f"- providers: {', '.join(self.payload['gateway']['configured_providers']) if self.payload['gateway']['configured_providers'] else 'none'}"
+        )
+        lines.append(
+            f"- channels: {', '.join(self.payload['gateway']['configured_channels']) if self.payload['gateway']['configured_channels'] else 'none'}"
+        )
+        lines.append(f"- last researcher trace: {self.payload['researcher'].get('last_trace_ref') or 'none'}")
+        lines.append(f"- last swarm decision: {(self.payload['swarm'].get('last_decision') or {}).get('mode', 'none')}")
+        lines.append(f"- last swarm sync: {(self.payload['swarm'].get('last_sync') or {}).get('mode', 'none')}")
+        return "\n".join(lines)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="spark-intelligence")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -60,6 +99,10 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser = subparsers.add_parser("doctor", help="Run environment and state checks")
     doctor_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     doctor_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+
+    status_parser = subparsers.add_parser("status", help="Show unified runtime, bridge, and attachment state")
+    status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     gateway_parser = subparsers.add_parser("gateway", help="Gateway operations")
     gateway_subparsers = gateway_parser.add_subparsers(dest="gateway_command", required=True)
@@ -274,6 +317,47 @@ def handle_doctor(args: argparse.Namespace) -> int:
     else:
         print(report.to_text())
     return 0 if report.ok else 1
+
+
+def handle_status(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+
+    doctor_report = run_doctor(config_manager, state_db)
+    gateway = gateway_status(config_manager, state_db)
+    researcher = researcher_bridge_status(config_manager=config_manager, state_db=state_db)
+    swarm = swarm_status(config_manager, state_db)
+    attachments = attachment_status(config_manager)
+    active_chip_keys = config_manager.get_path("spark.chips.active_keys", default=[]) or []
+    active_path_key = config_manager.get_path("spark.specialization_paths.active_path_key")
+
+    payload = {
+        "doctor": {"ok": doctor_report.ok, "checks": [{"name": check.name, "ok": check.ok, "detail": check.detail} for check in doctor_report.checks]},
+        "gateway": json.loads(gateway.to_json()),
+        "researcher": json.loads(researcher.to_json()),
+        "swarm": json.loads(swarm.to_json()),
+        "attachments": {
+            "record_count": len(attachments.records),
+            "warning_count": len(attachments.warnings),
+            "chip_count": len([record for record in attachments.records if record.kind == "chip"]),
+            "path_count": len([record for record in attachments.records if record.kind == "path"]),
+            "active_chip_keys": active_chip_keys,
+            "active_path_key": active_path_key,
+            "snapshot_path": str(config_manager.paths.home / "attachments.snapshot.json"),
+        },
+    }
+    status = SystemStatus(
+        doctor_ok=doctor_report.ok,
+        gateway_ready=gateway.ready,
+        researcher_available=researcher.available,
+        swarm_payload_ready=swarm.payload_ready,
+        attachment_warning_count=len(attachments.warnings),
+        payload=payload,
+    )
+    print(status.to_json() if args.json else status.to_text())
+    return 0 if doctor_report.ok else 1
 
 
 def handle_gateway_start(args: argparse.Namespace) -> int:
@@ -770,6 +854,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_setup(args)
     if args.command == "doctor":
         return handle_doctor(args)
+    if args.command == "status":
+        return handle_status(args)
     if args.command == "gateway" and args.gateway_command == "start":
         return handle_gateway_start(args)
     if args.command == "gateway" and args.gateway_command == "status":

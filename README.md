@@ -72,6 +72,7 @@ Current Phase 0 runtime shell:
 ```bash
 pip install -e .
 spark-intelligence setup
+spark-intelligence status
 spark-intelligence auth connect openai --api-key <key> --model <model>
 spark-intelligence channel add telegram --bot-token <token> --allowed-user <id>
 spark-intelligence config set spark.researcher.runtime_root "C:/Users/USER/Desktop/spark-researcher"
