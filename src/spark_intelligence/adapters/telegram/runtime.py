@@ -27,14 +27,16 @@ class TelegramRuntimeSummary:
     status: str | None
     pairing_mode: str | None
     auth_ref: str | None
+    bot_username: str | None
     allowed_user_count: int
 
     def to_line(self) -> str:
         if not self.configured:
             return "- telegram: not configured"
+        bot_ref = f" bot=@{self.bot_username}" if self.bot_username else ""
         return (
             f"- telegram: status={self.status or 'unknown'} pairing_mode={self.pairing_mode} "
-            f"auth_ref={self.auth_ref or 'missing'} allowed_users={self.allowed_user_count}"
+            f"auth_ref={self.auth_ref or 'missing'}{bot_ref} allowed_users={self.allowed_user_count}"
         )
 
 
@@ -96,6 +98,7 @@ def build_telegram_runtime_summary(config_manager: ConfigManager, state_db: Stat
             status=None,
             pairing_mode=None,
             auth_ref=None,
+            bot_username=None,
             allowed_user_count=0,
         )
 
@@ -118,6 +121,7 @@ def build_telegram_runtime_summary(config_manager: ConfigManager, state_db: Stat
         status=(installation["status"] if installation else record.get("status")),
         pairing_mode=(installation["pairing_mode"] if installation else record.get("pairing_mode")),
         auth_ref=(installation["auth_ref"] if installation else record.get("auth_ref")),
+        bot_username=((record.get("bot_profile") or {}).get("username") if isinstance(record.get("bot_profile"), dict) else None),
         allowed_user_count=count,
     )
 

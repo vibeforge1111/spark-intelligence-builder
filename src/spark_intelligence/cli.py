@@ -21,7 +21,12 @@ from spark_intelligence.attachments import (
     unpin_chip,
 )
 from spark_intelligence.auth.service import connect_provider
-from spark_intelligence.channel.service import add_channel, set_channel_status
+from spark_intelligence.channel.service import (
+    add_channel,
+    inspect_telegram_bot_token,
+    render_telegram_botfather_guide,
+    set_channel_status,
+)
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import run_doctor
 from spark_intelligence.gateway.runtime import (
@@ -216,6 +221,34 @@ def build_parser() -> argparse.ArgumentParser:
         default="pairing",
         help="Inbound DM authorization mode",
     )
+    channel_add_parser.add_argument(
+        "--skip-validate",
+        action="store_true",
+        help="Skip remote token validation. Useful only for offline setup or scripted recovery.",
+    )
+    channel_telegram_onboard_parser = channel_subparsers.add_parser(
+        "telegram-onboard",
+        help="Guide or complete BotFather-based Telegram setup",
+    )
+    channel_telegram_onboard_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    channel_telegram_onboard_parser.add_argument("--bot-token", help="Telegram bot token from BotFather")
+    channel_telegram_onboard_parser.add_argument("--allowed-user", action="append", default=[], help="Allowed Telegram user id")
+    channel_telegram_onboard_parser.add_argument(
+        "--pairing-mode",
+        choices=["allowlist", "pairing"],
+        default="pairing",
+        help="Inbound DM authorization mode",
+    )
+    channel_telegram_onboard_parser.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="Validate the Telegram token without storing channel config",
+    )
+    channel_telegram_onboard_parser.add_argument(
+        "--skip-validate",
+        action="store_true",
+        help="Skip remote token validation. Useful only for offline setup or scripted recovery.",
+    )
 
     attachments_parser = subparsers.add_parser("attachments", help="Inspect and manage chip/path attachment roots")
     attachments_subparsers = attachments_parser.add_subparsers(dest="attachments_command", required=True)
@@ -366,7 +399,7 @@ def handle_setup(args: argparse.Namespace) -> int:
             print(f"  - {note}")
     print("Next steps:")
     print("  1. spark-intelligence auth connect openai --api-key <key> --model <model>")
-    print("  2. spark-intelligence channel add telegram --bot-token <token> --allowed-user <id>")
+    print("  2. spark-intelligence channel telegram-onboard")
     print("  3. spark-intelligence doctor")
     print("  4. spark-intelligence gateway start")
     print("Optional Spark hookups:")
@@ -646,6 +679,27 @@ def handle_channel_add(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
+    metadata: dict[str, object] | None = None
+    validation_note: str | None = None
+    if args.channel_kind == "telegram" and args.bot_token and not args.skip_validate:
+        try:
+            profile = inspect_telegram_bot_token(args.bot_token)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            print("", file=sys.stderr)
+            print(
+                render_telegram_botfather_guide(
+                    allowed_users=args.allowed_user,
+                    pairing_mode=args.pairing_mode,
+                ),
+                file=sys.stderr,
+            )
+            return 1
+        metadata = {"bot_profile": profile.to_dict()}
+        validation_note = (
+            f"Validated Telegram bot @{profile.username or 'unknown'} "
+            f"(id={profile.bot_id}, first_name={profile.first_name or 'unknown'})."
+        )
     result = add_channel(
         config_manager=config_manager,
         state_db=state_db,
@@ -653,8 +707,79 @@ def handle_channel_add(args: argparse.Namespace) -> int:
         bot_token=args.bot_token,
         allowed_users=args.allowed_user,
         pairing_mode=args.pairing_mode,
+        metadata=metadata,
+    )
+    if validation_note:
+        print(validation_note)
+    print(result)
+    if args.channel_kind == "telegram":
+        print("Next Telegram steps:")
+        print("  1. Open Telegram and send /start to the bot from the account you want to pair.")
+        print("  2. Run spark-intelligence gateway start")
+        print("  3. Use spark-intelligence operator review-pairings if pairing approval is required.")
+    return 0
+
+
+def handle_channel_telegram_onboard(args: argparse.Namespace) -> int:
+    if not args.bot_token:
+        print(
+            render_telegram_botfather_guide(
+                allowed_users=args.allowed_user,
+                pairing_mode=args.pairing_mode,
+            )
+        )
+        return 0
+
+    if args.skip_validate:
+        profile = None
+    else:
+        try:
+            profile = inspect_telegram_bot_token(args.bot_token)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            print("", file=sys.stderr)
+            print(
+                render_telegram_botfather_guide(
+                    allowed_users=args.allowed_user,
+                    pairing_mode=args.pairing_mode,
+                ),
+                file=sys.stderr,
+            )
+            return 1
+
+    if profile:
+        print(
+            f"Validated Telegram bot @{profile.username or 'unknown'} "
+            f"(id={profile.bot_id}, first_name={profile.first_name or 'unknown'})."
+        )
+        if args.validate_only:
+            print("Token validation passed. No config was changed.")
+            return 0
+    elif args.validate_only:
+        print("Cannot use --validate-only together with --skip-validate.", file=sys.stderr)
+        return 2
+
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = add_channel(
+        config_manager=config_manager,
+        state_db=state_db,
+        channel_kind="telegram",
+        bot_token=args.bot_token,
+        allowed_users=args.allowed_user,
+        pairing_mode=args.pairing_mode,
+        metadata={"bot_profile": profile.to_dict()} if profile else None,
     )
     print(result)
+    print("Telegram onboarding next steps:")
+    print("  1. Open Telegram and send /start to the bot.")
+    if args.allowed_user:
+        print("  2. Confirm the listed allowed user ids are the accounts you want paired first.")
+    else:
+        print("  2. Run spark-intelligence operator review-pairings after the first DM arrives.")
+    print("  3. Run spark-intelligence gateway start")
     return 0
 
 
@@ -1115,6 +1240,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_gateway_outbound(args)
     if args.command == "channel" and args.channel_command == "add":
         return handle_channel_add(args)
+    if args.command == "channel" and args.channel_command == "telegram-onboard":
+        return handle_channel_telegram_onboard(args)
     if args.command == "attachments" and args.attachments_command == "status":
         return handle_attachments_status(args)
     if args.command == "attachments" and args.attachments_command == "list":

@@ -76,7 +76,7 @@ spark-intelligence status
 spark-intelligence operator set-bridge researcher disabled
 spark-intelligence operator review-pairings
 spark-intelligence auth connect openai --api-key <key> --model <model>
-spark-intelligence channel add telegram --bot-token <token> --allowed-user <id>
+spark-intelligence channel telegram-onboard
 spark-intelligence channel add discord --bot-token <token> --allowed-user <id>
 spark-intelligence channel add whatsapp --bot-token <token> --allowed-user <id>
 spark-intelligence config set spark.researcher.runtime_root "C:/Users/USER/Desktop/spark-researcher"
@@ -96,6 +96,16 @@ spark-intelligence setup \
   --swarm-workspace-id <workspace_id> \
   --swarm-access-token <token>
 ```
+
+Telegram setup is BotFather-first and DM-first. The guided path is:
+
+```bash
+spark-intelligence channel telegram-onboard
+spark-intelligence channel telegram-onboard --bot-token <token> --allowed-user <telegram_user_id>
+spark-intelligence channel add telegram --bot-token <token> --allowed-user <telegram_user_id>
+```
+
+`channel telegram-onboard` prints the BotFather steps when no token is provided, and validates the token before storing it when a token is provided. `channel add telegram` stays scriptable, but now validates the token by default unless `--skip-validate` is explicitly used.
 
 Telegram runtime verification is available in two forms:
 
