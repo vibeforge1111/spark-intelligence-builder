@@ -1,0 +1,4 @@
+interface:
+  display_name: "Security Systems"
+  short_description: "Design secure local-agent systems."
+  default_prompt: "Use $security-systems to design secure, lightweight Spark Intelligence runtime boundaries and guardrails."

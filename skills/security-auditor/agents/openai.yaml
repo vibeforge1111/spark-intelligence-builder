@@ -1,0 +1,4 @@
+interface:
+  display_name: "Security Auditor"
+  short_description: "Audit local-agent security rigor."
+  default_prompt: "Use $security-auditor to grade Spark Intelligence security posture, trust boundaries, and hardening gaps."

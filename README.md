@@ -24,6 +24,8 @@ This repo currently includes:
 - [docs/IDENTITY_AND_SESSION_MODEL_SPEC_V1.md](./docs/IDENTITY_AND_SESSION_MODEL_SPEC_V1.md)
 - [docs/PROVIDER_AND_AUTH_CONFIG_SPEC_V1.md](./docs/PROVIDER_AND_AUTH_CONFIG_SPEC_V1.md)
 - [docs/SECURITY_RESEARCH_PLAN_HERMES_OPENCLAW.md](./docs/SECURITY_RESEARCH_PLAN_HERMES_OPENCLAW.md)
+- [docs/SECURITY_DOCTRINE_V1.md](./docs/SECURITY_DOCTRINE_V1.md)
+- [docs/OPENCLAW_HERMES_SECURITY_HISTORY_ANALYSIS_2026-03-25.md](./docs/OPENCLAW_HERMES_SECURITY_HISTORY_ANALYSIS_2026-03-25.md)
 
 Key repo skills:
 
@@ -31,6 +33,8 @@ Key repo skills:
 - [skills/maintainable-engineering/SKILL.md](./skills/maintainable-engineering/SKILL.md)
 - [skills/spark-ecosystem-product/SKILL.md](./skills/spark-ecosystem-product/SKILL.md)
 - [skills/agent-landscape-analysis/SKILL.md](./skills/agent-landscape-analysis/SKILL.md)
+- [skills/security-systems/SKILL.md](./skills/security-systems/SKILL.md)
+- [skills/security-auditor/SKILL.md](./skills/security-auditor/SKILL.md)
 
 Validation support:
 
