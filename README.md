@@ -102,6 +102,7 @@ spark-intelligence gateway simulate-telegram-update ./sample-update.json
 spark-intelligence gateway start --once --poll-timeout-seconds 0
 spark-intelligence gateway start --continuous
 spark-intelligence gateway traces --limit 20
+spark-intelligence gateway outbound --limit 20
 ```
 
 Config can be inspected and updated without editing `config.yaml` manually:

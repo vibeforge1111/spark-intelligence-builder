@@ -15,7 +15,7 @@ from spark_intelligence.adapters.telegram.runtime import (
 )
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import run_doctor
-from spark_intelligence.gateway.tracing import read_gateway_traces
+from spark_intelligence.gateway.tracing import outbound_log_path, read_gateway_traces, read_outbound_audit, trace_log_path
 from spark_intelligence.state.db import StateDB
 
 
@@ -114,7 +114,8 @@ def gateway_start(
         lines.append(f"Telegram auth check failed: {exc.reason}. Gateway did not start polling.")
         return "\n".join(lines)
     lines.append(f"Telegram bot authenticated: @{me.get('username', 'unknown')}")
-    lines.append(f"Gateway trace log: {config_manager.paths.logs_dir / 'gateway-trace.jsonl'}")
+    lines.append(f"Gateway trace log: {trace_log_path(config_manager)}")
+    lines.append(f"Gateway outbound audit log: {outbound_log_path(config_manager)}")
 
     cycle_limit = 1 if once else max_cycles
     cycle_index = 0
@@ -169,8 +170,25 @@ def gateway_trace_view(config_manager: ConfigManager, *, limit: int = 20, as_jso
     lines = ["Gateway traces:"]
     for trace in traces:
         lines.append(
-            f"- event={trace.get('event')} update_id={trace.get('update_id')} "
-            f"user={trace.get('telegram_user_id')} trace_ref={trace.get('trace_ref', 'n/a')} "
-            f"mode={trace.get('bridge_mode', 'n/a')}"
+            f"- at={trace.get('recorded_at')} event={trace.get('event')} update_id={trace.get('update_id')} "
+            f"user={trace.get('telegram_user_id')} decision={trace.get('decision', 'n/a')} "
+            f"trace_ref={trace.get('trace_ref', 'n/a')} mode={trace.get('bridge_mode', 'n/a')} "
+            f"delivery_ok={trace.get('delivery_ok', 'n/a')}"
+        )
+    return "\n".join(lines)
+
+
+def gateway_outbound_view(config_manager: ConfigManager, *, limit: int = 20, as_json: bool = False) -> str:
+    records = read_outbound_audit(config_manager, limit=limit)
+    if as_json:
+        return json.dumps(records, indent=2)
+    if not records:
+        return "No gateway outbound audit records."
+    lines = ["Gateway outbound audit:"]
+    for record in records:
+        lines.append(
+            f"- at={record.get('recorded_at')} event={record.get('event')} update_id={record.get('update_id')} "
+            f"user={record.get('telegram_user_id')} ok={record.get('delivery_ok')} "
+            f"mode={record.get('bridge_mode', 'n/a')} preview={record.get('response_preview', '')}"
         )
     return "\n".join(lines)

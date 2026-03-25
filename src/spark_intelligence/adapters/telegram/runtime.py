@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any
+from urllib.error import HTTPError, URLError
 
 from spark_intelligence.adapters.telegram.client import TelegramBotApiClient
 from spark_intelligence.adapters.telegram.normalize import normalize_telegram_update
 from spark_intelligence.config.loader import ConfigManager
-from spark_intelligence.gateway.tracing import append_gateway_trace
+from spark_intelligence.gateway.tracing import append_gateway_trace, append_outbound_audit
 from spark_intelligence.identity.service import resolve_inbound_dm
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply, record_researcher_bridge_result
 from spark_intelligence.state.db import StateDB
@@ -55,7 +56,10 @@ class TelegramPollResult:
     fetched_update_count: int
     processed_count: int
     sent_count: int
+    failed_send_count: int
     ignored_count: int
+    blocked_count: int
+    held_count: int
     pending_pairing_count: int
     next_offset: int | None
     trace_refs: list[str]
@@ -66,7 +70,10 @@ class TelegramPollResult:
             f"- fetched_updates: {self.fetched_update_count}\n"
             f"- processed: {self.processed_count}\n"
             f"- sent: {self.sent_count}\n"
+            f"- failed_sends: {self.failed_send_count}\n"
             f"- ignored: {self.ignored_count}\n"
+            f"- blocked: {self.blocked_count}\n"
+            f"- held: {self.held_count}\n"
             f"- pending_pairing: {self.pending_pairing_count}\n"
             f"- next_offset: {self.next_offset}\n"
             f"- trace_refs: {', '.join(self.trace_refs) if self.trace_refs else 'none'}"
@@ -184,7 +191,10 @@ def poll_telegram_updates_once(
     updates = client.get_updates(offset=offset, timeout_seconds=timeout_seconds)
     processed_count = 0
     sent_count = 0
+    failed_send_count = 0
     ignored_count = 0
+    blocked_count = 0
+    held_count = 0
     pending_pairing_count = 0
     next_offset = offset
     trace_refs: list[str] = []
@@ -215,8 +225,23 @@ def poll_telegram_updates_once(
 
         if resolution.decision == "pending_pairing":
             pending_pairing_count += 1
-            client.send_message(chat_id=normalized.chat_id, text=resolution.response_text)
-            sent_count += 1
+            send_result = _send_telegram_reply(
+                config_manager=config_manager,
+                client=client,
+                chat_id=normalized.chat_id,
+                text=resolution.response_text,
+                event="telegram_pending_pairing_outbound",
+                update_id=normalized.update_id,
+                telegram_user_id=normalized.telegram_user_id,
+                session_id=resolution.session_id,
+                decision=resolution.decision,
+                bridge_mode=None,
+                trace_ref=None,
+            )
+            if send_result["ok"]:
+                sent_count += 1
+            else:
+                failed_send_count += 1
             append_gateway_trace(
                 config_manager,
                 {
@@ -225,12 +250,19 @@ def poll_telegram_updates_once(
                     "telegram_user_id": normalized.telegram_user_id,
                     "chat_id": normalized.chat_id,
                     "session_id": resolution.session_id,
+                    "response_preview": _preview_text(resolution.response_text),
+                    "delivery_ok": send_result["ok"],
+                    "delivery_error": send_result["error"],
                 },
             )
             continue
 
         if not resolution.allowed or not resolution.agent_id or not resolution.human_id or not resolution.session_id:
             ignored_count += 1
+            if resolution.decision == "held":
+                held_count += 1
+            elif resolution.decision not in {"ignored"}:
+                blocked_count += 1
             append_gateway_trace(
                 config_manager,
                 {
@@ -239,6 +271,7 @@ def poll_telegram_updates_once(
                     "telegram_user_id": normalized.telegram_user_id,
                     "chat_id": normalized.chat_id,
                     "decision": resolution.decision,
+                    "response_preview": _preview_text(resolution.response_text),
                 },
             )
             continue
@@ -253,9 +286,24 @@ def poll_telegram_updates_once(
             user_message=normalized.text,
         )
         record_researcher_bridge_result(state_db=state_db, result=bridge_result)
-        client.send_message(chat_id=normalized.chat_id, text=bridge_result.reply_text)
+        send_result = _send_telegram_reply(
+            config_manager=config_manager,
+            client=client,
+            chat_id=normalized.chat_id,
+            text=bridge_result.reply_text,
+            event="telegram_bridge_outbound",
+            update_id=normalized.update_id,
+            telegram_user_id=normalized.telegram_user_id,
+            session_id=resolution.session_id,
+            decision=resolution.decision,
+            bridge_mode=bridge_result.mode,
+            trace_ref=bridge_result.trace_ref,
+        )
         processed_count += 1
-        sent_count += 1
+        if send_result["ok"]:
+            sent_count += 1
+        else:
+            failed_send_count += 1
         trace_refs.append(bridge_result.trace_ref)
         append_gateway_trace(
             config_manager,
@@ -271,6 +319,10 @@ def poll_telegram_updates_once(
                 "config_path": bridge_result.config_path,
                 "evidence_summary": bridge_result.evidence_summary,
                 "attachment_context": bridge_result.attachment_context,
+                "response_preview": _preview_text(bridge_result.reply_text),
+                "response_length": len(bridge_result.reply_text),
+                "delivery_ok": send_result["ok"],
+                "delivery_error": send_result["error"],
             },
         )
 
@@ -290,8 +342,66 @@ def poll_telegram_updates_once(
         fetched_update_count=len(updates),
         processed_count=processed_count,
         sent_count=sent_count,
+        failed_send_count=failed_send_count,
         ignored_count=ignored_count,
+        blocked_count=blocked_count,
+        held_count=held_count,
         pending_pairing_count=pending_pairing_count,
         next_offset=next_offset,
         trace_refs=trace_refs,
     )
+
+
+def _send_telegram_reply(
+    *,
+    config_manager: ConfigManager,
+    client: TelegramBotApiClient,
+    chat_id: str,
+    text: str,
+    event: str,
+    update_id: int,
+    telegram_user_id: str,
+    session_id: str | None,
+    decision: str,
+    bridge_mode: str | None,
+    trace_ref: str | None,
+) -> dict[str, Any]:
+    error: str | None = None
+    ok = True
+    try:
+        client.send_message(chat_id=chat_id, text=text)
+    except RuntimeError as exc:
+        ok = False
+        error = str(exc)
+    except HTTPError as exc:
+        ok = False
+        error = f"HTTP {exc.code}"
+    except URLError as exc:
+        ok = False
+        error = str(exc.reason)
+    append_outbound_audit(
+        config_manager,
+        {
+            "event": event,
+            "channel_id": "telegram",
+            "update_id": update_id,
+            "telegram_user_id": telegram_user_id,
+            "chat_id": chat_id,
+            "session_id": session_id,
+            "decision": decision,
+            "bridge_mode": bridge_mode,
+            "trace_ref": trace_ref,
+            "delivery_ok": ok,
+            "delivery_error": error,
+            "response_preview": _preview_text(text),
+            "response_length": len(text),
+        },
+    )
+    return {"ok": ok, "error": error}
+
+
+def _preview_text(text: str, *, limit: int = 160) -> str:
+    compact = " ".join(text.split())
+    if len(compact) <= limit:
+        return compact
+    return f"{compact[: limit - 3]}..."

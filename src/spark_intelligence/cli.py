@@ -24,7 +24,13 @@ from spark_intelligence.auth.service import connect_provider
 from spark_intelligence.channel.service import add_channel, set_channel_status
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import run_doctor
-from spark_intelligence.gateway.runtime import gateway_simulate_telegram_update, gateway_start, gateway_status, gateway_trace_view
+from spark_intelligence.gateway.runtime import (
+    gateway_outbound_view,
+    gateway_simulate_telegram_update,
+    gateway_start,
+    gateway_status,
+    gateway_trace_view,
+)
 from spark_intelligence.identity.service import (
     agent_inspect,
     approve_pairing,
@@ -172,6 +178,10 @@ def build_parser() -> argparse.ArgumentParser:
     gateway_traces_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     gateway_traces_parser.add_argument("--limit", type=int, default=20, help="Number of trace events to show")
     gateway_traces_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    gateway_outbound_parser = gateway_subparsers.add_parser("outbound", help="Show recent outbound audit records")
+    gateway_outbound_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    gateway_outbound_parser.add_argument("--limit", type=int, default=20, help="Number of outbound events to show")
+    gateway_outbound_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     channel_parser = subparsers.add_parser("channel", help="Manage channel adapters")
     channel_subparsers = channel_parser.add_subparsers(dest="channel_command", required=True)
@@ -559,6 +569,13 @@ def handle_gateway_traces(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
     print(gateway_trace_view(config_manager, limit=args.limit, as_json=args.json))
+    return 0
+
+
+def handle_gateway_outbound(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    print(gateway_outbound_view(config_manager, limit=args.limit, as_json=args.json))
     return 0
 
 
@@ -1026,6 +1043,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_gateway_simulate_telegram_update(args)
     if args.command == "gateway" and args.gateway_command == "traces":
         return handle_gateway_traces(args)
+    if args.command == "gateway" and args.gateway_command == "outbound":
+        return handle_gateway_outbound(args)
     if args.command == "channel" and args.channel_command == "add":
         return handle_channel_add(args)
     if args.command == "attachments" and args.attachments_command == "status":
