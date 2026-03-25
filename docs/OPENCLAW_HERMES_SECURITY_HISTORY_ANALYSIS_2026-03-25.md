@@ -396,6 +396,10 @@ not:
 
 - complete line-by-line audit of every historical change
 
+For the compact theme summary extracted from the full-history mining, also read:
+
+- `docs/SECURITY_HISTORY_THEME_APPENDIX_2026-03-25.md`
+
 ## 9. Final Conclusion
 
 OpenClaw teaches that wide agent systems repeatedly need hardening around auth, webhooks, sessions, and host boundaries.
