@@ -78,6 +78,7 @@ spark-intelligence operator review-pairings
 spark-intelligence auth connect openai --api-key <key> --model <model>
 spark-intelligence channel add telegram --bot-token <token> --allowed-user <id>
 spark-intelligence channel add discord --bot-token <token> --allowed-user <id>
+spark-intelligence channel add whatsapp --bot-token <token> --allowed-user <id>
 spark-intelligence config set spark.researcher.runtime_root "C:/Users/USER/Desktop/spark-researcher"
 spark-intelligence swarm configure --api-url https://your-swarm-host --workspace-id <workspace_id> --access-token <token>
 spark-intelligence doctor
@@ -101,6 +102,7 @@ Telegram runtime verification is available in two forms:
 ```bash
 spark-intelligence gateway simulate-telegram-update ./sample-update.json
 spark-intelligence gateway simulate-discord-message ./sample-discord-message.json
+spark-intelligence gateway simulate-whatsapp-message ./sample-whatsapp-message.json
 spark-intelligence gateway start --once --poll-timeout-seconds 0
 spark-intelligence gateway start --continuous
 spark-intelligence gateway traces --limit 20

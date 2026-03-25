@@ -14,6 +14,7 @@ from spark_intelligence.adapters.telegram.runtime import (
     poll_telegram_updates_once,
     simulate_telegram_update,
 )
+from spark_intelligence.adapters.whatsapp.runtime import build_whatsapp_runtime_summary, simulate_whatsapp_message
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import run_doctor
 from spark_intelligence.gateway.tracing import outbound_log_path, read_gateway_traces, read_outbound_audit, trace_log_path
@@ -62,13 +63,14 @@ def gateway_status(config_manager: ConfigManager, state_db: StateDB) -> GatewayS
     doctor_report = run_doctor(config_manager, state_db)
     telegram_summary = build_telegram_runtime_summary(config_manager, state_db)
     discord_summary = build_discord_runtime_summary(config_manager, state_db)
+    whatsapp_summary = build_whatsapp_runtime_summary(config_manager, state_db)
     ready = bool(provider_records) and bool(active_channel_records) and doctor_report.ok
     return GatewayStatus(
         ready=ready,
         configured_channels=channel_records,
         configured_providers=provider_records,
         doctor_ok=doctor_report.ok,
-        adapter_lines=[telegram_summary.to_line(), discord_summary.to_line()],
+        adapter_lines=[telegram_summary.to_line(), discord_summary.to_line(), whatsapp_summary.to_line()],
     )
 
 
@@ -88,8 +90,11 @@ def gateway_start(
     config = config_manager.load()
     telegram_record = config.get("channels", {}).get("records", {}).get("telegram")
     discord_record = config.get("channels", {}).get("records", {}).get("discord")
+    whatsapp_record = config.get("channels", {}).get("records", {}).get("whatsapp")
     if discord_record:
         lines.append("Discord adapter is configured, but a foreground runtime is not implemented yet.")
+    if whatsapp_record:
+        lines.append("WhatsApp adapter is configured, but a foreground runtime is not implemented yet.")
     if not telegram_record:
         lines.append("No Telegram adapter configured. Gateway is idle.")
         return "\n".join(lines)
@@ -175,6 +180,22 @@ def gateway_simulate_discord_message(
 ) -> str:
     payload: dict[str, Any] = json.loads(payload_path.read_text(encoding="utf-8-sig"))
     result = simulate_discord_message(
+        config_manager=config_manager,
+        state_db=state_db,
+        payload=payload,
+    )
+    return result.to_json() if as_json else result.to_text()
+
+
+def gateway_simulate_whatsapp_message(
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    payload_path: Path,
+    *,
+    as_json: bool = False,
+) -> str:
+    payload: dict[str, Any] = json.loads(payload_path.read_text(encoding="utf-8-sig"))
+    result = simulate_whatsapp_message(
         config_manager=config_manager,
         state_db=state_db,
         payload=payload,
