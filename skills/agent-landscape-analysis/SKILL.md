@@ -23,6 +23,10 @@ Use this skill when work touches:
 - `docs/IMPORT_AND_MIGRATION_SPEC_V1.md`
 - `docs/SPARK_INTELLIGENCE_PROMPT_BIBLE.md`
 
+Then read:
+
+- `references/comparison-playbook.md`
+
 ## External Research Rule
 
 Use primary sources whenever possible:
@@ -51,6 +55,8 @@ Always classify findings into:
 5. Separate good product shape from bad maintenance cost.
 6. Recommend what Spark should borrow, copy as a pattern, or reject.
 
+Use the comparison buckets and output template in `references/comparison-playbook.md`.
+
 ## Required Outputs
 
 Return these explicitly:
@@ -68,3 +74,12 @@ Return these explicitly:
 - Do not reward breadth when it increases maintenance cost.
 - Prefer stronger harnesses, cleaner setup, and clearer ownership.
 - Keep a running eye on migration compatibility and operator trust.
+
+## Default Deliverable
+
+The result should end with:
+
+- borrow
+- yoink
+- reject
+- keep uniquely Spark

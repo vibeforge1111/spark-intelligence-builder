@@ -21,6 +21,10 @@ Use this skill when work touches:
 - `docs/SPARK_INTELLIGENCE_PROMPT_BIBLE.md`
 - `docs/PRD_SPARK_INTELLIGENCE_V1.md`
 
+Then read:
+
+- `references/review-framework.md`
+
 ## Core Doctrine
 
 Prefer:
@@ -51,6 +55,8 @@ Reject:
 5. Check documentation burden and operator burden.
 6. Review security defaults and trust boundaries.
 7. Require tests or smoke coverage where failure would be expensive.
+
+If the request is a real review, use the severity-first order and output template from `references/review-framework.md`.
 
 ## Required Outputs
 
@@ -90,3 +96,12 @@ When reviewing docs:
 - Memory doctrine belongs to the memory chip, not random modules.
 - The gateway should not become the real product.
 - The runtime should remain lightweight enough to install quickly and debug locally.
+
+## Default Deliverable
+
+The default output should be actionable:
+
+- findings
+- simplifications
+- test gaps
+- ownership corrections

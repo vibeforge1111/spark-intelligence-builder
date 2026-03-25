@@ -21,6 +21,10 @@ Use this skill when work touches:
 - `docs/ARCHITECTURE_SPARK_INTELLIGENCE_V1.md`
 - `docs/SPARK_INTELLIGENCE_PROMPT_BIBLE.md`
 
+Then read:
+
+- `references/system-map.md`
+
 ## Core Doctrine
 
 Spark Intelligence should be:
@@ -53,6 +57,8 @@ Ask these questions on every decision:
 5. Preserve one persistent agent identity across channels.
 6. Check whether the proposal improves collective intelligence and moddability without increasing chaos.
 
+If ownership is unclear, use the system ownership map in `references/system-map.md` before recommending any new module or feature.
+
 ## Required Outputs
 
 Return these explicitly:
@@ -71,3 +77,12 @@ Return these explicitly:
 - Keep specialization in chips and paths.
 - Keep memory ownership with the memory chip.
 - Keep Spark Intelligence lightweight enough to stay maintainable.
+
+## Default Deliverable
+
+The result should usually include:
+
+- what the user gets
+- who owns the feature
+- why it belongs there
+- what stays out of this repo

@@ -21,6 +21,10 @@ Use this skill when work touches:
 - `docs/ARCHITECTURE_SPARK_INTELLIGENCE_V1.md`
 - `docs/SPARK_INTELLIGENCE_PROMPT_BIBLE.md`
 
+Then read:
+
+- `references/workflow.md`
+
 ## Core Doctrine
 
 The correct shape is:
@@ -48,6 +52,8 @@ Reject:
 5. Define the minimum smoke tests.
 6. Check for scheduler duplication or hidden loops.
 7. Keep the implementation lightweight by default.
+
+If the task is deeper than a quick pass, use the output template and anti-pattern checklist in `references/workflow.md`.
 
 ## Required Outputs
 
@@ -86,3 +92,7 @@ Findings should prioritize:
 - retry storms
 - hidden state
 - missing smoke coverage
+
+## Default Deliverable
+
+Give a concrete answer, not generic principles. The result should usually end in a small harness plan, review finding set, or smoke-test checklist.
