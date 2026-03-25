@@ -140,6 +140,17 @@ def sync_attachment_snapshot(*, config_manager: ConfigManager, state_db: StateDB
     return snapshot
 
 
+def build_attachment_context(config_manager: ConfigManager) -> dict[str, Any]:
+    snapshot = build_attachment_snapshot(config_manager)
+    return {
+        "active_chip_keys": snapshot.active_chip_keys,
+        "pinned_chip_keys": snapshot.pinned_chip_keys,
+        "active_path_key": snapshot.active_path_key,
+        "warning_count": len(snapshot.warnings),
+        "snapshot_path": snapshot.snapshot_path,
+    }
+
+
 def activate_chip(config_manager: ConfigManager, *, chip_key: str) -> list[str]:
     available = {record.key for record in attachment_status(config_manager).records if record.kind == "chip"}
     _require_known_key(chip_key, available, "chip")

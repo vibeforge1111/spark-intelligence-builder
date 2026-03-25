@@ -5,6 +5,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from spark_intelligence.attachments import build_attachment_context
 from spark_intelligence.config.loader import ConfigManager
 
 
@@ -18,6 +19,7 @@ class ResearcherBridgeResult:
     mode: str
     runtime_root: str | None
     config_path: str | None
+    attachment_context: dict[str, object] | None
 
 
 def discover_researcher_runtime_root(config_manager: ConfigManager) -> tuple[Path | None, str]:
@@ -69,6 +71,22 @@ def _render_reply_from_advisory(advisory: dict) -> tuple[str, str, str]:
     return reply_text, evidence_summary, str(trace_ref)
 
 
+def _build_contextual_task(*, user_message: str, attachment_context: dict[str, object]) -> str:
+    active_chip_keys = attachment_context.get("active_chip_keys") or []
+    pinned_chip_keys = attachment_context.get("pinned_chip_keys") or []
+    active_path_key = attachment_context.get("active_path_key") or None
+    lines = [
+        "[Spark Intelligence context]",
+        f"active_chip_keys={','.join(str(item) for item in active_chip_keys) if active_chip_keys else 'none'}",
+        f"pinned_chip_keys={','.join(str(item) for item in pinned_chip_keys) if pinned_chip_keys else 'none'}",
+        f"active_path_key={active_path_key or 'none'}",
+        "",
+        "[User message]",
+        user_message,
+    ]
+    return "\n".join(lines)
+
+
 def build_researcher_reply(
     *,
     config_manager: ConfigManager,
@@ -79,13 +97,15 @@ def build_researcher_reply(
     channel_kind: str,
     user_message: str,
 ) -> ResearcherBridgeResult:
+    attachment_context = build_attachment_context(config_manager)
+    contextual_task = _build_contextual_task(user_message=user_message, attachment_context=attachment_context)
     runtime_root, runtime_source = discover_researcher_runtime_root(config_manager)
     if runtime_root is not None:
         config_path = resolve_researcher_config_path(config_manager, runtime_root)
         if config_path.exists():
             try:
                 build_advisory = _import_build_advisory(runtime_root)
-                advisory = build_advisory(config_path, user_message, model="generic", limit=3, domain=None)
+                advisory = build_advisory(config_path, contextual_task, model="generic", limit=3, domain=None)
                 reply_text, evidence_summary, trace_ref = _render_reply_from_advisory(advisory)
                 return ResearcherBridgeResult(
                     request_id=request_id,
@@ -96,6 +116,7 @@ def build_researcher_reply(
                     mode=f"external_{runtime_source}",
                     runtime_root=str(runtime_root),
                     config_path=str(config_path),
+                    attachment_context=attachment_context,
                 )
             except Exception as exc:  # pragma: no cover - external bridge safety
                 return ResearcherBridgeResult(
@@ -107,6 +128,7 @@ def build_researcher_reply(
                     mode="bridge_error",
                     runtime_root=str(runtime_root),
                     config_path=str(config_path),
+                    attachment_context=attachment_context,
                 )
 
     reply_text = (
@@ -116,10 +138,15 @@ def build_researcher_reply(
     return ResearcherBridgeResult(
         request_id=request_id,
         reply_text=reply_text,
-        evidence_summary="No external Spark Researcher runtime was configured or discovered.",
+        evidence_summary=(
+            "No external Spark Researcher runtime was configured or discovered. "
+            f"active_chips={len(attachment_context.get('active_chip_keys') or [])} "
+            f"active_path={attachment_context.get('active_path_key') or 'none'}"
+        ),
         escalation_hint=None,
         trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
         mode="stub",
         runtime_root=str(runtime_root) if runtime_root else None,
         config_path=str(resolve_researcher_config_path(config_manager, runtime_root)) if runtime_root else None,
+        attachment_context=attachment_context,
     )

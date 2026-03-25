@@ -8,6 +8,7 @@ from spark_intelligence.attachments.registry import (
 from spark_intelligence.attachments.snapshot import (
     AttachmentSnapshot,
     activate_chip,
+    build_attachment_context,
     build_attachment_snapshot,
     clear_active_path,
     deactivate_chip,
@@ -24,6 +25,7 @@ __all__ = [
     "add_attachment_root",
     "activate_chip",
     "attachment_status",
+    "build_attachment_context",
     "build_attachment_snapshot",
     "clear_active_path",
     "deactivate_chip",

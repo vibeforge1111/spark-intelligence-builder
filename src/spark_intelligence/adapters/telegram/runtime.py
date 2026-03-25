@@ -136,9 +136,11 @@ def simulate_telegram_update(
         outbound_text = bridge_result.reply_text
         trace_ref = bridge_result.trace_ref
         bridge_mode = bridge_result.mode
+        attachment_context = bridge_result.attachment_context
     else:
         trace_ref = None
         bridge_mode = None
+        attachment_context = None
     detail = {
         "telegram_user_id": normalized.telegram_user_id,
         "chat_id": normalized.chat_id,
@@ -149,6 +151,7 @@ def simulate_telegram_update(
         "response_text": outbound_text,
         "trace_ref": trace_ref,
         "bridge_mode": bridge_mode,
+        "attachment_context": attachment_context,
     }
     return TelegramSimulationResult(ok=resolution.allowed, decision=resolution.decision, detail=detail)
 
@@ -254,6 +257,7 @@ def poll_telegram_updates_once(
                 "runtime_root": bridge_result.runtime_root,
                 "config_path": bridge_result.config_path,
                 "evidence_summary": bridge_result.evidence_summary,
+                "attachment_context": bridge_result.attachment_context,
             },
         )
 
