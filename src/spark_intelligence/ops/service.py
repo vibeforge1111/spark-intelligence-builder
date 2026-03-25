@@ -54,40 +54,13 @@ class OperatorInboxReport:
             f"bridge_alerts={counts['bridge_alerts']}"
         )
 
-        pending_pairings = self.payload["pairings"]["pending"]
-        if pending_pairings:
-            lines.append("- pending pairings:")
-            for row in pending_pairings:
+        items = self.payload.get("items") or []
+        if items:
+            lines.append("- actions:")
+            for item in items:
                 lines.append(
-                    f"  {row['channel_id']}:{row['external_user_id']} "
-                    f"updated_at={row['updated_at']}"
-                )
-
-        held_pairings = self.payload["pairings"]["held"]
-        if held_pairings:
-            lines.append("- held pairings:")
-            for row in held_pairings:
-                lines.append(
-                    f"  {row['channel_id']}:{row['external_user_id']} "
-                    f"updated_at={row['updated_at']}"
-                )
-
-        channel_alerts = self.payload["channels"]
-        if channel_alerts:
-            lines.append("- channel alerts:")
-            for row in channel_alerts:
-                lines.append(
-                    f"  {row['channel_id']} status={row['status']} "
-                    f"pairing_mode={row['pairing_mode']} updated_at={row['updated_at']}"
-                )
-
-        bridge_alerts = self.payload["bridges"]
-        if bridge_alerts:
-            lines.append("- bridge alerts:")
-            for row in bridge_alerts:
-                lines.append(
-                    f"  {row['bridge']} severity={row['severity']} "
-                    f"status={row['status']} summary={row['summary']}"
+                    f"  [{item['priority']}] {item['summary']} "
+                    f"command={item['recommended_command']}"
                 )
 
         return "\n".join(lines)
@@ -155,6 +128,12 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
     held_pairings = [row for row in pairing_rows if row.get("status") == "held"]
     channel_alerts = _load_channel_alerts(state_db)
     bridge_alerts = _build_bridge_alerts(config_manager=config_manager, state_db=state_db)
+    items = _build_inbox_items(
+        pending_pairings=pending_pairings,
+        held_pairings=held_pairings,
+        channel_alerts=channel_alerts,
+        bridge_alerts=bridge_alerts,
+    )
 
     payload = {
         "counts": {
@@ -170,6 +149,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
         },
         "channels": channel_alerts,
         "bridges": bridge_alerts,
+        "items": items,
     }
     return OperatorInboxReport(payload=payload)
 
@@ -276,3 +256,86 @@ def _build_bridge_alerts(*, config_manager: ConfigManager, state_db: StateDB) ->
         )
 
     return alerts
+
+
+def _build_inbox_items(
+    *,
+    pending_pairings: list[dict[str, Any]],
+    held_pairings: list[dict[str, Any]],
+    channel_alerts: list[dict[str, Any]],
+    bridge_alerts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+
+    for row in pending_pairings:
+        channel_id = str(row["channel_id"])
+        external_user_id = str(row["external_user_id"])
+        items.append(
+            {
+                "kind": "pairing",
+                "status": "pending",
+                "priority": "high",
+                "sort_order": 20,
+                "item_ref": f"{channel_id}:{external_user_id}",
+                "summary": f"Pending pairing for {channel_id}:{external_user_id}.",
+                "recommended_command": f"spark-intelligence operator approve-pairing {channel_id} {external_user_id}",
+            }
+        )
+
+    for row in held_pairings:
+        channel_id = str(row["channel_id"])
+        external_user_id = str(row["external_user_id"])
+        items.append(
+            {
+                "kind": "pairing",
+                "status": "held",
+                "priority": "medium",
+                "sort_order": 30,
+                "item_ref": f"{channel_id}:{external_user_id}",
+                "summary": f"Held pairing for {channel_id}:{external_user_id}.",
+                "recommended_command": f"spark-intelligence operator approve-pairing {channel_id} {external_user_id}",
+            }
+        )
+
+    for row in channel_alerts:
+        channel_id = str(row["channel_id"])
+        status = str(row["status"])
+        items.append(
+            {
+                "kind": "channel",
+                "status": status,
+                "priority": "medium" if status == "paused" else "high",
+                "sort_order": 35 if status == "paused" else 25,
+                "item_ref": channel_id,
+                "summary": f"Channel {channel_id} is {status}.",
+                "recommended_command": f"spark-intelligence operator set-channel {channel_id} enabled",
+            }
+        )
+
+    severity_order = {"critical": 10, "warning": 15, "info": 40}
+    for row in bridge_alerts:
+        bridge = str(row["bridge"])
+        status = str(row["status"])
+        severity = str(row["severity"])
+        enable_mode = "enabled"
+        recommended_command = f"spark-intelligence operator set-bridge {bridge} {enable_mode}"
+        if bridge == "swarm" and status in {"http_error", "network_error", "api_not_configured"}:
+            recommended_command = "spark-intelligence swarm status"
+        elif bridge == "researcher" and status == "bridge_error":
+            recommended_command = "spark-intelligence researcher status"
+        items.append(
+            {
+                "kind": "bridge",
+                "status": status,
+                "priority": severity,
+                "sort_order": severity_order.get(severity, 50),
+                "item_ref": bridge,
+                "summary": row["summary"],
+                "recommended_command": recommended_command,
+            }
+        )
+
+    items.sort(key=lambda item: (int(item["sort_order"]), str(item["item_ref"])))
+    for item in items:
+        item.pop("sort_order", None)
+    return items

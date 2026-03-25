@@ -157,3 +157,5 @@ spark-intelligence operator approve-pairing telegram 123456
 spark-intelligence operator inbox
 spark-intelligence operator history
 ```
+
+`operator inbox` now emits direct recommended commands for each actionable item so the operator surface stays lightweight and local-first without a separate ticketing subsystem.
