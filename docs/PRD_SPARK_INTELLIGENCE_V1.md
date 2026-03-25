@@ -392,8 +392,10 @@ The user talks to one agent, but that agent is backed by the full Spark ecosyste
 ## 19. Immediate Next Docs
 
 - architecture spec
-- runtime state model
 - channel adapter spec
+- identity and session model spec
+- provider and auth config spec
+- Spark Researcher integration contract
 - chip attachment spec
 - specialization path spec
 - operator control surface spec

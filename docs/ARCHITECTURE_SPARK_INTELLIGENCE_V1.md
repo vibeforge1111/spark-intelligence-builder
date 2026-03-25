@@ -919,14 +919,12 @@ spark-intelligence-builder/
 The next docs after this should be:
 
 1. channel adapter spec
-2. onboarding CLI spec
-3. identity and session model spec
-4. Spark Researcher integration contract
-5. Spark Swarm escalation contract
-6. domain chip attachment contract
-7. cron and job harness spec
-8. import and migration spec
-9. prompt bible operating guide
+2. Spark Researcher integration contract
+3. Spark Swarm escalation contract
+4. domain chip attachment contract
+5. provider and auth config spec
+6. prompt bible operating guide
+7. security doctrine and hardening spec
 
 ## 18. Final Architectural Decision
 
