@@ -118,3 +118,13 @@ spark-intelligence swarm configure --api-url https://your-swarm-host --workspace
 spark-intelligence swarm sync --dry-run
 spark-intelligence swarm sync
 ```
+
+Chip and specialization-path attachments stay external as well. Spark Intelligence scans configured roots first, then falls back to Desktop auto-discovery for repos such as `domain-chip-*` and `specialization-path-*`:
+
+```bash
+spark-intelligence attachments status
+spark-intelligence attachments list --kind chip
+spark-intelligence attachments list --kind path --json
+spark-intelligence attachments add-root chips "C:/Users/USER/Desktop/domain-chip-content"
+spark-intelligence attachments add-root paths "C:/Users/USER/Desktop/specialization-path-startup-operator"
+```

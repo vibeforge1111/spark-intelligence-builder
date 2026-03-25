@@ -4,6 +4,7 @@ import json
 import sqlite3
 from dataclasses import dataclass
 
+from spark_intelligence.attachments import attachment_status
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
 from spark_intelligence.state.db import StateDB
@@ -150,6 +151,25 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
                 "swarm-bridge",
                 True,
                 f"ready api={swarm.api_url} workspace={swarm.workspace_id}",
+            )
+        )
+
+    attachments = attachment_status(config_manager)
+    attachment_count = len(attachments.records)
+    if attachments.warnings:
+        checks.append(
+            DoctorCheck(
+                "attachments",
+                True,
+                f"{attachment_count} discovered with {len(attachments.warnings)} warning(s)",
+            )
+        )
+    else:
+        checks.append(
+            DoctorCheck(
+                "attachments",
+                True,
+                f"{attachment_count} discovered ({len([r for r in attachments.records if r.kind == 'chip'])} chips, {len([r for r in attachments.records if r.kind == 'path'])} paths)",
             )
         )
 

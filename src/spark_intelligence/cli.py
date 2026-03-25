@@ -7,6 +7,7 @@ from pathlib import Path
 
 import yaml
 
+from spark_intelligence.attachments import add_attachment_root, attachment_status, list_attachments
 from spark_intelligence.auth.service import connect_provider
 from spark_intelligence.channel.service import add_channel
 from spark_intelligence.config.loader import ConfigManager
@@ -93,6 +94,20 @@ def build_parser() -> argparse.ArgumentParser:
         default="pairing",
         help="Inbound DM authorization mode",
     )
+
+    attachments_parser = subparsers.add_parser("attachments", help="Inspect and manage chip/path attachment roots")
+    attachments_subparsers = attachments_parser.add_subparsers(dest="attachments_command", required=True)
+    attachments_status_parser = attachments_subparsers.add_parser("status", help="Scan chip and path attachments")
+    attachments_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    attachments_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    attachments_list_parser = attachments_subparsers.add_parser("list", help="List discovered chip/path attachments")
+    attachments_list_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    attachments_list_parser.add_argument("--kind", choices=["all", "chip", "path"], default="all")
+    attachments_list_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    attachments_add_root_parser = attachments_subparsers.add_parser("add-root", help="Add a chip or path root")
+    attachments_add_root_parser.add_argument("target", choices=["chips", "paths"], help="Which attachment root list to update")
+    attachments_add_root_parser.add_argument("root", help="Root path to add")
+    attachments_add_root_parser.add_argument("--home", help="Override Spark Intelligence home directory")
 
     auth_parser = subparsers.add_parser("auth", help="Manage model providers")
     auth_subparsers = auth_parser.add_subparsers(dest="auth_command", required=True)
@@ -284,6 +299,33 @@ def handle_channel_add(args: argparse.Namespace) -> int:
         pairing_mode=args.pairing_mode,
     )
     print(result)
+    return 0
+
+
+def handle_attachments_status(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    result = attachment_status(config_manager)
+    print(result.to_json() if args.json else result.to_text())
+    return 0
+
+
+def handle_attachments_list(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    result = list_attachments(config_manager, kind=args.kind)
+    print(result.to_json() if args.json else result.to_text())
+    return 0
+
+
+def handle_attachments_add_root(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    values = add_attachment_root(config_manager, target=args.target, root=args.root)
+    dotted_path = "spark.chips.roots" if args.target == "chips" else "spark.specialization_paths.roots"
+    print(f"Updated {dotted_path}:")
+    for value in values:
+        print(f"- {value}")
     return 0
 
 
@@ -561,6 +603,12 @@ def main(argv: list[str] | None = None) -> int:
         return handle_gateway_traces(args)
     if args.command == "channel" and args.channel_command == "add":
         return handle_channel_add(args)
+    if args.command == "attachments" and args.attachments_command == "status":
+        return handle_attachments_status(args)
+    if args.command == "attachments" and args.attachments_command == "list":
+        return handle_attachments_list(args)
+    if args.command == "attachments" and args.attachments_command == "add-root":
+        return handle_attachments_add_root(args)
     if args.command == "auth" and args.auth_command == "connect":
         return handle_auth_connect(args)
     if args.command == "config" and args.config_command == "show":
