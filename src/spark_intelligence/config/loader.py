@@ -72,7 +72,17 @@ class ConfigManager:
                 "chips": {"roots": [], "active_keys": [], "pinned_keys": []},
                 "specialization_paths": {"roots": [], "active_path_key": None},
             },
-            "security": {"dangerous_approval_mode": "operator_only", "log_redaction": "standard"},
+            "security": {
+                "dangerous_approval_mode": "operator_only",
+                "log_redaction": "standard",
+                "telegram": {
+                    "duplicate_window_size": 128,
+                    "max_messages_per_minute": 6,
+                    "rate_limit_notice_cooldown_seconds": 30,
+                    "max_reply_chars": 3500,
+                    "redact_secret_like_replies": True,
+                },
+            },
         }
 
     def load(self) -> dict[str, Any]:

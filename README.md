@@ -160,3 +160,8 @@ spark-intelligence operator history
 ```
 
 `operator inbox` now emits direct recommended commands for each actionable item so the operator surface stays lightweight and local-first without a separate ticketing subsystem.
+
+Telegram ingress now also applies lightweight runtime guardrails:
+- duplicate update suppression
+- per-user rate limiting
+- outbound reply truncation and secret-like reply blocking

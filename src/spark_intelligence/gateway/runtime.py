@@ -173,7 +173,8 @@ def gateway_trace_view(config_manager: ConfigManager, *, limit: int = 20, as_jso
             f"- at={trace.get('recorded_at')} event={trace.get('event')} update_id={trace.get('update_id')} "
             f"user={trace.get('telegram_user_id')} decision={trace.get('decision', 'n/a')} "
             f"trace_ref={trace.get('trace_ref', 'n/a')} mode={trace.get('bridge_mode', 'n/a')} "
-            f"delivery_ok={trace.get('delivery_ok', 'n/a')}"
+            f"delivery_ok={trace.get('delivery_ok', 'n/a')} "
+            f"guardrails={','.join(trace.get('guardrail_actions', [])) if trace.get('guardrail_actions') else 'none'}"
         )
     return "\n".join(lines)
 
@@ -189,6 +190,8 @@ def gateway_outbound_view(config_manager: ConfigManager, *, limit: int = 20, as_
         lines.append(
             f"- at={record.get('recorded_at')} event={record.get('event')} update_id={record.get('update_id')} "
             f"user={record.get('telegram_user_id')} ok={record.get('delivery_ok')} "
-            f"mode={record.get('bridge_mode', 'n/a')} preview={record.get('response_preview', '')}"
+            f"mode={record.get('bridge_mode', 'n/a')} "
+            f"guardrails={','.join(record.get('guardrail_actions', [])) if record.get('guardrail_actions') else 'none'} "
+            f"preview={record.get('response_preview', '')}"
         )
     return "\n".join(lines)
