@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import sys
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,8 @@ class ResearcherBridgeStatus:
     last_config_path: str | None
     last_evidence_summary: str | None
     last_attachment_context: dict[str, Any] | None
+    failure_count: int
+    last_failure: dict[str, Any] | None
 
     def to_json(self) -> str:
         return json.dumps(
@@ -59,6 +62,8 @@ class ResearcherBridgeStatus:
                 "last_config_path": self.last_config_path,
                 "last_evidence_summary": self.last_evidence_summary,
                 "last_attachment_context": self.last_attachment_context,
+                "failure_count": self.failure_count,
+                "last_failure": self.last_failure,
             },
             indent=2,
         )
@@ -84,6 +89,13 @@ class ResearcherBridgeStatus:
             lines.append(f"- last_config_path: {self.last_config_path}")
         if self.last_evidence_summary:
             lines.append(f"- last_evidence_summary: {self.last_evidence_summary}")
+        lines.append(f"- failure_count: {self.failure_count}")
+        if self.last_failure:
+            lines.append(
+                f"- last_failure: mode={self.last_failure.get('mode')} "
+                f"at={self.last_failure.get('recorded_at')} "
+                f"message={self.last_failure.get('message')}"
+            )
         return "\n".join(lines)
 
 
@@ -175,6 +187,8 @@ def researcher_bridge_status(*, config_manager: ConfigManager, state_db: StateDB
         last_config_path=runtime_state.get("researcher:last_config_path"),
         last_evidence_summary=runtime_state.get("researcher:last_evidence_summary"),
         last_attachment_context=_loads_json(runtime_state.get("researcher:last_attachment_context")),
+        failure_count=_parse_int(runtime_state.get("researcher:failure_count")),
+        last_failure=_loads_json(runtime_state.get("researcher:last_failure")),
     )
 
 
@@ -191,6 +205,24 @@ def record_researcher_bridge_result(*, state_db: StateDB, result: ResearcherBrid
             "researcher:last_attachment_context",
             json.dumps(result.attachment_context or {}, sort_keys=True),
         )
+        if result.mode == "bridge_error":
+            failure_count = _read_failure_count(conn, "researcher:failure_count")
+            _set_runtime_state(conn, "researcher:failure_count", str(failure_count + 1))
+            _set_runtime_state(
+                conn,
+                "researcher:last_failure",
+                json.dumps(
+                    {
+                        "mode": result.mode,
+                        "request_id": result.request_id,
+                        "runtime_root": result.runtime_root,
+                        "config_path": result.config_path,
+                        "message": result.reply_text,
+                        "recorded_at": _utc_now_iso(),
+                    },
+                    sort_keys=True,
+                ),
+            )
         conn.commit()
 
 
@@ -287,6 +319,29 @@ def _loads_json(value: str | None) -> dict[str, Any] | None:
     except json.JSONDecodeError:
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+def _parse_int(value: str | None) -> int:
+    if value is None or value == "":
+        return 0
+    try:
+        return int(value)
+    except ValueError:
+        return 0
+
+
+def _read_failure_count(conn: Any, state_key: str) -> int:
+    row = conn.execute("SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (state_key,)).fetchone()
+    if not row or row["value"] is None:
+        return 0
+    try:
+        return int(str(row["value"]))
+    except ValueError:
+        return 0
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _set_runtime_state(conn: Any, state_key: str, value: str) -> None:

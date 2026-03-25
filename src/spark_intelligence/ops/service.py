@@ -290,6 +290,18 @@ def _build_bridge_alerts(*, config_manager: ConfigManager, state_db: StateDB) ->
                 "summary": "The last Spark Researcher bridge call failed closed.",
             }
         )
+    if researcher.last_failure:
+        alerts.append(
+            {
+                "bridge": "researcher",
+                "severity": "warning",
+                "status": str(researcher.last_failure.get("mode") or "failure_recorded"),
+                "summary": (
+                    f"Spark Researcher has recorded {researcher.failure_count} failure(s); "
+                    f"last failure at {researcher.last_failure.get('recorded_at') or 'unknown time'}."
+                ),
+            }
+        )
 
     swarm = swarm_status(config_manager, state_db)
     if not swarm.enabled:
@@ -341,6 +353,18 @@ def _build_bridge_alerts(*, config_manager: ConfigManager, state_db: StateDB) ->
                 "severity": "warning",
                 "status": "unavailable",
                 "summary": "The last Spark Swarm escalation evaluation reported Swarm unavailable.",
+            }
+        )
+    if swarm.last_failure:
+        alerts.append(
+            {
+                "bridge": "swarm",
+                "severity": "warning",
+                "status": str(swarm.last_failure.get("mode") or "failure_recorded"),
+                "summary": (
+                    f"Spark Swarm has recorded {swarm.failure_count} failure(s); "
+                    f"last failure at {swarm.last_failure.get('recorded_at') or 'unknown time'}."
+                ),
             }
         )
 
@@ -449,9 +473,13 @@ def _build_security_items(
         severity = str(row["severity"])
         status = str(row["status"])
         recommended_command = f"spark-intelligence operator set-bridge {bridge} enabled"
-        if bridge == "researcher" and status == "bridge_error":
+        if bridge == "researcher" and status in {"bridge_error", "failure_recorded"}:
             recommended_command = "spark-intelligence researcher status"
-        if bridge == "swarm" and status in {"http_error", "network_error", "api_not_configured", "unavailable"}:
+        if bridge == "researcher" and severity == "warning":
+            recommended_command = "spark-intelligence researcher status"
+        if bridge == "swarm" and status in {"http_error", "network_error", "api_not_configured", "unavailable", "workspace_id_missing", "researcher_missing", "failure_recorded"}:
+            recommended_command = "spark-intelligence swarm status"
+        if bridge == "swarm" and severity == "warning":
             recommended_command = "spark-intelligence swarm status"
         items.append(
             {

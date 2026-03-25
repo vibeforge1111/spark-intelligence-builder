@@ -9,6 +9,7 @@ import urllib.parse
 import urllib.request
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,8 @@ class SwarmStatus:
     attachment_context: dict[str, Any]
     last_sync: dict[str, Any] | None
     last_decision: dict[str, Any] | None
+    failure_count: int
+    last_failure: dict[str, Any] | None
 
     def to_json(self) -> str:
         return json.dumps(
@@ -52,6 +55,8 @@ class SwarmStatus:
                 "attachment_context": self.attachment_context,
                 "last_sync": self.last_sync,
                 "last_decision": self.last_decision,
+                "failure_count": self.failure_count,
+                "last_failure": self.last_failure,
             },
             indent=2,
         )
@@ -74,6 +79,7 @@ class SwarmStatus:
                 f"- active_path_key: {self.attachment_context.get('active_path_key') or 'none'}",
                 f"- last_sync_mode: {(self.last_sync or {}).get('mode', 'none')}",
                 f"- last_decision_mode: {(self.last_decision or {}).get('mode', 'none')}",
+                f"- failure_count: {self.failure_count}",
             ]
         )
 
@@ -190,6 +196,8 @@ def swarm_status(config_manager: ConfigManager, state_db: StateDB | None = None)
         attachment_context=attachment_context,
         last_sync=_loads_json_object(runtime_state.get("swarm:last_sync")),
         last_decision=_loads_json_object(runtime_state.get("swarm:last_decision")),
+        failure_count=_parse_int(runtime_state.get("swarm:failure_count")),
+        last_failure=_loads_json_object(runtime_state.get("swarm:last_failure")),
     )
 
 
@@ -201,7 +209,7 @@ def sync_swarm_collective(
 ) -> SwarmSyncResult:
     status = swarm_status(config_manager, state_db)
     if not status.enabled:
-        return SwarmSyncResult(
+        result = SwarmSyncResult(
             ok=False,
             mode="disabled",
             message="Spark Swarm bridge is disabled by operator.",
@@ -211,8 +219,10 @@ def sync_swarm_collective(
             accepted=None,
             response_body=None,
         )
+        _record_swarm_failure_state(state_db, kind="sync", result=result)
+        return result
     if not status.researcher_ready or not status.researcher_config_path or not status.researcher_runtime_root:
-        return SwarmSyncResult(
+        result = SwarmSyncResult(
             ok=False,
             mode="researcher_missing",
             message="Spark Researcher runtime/config is missing; cannot build a Swarm payload.",
@@ -222,12 +232,14 @@ def sync_swarm_collective(
             accepted=None,
             response_body=None,
         )
+        _record_swarm_failure_state(state_db, kind="sync", result=result)
+        return result
 
     researcher_root = Path(status.researcher_runtime_root)
     researcher_config_path = Path(status.researcher_config_path)
     workspace_id = status.workspace_id
     if not workspace_id:
-        return SwarmSyncResult(
+        result = SwarmSyncResult(
             ok=False,
             mode="workspace_id_missing",
             message="spark.swarm.workspace_id is required before Swarm sync.",
@@ -237,6 +249,8 @@ def sync_swarm_collective(
             accepted=None,
             response_body=None,
         )
+        _record_swarm_failure_state(state_db, kind="sync", result=result)
+        return result
 
     payload, payload_path = _build_collective_payload(
         config_manager=config_manager,
@@ -268,7 +282,7 @@ def sync_swarm_collective(
     api_url = status.api_url
     access_token = _resolve_swarm_access_token(config_manager)
     if not api_url or not access_token:
-        return SwarmSyncResult(
+        result = SwarmSyncResult(
             ok=False,
             mode="api_not_configured",
             message="Swarm API URL or access token is missing; payload was built but not uploaded.",
@@ -278,6 +292,8 @@ def sync_swarm_collective(
             accepted=None,
             response_body=None,
         )
+        _record_swarm_failure_state(state_db, kind="sync", result=result)
+        return result
 
     try:
         response_body = _post_collective_payload(api_url=api_url, workspace_id=workspace_id, access_token=access_token, payload=payload)
@@ -291,7 +307,7 @@ def sync_swarm_collective(
             workspace_id=workspace_id,
             accepted=False,
         )
-        return SwarmSyncResult(
+        result = SwarmSyncResult(
             ok=False,
             mode="http_error",
             message=f"Swarm API rejected the sync with HTTP {exc.code}.",
@@ -301,6 +317,8 @@ def sync_swarm_collective(
             accepted=False,
             response_body=body,
         )
+        _record_swarm_failure_state(state_db, kind="sync", result=result)
+        return result
     except urllib.error.URLError as exc:
         _record_swarm_sync_state(
             state_db,
@@ -310,7 +328,7 @@ def sync_swarm_collective(
             workspace_id=workspace_id,
             accepted=False,
         )
-        return SwarmSyncResult(
+        result = SwarmSyncResult(
             ok=False,
             mode="network_error",
             message=f"Could not reach Swarm API: {exc.reason}",
@@ -320,6 +338,8 @@ def sync_swarm_collective(
             accepted=False,
             response_body=None,
         )
+        _record_swarm_failure_state(state_db, kind="sync", result=result)
+        return result
 
     accepted = bool(response_body.get("accepted"))
     _record_swarm_sync_state(
@@ -330,7 +350,7 @@ def sync_swarm_collective(
         workspace_id=workspace_id,
         accepted=accepted,
     )
-    return SwarmSyncResult(
+    result = SwarmSyncResult(
         ok=accepted,
         mode="uploaded",
         message="Uploaded the latest Spark Researcher collective payload to Spark Swarm.",
@@ -340,6 +360,9 @@ def sync_swarm_collective(
         accepted=accepted,
         response_body=response_body,
     )
+    if not accepted:
+        _record_swarm_failure_state(state_db, kind="sync", result=result)
+    return result
 
 
 def evaluate_swarm_escalation(
@@ -362,6 +385,7 @@ def evaluate_swarm_escalation(
             api_ready=False,
         )
         _record_swarm_decision_state(state_db, result=result)
+        _record_swarm_failure_state(state_db, kind="decision", result=result)
         return result
     lowered = task.lower()
     triggers: list[str] = []
@@ -391,6 +415,7 @@ def evaluate_swarm_escalation(
             swarm_available=False,
             api_ready=status.api_ready,
         )
+        _record_swarm_failure_state(state_db, kind="decision", result=result)
     elif triggers:
         result = SwarmDecisionResult(
             ok=True,
@@ -565,6 +590,39 @@ def _record_swarm_decision_state(state_db: StateDB, *, result: SwarmDecisionResu
         conn.commit()
 
 
+def _record_swarm_failure_state(
+    state_db: StateDB,
+    *,
+    kind: str,
+    result: SwarmSyncResult | SwarmDecisionResult,
+) -> None:
+    with state_db.connect() as conn:
+        failure_count = _read_failure_count(conn, "swarm:failure_count")
+        _set_runtime_state(conn, "swarm:failure_count", str(failure_count + 1))
+        if isinstance(result, SwarmSyncResult):
+            payload = {
+                "kind": kind,
+                "mode": result.mode,
+                "message": result.message,
+                "api_url": result.api_url,
+                "workspace_id": result.workspace_id,
+                "payload_path": result.payload_path,
+                "recorded_at": _utc_now_iso(),
+            }
+        else:
+            payload = {
+                "kind": kind,
+                "mode": result.mode,
+                "message": result.reason,
+                "api_ready": result.api_ready,
+                "swarm_available": result.swarm_available,
+                "triggers": result.triggers,
+                "recorded_at": _utc_now_iso(),
+            }
+        _set_runtime_state(conn, "swarm:last_failure", json.dumps(payload, sort_keys=True))
+        conn.commit()
+
+
 def _read_swarm_runtime_state(state_db: StateDB) -> dict[str, str]:
     with state_db.connect() as conn:
         rows = conn.execute(
@@ -583,6 +641,25 @@ def _loads_json_object(value: str | None) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def _parse_int(value: str | None) -> int:
+    if value is None or value == "":
+        return 0
+    try:
+        return int(value)
+    except ValueError:
+        return 0
+
+
+def _read_failure_count(conn: Any, state_key: str) -> int:
+    row = conn.execute("SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (state_key,)).fetchone()
+    if not row or row["value"] is None:
+        return 0
+    try:
+        return int(str(row["value"]))
+    except ValueError:
+        return 0
+
+
 def _set_runtime_state(conn: Any, state_key: str, value: str) -> None:
     conn.execute(
         """
@@ -592,6 +669,10 @@ def _set_runtime_state(conn: Any, state_key: str, value: str) -> None:
         """,
         (state_key, value),
     )
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _import_researcher_symbol(runtime_root: Path, module_name: str, symbol: str):

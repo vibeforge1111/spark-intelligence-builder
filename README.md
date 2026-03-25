@@ -161,6 +161,7 @@ spark-intelligence operator history
 ```
 
 `operator inbox` now emits direct recommended commands for each actionable item so the operator surface stays lightweight and local-first without a separate ticketing subsystem.
+`operator security` also reads durable bridge failure counters and last-failure metadata from local state, not just recent logs.
 
 Telegram ingress now also applies lightweight runtime guardrails:
 - duplicate update suppression
