@@ -6,8 +6,7 @@ from typing import Any
 
 from spark_intelligence.adapters.discord.normalize import normalize_discord_message
 from spark_intelligence.config.loader import ConfigManager
-from spark_intelligence.identity.service import resolve_inbound_dm
-from spark_intelligence.researcher_bridge.advisory import build_researcher_reply, record_researcher_bridge_result
+from spark_intelligence.gateway import resolve_simulated_dm
 from spark_intelligence.state.db import StateDB
 
 
@@ -97,46 +96,22 @@ def simulate_discord_message(
                 "channel_id": normalized.channel_id,
             },
         )
-    resolution = resolve_inbound_dm(
+    bridge = resolve_simulated_dm(
+        config_manager=config_manager,
         state_db=state_db,
         channel_id="discord",
+        request_id=f"discord:{normalized.message_id}",
         external_user_id=normalized.discord_user_id,
         display_name=normalized.discord_username or f"discord user {normalized.discord_user_id}",
+        user_message=normalized.content,
     )
-    outbound_text = resolution.response_text
-    if resolution.allowed and resolution.agent_id and resolution.human_id and resolution.session_id:
-        bridge_result = build_researcher_reply(
-            config_manager=config_manager,
-            request_id=f"discord:{normalized.message_id}",
-            agent_id=resolution.agent_id,
-            human_id=resolution.human_id,
-            session_id=resolution.session_id,
-            channel_kind="discord",
-            user_message=normalized.content,
-        )
-        record_researcher_bridge_result(state_db=state_db, result=bridge_result)
-        outbound_text = bridge_result.reply_text
-        trace_ref = bridge_result.trace_ref
-        bridge_mode = bridge_result.mode
-        attachment_context = bridge_result.attachment_context
-    else:
-        trace_ref = None
-        bridge_mode = None
-        attachment_context = None
     return DiscordSimulationResult(
-        ok=resolution.allowed,
-        decision=resolution.decision,
+        ok=bridge.ok,
+        decision=bridge.decision,
         detail={
             "discord_user_id": normalized.discord_user_id,
             "channel_id": normalized.channel_id,
             "guild_id": normalized.guild_id,
-            "session_id": resolution.session_id,
-            "human_id": resolution.human_id,
-            "agent_id": resolution.agent_id,
-            "message_text": normalized.content,
-            "response_text": outbound_text,
-            "trace_ref": trace_ref,
-            "bridge_mode": bridge_mode,
-            "attachment_context": attachment_context,
+            **bridge.detail,
         },
     )
