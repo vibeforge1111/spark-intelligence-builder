@@ -66,3 +66,14 @@ Validation support:
 
 - `python scripts/validate_skills.py`
 - [scenario-packs/reliable-job-harnesses/README.md](./scenario-packs/reliable-job-harnesses/README.md)
+
+Current Phase 0 runtime shell:
+
+```bash
+pip install -e .
+spark-intelligence setup
+spark-intelligence auth connect openai --api-key <key> --model <model>
+spark-intelligence channel add telegram --bot-token <token> --allowed-user <id>
+spark-intelligence doctor
+spark-intelligence gateway start
+```
