@@ -33,6 +33,13 @@ class IdentityReport:
                 f"{attachments.get('path_count', 0)} paths ({attachments.get('path_source', 'unknown')}), "
                 f"warnings={attachments.get('warning_count', 0)}"
             )
+            lines.append(
+                "- attachment state: "
+                f"active_chips={', '.join(attachments.get('active_chip_keys', [])) if attachments.get('active_chip_keys') else 'none'}, "
+                f"pinned_chips={', '.join(attachments.get('pinned_chip_keys', [])) if attachments.get('pinned_chip_keys') else 'none'}, "
+                f"active_path={attachments.get('active_path_key') or 'none'}"
+            )
+            lines.append(f"- attachment snapshot: {attachments.get('snapshot_path') or 'missing'}")
         return "\n".join(lines)
 
     def to_json(self) -> str:

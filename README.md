@@ -127,5 +127,11 @@ spark-intelligence attachments list --kind chip
 spark-intelligence attachments list --kind path --json
 spark-intelligence attachments add-root chips "C:/Users/USER/Desktop/domain-chip-content"
 spark-intelligence attachments add-root paths "C:/Users/USER/Desktop/specialization-path-startup-operator"
+spark-intelligence attachments activate-chip content
+spark-intelligence attachments pin-chip startup-yc
+spark-intelligence attachments set-path startup-operator
+spark-intelligence attachments snapshot --json
 spark-intelligence agent inspect
 ```
+
+The attachment snapshot is written to `SPARK_INTELLIGENCE_HOME/attachments.snapshot.json` and mirrored into SQLite runtime state so external Spark repos can consume the current attachment set without importing this repo's internals.

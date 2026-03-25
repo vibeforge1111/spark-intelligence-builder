@@ -7,7 +7,18 @@ from pathlib import Path
 
 import yaml
 
-from spark_intelligence.attachments import add_attachment_root, attachment_status, list_attachments
+from spark_intelligence.attachments import (
+    activate_chip,
+    add_attachment_root,
+    attachment_status,
+    clear_active_path,
+    deactivate_chip,
+    list_attachments,
+    pin_chip,
+    set_active_path,
+    sync_attachment_snapshot,
+    unpin_chip,
+)
 from spark_intelligence.auth.service import connect_provider
 from spark_intelligence.channel.service import add_channel
 from spark_intelligence.config.loader import ConfigManager
@@ -108,6 +119,26 @@ def build_parser() -> argparse.ArgumentParser:
     attachments_add_root_parser.add_argument("target", choices=["chips", "paths"], help="Which attachment root list to update")
     attachments_add_root_parser.add_argument("root", help="Root path to add")
     attachments_add_root_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    attachments_snapshot_parser = attachments_subparsers.add_parser("snapshot", help="Build and persist the attachment snapshot")
+    attachments_snapshot_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    attachments_snapshot_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    attachments_activate_chip_parser = attachments_subparsers.add_parser("activate-chip", help="Mark a chip active")
+    attachments_activate_chip_parser.add_argument("chip_key", help="Chip key to activate")
+    attachments_activate_chip_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    attachments_deactivate_chip_parser = attachments_subparsers.add_parser("deactivate-chip", help="Remove a chip from active and pinned state")
+    attachments_deactivate_chip_parser.add_argument("chip_key", help="Chip key to deactivate")
+    attachments_deactivate_chip_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    attachments_pin_chip_parser = attachments_subparsers.add_parser("pin-chip", help="Pin a chip so it remains active")
+    attachments_pin_chip_parser.add_argument("chip_key", help="Chip key to pin")
+    attachments_pin_chip_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    attachments_unpin_chip_parser = attachments_subparsers.add_parser("unpin-chip", help="Remove a chip from pinned state")
+    attachments_unpin_chip_parser.add_argument("chip_key", help="Chip key to unpin")
+    attachments_unpin_chip_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    attachments_set_path_parser = attachments_subparsers.add_parser("set-path", help="Set the active specialization path")
+    attachments_set_path_parser.add_argument("path_key", help="Specialization path key")
+    attachments_set_path_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    attachments_clear_path_parser = attachments_subparsers.add_parser("clear-path", help="Clear the active specialization path")
+    attachments_clear_path_parser.add_argument("--home", help="Override Spark Intelligence home directory")
 
     auth_parser = subparsers.add_parser("auth", help="Manage model providers")
     auth_subparsers = auth_parser.add_subparsers(dest="auth_command", required=True)
@@ -320,12 +351,97 @@ def handle_attachments_list(args: argparse.Namespace) -> int:
 
 def handle_attachments_add_root(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
+    state_db.initialize()
     values = add_attachment_root(config_manager, target=args.target, root=args.root)
+    sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
     dotted_path = "spark.chips.roots" if args.target == "chips" else "spark.specialization_paths.roots"
     print(f"Updated {dotted_path}:")
     for value in values:
         print(f"- {value}")
+    return 0
+
+
+def handle_attachments_snapshot(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    snapshot = sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
+    print(snapshot.to_json() if args.json else snapshot.to_text())
+    return 0
+
+
+def handle_attachments_activate_chip(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    active_keys = activate_chip(config_manager, chip_key=args.chip_key)
+    snapshot = sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
+    print(f"Active chips: {', '.join(active_keys) if active_keys else 'none'}")
+    print(f"Snapshot: {snapshot.snapshot_path}")
+    return 0
+
+
+def handle_attachments_deactivate_chip(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    active_keys = deactivate_chip(config_manager, chip_key=args.chip_key)
+    snapshot = sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
+    print(f"Active chips: {', '.join(active_keys) if active_keys else 'none'}")
+    print(f"Snapshot: {snapshot.snapshot_path}")
+    return 0
+
+
+def handle_attachments_pin_chip(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    active_keys = pin_chip(config_manager, chip_key=args.chip_key)
+    snapshot = sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
+    print(f"Active chips: {', '.join(active_keys) if active_keys else 'none'}")
+    print(f"Snapshot: {snapshot.snapshot_path}")
+    return 0
+
+
+def handle_attachments_unpin_chip(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    pinned_keys = unpin_chip(config_manager, chip_key=args.chip_key)
+    snapshot = sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
+    print(f"Pinned chips: {', '.join(pinned_keys) if pinned_keys else 'none'}")
+    print(f"Snapshot: {snapshot.snapshot_path}")
+    return 0
+
+
+def handle_attachments_set_path(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    path_key = set_active_path(config_manager, path_key=args.path_key)
+    snapshot = sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
+    print(f"Active path: {path_key}")
+    print(f"Snapshot: {snapshot.snapshot_path}")
+    return 0
+
+
+def handle_attachments_clear_path(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    clear_active_path(config_manager)
+    snapshot = sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
+    print("Active path: none")
+    print(f"Snapshot: {snapshot.snapshot_path}")
     return 0
 
 
@@ -482,6 +598,11 @@ def _apply_setup_integrations(config_manager: ConfigManager, args: argparse.Name
         config_manager.set_path("spark.specialization_paths.roots", attachment_scan.path_roots)
         notes.append(f"autoconnected {len(attachment_scan.path_roots)} specialization path root(s)")
 
+    state_db = StateDB(config_manager.paths.state_db)
+    state_db.initialize()
+    snapshot = sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
+    notes.append(f"wrote attachment snapshot to {snapshot.snapshot_path}")
+
     return notes
 
 
@@ -541,6 +662,10 @@ def handle_agent_inspect(args: argparse.Namespace) -> int:
         "chip_count": len([record for record in attachments.records if record.kind == "chip"]),
         "path_count": len([record for record in attachments.records if record.kind == "path"]),
         "warning_count": len(attachments.warnings),
+        "active_chip_keys": config_manager.get_path("spark.chips.active_keys", default=[]) or [],
+        "pinned_chip_keys": config_manager.get_path("spark.chips.pinned_keys", default=[]) or [],
+        "active_path_key": config_manager.get_path("spark.specialization_paths.active_path_key"),
+        "snapshot_path": str(config_manager.paths.home / "attachments.snapshot.json"),
     }
     if args.json:
         print(report.to_json())
@@ -625,6 +750,20 @@ def main(argv: list[str] | None = None) -> int:
         return handle_attachments_list(args)
     if args.command == "attachments" and args.attachments_command == "add-root":
         return handle_attachments_add_root(args)
+    if args.command == "attachments" and args.attachments_command == "snapshot":
+        return handle_attachments_snapshot(args)
+    if args.command == "attachments" and args.attachments_command == "activate-chip":
+        return handle_attachments_activate_chip(args)
+    if args.command == "attachments" and args.attachments_command == "deactivate-chip":
+        return handle_attachments_deactivate_chip(args)
+    if args.command == "attachments" and args.attachments_command == "pin-chip":
+        return handle_attachments_pin_chip(args)
+    if args.command == "attachments" and args.attachments_command == "unpin-chip":
+        return handle_attachments_unpin_chip(args)
+    if args.command == "attachments" and args.attachments_command == "set-path":
+        return handle_attachments_set_path(args)
+    if args.command == "attachments" and args.attachments_command == "clear-path":
+        return handle_attachments_clear_path(args)
     if args.command == "auth" and args.auth_command == "connect":
         return handle_auth_connect(args)
     if args.command == "config" and args.config_command == "show":

@@ -69,8 +69,8 @@ class ConfigManager:
                     "workspace_id": None,
                     "access_token_env": None,
                 },
-                "chips": {"roots": []},
-                "specialization_paths": {"roots": []},
+                "chips": {"roots": [], "active_keys": [], "pinned_keys": []},
+                "specialization_paths": {"roots": [], "active_path_key": None},
             },
             "security": {"dangerous_approval_mode": "operator_only", "log_redaction": "standard"},
         }
