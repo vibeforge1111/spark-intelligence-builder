@@ -118,7 +118,9 @@ spark-intelligence gateway simulate-whatsapp-message ./sample-whatsapp-message.j
 spark-intelligence gateway start --once --poll-timeout-seconds 0
 spark-intelligence gateway start --continuous
 spark-intelligence gateway traces --limit 20
+spark-intelligence gateway traces --channel-id telegram --event telegram_pending_pairing
 spark-intelligence gateway outbound --limit 20
+spark-intelligence gateway outbound --channel-id telegram --delivery failed
 ```
 
 Config can be inspected and updated without editing `config.yaml` manually:
@@ -185,6 +187,7 @@ Telegram pending pairings now also carry lightweight local context, so `operator
 `operator pairing-summary telegram` provides a compact channel-level view of pending, held, approved, and revoked pairing state in one command.
 After approval, the first successful Telegram reply also carries a one-time "pairing approved" welcome so the user gets a cleaner handoff into the active agent.
 Held, revoked, paused, disabled, and generic blocked Telegram DMs now also return explicit user-facing replies instead of failing silently.
+`gateway traces` and `gateway outbound` now support lightweight filters like `--channel-id`, `--event`, `--user`, and `--delivery` so Telegram onboarding failures can be narrowed quickly without another dashboard.
 
 Telegram ingress now also applies lightweight runtime guardrails:
 - duplicate update suppression

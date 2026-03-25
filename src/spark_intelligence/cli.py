@@ -228,10 +228,24 @@ def build_parser() -> argparse.ArgumentParser:
     gateway_traces_parser = gateway_subparsers.add_parser("traces", help="Show recent gateway traces")
     gateway_traces_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     gateway_traces_parser.add_argument("--limit", type=int, default=20, help="Number of trace events to show")
+    gateway_traces_parser.add_argument("--channel-id", help="Filter trace events by channel id")
+    gateway_traces_parser.add_argument("--event", help="Filter trace events by event name")
+    gateway_traces_parser.add_argument("--user", help="Filter trace events by user id or chat id")
+    gateway_traces_parser.add_argument("--decision", help="Filter trace events by decision")
     gateway_traces_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     gateway_outbound_parser = gateway_subparsers.add_parser("outbound", help="Show recent outbound audit records")
     gateway_outbound_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     gateway_outbound_parser.add_argument("--limit", type=int, default=20, help="Number of outbound events to show")
+    gateway_outbound_parser.add_argument("--channel-id", help="Filter outbound events by channel id")
+    gateway_outbound_parser.add_argument("--event", help="Filter outbound events by event name")
+    gateway_outbound_parser.add_argument("--user", help="Filter outbound events by user id or chat id")
+    gateway_outbound_parser.add_argument("--decision", help="Filter outbound events by decision")
+    gateway_outbound_parser.add_argument(
+        "--delivery",
+        choices=["ok", "failed"],
+        help="Filter outbound events by delivery result",
+    )
+    gateway_outbound_parser.add_argument("--contains", help="Filter outbound preview text by substring")
     gateway_outbound_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     channel_parser = subparsers.add_parser("channel", help="Manage channel adapters")
@@ -748,14 +762,36 @@ def handle_gateway_simulate_whatsapp_message(args: argparse.Namespace) -> int:
 def handle_gateway_traces(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
-    print(gateway_trace_view(config_manager, limit=args.limit, as_json=args.json))
+    print(
+        gateway_trace_view(
+            config_manager,
+            limit=args.limit,
+            channel_id=args.channel_id,
+            event=args.event,
+            user=args.user,
+            decision=args.decision,
+            as_json=args.json,
+        )
+    )
     return 0
 
 
 def handle_gateway_outbound(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
-    print(gateway_outbound_view(config_manager, limit=args.limit, as_json=args.json))
+    print(
+        gateway_outbound_view(
+            config_manager,
+            limit=args.limit,
+            channel_id=args.channel_id,
+            event=args.event,
+            user=args.user,
+            decision=args.decision,
+            delivery=args.delivery,
+            contains=args.contains,
+            as_json=args.json,
+        )
+    )
     return 0
 
 

@@ -333,6 +333,7 @@ def poll_telegram_updates_once(
                 config_manager,
                 {
                     "event": "telegram_update_duplicate",
+                    "channel_id": "telegram",
                     "update_id": normalized.update_id,
                     "telegram_user_id": normalized.telegram_user_id,
                     "chat_type": normalized.chat_type,
@@ -345,6 +346,7 @@ def poll_telegram_updates_once(
                 config_manager,
                 {
                     "event": "telegram_update_ignored",
+                    "channel_id": "telegram",
                     "reason": "non_dm_surface",
                     "update_id": normalized.update_id,
                     "telegram_user_id": normalized.telegram_user_id,
@@ -387,6 +389,7 @@ def poll_telegram_updates_once(
                 config_manager,
                 {
                     "event": "telegram_rate_limited",
+                    "channel_id": "telegram",
                     "update_id": normalized.update_id,
                     "telegram_user_id": normalized.telegram_user_id,
                     "chat_id": normalized.chat_id,
@@ -446,6 +449,7 @@ def poll_telegram_updates_once(
                 config_manager,
                 {
                     "event": "telegram_pending_pairing",
+                    "channel_id": "telegram",
                     "update_id": normalized.update_id,
                     "telegram_user_id": normalized.telegram_user_id,
                     "chat_id": normalized.chat_id,
@@ -495,6 +499,7 @@ def poll_telegram_updates_once(
                 config_manager,
                 {
                     "event": "telegram_update_denied",
+                    "channel_id": "telegram",
                     "update_id": normalized.update_id,
                     "telegram_user_id": normalized.telegram_user_id,
                     "chat_id": normalized.chat_id,
@@ -545,6 +550,7 @@ def poll_telegram_updates_once(
             config_manager,
             {
                 "event": "telegram_update_processed",
+                "channel_id": "telegram",
                 "update_id": normalized.update_id,
                 "telegram_user_id": normalized.telegram_user_id,
                 "chat_id": normalized.chat_id,

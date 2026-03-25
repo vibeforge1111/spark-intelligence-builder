@@ -256,8 +256,23 @@ def gateway_simulate_whatsapp_message(
     return result.to_json() if as_json else result.to_text()
 
 
-def gateway_trace_view(config_manager: ConfigManager, *, limit: int = 20, as_json: bool = False) -> str:
-    traces = read_gateway_traces(config_manager, limit=limit)
+def gateway_trace_view(
+    config_manager: ConfigManager,
+    *,
+    limit: int = 20,
+    channel_id: str | None = None,
+    event: str | None = None,
+    user: str | None = None,
+    decision: str | None = None,
+    as_json: bool = False,
+) -> str:
+    traces = _filter_log_records(
+        read_gateway_traces(config_manager, limit=limit),
+        channel_id=channel_id,
+        event=event,
+        user=user,
+        decision=decision,
+    )
     if as_json:
         return json.dumps(traces, indent=2)
     if not traces:
@@ -265,8 +280,9 @@ def gateway_trace_view(config_manager: ConfigManager, *, limit: int = 20, as_jso
     lines = ["Gateway traces:"]
     for trace in traces:
         lines.append(
-            f"- at={trace.get('recorded_at')} event={trace.get('event')} update_id={trace.get('update_id')} "
-            f"user={trace.get('telegram_user_id')} decision={trace.get('decision', 'n/a')} "
+            f"- at={trace.get('recorded_at')} channel={_record_channel_id(trace)} "
+            f"event={trace.get('event')} update_id={trace.get('update_id')} "
+            f"user={_record_user_ref(trace)} decision={trace.get('decision', 'n/a')} "
             f"trace_ref={trace.get('trace_ref', 'n/a')} mode={trace.get('bridge_mode', 'n/a')} "
             f"delivery_ok={trace.get('delivery_ok', 'n/a')} "
             f"guardrails={','.join(trace.get('guardrail_actions', [])) if trace.get('guardrail_actions') else 'none'}"
@@ -274,8 +290,27 @@ def gateway_trace_view(config_manager: ConfigManager, *, limit: int = 20, as_jso
     return "\n".join(lines)
 
 
-def gateway_outbound_view(config_manager: ConfigManager, *, limit: int = 20, as_json: bool = False) -> str:
-    records = read_outbound_audit(config_manager, limit=limit)
+def gateway_outbound_view(
+    config_manager: ConfigManager,
+    *,
+    limit: int = 20,
+    channel_id: str | None = None,
+    event: str | None = None,
+    user: str | None = None,
+    decision: str | None = None,
+    delivery: str | None = None,
+    contains: str | None = None,
+    as_json: bool = False,
+) -> str:
+    records = _filter_log_records(
+        read_outbound_audit(config_manager, limit=limit),
+        channel_id=channel_id,
+        event=event,
+        user=user,
+        decision=decision,
+        delivery=delivery,
+        contains=contains,
+    )
     if as_json:
         return json.dumps(records, indent=2)
     if not records:
@@ -283,13 +318,68 @@ def gateway_outbound_view(config_manager: ConfigManager, *, limit: int = 20, as_
     lines = ["Gateway outbound audit:"]
     for record in records:
         lines.append(
-            f"- at={record.get('recorded_at')} event={record.get('event')} update_id={record.get('update_id')} "
-            f"user={record.get('telegram_user_id')} ok={record.get('delivery_ok')} "
+            f"- at={record.get('recorded_at')} channel={_record_channel_id(record)} "
+            f"event={record.get('event')} update_id={record.get('update_id')} "
+            f"user={_record_user_ref(record)} ok={record.get('delivery_ok')} "
             f"mode={record.get('bridge_mode', 'n/a')} "
             f"guardrails={','.join(record.get('guardrail_actions', [])) if record.get('guardrail_actions') else 'none'} "
             f"preview={record.get('response_preview', '')}"
         )
     return "\n".join(lines)
+
+
+def _filter_log_records(
+    records: list[dict[str, Any]],
+    *,
+    channel_id: str | None = None,
+    event: str | None = None,
+    user: str | None = None,
+    decision: str | None = None,
+    delivery: str | None = None,
+    contains: str | None = None,
+) -> list[dict[str, Any]]:
+    filtered = records
+    if channel_id:
+        filtered = [record for record in filtered if _record_channel_id(record) == channel_id]
+    if event:
+        filtered = [record for record in filtered if str(record.get("event") or "") == event]
+    if user:
+        filtered = [record for record in filtered if _record_user_ref(record) == user]
+    if decision:
+        filtered = [record for record in filtered if str(record.get("decision") or "") == decision]
+    if delivery:
+        delivery_ok = delivery == "ok"
+        filtered = [record for record in filtered if bool(record.get("delivery_ok")) is delivery_ok]
+    if contains:
+        needle = contains.lower()
+        filtered = [
+            record
+            for record in filtered
+            if needle in str(record.get("response_preview") or record.get("failure_message") or "").lower()
+        ]
+    return filtered
+
+
+def _record_channel_id(record: dict[str, Any]) -> str:
+    channel_id = record.get("channel_id")
+    if channel_id:
+        return str(channel_id)
+    event = str(record.get("event") or "")
+    if event.startswith("telegram_"):
+        return "telegram"
+    if event.startswith("discord_"):
+        return "discord"
+    if event.startswith("whatsapp_"):
+        return "whatsapp"
+    return "unknown"
+
+
+def _record_user_ref(record: dict[str, Any]) -> str:
+    for key in ("telegram_user_id", "external_user_id", "user_id", "chat_id"):
+        value = record.get(key)
+        if value not in {None, ""}:
+            return str(value)
+    return "unknown"
 
 
 def _classify_telegram_failure(exc: Exception) -> str:
@@ -334,6 +424,7 @@ def _record_telegram_poll_failure(
         config_manager,
         {
             "event": "telegram_poll_failure",
+            "channel_id": "telegram",
             "failure_type": failure_type,
             "failure_message": message,
             "backoff_seconds": backoff_seconds,
