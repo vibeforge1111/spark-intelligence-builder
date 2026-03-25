@@ -598,20 +598,11 @@ def approve_latest_pairing(
     approved_by: str = LOCAL_OPERATOR_HUMAN_ID,
 ) -> str:
     _require_operator(state_db, approved_by)
-    with state_db.connect() as conn:
-        row = conn.execute(
-            """
-            SELECT external_user_id
-            FROM pairing_records
-            WHERE channel_id = ? AND status = 'pending'
-            ORDER BY updated_at DESC, external_user_id DESC
-            LIMIT 1
-            """,
-            (channel_id,),
-        ).fetchone()
-    if not row:
-        raise ValueError(f"No pending pairing found for channel '{channel_id}'.")
-    external_user_id = str(row["external_user_id"])
+    external_user_id = peek_latest_pairing_external_user_id(
+        state_db=state_db,
+        channel_id=channel_id,
+        statuses=("pending",),
+    )
     context = _load_pairing_context(
         state_db=state_db,
         channel_id=channel_id,
@@ -634,23 +625,15 @@ def hold_latest_pairing(
     held_by: str = LOCAL_OPERATOR_HUMAN_ID,
 ) -> str:
     _require_operator(state_db, held_by)
-    with state_db.connect() as conn:
-        row = conn.execute(
-            """
-            SELECT external_user_id
-            FROM pairing_records
-            WHERE channel_id = ? AND status = 'pending'
-            ORDER BY updated_at DESC, external_user_id DESC
-            LIMIT 1
-            """,
-            (channel_id,),
-        ).fetchone()
-    if not row:
-        raise ValueError(f"No pending pairing found for channel '{channel_id}'.")
+    external_user_id = peek_latest_pairing_external_user_id(
+        state_db=state_db,
+        channel_id=channel_id,
+        statuses=("pending",),
+    )
     return hold_pairing(
         state_db=state_db,
         channel_id=channel_id,
-        external_user_id=str(row["external_user_id"]),
+        external_user_id=external_user_id,
         held_by=held_by,
     )
 
@@ -662,28 +645,49 @@ def revoke_latest_pairing(
     revoked_by: str = LOCAL_OPERATOR_HUMAN_ID,
 ) -> str:
     _require_operator(state_db, revoked_by)
+    external_user_id = peek_latest_pairing_external_user_id(
+        state_db=state_db,
+        channel_id=channel_id,
+        statuses=("pending", "held"),
+    )
+    return revoke_pairing(
+        state_db=state_db,
+        channel_id=channel_id,
+        external_user_id=external_user_id,
+        revoked_by=revoked_by,
+    )
+
+
+def peek_latest_pairing_external_user_id(
+    *,
+    state_db: StateDB,
+    channel_id: str,
+    statuses: tuple[str, ...],
+) -> str:
+    if not statuses:
+        raise ValueError("At least one pairing status must be provided.")
+    placeholders = ", ".join("?" for _ in statuses)
     with state_db.connect() as conn:
         row = conn.execute(
-            """
+            f"""
             SELECT external_user_id
             FROM pairing_records
-            WHERE channel_id = ? AND status IN ('pending', 'held')
+            WHERE channel_id = ? AND status IN ({placeholders})
             ORDER BY
                 CASE status WHEN 'pending' THEN 0 WHEN 'held' THEN 1 ELSE 2 END,
                 updated_at DESC,
                 external_user_id DESC
             LIMIT 1
             """,
-            (channel_id,),
+            (channel_id, *statuses),
         ).fetchone()
     if not row:
-        raise ValueError(f"No pending or held pairing found for channel '{channel_id}'.")
-    return revoke_pairing(
-        state_db=state_db,
-        channel_id=channel_id,
-        external_user_id=str(row["external_user_id"]),
-        revoked_by=revoked_by,
-    )
+        if statuses == ("pending",):
+            raise ValueError(f"No pending pairing found for channel '{channel_id}'.")
+        if statuses == ("pending", "held"):
+            raise ValueError(f"No pending or held pairing found for channel '{channel_id}'.")
+        raise ValueError(f"No matching pairing found for channel '{channel_id}' with statuses {statuses}.")
+    return str(row["external_user_id"])
 
 
 def consume_pairing_welcome(

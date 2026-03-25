@@ -48,6 +48,7 @@ from spark_intelligence.identity.service import (
     list_pairings,
     list_sessions,
     pairing_summary,
+    peek_latest_pairing_external_user_id,
     revoke_latest_pairing,
     review_pairings,
     revoke_pairing,
@@ -548,6 +549,11 @@ def handle_operator_approve_latest(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
+    external_user_id = peek_latest_pairing_external_user_id(
+        state_db=state_db,
+        channel_id=args.channel_id,
+        statuses=("pending",),
+    )
     result = approve_latest_pairing(
         state_db=state_db,
         channel_id=args.channel_id,
@@ -557,7 +563,7 @@ def handle_operator_approve_latest(args: argparse.Namespace) -> int:
         state_db=state_db,
         action="approve_latest_pairing",
         target_kind="pairing",
-        target_ref=args.channel_id,
+        target_ref=f"{args.channel_id}:{external_user_id}",
         reason=args.reason,
         details={"display_name": args.display_name},
     )
@@ -570,6 +576,11 @@ def handle_operator_hold_latest(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
+    external_user_id = peek_latest_pairing_external_user_id(
+        state_db=state_db,
+        channel_id=args.channel_id,
+        statuses=("pending",),
+    )
     result = hold_latest_pairing(
         state_db=state_db,
         channel_id=args.channel_id,
@@ -578,7 +589,7 @@ def handle_operator_hold_latest(args: argparse.Namespace) -> int:
         state_db=state_db,
         action="hold_latest_pairing",
         target_kind="pairing",
-        target_ref=args.channel_id,
+        target_ref=f"{args.channel_id}:{external_user_id}",
         reason=args.reason,
     )
     print(result)
@@ -590,6 +601,11 @@ def handle_operator_revoke_latest(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
+    external_user_id = peek_latest_pairing_external_user_id(
+        state_db=state_db,
+        channel_id=args.channel_id,
+        statuses=("pending", "held"),
+    )
     result = revoke_latest_pairing(
         state_db=state_db,
         channel_id=args.channel_id,
@@ -598,7 +614,7 @@ def handle_operator_revoke_latest(args: argparse.Namespace) -> int:
         state_db=state_db,
         action="revoke_latest_pairing",
         target_kind="pairing",
-        target_ref=args.channel_id,
+        target_ref=f"{args.channel_id}:{external_user_id}",
         reason=args.reason,
     )
     print(result)
