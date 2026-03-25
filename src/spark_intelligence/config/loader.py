@@ -54,7 +54,7 @@ class ConfigManager:
 
     def default_config(self) -> dict[str, Any]:
         return {
-            "workspace": {"id": "default", "home": str(self.paths.home)},
+            "workspace": {"id": "default", "home": str(self.paths.home), "owner_human_id": "local-operator"},
             "runtime": {"foreground_only": True, "autostart": {"enabled": False}},
             "providers": {"default_provider": None, "records": {}},
             "channels": {"records": {}},

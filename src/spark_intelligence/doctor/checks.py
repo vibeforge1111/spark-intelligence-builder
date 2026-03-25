@@ -60,6 +60,15 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
     except sqlite3.Error as exc:
         checks.append(DoctorCheck("state-schema", False, str(exc)))
 
+    try:
+        with state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM workspace_roles WHERE human_id = 'local-operator' AND role = 'operator_admin' LIMIT 1"
+            ).fetchone()
+        checks.append(DoctorCheck("operator-authority", bool(row), "local operator present"))
+    except sqlite3.Error as exc:
+        checks.append(DoctorCheck("operator-authority", False, str(exc)))
+
     env_map = config_manager.read_env_map()
     provider_records = config_manager.load().get("providers", {}).get("records", {})
     if provider_records:

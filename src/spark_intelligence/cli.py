@@ -8,6 +8,14 @@ from spark_intelligence.channel.service import add_channel
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import run_doctor
 from spark_intelligence.gateway.runtime import gateway_start, gateway_status
+from spark_intelligence.identity.service import (
+    agent_inspect,
+    approve_pairing,
+    list_pairings,
+    list_sessions,
+    revoke_pairing,
+    revoke_session,
+)
 from spark_intelligence.jobs.service import jobs_list, jobs_tick
 from spark_intelligence.state.db import StateDB
 
@@ -60,6 +68,34 @@ def build_parser() -> argparse.ArgumentParser:
     jobs_tick_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     jobs_list_parser = jobs_subparsers.add_parser("list", help="List known jobs")
     jobs_list_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+
+    agent_parser = subparsers.add_parser("agent", help="Inspect agent and workspace state")
+    agent_subparsers = agent_parser.add_subparsers(dest="agent_command", required=True)
+    agent_inspect_parser = agent_subparsers.add_parser("inspect", help="Inspect current workspace identity state")
+    agent_inspect_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    agent_inspect_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+
+    pairing_parser = subparsers.add_parser("pairings", help="Manage pairings")
+    pairing_subparsers = pairing_parser.add_subparsers(dest="pairings_command", required=True)
+    pairing_list_parser = pairing_subparsers.add_parser("list", help="List pairings")
+    pairing_list_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    pairing_approve_parser = pairing_subparsers.add_parser("approve", help="Approve a pairing")
+    pairing_approve_parser.add_argument("channel_id", help="Channel installation id")
+    pairing_approve_parser.add_argument("external_user_id", help="External user id")
+    pairing_approve_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    pairing_approve_parser.add_argument("--display-name", help="Friendly display name")
+    pairing_revoke_parser = pairing_subparsers.add_parser("revoke", help="Revoke a pairing")
+    pairing_revoke_parser.add_argument("channel_id", help="Channel installation id")
+    pairing_revoke_parser.add_argument("external_user_id", help="External user id")
+    pairing_revoke_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+
+    sessions_parser = subparsers.add_parser("sessions", help="Inspect and revoke session bindings")
+    sessions_subparsers = sessions_parser.add_subparsers(dest="sessions_command", required=True)
+    sessions_list_parser = sessions_subparsers.add_parser("list", help="List sessions")
+    sessions_list_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    sessions_revoke_parser = sessions_subparsers.add_parser("revoke", help="Revoke a session")
+    sessions_revoke_parser.add_argument("session_id", help="Canonical session id")
+    sessions_revoke_parser.add_argument("--home", help="Override Spark Intelligence home directory")
 
     return parser
 
@@ -164,6 +200,72 @@ def handle_jobs_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_agent_inspect(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    owner = config_manager.load().get("workspace", {}).get("owner_human_id", "local-operator")
+    report = agent_inspect(state_db=state_db, workspace_owner=owner)
+    if args.json:
+        print(report.to_json())
+    else:
+        print(report.to_text())
+    return 0
+
+
+def handle_pairings_list(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    print(list_pairings(state_db))
+    return 0
+
+
+def handle_pairings_approve(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    print(
+        approve_pairing(
+            state_db=state_db,
+            channel_id=args.channel_id,
+            external_user_id=args.external_user_id,
+            display_name=args.display_name,
+        )
+    )
+    return 0
+
+
+def handle_pairings_revoke(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    print(revoke_pairing(state_db=state_db, channel_id=args.channel_id, external_user_id=args.external_user_id))
+    return 0
+
+
+def handle_sessions_list(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    print(list_sessions(state_db))
+    return 0
+
+
+def handle_sessions_revoke(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    print(revoke_session(state_db=state_db, session_id=args.session_id))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -184,6 +286,18 @@ def main(argv: list[str] | None = None) -> int:
         return handle_jobs_tick(args)
     if args.command == "jobs" and args.jobs_command == "list":
         return handle_jobs_list(args)
+    if args.command == "agent" and args.agent_command == "inspect":
+        return handle_agent_inspect(args)
+    if args.command == "pairings" and args.pairings_command == "list":
+        return handle_pairings_list(args)
+    if args.command == "pairings" and args.pairings_command == "approve":
+        return handle_pairings_approve(args)
+    if args.command == "pairings" and args.pairings_command == "revoke":
+        return handle_pairings_revoke(args)
+    if args.command == "sessions" and args.sessions_command == "list":
+        return handle_sessions_list(args)
+    if args.command == "sessions" and args.sessions_command == "revoke":
+        return handle_sessions_revoke(args)
 
     parser.error("Unknown command")
     return 2

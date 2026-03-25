@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.identity.service import approve_pairing
 from spark_intelligence.state.db import StateDB
 
 
@@ -46,12 +47,14 @@ def add_channel(
             """,
             (channel_id, channel_kind, "configured", pairing_mode, auth_ref),
         )
-        conn.execute("DELETE FROM allowlist_entries WHERE channel_id = ?", (channel_id,))
-        for user_id in allowed_users:
-            conn.execute(
-                "INSERT INTO allowlist_entries(channel_id, external_user_id, role) VALUES (?, ?, ?)",
-                (channel_id, user_id, "paired_user"),
-            )
         conn.commit()
+
+    for user_id in allowed_users:
+        approve_pairing(
+            state_db=state_db,
+            channel_id=channel_id,
+            external_user_id=user_id,
+            display_name=f"{channel_kind} user {user_id}",
+        )
 
     return f"Configured channel '{channel_kind}' with pairing mode '{pairing_mode}'."

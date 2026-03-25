@@ -75,5 +75,8 @@ spark-intelligence setup
 spark-intelligence auth connect openai --api-key <key> --model <model>
 spark-intelligence channel add telegram --bot-token <token> --allowed-user <id>
 spark-intelligence doctor
+spark-intelligence agent inspect
+spark-intelligence pairings list
+spark-intelligence sessions list
 spark-intelligence gateway start
 ```
