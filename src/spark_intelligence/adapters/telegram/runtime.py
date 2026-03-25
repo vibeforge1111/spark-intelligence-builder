@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -13,6 +14,7 @@ from spark_intelligence.gateway.guardrails import (
     is_duplicate_event,
     load_channel_security_policy,
     prepare_outbound_text,
+    set_runtime_state_value,
 )
 from spark_intelligence.gateway.tracing import append_gateway_trace, append_outbound_audit
 from spark_intelligence.identity.service import resolve_inbound_dm
@@ -28,16 +30,32 @@ class TelegramRuntimeSummary:
     pairing_mode: str | None
     auth_ref: str | None
     bot_username: str | None
+    auth_status: str | None
     allowed_user_count: int
 
     def to_line(self) -> str:
         if not self.configured:
             return "- telegram: not configured"
         bot_ref = f" bot=@{self.bot_username}" if self.bot_username else ""
+        auth_ref = f" auth={self.auth_status or 'unknown'}"
         return (
             f"- telegram: status={self.status or 'unknown'} pairing_mode={self.pairing_mode} "
-            f"auth_ref={self.auth_ref or 'missing'}{bot_ref} allowed_users={self.allowed_user_count}"
+            f"auth_ref={self.auth_ref or 'missing'}{bot_ref}{auth_ref} allowed_users={self.allowed_user_count}"
         )
+
+
+@dataclass
+class TelegramRuntimeHealth:
+    auth_status: str | None
+    auth_checked_at: str | None
+    auth_error: str | None
+    bot_username: str | None
+    last_ok_at: str | None
+    last_failure_at: str | None
+    last_failure_type: str | None
+    last_failure_message: str | None
+    consecutive_failures: int
+    last_backoff_seconds: int
 
 
 @dataclass
@@ -99,9 +117,11 @@ def build_telegram_runtime_summary(config_manager: ConfigManager, state_db: Stat
             pairing_mode=None,
             auth_ref=None,
             bot_username=None,
+            auth_status=None,
             allowed_user_count=0,
         )
 
+    health = read_telegram_runtime_health(state_db)
     with state_db.connect() as conn:
         count = conn.execute(
             "SELECT COUNT(*) AS c FROM allowlist_entries WHERE channel_id = 'telegram'"
@@ -121,9 +141,76 @@ def build_telegram_runtime_summary(config_manager: ConfigManager, state_db: Stat
         status=(installation["status"] if installation else record.get("status")),
         pairing_mode=(installation["pairing_mode"] if installation else record.get("pairing_mode")),
         auth_ref=(installation["auth_ref"] if installation else record.get("auth_ref")),
-        bot_username=((record.get("bot_profile") or {}).get("username") if isinstance(record.get("bot_profile"), dict) else None),
+        bot_username=(
+            ((record.get("bot_profile") or {}).get("username") if isinstance(record.get("bot_profile"), dict) else None)
+            or health.bot_username
+        ),
+        auth_status=health.auth_status,
         allowed_user_count=count,
     )
+
+
+def read_telegram_runtime_health(state_db: StateDB) -> TelegramRuntimeHealth:
+    auth_payload = _load_runtime_json_object(state_db, "telegram:auth_state")
+    poll_payload = _load_runtime_json_object(state_db, "telegram:poll_state")
+    return TelegramRuntimeHealth(
+        auth_status=_read_optional_text(auth_payload.get("status")),
+        auth_checked_at=_read_optional_text(auth_payload.get("checked_at")),
+        auth_error=_read_optional_text(auth_payload.get("error")),
+        bot_username=_read_optional_text(auth_payload.get("bot_username")),
+        last_ok_at=_read_optional_text(poll_payload.get("last_ok_at")),
+        last_failure_at=_read_optional_text(poll_payload.get("last_failure_at")),
+        last_failure_type=_read_optional_text(poll_payload.get("last_failure_type")),
+        last_failure_message=_read_optional_text(poll_payload.get("last_failure_message")),
+        consecutive_failures=_read_optional_int(poll_payload.get("consecutive_failures")),
+        last_backoff_seconds=_read_optional_int(poll_payload.get("last_backoff_seconds")),
+    )
+
+
+def record_telegram_auth_result(
+    *,
+    state_db: StateDB,
+    status: str,
+    bot_username: str | None = None,
+    error: str | None = None,
+) -> None:
+    set_runtime_state_value(
+        state_db=state_db,
+        state_key="telegram:auth_state",
+        value=json.dumps(
+            {
+                "status": status,
+                "checked_at": _utc_now_iso(),
+                "bot_username": bot_username,
+                "error": error,
+            },
+            sort_keys=True,
+        ),
+    )
+
+
+def record_telegram_poll_success(*, state_db: StateDB) -> None:
+    payload = _load_runtime_json_object(state_db, "telegram:poll_state")
+    payload["last_ok_at"] = _utc_now_iso()
+    payload["consecutive_failures"] = 0
+    payload["last_backoff_seconds"] = 0
+    set_runtime_state_value(state_db=state_db, state_key="telegram:poll_state", value=json.dumps(payload, sort_keys=True))
+
+
+def record_telegram_poll_failure(
+    *,
+    state_db: StateDB,
+    failure_type: str,
+    message: str,
+    backoff_seconds: int,
+) -> None:
+    payload = _load_runtime_json_object(state_db, "telegram:poll_state")
+    payload["last_failure_at"] = _utc_now_iso()
+    payload["last_failure_type"] = failure_type
+    payload["last_failure_message"] = message
+    payload["consecutive_failures"] = _read_optional_int(payload.get("consecutive_failures")) + 1
+    payload["last_backoff_seconds"] = max(backoff_seconds, 0)
+    set_runtime_state_value(state_db=state_db, state_key="telegram:poll_state", value=json.dumps(payload, sort_keys=True))
 
 
 def simulate_telegram_update(
@@ -150,7 +237,7 @@ def simulate_telegram_update(
         external_user_id=normalized.telegram_user_id,
         display_name=normalized.telegram_username or f"telegram user {normalized.telegram_user_id}",
     )
-    outbound_text = resolution.response_text
+    outbound_text = _pairing_reply_text(resolution.response_text, inbound_text=normalized.text)
     if resolution.allowed and resolution.agent_id and resolution.human_id and resolution.session_id:
         bridge_result = build_researcher_reply(
             config_manager=config_manager,
@@ -298,11 +385,12 @@ def poll_telegram_updates_once(
 
         if resolution.decision == "pending_pairing":
             pending_pairing_count += 1
+            pairing_text = _pairing_reply_text(resolution.response_text, inbound_text=normalized.text)
             send_result = _send_telegram_reply(
                 config_manager=config_manager,
                 client=client,
                 chat_id=normalized.chat_id,
-                text=resolution.response_text,
+                text=pairing_text,
                 event="telegram_pending_pairing_outbound",
                 update_id=normalized.update_id,
                 telegram_user_id=normalized.telegram_user_id,
@@ -323,7 +411,7 @@ def poll_telegram_updates_once(
                     "telegram_user_id": normalized.telegram_user_id,
                     "chat_id": normalized.chat_id,
                     "session_id": resolution.session_id,
-                    "response_preview": _preview_text(resolution.response_text),
+                    "response_preview": _preview_text(pairing_text),
                     "delivery_ok": send_result["ok"],
                     "delivery_error": send_result["error"],
                     "guardrail_actions": send_result["guardrail_actions"],
@@ -502,3 +590,44 @@ def _preview_text(text: str, *, limit: int = 160) -> str:
     if len(compact) <= limit:
         return compact
     return f"{compact[: limit - 3]}..."
+
+
+def _pairing_reply_text(default_text: str, *, inbound_text: str) -> str:
+    normalized = inbound_text.strip().lower()
+    if normalized in {"/start", "start"}:
+        return (
+            "Spark Intelligence received your start request. "
+            "This Telegram account is waiting for operator approval before the agent will respond here."
+        )
+    return default_text
+
+
+def _load_runtime_json_object(state_db: StateDB, state_key: str) -> dict[str, Any]:
+    with state_db.connect() as conn:
+        row = conn.execute("SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (state_key,)).fetchone()
+    if not row or row["value"] is None:
+        return {}
+    try:
+        payload = json.loads(str(row["value"]))
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _read_optional_text(value: object) -> str | None:
+    if value in {None, ""}:
+        return None
+    return str(value)
+
+
+def _read_optional_int(value: object) -> int:
+    if value in {None, ""}:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")

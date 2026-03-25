@@ -12,12 +12,16 @@ from spark_intelligence.adapters.telegram.client import TelegramBotApiClient
 from spark_intelligence.adapters.telegram.runtime import (
     build_telegram_runtime_summary,
     poll_telegram_updates_once,
+    read_telegram_runtime_health,
+    record_telegram_auth_result,
+    record_telegram_poll_failure,
+    record_telegram_poll_success,
     simulate_telegram_update,
 )
 from spark_intelligence.adapters.whatsapp.runtime import build_whatsapp_runtime_summary, simulate_whatsapp_message
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import run_doctor
-from spark_intelligence.gateway.tracing import outbound_log_path, read_gateway_traces, read_outbound_audit, trace_log_path
+from spark_intelligence.gateway.tracing import append_gateway_trace, outbound_log_path, read_gateway_traces, read_outbound_audit, trace_log_path
 from spark_intelligence.state.db import StateDB
 
 
@@ -111,6 +115,7 @@ def gateway_start(
     env_map = config_manager.read_env_map()
     token = env_map.get(auth_ref) if auth_ref else None
     if not token:
+        record_telegram_auth_result(state_db=state_db, status="missing", error="Telegram auth ref is missing or unresolved.")
         lines.append("Telegram auth ref is missing or unresolved. Gateway did not start polling.")
         return "\n".join(lines)
 
@@ -118,11 +123,23 @@ def gateway_start(
     try:
         me = client.get_me().get("result", {})
     except urllib.error.HTTPError as exc:
+        record_telegram_auth_result(state_db=state_db, status="failed", error=f"HTTP {exc.code}")
         lines.append(f"Telegram auth check failed with HTTP {exc.code}. Gateway did not start polling.")
         return "\n".join(lines)
     except urllib.error.URLError as exc:
+        record_telegram_auth_result(state_db=state_db, status="failed", error=str(exc.reason))
         lines.append(f"Telegram auth check failed: {exc.reason}. Gateway did not start polling.")
         return "\n".join(lines)
+    except RuntimeError as exc:
+        record_telegram_auth_result(state_db=state_db, status="failed", error=str(exc))
+        lines.append(f"Telegram auth check failed: {exc}. Gateway did not start polling.")
+        return "\n".join(lines)
+    record_telegram_auth_result(
+        state_db=state_db,
+        status="ok",
+        bot_username=str(me.get("username")) if me.get("username") else None,
+        error=None,
+    )
     lines.append(f"Telegram bot authenticated: @{me.get('username', 'unknown')}")
     lines.append(f"Gateway trace log: {trace_log_path(config_manager)}")
     lines.append(f"Gateway outbound audit log: {outbound_log_path(config_manager)}")
@@ -133,12 +150,48 @@ def gateway_start(
         while True:
             if cycle_limit is not None and cycle_index >= cycle_limit:
                 break
-            poll_result = poll_telegram_updates_once(
-                config_manager=config_manager,
-                state_db=state_db,
-                client=client,
-                timeout_seconds=poll_timeout_seconds,
-            )
+            try:
+                poll_result = poll_telegram_updates_once(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    client=client,
+                    timeout_seconds=poll_timeout_seconds,
+                )
+            except (urllib.error.HTTPError, urllib.error.URLError, RuntimeError) as exc:
+                failure_type = _classify_telegram_failure(exc)
+                failure_message = _telegram_failure_message(exc)
+                backoff_seconds = _record_telegram_poll_failure(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    failure_type=failure_type,
+                    message=failure_message,
+                )
+                lines.append(f"Cycle {cycle_index + 1}:")
+                lines.append(f"  Telegram polling failure: type={failure_type} message={failure_message}")
+                lines.append(f"  Backoff seconds: {backoff_seconds}")
+                cycle_index += 1
+                if once or not continuous:
+                    break
+                sleep(max(backoff_seconds, 1))
+                continue
+            except Exception as exc:  # pragma: no cover - defensive runtime guard
+                failure_type = "unexpected_error"
+                failure_message = str(exc)
+                backoff_seconds = _record_telegram_poll_failure(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    failure_type=failure_type,
+                    message=failure_message,
+                )
+                lines.append(f"Cycle {cycle_index + 1}:")
+                lines.append(f"  Telegram polling failure: type={failure_type} message={failure_message}")
+                lines.append(f"  Backoff seconds: {backoff_seconds}")
+                cycle_index += 1
+                if once or not continuous:
+                    break
+                sleep(max(backoff_seconds, 1))
+                continue
+            record_telegram_poll_success(state_db=state_db)
             lines.append(f"Cycle {cycle_index + 1}:")
             lines.extend(f"  {line}" for line in poll_result.to_text().splitlines())
             cycle_index += 1
@@ -237,3 +290,54 @@ def gateway_outbound_view(config_manager: ConfigManager, *, limit: int = 20, as_
             f"preview={record.get('response_preview', '')}"
         )
     return "\n".join(lines)
+
+
+def _classify_telegram_failure(exc: Exception) -> str:
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"http_{exc.code}"
+    if isinstance(exc, urllib.error.URLError):
+        return "network_error"
+    if isinstance(exc, RuntimeError):
+        message = str(exc).lower()
+        if "timed out" in message:
+            return "timeout"
+        if "unauthorized" in message or "token" in message:
+            return "auth_error"
+        return "runtime_error"
+    return "unexpected_error"
+
+
+def _telegram_failure_message(exc: Exception) -> str:
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"HTTP {exc.code}"
+    if isinstance(exc, urllib.error.URLError):
+        return str(exc.reason)
+    return str(exc)
+
+
+def _record_telegram_poll_failure(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    failure_type: str,
+    message: str,
+) -> int:
+    health = read_telegram_runtime_health(state_db)
+    backoff_seconds = min(10, max(1, 2 ** min(health.consecutive_failures, 3)))
+    record_telegram_poll_failure(
+        state_db=state_db,
+        failure_type=failure_type,
+        message=message,
+        backoff_seconds=backoff_seconds,
+    )
+    append_gateway_trace(
+        config_manager,
+        {
+            "event": "telegram_poll_failure",
+            "failure_type": failure_type,
+            "failure_message": message,
+            "backoff_seconds": backoff_seconds,
+            "consecutive_failures": health.consecutive_failures + 1,
+        },
+    )
+    return backoff_seconds

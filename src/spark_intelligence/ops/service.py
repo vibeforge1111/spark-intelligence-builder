@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from spark_intelligence.adapters.telegram.runtime import read_telegram_runtime_health
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.gateway.tracing import read_gateway_traces, read_outbound_audit
 from spark_intelligence.identity.service import LOCAL_OPERATOR_HUMAN_ID
@@ -159,7 +160,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
     pairing_rows = review_pairings(state_db).rows
     pending_pairings = [row for row in pairing_rows if row.get("status") == "pending"]
     held_pairings = [row for row in pairing_rows if row.get("status") == "held"]
-    channel_alerts = _load_channel_alerts(state_db)
+    channel_alerts = _load_channel_alerts(config_manager=config_manager, state_db=state_db)
     bridge_alerts = _build_bridge_alerts(config_manager=config_manager, state_db=state_db)
     items = _build_inbox_items(
         pending_pairings=pending_pairings,
@@ -193,7 +194,7 @@ def build_operator_security_report(
     state_db: StateDB,
     limit: int = 100,
 ) -> OperatorSecurityReport:
-    channel_alerts = _load_channel_alerts(state_db)
+    channel_alerts = _load_channel_alerts(config_manager=config_manager, state_db=state_db)
     bridge_alerts = _build_bridge_alerts(config_manager=config_manager, state_db=state_db)
     traces = read_gateway_traces(config_manager, limit=limit)
     outbound = read_outbound_audit(config_manager, limit=limit)
@@ -243,7 +244,7 @@ def build_operator_security_report(
     return OperatorSecurityReport(payload=payload)
 
 
-def _load_channel_alerts(state_db: StateDB) -> list[dict[str, Any]]:
+def _load_channel_alerts(*, config_manager: ConfigManager, state_db: StateDB) -> list[dict[str, Any]]:
     with state_db.connect() as conn:
         rows = conn.execute(
             """
@@ -256,7 +257,40 @@ def _load_channel_alerts(state_db: StateDB) -> list[dict[str, Any]]:
                 channel_id
             """
         ).fetchall()
-    return [dict(row) for row in rows]
+    alerts = [dict(row) for row in rows]
+    telegram_health = read_telegram_runtime_health(state_db)
+    if telegram_health.auth_status in {"failed", "missing"}:
+        alerts.append(
+            {
+                "channel_id": "telegram",
+                "channel_kind": "telegram",
+                "status": f"auth_{telegram_health.auth_status}",
+                "pairing_mode": None,
+                "updated_at": telegram_health.auth_checked_at,
+                "summary": (
+                    f"Telegram auth status is {telegram_health.auth_status}; "
+                    f"last error: {telegram_health.auth_error or 'unknown'}."
+                ),
+                "recommended_command": "spark-intelligence channel telegram-onboard --bot-token <token>",
+            }
+        )
+    if telegram_health.consecutive_failures > 0 and telegram_health.last_failure_at:
+        alerts.append(
+            {
+                "channel_id": "telegram",
+                "channel_kind": "telegram",
+                "status": "poll_failure",
+                "pairing_mode": None,
+                "updated_at": telegram_health.last_failure_at,
+                "summary": (
+                    f"Telegram polling has {telegram_health.consecutive_failures} consecutive failure(s); "
+                    f"last type={telegram_health.last_failure_type or 'unknown'} "
+                    f"backoff={telegram_health.last_backoff_seconds}s."
+                ),
+                "recommended_command": "spark-intelligence gateway traces --limit 20",
+            }
+        )
+    return alerts
 
 
 def _build_bridge_alerts(*, config_manager: ConfigManager, state_db: StateDB) -> list[dict[str, Any]]:
@@ -413,15 +447,16 @@ def _build_inbox_items(
     for row in channel_alerts:
         channel_id = str(row["channel_id"])
         status = str(row["status"])
+        summary = str(row.get("summary") or f"Channel {channel_id} is {status}.")
         items.append(
             {
                 "kind": "channel",
                 "status": status,
-                "priority": "medium" if status == "paused" else "high",
-                "sort_order": 35 if status == "paused" else 25,
+                "priority": "medium" if status in {"paused", "poll_failure"} else "high",
+                "sort_order": 35 if status in {"paused", "poll_failure"} else 25,
                 "item_ref": channel_id,
-                "summary": f"Channel {channel_id} is {status}.",
-                "recommended_command": f"spark-intelligence operator set-channel {channel_id} enabled",
+                "summary": summary,
+                "recommended_command": str(row.get("recommended_command") or f"spark-intelligence operator set-channel {channel_id} enabled"),
             }
         )
 
@@ -493,12 +528,13 @@ def _build_security_items(
     for row in channel_alerts:
         channel_id = str(row["channel_id"])
         status = str(row["status"])
+        summary = str(row.get("summary") or f"Channel {channel_id} remains {status}; ingress is constrained.")
         items.append(
             {
-                "priority": "medium" if status == "paused" else "high",
-                "sort_order": severity_order.get("medium" if status == "paused" else "high", 60),
-                "summary": f"Channel {channel_id} remains {status}; ingress is constrained.",
-                "recommended_command": f"spark-intelligence operator set-channel {channel_id} enabled",
+                "priority": "medium" if status in {"paused", "poll_failure"} else "high",
+                "sort_order": severity_order.get("medium" if status in {"paused", "poll_failure"} else "high", 60),
+                "summary": summary,
+                "recommended_command": str(row.get("recommended_command") or f"spark-intelligence operator set-channel {channel_id} enabled"),
             }
         )
 

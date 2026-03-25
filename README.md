@@ -183,3 +183,11 @@ Telegram ingress now also applies lightweight runtime guardrails:
 - outbound reply truncation and secret-like reply blocking
 
 Those guardrails now live in shared gateway helpers so future adapters can inherit the same local-first safety behavior instead of re-implementing it.
+
+Telegram runtime health is also persisted locally now:
+- last auth check state
+- last poll failure type/message
+- consecutive poll failures with bounded backoff
+- cleaner `/start` pairing response for first-contact users
+
+That health flows into `gateway status`, `operator inbox`, and `operator security` so Telegram problems stay visible without another background subsystem.
