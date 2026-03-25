@@ -80,3 +80,9 @@ spark-intelligence pairings list
 spark-intelligence sessions list
 spark-intelligence gateway start
 ```
+
+Telegram runtime simulation is available for local verification before real polling lands:
+
+```bash
+spark-intelligence gateway simulate-telegram-update ./sample-update.json
+```

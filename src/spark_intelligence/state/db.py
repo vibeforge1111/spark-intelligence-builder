@@ -66,7 +66,8 @@ SCHEMA_STATEMENTS = [
         channel_id TEXT NOT NULL,
         external_user_id TEXT NOT NULL,
         role TEXT NOT NULL DEFAULT 'paired_user',
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(channel_id, external_user_id, role)
     )
     """,
     """

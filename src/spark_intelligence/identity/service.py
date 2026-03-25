@@ -31,6 +31,16 @@ class IdentityReport:
         return json.dumps(self.payload, indent=2)
 
 
+@dataclass
+class InboundResolution:
+    allowed: bool
+    decision: str
+    human_id: str | None
+    agent_id: str | None
+    session_id: str | None
+    response_text: str
+
+
 def _require_operator(state_db: StateDB, human_id: str = LOCAL_OPERATOR_HUMAN_ID) -> None:
     with state_db.connect() as conn:
         row = conn.execute(
@@ -142,15 +152,119 @@ def approve_pairing(
             (pairing_id, channel_id, external_user_id, human_id, approved_by),
         )
         conn.execute(
-            """
-            INSERT INTO allowlist_entries(channel_id, external_user_id, role)
-            VALUES (?, ?, 'paired_user')
-            """,
+            "DELETE FROM allowlist_entries WHERE channel_id = ? AND external_user_id = ? AND role = 'paired_user'",
+            (channel_id, external_user_id),
+        )
+        conn.execute(
+            "INSERT INTO allowlist_entries(channel_id, external_user_id, role) VALUES (?, ?, 'paired_user')",
             (channel_id, external_user_id),
         )
         conn.commit()
 
     return f"Approved pairing for {channel_id}:{external_user_id} -> {human_id}"
+
+
+def resolve_inbound_dm(
+    *,
+    state_db: StateDB,
+    channel_id: str,
+    external_user_id: str,
+    display_name: str,
+) -> InboundResolution:
+    session_id = _canonical_session_id(channel_id, external_user_id)
+    human_id = _canonical_human_id(channel_id, external_user_id)
+    agent_id = _canonical_agent_id(human_id)
+
+    with state_db.connect() as conn:
+        channel_row = conn.execute(
+            "SELECT channel_id, pairing_mode FROM channel_installations WHERE channel_id = ? LIMIT 1",
+            (channel_id,),
+        ).fetchone()
+        if not channel_row:
+            return InboundResolution(
+                allowed=False,
+                decision="blocked",
+                human_id=None,
+                agent_id=None,
+                session_id=None,
+                response_text="Channel is not configured.",
+            )
+
+        allow_row = conn.execute(
+            """
+            SELECT 1
+            FROM allowlist_entries
+            WHERE channel_id = ? AND external_user_id = ? AND role = 'paired_user'
+            LIMIT 1
+            """,
+            (channel_id, external_user_id),
+        ).fetchone()
+
+        session_row = conn.execute(
+            """
+            SELECT session_id
+            FROM session_bindings
+            WHERE session_id = ? AND status = 'active'
+            LIMIT 1
+            """,
+            (session_id,),
+        ).fetchone()
+
+        pairing_mode = channel_row["pairing_mode"]
+        if allow_row and session_row:
+            return InboundResolution(
+                allowed=True,
+                decision="allowed",
+                human_id=human_id,
+                agent_id=agent_id,
+                session_id=session_id,
+                response_text="Authorized DM routed to canonical session.",
+            )
+
+        if allow_row and not session_row:
+            approve_pairing(
+                state_db=state_db,
+                channel_id=channel_id,
+                external_user_id=external_user_id,
+                display_name=display_name,
+            )
+            return InboundResolution(
+                allowed=True,
+                decision="allowed",
+                human_id=human_id,
+                agent_id=agent_id,
+                session_id=session_id,
+                response_text="Authorized DM restored its canonical session.",
+            )
+
+        if pairing_mode == "pairing":
+            pairing_id = f"pairing:{channel_id}:{external_user_id}"
+            conn.execute(
+                """
+                INSERT INTO pairing_records(pairing_id, channel_id, external_user_id, human_id, status, approved_by)
+                VALUES (?, ?, ?, ?, 'pending', NULL)
+                ON CONFLICT(pairing_id) DO UPDATE SET status='pending', updated_at=CURRENT_TIMESTAMP
+                """,
+                (pairing_id, channel_id, external_user_id, human_id),
+            )
+            conn.commit()
+            return InboundResolution(
+                allowed=False,
+                decision="pending_pairing",
+                human_id=human_id,
+                agent_id=None,
+                session_id=None,
+                response_text="Unauthorized DM. Pairing approval is required before this agent will respond.",
+            )
+
+        return InboundResolution(
+            allowed=False,
+            decision="blocked",
+            human_id=None,
+            agent_id=None,
+            session_id=None,
+            response_text="Unauthorized DM. This channel requires explicit allowlist access.",
+        )
 
 
 def revoke_pairing(*, state_db: StateDB, channel_id: str, external_user_id: str, revoked_by: str = LOCAL_OPERATOR_HUMAN_ID) -> str:

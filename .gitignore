@@ -12,4 +12,6 @@ __pycache__/
 .idea/
 .vscode/
 .tmp-home/
+.tmp-home-*/
+.tmp-telegram-*.json
 *.egg-info/
