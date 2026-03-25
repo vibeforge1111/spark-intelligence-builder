@@ -78,6 +78,42 @@ class ConfigManager:
     def save(self, data: dict[str, Any]) -> None:
         self.paths.config_yaml.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
+    def get_path(self, dotted_path: str, *, default: Any = None) -> Any:
+        current: Any = self.load()
+        for part in self._split_path(dotted_path):
+            if not isinstance(current, dict) or part not in current:
+                return default
+            current = current[part]
+        return current
+
+    def set_path(self, dotted_path: str, value: Any) -> dict[str, Any]:
+        data = self.load()
+        current: dict[str, Any] = data
+        parts = self._split_path(dotted_path)
+        for part in parts[:-1]:
+            child = current.get(part)
+            if not isinstance(child, dict):
+                child = {}
+                current[part] = child
+            current = child
+        current[parts[-1]] = value
+        self.save(data)
+        return data
+
+    def unset_path(self, dotted_path: str) -> bool:
+        data = self.load()
+        current: Any = data
+        parts = self._split_path(dotted_path)
+        for part in parts[:-1]:
+            if not isinstance(current, dict) or part not in current:
+                return False
+            current = current[part]
+        if not isinstance(current, dict) or parts[-1] not in current:
+            return False
+        del current[parts[-1]]
+        self.save(data)
+        return True
+
     def upsert_env_secret(self, key: str, value: str) -> None:
         env_map = self.read_env_map()
         env_map[key] = value
@@ -95,3 +131,10 @@ class ConfigManager:
             key, value = stripped.split("=", 1)
             mapping[key] = value
         return mapping
+
+    @staticmethod
+    def _split_path(dotted_path: str) -> list[str]:
+        parts = [part.strip() for part in dotted_path.split(".") if part.strip()]
+        if not parts:
+            raise ValueError("Config path must not be empty.")
+        return parts

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from time import sleep
 from typing import Any
 
 from spark_intelligence.adapters.telegram.client import TelegramBotApiClient
@@ -67,6 +68,7 @@ def gateway_start(
     state_db: StateDB,
     *,
     once: bool = False,
+    continuous: bool = False,
     max_cycles: int | None = None,
     poll_timeout_seconds: int = 5,
 ) -> str:
@@ -90,19 +92,33 @@ def gateway_start(
     client = TelegramBotApiClient(token=token)
     me = client.get_me().get("result", {})
     lines.append(f"Telegram bot authenticated: @{me.get('username', 'unknown')}")
+    lines.append(f"Gateway trace log: {config_manager.paths.logs_dir / 'gateway-trace.jsonl'}")
 
-    cycles = 1 if once else (max_cycles or 1)
-    for cycle in range(cycles):
-        poll_result = poll_telegram_updates_once(
-            config_manager=config_manager,
-            state_db=state_db,
-            client=client,
-            timeout_seconds=poll_timeout_seconds,
-        )
-        lines.append(f"Cycle {cycle + 1}:")
-        lines.extend(f"  {line}" for line in poll_result.to_text().splitlines())
-        if once:
-            break
+    cycle_limit = 1 if once else max_cycles
+    cycle_index = 0
+    try:
+        while True:
+            if cycle_limit is not None and cycle_index >= cycle_limit:
+                break
+            poll_result = poll_telegram_updates_once(
+                config_manager=config_manager,
+                state_db=state_db,
+                client=client,
+                timeout_seconds=poll_timeout_seconds,
+            )
+            lines.append(f"Cycle {cycle_index + 1}:")
+            lines.extend(f"  {line}" for line in poll_result.to_text().splitlines())
+            cycle_index += 1
+            if once or not continuous:
+                break
+            if poll_timeout_seconds <= 0:
+                sleep(1)
+    except KeyboardInterrupt:
+        lines.append("")
+        lines.append(f"Gateway interrupted by operator after {cycle_index} cycle(s).")
+    else:
+        lines.append("")
+        lines.append(f"Gateway exited cleanly after {cycle_index} cycle(s).")
     return "\n".join(lines)
 
 

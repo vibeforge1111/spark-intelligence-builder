@@ -74,6 +74,7 @@ pip install -e .
 spark-intelligence setup
 spark-intelligence auth connect openai --api-key <key> --model <model>
 spark-intelligence channel add telegram --bot-token <token> --allowed-user <id>
+spark-intelligence config set spark.researcher.runtime_root "C:/Users/USER/Desktop/spark-researcher"
 spark-intelligence doctor
 spark-intelligence agent inspect
 spark-intelligence pairings list
@@ -86,5 +87,15 @@ Telegram runtime verification is available in two forms:
 ```bash
 spark-intelligence gateway simulate-telegram-update ./sample-update.json
 spark-intelligence gateway start --once --poll-timeout-seconds 0
+spark-intelligence gateway start --continuous
 spark-intelligence gateway traces --limit 20
+```
+
+Config can be inspected and updated without editing `config.yaml` manually:
+
+```bash
+spark-intelligence config show
+spark-intelligence config show --path spark.researcher --json
+spark-intelligence config set spark.researcher.config_path "C:/Users/USER/Desktop/spark-researcher/spark-researcher.project.json"
+spark-intelligence config unset spark.researcher.config_path
 ```

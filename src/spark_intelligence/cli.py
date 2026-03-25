@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
+
+import yaml
 
 from spark_intelligence.auth.service import connect_provider
 from spark_intelligence.channel.service import add_channel
@@ -37,6 +40,11 @@ def build_parser() -> argparse.ArgumentParser:
     gateway_start_parser = gateway_subparsers.add_parser("start", help="Start foreground gateway")
     gateway_start_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     gateway_start_parser.add_argument("--once", action="store_true", help="Run one poll cycle and exit")
+    gateway_start_parser.add_argument(
+        "--continuous",
+        action="store_true",
+        help="Keep polling in the foreground until interrupted or --max-cycles is reached",
+    )
     gateway_start_parser.add_argument("--max-cycles", type=int, help="Limit gateway poll cycles")
     gateway_start_parser.add_argument(
         "--poll-timeout-seconds",
@@ -81,6 +89,20 @@ def build_parser() -> argparse.ArgumentParser:
     auth_connect_parser.add_argument("--api-key", help="API key for the provider")
     auth_connect_parser.add_argument("--model", help="Default model id")
     auth_connect_parser.add_argument("--base-url", help="Custom provider base URL")
+
+    config_parser = subparsers.add_parser("config", help="Inspect and update config values")
+    config_subparsers = config_parser.add_subparsers(dest="config_command", required=True)
+    config_show_parser = config_subparsers.add_parser("show", help="Show config or one config path")
+    config_show_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    config_show_parser.add_argument("--path", help="Dot-path under config.yaml")
+    config_show_parser.add_argument("--json", action="store_true", help="Emit JSON output")
+    config_set_parser = config_subparsers.add_parser("set", help="Set one config value")
+    config_set_parser.add_argument("path", help="Dot-path under config.yaml")
+    config_set_parser.add_argument("value", help="YAML-parsed value to store")
+    config_set_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    config_unset_parser = config_subparsers.add_parser("unset", help="Remove one config value")
+    config_unset_parser.add_argument("path", help="Dot-path under config.yaml")
+    config_unset_parser.add_argument("--home", help="Override Spark Intelligence home directory")
 
     jobs_parser = subparsers.add_parser("jobs", help="Inspect and execute jobs")
     jobs_subparsers = jobs_parser.add_subparsers(dest="jobs_command", required=True)
@@ -150,6 +172,9 @@ def handle_doctor(args: argparse.Namespace) -> int:
 
 
 def handle_gateway_start(args: argparse.Namespace) -> int:
+    if args.once and args.continuous:
+        print("Choose either --once or --continuous, not both.", file=sys.stderr)
+        return 2
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
@@ -158,6 +183,7 @@ def handle_gateway_start(args: argparse.Namespace) -> int:
         config_manager,
         state_db,
         once=args.once,
+        continuous=args.continuous,
         max_cycles=args.max_cycles,
         poll_timeout_seconds=args.poll_timeout_seconds,
     )
@@ -231,6 +257,39 @@ def handle_auth_connect(args: argparse.Namespace) -> int:
     )
     print(result)
     return 0
+
+
+def handle_config_show(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    value = config_manager.get_path(args.path) if args.path else config_manager.load()
+    if args.json:
+        print(json.dumps(value, indent=2))
+    elif isinstance(value, (str, int, float, bool)) or value is None:
+        print("null" if value is None else value)
+    else:
+        print(yaml.safe_dump(value, sort_keys=False).rstrip())
+    return 0
+
+
+def handle_config_set(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    parsed_value = yaml.safe_load(args.value)
+    config_manager.set_path(args.path, parsed_value)
+    print(f"Set {args.path} = {json.dumps(parsed_value)}")
+    return 0
+
+
+def handle_config_unset(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    removed = config_manager.unset_path(args.path)
+    if removed:
+        print(f"Removed {args.path}")
+        return 0
+    print(f"Config path not found: {args.path}", file=sys.stderr)
+    return 1
 
 
 def handle_jobs_tick(args: argparse.Namespace) -> int:
@@ -337,6 +396,12 @@ def main(argv: list[str] | None = None) -> int:
         return handle_channel_add(args)
     if args.command == "auth" and args.auth_command == "connect":
         return handle_auth_connect(args)
+    if args.command == "config" and args.config_command == "show":
+        return handle_config_show(args)
+    if args.command == "config" and args.config_command == "set":
+        return handle_config_set(args)
+    if args.command == "config" and args.config_command == "unset":
+        return handle_config_unset(args)
     if args.command == "jobs" and args.jobs_command == "tick":
         return handle_jobs_tick(args)
     if args.command == "jobs" and args.jobs_command == "list":
