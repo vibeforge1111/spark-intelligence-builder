@@ -187,6 +187,9 @@ def build_parser() -> argparse.ArgumentParser:
     operator_history_parser = operator_subparsers.add_parser("history", help="Show recent operator actions")
     operator_history_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     operator_history_parser.add_argument("--limit", type=int, default=20, help="Number of events to show")
+    operator_history_parser.add_argument("--action", help="Filter history to one action")
+    operator_history_parser.add_argument("--target-kind", help="Filter history to one target kind")
+    operator_history_parser.add_argument("--contains", help="Filter history by target, reason, or details substring")
     operator_history_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     operator_inbox_parser = operator_subparsers.add_parser("inbox", help="Show actionable operator items")
     operator_inbox_parser.add_argument("--home", help="Override Spark Intelligence home directory")
@@ -666,7 +669,13 @@ def handle_operator_history(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
-    report = list_operator_events(state_db, limit=args.limit)
+    report = list_operator_events(
+        state_db,
+        limit=args.limit,
+        action=args.action,
+        target_kind=args.target_kind,
+        contains=args.contains,
+    )
     print(report.to_json() if args.json else report.to_text())
     return 0
 

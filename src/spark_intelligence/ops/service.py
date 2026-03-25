@@ -122,16 +122,43 @@ def log_operator_event(
         conn.commit()
 
 
-def list_operator_events(state_db: StateDB, *, limit: int = 20) -> OperatorEventReport:
+def list_operator_events(
+    state_db: StateDB,
+    *,
+    limit: int = 20,
+    action: str | None = None,
+    target_kind: str | None = None,
+    contains: str | None = None,
+) -> OperatorEventReport:
+    filters: list[str] = []
+    params: list[Any] = []
+    if action:
+        filters.append("action = ?")
+        params.append(action)
+    if target_kind:
+        filters.append("target_kind = ?")
+        params.append(target_kind)
+    if contains:
+        needle = f"%{contains.lower()}%"
+        filters.append(
+            "("
+            "LOWER(target_ref) LIKE ? OR "
+            "LOWER(COALESCE(reason, '')) LIKE ? OR "
+            "LOWER(COALESCE(details_json, '')) LIKE ?"
+            ")"
+        )
+        params.extend([needle, needle, needle])
+    where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
     with state_db.connect() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT event_id, actor_human_id, action, target_kind, target_ref, reason, details_json, created_at
             FROM operator_events
+            {where_clause}
             ORDER BY event_id DESC
             LIMIT ?
             """,
-            (limit,),
+            (*params, limit),
         ).fetchall()
     payload: list[dict[str, Any]] = []
     for row in rows:
