@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from spark_intelligence.attachments import build_attachment_context
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
 from spark_intelligence.state.db import StateDB
@@ -29,6 +30,9 @@ class SwarmStatus:
     api_url: str | None
     workspace_id: str | None
     access_token_env: str | None
+    attachment_context: dict[str, Any]
+    last_sync: dict[str, Any] | None
+    last_decision: dict[str, Any] | None
 
     def to_json(self) -> str:
         return json.dumps(
@@ -43,6 +47,9 @@ class SwarmStatus:
                 "api_url": self.api_url,
                 "workspace_id": self.workspace_id,
                 "access_token_env": self.access_token_env,
+                "attachment_context": self.attachment_context,
+                "last_sync": self.last_sync,
+                "last_decision": self.last_decision,
             },
             indent=2,
         )
@@ -60,6 +67,10 @@ class SwarmStatus:
                 f"- api_url: {self.api_url or 'missing'}",
                 f"- workspace_id: {self.workspace_id or 'missing'}",
                 f"- access_token_env: {self.access_token_env or 'missing'}",
+                f"- active_chip_keys: {', '.join(self.attachment_context.get('active_chip_keys', [])) if self.attachment_context.get('active_chip_keys') else 'none'}",
+                f"- active_path_key: {self.attachment_context.get('active_path_key') or 'none'}",
+                f"- last_sync_mode: {(self.last_sync or {}).get('mode', 'none')}",
+                f"- last_decision_mode: {(self.last_decision or {}).get('mode', 'none')}",
             ]
         )
 
@@ -105,7 +116,49 @@ class SwarmSyncResult:
         return "\n".join(lines)
 
 
-def swarm_status(config_manager: ConfigManager) -> SwarmStatus:
+@dataclass
+class SwarmDecisionResult:
+    ok: bool
+    escalate: bool
+    mode: str
+    reason: str
+    triggers: list[str]
+    task: str
+    attachment_context: dict[str, Any]
+    swarm_available: bool
+    api_ready: bool
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "ok": self.ok,
+                "escalate": self.escalate,
+                "mode": self.mode,
+                "reason": self.reason,
+                "triggers": self.triggers,
+                "task": self.task,
+                "attachment_context": self.attachment_context,
+                "swarm_available": self.swarm_available,
+                "api_ready": self.api_ready,
+            },
+            indent=2,
+        )
+
+    def to_text(self) -> str:
+        lines = [
+            f"Swarm escalation: {'recommended' if self.escalate else 'hold local'}",
+            f"- mode: {self.mode}",
+            f"- reason: {self.reason}",
+            f"- triggers: {', '.join(self.triggers) if self.triggers else 'none'}",
+            f"- swarm_available: {'yes' if self.swarm_available else 'no'}",
+            f"- api_ready: {'yes' if self.api_ready else 'no'}",
+            f"- active_chip_keys: {', '.join(self.attachment_context.get('active_chip_keys', [])) if self.attachment_context.get('active_chip_keys') else 'none'}",
+            f"- active_path_key: {self.attachment_context.get('active_path_key') or 'none'}",
+        ]
+        return "\n".join(lines)
+
+
+def swarm_status(config_manager: ConfigManager, state_db: StateDB | None = None) -> SwarmStatus:
     runtime_root, _ = _discover_swarm_runtime_root(config_manager)
     researcher_root, _ = discover_researcher_runtime_root(config_manager)
     researcher_config_path = resolve_researcher_config_path(config_manager, researcher_root) if researcher_root else None
@@ -113,6 +166,8 @@ def swarm_status(config_manager: ConfigManager) -> SwarmStatus:
     workspace_id = _resolve_swarm_workspace_id(config_manager)
     access_token_env = _resolve_swarm_access_token_env(config_manager)
     access_token = _resolve_swarm_access_token(config_manager)
+    attachment_context = build_attachment_context(config_manager)
+    runtime_state = _read_swarm_runtime_state(state_db) if state_db is not None else {}
     researcher_ready = bool(researcher_root and researcher_config_path and researcher_config_path.exists())
     payload_ready = researcher_ready and _researcher_has_ledger(researcher_config_path)
     api_ready = bool(api_url and workspace_id and access_token)
@@ -127,6 +182,9 @@ def swarm_status(config_manager: ConfigManager) -> SwarmStatus:
         api_url=api_url,
         workspace_id=workspace_id,
         access_token_env=access_token_env,
+        attachment_context=attachment_context,
+        last_sync=_loads_json_object(runtime_state.get("swarm:last_sync")),
+        last_decision=_loads_json_object(runtime_state.get("swarm:last_decision")),
     )
 
 
@@ -136,7 +194,7 @@ def sync_swarm_collective(
     state_db: StateDB,
     dry_run: bool = False,
 ) -> SwarmSyncResult:
-    status = swarm_status(config_manager)
+    status = swarm_status(config_manager, state_db)
     if not status.researcher_ready or not status.researcher_config_path or not status.researcher_runtime_root:
         return SwarmSyncResult(
             ok=False,
@@ -268,6 +326,70 @@ def sync_swarm_collective(
     )
 
 
+def evaluate_swarm_escalation(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    task: str,
+) -> SwarmDecisionResult:
+    status = swarm_status(config_manager, state_db)
+    lowered = task.lower()
+    triggers: list[str] = []
+    keyword_groups = {
+        "explicit_swarm": ["swarm", "delegate", "delegation"],
+        "parallel_work": ["parallel", "multi-agent", "multi agent", "coordinate"],
+        "deep_research": ["research deeply", "investigate deeply", "comprehensive"],
+        "multi_step": ["break down", "multi-step", "orchestrate", "workflow"],
+    }
+    for trigger, phrases in keyword_groups.items():
+        if any(phrase in lowered for phrase in phrases):
+            triggers.append(trigger)
+    if len(task.split()) >= 40:
+        triggers.append("long_task")
+    if len(status.attachment_context.get("active_chip_keys", [])) >= 2:
+        triggers.append("multi_chip_context")
+
+    if not status.payload_ready:
+        result = SwarmDecisionResult(
+            ok=False,
+            escalate=False,
+            mode="unavailable",
+            reason="Spark Swarm cannot be recommended because the local payload path is not ready.",
+            triggers=triggers,
+            task=task,
+            attachment_context=status.attachment_context,
+            swarm_available=False,
+            api_ready=status.api_ready,
+        )
+    elif triggers:
+        result = SwarmDecisionResult(
+            ok=True,
+            escalate=True,
+            mode="manual_recommended",
+            reason="This task shows explicit escalation signals and Spark Swarm is available.",
+            triggers=triggers,
+            task=task,
+            attachment_context=status.attachment_context,
+            swarm_available=True,
+            api_ready=status.api_ready,
+        )
+    else:
+        result = SwarmDecisionResult(
+            ok=True,
+            escalate=False,
+            mode="hold_local",
+            reason="No strong escalation signals were detected; keep the task on the primary agent.",
+            triggers=triggers,
+            task=task,
+            attachment_context=status.attachment_context,
+            swarm_available=True,
+            api_ready=status.api_ready,
+        )
+
+    _record_swarm_decision_state(state_db, result=result)
+    return result
+
+
 def _discover_swarm_runtime_root(config_manager: ConfigManager) -> tuple[Path | None, str]:
     configured_root = config_manager.get_path("spark.swarm.runtime_root")
     if configured_root:
@@ -377,26 +499,69 @@ def _record_swarm_sync_state(
     accepted: bool | None,
 ) -> None:
     with state_db.connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO runtime_state(state_key, value)
-            VALUES ('swarm:last_sync', ?)
-            ON CONFLICT(state_key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
-            """,
-            (
-                json.dumps(
-                    {
-                        "mode": mode,
-                        "payload_path": payload_path,
-                        "api_url": api_url,
-                        "workspace_id": workspace_id,
-                        "accepted": accepted,
-                    },
-                    sort_keys=True,
-                ),
+        _set_runtime_state(
+            conn,
+            "swarm:last_sync",
+            json.dumps(
+                {
+                    "mode": mode,
+                    "payload_path": payload_path,
+                    "api_url": api_url,
+                    "workspace_id": workspace_id,
+                    "accepted": accepted,
+                },
+                sort_keys=True,
             ),
         )
         conn.commit()
+
+
+def _record_swarm_decision_state(state_db: StateDB, *, result: SwarmDecisionResult) -> None:
+    with state_db.connect() as conn:
+        _set_runtime_state(
+            conn,
+            "swarm:last_decision",
+            json.dumps(
+                {
+                    "mode": result.mode,
+                    "escalate": result.escalate,
+                    "reason": result.reason,
+                    "triggers": result.triggers,
+                    "task": result.task,
+                },
+                sort_keys=True,
+            ),
+        )
+        conn.commit()
+
+
+def _read_swarm_runtime_state(state_db: StateDB) -> dict[str, str]:
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            "SELECT state_key, value FROM runtime_state WHERE state_key LIKE 'swarm:%'"
+        ).fetchall()
+    return {str(row["state_key"]): str(row["value"] or "") for row in rows}
+
+
+def _loads_json_object(value: str | None) -> dict[str, Any] | None:
+    if not value:
+        return None
+    try:
+        data = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _set_runtime_state(conn: Any, state_key: str, value: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO runtime_state(state_key, value)
+        VALUES (?, ?)
+        ON CONFLICT(state_key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
+        """,
+        (state_key, value),
+    )
 
 
 def _import_researcher_symbol(runtime_root: Path, module_name: str, symbol: str):

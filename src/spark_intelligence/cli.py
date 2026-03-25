@@ -36,7 +36,7 @@ from spark_intelligence.jobs.service import jobs_list, jobs_tick
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
 from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.state.db import StateDB
-from spark_intelligence.swarm_bridge import swarm_status, sync_swarm_collective
+from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_status, sync_swarm_collective
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -193,6 +193,13 @@ def build_parser() -> argparse.ArgumentParser:
     swarm_sync_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     swarm_sync_parser.add_argument("--dry-run", action="store_true", help="Build the payload without uploading it")
     swarm_sync_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    swarm_evaluate_parser = swarm_subparsers.add_parser(
+        "evaluate",
+        help="Evaluate whether a task should be escalated to Spark Swarm",
+    )
+    swarm_evaluate_parser.add_argument("task", help="Task description to evaluate")
+    swarm_evaluate_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    swarm_evaluate_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     jobs_parser = subparsers.add_parser("jobs", help="Inspect and execute jobs")
     jobs_subparsers = jobs_parser.add_subparsers(dest="jobs_command", required=True)
@@ -514,8 +521,10 @@ def handle_config_unset(args: argparse.Namespace) -> int:
 
 def handle_swarm_status(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
-    status = swarm_status(config_manager)
+    state_db.initialize()
+    status = swarm_status(config_manager, state_db)
     print(status.to_json() if args.json else status.to_text())
     return 0 if status.payload_ready else 1
 
@@ -545,6 +554,16 @@ def handle_swarm_sync(args: argparse.Namespace) -> int:
     config_manager.bootstrap()
     state_db.initialize()
     result = sync_swarm_collective(config_manager=config_manager, state_db=state_db, dry_run=args.dry_run)
+    print(result.to_json() if args.json else result.to_text())
+    return 0 if result.ok else 1
+
+
+def handle_swarm_evaluate(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = evaluate_swarm_escalation(config_manager=config_manager, state_db=state_db, task=args.task)
     print(result.to_json() if args.json else result.to_text())
     return 0 if result.ok else 1
 
@@ -797,6 +816,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_swarm_configure(args)
     if args.command == "swarm" and args.swarm_command == "sync":
         return handle_swarm_sync(args)
+    if args.command == "swarm" and args.swarm_command == "evaluate":
+        return handle_swarm_evaluate(args)
     if args.command == "jobs" and args.jobs_command == "tick":
         return handle_jobs_tick(args)
     if args.command == "jobs" and args.jobs_command == "list":

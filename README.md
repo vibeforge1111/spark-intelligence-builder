@@ -117,6 +117,7 @@ spark-intelligence swarm status
 spark-intelligence swarm configure --api-url https://your-swarm-host --workspace-id <workspace_id> --access-token <token>
 spark-intelligence swarm sync --dry-run
 spark-intelligence swarm sync
+spark-intelligence swarm evaluate "Break this into a multi-step parallel research workflow"
 ```
 
 Chip and specialization-path attachments stay external as well. Spark Intelligence scans configured roots first, then falls back to Desktop auto-discovery for repos such as `domain-chip-*` and `specialization-path-*`:
