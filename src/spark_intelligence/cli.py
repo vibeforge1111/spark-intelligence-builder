@@ -8,7 +8,7 @@ from spark_intelligence.auth.service import connect_provider
 from spark_intelligence.channel.service import add_channel
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import run_doctor
-from spark_intelligence.gateway.runtime import gateway_simulate_telegram_update, gateway_start, gateway_status
+from spark_intelligence.gateway.runtime import gateway_simulate_telegram_update, gateway_start, gateway_status, gateway_trace_view
 from spark_intelligence.identity.service import (
     agent_inspect,
     approve_pairing,
@@ -54,6 +54,10 @@ def build_parser() -> argparse.ArgumentParser:
     gateway_simulate_parser.add_argument("update_file", help="Path to a Telegram update JSON file")
     gateway_simulate_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     gateway_simulate_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    gateway_traces_parser = gateway_subparsers.add_parser("traces", help="Show recent gateway traces")
+    gateway_traces_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    gateway_traces_parser.add_argument("--limit", type=int, default=20, help="Number of trace events to show")
+    gateway_traces_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     channel_parser = subparsers.add_parser("channel", help="Manage channel adapters")
     channel_subparsers = channel_parser.add_subparsers(dest="channel_command", required=True)
@@ -185,6 +189,13 @@ def handle_gateway_simulate_telegram_update(args: argparse.Namespace) -> int:
             as_json=args.json,
         )
     )
+    return 0
+
+
+def handle_gateway_traces(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    print(gateway_trace_view(config_manager, limit=args.limit, as_json=args.json))
     return 0
 
 
@@ -320,6 +331,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_gateway_status(args)
     if args.command == "gateway" and args.gateway_command == "simulate-telegram-update":
         return handle_gateway_simulate_telegram_update(args)
+    if args.command == "gateway" and args.gateway_command == "traces":
+        return handle_gateway_traces(args)
     if args.command == "channel" and args.channel_command == "add":
         return handle_channel_add(args)
     if args.command == "auth" and args.auth_command == "connect":

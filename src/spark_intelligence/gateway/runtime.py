@@ -13,6 +13,7 @@ from spark_intelligence.adapters.telegram.runtime import (
 )
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import run_doctor
+from spark_intelligence.gateway.tracing import read_gateway_traces
 from spark_intelligence.state.db import StateDB
 
 
@@ -119,3 +120,19 @@ def gateway_simulate_telegram_update(
         update_payload=payload,
     )
     return result.to_json() if as_json else result.to_text()
+
+
+def gateway_trace_view(config_manager: ConfigManager, *, limit: int = 20, as_json: bool = False) -> str:
+    traces = read_gateway_traces(config_manager, limit=limit)
+    if as_json:
+        return json.dumps(traces, indent=2)
+    if not traces:
+        return "No gateway traces recorded."
+    lines = ["Gateway traces:"]
+    for trace in traces:
+        lines.append(
+            f"- event={trace.get('event')} update_id={trace.get('update_id')} "
+            f"user={trace.get('telegram_user_id')} trace_ref={trace.get('trace_ref', 'n/a')} "
+            f"mode={trace.get('bridge_mode', 'n/a')}"
+        )
+    return "\n".join(lines)

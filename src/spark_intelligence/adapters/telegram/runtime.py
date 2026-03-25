@@ -7,6 +7,7 @@ from typing import Any
 from spark_intelligence.adapters.telegram.client import TelegramBotApiClient
 from spark_intelligence.adapters.telegram.normalize import normalize_telegram_update
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.gateway.tracing import append_gateway_trace
 from spark_intelligence.identity.service import resolve_inbound_dm
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
 from spark_intelligence.state.db import StateDB
@@ -56,6 +57,7 @@ class TelegramPollResult:
     ignored_count: int
     pending_pairing_count: int
     next_offset: int | None
+    trace_refs: list[str]
 
     def to_text(self) -> str:
         return (
@@ -65,7 +67,8 @@ class TelegramPollResult:
             f"- sent: {self.sent_count}\n"
             f"- ignored: {self.ignored_count}\n"
             f"- pending_pairing: {self.pending_pairing_count}\n"
-            f"- next_offset: {self.next_offset}"
+            f"- next_offset: {self.next_offset}\n"
+            f"- trace_refs: {', '.join(self.trace_refs) if self.trace_refs else 'none'}"
         )
 
 
@@ -131,6 +134,11 @@ def simulate_telegram_update(
             user_message=normalized.text,
         )
         outbound_text = bridge_result.reply_text
+        trace_ref = bridge_result.trace_ref
+        bridge_mode = bridge_result.mode
+    else:
+        trace_ref = None
+        bridge_mode = None
     detail = {
         "telegram_user_id": normalized.telegram_user_id,
         "chat_id": normalized.chat_id,
@@ -139,6 +147,8 @@ def simulate_telegram_update(
         "agent_id": resolution.agent_id,
         "message_text": normalized.text,
         "response_text": outbound_text,
+        "trace_ref": trace_ref,
+        "bridge_mode": bridge_mode,
     }
     return TelegramSimulationResult(ok=resolution.allowed, decision=resolution.decision, detail=detail)
 
@@ -162,12 +172,23 @@ def poll_telegram_updates_once(
     ignored_count = 0
     pending_pairing_count = 0
     next_offset = offset
+    trace_refs: list[str] = []
 
     for update in updates:
         normalized = normalize_telegram_update(update, channel_id="telegram")
         next_offset = normalized.update_id + 1
         if not normalized.is_dm:
             ignored_count += 1
+            append_gateway_trace(
+                config_manager,
+                {
+                    "event": "telegram_update_ignored",
+                    "reason": "non_dm_surface",
+                    "update_id": normalized.update_id,
+                    "telegram_user_id": normalized.telegram_user_id,
+                    "chat_type": normalized.chat_type,
+                },
+            )
             continue
 
         resolution = resolve_inbound_dm(
@@ -181,10 +202,30 @@ def poll_telegram_updates_once(
             pending_pairing_count += 1
             client.send_message(chat_id=normalized.chat_id, text=resolution.response_text)
             sent_count += 1
+            append_gateway_trace(
+                config_manager,
+                {
+                    "event": "telegram_pending_pairing",
+                    "update_id": normalized.update_id,
+                    "telegram_user_id": normalized.telegram_user_id,
+                    "chat_id": normalized.chat_id,
+                    "session_id": resolution.session_id,
+                },
+            )
             continue
 
         if not resolution.allowed or not resolution.agent_id or not resolution.human_id or not resolution.session_id:
             ignored_count += 1
+            append_gateway_trace(
+                config_manager,
+                {
+                    "event": "telegram_update_blocked",
+                    "update_id": normalized.update_id,
+                    "telegram_user_id": normalized.telegram_user_id,
+                    "chat_id": normalized.chat_id,
+                    "decision": resolution.decision,
+                },
+            )
             continue
 
         bridge_result = build_researcher_reply(
@@ -199,6 +240,22 @@ def poll_telegram_updates_once(
         client.send_message(chat_id=normalized.chat_id, text=bridge_result.reply_text)
         processed_count += 1
         sent_count += 1
+        trace_refs.append(bridge_result.trace_ref)
+        append_gateway_trace(
+            config_manager,
+            {
+                "event": "telegram_update_processed",
+                "update_id": normalized.update_id,
+                "telegram_user_id": normalized.telegram_user_id,
+                "chat_id": normalized.chat_id,
+                "session_id": resolution.session_id,
+                "trace_ref": bridge_result.trace_ref,
+                "bridge_mode": bridge_result.mode,
+                "runtime_root": bridge_result.runtime_root,
+                "config_path": bridge_result.config_path,
+                "evidence_summary": bridge_result.evidence_summary,
+            },
+        )
 
     if next_offset is not None:
         with state_db.connect() as conn:
@@ -219,4 +276,5 @@ def poll_telegram_updates_once(
         ignored_count=ignored_count,
         pending_pairing_count=pending_pairing_count,
         next_offset=next_offset,
+        trace_refs=trace_refs,
     )

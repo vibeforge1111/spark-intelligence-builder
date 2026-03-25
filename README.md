@@ -86,4 +86,5 @@ Telegram runtime verification is available in two forms:
 ```bash
 spark-intelligence gateway simulate-telegram-update ./sample-update.json
 spark-intelligence gateway start --once --poll-timeout-seconds 0
+spark-intelligence gateway traces --limit 20
 ```
