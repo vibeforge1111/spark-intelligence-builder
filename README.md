@@ -11,6 +11,7 @@ The core idea is simple:
 - `Autoloop flywheels` improve the agent from repeated use.
 - `Telegram`, `WhatsApp`, and `Discord` act as delivery adapters.
 
-This repo starts with the PRD for `Spark Intelligence v1`.
+This repo currently includes:
 
-See [docs/PRD_SPARK_INTELLIGENCE_V1.md](./docs/PRD_SPARK_INTELLIGENCE_V1.md).
+- [docs/PRD_SPARK_INTELLIGENCE_V1.md](./docs/PRD_SPARK_INTELLIGENCE_V1.md)
+- [docs/ARCHITECTURE_SPARK_INTELLIGENCE_V1.md](./docs/ARCHITECTURE_SPARK_INTELLIGENCE_V1.md)
