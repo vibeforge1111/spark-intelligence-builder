@@ -70,7 +70,22 @@ That means:
 - keep platform-specific logic isolated
 - delay complexity until real load proves it is needed
 
-### 2.8 Fast Install and Migration
+### 2.8 Federated Spark Boundaries
+
+Spark Intelligence should stay intentionally small relative to the wider Spark ecosystem.
+
+That means:
+
+- `Spark Researcher` remains its own runtime intelligence system
+- `Spark Swarm` remains its own execution and delegation system
+- `domain chips` remain independent specialization repos or modules
+- `specialization paths` remain their own progression surface
+
+Spark Intelligence should orchestrate those systems through explicit contracts.
+
+It should not silently absorb their internals until this repo becomes the whole platform by accident.
+
+### 2.9 Fast Install and Migration
 
 The system should install quickly and migrate cleanly.
 
@@ -83,7 +98,7 @@ That means:
 - no requirement to hand-edit ten different systems before first use
 - no requirement to install Docker or a custom process manager
 
-### 2.9 One Obvious Way
+### 2.10 One Obvious Way
 
 The architecture should make the correct path obvious.
 
@@ -250,6 +265,24 @@ Spark Intelligence should have:
 - one clear secret-reference path
 
 Adapters may keep transport-local caches only when required by their library, but they must not become shadow truth stores.
+
+### 4.11 Federated Repo Discipline
+
+Spark Intelligence should be a coordination repo, not an empire repo.
+
+Prefer:
+
+- explicit integration contracts
+- repo-local bridge clients
+- separately evolving Spark subsystems
+- narrow payloads between repos
+
+Reject:
+
+- copying Spark Researcher logic into this repo
+- copying Spark Swarm orchestration internals into this repo
+- embedding domain-chip intelligence directly into gateway or adapter code
+- hardcoding specialization-path doctrine into local runtime glue
 
 ## 5. High-Level System
 
@@ -682,6 +715,13 @@ This repo should not become the canonical store for all memory intelligence.
 
 That belongs to the memory chip and related Spark systems.
 
+This repo should also not become the canonical home of:
+
+- Spark Researcher internals
+- Spark Swarm internals
+- domain-chip logic
+- specialization-path logic
+
 ## 13. Runtime Boundaries
 
 ### 12.1 What Lives Inside Spark Intelligence
@@ -749,6 +789,8 @@ Before building a new subsystem in this repo, ask:
 4. Is this only transport glue and therefore belongs in an adapter?
 
 If the answer is yes to any of those, do not rebuild it inside Spark Intelligence.
+
+If another Spark repo should own the concern, keep the ownership there and integrate through a contract.
 
 ### 13.4 Internal Protocol
 

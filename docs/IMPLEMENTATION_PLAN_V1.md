@@ -30,6 +30,7 @@ The first slice must preserve these boundaries from the beginning:
 - one role distinction between paired user and operator authority
 - one operator-owned runtime control path
 - one adapter-containment rule
+- one federated repo boundary between Spark Intelligence and the rest of Spark
 
 If a shortcut breaks one of these, it should not land as "temporary v1 glue".
 
@@ -46,6 +47,12 @@ The first serious slice should prove:
 - doctor
 
 That is enough to validate the product shape.
+
+It should also prove the architecture shape:
+
+- Spark Intelligence can call Spark Researcher cleanly without copying its internals
+- later Spark Swarm and chip/path integrations can stay contract-driven
+- this repo can remain the orchestrator instead of turning into a giant everything-repo
 
 ## 5. Proposed Codebase Layout
 
@@ -108,6 +115,7 @@ Key outputs:
 - SQLite schema for identity, sessions, channels, pairings
 - exact role and authority records
 - strict local paths
+- repo-local integration config for external Spark systems
 
 Exit criteria:
 
@@ -206,11 +214,13 @@ Key outputs:
 - request envelope
 - bridge to advisory and packet/memory surfaces
 - normalized response envelope
+- external-runtime contract wiring without local logic duplication
 
 Exit criteria:
 
 - Spark Intelligence can produce a Spark Researcher-backed reply for Telegram
 - no adapter secrets pass through the bridge by default
+- Spark Researcher remains an external system boundary, not copied logic
 
 ### Phase 6: Doctor, Health, And Harness
 
@@ -265,6 +275,11 @@ Only after the first slice is stable:
 - Spark Swarm escalation path
 - richer operator control surface
 
+Expansion rule:
+
+- add bridges and contracts before adding copied internals
+- keep domain chips and specialization paths out of this repo unless there is a very strong boundary reason
+
 ## 7. Required Smoke Tests
 
 The first slice should have short smoke tests for:
@@ -281,6 +296,7 @@ The first slice should have short smoke tests for:
 - paired user cannot access operator-only mutations
 - exact session binding survives adapter restart
 - Telegram adapter failure is visible without taking down unrelated state
+- Spark Researcher bridge works without local fallback duplication
 
 ## 8. Security Review Gates
 
@@ -318,6 +334,7 @@ Suggested first code files:
 - do not build webhook-first Telegram
 - do not build a custom daemon manager
 - do not rebuild Spark Researcher logic locally
+- do not pull chip or specialization-path logic into this repo just because integration is inconvenient
 - do not add broad dangerous tool execution before approval boundaries are ready
 - do not skip doctor and health surfaces
 

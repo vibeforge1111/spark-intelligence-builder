@@ -2,6 +2,8 @@
 
 Spark Intelligence Builder is the product repo for `Spark Intelligence`: a Spark-native, persistent 1:1 agent system.
 
+It is intentionally not the repo that should absorb the whole Spark ecosystem.
+
 The core idea is simple:
 
 - `Spark Researcher` is the runtime core.
@@ -10,6 +12,20 @@ The core idea is simple:
 - `Specialization paths` shape long-term growth.
 - `Autoloop flywheels` improve the agent from repeated use.
 - `Telegram`, `WhatsApp`, and `Discord` act as delivery adapters.
+
+This repo should stay focused on:
+
+- runtime shell
+- gateway and adapters
+- identity, pairing, and operator control
+- contracts and bridges into other Spark systems
+
+It should avoid becoming a giant everything-repo by copying the internals of:
+
+- `Spark Researcher`
+- `Spark Swarm`
+- `domain chip` repos
+- `specialization path` repos
 
 This repo currently includes:
 
