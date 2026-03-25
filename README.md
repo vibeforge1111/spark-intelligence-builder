@@ -154,5 +154,6 @@ spark-intelligence operator set-channel telegram paused
 spark-intelligence operator review-pairings
 spark-intelligence operator hold-pairing telegram 123456
 spark-intelligence operator approve-pairing telegram 123456
+spark-intelligence operator inbox
 spark-intelligence operator history
 ```
