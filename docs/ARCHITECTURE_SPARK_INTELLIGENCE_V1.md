@@ -70,6 +70,32 @@ That means:
 - keep platform-specific logic isolated
 - delay complexity until real load proves it is needed
 
+### 2.8 Fast Install and Migration
+
+The system should install quickly and migrate cleanly.
+
+That means:
+
+- a fast default installer
+- minimal dependency surface
+- sensible defaults out of the box
+- import paths for users coming from OpenClaw and Hermes
+- no requirement to hand-edit ten different systems before first use
+
+### 2.9 One Obvious Way
+
+The architecture should make the correct path obvious.
+
+That means:
+
+- one canonical runtime path
+- one scheduler model
+- one identity model
+- one config model
+- one operator truth surface
+
+If two systems appear to solve the same problem, the architecture should collapse them into one unless there is a strong reason not to.
+
 ## 3. Architectural Thesis
 
 Spark Intelligence should combine:
@@ -90,7 +116,67 @@ And not:
 
 `channels -> too many services -> too many sync points -> too much maintenance`
 
-## 4. High-Level System
+## 4. Engineering Principles
+
+These are the practical design rules for keeping the system lightweight and durable.
+
+### 4.1 Carmack-Style Simplicity
+
+Prefer:
+
+- fewer moving parts
+- fewer layers
+- straightforward data flow
+- explicit state transitions
+- boring and dependable implementation choices
+
+Reject:
+
+- unnecessary indirection
+- abstraction before pressure
+- cleverness that hides failure modes
+
+### 4.2 Karpathy-Style Product Pragmatism
+
+Prefer:
+
+- a system that works end to end
+- low-friction install and setup
+- strong defaults
+- visible user value quickly
+- thin glue around strong model/runtime primitives
+
+Reject:
+
+- architecture that looks sophisticated but feels brittle
+- operator burden disguised as flexibility
+- features that multiply maintenance cost without deepening the wedge
+
+### 4.3 No Competing Systems
+
+For every major concern, there should be one clear owner.
+
+Examples:
+
+- one scheduler model
+- one identity model
+- one pairing and allowlist model
+- one way to route to Spark Swarm
+- one way to attach domain chips
+
+### 4.4 Harnesses Over Heroics
+
+The system should stay stable because it has strong harnesses, not because the operator keeps patching it manually.
+
+That means:
+
+- health checks
+- idempotent jobs
+- replayable workflows
+- explicit diagnostics
+- deterministic startup validation
+
+## 5. High-Level System
 
 ```text
 Telegram / WhatsApp / Discord / Web
@@ -127,7 +213,7 @@ Telegram / WhatsApp / Discord / Web
                     Memory Chip Boundary
 ```
 
-## 5. Primary Subsystems
+## 6. Primary Subsystems
 
 ### 5.1 Spark Intelligence Gateway
 
@@ -290,7 +376,7 @@ This repo should define:
 - what interfaces it needs
 - how runtime sessions request memory services
 
-## 6. Internal Data Flow
+## 7. Internal Data Flow
 
 ### 6.1 Standard Request Flow
 
@@ -324,7 +410,7 @@ Over time:
 3. New chips or deeper variants become active.
 4. The user's agent gets sharper without becoming fragmented.
 
-## 7. Channel Adapter Architecture
+## 8. Channel Adapter Architecture
 
 ### 7.1 Adapter Model
 
@@ -374,7 +460,7 @@ Lightweight rule:
 
 every new adapter should be mostly translation glue, not a new runtime.
 
-## 8. Onboarding Architecture
+## 9. Onboarding Architecture
 
 ### 8.1 Recommended Path
 
@@ -411,6 +497,15 @@ Reasons:
 - supports non-interactive automation later
 - keeps the setup flow explicit and debuggable
 
+The install target should feel like seconds, not an afternoon.
+
+That means:
+
+- one install command
+- one setup command
+- one doctor command
+- one gateway start command
+
 ### 8.3 What Onboarding Should Configure
 
 The onboarding wizard should configure:
@@ -438,7 +533,7 @@ The user should also choose:
 OpenClaw and Hermes onboard channels and runtime.
 Spark Intelligence must onboard evolution.
 
-## 9. Operator Control Plane
+## 10. Operator Control Plane
 
 Spark Intelligence should have an operator surface, but not as the primary user product.
 
@@ -458,7 +553,7 @@ Maintainability rule:
 
 the operator plane should be generated from the same underlying runtime state, not from a separate shadow state model.
 
-## 10. Security Model
+## 11. Security Model
 
 ### 10.1 Default Posture
 
@@ -486,7 +581,7 @@ One user should not accidentally inherit another user's context simply because t
 
 The architecture should default to per-user isolation unless a room-style shared mode is explicitly enabled.
 
-## 11. Storage Model
+## 12. Storage Model
 
 ### 11.1 What This Repo Owns
 
@@ -512,7 +607,7 @@ This repo should not become the canonical store for all memory intelligence.
 
 That belongs to the memory chip and related Spark systems.
 
-## 12. Runtime Boundaries
+## 13. Runtime Boundaries
 
 ### 12.1 What Lives Inside Spark Intelligence
 
@@ -530,7 +625,7 @@ That belongs to the memory chip and related Spark systems.
 - standalone Spark Researcher internals outside exposed interfaces
 - standalone Spark Swarm internals outside exposed interfaces
 
-## 13. Recommended v1 Technical Shape
+## 14. Recommended v1 Technical Shape
 
 ### 13.1 Services
 
@@ -556,6 +651,7 @@ The default posture should be:
 - one clear module tree
 - one canonical config model
 - one canonical session and identity model
+- one scheduler and job harness
 
 ### 13.2 Control Plane
 
@@ -591,7 +687,49 @@ We should likely use a structured event/request model internally for:
 
 This is a pattern worth borrowing directly from modern gateway systems.
 
-### 13.5 Adapter Budget
+### 13.5 Cron and Job Harness
+
+The system should have one job harness for:
+
+- scheduled wakeups
+- retries
+- maintenance jobs
+- sync/import jobs
+- periodic health checks
+
+Design rules:
+
+- jobs must be idempotent
+- jobs must be observable
+- jobs must not silently fork their own state models
+- one scheduler should own recurring execution
+- one job record format should exist for status, retry, and failure reporting
+
+This should be lightweight. For v1:
+
+- prefer one internal scheduler over an external job platform
+- prefer SQLite-backed job metadata over a separate queue service
+- prefer explicit retry policy over many background daemons
+
+### 13.6 Install Shape
+
+The install path should be aggressively simple.
+
+Recommended shape:
+
+- `curl ... | bash` or equivalent one-step installer later
+- `spark-intelligence setup`
+- `spark-intelligence doctor`
+- `spark-intelligence gateway start`
+
+The installer should:
+
+- fetch only what is needed
+- avoid optional heavy dependencies by default
+- install adapter dependencies only when the user enables that adapter
+- validate the environment before declaring success
+
+### 13.7 Adapter Budget
 
 To keep the system maintainable, v1 should support only a small number of first-class adapters.
 
@@ -603,7 +741,7 @@ Recommended sequence:
 
 Do not start by supporting every surface that OpenClaw supports.
 
-### 13.6 Complexity Budget
+### 13.8 Complexity Budget
 
 The architecture should explicitly reject:
 
@@ -613,8 +751,32 @@ The architecture should explicitly reject:
 - runtime duplication between Spark Intelligence and Spark Researcher
 - memory logic duplicated outside the memory chip
 - feature sprawl in the CLI before the runtime is stable
+- multiple cron systems or competing background workers
 
-## 14. Borrow / Yoink / Build Ourselves
+### 13.9 Migration Compatibility
+
+Spark Intelligence should support migration from OpenClaw and Hermes where it is structurally clean to do so.
+
+V1 migration targets:
+
+- channel credentials and adapter settings where feasible
+- user allowlists and pairing state
+- basic agent/session identity mapping
+- operator config that can be translated safely
+
+Migration should not promise unsafe or lossy imports for:
+
+- memory semantics owned by foreign systems
+- internal runtime traces with incompatible meaning
+- opaque state that cannot be verified
+
+The rule is:
+
+import what is useful, deterministic, and auditable.
+
+Do not import mystery state.
+
+## 15. Borrow / Yoink / Build Ourselves
 
 ### 14.1 Borrow From OpenClaw
 
@@ -633,6 +795,7 @@ The architecture should explicitly reject:
 - platform-specific setup guides and env/config separation
 - session isolation thinking for Discord and group contexts
 - channel-specific operational docs
+- clean install, setup, status, and doctor rhythm
 
 ### 14.3 Yoink Directly As Patterns
 
@@ -649,6 +812,7 @@ What not to yoink:
 - OpenClaw's full channel surface area
 - any architecture that makes the gateway more important than the Spark runtime
 - any pattern that increases maintenance cost without improving the v1 wedge
+- any setup flow that requires operator babysitting every other day
 
 ### 14.4 Keep Uniquely Spark
 
@@ -661,7 +825,7 @@ What not to yoink:
 
 This is the actual moat. If we lose this, we are only rebuilding a messaging wrapper.
 
-## 15. Recommended v1 Package Layout
+## 16. Recommended v1 Package Layout
 
 ```text
 spark-intelligence-builder/
@@ -686,7 +850,7 @@ spark-intelligence-builder/
 `- tests/
 ```
 
-## 16. Immediate Next Specs
+## 17. Immediate Next Specs
 
 The next docs after this should be:
 
@@ -696,8 +860,10 @@ The next docs after this should be:
 4. Spark Researcher integration contract
 5. Spark Swarm escalation contract
 6. domain chip attachment contract
+7. cron and job harness spec
+8. import and migration spec
 
-## 17. Final Architectural Decision
+## 18. Final Architectural Decision
 
 Spark Intelligence should be:
 
@@ -707,6 +873,9 @@ Spark Intelligence should be:
 - many attached specialization systems
 - as lightweight as possible in v1
 - as maintainable as possible over time
+- fast to install
+- safe to migrate into
+- built around harnesses instead of competing subsystems
 
 The user talks to one agent.
 The Spark ecosystem is what makes that agent powerful.
