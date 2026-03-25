@@ -9,7 +9,7 @@ from spark_intelligence.adapters.telegram.normalize import normalize_telegram_up
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.gateway.tracing import append_gateway_trace
 from spark_intelligence.identity.service import resolve_inbound_dm
-from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
+from spark_intelligence.researcher_bridge.advisory import build_researcher_reply, record_researcher_bridge_result
 from spark_intelligence.state.db import StateDB
 
 
@@ -133,6 +133,7 @@ def simulate_telegram_update(
             channel_kind="telegram",
             user_message=normalized.text,
         )
+        record_researcher_bridge_result(state_db=state_db, result=bridge_result)
         outbound_text = bridge_result.reply_text
         trace_ref = bridge_result.trace_ref
         bridge_mode = bridge_result.mode
@@ -240,6 +241,7 @@ def poll_telegram_updates_once(
             channel_kind="telegram",
             user_message=normalized.text,
         )
+        record_researcher_bridge_result(state_db=state_db, result=bridge_result)
         client.send_message(chat_id=normalized.chat_id, text=bridge_result.reply_text)
         processed_count += 1
         sent_count += 1

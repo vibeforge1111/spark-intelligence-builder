@@ -34,6 +34,7 @@ from spark_intelligence.identity.service import (
 )
 from spark_intelligence.jobs.service import jobs_list, jobs_tick
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
+from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import swarm_status, sync_swarm_collective
 
@@ -148,6 +149,12 @@ def build_parser() -> argparse.ArgumentParser:
     auth_connect_parser.add_argument("--api-key", help="API key for the provider")
     auth_connect_parser.add_argument("--model", help="Default model id")
     auth_connect_parser.add_argument("--base-url", help="Custom provider base URL")
+
+    researcher_parser = subparsers.add_parser("researcher", help="Inspect Spark Researcher bridge state")
+    researcher_subparsers = researcher_parser.add_subparsers(dest="researcher_command", required=True)
+    researcher_status_parser = researcher_subparsers.add_parser("status", help="Show Spark Researcher bridge readiness")
+    researcher_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    researcher_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     config_parser = subparsers.add_parser("config", help="Inspect and update config values")
     config_subparsers = config_parser.add_subparsers(dest="config_command", required=True)
@@ -462,6 +469,16 @@ def handle_auth_connect(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_researcher_status(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    status = researcher_bridge_status(config_manager=config_manager, state_db=state_db)
+    print(status.to_json() if args.json else status.to_text())
+    return 0 if status.available else 1
+
+
 def handle_config_show(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
@@ -766,6 +783,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_attachments_clear_path(args)
     if args.command == "auth" and args.auth_command == "connect":
         return handle_auth_connect(args)
+    if args.command == "researcher" and args.researcher_command == "status":
+        return handle_researcher_status(args)
     if args.command == "config" and args.config_command == "show":
         return handle_config_show(args)
     if args.command == "config" and args.config_command == "set":

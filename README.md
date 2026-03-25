@@ -137,3 +137,8 @@ spark-intelligence agent inspect
 The attachment snapshot is written to `SPARK_INTELLIGENCE_HOME/attachments.snapshot.json` and mirrored into SQLite runtime state so external Spark repos can consume the current attachment set without importing this repo's internals.
 
 The Spark Researcher bridge now also includes a compact attachment context envelope derived from that snapshot, so advisory requests can stay aware of active chips and the active specialization path without this repo importing chip logic.
+
+```bash
+spark-intelligence researcher status
+spark-intelligence researcher status --json
+```
