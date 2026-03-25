@@ -5,7 +5,9 @@ import sqlite3
 from dataclasses import dataclass
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
 from spark_intelligence.state.db import StateDB
+from spark_intelligence.swarm_bridge import swarm_status
 
 
 @dataclass
@@ -86,5 +88,69 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
         )
     else:
         checks.append(DoctorCheck("provider-secrets", True, "no providers configured yet"))
+
+    researcher_root, researcher_source = discover_researcher_runtime_root(config_manager)
+    if researcher_root:
+        researcher_config_path = resolve_researcher_config_path(config_manager, researcher_root)
+        checks.append(
+            DoctorCheck(
+                "researcher-bridge",
+                researcher_config_path.exists(),
+                (
+                    f"{researcher_source}:{researcher_root} config={researcher_config_path}"
+                    if researcher_config_path.exists()
+                    else f"{researcher_source}:{researcher_root} missing config at {researcher_config_path}"
+                ),
+            )
+        )
+    else:
+        checks.append(
+            DoctorCheck(
+                "researcher-bridge",
+                True,
+                "not connected yet; advisory bridge will stay in stub mode",
+            )
+        )
+
+    swarm = swarm_status(config_manager)
+    swarm_hosted_fields = [swarm.api_url, swarm.workspace_id, swarm.access_token_env]
+    hosted_field_count = sum(1 for field in swarm_hosted_fields if field)
+
+    if not swarm.configured:
+        checks.append(DoctorCheck("swarm-bridge", True, "not connected yet; Swarm sync is optional"))
+    elif swarm.runtime_root and hosted_field_count == 0:
+        checks.append(
+            DoctorCheck(
+                "swarm-bridge",
+                True,
+                f"local swarm repo connected at {swarm.runtime_root}; hosted sync not configured yet",
+            )
+        )
+    elif not swarm.researcher_ready:
+        checks.append(DoctorCheck("swarm-bridge", False, "configured but Spark Researcher is not ready for payload export"))
+    elif 0 < hosted_field_count < 3:
+        checks.append(
+            DoctorCheck(
+                "swarm-bridge",
+                False,
+                "configured but missing api_url, workspace_id, or access_token_env",
+            )
+        )
+    elif not swarm.api_ready:
+        checks.append(
+            DoctorCheck(
+                "swarm-bridge",
+                True,
+                "API config present; upload readiness depends on access token resolution and latest payload availability",
+            )
+        )
+    else:
+        checks.append(
+            DoctorCheck(
+                "swarm-bridge",
+                True,
+                f"ready api={swarm.api_url} workspace={swarm.workspace_id}",
+            )
+        )
 
     return DoctorReport(checks=checks)

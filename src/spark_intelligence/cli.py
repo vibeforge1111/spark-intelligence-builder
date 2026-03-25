@@ -21,6 +21,7 @@ from spark_intelligence.identity.service import (
     revoke_session,
 )
 from spark_intelligence.jobs.service import jobs_list, jobs_tick
+from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import swarm_status, sync_swarm_collective
 
@@ -31,6 +32,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     setup_parser = subparsers.add_parser("setup", help="Bootstrap config and state")
     setup_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    setup_parser.add_argument("--researcher-root", help="Connect a local spark-researcher repo")
+    setup_parser.add_argument("--researcher-config", help="Override spark-researcher config path")
+    setup_parser.add_argument("--swarm-runtime-root", help="Connect a local spark-swarm repo")
+    setup_parser.add_argument("--swarm-api-url", help="Set the Spark Swarm API base URL")
+    setup_parser.add_argument("--swarm-workspace-id", help="Set the Spark Swarm workspace id")
+    setup_parser.add_argument("--swarm-access-token", help="Store a Spark Swarm access token")
+    setup_parser.add_argument(
+        "--swarm-access-token-env",
+        default="SPARK_SWARM_ACCESS_TOKEN",
+        help="Env var name used to store the Spark Swarm access token",
+    )
 
     doctor_parser = subparsers.add_parser("doctor", help="Run environment and state checks")
     doctor_parser.add_argument("--home", help="Override Spark Intelligence home directory")
@@ -172,16 +184,24 @@ def handle_setup(args: argparse.Namespace) -> int:
     created = config_manager.bootstrap()
     state_db = StateDB(config_manager.paths.state_db)
     state_db.initialize()
+    setup_notes = _apply_setup_integrations(config_manager, args)
     print(f"Spark Intelligence home: {config_manager.paths.home}")
     if created:
         print("Created config, env, and state bootstrap.")
     else:
         print("Existing config and env preserved; verified state bootstrap.")
+    if setup_notes:
+        print("Setup integrations:")
+        for note in setup_notes:
+            print(f"  - {note}")
     print("Next steps:")
     print("  1. spark-intelligence auth connect openai --api-key <key> --model <model>")
     print("  2. spark-intelligence channel add telegram --bot-token <token> --allowed-user <id>")
     print("  3. spark-intelligence doctor")
     print("  4. spark-intelligence gateway start")
+    print("Optional Spark hookups:")
+    print("  - spark-intelligence swarm status")
+    print("  - spark-intelligence swarm sync --dry-run")
     return 0
 
 
@@ -328,18 +348,14 @@ def handle_swarm_status(args: argparse.Namespace) -> int:
 def handle_swarm_configure(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
-    if args.api_url:
-        config_manager.set_path("spark.swarm.api_url", args.api_url.rstrip("/"))
-    if args.workspace_id:
-        config_manager.set_path("spark.swarm.workspace_id", args.workspace_id)
-        config_manager.upsert_env_secret("SPARK_SWARM_WORKSPACE_ID", args.workspace_id)
-    if args.runtime_root:
-        config_manager.set_path("spark.swarm.runtime_root", str(Path(args.runtime_root).expanduser()))
-    if args.access_token:
-        config_manager.upsert_env_secret(args.access_token_env, args.access_token)
-        config_manager.set_path("spark.swarm.access_token_env", args.access_token_env)
-    elif args.access_token_env:
-        config_manager.set_path("spark.swarm.access_token_env", args.access_token_env)
+    _configure_swarm(
+        config_manager,
+        api_url=args.api_url,
+        workspace_id=args.workspace_id,
+        runtime_root=args.runtime_root,
+        access_token=args.access_token,
+        access_token_env=args.access_token_env,
+    )
     print("Spark Swarm bridge config updated.")
     print("Recommended checks:")
     print("  1. spark-intelligence swarm status")
@@ -356,6 +372,91 @@ def handle_swarm_sync(args: argparse.Namespace) -> int:
     result = sync_swarm_collective(config_manager=config_manager, state_db=state_db, dry_run=args.dry_run)
     print(result.to_json() if args.json else result.to_text())
     return 0 if result.ok else 1
+
+
+def _apply_setup_integrations(config_manager: ConfigManager, args: argparse.Namespace) -> list[str]:
+    notes: list[str] = []
+
+    researcher_root_value = args.researcher_root
+    if not researcher_root_value:
+        current_root = config_manager.get_path("spark.researcher.runtime_root")
+        discovered_root, source = discover_researcher_runtime_root(config_manager)
+        if not current_root and discovered_root and source == "autodiscovered":
+            researcher_root_value = str(discovered_root)
+            notes.append(f"autoconnected spark-researcher at {discovered_root}")
+
+    if researcher_root_value:
+        normalized_root = str(Path(researcher_root_value).expanduser())
+        config_manager.set_path("spark.researcher.runtime_root", normalized_root)
+        notes.append(f"configured spark.researcher.runtime_root = {normalized_root}")
+        if args.researcher_config:
+            normalized_config = str(Path(args.researcher_config).expanduser())
+            config_manager.set_path("spark.researcher.config_path", normalized_config)
+            notes.append(f"configured spark.researcher.config_path = {normalized_config}")
+        else:
+            resolved = resolve_researcher_config_path(config_manager, Path(normalized_root))
+            if resolved.exists():
+                config_manager.set_path("spark.researcher.config_path", str(resolved))
+                notes.append(f"discovered spark-researcher config at {resolved}")
+
+    swarm_runtime_root = args.swarm_runtime_root
+    if not swarm_runtime_root:
+        current_swarm_root = config_manager.get_path("spark.swarm.runtime_root")
+        default_swarm_root = Path.home() / "Desktop" / "spark-swarm"
+        if not current_swarm_root and default_swarm_root.exists():
+            swarm_runtime_root = str(default_swarm_root)
+            notes.append(f"autoconnected spark-swarm at {default_swarm_root}")
+
+    if any(
+        [
+            swarm_runtime_root,
+            args.swarm_api_url,
+            args.swarm_workspace_id,
+            args.swarm_access_token,
+        ]
+    ):
+        _configure_swarm(
+            config_manager,
+            api_url=args.swarm_api_url,
+            workspace_id=args.swarm_workspace_id,
+            runtime_root=swarm_runtime_root,
+            access_token=args.swarm_access_token,
+            access_token_env=args.swarm_access_token_env if args.swarm_access_token else None,
+        )
+        if args.swarm_api_url:
+            notes.append(f"configured spark.swarm.api_url = {args.swarm_api_url.rstrip('/')}")
+        if args.swarm_workspace_id:
+            notes.append(f"configured spark.swarm.workspace_id = {args.swarm_workspace_id}")
+        if swarm_runtime_root:
+            notes.append(f"configured spark.swarm.runtime_root = {Path(swarm_runtime_root).expanduser()}")
+        if args.swarm_access_token:
+            notes.append(f"stored spark.swarm access token in {args.swarm_access_token_env}")
+
+    return notes
+
+
+def _configure_swarm(
+    config_manager: ConfigManager,
+    *,
+    api_url: str | None,
+    workspace_id: str | None,
+    runtime_root: str | None,
+    access_token: str | None,
+    access_token_env: str | None,
+) -> None:
+    if api_url:
+        config_manager.set_path("spark.swarm.api_url", api_url.rstrip("/"))
+    if workspace_id:
+        config_manager.set_path("spark.swarm.workspace_id", workspace_id)
+        config_manager.upsert_env_secret("SPARK_SWARM_WORKSPACE_ID", workspace_id)
+    if runtime_root:
+        config_manager.set_path("spark.swarm.runtime_root", str(Path(runtime_root).expanduser()))
+    if access_token:
+        env_name = access_token_env or "SPARK_SWARM_ACCESS_TOKEN"
+        config_manager.upsert_env_secret(env_name, access_token)
+        config_manager.set_path("spark.swarm.access_token_env", env_name)
+    elif access_token_env:
+        config_manager.set_path("spark.swarm.access_token_env", access_token_env)
 
 
 def handle_jobs_tick(args: argparse.Namespace) -> int:

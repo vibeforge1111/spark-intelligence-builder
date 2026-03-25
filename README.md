@@ -83,6 +83,15 @@ spark-intelligence sessions list
 spark-intelligence gateway start
 ```
 
+`setup` now auto-detects local `spark-researcher` and `spark-swarm` repos on the Desktop when they are present. It can also wire hosted Swarm access in one command:
+
+```bash
+spark-intelligence setup \
+  --swarm-api-url https://your-swarm-host \
+  --swarm-workspace-id <workspace_id> \
+  --swarm-access-token <token>
+```
+
 Telegram runtime verification is available in two forms:
 
 ```bash
