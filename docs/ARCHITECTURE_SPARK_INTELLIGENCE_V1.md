@@ -176,6 +176,19 @@ That means:
 - explicit diagnostics
 - deterministic startup validation
 
+### 4.5 Gstack Decision Discipline
+
+Spark Intelligence should use gstack-style product rigor when deciding what to build.
+
+That means:
+
+- product-market fit before feature sprawl
+- startup quality judgment before technical vanity
+- review and QA discipline before shipping
+- completeness on important narrow loops, not ambition on everything at once
+
+This system should be a machine for useful product decisions, not a pile of smart-sounding architecture.
+
 ## 5. High-Level System
 
 ```text
@@ -704,12 +717,27 @@ Design rules:
 - jobs must not silently fork their own state models
 - one scheduler should own recurring execution
 - one job record format should exist for status, retry, and failure reporting
+- every critical job should have a smoke test
+- every critical job should have a direct manual run mode for debugging
+- every critical job should expose its last successful run and last failure
 
 This should be lightweight. For v1:
 
 - prefer one internal scheduler over an external job platform
 - prefer SQLite-backed job metadata over a separate queue service
 - prefer explicit retry policy over many background daemons
+
+Recommended v1 smoke targets:
+
+- install smoke
+- setup smoke
+- doctor smoke
+- gateway startup smoke
+- adapter handshake smoke
+- send and receive smoke
+- persistent session smoke
+- scheduled job smoke
+- migration import smoke
 
 ### 13.6 Install Shape
 
@@ -862,6 +890,7 @@ The next docs after this should be:
 6. domain chip attachment contract
 7. cron and job harness spec
 8. import and migration spec
+9. prompt bible operating guide
 
 ## 18. Final Architectural Decision
 
