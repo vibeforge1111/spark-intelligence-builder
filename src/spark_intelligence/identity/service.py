@@ -90,6 +90,41 @@ class PairingQueueReport:
         return json.dumps({"rows": self.rows}, indent=2)
 
 
+@dataclass
+class PairingSummaryReport:
+    channel_id: str
+    counts: dict[str, int]
+    latest_pending: dict[str, Any] | None
+    latest_held: dict[str, Any] | None
+    latest_approved: dict[str, Any] | None
+
+    def to_text(self) -> str:
+        lines = [f"Pairing summary: {self.channel_id}"]
+        lines.append(
+            "- counts: "
+            f"pending={self.counts.get('pending', 0)} "
+            f"held={self.counts.get('held', 0)} "
+            f"approved={self.counts.get('approved', 0)} "
+            f"revoked={self.counts.get('revoked', 0)}"
+        )
+        lines.extend(_format_pairing_summary_block("latest_pending", self.latest_pending))
+        lines.extend(_format_pairing_summary_block("latest_held", self.latest_held))
+        lines.extend(_format_pairing_summary_block("latest_approved", self.latest_approved))
+        return "\n".join(lines)
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "channel_id": self.channel_id,
+                "counts": self.counts,
+                "latest_pending": self.latest_pending,
+                "latest_held": self.latest_held,
+                "latest_approved": self.latest_approved,
+            },
+            indent=2,
+        )
+
+
 def _require_operator(state_db: StateDB, human_id: str = LOCAL_OPERATOR_HUMAN_ID) -> None:
     with state_db.connect() as conn:
         row = conn.execute(
@@ -491,6 +526,46 @@ def review_pairings(state_db: StateDB) -> PairingQueueReport:
     return PairingQueueReport(rows=payload)
 
 
+def pairing_summary(*, state_db: StateDB, channel_id: str) -> PairingSummaryReport:
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT pairing_id, channel_id, external_user_id, human_id, status, approved_by, approved_at, updated_at
+            FROM pairing_records
+            WHERE channel_id = ?
+            ORDER BY updated_at DESC, external_user_id DESC
+            """,
+            (channel_id,),
+        ).fetchall()
+    counts = {"pending": 0, "held": 0, "approved": 0, "revoked": 0}
+    latest_pending: dict[str, Any] | None = None
+    latest_held: dict[str, Any] | None = None
+    latest_approved: dict[str, Any] | None = None
+    for row in rows:
+        status = str(row["status"])
+        if status in counts:
+            counts[status] += 1
+        item = dict(row)
+        item["context"] = _load_pairing_context(
+            state_db=state_db,
+            channel_id=str(row["channel_id"]),
+            external_user_id=str(row["external_user_id"]),
+        )
+        if status == "pending" and latest_pending is None:
+            latest_pending = item
+        elif status == "held" and latest_held is None:
+            latest_held = item
+        elif status == "approved" and latest_approved is None:
+            latest_approved = item
+    return PairingSummaryReport(
+        channel_id=channel_id,
+        counts=counts,
+        latest_pending=latest_pending,
+        latest_held=latest_held,
+        latest_approved=latest_approved,
+    )
+
+
 def approve_latest_pairing(
     *,
     state_db: StateDB,
@@ -664,3 +739,22 @@ def _read_optional_text(value: object) -> str | None:
     if value in {None, ""}:
         return None
     return str(value)
+
+
+def _format_pairing_summary_block(label: str, row: dict[str, Any] | None) -> list[str]:
+    if not row:
+        return [f"- {label}: none"]
+    context = row.get("context") or {}
+    parts = [
+        f"- {label}: {row.get('channel_id')}:{row.get('external_user_id')}",
+        f"status={row.get('status')}",
+        f"human={row.get('human_id')}",
+        f"updated_at={row.get('updated_at')}",
+    ]
+    if context.get("telegram_username"):
+        parts.append(f"telegram_username=@{context['telegram_username']}")
+    if context.get("chat_id"):
+        parts.append(f"chat_id={context['chat_id']}")
+    if context.get("last_message_text"):
+        parts.append(f"last_message={context['last_message_text']}")
+    return [" ".join(parts)]

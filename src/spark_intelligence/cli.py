@@ -47,6 +47,7 @@ from spark_intelligence.identity.service import (
     hold_latest_pairing,
     list_pairings,
     list_sessions,
+    pairing_summary,
     review_pairings,
     revoke_pairing,
     revoke_session,
@@ -133,6 +134,13 @@ def build_parser() -> argparse.ArgumentParser:
     operator_review_pairings_parser = operator_subparsers.add_parser("review-pairings", help="Show pending and held pairing requests")
     operator_review_pairings_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     operator_review_pairings_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    operator_pairing_summary_parser = operator_subparsers.add_parser(
+        "pairing-summary",
+        help="Show compact pairing state for one channel",
+    )
+    operator_pairing_summary_parser.add_argument("channel_id", choices=["telegram", "discord", "whatsapp"])
+    operator_pairing_summary_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    operator_pairing_summary_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     operator_approve_pairing_parser = operator_subparsers.add_parser("approve-pairing", help="Approve a pending or held pairing")
     operator_approve_pairing_parser.add_argument("channel_id")
     operator_approve_pairing_parser.add_argument("external_user_id")
@@ -468,6 +476,16 @@ def handle_operator_review_pairings(args: argparse.Namespace) -> int:
     config_manager.bootstrap()
     state_db.initialize()
     report = review_pairings(state_db)
+    print(report.to_json() if args.json else report.to_text())
+    return 0
+
+
+def handle_operator_pairing_summary(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    report = pairing_summary(state_db=state_db, channel_id=args.channel_id)
     print(report.to_json() if args.json else report.to_text())
     return 0
 
@@ -1295,6 +1313,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_operator_set_bridge(args)
     if args.command == "operator" and args.operator_command == "review-pairings":
         return handle_operator_review_pairings(args)
+    if args.command == "operator" and args.operator_command == "pairing-summary":
+        return handle_operator_pairing_summary(args)
     if args.command == "operator" and args.operator_command == "approve-pairing":
         return handle_operator_approve_pairing(args)
     if args.command == "operator" and args.operator_command == "approve-latest":
