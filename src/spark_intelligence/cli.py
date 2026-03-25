@@ -41,6 +41,7 @@ from spark_intelligence.gateway.runtime import (
 )
 from spark_intelligence.identity.service import (
     agent_inspect,
+    approve_latest_pairing,
     approve_pairing,
     hold_pairing,
     list_pairings,
@@ -137,6 +138,14 @@ def build_parser() -> argparse.ArgumentParser:
     operator_approve_pairing_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     operator_approve_pairing_parser.add_argument("--display-name", help="Friendly display name")
     operator_approve_pairing_parser.add_argument("--reason", help="Short audit reason for this approval")
+    operator_approve_latest_parser = operator_subparsers.add_parser(
+        "approve-latest",
+        help="Approve the newest pending pairing for a channel",
+    )
+    operator_approve_latest_parser.add_argument("channel_id", choices=["telegram", "discord", "whatsapp"])
+    operator_approve_latest_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    operator_approve_latest_parser.add_argument("--display-name", help="Friendly display name override")
+    operator_approve_latest_parser.add_argument("--reason", help="Short audit reason for this approval")
     operator_hold_pairing_parser = operator_subparsers.add_parser("hold-pairing", help="Mark a pairing request as held")
     operator_hold_pairing_parser.add_argument("channel_id")
     operator_hold_pairing_parser.add_argument("external_user_id")
@@ -471,6 +480,28 @@ def handle_operator_approve_pairing(args: argparse.Namespace) -> int:
         action="approve_pairing",
         target_kind="pairing",
         target_ref=f"{args.channel_id}:{args.external_user_id}",
+        reason=args.reason,
+        details={"display_name": args.display_name},
+    )
+    print(result)
+    return 0
+
+
+def handle_operator_approve_latest(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = approve_latest_pairing(
+        state_db=state_db,
+        channel_id=args.channel_id,
+        display_name=args.display_name,
+    )
+    log_operator_event(
+        state_db=state_db,
+        action="approve_latest_pairing",
+        target_kind="pairing",
+        target_ref=args.channel_id,
         reason=args.reason,
         details={"display_name": args.display_name},
     )
@@ -1238,6 +1269,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_operator_review_pairings(args)
     if args.command == "operator" and args.operator_command == "approve-pairing":
         return handle_operator_approve_pairing(args)
+    if args.command == "operator" and args.operator_command == "approve-latest":
+        return handle_operator_approve_latest(args)
     if args.command == "operator" and args.operator_command == "hold-pairing":
         return handle_operator_hold_pairing(args)
     if args.command == "operator" and args.operator_command == "set-channel":

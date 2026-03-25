@@ -17,7 +17,7 @@ from spark_intelligence.gateway.guardrails import (
     set_runtime_state_value,
 )
 from spark_intelligence.gateway.tracing import append_gateway_trace, append_outbound_audit
-from spark_intelligence.identity.service import resolve_inbound_dm
+from spark_intelligence.identity.service import record_pairing_context, resolve_inbound_dm
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply, record_researcher_bridge_result
 from spark_intelligence.state.db import StateDB
 
@@ -237,6 +237,20 @@ def simulate_telegram_update(
         external_user_id=normalized.telegram_user_id,
         display_name=normalized.telegram_username or f"telegram user {normalized.telegram_user_id}",
     )
+    if resolution.decision in {"pending_pairing", "held"}:
+        record_pairing_context(
+            state_db=state_db,
+            channel_id="telegram",
+            external_user_id=normalized.telegram_user_id,
+            context={
+                "display_name": normalized.telegram_username or f"telegram user {normalized.telegram_user_id}",
+                "telegram_username": normalized.telegram_username,
+                "chat_id": normalized.chat_id,
+                "last_message_text": _preview_text(normalized.text, limit=80),
+                "last_update_id": normalized.update_id,
+                "last_seen_at": _utc_now_iso(),
+            },
+        )
     outbound_text = _pairing_reply_text(resolution.response_text, inbound_text=normalized.text)
     if resolution.allowed and resolution.agent_id and resolution.human_id and resolution.session_id:
         bridge_result = build_researcher_reply(
@@ -382,6 +396,20 @@ def poll_telegram_updates_once(
             external_user_id=normalized.telegram_user_id,
             display_name=normalized.telegram_username or f"telegram user {normalized.telegram_user_id}",
         )
+        if resolution.decision in {"pending_pairing", "held"}:
+            record_pairing_context(
+                state_db=state_db,
+                channel_id="telegram",
+                external_user_id=normalized.telegram_user_id,
+                context={
+                    "display_name": normalized.telegram_username or f"telegram user {normalized.telegram_user_id}",
+                    "telegram_username": normalized.telegram_username,
+                    "chat_id": normalized.chat_id,
+                    "last_message_text": _preview_text(normalized.text, limit=80),
+                    "last_update_id": normalized.update_id,
+                    "last_seen_at": _utc_now_iso(),
+                },
+            )
 
         if resolution.decision == "pending_pairing":
             pending_pairing_count += 1

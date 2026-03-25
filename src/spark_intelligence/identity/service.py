@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import Any
 
 from spark_intelligence.state.db import StateDB
 
@@ -65,11 +66,24 @@ class PairingQueueReport:
             return "No pending or held pairings."
         lines = ["Pairing review queue:"]
         for row in self.rows:
-            lines.append(
+            summary = (
                 f"- {row['channel_id']}:{row['external_user_id']} status={row['status']} "
                 f"human={row['human_id']} approved_by={row['approved_by'] or 'none'} "
                 f"updated_at={row['updated_at']}"
             )
+            context = row.get("context") or {}
+            detail_parts: list[str] = []
+            if context.get("display_name"):
+                detail_parts.append(f"display_name={context['display_name']}")
+            if context.get("telegram_username"):
+                detail_parts.append(f"telegram_username=@{context['telegram_username']}")
+            if context.get("chat_id"):
+                detail_parts.append(f"chat_id={context['chat_id']}")
+            if context.get("last_message_text"):
+                detail_parts.append(f"last_message={context['last_message_text']}")
+            if detail_parts:
+                summary = f"{summary} {' '.join(detail_parts)}"
+            lines.append(summary)
         return "\n".join(lines)
 
     def to_json(self) -> str:
@@ -402,6 +416,26 @@ def hold_pairing(*, state_db: StateDB, channel_id: str, external_user_id: str, h
     return f"Held pairing for {channel_id}:{external_user_id}"
 
 
+def record_pairing_context(
+    *,
+    state_db: StateDB,
+    channel_id: str,
+    external_user_id: str,
+    context: dict[str, Any],
+) -> None:
+    state_key = _pairing_context_state_key(channel_id, external_user_id)
+    with state_db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO runtime_state(state_key, value)
+            VALUES (?, ?)
+            ON CONFLICT(state_key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
+            """,
+            (state_key, json.dumps(context, sort_keys=True)),
+        )
+        conn.commit()
+
+
 def list_pairings(state_db: StateDB) -> str:
     with state_db.connect() as conn:
         rows = conn.execute(
@@ -437,7 +471,53 @@ def review_pairings(state_db: StateDB) -> PairingQueueReport:
                 external_user_id
             """
         ).fetchall()
-    return PairingQueueReport(rows=[dict(row) for row in rows])
+    payload: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        item["context"] = _load_pairing_context(
+            state_db=state_db,
+            channel_id=str(row["channel_id"]),
+            external_user_id=str(row["external_user_id"]),
+        )
+        payload.append(item)
+    return PairingQueueReport(rows=payload)
+
+
+def approve_latest_pairing(
+    *,
+    state_db: StateDB,
+    channel_id: str,
+    display_name: str | None = None,
+    approved_by: str = LOCAL_OPERATOR_HUMAN_ID,
+) -> str:
+    _require_operator(state_db, approved_by)
+    with state_db.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT external_user_id
+            FROM pairing_records
+            WHERE channel_id = ? AND status = 'pending'
+            ORDER BY updated_at DESC, external_user_id DESC
+            LIMIT 1
+            """,
+            (channel_id,),
+        ).fetchone()
+    if not row:
+        raise ValueError(f"No pending pairing found for channel '{channel_id}'.")
+    external_user_id = str(row["external_user_id"])
+    context = _load_pairing_context(
+        state_db=state_db,
+        channel_id=channel_id,
+        external_user_id=external_user_id,
+    )
+    resolved_display_name = display_name or _read_optional_text(context.get("display_name"))
+    return approve_pairing(
+        state_db=state_db,
+        channel_id=channel_id,
+        external_user_id=external_user_id,
+        display_name=resolved_display_name,
+        approved_by=approved_by,
+    )
 
 
 def list_sessions(state_db: StateDB) -> str:
@@ -500,3 +580,28 @@ def agent_inspect(*, state_db: StateDB, workspace_owner: str) -> IdentityReport:
         "channels": channels,
     }
     return IdentityReport(payload=payload)
+
+
+def _pairing_context_state_key(channel_id: str, external_user_id: str) -> str:
+    return f"pairing_context:{channel_id}:{external_user_id}"
+
+
+def _load_pairing_context(*, state_db: StateDB, channel_id: str, external_user_id: str) -> dict[str, Any]:
+    with state_db.connect() as conn:
+        row = conn.execute(
+            "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+            (_pairing_context_state_key(channel_id, external_user_id),),
+        ).fetchone()
+    if not row or row["value"] is None:
+        return {}
+    try:
+        payload = json.loads(str(row["value"]))
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _read_optional_text(value: object) -> str | None:
+    if value in {None, ""}:
+        return None
+    return str(value)
