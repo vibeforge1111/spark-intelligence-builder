@@ -20,6 +20,7 @@ This repo currently includes:
 - [docs/IMPORT_AND_MIGRATION_SPEC_V1.md](./docs/IMPORT_AND_MIGRATION_SPEC_V1.md)
 - [docs/CODING_RULESET_V1.md](./docs/CODING_RULESET_V1.md)
 - [docs/SKILL_VALIDATION_GUIDE.md](./docs/SKILL_VALIDATION_GUIDE.md)
+- [docs/ONBOARDING_CLI_SPEC_V1.md](./docs/ONBOARDING_CLI_SPEC_V1.md)
 
 Key repo skills:
 
