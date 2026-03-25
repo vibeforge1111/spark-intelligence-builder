@@ -520,6 +520,34 @@ def approve_latest_pairing(
     )
 
 
+def hold_latest_pairing(
+    *,
+    state_db: StateDB,
+    channel_id: str,
+    held_by: str = LOCAL_OPERATOR_HUMAN_ID,
+) -> str:
+    _require_operator(state_db, held_by)
+    with state_db.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT external_user_id
+            FROM pairing_records
+            WHERE channel_id = ? AND status = 'pending'
+            ORDER BY updated_at DESC, external_user_id DESC
+            LIMIT 1
+            """,
+            (channel_id,),
+        ).fetchone()
+    if not row:
+        raise ValueError(f"No pending pairing found for channel '{channel_id}'.")
+    return hold_pairing(
+        state_db=state_db,
+        channel_id=channel_id,
+        external_user_id=str(row["external_user_id"]),
+        held_by=held_by,
+    )
+
+
 def list_sessions(state_db: StateDB) -> str:
     with state_db.connect() as conn:
         rows = conn.execute(

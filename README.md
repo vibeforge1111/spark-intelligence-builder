@@ -172,6 +172,7 @@ spark-intelligence operator review-pairings
 spark-intelligence operator hold-pairing telegram 123456
 spark-intelligence operator approve-pairing telegram 123456
 spark-intelligence operator approve-latest telegram
+spark-intelligence operator hold-latest telegram
 spark-intelligence operator inbox
 spark-intelligence operator security
 spark-intelligence operator history
