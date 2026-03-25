@@ -171,6 +171,7 @@ spark-intelligence operator set-bridge researcher enabled
 spark-intelligence operator set-bridge swarm disabled
 spark-intelligence operator set-channel telegram paused
 spark-intelligence operator review-pairings
+spark-intelligence operator review-pairings --channel-id telegram --status pending
 spark-intelligence operator pairing-summary telegram
 spark-intelligence operator hold-pairing telegram 123456
 spark-intelligence operator approve-pairing telegram 123456
@@ -184,6 +185,7 @@ spark-intelligence operator history
 `operator inbox` now emits direct recommended commands for each actionable item so the operator surface stays lightweight and local-first without a separate ticketing subsystem.
 `operator security` also reads durable bridge failure counters and last-failure metadata from local state, not just recent logs.
 Telegram pending pairings now also carry lightweight local context, so `operator review-pairings` can show the most recent Telegram username, chat id, and last inbound message preview.
+`operator review-pairings` now also supports lightweight `--channel-id`, `--status`, and `--limit` filters so the queue stays usable once there are multiple channels or repeated onboarding attempts.
 `operator pairing-summary telegram` provides a compact channel-level view of pending, held, approved, and revoked pairing state in one command.
 After approval, the first successful Telegram reply also carries a one-time "pairing approved" welcome so the user gets a cleaner handoff into the active agent.
 Held, revoked, paused, disabled, and generic blocked Telegram DMs now also return explicit user-facing replies instead of failing silently.

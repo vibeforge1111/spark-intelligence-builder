@@ -500,19 +500,43 @@ def list_pairings(state_db: StateDB) -> str:
     return "\n".join(lines)
 
 
-def review_pairings(state_db: StateDB) -> PairingQueueReport:
+def review_pairings(
+    state_db: StateDB,
+    *,
+    channel_id: str | None = None,
+    status: str | None = None,
+    limit: int | None = None,
+) -> PairingQueueReport:
+    allowed_statuses = ("pending", "held")
+    filters: list[str] = ["status IN ('pending', 'held')"]
+    params: list[Any] = []
+    if channel_id:
+        filters.append("channel_id = ?")
+        params.append(channel_id)
+    if status:
+        if status not in allowed_statuses:
+            raise ValueError(f"Unsupported review pairing status '{status}'.")
+        filters.append("status = ?")
+        params.append(status)
+    limit_clause = ""
+    if limit is not None:
+        limit_clause = "LIMIT ?"
+        params.append(limit)
     with state_db.connect() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT pairing_id, channel_id, external_user_id, human_id, status, approved_by, approved_at, updated_at
             FROM pairing_records
-            WHERE status IN ('pending', 'held')
+            WHERE {' AND '.join(filters)}
             ORDER BY
                 CASE status WHEN 'pending' THEN 0 WHEN 'held' THEN 1 ELSE 2 END,
                 updated_at DESC,
                 channel_id,
                 external_user_id
+            {limit_clause}
             """
+            ,
+            params,
         ).fetchall()
     payload: list[dict[str, Any]] = []
     for row in rows:

@@ -133,6 +133,9 @@ def build_parser() -> argparse.ArgumentParser:
     operator_set_bridge_parser.add_argument("--reason", help="Short audit reason for this change")
     operator_review_pairings_parser = operator_subparsers.add_parser("review-pairings", help="Show pending and held pairing requests")
     operator_review_pairings_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    operator_review_pairings_parser.add_argument("--channel-id", choices=["telegram", "discord", "whatsapp"], help="Filter review queue to one channel")
+    operator_review_pairings_parser.add_argument("--status", choices=["pending", "held"], help="Filter review queue to one status")
+    operator_review_pairings_parser.add_argument("--limit", type=int, help="Limit the number of rows shown")
     operator_review_pairings_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     operator_pairing_summary_parser = operator_subparsers.add_parser(
         "pairing-summary",
@@ -489,7 +492,12 @@ def handle_operator_review_pairings(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
-    report = review_pairings(state_db)
+    report = review_pairings(
+        state_db,
+        channel_id=args.channel_id,
+        status=args.status,
+        limit=args.limit,
+    )
     print(report.to_json() if args.json else report.to_text())
     return 0
 
