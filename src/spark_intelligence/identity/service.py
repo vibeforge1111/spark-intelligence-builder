@@ -208,6 +208,14 @@ def approve_pairing(
             "INSERT INTO allowlist_entries(channel_id, external_user_id, role) VALUES (?, ?, 'paired_user')",
             (channel_id, external_user_id),
         )
+        conn.execute(
+            """
+            INSERT INTO runtime_state(state_key, value)
+            VALUES (?, '1')
+            ON CONFLICT(state_key) DO UPDATE SET value='1', updated_at=CURRENT_TIMESTAMP
+            """,
+            (_pairing_welcome_state_key(channel_id, external_user_id),),
+        )
         conn.commit()
 
     return f"Approved pairing for {channel_id}:{external_user_id} -> {human_id}"
@@ -548,6 +556,25 @@ def hold_latest_pairing(
     )
 
 
+def consume_pairing_welcome(
+    *,
+    state_db: StateDB,
+    channel_id: str,
+    external_user_id: str,
+) -> bool:
+    state_key = _pairing_welcome_state_key(channel_id, external_user_id)
+    with state_db.connect() as conn:
+        row = conn.execute(
+            "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+            (state_key,),
+        ).fetchone()
+        if not row or row["value"] != "1":
+            return False
+        conn.execute("DELETE FROM runtime_state WHERE state_key = ?", (state_key,))
+        conn.commit()
+    return True
+
+
 def list_sessions(state_db: StateDB) -> str:
     with state_db.connect() as conn:
         rows = conn.execute(
@@ -612,6 +639,10 @@ def agent_inspect(*, state_db: StateDB, workspace_owner: str) -> IdentityReport:
 
 def _pairing_context_state_key(channel_id: str, external_user_id: str) -> str:
     return f"pairing_context:{channel_id}:{external_user_id}"
+
+
+def _pairing_welcome_state_key(channel_id: str, external_user_id: str) -> str:
+    return f"pairing_welcome:{channel_id}:{external_user_id}"
 
 
 def _load_pairing_context(*, state_db: StateDB, channel_id: str, external_user_id: str) -> dict[str, Any]:

@@ -17,7 +17,7 @@ from spark_intelligence.gateway.guardrails import (
     set_runtime_state_value,
 )
 from spark_intelligence.gateway.tracing import append_gateway_trace, append_outbound_audit
-from spark_intelligence.identity.service import record_pairing_context, resolve_inbound_dm
+from spark_intelligence.identity.service import consume_pairing_welcome, record_pairing_context, resolve_inbound_dm
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply, record_researcher_bridge_result
 from spark_intelligence.state.db import StateDB
 
@@ -263,7 +263,11 @@ def simulate_telegram_update(
             user_message=normalized.text,
         )
         record_researcher_bridge_result(state_db=state_db, result=bridge_result)
-        outbound_text = bridge_result.reply_text
+        outbound_text = _apply_post_approval_welcome(
+            state_db=state_db,
+            external_user_id=normalized.telegram_user_id,
+            reply_text=bridge_result.reply_text,
+        )
         trace_ref = bridge_result.trace_ref
         bridge_mode = bridge_result.mode
         attachment_context = bridge_result.attachment_context
@@ -476,11 +480,16 @@ def poll_telegram_updates_once(
             user_message=normalized.text,
         )
         record_researcher_bridge_result(state_db=state_db, result=bridge_result)
+        outbound_text = _apply_post_approval_welcome(
+            state_db=state_db,
+            external_user_id=normalized.telegram_user_id,
+            reply_text=bridge_result.reply_text,
+        )
         send_result = _send_telegram_reply(
             config_manager=config_manager,
             client=client,
             chat_id=normalized.chat_id,
-            text=bridge_result.reply_text,
+            text=outbound_text,
             event="telegram_bridge_outbound",
             update_id=normalized.update_id,
             telegram_user_id=normalized.telegram_user_id,
@@ -509,8 +518,8 @@ def poll_telegram_updates_once(
                 "config_path": bridge_result.config_path,
                 "evidence_summary": bridge_result.evidence_summary,
                 "attachment_context": bridge_result.attachment_context,
-                "response_preview": _preview_text(bridge_result.reply_text),
-                "response_length": len(bridge_result.reply_text),
+                "response_preview": _preview_text(outbound_text),
+                "response_length": len(outbound_text),
                 "delivery_ok": send_result["ok"],
                 "delivery_error": send_result["error"],
                 "guardrail_actions": send_result["guardrail_actions"],
@@ -618,6 +627,23 @@ def _preview_text(text: str, *, limit: int = 160) -> str:
     if len(compact) <= limit:
         return compact
     return f"{compact[: limit - 3]}..."
+
+
+def _apply_post_approval_welcome(
+    *,
+    state_db: StateDB,
+    external_user_id: str,
+    reply_text: str,
+) -> str:
+    welcome_pending = consume_pairing_welcome(
+        state_db=state_db,
+        channel_id="telegram",
+        external_user_id=external_user_id,
+    )
+    if not welcome_pending:
+        return reply_text
+    welcome_text = "Pairing approved. Spark Intelligence is now active in this Telegram DM."
+    return f"{welcome_text}\n\n{reply_text}".strip()
 
 
 def _pairing_reply_text(default_text: str, *, inbound_text: str) -> str:
