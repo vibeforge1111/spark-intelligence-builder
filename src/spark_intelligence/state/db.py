@@ -147,6 +147,18 @@ SCHEMA_STATEMENTS = [
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS operator_events (
+        event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        actor_human_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        target_kind TEXT NOT NULL,
+        target_ref TEXT NOT NULL,
+        reason TEXT,
+        details_json TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
 ]
 
 

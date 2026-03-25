@@ -153,4 +153,5 @@ spark-intelligence operator set-bridge swarm disabled
 spark-intelligence operator review-pairings
 spark-intelligence operator hold-pairing telegram 123456
 spark-intelligence operator approve-pairing telegram 123456
+spark-intelligence operator history
 ```

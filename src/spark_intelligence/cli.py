@@ -36,6 +36,7 @@ from spark_intelligence.identity.service import (
     revoke_session,
 )
 from spark_intelligence.jobs.service import jobs_list, jobs_tick
+from spark_intelligence.ops import list_operator_events, log_operator_event
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
 from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.state.db import StateDB
@@ -112,6 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
     operator_set_bridge_parser.add_argument("bridge", choices=["researcher", "swarm"])
     operator_set_bridge_parser.add_argument("mode", choices=["enabled", "disabled"])
     operator_set_bridge_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    operator_set_bridge_parser.add_argument("--reason", help="Short audit reason for this change")
     operator_review_pairings_parser = operator_subparsers.add_parser("review-pairings", help="Show pending and held pairing requests")
     operator_review_pairings_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     operator_review_pairings_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
@@ -120,10 +122,16 @@ def build_parser() -> argparse.ArgumentParser:
     operator_approve_pairing_parser.add_argument("external_user_id")
     operator_approve_pairing_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     operator_approve_pairing_parser.add_argument("--display-name", help="Friendly display name")
+    operator_approve_pairing_parser.add_argument("--reason", help="Short audit reason for this approval")
     operator_hold_pairing_parser = operator_subparsers.add_parser("hold-pairing", help="Mark a pairing request as held")
     operator_hold_pairing_parser.add_argument("channel_id")
     operator_hold_pairing_parser.add_argument("external_user_id")
     operator_hold_pairing_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    operator_hold_pairing_parser.add_argument("--reason", help="Short audit reason for holding this request")
+    operator_history_parser = operator_subparsers.add_parser("history", help="Show recent operator actions")
+    operator_history_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    operator_history_parser.add_argument("--limit", type=int, default=20, help="Number of events to show")
+    operator_history_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     gateway_parser = subparsers.add_parser("gateway", help="Gateway operations")
     gateway_subparsers = gateway_parser.add_subparsers(dest="gateway_command", required=True)
@@ -342,8 +350,18 @@ def handle_doctor(args: argparse.Namespace) -> int:
 
 def handle_operator_set_bridge(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
+    state_db.initialize()
     config_manager.set_path(f"spark.{args.bridge}.enabled", args.mode == "enabled")
+    log_operator_event(
+        state_db=state_db,
+        action="set_bridge",
+        target_kind="bridge",
+        target_ref=args.bridge,
+        reason=args.reason,
+        details={"enabled": args.mode == "enabled"},
+    )
     print(f"Set spark.{args.bridge}.enabled = {json.dumps(args.mode == 'enabled')}")
     return 0
 
@@ -363,14 +381,21 @@ def handle_operator_approve_pairing(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
-    print(
-        approve_pairing(
-            state_db=state_db,
-            channel_id=args.channel_id,
-            external_user_id=args.external_user_id,
-            display_name=args.display_name,
-        )
+    result = approve_pairing(
+        state_db=state_db,
+        channel_id=args.channel_id,
+        external_user_id=args.external_user_id,
+        display_name=args.display_name,
     )
+    log_operator_event(
+        state_db=state_db,
+        action="approve_pairing",
+        target_kind="pairing",
+        target_ref=f"{args.channel_id}:{args.external_user_id}",
+        reason=args.reason,
+        details={"display_name": args.display_name},
+    )
+    print(result)
     return 0
 
 
@@ -379,7 +404,25 @@ def handle_operator_hold_pairing(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
-    print(hold_pairing(state_db=state_db, channel_id=args.channel_id, external_user_id=args.external_user_id))
+    result = hold_pairing(state_db=state_db, channel_id=args.channel_id, external_user_id=args.external_user_id)
+    log_operator_event(
+        state_db=state_db,
+        action="hold_pairing",
+        target_kind="pairing",
+        target_ref=f"{args.channel_id}:{args.external_user_id}",
+        reason=args.reason,
+    )
+    print(result)
+    return 0
+
+
+def handle_operator_history(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    report = list_operator_events(state_db, limit=args.limit)
+    print(report.to_json() if args.json else report.to_text())
     return 0
 
 
@@ -928,6 +971,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_operator_approve_pairing(args)
     if args.command == "operator" and args.operator_command == "hold-pairing":
         return handle_operator_hold_pairing(args)
+    if args.command == "operator" and args.operator_command == "history":
+        return handle_operator_history(args)
     if args.command == "gateway" and args.gateway_command == "start":
         return handle_gateway_start(args)
     if args.command == "gateway" and args.gateway_command == "status":
