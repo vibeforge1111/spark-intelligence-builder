@@ -90,8 +90,17 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
     else:
         checks.append(DoctorCheck("provider-secrets", True, "no providers configured yet"))
 
+    researcher_enabled = bool(config_manager.get_path("spark.researcher.enabled", default=True))
     researcher_root, researcher_source = discover_researcher_runtime_root(config_manager)
-    if researcher_root:
+    if not researcher_enabled:
+        checks.append(
+            DoctorCheck(
+                "researcher-bridge",
+                True,
+                "disabled by operator",
+            )
+        )
+    elif researcher_root:
         researcher_config_path = resolve_researcher_config_path(config_manager, researcher_root)
         checks.append(
             DoctorCheck(
@@ -113,11 +122,13 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
             )
         )
 
-    swarm = swarm_status(config_manager)
+    swarm = swarm_status(config_manager, state_db)
     swarm_hosted_fields = [swarm.api_url, swarm.workspace_id, swarm.access_token_env]
     hosted_field_count = sum(1 for field in swarm_hosted_fields if field)
 
-    if not swarm.configured:
+    if not swarm.enabled:
+        checks.append(DoctorCheck("swarm-bridge", True, "disabled by operator"))
+    elif not swarm.configured:
         checks.append(DoctorCheck("swarm-bridge", True, "not connected yet; Swarm sync is optional"))
     elif swarm.runtime_root and hosted_field_count == 0:
         checks.append(

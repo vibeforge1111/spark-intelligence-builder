@@ -73,6 +73,8 @@ Current Phase 0 runtime shell:
 pip install -e .
 spark-intelligence setup
 spark-intelligence status
+spark-intelligence operator set-bridge researcher disabled
+spark-intelligence operator review-pairings
 spark-intelligence auth connect openai --api-key <key> --model <model>
 spark-intelligence channel add telegram --bot-token <token> --allowed-user <id>
 spark-intelligence config set spark.researcher.runtime_root "C:/Users/USER/Desktop/spark-researcher"
@@ -143,4 +145,12 @@ The Spark Researcher bridge now also includes a compact attachment context envel
 ```bash
 spark-intelligence researcher status
 spark-intelligence researcher status --json
+```
+
+```bash
+spark-intelligence operator set-bridge researcher enabled
+spark-intelligence operator set-bridge swarm disabled
+spark-intelligence operator review-pairings
+spark-intelligence operator hold-pairing telegram 123456
+spark-intelligence operator approve-pairing telegram 123456
 ```

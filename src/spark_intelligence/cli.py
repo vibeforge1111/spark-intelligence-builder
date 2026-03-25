@@ -28,8 +28,10 @@ from spark_intelligence.gateway.runtime import gateway_simulate_telegram_update,
 from spark_intelligence.identity.service import (
     agent_inspect,
     approve_pairing,
+    hold_pairing,
     list_pairings,
     list_sessions,
+    review_pairings,
     revoke_pairing,
     revoke_session,
 )
@@ -103,6 +105,25 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser = subparsers.add_parser("status", help="Show unified runtime, bridge, and attachment state")
     status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+
+    operator_parser = subparsers.add_parser("operator", help="Safe operator controls for bridges and pairing review")
+    operator_subparsers = operator_parser.add_subparsers(dest="operator_command", required=True)
+    operator_set_bridge_parser = operator_subparsers.add_parser("set-bridge", help="Enable or disable a bridge")
+    operator_set_bridge_parser.add_argument("bridge", choices=["researcher", "swarm"])
+    operator_set_bridge_parser.add_argument("mode", choices=["enabled", "disabled"])
+    operator_set_bridge_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    operator_review_pairings_parser = operator_subparsers.add_parser("review-pairings", help="Show pending and held pairing requests")
+    operator_review_pairings_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    operator_review_pairings_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    operator_approve_pairing_parser = operator_subparsers.add_parser("approve-pairing", help="Approve a pending or held pairing")
+    operator_approve_pairing_parser.add_argument("channel_id")
+    operator_approve_pairing_parser.add_argument("external_user_id")
+    operator_approve_pairing_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    operator_approve_pairing_parser.add_argument("--display-name", help="Friendly display name")
+    operator_hold_pairing_parser = operator_subparsers.add_parser("hold-pairing", help="Mark a pairing request as held")
+    operator_hold_pairing_parser.add_argument("channel_id")
+    operator_hold_pairing_parser.add_argument("external_user_id")
+    operator_hold_pairing_parser.add_argument("--home", help="Override Spark Intelligence home directory")
 
     gateway_parser = subparsers.add_parser("gateway", help="Gateway operations")
     gateway_subparsers = gateway_parser.add_subparsers(dest="gateway_command", required=True)
@@ -317,6 +338,49 @@ def handle_doctor(args: argparse.Namespace) -> int:
     else:
         print(report.to_text())
     return 0 if report.ok else 1
+
+
+def handle_operator_set_bridge(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    config_manager.set_path(f"spark.{args.bridge}.enabled", args.mode == "enabled")
+    print(f"Set spark.{args.bridge}.enabled = {json.dumps(args.mode == 'enabled')}")
+    return 0
+
+
+def handle_operator_review_pairings(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    report = review_pairings(state_db)
+    print(report.to_json() if args.json else report.to_text())
+    return 0
+
+
+def handle_operator_approve_pairing(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    print(
+        approve_pairing(
+            state_db=state_db,
+            channel_id=args.channel_id,
+            external_user_id=args.external_user_id,
+            display_name=args.display_name,
+        )
+    )
+    return 0
+
+
+def handle_operator_hold_pairing(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    print(hold_pairing(state_db=state_db, channel_id=args.channel_id, external_user_id=args.external_user_id))
+    return 0
 
 
 def handle_status(args: argparse.Namespace) -> int:
@@ -856,6 +920,14 @@ def main(argv: list[str] | None = None) -> int:
         return handle_doctor(args)
     if args.command == "status":
         return handle_status(args)
+    if args.command == "operator" and args.operator_command == "set-bridge":
+        return handle_operator_set_bridge(args)
+    if args.command == "operator" and args.operator_command == "review-pairings":
+        return handle_operator_review_pairings(args)
+    if args.command == "operator" and args.operator_command == "approve-pairing":
+        return handle_operator_approve_pairing(args)
+    if args.command == "operator" and args.operator_command == "hold-pairing":
+        return handle_operator_hold_pairing(args)
     if args.command == "gateway" and args.gateway_command == "start":
         return handle_gateway_start(args)
     if args.command == "gateway" and args.gateway_command == "status":

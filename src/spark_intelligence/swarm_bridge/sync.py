@@ -20,6 +20,7 @@ from spark_intelligence.state.db import StateDB
 
 @dataclass
 class SwarmStatus:
+    enabled: bool
     configured: bool
     researcher_ready: bool
     payload_ready: bool
@@ -38,6 +39,7 @@ class SwarmStatus:
         return json.dumps(
             {
                 "configured": self.configured,
+                "enabled": self.enabled,
                 "researcher_ready": self.researcher_ready,
                 "payload_ready": self.payload_ready,
                 "api_ready": self.api_ready,
@@ -57,6 +59,7 @@ class SwarmStatus:
     def to_text(self) -> str:
         return "\n".join(
             [
+                f"Swarm enabled: {'yes' if self.enabled else 'no'}",
                 f"Swarm configured: {'yes' if self.configured else 'no'}",
                 f"- researcher_ready: {'yes' if self.researcher_ready else 'no'}",
                 f"- payload_ready: {'yes' if self.payload_ready else 'no'}",
@@ -159,6 +162,7 @@ class SwarmDecisionResult:
 
 
 def swarm_status(config_manager: ConfigManager, state_db: StateDB | None = None) -> SwarmStatus:
+    enabled = bool(config_manager.get_path("spark.swarm.enabled", default=True))
     runtime_root, _ = _discover_swarm_runtime_root(config_manager)
     researcher_root, _ = discover_researcher_runtime_root(config_manager)
     researcher_config_path = resolve_researcher_config_path(config_manager, researcher_root) if researcher_root else None
@@ -168,10 +172,11 @@ def swarm_status(config_manager: ConfigManager, state_db: StateDB | None = None)
     access_token = _resolve_swarm_access_token(config_manager)
     attachment_context = build_attachment_context(config_manager)
     runtime_state = _read_swarm_runtime_state(state_db) if state_db is not None else {}
-    researcher_ready = bool(researcher_root and researcher_config_path and researcher_config_path.exists())
+    researcher_ready = enabled and bool(researcher_root and researcher_config_path and researcher_config_path.exists())
     payload_ready = researcher_ready and _researcher_has_ledger(researcher_config_path)
-    api_ready = bool(api_url and workspace_id and access_token)
+    api_ready = enabled and bool(api_url and workspace_id and access_token)
     return SwarmStatus(
+        enabled=enabled,
         configured=bool(runtime_root or api_url or workspace_id or access_token_env),
         researcher_ready=researcher_ready,
         payload_ready=payload_ready,
@@ -195,6 +200,17 @@ def sync_swarm_collective(
     dry_run: bool = False,
 ) -> SwarmSyncResult:
     status = swarm_status(config_manager, state_db)
+    if not status.enabled:
+        return SwarmSyncResult(
+            ok=False,
+            mode="disabled",
+            message="Spark Swarm bridge is disabled by operator.",
+            payload_path=None,
+            api_url=status.api_url,
+            workspace_id=status.workspace_id,
+            accepted=None,
+            response_body=None,
+        )
     if not status.researcher_ready or not status.researcher_config_path or not status.researcher_runtime_root:
         return SwarmSyncResult(
             ok=False,
@@ -333,6 +349,20 @@ def evaluate_swarm_escalation(
     task: str,
 ) -> SwarmDecisionResult:
     status = swarm_status(config_manager, state_db)
+    if not status.enabled:
+        result = SwarmDecisionResult(
+            ok=False,
+            escalate=False,
+            mode="disabled",
+            reason="Spark Swarm is disabled by operator for this workspace.",
+            triggers=[],
+            task=task,
+            attachment_context=status.attachment_context,
+            swarm_available=False,
+            api_ready=False,
+        )
+        _record_swarm_decision_state(state_db, result=result)
+        return result
     lowered = task.lower()
     triggers: list[str] = []
     keyword_groups = {

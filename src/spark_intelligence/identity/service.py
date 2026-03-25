@@ -56,6 +56,26 @@ class InboundResolution:
     response_text: str
 
 
+@dataclass
+class PairingQueueReport:
+    rows: list[dict]
+
+    def to_text(self) -> str:
+        if not self.rows:
+            return "No pending or held pairings."
+        lines = ["Pairing review queue:"]
+        for row in self.rows:
+            lines.append(
+                f"- {row['channel_id']}:{row['external_user_id']} status={row['status']} "
+                f"human={row['human_id']} approved_by={row['approved_by'] or 'none'} "
+                f"updated_at={row['updated_at']}"
+            )
+        return "\n".join(lines)
+
+    def to_json(self) -> str:
+        return json.dumps({"rows": self.rows}, indent=2)
+
+
 def _require_operator(state_db: StateDB, human_id: str = LOCAL_OPERATOR_HUMAN_ID) -> None:
     with state_db.connect() as conn:
         row = conn.execute(
@@ -226,6 +246,15 @@ def resolve_inbound_dm(
         ).fetchone()
 
         pairing_mode = channel_row["pairing_mode"]
+        pairing_row = conn.execute(
+            """
+            SELECT status
+            FROM pairing_records
+            WHERE pairing_id = ?
+            LIMIT 1
+            """,
+            (f"pairing:{channel_id}:{external_user_id}",),
+        ).fetchone()
         if allow_row and session_row:
             return InboundResolution(
                 allowed=True,
@@ -253,6 +282,24 @@ def resolve_inbound_dm(
             )
 
         if pairing_mode == "pairing":
+            if pairing_row and pairing_row["status"] == "held":
+                return InboundResolution(
+                    allowed=False,
+                    decision="held",
+                    human_id=human_id,
+                    agent_id=None,
+                    session_id=None,
+                    response_text="Pairing request is currently on hold pending operator review.",
+                )
+            if pairing_row and pairing_row["status"] == "revoked":
+                return InboundResolution(
+                    allowed=False,
+                    decision="revoked",
+                    human_id=human_id,
+                    agent_id=None,
+                    session_id=None,
+                    response_text="Access for this pairing has been revoked by the operator.",
+                )
             pairing_id = f"pairing:{channel_id}:{external_user_id}"
             conn.execute(
                 """
@@ -310,6 +357,31 @@ def revoke_pairing(*, state_db: StateDB, channel_id: str, external_user_id: str,
     return f"Revoked pairing for {channel_id}:{external_user_id}"
 
 
+def hold_pairing(*, state_db: StateDB, channel_id: str, external_user_id: str, held_by: str = LOCAL_OPERATOR_HUMAN_ID) -> str:
+    _require_operator(state_db, held_by)
+    human_id = _canonical_human_id(channel_id, external_user_id)
+    pairing_id = f"pairing:{channel_id}:{external_user_id}"
+    with state_db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO pairing_records(pairing_id, channel_id, external_user_id, human_id, status, approved_by)
+            VALUES (?, ?, ?, ?, 'held', ?)
+            ON CONFLICT(pairing_id) DO UPDATE SET
+                human_id=excluded.human_id,
+                status='held',
+                approved_by=excluded.approved_by,
+                updated_at=CURRENT_TIMESTAMP
+            """,
+            (pairing_id, channel_id, external_user_id, human_id, held_by),
+        )
+        conn.execute(
+            "DELETE FROM allowlist_entries WHERE channel_id = ? AND external_user_id = ?",
+            (channel_id, external_user_id),
+        )
+        conn.commit()
+    return f"Held pairing for {channel_id}:{external_user_id}"
+
+
 def list_pairings(state_db: StateDB) -> str:
     with state_db.connect() as conn:
         rows = conn.execute(
@@ -329,6 +401,23 @@ def list_pairings(state_db: StateDB) -> str:
             f"approved_at={row['approved_at']}"
         )
     return "\n".join(lines)
+
+
+def review_pairings(state_db: StateDB) -> PairingQueueReport:
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT pairing_id, channel_id, external_user_id, human_id, status, approved_by, approved_at, updated_at
+            FROM pairing_records
+            WHERE status IN ('pending', 'held')
+            ORDER BY
+                CASE status WHEN 'pending' THEN 0 WHEN 'held' THEN 1 ELSE 2 END,
+                updated_at DESC,
+                channel_id,
+                external_user_id
+            """
+        ).fetchall()
+    return PairingQueueReport(rows=[dict(row) for row in rows])
 
 
 def list_sessions(state_db: StateDB) -> str:

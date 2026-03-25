@@ -27,6 +27,7 @@ class ResearcherBridgeResult:
 
 @dataclass
 class ResearcherBridgeStatus:
+    enabled: bool
     configured: bool
     available: bool
     mode: str
@@ -46,6 +47,7 @@ class ResearcherBridgeStatus:
             {
                 "configured": self.configured,
                 "available": self.available,
+                "enabled": self.enabled,
                 "mode": self.mode,
                 "runtime_root": self.runtime_root,
                 "config_path": self.config_path,
@@ -63,6 +65,7 @@ class ResearcherBridgeStatus:
 
     def to_text(self) -> str:
         lines = [
+            f"Researcher bridge enabled: {'yes' if self.enabled else 'no'}",
             f"Researcher bridge configured: {'yes' if self.configured else 'no'}",
             f"- available: {'yes' if self.available else 'no'}",
             f"- mode: {self.mode}",
@@ -153,10 +156,12 @@ def researcher_bridge_status(*, config_manager: ConfigManager, state_db: StateDB
     attachment_context = build_attachment_context(config_manager)
     runtime_root, runtime_source = discover_researcher_runtime_root(config_manager)
     config_path = resolve_researcher_config_path(config_manager, runtime_root) if runtime_root else None
-    available = bool(runtime_root and config_path and config_path.exists())
-    mode = f"external_{runtime_source}" if available else "stub"
+    enabled = bool(config_manager.get_path("spark.researcher.enabled", default=True))
+    available = enabled and bool(runtime_root and config_path and config_path.exists())
+    mode = "disabled" if not enabled else (f"external_{runtime_source}" if available else "stub")
     runtime_state = _read_runtime_state(state_db)
     return ResearcherBridgeStatus(
+        enabled=enabled,
         configured=runtime_root is not None,
         available=available,
         mode=mode,
@@ -201,6 +206,18 @@ def build_researcher_reply(
 ) -> ResearcherBridgeResult:
     attachment_context = build_attachment_context(config_manager)
     contextual_task = _build_contextual_task(user_message=user_message, attachment_context=attachment_context)
+    if not bool(config_manager.get_path("spark.researcher.enabled", default=True)):
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text="[Spark Researcher disabled] The operator has disabled the Spark Researcher bridge for this workspace.",
+            evidence_summary="Spark Researcher bridge disabled by operator.",
+            escalation_hint=None,
+            trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+            mode="disabled",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+        )
     runtime_root, runtime_source = discover_researcher_runtime_root(config_manager)
     if runtime_root is not None:
         config_path = resolve_researcher_config_path(config_manager, runtime_root)
