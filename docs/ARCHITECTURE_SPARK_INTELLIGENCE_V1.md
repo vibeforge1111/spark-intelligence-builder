@@ -165,7 +165,19 @@ Examples:
 - one way to route to Spark Swarm
 - one way to attach domain chips
 
-### 4.4 Harnesses Over Heroics
+### 4.4 One Trust Boundary Per Workspace
+
+Spark Intelligence v1 should be explicit about its trust model.
+
+Within one workspace:
+
+- one human maps to one persistent agent identity
+- paired users are not automatically operator admins
+- hostile multi-tenant use is not the baseline security model
+
+If stronger isolation is needed, split workspaces and runtime boundaries instead of pretending one shared workspace is a full adversarial boundary.
+
+### 4.5 Harnesses Over Heroics
 
 The system should stay stable because it has strong harnesses, not because the operator keeps patching it manually.
 
@@ -177,7 +189,19 @@ That means:
 - explicit diagnostics
 - deterministic startup validation
 
-### 4.6 Native Over Homegrown Supervision
+### 4.6 Runtime Ownership Stays With The Operator Plane
+
+The agent should not own the runtime.
+
+That means:
+
+- no agent-managed background restarts
+- no self-installed watchdog loops
+- no direct mutation of runtime supervision state from normal chat authority
+
+Runtime control should flow through the explicit operator control surface.
+
+### 4.7 Native Over Homegrown Supervision
 
 If Spark Intelligence needs keep-running behavior, prefer the operating system's native scheduler or service primitives over a bundled daemon manager.
 
@@ -193,7 +217,7 @@ Reject:
 - detached child-process trees used as supervision
 - hidden shell relaunch loops
 
-### 4.5 Gstack Decision Discipline
+### 4.8 Gstack Decision Discipline
 
 Spark Intelligence should use gstack-style product rigor when deciding what to build.
 
@@ -205,6 +229,27 @@ That means:
 - completeness on important narrow loops, not ambition on everything at once
 
 This system should be a machine for useful product decisions, not a pile of smart-sounding architecture.
+
+### 4.9 Adapter Containment
+
+Adapters should be thin and failure-contained.
+
+A broken adapter must not:
+
+- corrupt canonical identity state
+- own core authorization truth
+- create its own scheduler
+- crash unrelated adapters by default
+
+### 4.10 Canonical Config And State Authority
+
+Spark Intelligence should have:
+
+- one canonical config model
+- one canonical SQLite state model
+- one clear secret-reference path
+
+Adapters may keep transport-local caches only when required by their library, but they must not become shadow truth stores.
 
 ## 5. High-Level System
 

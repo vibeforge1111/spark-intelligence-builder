@@ -20,7 +20,20 @@ Build one narrow, production-shaped slice first.
 
 Do not begin with a giant framework.
 
-## 3. Target v1 Slice
+## 3. Pre-Implementation Non-Negotiables
+
+The first slice must preserve these boundaries from the beginning:
+
+- one workspace trust boundary
+- one canonical config model
+- one canonical SQLite state model
+- one role distinction between paired user and operator authority
+- one operator-owned runtime control path
+- one adapter-containment rule
+
+If a shortcut breaks one of these, it should not land as "temporary v1 glue".
+
+## 4. Target v1 Slice
 
 The first serious slice should prove:
 
@@ -34,7 +47,7 @@ The first serious slice should prove:
 
 That is enough to validate the product shape.
 
-## 4. Proposed Codebase Layout
+## 5. Proposed Codebase Layout
 
 Recommended initial layout:
 
@@ -54,7 +67,7 @@ src/
    `- security/
 ```
 
-## 5. Phase Plan
+## 6. Phase Plan
 
 ### Phase 0: Package And CLI Skeleton
 
@@ -76,6 +89,7 @@ Exit criteria:
 - commands parse cleanly
 - config root created
 - no heavy dependencies required
+- runtime control remains operator-only
 
 ### Phase 1: Config And State Layer
 
@@ -92,6 +106,7 @@ Key outputs:
 
 - config loader and validator
 - SQLite schema for identity, sessions, channels, pairings
+- exact role and authority records
 - strict local paths
 
 Exit criteria:
@@ -99,6 +114,7 @@ Exit criteria:
 - config validates
 - state initializes idempotently
 - doctor can verify state readiness
+- no secondary adapter-owned truth store exists
 
 ### Phase 2: Identity And Pairing Core
 
@@ -117,12 +133,14 @@ Key outputs:
 - session bindings
 - pairing records
 - allowlists
+- paired-user vs operator-authority checks
 
 Exit criteria:
 
 - unknown senders fail closed
 - explicit pairing works
 - sessions are inspectable and revocable
+- paired access cannot mutate control-plane state
 
 ### Phase 3: Provider And Auth Layer
 
@@ -165,11 +183,13 @@ Key outputs:
 - DM-first behavior
 - pairing-safe `/start`
 - outbound text delivery
+- adapter-local failure containment
 
 Exit criteria:
 
 - one allowlisted or paired DM user can message the bot
 - one reply returns through the full path
+- Telegram failure does not corrupt identity or job state
 
 ### Phase 5: Spark Researcher Bridge
 
@@ -210,11 +230,14 @@ Key outputs:
 - adapter health
 - provider health
 - `jobs tick`
+- runtime ownership checks
+- config/state consistency checks
 
 Exit criteria:
 
 - install -> setup -> doctor -> gateway start is reliable
 - failures are legible
+- hidden background-runtime drift is detectable
 
 ### Phase 7: Security Hardening Pass
 
@@ -242,7 +265,7 @@ Only after the first slice is stable:
 - Spark Swarm escalation path
 - richer operator control surface
 
-## 6. Required Smoke Tests
+## 7. Required Smoke Tests
 
 The first slice should have short smoke tests for:
 
@@ -255,8 +278,11 @@ The first slice should have short smoke tests for:
 - Telegram outbound reply
 - doctor
 - jobs tick
+- paired user cannot access operator-only mutations
+- exact session binding survives adapter restart
+- Telegram adapter failure is visible without taking down unrelated state
 
-## 7. Security Review Gates
+## 8. Security Review Gates
 
 Before shipping the first slice, run:
 

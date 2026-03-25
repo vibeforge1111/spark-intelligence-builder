@@ -39,11 +39,27 @@ Give the minimum authority needed for the feature to work.
 
 Identity, pairing, allowlists, and approval state must not be split across competing subsystems.
 
-### 3.4 Fail Closed
+### 3.4 Paired Access Is Not Operator Authority
+
+Being allowed to chat with the agent does not grant control-plane authority.
+
+Runtime policy, pairings, allowlists, and service-control actions must stay behind explicit operator checks.
+
+### 3.5 Fail Closed
 
 If auth, pairing, verification, or validation fails, stop the action.
 
-### 3.5 Local Inspectability
+### 3.6 Runtime Ownership Boundary
+
+The agent must not silently become the runtime operator.
+
+Guardrails:
+
+- no chat-driven runtime restarts without explicit operator mediation
+- no background self-supervision loops
+- no direct config mutation from ordinary chat authority
+
+### 3.7 Local Inspectability
 
 An operator should be able to inspect:
 
@@ -101,7 +117,17 @@ Guardrails:
 - session revocation
 - explicit session binding per surface
 
-### 4.5 Webhook And Adapter Boundary
+### 4.5 Operator Control Boundary
+
+Control-plane mutations are a separate authority class.
+
+Guardrails:
+
+- explicit role checks
+- auditable control actions
+- no adapter-specific hidden admin paths
+
+### 4.6 Webhook And Adapter Boundary
 
 External webhook and messaging inputs are hostile until proven valid.
 
@@ -139,7 +165,19 @@ Guardrails:
 - no hidden watchdog loops
 - no detached child-process tricks as the reliability foundation
 
-### 5.5 Logging And Output
+### 5.5 Adapter Containment
+
+- adapter failure should stay adapter-local where possible
+- adapter state must not override canonical identity or session truth
+- adapter retry loops must be visible in shared health surfaces
+
+### 5.6 Plugins, Hooks, And Extension Surfaces
+
+- no broad plugin marketplace in v1
+- no trusted hook execution by default
+- extension points must stay narrow and auditable
+
+### 5.7 Logging And Output
 
 - no secret leakage
 - no accidental cross-user transcript leakage
@@ -204,13 +242,16 @@ Source: public Hermes repo and refs at `https://github.com/NousResearch/hermes-a
 Spark should start stricter in these places:
 
 - one canonical identity store
+- one canonical config and state authority
 - explicit DMs-first posture
 - explicit cross-channel linking proof
+- explicit role separation between paired user and operator
 - explicit full-command approvals
 - strict secret-file permissions
 - reduced host env inheritance
 - explicit webhook replay and state validation
 - no daemon sprawl
+- no chat-owned runtime control
 
 ## 9. Security Review Questions
 
@@ -221,8 +262,9 @@ Before shipping a feature, ask:
 3. Does it create a new identity or session path?
 4. Does it expose secrets or tokens?
 5. Does it rely on hidden background behavior?
-6. Does it fail closed?
-7. Can the operator inspect and revoke it?
+6. Does it accidentally turn chat access into operator access?
+7. Does it fail closed?
+8. Can the operator inspect and revoke it?
 
 ## 10. Final Rule
 
