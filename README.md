@@ -48,6 +48,7 @@ This repo currently includes:
 - [docs/SECURITY_HISTORY_THEME_APPENDIX_2026-03-25.md](./docs/SECURITY_HISTORY_THEME_APPENDIX_2026-03-25.md)
 - [docs/TELEGRAM_ADAPTER_SPEC_V1.md](./docs/TELEGRAM_ADAPTER_SPEC_V1.md)
 - [docs/TELEGRAM_OPERATOR_RUNBOOK_2026-03-26.md](./docs/TELEGRAM_OPERATOR_RUNBOOK_2026-03-26.md)
+- [docs/GATEWAY_PROVIDER_AUTH_READINESS_REVIEW_2026-03-26.md](./docs/GATEWAY_PROVIDER_AUTH_READINESS_REVIEW_2026-03-26.md)
 - [docs/SPARK_RESEARCHER_INTEGRATION_CONTRACT_V1.md](./docs/SPARK_RESEARCHER_INTEGRATION_CONTRACT_V1.md)
 - [docs/SPARK_SWARM_ESCALATION_CONTRACT_V1.md](./docs/SPARK_SWARM_ESCALATION_CONTRACT_V1.md)
 - [docs/DOMAIN_CHIP_ATTACHMENT_CONTRACT_V1.md](./docs/DOMAIN_CHIP_ATTACHMENT_CONTRACT_V1.md)
@@ -238,15 +239,17 @@ Today’s implementation summary is recorded in [docs/IMPLEMENTATION_STATUS_2026
 
 Today’s execution order is recorded in [docs/IMPLEMENTATION_WORKPLAN_2026-03-26.md](./docs/IMPLEMENTATION_WORKPLAN_2026-03-26.md).
 
+The next architecture pass for gateway, provider auth, OAuth, and runtime model routing is recorded in [docs/GATEWAY_PROVIDER_AUTH_READINESS_REVIEW_2026-03-26.md](./docs/GATEWAY_PROVIDER_AUTH_READINESS_REVIEW_2026-03-26.md).
+
 ## Current Start
 
-Current work should continue with hardening and operational polish, not more channel breadth.
+Current work should continue with gateway and provider-auth architecture locking, not more adapter breadth.
 
 The exact first move is:
 
-1. keep operator and channel config mutations regression-safe
-2. tighten docs and runbooks around real Telegram onboarding, allowlist semantics, and recovery
-3. add any remaining `doctor` or `status` polish only where it improves live ops directly
-4. expand to another adapter only after the Telegram/operator slice stays stable
+1. lock the provider registry, auth-profile model, callback-state model, and route-registry contract
+2. add one shared runtime-provider resolver used by CLI, gateway, and future bridge execution
+3. implement secure OAuth alongside static API-key auth without weakening existing Telegram/operator safety
+4. expand Discord or WhatsApp only after those contracts are real and regression-covered
 
 Do not start with live Discord or WhatsApp runtime work before that.

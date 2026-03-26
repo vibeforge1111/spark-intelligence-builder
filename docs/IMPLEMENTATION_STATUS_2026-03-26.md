@@ -72,22 +72,25 @@ The remaining risk is that more adapters or more config mutation paths could rei
 
 ## 6. Next Start Exactly
 
-The next slice should stay focused on stabilization and operator clarity, not new feature breadth.
+The next slice should stay focused on gateway and provider-auth architecture, not more adapter breadth.
 
 Start here in this exact order:
 
-1. Keep operator and channel config mutation paths regression-safe as more adapters land.
-2. Tighten docs and runbooks so allowlists, pairings, token rotation, and recovery are described exactly as shipped.
-3. Add any remaining `doctor`, `status`, or audit polish only where it materially improves live operations.
-4. Only after that, start the next adapter or broader runtime-hardening pass.
+1. Lock the provider registry, auth-profile shape, OAuth callback-state shape, and gateway route-registry contract.
+2. Add one shared runtime-provider resolver used by CLI, gateway, and future bridge execution paths.
+3. Add secure OAuth support alongside static API-key support without weakening existing Telegram/operator safety.
+4. Only after that, widen Discord, WhatsApp, or webhook-heavy surfaces.
+
+The detailed execution direction is recorded in `GATEWAY_PROVIDER_AUTH_READINESS_REVIEW_2026-03-26.md`.
 
 ## 7. Current Non-Goals
 
 Do not start these next:
 
-- live Discord runtime
-- live WhatsApp runtime
+- full live Discord runtime breadth
+- full live WhatsApp runtime breadth
 - webhook-first Telegram
+- a provider plugin marketplace
 - new memory logic in this repo
 - copied Spark Researcher or Spark Swarm internals
 
@@ -95,7 +98,9 @@ Do not start these next:
 
 The next slice is successful if all of this is true:
 
-- the Telegram/operator slice stays regression-safe under config mutation and token rotation
-- the docs match the shipped operator behavior closely enough for reuse without guesswork
-- any remaining live-ops polish improves recovery and audit clarity instead of adding surface area
-- expansion to another adapter happens only after the current slice stays stable
+- one shared runtime-provider resolver exists and is used by every model-call path
+- Spark supports both static API-key auth and at least one secure OAuth flow
+- callback state is single-use, auditable, and fail-closed
+- doctor and status can explain missing, expiring, failed, and healthy auth states
+- channel config points at auth profiles instead of raw token assumptions
+- expansion to another adapter happens only after those contracts are stable
