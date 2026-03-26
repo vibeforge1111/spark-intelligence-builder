@@ -907,8 +907,10 @@ def handle_channel_telegram_onboard(args: argparse.Namespace) -> int:
     existing_record = config_manager.get_path("channels.records.telegram", default={}) or {}
     existing_allowed_users = existing_record.get("allowed_users") if isinstance(existing_record, dict) else []
     existing_pairing_mode = existing_record.get("pairing_mode") if isinstance(existing_record, dict) else None
+    existing_status = existing_record.get("status") if isinstance(existing_record, dict) else None
     effective_allowed_users = args.allowed_user or (existing_allowed_users if isinstance(existing_allowed_users, list) else [])
     effective_pairing_mode = args.pairing_mode or (str(existing_pairing_mode) if existing_pairing_mode else "pairing")
+    effective_status = str(existing_status) if existing_status else "enabled"
 
     if not args.bot_token:
         print(
@@ -958,6 +960,7 @@ def handle_channel_telegram_onboard(args: argparse.Namespace) -> int:
         bot_token=args.bot_token,
         allowed_users=effective_allowed_users,
         pairing_mode=effective_pairing_mode,
+        status=effective_status,
         metadata={"bot_profile": profile.to_dict()} if profile else None,
     )
     print(result)

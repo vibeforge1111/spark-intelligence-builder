@@ -137,6 +137,7 @@ def add_channel(
     bot_token: str | None,
     allowed_users: list[str],
     pairing_mode: str,
+    status: str = "enabled",
     metadata: dict[str, Any] | None = None,
 ) -> str:
     config = config_manager.load()
@@ -159,7 +160,7 @@ def add_channel(
 
     config["channels"]["records"][channel_id] = {
         "channel_kind": channel_kind,
-        "status": "enabled",
+        "status": status,
         "pairing_mode": pairing_mode,
         "auth_ref": auth_ref,
         "allowed_users": allowed_users,
@@ -180,7 +181,7 @@ def add_channel(
                 auth_ref=excluded.auth_ref,
                 updated_at=CURRENT_TIMESTAMP
             """,
-            (channel_id, channel_kind, "enabled", pairing_mode, auth_ref),
+            (channel_id, channel_kind, status, pairing_mode, auth_ref),
         )
         conn.commit()
 
@@ -192,7 +193,7 @@ def add_channel(
             display_name=f"{channel_kind} user {user_id}",
         )
 
-    return f"Configured channel '{channel_kind}' with pairing mode '{pairing_mode}'."
+    return f"Configured channel '{channel_kind}' with pairing mode '{pairing_mode}' status '{status}'."
 
 
 def set_channel_status(

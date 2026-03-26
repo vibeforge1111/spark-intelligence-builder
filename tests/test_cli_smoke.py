@@ -183,4 +183,44 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(record["pairing_mode"], "allowlist")
         self.assertEqual(record["allowed_users"], ["111"])
         self.assertEqual(config_manager.read_env_map()["TELEGRAM_BOT_TOKEN"], "new-token")
-        self.assertIn("Configured channel 'telegram' with pairing mode 'allowlist'.", stdout)
+        self.assertEqual(record["status"], "enabled")
+        self.assertIn("Configured channel 'telegram' with pairing mode 'allowlist' status 'enabled'.", stdout)
+
+    def test_telegram_onboard_preserves_existing_channel_status_on_token_rotation(self) -> None:
+        self.add_telegram_channel(pairing_mode="pairing", bot_token="old-token")
+        status_exit, _, status_stderr = self.run_cli(
+            "operator",
+            "set-channel",
+            "telegram",
+            "paused",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(status_exit, 0, status_stderr)
+
+        with patch(
+            "spark_intelligence.cli.inspect_telegram_bot_token",
+            return_value=TelegramBotProfile(
+                bot_id="42",
+                username="sparkbot",
+                first_name="Spark Bot",
+                can_join_groups=True,
+                can_read_all_group_messages=False,
+                supports_inline_queries=False,
+            ),
+        ):
+            exit_code, stdout, stderr = self.run_cli(
+                "channel",
+                "telegram-onboard",
+                "--home",
+                str(self.home),
+                "--bot-token",
+                "new-token",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        config_manager = ConfigManager.from_home(str(self.home))
+        record = config_manager.get_path("channels.records.telegram")
+        self.assertEqual(record["status"], "paused")
+        self.assertEqual(config_manager.read_env_map()["TELEGRAM_BOT_TOKEN"], "new-token")
+        self.assertIn("Configured channel 'telegram' with pairing mode 'pairing' status 'paused'.", stdout)
