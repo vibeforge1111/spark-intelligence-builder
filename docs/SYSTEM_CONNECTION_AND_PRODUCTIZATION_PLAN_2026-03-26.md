@@ -9,6 +9,8 @@ This plan answers two practical questions:
 
 This is a connection and productization plan, not only a code roadmap.
 
+The first supporting runtime surface for this plan is `spark-intelligence connect status`, which reports the current phase, the current blocker, and the next command to run from the live home.
+
 ## 2. Current Reality
 
 These things are real today on the canonical live home `.tmp-home-live-telegram-real`:

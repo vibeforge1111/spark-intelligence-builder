@@ -36,6 +36,52 @@ class CliSmokeTests(SparkTestCase):
             self.assertIn("Spark Intelligence status", status_stdout)
             self.assertIn("- doctor: ok", status_stdout)
 
+    def test_connect_status_surfaces_phase_plan_on_clean_home(self) -> None:
+        exit_code, stdout, stderr = self.run_cli("connect", "status", "--home", str(self.home))
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertIn("Spark Intelligence connection plan", stdout)
+        self.assertIn("- current phase: phase-a-telegram-core Lock Telegram core", stdout)
+        self.assertIn("- phase-a-telegram-core: blocked Lock Telegram core", stdout)
+        self.assertIn("next: spark-intelligence channel telegram-onboard", stdout)
+
+    def test_connect_status_marks_telegram_core_ready_when_live_prereqs_exist(self) -> None:
+        researcher_root = self.home / "spark-researcher"
+        researcher_root.mkdir()
+        researcher_config = researcher_root / "spark-researcher.project.json"
+        researcher_config.write_text("{}", encoding="utf-8")
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.researcher.runtime_root", str(researcher_root))
+        self.config_manager.set_path("spark.researcher.config_path", str(researcher_config))
+        self.add_telegram_channel(bot_token="good-token")
+        self.config_manager.upsert_env_secret("CUSTOM_API_KEY", "minimax-test-key")
+
+        connect_exit, _, connect_stderr = self.run_cli(
+            "auth",
+            "connect",
+            "custom",
+            "--home",
+            str(self.home),
+            "--api-key-env",
+            "CUSTOM_API_KEY",
+            "--base-url",
+            "https://api.minimax.io/v1",
+            "--model",
+            "MiniMax-M2.5",
+        )
+        self.assertEqual(connect_exit, 0, connect_stderr)
+
+        exit_code, stdout, stderr = self.run_cli("connect", "status", "--home", str(self.home), "--json")
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["overall_status"], "in_progress")
+        self.assertEqual(payload["current_phase"], "phase-b-specialization")
+        self.assertEqual(payload["phases"][0]["phase_id"], "phase-a-telegram-core")
+        self.assertEqual(payload["phases"][0]["status"], "ready")
+        self.assertEqual(payload["phases"][1]["phase_id"], "phase-b-specialization")
+        self.assertIn(payload["phases"][1]["status"], {"blocked", "in_progress"})
+
     def test_operator_security_surfaces_telegram_poll_failure_in_json(self) -> None:
         self.add_telegram_channel(bot_token="good-token")
 

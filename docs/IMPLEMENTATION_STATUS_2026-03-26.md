@@ -143,6 +143,8 @@ Codex OAuth is still not proven on the live home and is no longer the gating ite
 
 The next broader connection and productization map is now recorded in `SYSTEM_CONNECTION_AND_PRODUCTIZATION_PLAN_2026-03-26.md`. That plan separates what is truly connected today from what is only wired, and defines the next step-by-step order for activating chips/path specialization, connecting real Swarm API access, and productizing the install/setup/run story for another operator.
 
+That plan now also has a first supporting runtime surface: `spark-intelligence connect status` turns the current system state into explicit connection phases, shows which phase is currently blocking progress, and points directly at the next command to run instead of leaving the phase plan as docs-only.
+
 ## 7. Current Non-Goals
 
 Do not start these next:

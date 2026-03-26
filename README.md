@@ -79,6 +79,7 @@ Current runtime shell:
 ```bash
 pip install -e .
 spark-intelligence setup
+spark-intelligence connect status
 spark-intelligence status
 spark-intelligence operator set-bridge researcher disabled
 spark-intelligence operator review-pairings
@@ -116,6 +117,8 @@ spark-intelligence setup \
   --swarm-workspace-id <workspace_id> \
   --swarm-access-token <token>
 ```
+
+After bootstrap, `spark-intelligence connect status` is the quickest way to see the current connection phase, the live blocker for the next phase, and the next command to run.
 
 Model-provider auth now has a first-class provider registry plus default auth-profile layer. `auth providers` shows the supported auth methods and execution transport, `auth connect` writes a canonical API-key-backed profile such as `openai:default` or `anthropic:default`, `auth login openai-codex --listen` now completes through the same gateway-owned callback surface exposed by `gateway oauth-callback`, `auth refresh openai-codex` rotates the locally stored OAuth access token when a refresh token is present, `auth logout openai-codex` revokes the locally stored OAuth profile, and `auth status` now surfaces expiry and refresh state so the configured provider auth can be inspected before runtime use. Tokens that are close to expiry are now marked `expiring_soon`, `doctor` flags stale OAuth maintenance explicitly, `jobs list` shows the last maintenance result, and `jobs tick` runs the built-in OAuth maintenance job before tokens fail closed.
 

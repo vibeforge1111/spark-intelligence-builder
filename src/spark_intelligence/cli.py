@@ -136,6 +136,221 @@ class SystemStatus:
         return "\n".join(lines)
 
 
+@dataclass
+class ConnectionPhaseStatus:
+    phase_id: str
+    title: str
+    status: str
+    summary: str
+    checks: list[str]
+    next_steps: list[str]
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "phase_id": self.phase_id,
+            "title": self.title,
+            "status": self.status,
+            "summary": self.summary,
+            "checks": self.checks,
+            "next_steps": self.next_steps,
+        }
+
+
+@dataclass
+class ConnectionPlanStatus:
+    overall_status: str
+    current_phase: str
+    current_phase_title: str
+    phases: list[ConnectionPhaseStatus]
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "overall_status": self.overall_status,
+                "current_phase": self.current_phase,
+                "current_phase_title": self.current_phase_title,
+                "phases": [phase.to_payload() for phase in self.phases],
+            },
+            indent=2,
+        )
+
+    def to_text(self) -> str:
+        lines = ["Spark Intelligence connection plan"]
+        lines.append(f"- overall: {self.overall_status}")
+        lines.append(f"- current phase: {self.current_phase} {self.current_phase_title}")
+        for phase in self.phases:
+            lines.append(f"- {phase.phase_id}: {phase.status} {phase.title}")
+            lines.append(f"  summary: {phase.summary}")
+            lines.extend(f"  check: {check}" for check in phase.checks)
+            lines.extend(f"  next: {step}" for step in phase.next_steps)
+        return "\n".join(lines)
+
+
+def build_connection_plan_status(config_manager: ConfigManager, state_db: StateDB) -> ConnectionPlanStatus:
+    gateway = gateway_status(config_manager, state_db)
+    researcher = researcher_bridge_status(config_manager=config_manager, state_db=state_db)
+    swarm = swarm_status(config_manager, state_db)
+    attachments = attachment_status(config_manager)
+    active_chip_keys = config_manager.get_path("spark.chips.active_keys", default=[]) or []
+    active_path_key = config_manager.get_path("spark.specialization_paths.active_path_key")
+    telegram_configured = "telegram" in gateway.configured_channels
+    providers_configured = bool(gateway.configured_providers)
+
+    phase_a_checks = [
+        f"telegram_configured={'yes' if telegram_configured else 'no'}",
+        f"gateway_ready={'yes' if gateway.ready else 'no'}",
+        f"researcher_available={'yes' if researcher.available else 'no'}",
+        f"provider_runtime_ok={'yes' if gateway.provider_runtime_ok else 'no'}",
+        f"provider_execution_ok={'yes' if gateway.provider_execution_ok else 'no'}",
+    ]
+    if telegram_configured and gateway.ready and researcher.available and gateway.provider_runtime_ok and gateway.provider_execution_ok:
+        phase_a = ConnectionPhaseStatus(
+            phase_id="phase-a-telegram-core",
+            title="Lock Telegram core",
+            status="ready",
+            summary="Telegram, Researcher, and the current provider path are live together on the canonical home.",
+            checks=phase_a_checks,
+            next_steps=[],
+        )
+    else:
+        phase_a_steps: list[str] = []
+        if not telegram_configured:
+            phase_a_steps.append("spark-intelligence channel telegram-onboard")
+        if not providers_configured:
+            phase_a_steps.append(
+                "spark-intelligence auth connect custom --api-key-env CUSTOM_API_KEY --base-url https://api.minimax.io/v1 --model MiniMax-M2.5"
+            )
+        if providers_configured and not gateway.provider_runtime_ok:
+            phase_a_steps.extend(gateway.repair_hints or ["spark-intelligence auth status"])
+        if not researcher.available:
+            phase_a_steps.append("spark-intelligence researcher status")
+        if telegram_configured and providers_configured and not gateway.ready:
+            phase_a_steps.append("spark-intelligence gateway status")
+        phase_a = ConnectionPhaseStatus(
+            phase_id="phase-a-telegram-core",
+            title="Lock Telegram core",
+            status="in_progress" if telegram_configured or providers_configured or researcher.available else "blocked",
+            summary="The live Telegram shell exists, but the full Telegram + Researcher + provider loop is not completely green yet.",
+            checks=phase_a_checks,
+            next_steps=phase_a_steps,
+        )
+
+    attachment_chip_count = len([record for record in attachments.records if record.kind == "chip"])
+    attachment_path_count = len([record for record in attachments.records if record.kind == "path"])
+    phase_b_checks = [
+        f"active_chip_count={len(active_chip_keys)}",
+        f"active_path={'yes' if bool(active_path_key) else 'no'}",
+        f"discovered_chip_count={attachment_chip_count}",
+        f"discovered_path_count={attachment_path_count}",
+    ]
+    if active_chip_keys and active_path_key:
+        phase_b = ConnectionPhaseStatus(
+            phase_id="phase-b-specialization",
+            title="Activate Spark specialization",
+            status="ready",
+            summary="At least one chip set and one specialization path are active in the runtime state.",
+            checks=phase_b_checks,
+            next_steps=[],
+        )
+    else:
+        phase_b = ConnectionPhaseStatus(
+            phase_id="phase-b-specialization",
+            title="Activate Spark specialization",
+            status="in_progress" if attachment_chip_count or attachment_path_count or active_chip_keys or active_path_key else "blocked",
+            summary="Spark can already discover external chips and paths, but the Telegram agent is not yet shaped by active assets.",
+            checks=phase_b_checks,
+            next_steps=[
+                "spark-intelligence attachments list --kind chip",
+                "spark-intelligence attachments activate-chip <chip-key>",
+                "spark-intelligence attachments list --kind path",
+                "spark-intelligence attachments set-path <path-key>",
+                "spark-intelligence attachments snapshot --json",
+                "spark-intelligence agent inspect",
+            ],
+        )
+
+    phase_c_checks = [
+        f"payload_ready={'yes' if swarm.payload_ready else 'no'}",
+        f"api_ready={'yes' if swarm.api_ready else 'no'}",
+        f"api_url={swarm.api_url or 'missing'}",
+        f"workspace_id={swarm.workspace_id or 'missing'}",
+        f"access_token_env={swarm.access_token_env or 'missing'}",
+    ]
+    if swarm.payload_ready and swarm.api_ready:
+        phase_c = ConnectionPhaseStatus(
+            phase_id="phase-c-swarm-api",
+            title="Connect Spark Swarm",
+            status="ready",
+            summary="Swarm is payload-ready and API-connected, so live sync and escalation work can start safely.",
+            checks=phase_c_checks,
+            next_steps=[],
+        )
+    else:
+        phase_c = ConnectionPhaseStatus(
+            phase_id="phase-c-swarm-api",
+            title="Connect Spark Swarm",
+            status="in_progress" if swarm.payload_ready or swarm.runtime_root or swarm.api_url else "blocked",
+            summary="Swarm plumbing exists, but the bridge is not yet fully API-connected and proven reachable.",
+            checks=phase_c_checks,
+            next_steps=[
+                "spark-intelligence swarm status",
+                "spark-intelligence swarm configure --api-url <url> --workspace-id <workspace-id> --access-token <token>",
+                "spark-intelligence swarm sync --dry-run",
+                "spark-intelligence swarm sync",
+            ],
+        )
+
+    phase_d_prereq_ready = phase_a.status == "ready" and phase_b.status == "ready" and phase_c.status == "ready"
+    phase_d = ConnectionPhaseStatus(
+        phase_id="phase-d-runtime-routing",
+        title="Lock runtime routing contract",
+        status="in_progress" if phase_d_prereq_ready or phase_a.status == "ready" else "blocked",
+        summary=(
+            "The next runtime contract is to make Researcher-first, direct-provider fallback, and Swarm escalation explicit and operator-visible."
+            if phase_d_prereq_ready or phase_a.status == "ready"
+            else "Runtime routing should be locked only after the live Telegram core and system connections above are in place."
+        ),
+        checks=[
+            f"telegram_core={phase_a.status}",
+            f"specialization={phase_b.status}",
+            f"swarm_api={phase_c.status}",
+            f"last_provider_transport={researcher.last_provider_execution_transport or 'none'}",
+        ],
+        next_steps=[
+            "docs/SYSTEM_CONNECTION_AND_PRODUCTIZATION_PLAN_2026-03-26.md",
+            "spark-intelligence gateway traces --limit 20",
+        ],
+    )
+
+    phase_e = ConnectionPhaseStatus(
+        phase_id="phase-e-productization",
+        title="Productize install and run",
+        status="in_progress",
+        summary="Bootstrap, setup, and continuous gateway mode exist, but the installer and always-on run story are not yet fully packaged for another operator.",
+        checks=[
+            "setup_command=yes",
+            "continuous_gateway=yes",
+            "canonical_home=yes",
+            "fresh_operator_install=not_done",
+        ],
+        next_steps=[
+            "spark-intelligence setup",
+            "spark-intelligence connect status",
+            "docs/SYSTEM_CONNECTION_AND_PRODUCTIZATION_PLAN_2026-03-26.md",
+        ],
+    )
+
+    phases = [phase_a, phase_b, phase_c, phase_d, phase_e]
+    current = next((phase for phase in phases if phase.status != "ready"), phases[-1])
+    overall_status = "ready" if all(phase.status == "ready" for phase in phases) else "in_progress"
+    return ConnectionPlanStatus(
+        overall_status=overall_status,
+        current_phase=current.phase_id,
+        current_phase_title=current.title,
+        phases=phases,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="spark-intelligence")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -161,6 +376,15 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser = subparsers.add_parser("status", help="Show unified runtime, bridge, and attachment state")
     status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+
+    connect_parser = subparsers.add_parser("connect", help="Inspect phased system-connection progress")
+    connect_subparsers = connect_parser.add_subparsers(dest="connect_command", required=True)
+    connect_status_parser = connect_subparsers.add_parser(
+        "status",
+        help="Show the current connection phase, blockers, and next steps",
+    )
+    connect_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    connect_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     operator_parser = subparsers.add_parser("operator", help="Safe operator controls for bridges and pairing review")
     operator_subparsers = operator_parser.add_subparsers(dest="operator_command", required=True)
@@ -575,8 +799,9 @@ def handle_setup(args: argparse.Namespace) -> int:
     print("Next steps:")
     print("  1. spark-intelligence auth connect openai --api-key <key> --model <model>")
     print("  2. spark-intelligence channel telegram-onboard")
-    print("  3. spark-intelligence doctor")
-    print("  4. spark-intelligence gateway start")
+    print("  3. spark-intelligence connect status")
+    print("  4. spark-intelligence doctor")
+    print("  5. spark-intelligence gateway start")
     print("Optional Spark hookups:")
     print("  - spark-intelligence swarm status")
     print("  - spark-intelligence swarm sync --dry-run")
@@ -914,6 +1139,16 @@ def handle_status(args: argparse.Namespace) -> int:
     )
     print(status.to_json() if args.json else status.to_text())
     return 0 if doctor_report.ok else 1
+
+
+def handle_connect_status(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    status = build_connection_plan_status(config_manager=config_manager, state_db=state_db)
+    print(status.to_json() if args.json else status.to_text())
+    return 0
 
 
 def handle_gateway_start(args: argparse.Namespace) -> int:
@@ -1842,6 +2077,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_doctor(args)
     if args.command == "status":
         return handle_status(args)
+    if args.command == "connect" and args.connect_command == "status":
+        return handle_connect_status(args)
     if args.command == "operator" and args.operator_command == "set-bridge":
         return handle_operator_set_bridge(args)
     if args.command == "operator" and args.operator_command == "review-pairings":
