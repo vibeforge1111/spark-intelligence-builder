@@ -123,6 +123,8 @@ The gateway-owned OAuth callback listener now also rejects malformed callback re
 
 The shared route registry now also carries ingress contracts for future adapter webhooks. `oauth_callback` routes are GET-only, and `adapter_webhook` routes must be POST-only and declare allowed request content types so future HTTP handlers can fail closed before adapter-specific parsing runs.
 
+The first real webhook skeleton now uses that contract for Discord. `/webhooks/discord` is registered as POST `application/json`, request validation happens before JSON decoding, and JSON decoding happens before Discord normalization. That keeps the ingress boundary strict without pretending Discord signature or remote auth verification is finished yet.
+
 The Spark Researcher bridge is now provider-aware on the live path. When a provider is configured and resolvable, Spark uses that runtime selection to choose the advisory model family and run real provider execution instead of always falling back to `generic`. API-key-backed providers now execute through Spark's direct HTTP wrapper path, while the Codex/OAuth branch stays on the external CLI-wrapper transport until there is a first-class direct OAuth runtime with the same security guarantees. If provider auth is configured but unresolved, the bridge fails closed.
 
 Telegram setup is BotFather-first and DM-first. The guided path is:
