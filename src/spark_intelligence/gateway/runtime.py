@@ -20,7 +20,7 @@ from spark_intelligence.adapters.telegram.runtime import (
 )
 from spark_intelligence.adapters.whatsapp.runtime import build_whatsapp_runtime_summary, simulate_whatsapp_message
 from spark_intelligence.auth.providers import get_provider_spec
-from spark_intelligence.auth.runtime import build_auth_status_report
+from spark_intelligence.auth.runtime import build_auth_status_report, runtime_provider_health
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import provider_execution_health, run_doctor
 from spark_intelligence.gateway.tracing import append_gateway_trace, outbound_log_path, read_gateway_traces, read_outbound_audit, trace_log_path
@@ -35,6 +35,8 @@ class GatewayStatus:
     configured_channels: list[str]
     configured_providers: list[str]
     doctor_ok: bool
+    provider_runtime_ok: bool
+    provider_runtime_detail: str
     provider_execution_ok: bool
     provider_execution_detail: str
     oauth_maintenance_ok: bool
@@ -49,6 +51,8 @@ class GatewayStatus:
                 "configured_channels": self.configured_channels,
                 "configured_providers": self.configured_providers,
                 "doctor_ok": self.doctor_ok,
+                "provider_runtime_ok": self.provider_runtime_ok,
+                "provider_runtime_detail": self.provider_runtime_detail,
                 "provider_execution_ok": self.provider_execution_ok,
                 "provider_execution_detail": self.provider_execution_detail,
                 "oauth_maintenance_ok": self.oauth_maintenance_ok,
@@ -64,6 +68,9 @@ class GatewayStatus:
         lines.append(f"- providers: {', '.join(self.configured_providers) if self.configured_providers else 'none'}")
         lines.append(f"- channels: {', '.join(self.configured_channels) if self.configured_channels else 'none'}")
         lines.append(f"- doctor: {'ok' if self.doctor_ok else 'degraded'}")
+        lines.append(
+            f"- provider-runtime: {'ok' if self.provider_runtime_ok else 'degraded'} {self.provider_runtime_detail}"
+        )
         lines.append(
             f"- provider-execution: {'ok' if self.provider_execution_ok else 'degraded'} {self.provider_execution_detail}"
         )
@@ -95,6 +102,10 @@ def gateway_status(config_manager: ConfigManager, state_db: StateDB) -> GatewayS
     ]
     auth_report = build_auth_status_report(config_manager=config_manager, state_db=state_db)
     configured_providers = [provider.provider_id for provider in auth_report.providers]
+    provider_runtime_ok, provider_runtime_detail = runtime_provider_health(
+        config_manager=config_manager,
+        state_db=state_db,
+    )
     oauth_maintenance_ok, oauth_maintenance_detail = oauth_maintenance_health_from_report(
         state_db=state_db,
         auth_report=auth_report,
@@ -115,6 +126,8 @@ def gateway_status(config_manager: ConfigManager, state_db: StateDB) -> GatewayS
         configured_channels=channel_records,
         configured_providers=configured_providers,
         doctor_ok=doctor_report.ok,
+        provider_runtime_ok=provider_runtime_ok,
+        provider_runtime_detail=provider_runtime_detail,
         provider_execution_ok=provider_execution_ok,
         provider_execution_detail=provider_execution_detail,
         oauth_maintenance_ok=oauth_maintenance_ok,
@@ -155,6 +168,9 @@ def gateway_start(
         lines.append("Discord adapter is configured, but a foreground runtime is not implemented yet.")
     if whatsapp_record:
         lines.append("WhatsApp adapter is configured, but a foreground runtime is not implemented yet.")
+    if status.configured_providers and not status.provider_runtime_ok:
+        lines.append("Provider runtime readiness is degraded. Gateway did not start polling.")
+        return GatewayStartReport(ok=False, text="\n".join(lines))
     if status.configured_providers and not status.provider_execution_ok:
         lines.append("Provider execution readiness is degraded. Gateway did not start polling.")
         return GatewayStartReport(ok=False, text="\n".join(lines))

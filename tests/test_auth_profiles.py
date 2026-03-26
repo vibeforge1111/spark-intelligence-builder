@@ -580,6 +580,7 @@ class AuthProfileTests(SparkTestCase):
         )
         self.assertEqual(doctor_exit, 1, doctor_stderr)
         self.assertIn("[fail] provider-auth: openai-codex:expired", doctor_stdout)
+        self.assertIn("[fail] provider-runtime: Provider 'openai-codex' has an expired OAuth access token.", doctor_stdout)
 
         with self.assertRaisesRegex(RuntimeError, "expired OAuth access token"):
             resolve_runtime_provider(
@@ -1007,3 +1008,7 @@ class AuthProfileTests(SparkTestCase):
         self.assertEqual(doctor_exit, 1, doctor_stderr)
         self.assertIn("Doctor status: degraded", doctor_stdout)
         self.assertIn("[fail] provider-auth: openrouter:MISSING_OPENROUTER_KEY", doctor_stdout)
+        self.assertIn(
+            "[fail] provider-runtime: Provider 'openrouter' is missing secret value for env ref 'MISSING_OPENROUTER_KEY'.",
+            doctor_stdout,
+        )

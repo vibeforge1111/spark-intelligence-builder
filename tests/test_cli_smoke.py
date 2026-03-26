@@ -153,6 +153,10 @@ class CliSmokeTests(SparkTestCase):
         self.assertIn("Gateway ready: no", stdout)
         self.assertIn("- channels: telegram", stdout)
         self.assertIn("- providers: openai", stdout)
+        self.assertIn(
+            "- provider-runtime: degraded Provider 'openai' is missing secret value for env ref 'MISSING_OPENAI_KEY'.",
+            stdout,
+        )
         self.assertIn("- provider-execution: ok openai:direct_http", stdout)
         self.assertIn("- oauth-maintenance: ok no oauth providers configured", stdout)
         self.assertIn(
@@ -190,6 +194,8 @@ class CliSmokeTests(SparkTestCase):
         self.assertIn("gateway", payload)
         self.assertTrue(payload["gateway"]["oauth_maintenance_ok"])
         self.assertEqual(payload["gateway"]["oauth_maintenance_detail"], "no oauth providers configured")
+        self.assertTrue(payload["gateway"]["provider_runtime_ok"])
+        self.assertEqual(payload["gateway"]["provider_runtime_detail"], "anthropic:anthropic:default:direct_http")
         self.assertTrue(payload["gateway"]["provider_execution_ok"])
         self.assertEqual(payload["gateway"]["provider_execution_detail"], "anthropic:direct_http")
         self.assertIn(
@@ -241,12 +247,40 @@ class CliSmokeTests(SparkTestCase):
         )
 
         self.assertEqual(exit_code, 1, stderr)
+        self.assertIn("- provider-runtime: ok openai-codex:openai-codex:default:external_cli_wrapper", stdout)
         self.assertIn("- provider-execution: degraded openai-codex:external_cli_wrapper:researcher_disabled", stdout)
         self.assertIn("- oauth-maintenance: degraded oauth maintenance has never run; expiring_soon=openai-codex", stdout)
         self.assertIn(
             "- provider=openai-codex method=oauth status=expiring_soon transport=external_cli_wrapper exec_ready=no dependency=researcher_disabled",
             stdout,
         )
+
+    def test_gateway_start_fails_closed_when_runtime_provider_is_unresolved(self) -> None:
+        self.add_telegram_channel(bot_token="good-token")
+        connect_exit, _, connect_stderr = self.run_cli(
+            "auth",
+            "connect",
+            "openai",
+            "--home",
+            str(self.home),
+            "--api-key-env",
+            "MISSING_OPENAI_KEY",
+            "--model",
+            "gpt-5.4",
+        )
+        self.assertEqual(connect_exit, 0, connect_stderr)
+
+        exit_code, stdout, stderr = self.run_cli(
+            "gateway",
+            "start",
+            "--home",
+            str(self.home),
+            "--once",
+        )
+
+        self.assertEqual(exit_code, 1, stderr)
+        self.assertIn("Provider runtime readiness is degraded. Gateway did not start polling.", stdout)
+        self.assertNotIn("Telegram bot authenticated:", stdout)
 
     def test_gateway_start_fails_closed_when_provider_execution_is_unavailable(self) -> None:
         self.add_telegram_channel(bot_token="good-token")

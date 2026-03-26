@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from spark_intelligence.attachments import attachment_status
 from spark_intelligence.adapters.telegram.runtime import build_telegram_runtime_summary, read_telegram_runtime_health
 from spark_intelligence.auth.providers import get_provider_spec
-from spark_intelligence.auth.runtime import build_auth_status_report
+from spark_intelligence.auth.runtime import build_auth_status_report, runtime_provider_health
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.jobs.service import oauth_maintenance_health
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, researcher_bridge_status, resolve_researcher_config_path
@@ -98,6 +98,11 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
         )
     else:
         checks.append(DoctorCheck("provider-auth", True, "no providers configured yet"))
+    provider_runtime_ok, provider_runtime_detail = runtime_provider_health(
+        config_manager=config_manager,
+        state_db=state_db,
+    )
+    checks.append(DoctorCheck("provider-runtime", provider_runtime_ok, provider_runtime_detail))
     oauth_maintenance_ok, oauth_maintenance_detail = oauth_maintenance_health(
         config_manager=config_manager,
         state_db=state_db,

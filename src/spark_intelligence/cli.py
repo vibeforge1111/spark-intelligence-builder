@@ -98,6 +98,11 @@ class SystemStatus:
             f"- channels: {', '.join(self.payload['gateway']['configured_channels']) if self.payload['gateway']['configured_channels'] else 'none'}"
         )
         lines.append(
+            f"- provider runtime: {'ok' if self.payload['gateway'].get('provider_runtime_ok') else 'degraded'}"
+        )
+        if self.payload['gateway'].get('provider_runtime_detail'):
+            lines.append(f"- provider runtime detail: {self.payload['gateway']['provider_runtime_detail']}")
+        lines.append(
             f"- provider execution: {'ok' if self.payload['gateway'].get('provider_execution_ok') else 'degraded'}"
         )
         if self.payload['gateway'].get('provider_execution_detail'):

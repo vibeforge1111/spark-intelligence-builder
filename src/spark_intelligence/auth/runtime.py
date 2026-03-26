@@ -211,6 +211,20 @@ def build_auth_status_report(*, config_manager: ConfigManager, state_db: StateDB
     )
 
 
+def runtime_provider_health(*, config_manager: ConfigManager, state_db: StateDB) -> tuple[bool, str]:
+    provider_records = config_manager.load().get("providers", {}).get("records", {}) or {}
+    if not provider_records:
+        return True, "no providers configured yet"
+    try:
+        resolution = resolve_runtime_provider(
+            config_manager=config_manager,
+            state_db=state_db,
+        )
+    except RuntimeError as exc:
+        return False, str(exc)
+    return True, f"{resolution.provider_id}:{resolution.auth_profile_id}:{resolution.execution_transport}"
+
+
 def resolve_runtime_provider(
     *,
     config_manager: ConfigManager,
