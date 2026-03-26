@@ -1556,7 +1556,7 @@ def handle_jobs_tick(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
-    print(jobs_tick(state_db))
+    print(jobs_tick(config_manager, state_db))
     return 0
 
 

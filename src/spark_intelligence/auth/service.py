@@ -16,6 +16,9 @@ from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.state.db import StateDB
 
 
+DEFAULT_OAUTH_REFRESH_WINDOW_SECONDS = 600
+
+
 @dataclass(frozen=True)
 class OAuthLoginStart:
     provider_id: str
@@ -424,6 +427,7 @@ def refresh_provider(
     config_manager: ConfigManager,
     state_db: StateDB,
     provider: str,
+    trigger: str = "manual",
 ) -> AuthRefreshResult:
     spec = get_provider_spec(provider)
     if not spec.supports_oauth_login or not spec.oauth:
@@ -452,7 +456,7 @@ def refresh_provider(
             provider_id=provider,
             auth_profile_id=auth_profile_id,
             event_kind="oauth_refresh_failed",
-            detail={"error": "OAuth profile has no refresh token."},
+            detail={"error": "OAuth profile has no refresh token.", "trigger": trigger},
         )
         raise RuntimeError(f"Provider '{provider}' has no refresh token available.")
 
@@ -472,7 +476,7 @@ def refresh_provider(
             provider_id=provider,
             auth_profile_id=auth_profile_id,
             event_kind="oauth_refresh_failed",
-            detail={"error": str(exc)},
+            detail={"error": str(exc), "trigger": trigger},
         )
         raise
 
@@ -498,7 +502,7 @@ def refresh_provider(
         provider_id=provider,
         auth_profile_id=auth_profile_id,
         event_kind="oauth_refresh_completed",
-        detail={},
+        detail={"trigger": trigger},
     )
 
     with state_db.connect() as conn:
@@ -518,6 +522,73 @@ def refresh_provider(
         access_expires_at=str(row["access_expires_at"]) if row and row["access_expires_at"] else None,
         refresh_expires_at=str(row["refresh_expires_at"]) if row and row["refresh_expires_at"] else None,
     )
+
+
+def run_oauth_refresh_maintenance(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    refresh_window_seconds: int = DEFAULT_OAUTH_REFRESH_WINDOW_SECONDS,
+) -> dict[str, object]:
+    refreshed: list[str] = []
+    failed: list[str] = []
+    skipped: list[str] = []
+    scanned = 0
+    due = 0
+
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                ap.provider_id,
+                ap.auth_profile_id,
+                oc.access_expires_at,
+                oc.refresh_expires_at,
+                oc.refresh_token_ciphertext
+            FROM auth_profiles ap
+            JOIN oauth_credentials oc ON oc.auth_profile_id = ap.auth_profile_id
+            WHERE ap.auth_method = 'oauth'
+              AND ap.status IN ('active', 'expired', 'refresh_error', 'expiring_soon')
+            ORDER BY ap.provider_id, ap.auth_profile_id
+            """
+        ).fetchall()
+
+    for row in rows:
+        scanned += 1
+        provider_id = str(row["provider_id"])
+        if not _oauth_refresh_due(
+            access_expires_at=row["access_expires_at"],
+            within_seconds=refresh_window_seconds,
+        ):
+            skipped.append(f"{provider_id}:not_due")
+            continue
+        due += 1
+        if not row["refresh_token_ciphertext"]:
+            skipped.append(f"{provider_id}:missing_refresh_token")
+            continue
+        if _timestamp_expired(row["refresh_expires_at"]):
+            skipped.append(f"{provider_id}:refresh_token_expired")
+            continue
+        try:
+            refresh_provider(
+                config_manager=config_manager,
+                state_db=state_db,
+                provider=provider_id,
+                trigger="job",
+            )
+        except Exception as exc:
+            failed.append(f"{provider_id}:{exc}")
+            continue
+        refreshed.append(provider_id)
+
+    return {
+        "job_kind": "oauth_refresh_maintenance",
+        "scanned": scanned,
+        "due": due,
+        "refreshed": refreshed,
+        "failed": failed,
+        "skipped": skipped,
+    }
 
 
 def exchange_oauth_authorization_code(
@@ -820,3 +891,23 @@ def _timestamp_from_expires_in(value: object) -> str | None:
 
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _oauth_refresh_due(*, access_expires_at: object, within_seconds: int) -> bool:
+    if not access_expires_at:
+        return False
+    try:
+        expires_at = datetime.fromisoformat(str(access_expires_at).replace("Z", "+00:00")).astimezone(UTC)
+    except ValueError:
+        return False
+    return expires_at <= datetime.now(UTC) + timedelta(seconds=within_seconds)
+
+
+def _timestamp_expired(value: object) -> bool:
+    if not value:
+        return False
+    try:
+        expires_at = datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(UTC)
+    except ValueError:
+        return False
+    return expires_at <= datetime.now(UTC)

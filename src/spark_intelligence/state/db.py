@@ -266,6 +266,17 @@ class StateDB:
                 ON CONFLICT(human_id, role) DO NOTHING
                 """
             )
+            conn.execute(
+                """
+                INSERT INTO job_records(job_id, job_kind, status, schedule_expr)
+                VALUES ('auth:oauth-refresh-maintenance', 'oauth_refresh_maintenance', 'scheduled', 'builtin:oauth_refresh_maintenance')
+                ON CONFLICT(job_id) DO UPDATE SET
+                    job_kind=excluded.job_kind,
+                    status=excluded.status,
+                    schedule_expr=excluded.schedule_expr,
+                    updated_at=CURRENT_TIMESTAMP
+                """
+            )
             conn.commit()
 
     def connect(self) -> sqlite3.Connection:

@@ -706,6 +706,21 @@ def _build_auth_alerts(*, config_manager: ConfigManager, state_db: StateDB) -> l
                 )
                 continue
 
+            if provider.status == "expiring_soon":
+                alerts.append(
+                    {
+                        "provider_id": provider.provider_id,
+                        "status": "expiring_soon",
+                        "severity": "info",
+                        "summary": (
+                            f"Provider {provider.provider_id} OAuth access token expires soon. "
+                            "Run scheduled maintenance now or refresh manually before runtime use degrades."
+                        ),
+                        "recommended_command": "spark-intelligence jobs tick",
+                    }
+                )
+                continue
+
             if provider.status in {"revoked", "pending_oauth"} or not provider.secret_present:
                 summary = (
                     f"Provider {provider.provider_id} needs OAuth login before runtime use."

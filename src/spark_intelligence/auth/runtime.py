@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from dataclasses import asdict, dataclass
 
 from spark_intelligence.auth.providers import get_provider_spec
@@ -49,6 +49,7 @@ class ProviderAuthStatus:
     last_refresh_at: str | None = None
     last_refresh_error: str | None = None
     token_expired: bool = False
+    token_expiring_soon: bool = False
 
 
 @dataclass(frozen=True)
@@ -121,6 +122,8 @@ class AuthStatusReport:
                 lines.append(f"  last_refresh_at={provider.last_refresh_at}")
             if provider.last_refresh_error:
                 lines.append(f"  last_refresh_error={provider.last_refresh_error}")
+            if provider.token_expiring_soon:
+                lines.append("  token_expiring_soon=yes")
         return "\n".join(lines)
 
 
@@ -180,6 +183,7 @@ def build_auth_status_report(*, config_manager: ConfigManager, state_db: StateDB
                 env_map=env_map,
             )
             token_expired = _oauth_token_expired(oauth_row)
+            token_expiring_soon = _oauth_token_expiring_soon(oauth_row)
             providers.append(
                 ProviderAuthStatus(
                     provider_id=provider_id,
@@ -198,6 +202,7 @@ def build_auth_status_report(*, config_manager: ConfigManager, state_db: StateDB
                     last_refresh_at=_optional_string(oauth_row["last_refresh_at"]) if oauth_row else None,
                     last_refresh_error=_optional_string(oauth_row["last_refresh_error"]) if oauth_row else None,
                     token_expired=token_expired,
+                    token_expiring_soon=token_expiring_soon,
                 )
             )
     return AuthStatusReport(
@@ -322,9 +327,18 @@ def _derive_profile_status(*, profile_row: object, secret_present: bool, oauth_r
     if oauth_row and _oauth_token_expired(oauth_row):
         return "expired"
     if profile_row and profile_row["status"]:
+        if (
+            str(profile_row["status"]) == "active"
+            and oauth_row
+            and secret_present
+            and _oauth_token_expiring_soon(oauth_row)
+        ):
+            return "expiring_soon"
         if not secret_present and str(profile_row["status"]) == "active":
             return "pending_secret"
         return str(profile_row["status"])
+    if oauth_row and secret_present and _oauth_token_expiring_soon(oauth_row):
+        return "expiring_soon"
     return "active" if secret_present else "pending_secret"
 
 
@@ -388,3 +402,14 @@ def _oauth_token_expired(oauth_row: object) -> bool:
     except ValueError:
         return False
     return expires_at <= datetime.now(UTC)
+
+
+def _oauth_token_expiring_soon(oauth_row: object, *, within_seconds: int = 600) -> bool:
+    if not oauth_row or not oauth_row["access_expires_at"]:
+        return False
+    try:
+        expires_at = datetime.fromisoformat(str(oauth_row["access_expires_at"]).replace("Z", "+00:00")).astimezone(UTC)
+    except ValueError:
+        return False
+    now = datetime.now(UTC)
+    return now < expires_at <= now + timedelta(seconds=within_seconds)

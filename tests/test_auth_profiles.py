@@ -707,6 +707,158 @@ class AuthProfileTests(SparkTestCase):
             "spark-intelligence auth refresh openai-codex",
         )
 
+    def test_auth_status_surfaces_expiring_soon_and_operator_guidance(self) -> None:
+        start_exit, start_stdout, start_stderr = self.run_cli(
+            "auth",
+            "login",
+            "openai-codex",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(start_exit, 0, start_stderr)
+        start_payload = json.loads(start_stdout)
+        callback_url = (
+            "http://127.0.0.1:1455/auth/callback"
+            f"?state={start_payload['callback_state']}&code=test-oauth-code"
+        )
+
+        with patch(
+            "spark_intelligence.auth.service.exchange_oauth_authorization_code",
+            return_value={
+                "access_token": "oauth-access-token",
+                "refresh_token": "oauth-refresh-token",
+                "expires_in": 60,
+            },
+        ):
+            complete_exit, _, complete_stderr = self.run_cli(
+                "auth",
+                "login",
+                "openai-codex",
+                "--home",
+                str(self.home),
+                "--callback-url",
+                callback_url,
+            )
+        self.assertEqual(complete_exit, 0, complete_stderr)
+
+        status_exit, status_stdout, status_stderr = self.run_cli(
+            "auth",
+            "status",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(status_exit, 0, status_stderr)
+        status_payload = json.loads(status_stdout)
+        self.assertEqual(status_payload["providers"][0]["status"], "expiring_soon")
+        self.assertTrue(status_payload["providers"][0]["token_expiring_soon"])
+
+        inbox_exit, inbox_stdout, inbox_stderr = self.run_cli(
+            "operator",
+            "inbox",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(inbox_exit, 0, inbox_stderr)
+        inbox_payload = json.loads(inbox_stdout)
+        self.assertEqual(inbox_payload["counts"]["auth_alerts"], 1)
+        self.assertEqual(inbox_payload["auth"][0]["status"], "expiring_soon")
+        self.assertEqual(
+            inbox_payload["auth"][0]["recommended_command"],
+            "spark-intelligence jobs tick",
+        )
+
+    def test_jobs_tick_refreshes_due_oauth_profile(self) -> None:
+        start_exit, start_stdout, start_stderr = self.run_cli(
+            "auth",
+            "login",
+            "openai-codex",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(start_exit, 0, start_stderr)
+        start_payload = json.loads(start_stdout)
+        callback_url = (
+            "http://127.0.0.1:1455/auth/callback"
+            f"?state={start_payload['callback_state']}&code=test-oauth-code"
+        )
+
+        with patch(
+            "spark_intelligence.auth.service.exchange_oauth_authorization_code",
+            return_value={
+                "access_token": "oauth-access-token",
+                "refresh_token": "oauth-refresh-token",
+                "expires_in": 60,
+            },
+        ):
+            complete_exit, _, complete_stderr = self.run_cli(
+                "auth",
+                "login",
+                "openai-codex",
+                "--home",
+                str(self.home),
+                "--callback-url",
+                callback_url,
+            )
+        self.assertEqual(complete_exit, 0, complete_stderr)
+
+        with patch(
+            "spark_intelligence.auth.service.exchange_oauth_refresh_token",
+            return_value={
+                "access_token": "oauth-access-token-refreshed",
+                "refresh_token": "oauth-refresh-token-rotated",
+                "expires_in": 3600,
+                "refresh_token_expires_in": 7200,
+            },
+        ):
+            tick_exit, tick_stdout, tick_stderr = self.run_cli(
+                "jobs",
+                "tick",
+                "--home",
+                str(self.home),
+            )
+
+        self.assertEqual(tick_exit, 0, tick_stderr)
+        self.assertIn("auth:oauth-refresh-maintenance", tick_stdout)
+        self.assertIn("refreshed=1", tick_stdout)
+
+        with self.state_db.connect() as conn:
+            oauth_row = conn.execute(
+                """
+                SELECT access_token_ciphertext, refresh_token_ciphertext
+                FROM oauth_credentials
+                WHERE auth_profile_id = 'openai-codex:default'
+                LIMIT 1
+                """
+            ).fetchone()
+            event_row = conn.execute(
+                """
+                SELECT event_kind, detail
+                FROM provider_runtime_events
+                WHERE auth_profile_id = 'openai-codex:default'
+                ORDER BY event_id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            job_row = conn.execute(
+                """
+                SELECT last_run_at, last_result
+                FROM job_records
+                WHERE job_id = 'auth:oauth-refresh-maintenance'
+                LIMIT 1
+                """
+            ).fetchone()
+
+        self.assertEqual(oauth_row["access_token_ciphertext"], "oauth-access-token-refreshed")
+        self.assertEqual(oauth_row["refresh_token_ciphertext"], "oauth-refresh-token-rotated")
+        self.assertEqual(event_row["event_kind"], "oauth_refresh_completed")
+        self.assertIn('"trigger": "job"', event_row["detail"])
+        self.assertTrue(job_row["last_run_at"])
+        self.assertIn("refreshed=1", job_row["last_result"])
+
     def test_operator_security_surfaces_revoked_oauth_reconnect_guidance(self) -> None:
         start_exit, start_stdout, start_stderr = self.run_cli(
             "auth",
