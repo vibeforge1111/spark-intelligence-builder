@@ -17,6 +17,23 @@ from spark_intelligence.swarm_bridge import swarm_status
 
 WEBHOOK_ALERT_SUSTAINED_THRESHOLD = 3
 WEBHOOK_ALERT_RECENT_WINDOW = timedelta(minutes=15)
+WEBHOOK_ALERT_EVENT_SPECS = {
+    "discord_webhook_auth_failed": {
+        "status": "auth_failed",
+        "summary_prefix": "Discord webhook auth rejected",
+        "recommended_command": "spark-intelligence gateway traces --event discord_webhook_auth_failed --limit 20",
+    },
+    "whatsapp_webhook_auth_failed": {
+        "status": "auth_failed",
+        "summary_prefix": "WhatsApp webhook auth rejected",
+        "recommended_command": "spark-intelligence gateway traces --event whatsapp_webhook_auth_failed --limit 20",
+    },
+    "whatsapp_webhook_verification_failed": {
+        "status": "verification_failed",
+        "summary_prefix": "WhatsApp webhook verification rejected",
+        "recommended_command": "spark-intelligence gateway traces --event whatsapp_webhook_verification_failed --limit 20",
+    },
+}
 
 
 @dataclass
@@ -192,6 +209,31 @@ def list_operator_events(
     return OperatorEventReport(rows=payload)
 
 
+def list_webhook_alert_events() -> tuple[str, ...]:
+    return tuple(WEBHOOK_ALERT_EVENT_SPECS.keys())
+
+
+def snooze_webhook_alert(*, state_db: StateDB, event_name: str, minutes: int) -> str:
+    if event_name not in WEBHOOK_ALERT_EVENT_SPECS:
+        raise ValueError(f"Unsupported webhook alert event: {event_name}")
+    if minutes <= 0:
+        raise ValueError("Webhook alert snooze minutes must be greater than zero.")
+    snooze_until = _utc_now() + timedelta(minutes=minutes)
+    with state_db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO runtime_state(state_key, value)
+            VALUES (?, ?)
+            ON CONFLICT(state_key) DO UPDATE SET
+                value=excluded.value,
+                updated_at=CURRENT_TIMESTAMP
+            """,
+            (_webhook_alert_snooze_state_key(event_name), snooze_until.isoformat(timespec="seconds")),
+        )
+        conn.commit()
+    return snooze_until.isoformat(timespec="seconds")
+
+
 def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) -> OperatorInboxReport:
     pairing_rows = review_pairings(state_db).rows
     pending_pairings = [row for row in pairing_rows if row.get("status") == "pending"]
@@ -199,7 +241,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
     channel_alerts = _load_channel_alerts(config_manager=config_manager, state_db=state_db)
     bridge_alerts = _build_bridge_alerts(config_manager=config_manager, state_db=state_db)
     auth_alerts = _build_auth_alerts(config_manager=config_manager, state_db=state_db)
-    webhook_alerts = _build_webhook_alerts(traces=read_gateway_traces(config_manager, limit=100))
+    webhook_alerts = _build_webhook_alerts(traces=read_gateway_traces(config_manager, limit=100), state_db=state_db)
     items = _build_inbox_items(
         pending_pairings=pending_pairings,
         held_pairings=held_pairings,
@@ -250,7 +292,7 @@ def build_operator_security_report(
     auth_alerts = _build_auth_alerts(config_manager=config_manager, state_db=state_db)
     traces = read_gateway_traces(config_manager, limit=limit)
     outbound = read_outbound_audit(config_manager, limit=limit)
-    webhook_alerts = _build_webhook_alerts(traces=traces)
+    webhook_alerts = _build_webhook_alerts(traces=traces, state_db=state_db)
 
     duplicate_updates = [trace for trace in traces if trace.get("event") == "telegram_update_duplicate"]
     rate_limited_updates = [trace for trace in traces if trace.get("event") == "telegram_rate_limited"]
@@ -822,27 +864,13 @@ def _build_auth_alerts(*, config_manager: ConfigManager, state_db: StateDB) -> l
     return alerts
 
 
-def _build_webhook_alerts(*, traces: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _build_webhook_alerts(*, traces: list[dict[str, Any]], state_db: StateDB) -> list[dict[str, Any]]:
     now = _utc_now()
-    event_specs = {
-        "discord_webhook_auth_failed": {
-            "status": "auth_failed",
-            "summary_prefix": "Discord webhook auth rejected",
-            "recommended_command": "spark-intelligence gateway traces --event discord_webhook_auth_failed --limit 20",
-        },
-        "whatsapp_webhook_auth_failed": {
-            "status": "auth_failed",
-            "summary_prefix": "WhatsApp webhook auth rejected",
-            "recommended_command": "spark-intelligence gateway traces --event whatsapp_webhook_auth_failed --limit 20",
-        },
-        "whatsapp_webhook_verification_failed": {
-            "status": "verification_failed",
-            "summary_prefix": "WhatsApp webhook verification rejected",
-            "recommended_command": "spark-intelligence gateway traces --event whatsapp_webhook_verification_failed --limit 20",
-        },
-    }
+    snoozed_events = _load_snoozed_webhook_events(state_db=state_db, now=now)
     alerts: list[dict[str, Any]] = []
-    for event_name, spec in event_specs.items():
+    for event_name, spec in WEBHOOK_ALERT_EVENT_SPECS.items():
+        if event_name in snoozed_events:
+            continue
         matching = [
             trace
             for trace in traces
@@ -893,3 +921,28 @@ def _parse_iso_datetime(value: Any) -> datetime | None:
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _load_snoozed_webhook_events(*, state_db: StateDB, now: datetime) -> set[str]:
+    state_keys = [_webhook_alert_snooze_state_key(event_name) for event_name in WEBHOOK_ALERT_EVENT_SPECS]
+    if not state_keys:
+        return set()
+    placeholders = ",".join("?" for _ in state_keys)
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            f"SELECT state_key, value FROM runtime_state WHERE state_key IN ({placeholders})",
+            tuple(state_keys),
+        ).fetchall()
+    snoozed: set[str] = set()
+    for row in rows:
+        snooze_until = _parse_iso_datetime(row["value"])
+        if snooze_until is None or snooze_until < now:
+            continue
+        key = str(row["state_key"])
+        if key.startswith("ops:webhook_alert_snooze:"):
+            snoozed.add(key.removeprefix("ops:webhook_alert_snooze:"))
+    return snoozed
+
+
+def _webhook_alert_snooze_state_key(event_name: str) -> str:
+    return f"ops:webhook_alert_snooze:{event_name}"

@@ -214,6 +214,71 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["counts"]["webhook_alerts"], 0)
         self.assertEqual(payload["webhook_alerts"], [])
 
+    def test_operator_can_snooze_discord_webhook_alert(self) -> None:
+        setup_exit, _, setup_stderr = self.run_cli(
+            "channel",
+            "add",
+            "discord",
+            "--home",
+            str(self.home),
+            "--allow-legacy-message-webhook",
+            "--webhook-secret",
+            "discord-webhook-secret",
+        )
+        self.assertEqual(setup_exit, 0, setup_stderr)
+
+        response = handle_discord_webhook(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            path=DISCORD_WEBHOOK_PATH,
+            method="POST",
+            content_type="application/json",
+            headers={},
+            body=b"{}",
+        )
+        self.assertEqual(response.status_code, 401)
+
+        snooze_exit, snooze_stdout, snooze_stderr = self.run_cli(
+            "operator",
+            "snooze-webhook-alert",
+            "discord_webhook_auth_failed",
+            "--minutes",
+            "30",
+            "--home",
+            str(self.home),
+            "--reason",
+            "known noisy source",
+        )
+        self.assertEqual(snooze_exit, 0, snooze_stderr)
+        self.assertIn("Snoozed webhook alert 'discord_webhook_auth_failed'", snooze_stdout)
+
+        security_exit, security_stdout, security_stderr = self.run_cli(
+            "operator",
+            "security",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(security_exit, 0, security_stderr)
+        payload = json.loads(security_stdout)
+        self.assertEqual(payload["counts"]["webhook_alerts"], 0)
+        self.assertEqual(payload["webhook_alerts"], [])
+
+        history_exit, history_stdout, history_stderr = self.run_cli(
+            "operator",
+            "history",
+            "--home",
+            str(self.home),
+            "--action",
+            "snooze_webhook_alert",
+            "--json",
+        )
+        self.assertEqual(history_exit, 0, history_stderr)
+        history_payload = json.loads(history_stdout)
+        self.assertEqual(len(history_payload["rows"]), 1)
+        self.assertEqual(history_payload["rows"][0]["target_ref"], "discord_webhook_auth_failed")
+        self.assertEqual(history_payload["rows"][0]["reason"], "known noisy source")
+
     def test_operator_inbox_surfaces_whatsapp_verification_rejections(self) -> None:
         setup_exit, _, setup_stderr = self.run_cli(
             "channel",
@@ -364,6 +429,62 @@ class CliSmokeTests(SparkTestCase):
                 "--json",
             )
 
+        self.assertEqual(inbox_exit, 0, inbox_stderr)
+        payload = json.loads(inbox_stdout)
+        self.assertEqual(payload["counts"]["webhook_alerts"], 0)
+        self.assertEqual(payload["webhooks"], [])
+
+    def test_operator_can_snooze_whatsapp_verification_alert(self) -> None:
+        setup_exit, _, setup_stderr = self.run_cli(
+            "channel",
+            "add",
+            "whatsapp",
+            "--home",
+            str(self.home),
+            "--bot-token",
+            "whatsapp-token",
+            "--webhook-secret",
+            "whatsapp-webhook-secret",
+            "--webhook-verify-token",
+            "whatsapp-verify-token",
+        )
+        self.assertEqual(setup_exit, 0, setup_stderr)
+
+        response = handle_whatsapp_webhook(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            path=WHATSAPP_WEBHOOK_PATH,
+            method="GET",
+            content_type=None,
+            headers={},
+            body=b"",
+            query_params={
+                "hub.mode": "subscribe",
+                "hub.verify_token": "wrong-token",
+                "hub.challenge": "challenge-code",
+            },
+        )
+        self.assertEqual(response.status_code, 401)
+
+        snooze_exit, snooze_stdout, snooze_stderr = self.run_cli(
+            "operator",
+            "snooze-webhook-alert",
+            "whatsapp_webhook_verification_failed",
+            "--minutes",
+            "30",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(snooze_exit, 0, snooze_stderr)
+        self.assertIn("Snoozed webhook alert 'whatsapp_webhook_verification_failed'", snooze_stdout)
+
+        inbox_exit, inbox_stdout, inbox_stderr = self.run_cli(
+            "operator",
+            "inbox",
+            "--home",
+            str(self.home),
+            "--json",
+        )
         self.assertEqual(inbox_exit, 0, inbox_stderr)
         payload = json.loads(inbox_stdout)
         self.assertEqual(payload["counts"]["webhook_alerts"], 0)

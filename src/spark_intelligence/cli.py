@@ -58,7 +58,14 @@ from spark_intelligence.identity.service import (
     revoke_session,
 )
 from spark_intelligence.jobs.service import jobs_list, jobs_tick
-from spark_intelligence.ops import build_operator_inbox, build_operator_security_report, list_operator_events, log_operator_event
+from spark_intelligence.ops import (
+    build_operator_inbox,
+    build_operator_security_report,
+    list_operator_events,
+    list_webhook_alert_events,
+    log_operator_event,
+    snooze_webhook_alert,
+)
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
 from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.state.db import StateDB
@@ -220,6 +227,14 @@ def build_parser() -> argparse.ArgumentParser:
     operator_security_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     operator_security_parser.add_argument("--limit", type=int, default=100, help="Number of recent trace/audit events to scan")
     operator_security_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    operator_snooze_webhook_parser = operator_subparsers.add_parser(
+        "snooze-webhook-alert",
+        help="Temporarily suppress one webhook alert family from operator surfaces",
+    )
+    operator_snooze_webhook_parser.add_argument("event", choices=list_webhook_alert_events())
+    operator_snooze_webhook_parser.add_argument("--minutes", type=int, default=60, help="Snooze duration in minutes")
+    operator_snooze_webhook_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    operator_snooze_webhook_parser.add_argument("--reason", help="Short audit reason for this snooze")
 
     gateway_parser = subparsers.add_parser("gateway", help="Gateway operations")
     gateway_subparsers = gateway_parser.add_subparsers(dest="gateway_command", required=True)
@@ -775,6 +790,28 @@ def handle_operator_security(args: argparse.Namespace) -> int:
     state_db.initialize()
     report = build_operator_security_report(config_manager=config_manager, state_db=state_db, limit=args.limit)
     print(report.to_json() if args.json else report.to_text())
+    return 0
+
+
+def handle_operator_snooze_webhook_alert(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    snooze_until = snooze_webhook_alert(
+        state_db=state_db,
+        event_name=args.event,
+        minutes=args.minutes,
+    )
+    log_operator_event(
+        state_db=state_db,
+        action="snooze_webhook_alert",
+        target_kind="webhook_alert",
+        target_ref=args.event,
+        reason=args.reason,
+        details={"minutes": args.minutes, "snooze_until": snooze_until},
+    )
+    print(f"Snoozed webhook alert '{args.event}' until {snooze_until}.")
     return 0
 
 
@@ -1771,6 +1808,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_operator_inbox(args)
     if args.command == "operator" and args.operator_command == "security":
         return handle_operator_security(args)
+    if args.command == "operator" and args.operator_command == "snooze-webhook-alert":
+        return handle_operator_snooze_webhook_alert(args)
     if args.command == "gateway" and args.gateway_command == "start":
         return handle_gateway_start(args)
     if args.command == "gateway" and args.gateway_command == "status":
