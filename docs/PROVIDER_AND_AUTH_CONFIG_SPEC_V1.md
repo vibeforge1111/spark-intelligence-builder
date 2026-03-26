@@ -131,6 +131,7 @@ Recommended commands:
 - `spark-intelligence auth login <provider>`
 - `spark-intelligence auth login <provider> --listen`
 - `spark-intelligence auth login <provider> --callback-url <full_url>`
+- `spark-intelligence gateway oauth-callback`
 - `spark-intelligence auth refresh <provider>`
 - `spark-intelligence auth logout <provider>`
 

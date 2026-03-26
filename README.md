@@ -82,6 +82,7 @@ spark-intelligence auth providers
 spark-intelligence auth connect openai --api-key <key> --model <model>
 spark-intelligence auth connect openrouter --api-key-env WORK_OPENROUTER_KEY --model anthropic/claude-3.7-sonnet
 spark-intelligence auth login openai-codex --listen
+spark-intelligence gateway oauth-callback --provider openai-codex
 spark-intelligence auth refresh openai-codex
 spark-intelligence auth logout openai-codex
 spark-intelligence auth status
@@ -106,7 +107,7 @@ spark-intelligence setup \
   --swarm-access-token <token>
 ```
 
-Model-provider auth now has a first-class provider registry plus default auth-profile layer. `auth providers` shows the supported auth methods, `auth connect` writes a canonical API-key-backed profile such as `openai:default` or `anthropic:default`, `auth login openai-codex --listen` can capture the loopback callback automatically, `auth refresh openai-codex` rotates the locally stored OAuth access token when a refresh token is present, `auth logout openai-codex` revokes the locally stored OAuth profile, and `auth status` now surfaces expiry and refresh state so the configured provider auth can be inspected before runtime use.
+Model-provider auth now has a first-class provider registry plus default auth-profile layer. `auth providers` shows the supported auth methods, `auth connect` writes a canonical API-key-backed profile such as `openai:default` or `anthropic:default`, `auth login openai-codex --listen` now completes through the same gateway-owned callback surface exposed by `gateway oauth-callback`, `auth refresh openai-codex` rotates the locally stored OAuth access token when a refresh token is present, `auth logout openai-codex` revokes the locally stored OAuth profile, and `auth status` now surfaces expiry and refresh state so the configured provider auth can be inspected before runtime use.
 
 OAuth-backed runtime resolution now fails closed on expired access tokens. If a stored OAuth token has expired, `auth status` marks it as `expired`, `doctor` degrades with the provider id and failing auth state, and runtime provider selection refuses to silently continue with stale credentials.
 
