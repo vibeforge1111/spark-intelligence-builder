@@ -90,21 +90,45 @@ def _handle_whatsapp_verification(
     record = _whatsapp_record(config_manager)
     verify_token_ref = record.get("webhook_verify_token_ref")
     if not verify_token_ref:
-        return _json_error_response(503, "WhatsApp webhook verify token is not configured.")
+        return _log_whatsapp_verification_failure(
+            config_manager=config_manager,
+            status_code=503,
+            message="WhatsApp webhook verify token is not configured.",
+        )
     expected_verify_token = config_manager.read_env_map().get(str(verify_token_ref), "")
     if not expected_verify_token:
-        return _json_error_response(503, f"WhatsApp webhook verify token ref '{verify_token_ref}' is unresolved.")
+        return _log_whatsapp_verification_failure(
+            config_manager=config_manager,
+            status_code=503,
+            message=f"WhatsApp webhook verify token ref '{verify_token_ref}' is unresolved.",
+        )
     mode = _query_value(query_params, "hub.mode")
     verify_token = _query_value(query_params, "hub.verify_token")
     challenge = _query_value(query_params, "hub.challenge")
     if mode != "subscribe":
-        return _json_error_response(400, "WhatsApp webhook verification requires hub.mode=subscribe.")
+        return _log_whatsapp_verification_failure(
+            config_manager=config_manager,
+            status_code=400,
+            message="WhatsApp webhook verification requires hub.mode=subscribe.",
+        )
     if not challenge:
-        return _json_error_response(400, "WhatsApp webhook verification challenge is missing.")
+        return _log_whatsapp_verification_failure(
+            config_manager=config_manager,
+            status_code=400,
+            message="WhatsApp webhook verification challenge is missing.",
+        )
     if not verify_token:
-        return _json_error_response(401, "WhatsApp webhook verify token is missing.")
+        return _log_whatsapp_verification_failure(
+            config_manager=config_manager,
+            status_code=401,
+            message="WhatsApp webhook verify token is missing.",
+        )
     if not hmac.compare_digest(expected_verify_token, verify_token):
-        return _json_error_response(401, "WhatsApp webhook verify token is invalid.")
+        return _log_whatsapp_verification_failure(
+            config_manager=config_manager,
+            status_code=401,
+            message="WhatsApp webhook verify token is invalid.",
+        )
     return WhatsAppWebhookResponse(
         status_code=200,
         body=challenge,
@@ -125,6 +149,16 @@ def _handle_whatsapp_event_post(
         body=body,
     )
     if auth_error:
+        append_gateway_trace(
+            config_manager,
+            {
+                "event": "whatsapp_webhook_auth_failed",
+                "channel_id": "whatsapp",
+                "decision": "rejected",
+                "reason": auth_error[1],
+                "status_code": auth_error[0],
+            },
+        )
         return _json_error_response(auth_error[0], auth_error[1])
 
     try:
@@ -259,6 +293,25 @@ def _json_error_response(status_code: int, message: str) -> WhatsAppWebhookRespo
         status_code=status_code,
         body=json.dumps({"ok": False, "error": message}, indent=2),
     )
+
+
+def _log_whatsapp_verification_failure(
+    *,
+    config_manager: ConfigManager,
+    status_code: int,
+    message: str,
+) -> WhatsAppWebhookResponse:
+    append_gateway_trace(
+        config_manager,
+        {
+            "event": "whatsapp_webhook_verification_failed",
+            "channel_id": "whatsapp",
+            "decision": "rejected",
+            "reason": message,
+            "status_code": status_code,
+        },
+    )
+    return _json_error_response(status_code, message)
 
 
 def _validate_whatsapp_webhook_signature(

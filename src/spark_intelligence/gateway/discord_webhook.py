@@ -13,6 +13,7 @@ from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.gateway.guardrails import prepare_outbound_text
 from spark_intelligence.gateway import resolve_simulated_dm
 from spark_intelligence.gateway.routes import GatewayRouteRegistration, GatewayRouteRegistry
+from spark_intelligence.gateway.tracing import append_gateway_trace
 from spark_intelligence.state.db import StateDB
 
 
@@ -72,6 +73,16 @@ def handle_discord_webhook(
         body=body,
     )
     if auth_error:
+        append_gateway_trace(
+            config_manager,
+            {
+                "event": "discord_webhook_auth_failed",
+                "channel_id": "discord",
+                "decision": "rejected",
+                "reason": auth_error[1],
+                "status_code": auth_error[0],
+            },
+        )
         return _json_error_response(auth_error[0], auth_error[1])
 
     try:

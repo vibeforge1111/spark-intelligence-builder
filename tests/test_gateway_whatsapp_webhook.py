@@ -115,6 +115,19 @@ class WhatsAppWebhookIngressTests(SparkTestCase):
         self.assertEqual(response.status_code, 401)
         payload = json.loads(response.body)
         self.assertEqual(payload["error"], "WhatsApp webhook verify token is invalid.")
+        traces = json.loads(
+            gateway_trace_view(
+                self.config_manager,
+                limit=10,
+                channel_id="whatsapp",
+                event="whatsapp_webhook_verification_failed",
+                decision="rejected",
+                as_json=True,
+            )
+        )
+        self.assertEqual(len(traces), 1)
+        self.assertEqual(traces[0]["reason"], "WhatsApp webhook verify token is invalid.")
+        self.assertEqual(traces[0]["status_code"], 401)
 
     def test_verification_rejects_missing_verify_token_configuration(self) -> None:
         self._add_whatsapp_channel(webhook_verify_token=None)
@@ -152,6 +165,19 @@ class WhatsAppWebhookIngressTests(SparkTestCase):
         self.assertEqual(response.status_code, 401)
         payload = json.loads(response.body)
         self.assertEqual(payload["error"], "WhatsApp webhook signature header is missing.")
+        traces = json.loads(
+            gateway_trace_view(
+                self.config_manager,
+                limit=10,
+                channel_id="whatsapp",
+                event="whatsapp_webhook_auth_failed",
+                decision="rejected",
+                as_json=True,
+            )
+        )
+        self.assertEqual(len(traces), 1)
+        self.assertEqual(traces[0]["reason"], "WhatsApp webhook signature header is missing.")
+        self.assertEqual(traces[0]["status_code"], 401)
 
     def test_rejects_invalid_signature_header(self) -> None:
         self._add_whatsapp_channel()

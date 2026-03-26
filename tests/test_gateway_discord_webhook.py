@@ -6,6 +6,7 @@ from unittest.mock import patch
 from nacl.signing import SigningKey
 
 from spark_intelligence.channel.service import add_channel
+from spark_intelligence.gateway.runtime import gateway_trace_view
 from spark_intelligence.gateway.discord_webhook import DISCORD_WEBHOOK_PATH, handle_discord_webhook
 
 from tests.test_support import SparkTestCase
@@ -109,6 +110,19 @@ class DiscordWebhookIngressTests(SparkTestCase):
         self.assertEqual(response.status_code, 401)
         payload = json.loads(response.body)
         self.assertEqual(payload["error"], "Discord webhook secret header is missing.")
+        traces = json.loads(
+            gateway_trace_view(
+                self.config_manager,
+                limit=10,
+                channel_id="discord",
+                event="discord_webhook_auth_failed",
+                decision="rejected",
+                as_json=True,
+            )
+        )
+        self.assertEqual(len(traces), 1)
+        self.assertEqual(traces[0]["reason"], "Discord webhook secret header is missing.")
+        self.assertEqual(traces[0]["status_code"], 401)
 
     def test_rejects_invalid_secret_header(self) -> None:
         self._add_discord_channel()
@@ -197,6 +211,19 @@ class DiscordWebhookIngressTests(SparkTestCase):
         self.assertEqual(response.status_code, 401)
         payload = json.loads(response.body)
         self.assertEqual(payload["error"], "Discord request signature is invalid.")
+        traces = json.loads(
+            gateway_trace_view(
+                self.config_manager,
+                limit=10,
+                channel_id="discord",
+                event="discord_webhook_auth_failed",
+                decision="rejected",
+                as_json=True,
+            )
+        )
+        self.assertEqual(len(traces), 1)
+        self.assertEqual(traces[0]["reason"], "Discord request signature is invalid.")
+        self.assertEqual(traces[0]["status_code"], 401)
 
     def test_handles_valid_signed_ping_payload(self) -> None:
         signing_key = SigningKey.generate()
