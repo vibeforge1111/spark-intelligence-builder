@@ -160,7 +160,42 @@ The first supported product path now exists, but there is still polish left for 
 - cleaner first-run docs
 - possibly one more validation pass from a truly fresh second home
 
-## 7. Best Starting Points For Tomorrow
+## 7. Exact Remaining Work
+
+What is still left from here, grouped by practical priority:
+
+### 7.1 Must-Finish Core Work
+
+- unblock hosted Spark Swarm auth/session acceptance so `swarm sync` stops failing with `401 authentication_required`
+- prove one real successful hosted `swarm sync`
+- prove one intentional Telegram-originated Swarm escalation path instead of only local payload readiness
+- tighten live Telegram response quality further so specialized replies feel operator-useful and not just technically correct
+
+### 7.2 Runtime Quality Work
+
+- refine the decision rule for:
+  - `researcher_advisory`
+  - `provider_execution`
+  - `provider_fallback_chat`
+  - Swarm recommendation or escalation
+- improve how startup/operator specialization shows up in normal Telegram replies
+- decide which route-policy defaults should become the recommended production defaults on the canonical home
+- review more live traces from the canonical home and remove any remaining memo-like or internal-looking answer patterns
+
+### 7.3 Productization Polish
+
+- add one cleaner runbook for boot, restart, stop, logs, and health checks for the always-on Telegram path
+- tighten the fresh-operator install story so it is not only smoke-tested but documented as the primary supported setup
+- make the canonical `.env` and home contract more explicit in docs
+- validate the supported bootstrap and autostart path one more time from a truly fresh operator-style home
+
+### 7.4 Deferred Expansion Work
+
+- Discord remains deferred until the Telegram plus Researcher plus Swarm path is complete
+- WhatsApp remains deferred for the same reason
+- Codex OAuth remains optional/deferred unless it becomes necessary for the primary production provider story
+
+## 8. Best Starting Points For Tomorrow
 
 There are two strong next options.
 
@@ -185,7 +220,7 @@ Best if the goal is to improve:
 - routing clarity
 - live conversational quality before adding more surfaces
 
-## 8. Recommended Tomorrow Order
+## 9. Recommended Tomorrow Order
 
 Recommended order:
 
@@ -204,11 +239,11 @@ Recommended order:
    - tighten route policy defaults
    - tighten response style and specialization behavior
 
-## 9. Repo State
+## 10. Repo State
 
-Latest pushed commit before this handoff note was extended:
+Latest pushed commit:
 
-- `60a5910` `fix: fall back to windows startup folder autostart`
+- `8dcddc2` `fix: harden telegram routing and swarm auth phases`
 
 Current test status at handoff:
 
