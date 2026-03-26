@@ -451,7 +451,7 @@ def revoke_pairing(*, state_db: StateDB, channel_id: str, external_user_id: str,
             (session_id,),
         )
         conn.execute(
-            "DELETE FROM allowlist_entries WHERE channel_id = ? AND external_user_id = ?",
+            "DELETE FROM allowlist_entries WHERE channel_id = ? AND external_user_id = ? AND role = 'paired_user'",
             (channel_id, external_user_id),
         )
         conn.execute(
@@ -481,7 +481,7 @@ def hold_pairing(*, state_db: StateDB, channel_id: str, external_user_id: str, h
             (pairing_id, channel_id, external_user_id, human_id, held_by),
         )
         conn.execute(
-            "DELETE FROM allowlist_entries WHERE channel_id = ? AND external_user_id = ?",
+            "DELETE FROM allowlist_entries WHERE channel_id = ? AND external_user_id = ? AND role = 'paired_user'",
             (channel_id, external_user_id),
         )
         conn.commit()

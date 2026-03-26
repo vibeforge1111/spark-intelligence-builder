@@ -1,7 +1,7 @@
 import json
 
 from spark_intelligence.adapters.telegram.runtime import simulate_telegram_update
-from spark_intelligence.identity.service import pairing_summary, review_pairings
+from spark_intelligence.identity.service import approve_pairing, pairing_summary, review_pairings
 
 from tests.test_support import SparkTestCase, make_telegram_update
 
@@ -221,3 +221,36 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertFalse(follow_up.ok)
         self.assertEqual(follow_up.decision, "blocked")
         self.assertIn("requires explicit allowlist access", str(follow_up.detail["response_text"]))
+
+    def test_revoke_pairing_does_not_override_configured_allowlist_access(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="alice",
+        )
+
+        exit_code, _, stderr = self.run_cli(
+            "pairings",
+            "revoke",
+            "telegram",
+            "111",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(exit_code, 0, stderr)
+
+        follow_up = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=109,
+                user_id="111",
+                username="alice",
+                text="still here",
+            ),
+        )
+
+        self.assertTrue(follow_up.ok)
+        self.assertEqual(follow_up.decision, "allowed")
