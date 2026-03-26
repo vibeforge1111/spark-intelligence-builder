@@ -271,6 +271,11 @@ def build_parser() -> argparse.ArgumentParser:
     channel_add_parser.add_argument("--bot-token", help="Adapter bot token")
     channel_add_parser.add_argument("--allowed-user", action="append", default=[], help="Allowed adapter user id")
     channel_add_parser.add_argument(
+        "--clear-allowed-users",
+        action="store_true",
+        help="Clear any existing configured allowed users before applying this update.",
+    )
+    channel_add_parser.add_argument(
         "--pairing-mode",
         choices=["allowlist", "pairing"],
         default=None,
@@ -288,6 +293,11 @@ def build_parser() -> argparse.ArgumentParser:
     channel_telegram_onboard_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     channel_telegram_onboard_parser.add_argument("--bot-token", help="Telegram bot token from BotFather")
     channel_telegram_onboard_parser.add_argument("--allowed-user", action="append", default=[], help="Allowed Telegram user id")
+    channel_telegram_onboard_parser.add_argument(
+        "--clear-allowed-users",
+        action="store_true",
+        help="Clear any existing configured allowed users before applying this update.",
+    )
     channel_telegram_onboard_parser.add_argument(
         "--pairing-mode",
         choices=["allowlist", "pairing"],
@@ -861,10 +871,16 @@ def handle_channel_add(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
+    if args.clear_allowed_users and args.allowed_user:
+        print("Cannot combine --clear-allowed-users with --allowed-user.", file=sys.stderr)
+        return 2
     existing_record = config_manager.get_path(f"channels.records.{args.channel_kind}", default={}) or {}
     existing_allowed_users = existing_record.get("allowed_users") if isinstance(existing_record, dict) else []
     existing_pairing_mode = existing_record.get("pairing_mode") if isinstance(existing_record, dict) else None
-    effective_allowed_users = args.allowed_user or (existing_allowed_users if isinstance(existing_allowed_users, list) else [])
+    if args.clear_allowed_users:
+        effective_allowed_users: list[str] = []
+    else:
+        effective_allowed_users = args.allowed_user or (existing_allowed_users if isinstance(existing_allowed_users, list) else [])
     effective_pairing_mode = args.pairing_mode or (str(existing_pairing_mode) if existing_pairing_mode else "pairing")
     metadata: dict[str, object] | None = None
     validation_note: str | None = None
@@ -909,11 +925,17 @@ def handle_channel_add(args: argparse.Namespace) -> int:
 
 def handle_channel_telegram_onboard(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
+    if args.clear_allowed_users and args.allowed_user:
+        print("Cannot combine --clear-allowed-users with --allowed-user.", file=sys.stderr)
+        return 2
     existing_record = config_manager.get_path("channels.records.telegram", default={}) or {}
     existing_allowed_users = existing_record.get("allowed_users") if isinstance(existing_record, dict) else []
     existing_pairing_mode = existing_record.get("pairing_mode") if isinstance(existing_record, dict) else None
     existing_status = existing_record.get("status") if isinstance(existing_record, dict) else None
-    effective_allowed_users = args.allowed_user or (existing_allowed_users if isinstance(existing_allowed_users, list) else [])
+    if args.clear_allowed_users:
+        effective_allowed_users: list[str] = []
+    else:
+        effective_allowed_users = args.allowed_user or (existing_allowed_users if isinstance(existing_allowed_users, list) else [])
     effective_pairing_mode = args.pairing_mode or (str(existing_pairing_mode) if existing_pairing_mode else "pairing")
     effective_status = str(existing_status) if existing_status else "enabled"
 
