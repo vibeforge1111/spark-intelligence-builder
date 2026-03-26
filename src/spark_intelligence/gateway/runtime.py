@@ -25,6 +25,7 @@ from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import run_doctor
 from spark_intelligence.gateway.tracing import append_gateway_trace, outbound_log_path, read_gateway_traces, read_outbound_audit, trace_log_path
 from spark_intelligence.jobs.service import oauth_maintenance_health_from_report
+from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.state.db import StateDB
 
 
@@ -92,6 +93,7 @@ def gateway_status(config_manager: ConfigManager, state_db: StateDB) -> GatewayS
         auth_report=auth_report,
     )
     doctor_report = run_doctor(config_manager, state_db)
+    researcher = researcher_bridge_status(config_manager=config_manager, state_db=state_db)
     telegram_summary = build_telegram_runtime_summary(config_manager, state_db)
     discord_summary = build_discord_runtime_summary(config_manager, state_db)
     whatsapp_summary = build_whatsapp_runtime_summary(config_manager, state_db)
@@ -104,7 +106,13 @@ def gateway_status(config_manager: ConfigManager, state_db: StateDB) -> GatewayS
         oauth_maintenance_ok=oauth_maintenance_ok,
         oauth_maintenance_detail=oauth_maintenance_detail,
         provider_lines=[
-            _provider_status_line(provider.provider_id, provider.auth_method, provider.status)
+            _provider_status_line(
+                provider.provider_id,
+                provider.auth_method,
+                provider.status,
+                researcher_available=researcher.available,
+                researcher_mode=researcher.mode,
+            )
             for provider in auth_report.providers
         ],
         adapter_lines=[telegram_summary.to_line(), discord_summary.to_line(), whatsapp_summary.to_line()],
@@ -470,9 +478,25 @@ def _record_telegram_poll_failure(
     return backoff_seconds
 
 
-def _provider_status_line(provider_id: str, auth_method: str, status: str) -> str:
+def _provider_status_line(
+    provider_id: str,
+    auth_method: str,
+    status: str,
+    *,
+    researcher_available: bool,
+    researcher_mode: str,
+) -> str:
     try:
         transport = get_provider_spec(provider_id).execution_transport
     except ValueError:
         transport = "unknown"
-    return f"provider={provider_id} method={auth_method} status={status} transport={transport}"
+    if transport == "external_cli_wrapper":
+        exec_ready = "yes" if researcher_available else "no"
+        dependency = "researcher_bridge" if researcher_available else f"researcher_{researcher_mode}"
+    else:
+        exec_ready = "yes"
+        dependency = "direct_http"
+    return (
+        f"provider={provider_id} method={auth_method} status={status} "
+        f"transport={transport} exec_ready={exec_ready} dependency={dependency}"
+    )

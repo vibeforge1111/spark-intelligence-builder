@@ -6,10 +6,11 @@ from dataclasses import dataclass
 
 from spark_intelligence.attachments import attachment_status
 from spark_intelligence.adapters.telegram.runtime import build_telegram_runtime_summary, read_telegram_runtime_health
+from spark_intelligence.auth.providers import get_provider_spec
 from spark_intelligence.auth.runtime import build_auth_status_report
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.jobs.service import oauth_maintenance_health
-from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
+from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, researcher_bridge_status, resolve_researcher_config_path
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import swarm_status
 
@@ -102,6 +103,12 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
         state_db=state_db,
     )
     checks.append(DoctorCheck("oauth-maintenance", oauth_maintenance_ok, oauth_maintenance_detail))
+    provider_execution_ok, provider_execution_detail = _provider_execution_health(
+        config_manager=config_manager,
+        state_db=state_db,
+        auth_report=auth_report,
+    )
+    checks.append(DoctorCheck("provider-execution", provider_execution_ok, provider_execution_detail))
 
     researcher_enabled = bool(config_manager.get_path("spark.researcher.enabled", default=True))
     researcher_root, researcher_source = discover_researcher_runtime_root(config_manager)
@@ -236,3 +243,31 @@ def _telegram_runtime_check(*, config_manager: ConfigManager, state_db: StateDB)
     if health.bot_username:
         detail_parts.append(f"bot=@{health.bot_username}")
     return DoctorCheck("telegram-runtime", True, " ".join(detail_parts))
+
+
+def _provider_execution_health(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    auth_report: object,
+) -> tuple[bool, str]:
+    providers = getattr(auth_report, "providers", [])
+    if not providers:
+        return True, "no providers configured yet"
+    researcher = researcher_bridge_status(config_manager=config_manager, state_db=state_db)
+    blocked: list[str] = []
+    ready: list[str] = []
+    for provider in providers:
+        spec = get_provider_spec(provider.provider_id)
+        if spec.execution_transport == "external_cli_wrapper":
+            if not researcher.available:
+                blocked.append(
+                    f"{provider.provider_id}:{spec.execution_transport}:researcher_{researcher.mode}"
+                )
+            else:
+                ready.append(f"{provider.provider_id}:{spec.execution_transport}")
+        else:
+            ready.append(f"{provider.provider_id}:{spec.execution_transport}")
+    if blocked:
+        return False, ", ".join(blocked)
+    return True, ", ".join(ready) if ready else "no provider execution transports active"
