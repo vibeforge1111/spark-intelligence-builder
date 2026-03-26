@@ -19,10 +19,12 @@ from spark_intelligence.adapters.telegram.runtime import (
     simulate_telegram_update,
 )
 from spark_intelligence.adapters.whatsapp.runtime import build_whatsapp_runtime_summary, simulate_whatsapp_message
+from spark_intelligence.auth.providers import get_provider_spec
 from spark_intelligence.auth.runtime import build_auth_status_report
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import run_doctor
 from spark_intelligence.gateway.tracing import append_gateway_trace, outbound_log_path, read_gateway_traces, read_outbound_audit, trace_log_path
+from spark_intelligence.jobs.service import oauth_maintenance_health_from_report
 from spark_intelligence.state.db import StateDB
 
 
@@ -32,6 +34,9 @@ class GatewayStatus:
     configured_channels: list[str]
     configured_providers: list[str]
     doctor_ok: bool
+    oauth_maintenance_ok: bool
+    oauth_maintenance_detail: str
+    provider_lines: list[str]
     adapter_lines: list[str]
 
     def to_json(self) -> str:
@@ -41,6 +46,9 @@ class GatewayStatus:
                 "configured_channels": self.configured_channels,
                 "configured_providers": self.configured_providers,
                 "doctor_ok": self.doctor_ok,
+                "oauth_maintenance_ok": self.oauth_maintenance_ok,
+                "oauth_maintenance_detail": self.oauth_maintenance_detail,
+                "provider_lines": self.provider_lines,
                 "adapter_lines": self.adapter_lines,
             },
             indent=2,
@@ -51,6 +59,10 @@ class GatewayStatus:
         lines.append(f"- providers: {', '.join(self.configured_providers) if self.configured_providers else 'none'}")
         lines.append(f"- channels: {', '.join(self.configured_channels) if self.configured_channels else 'none'}")
         lines.append(f"- doctor: {'ok' if self.doctor_ok else 'degraded'}")
+        lines.append(
+            f"- oauth-maintenance: {'ok' if self.oauth_maintenance_ok else 'degraded'} {self.oauth_maintenance_detail}"
+        )
+        lines.extend(f"- {line}" for line in self.provider_lines)
         lines.extend(self.adapter_lines)
         return "\n".join(lines)
 
@@ -75,6 +87,10 @@ def gateway_status(config_manager: ConfigManager, state_db: StateDB) -> GatewayS
     ]
     auth_report = build_auth_status_report(config_manager=config_manager, state_db=state_db)
     configured_providers = [provider.provider_id for provider in auth_report.providers]
+    oauth_maintenance_ok, oauth_maintenance_detail = oauth_maintenance_health_from_report(
+        state_db=state_db,
+        auth_report=auth_report,
+    )
     doctor_report = run_doctor(config_manager, state_db)
     telegram_summary = build_telegram_runtime_summary(config_manager, state_db)
     discord_summary = build_discord_runtime_summary(config_manager, state_db)
@@ -85,6 +101,12 @@ def gateway_status(config_manager: ConfigManager, state_db: StateDB) -> GatewayS
         configured_channels=channel_records,
         configured_providers=configured_providers,
         doctor_ok=doctor_report.ok,
+        oauth_maintenance_ok=oauth_maintenance_ok,
+        oauth_maintenance_detail=oauth_maintenance_detail,
+        provider_lines=[
+            _provider_status_line(provider.provider_id, provider.auth_method, provider.status)
+            for provider in auth_report.providers
+        ],
         adapter_lines=[telegram_summary.to_line(), discord_summary.to_line(), whatsapp_summary.to_line()],
     )
 
@@ -446,3 +468,11 @@ def _record_telegram_poll_failure(
         },
     )
     return backoff_seconds
+
+
+def _provider_status_line(provider_id: str, auth_method: str, status: str) -> str:
+    try:
+        transport = get_provider_spec(provider_id).execution_transport
+    except ValueError:
+        transport = "unknown"
+    return f"provider={provider_id} method={auth_method} status={status} transport={transport}"

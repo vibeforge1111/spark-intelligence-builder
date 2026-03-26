@@ -97,6 +97,15 @@ class SystemStatus:
         lines.append(
             f"- channels: {', '.join(self.payload['gateway']['configured_channels']) if self.payload['gateway']['configured_channels'] else 'none'}"
         )
+        lines.append(
+            f"- oauth maintenance: {'ok' if self.payload['gateway'].get('oauth_maintenance_ok') else 'degraded'}"
+        )
+        if self.payload['gateway'].get('oauth_maintenance_detail'):
+            lines.append(f"- oauth maintenance detail: {self.payload['gateway']['oauth_maintenance_detail']}")
+        if self.payload['researcher'].get('last_provider_execution_transport'):
+            lines.append(
+                f"- last provider transport: {self.payload['researcher']['last_provider_execution_transport']}"
+            )
         lines.append(f"- last researcher trace: {self.payload['researcher'].get('last_trace_ref') or 'none'}")
         lines.append(f"- last swarm decision: {(self.payload['swarm'].get('last_decision') or {}).get('mode', 'none')}")
         lines.append(f"- last swarm sync: {(self.payload['swarm'].get('last_sync') or {}).get('mode', 'none')}")

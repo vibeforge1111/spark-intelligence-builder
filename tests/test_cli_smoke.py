@@ -153,6 +153,8 @@ class CliSmokeTests(SparkTestCase):
         self.assertIn("Gateway ready: no", stdout)
         self.assertIn("- channels: telegram", stdout)
         self.assertIn("- providers: openai", stdout)
+        self.assertIn("- oauth-maintenance: ok no oauth providers configured", stdout)
+        self.assertIn("- provider=openai method=api_key_env status=pending_secret transport=direct_http", stdout)
 
     def test_status_json_includes_auth_report(self) -> None:
         connect_exit, _, connect_stderr = self.run_cli(
@@ -181,6 +183,63 @@ class CliSmokeTests(SparkTestCase):
         self.assertTrue(payload["auth"]["ok"])
         self.assertEqual(payload["auth"]["default_provider"], "anthropic")
         self.assertEqual(payload["auth"]["providers"][0]["auth_profile_id"], "anthropic:default")
+        self.assertIn("gateway", payload)
+        self.assertTrue(payload["gateway"]["oauth_maintenance_ok"])
+        self.assertEqual(payload["gateway"]["oauth_maintenance_detail"], "no oauth providers configured")
+        self.assertIn(
+            "provider=anthropic method=api_key_env status=active transport=direct_http",
+            payload["gateway"]["provider_lines"],
+        )
+
+    def test_gateway_status_surfaces_codex_transport_and_oauth_maintenance_degradation(self) -> None:
+        self.add_telegram_channel()
+        start_exit, start_stdout, start_stderr = self.run_cli(
+            "auth",
+            "login",
+            "openai-codex",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(start_exit, 0, start_stderr)
+        start_payload = json.loads(start_stdout)
+        callback_url = (
+            "http://127.0.0.1:1455/auth/callback"
+            f"?state={start_payload['callback_state']}&code=test-oauth-code"
+        )
+
+        with patch(
+            "spark_intelligence.auth.service.exchange_oauth_authorization_code",
+            return_value={
+                "access_token": "oauth-access-token",
+                "refresh_token": "oauth-refresh-token",
+                "expires_in": 60,
+            },
+        ):
+            complete_exit, _, complete_stderr = self.run_cli(
+                "auth",
+                "login",
+                "openai-codex",
+                "--home",
+                str(self.home),
+                "--callback-url",
+                callback_url,
+            )
+        self.assertEqual(complete_exit, 0, complete_stderr)
+
+        exit_code, stdout, stderr = self.run_cli(
+            "gateway",
+            "status",
+            "--home",
+            str(self.home),
+        )
+
+        self.assertEqual(exit_code, 1, stderr)
+        self.assertIn("- oauth-maintenance: degraded oauth maintenance has never run; expiring_soon=openai-codex", stdout)
+        self.assertIn(
+            "- provider=openai-codex method=oauth status=expiring_soon transport=external_cli_wrapper",
+            stdout,
+        )
 
     def test_setup_with_swarm_access_token_persists_named_env_ref(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
