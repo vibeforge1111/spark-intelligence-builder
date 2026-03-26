@@ -228,9 +228,11 @@ The current build already includes:
 
 Today’s implementation summary is recorded in [docs/IMPLEMENTATION_STATUS_2026-03-26.md](./docs/IMPLEMENTATION_STATUS_2026-03-26.md).
 
-## Tomorrow Start
+Today’s execution order is recorded in [docs/IMPLEMENTATION_WORKPLAN_2026-03-26.md](./docs/IMPLEMENTATION_WORKPLAN_2026-03-26.md).
 
-Tomorrow should start with stabilization, not more channel breadth.
+## Current Start
+
+Current work should start with stabilization, not more channel breadth.
 
 The exact first move is:
 
