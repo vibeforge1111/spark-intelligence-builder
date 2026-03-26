@@ -55,7 +55,8 @@ class OperatorInboxReport:
             f"held_pairings={counts['held_pairings']} "
             f"channel_alerts={counts['channel_alerts']} "
             f"bridge_alerts={counts['bridge_alerts']} "
-            f"auth_alerts={counts['auth_alerts']}"
+            f"auth_alerts={counts['auth_alerts']} "
+            f"webhook_alerts={counts['webhook_alerts']}"
         )
 
         items = self.payload.get("items") or []
@@ -85,6 +86,7 @@ class OperatorSecurityReport:
             f"bridge_alerts={counts['bridge_alerts']} "
             f"channel_alerts={counts['channel_alerts']} "
             f"auth_alerts={counts['auth_alerts']} "
+            f"webhook_alerts={counts['webhook_alerts']} "
             f"duplicates={counts['duplicate_updates']} "
             f"rate_limited={counts['rate_limited_updates']} "
             f"delivery_failures={counts['delivery_failures']} "
@@ -193,12 +195,14 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
     channel_alerts = _load_channel_alerts(config_manager=config_manager, state_db=state_db)
     bridge_alerts = _build_bridge_alerts(config_manager=config_manager, state_db=state_db)
     auth_alerts = _build_auth_alerts(config_manager=config_manager, state_db=state_db)
+    webhook_alerts = _build_webhook_alerts(traces=read_gateway_traces(config_manager, limit=100))
     items = _build_inbox_items(
         pending_pairings=pending_pairings,
         held_pairings=held_pairings,
         channel_alerts=channel_alerts,
         bridge_alerts=bridge_alerts,
         auth_alerts=auth_alerts,
+        webhook_alerts=webhook_alerts,
     )
 
     payload = {
@@ -208,7 +212,15 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
             "channel_alerts": len(channel_alerts),
             "bridge_alerts": len(bridge_alerts),
             "auth_alerts": len(auth_alerts),
-            "total": len(pending_pairings) + len(held_pairings) + len(channel_alerts) + len(bridge_alerts) + len(auth_alerts),
+            "webhook_alerts": len(webhook_alerts),
+            "total": (
+                len(pending_pairings)
+                + len(held_pairings)
+                + len(channel_alerts)
+                + len(bridge_alerts)
+                + len(auth_alerts)
+                + len(webhook_alerts)
+            ),
         },
         "pairings": {
             "pending": pending_pairings,
@@ -217,6 +229,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
         "channels": channel_alerts,
         "bridges": bridge_alerts,
         "auth": auth_alerts,
+        "webhooks": webhook_alerts,
         "items": items,
     }
     return OperatorInboxReport(payload=payload)
@@ -233,6 +246,7 @@ def build_operator_security_report(
     auth_alerts = _build_auth_alerts(config_manager=config_manager, state_db=state_db)
     traces = read_gateway_traces(config_manager, limit=limit)
     outbound = read_outbound_audit(config_manager, limit=limit)
+    webhook_alerts = _build_webhook_alerts(traces=traces)
 
     duplicate_updates = [trace for trace in traces if trace.get("event") == "telegram_update_duplicate"]
     rate_limited_updates = [trace for trace in traces if trace.get("event") == "telegram_rate_limited"]
@@ -249,6 +263,7 @@ def build_operator_security_report(
         bridge_alerts=bridge_alerts,
         channel_alerts=channel_alerts,
         auth_alerts=auth_alerts,
+        webhook_alerts=webhook_alerts,
         duplicate_updates=duplicate_updates,
         rate_limited_updates=rate_limited_updates,
         delivery_failures=delivery_failures,
@@ -260,6 +275,7 @@ def build_operator_security_report(
             "bridge_alerts": len(bridge_alerts),
             "channel_alerts": len(channel_alerts),
             "auth_alerts": len(auth_alerts),
+            "webhook_alerts": len(webhook_alerts),
             "duplicate_updates": len(duplicate_updates),
             "rate_limited_updates": len(rate_limited_updates),
             "delivery_failures": len(delivery_failures),
@@ -270,11 +286,13 @@ def build_operator_security_report(
         "bridge_alerts": bridge_alerts,
         "channel_alerts": channel_alerts,
         "auth_alerts": auth_alerts,
+        "webhook_alerts": webhook_alerts,
         "recent": {
             "duplicates": duplicate_updates,
             "rate_limited": rate_limited_updates,
             "delivery_failures": delivery_failures,
             "guardrail_hits": guardrail_hits,
+            "webhook_rejections": webhook_alerts,
         },
         "items": items,
         "log_limit": limit,
@@ -450,6 +468,7 @@ def _build_inbox_items(
     channel_alerts: list[dict[str, Any]],
     bridge_alerts: list[dict[str, Any]],
     auth_alerts: list[dict[str, Any]],
+    webhook_alerts: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
 
@@ -538,6 +557,22 @@ def _build_inbox_items(
             }
         )
 
+    webhook_priority = {"critical": "high", "warning": "medium", "info": "info"}
+    webhook_sort_order = {"critical": 22, "warning": 32, "info": 44}
+    for row in webhook_alerts:
+        severity = str(row["severity"])
+        items.append(
+            {
+                "kind": "webhook",
+                "status": str(row["status"]),
+                "priority": webhook_priority.get(severity, "medium"),
+                "sort_order": webhook_sort_order.get(severity, 46),
+                "item_ref": str(row["event"]),
+                "summary": str(row["summary"]),
+                "recommended_command": str(row["recommended_command"]),
+            }
+        )
+
     items.sort(key=lambda item: (int(item["sort_order"]), str(item["item_ref"])))
     for item in items:
         item.pop("sort_order", None)
@@ -549,6 +584,7 @@ def _build_security_items(
     bridge_alerts: list[dict[str, Any]],
     channel_alerts: list[dict[str, Any]],
     auth_alerts: list[dict[str, Any]],
+    webhook_alerts: list[dict[str, Any]],
     duplicate_updates: list[dict[str, Any]],
     rate_limited_updates: list[dict[str, Any]],
     delivery_failures: list[dict[str, Any]],
@@ -600,6 +636,20 @@ def _build_security_items(
             {
                 "priority": "high" if severity == "critical" else ("medium" if severity == "warning" else "info"),
                 "sort_order": severity_order.get("high" if severity == "critical" else ("medium" if severity == "warning" else "info"), 60),
+                "summary": str(row["summary"]),
+                "recommended_command": str(row["recommended_command"]),
+            }
+        )
+
+    for row in webhook_alerts:
+        severity = str(row["severity"])
+        items.append(
+            {
+                "priority": "high" if severity == "critical" else ("medium" if severity == "warning" else "info"),
+                "sort_order": severity_order.get(
+                    "high" if severity == "critical" else ("medium" if severity == "warning" else "info"),
+                    60,
+                ),
                 "summary": str(row["summary"]),
                 "recommended_command": str(row["recommended_command"]),
             }
@@ -765,4 +815,42 @@ def _build_auth_alerts(*, config_manager: ConfigManager, state_db: StateDB) -> l
                 }
             )
 
+    return alerts
+
+
+def _build_webhook_alerts(*, traces: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    event_specs = {
+        "discord_webhook_auth_failed": {
+            "status": "auth_failed",
+            "summary_prefix": "Discord webhook auth rejected",
+            "recommended_command": "spark-intelligence gateway traces --event discord_webhook_auth_failed --limit 20",
+        },
+        "whatsapp_webhook_auth_failed": {
+            "status": "auth_failed",
+            "summary_prefix": "WhatsApp webhook auth rejected",
+            "recommended_command": "spark-intelligence gateway traces --event whatsapp_webhook_auth_failed --limit 20",
+        },
+        "whatsapp_webhook_verification_failed": {
+            "status": "verification_failed",
+            "summary_prefix": "WhatsApp webhook verification rejected",
+            "recommended_command": "spark-intelligence gateway traces --event whatsapp_webhook_verification_failed --limit 20",
+        },
+    }
+    alerts: list[dict[str, Any]] = []
+    for event_name, spec in event_specs.items():
+        matching = [trace for trace in traces if trace.get("event") == event_name]
+        if not matching:
+            continue
+        latest = matching[-1]
+        latest_reason = str(latest.get("reason") or "unknown")
+        latest_status_code = int(latest.get("status_code") or 0)
+        alerts.append(
+            {
+                "event": event_name,
+                "status": spec["status"],
+                "severity": "critical" if latest_status_code >= 500 else "warning",
+                "summary": f"{spec['summary_prefix']} {len(matching)} time(s); latest reason: {latest_reason}.",
+                "recommended_command": spec["recommended_command"],
+            }
+        )
     return alerts
