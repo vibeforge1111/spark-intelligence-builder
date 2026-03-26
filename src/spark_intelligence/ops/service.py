@@ -146,9 +146,12 @@ class OperatorWebhookSnoozeReport:
                 if row.get("suppressed_recent_count")
                 else ""
             )
+            commands = f" command={row['recommended_command']}"
+            if row.get("clear_command") and row.get("clear_command") != row.get("recommended_command"):
+                commands += f" clear={row['clear_command']}"
             lines.append(
                 f"- event={row['event']} snoozed_at={row['snoozed_at']} until={row['snooze_until']} "
-                f"remaining_minutes={row['remaining_minutes']}{reason}{suppressed}"
+                f"remaining_minutes={row['remaining_minutes']}{reason}{suppressed}{commands}"
             )
         return "\n".join(lines)
 
@@ -1112,6 +1115,15 @@ def _list_webhook_alert_snoozes_with_traces(
             latest_reason = str(matching[-1].get("reason") or "unknown")
         suppressed_recent_count = len(matching)
         sustained_suppressed = suppressed_recent_count >= WEBHOOK_ALERT_SUSTAINED_THRESHOLD
+        clear_command = f"spark-intelligence operator clear-webhook-alert-snooze {row['event']}"
+        recommended_command = clear_command
+        if sustained_suppressed:
+            recommended_command = str(
+                WEBHOOK_ALERT_EVENT_SPECS.get(row["event"], {}).get(
+                    "recommended_command",
+                    f"spark-intelligence gateway traces --event {row['event']} --limit 20",
+                )
+            )
         payload.append(
             {
                 "event": row["event"],
@@ -1123,6 +1135,8 @@ def _list_webhook_alert_snoozes_with_traces(
                 "latest_suppressed_reason": latest_reason,
                 "status": "sustained_rejections_suppressed" if sustained_suppressed else "snoozed",
                 "severity": "warning" if sustained_suppressed else "info",
+                "recommended_command": recommended_command,
+                "clear_command": clear_command,
             }
         )
     return OperatorWebhookSnoozeReport(rows=payload)

@@ -366,6 +366,27 @@ class CliSmokeTests(SparkTestCase):
         )
         self.assertIn("Snooze is still masking sustained ingress traffic.", snooze_items[0]["summary"])
 
+        list_exit, list_stdout, list_stderr = self.run_cli(
+            "operator",
+            "webhook-alert-snoozes",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(list_exit, 0, list_stderr)
+        list_payload = json.loads(list_stdout)
+        self.assertEqual(len(list_payload["rows"]), 1)
+        self.assertEqual(list_payload["rows"][0]["status"], "sustained_rejections_suppressed")
+        self.assertEqual(list_payload["rows"][0]["severity"], "warning")
+        self.assertEqual(
+            list_payload["rows"][0]["recommended_command"],
+            "spark-intelligence gateway traces --event discord_webhook_auth_failed --limit 20",
+        )
+        self.assertEqual(
+            list_payload["rows"][0]["clear_command"],
+            "spark-intelligence operator clear-webhook-alert-snooze discord_webhook_auth_failed",
+        )
+
     def test_operator_can_list_and_clear_discord_webhook_alert_snooze(self) -> None:
         setup_exit, _, setup_stderr = self.run_cli(
             "channel",
@@ -417,6 +438,16 @@ class CliSmokeTests(SparkTestCase):
         self.assertIsNone(list_payload["rows"][0]["reason"])
         self.assertEqual(list_payload["rows"][0]["suppressed_recent_count"], 1)
         self.assertEqual(list_payload["rows"][0]["latest_suppressed_reason"], "Discord webhook secret header is missing.")
+        self.assertEqual(list_payload["rows"][0]["status"], "snoozed")
+        self.assertEqual(list_payload["rows"][0]["severity"], "info")
+        self.assertEqual(
+            list_payload["rows"][0]["recommended_command"],
+            "spark-intelligence operator clear-webhook-alert-snooze discord_webhook_auth_failed",
+        )
+        self.assertEqual(
+            list_payload["rows"][0]["clear_command"],
+            "spark-intelligence operator clear-webhook-alert-snooze discord_webhook_auth_failed",
+        )
 
         clear_exit, clear_stdout, clear_stderr = self.run_cli(
             "operator",
