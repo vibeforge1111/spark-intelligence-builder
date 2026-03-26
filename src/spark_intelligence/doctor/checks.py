@@ -5,6 +5,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from spark_intelligence.attachments import attachment_status
+from spark_intelligence.adapters.telegram.runtime import build_telegram_runtime_summary, read_telegram_runtime_health
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
 from spark_intelligence.state.db import StateDB
@@ -184,4 +185,42 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
             )
         )
 
+    checks.append(_telegram_runtime_check(config_manager=config_manager, state_db=state_db))
+
     return DoctorReport(checks=checks)
+
+
+def _telegram_runtime_check(*, config_manager: ConfigManager, state_db: StateDB) -> DoctorCheck:
+    summary = build_telegram_runtime_summary(config_manager, state_db)
+    if not summary.configured:
+        return DoctorCheck("telegram-runtime", True, "not configured")
+
+    health = read_telegram_runtime_health(state_db)
+    if not summary.auth_ref:
+        return DoctorCheck("telegram-runtime", False, "configured but auth_ref is missing")
+    if health.auth_status in {"failed", "missing"}:
+        return DoctorCheck(
+            "telegram-runtime",
+            False,
+            f"auth={health.auth_status} error={health.auth_error or 'unknown'}",
+        )
+    if health.consecutive_failures > 0 and health.last_failure_at:
+        return DoctorCheck(
+            "telegram-runtime",
+            False,
+            (
+                f"poll_failures={health.consecutive_failures} "
+                f"last_type={health.last_failure_type or 'unknown'} "
+                f"backoff={health.last_backoff_seconds}s"
+            ),
+        )
+    detail_parts = [
+        f"status={summary.status or 'unknown'}",
+        f"pairing_mode={summary.pairing_mode or 'unknown'}",
+        f"auth_ref={summary.auth_ref}",
+        f"auth={health.auth_status or 'not_checked'}",
+        f"allowed_users={summary.allowed_user_count}",
+    ]
+    if health.bot_username:
+        detail_parts.append(f"bot=@{health.bot_username}")
+    return DoctorCheck("telegram-runtime", True, " ".join(detail_parts))
