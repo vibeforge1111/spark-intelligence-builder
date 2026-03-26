@@ -60,6 +60,7 @@ Shipped today:
 - explicit `provider-runtime` doctor coverage so the selected default provider fails readiness when its secret, expiry state, or default-selection config is not actually resolvable
 - explicit `provider-execution` doctor coverage so wrapper-backed Codex auth fails readiness when the researcher bridge is disabled or unavailable
 - fail-closed `gateway start` behavior when configured runtime-provider or provider-execution readiness is not actually usable
+- stricter gateway OAuth callback capture so malformed callback requests are rejected at the HTTP edge and provider-denied callbacks become explicit auth failures with single-use state consumption
 - operator-visible reconnect and revoke guidance in `operator inbox` and `operator security` for expired, revoked, and refresh-error provider auth states
 - provider-aware Spark Researcher bridge routing instead of hardcoded `generic` advisory model selection
 - direct provider-backed LLM execution for API-key-backed bridge traffic via provider-aware HTTP wrapper commands

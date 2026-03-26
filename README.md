@@ -119,6 +119,8 @@ OAuth-backed runtime resolution now fails closed on expired access tokens. If a 
 
 `gateway start` now follows those same rules and fails closed before polling when runtime-provider readiness or provider-execution readiness is degraded. That keeps missing secrets, expired default OAuth profiles, no-default-provider config drift, and wrapper-backed Codex auth from looking healthy until the first inbound message proves otherwise.
 
+The gateway-owned OAuth callback listener now also rejects malformed callback requests at the HTTP edge and only captures OAuth-shaped requests with one `state` plus exactly one outcome (`code` or `error`). Provider-denied callbacks are consumed once and surfaced as explicit auth failures instead of collapsing into a vague missing-`code` error.
+
 The Spark Researcher bridge is now provider-aware on the live path. When a provider is configured and resolvable, Spark uses that runtime selection to choose the advisory model family and run real provider execution instead of always falling back to `generic`. API-key-backed providers now execute through Spark's direct HTTP wrapper path, while the Codex/OAuth branch stays on the external CLI-wrapper transport until there is a first-class direct OAuth runtime with the same security guarantees. If provider auth is configured but unresolved, the bridge fails closed.
 
 Telegram setup is BotFather-first and DM-first. The guided path is:
