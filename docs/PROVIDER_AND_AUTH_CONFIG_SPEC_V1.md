@@ -131,6 +131,7 @@ Recommended commands:
 - `spark-intelligence auth login <provider>`
 - `spark-intelligence auth login <provider> --listen`
 - `spark-intelligence auth login <provider> --callback-url <full_url>`
+- `spark-intelligence auth refresh <provider>`
 - `spark-intelligence auth logout <provider>`
 
 ## 8. OAuth Boundaries
@@ -150,6 +151,8 @@ Model-provider OAuth should use:
 - one-time callback state
 - short expiry
 - locked refresh
+- explicit expiry tracking in local state
+- operator-visible refresh failures
 - explicit provider and redirect matching
 
 ## 9. Security Rules
