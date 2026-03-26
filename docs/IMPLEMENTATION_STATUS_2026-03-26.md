@@ -56,6 +56,7 @@ Shipped today:
 - `expiring_soon` auth-status visibility plus operator guidance before OAuth tokens fail closed
 - built-in `jobs tick` OAuth maintenance that proactively refreshes due OAuth profiles
 - explicit doctor coverage for stale OAuth maintenance so the current manual scheduler model is visible and auditable
+- unified `status` and `gateway status` visibility for provider auth state, execution transport, and OAuth-maintenance health
 - operator-visible reconnect and revoke guidance in `operator inbox` and `operator security` for expired, revoked, and refresh-error provider auth states
 - provider-aware Spark Researcher bridge routing instead of hardcoded `generic` advisory model selection
 - direct provider-backed LLM execution for API-key-backed bridge traffic via provider-aware HTTP wrapper commands
