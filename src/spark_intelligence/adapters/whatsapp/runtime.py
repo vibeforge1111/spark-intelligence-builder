@@ -58,7 +58,7 @@ def build_whatsapp_runtime_summary(config_manager: ConfigManager, state_db: Stat
         )
     with state_db.connect() as conn:
         count = conn.execute(
-            "SELECT COUNT(*) AS c FROM allowlist_entries WHERE channel_id = 'whatsapp'"
+            "SELECT COUNT(DISTINCT external_user_id) AS c FROM allowlist_entries WHERE channel_id = 'whatsapp'"
         ).fetchone()["c"]
         installation = conn.execute(
             """

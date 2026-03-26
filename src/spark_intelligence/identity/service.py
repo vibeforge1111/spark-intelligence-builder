@@ -155,23 +155,18 @@ def _canonical_session_id(channel_id: str, external_user_id: str) -> str:
     return f"session:{channel_id}:dm:{external_user_id}"
 
 
-def approve_pairing(
+def _activate_channel_access(
     *,
     state_db: StateDB,
     channel_id: str,
     external_user_id: str,
-    display_name: str | None = None,
-    approved_by: str = LOCAL_OPERATOR_HUMAN_ID,
-) -> str:
-    _require_operator(state_db, approved_by)
+    display_name: str,
+) -> tuple[str, str, str]:
     human_id = _canonical_human_id(channel_id, external_user_id)
     agent_id = _canonical_agent_id(human_id)
     account_id = _canonical_channel_account_id(channel_id, external_user_id)
     surface_id = _canonical_surface_id(channel_id, external_user_id)
     session_id = _canonical_session_id(channel_id, external_user_id)
-    pairing_id = f"pairing:{channel_id}:{external_user_id}"
-
-    resolved_name = display_name or f"{channel_id} user {external_user_id}"
 
     with state_db.connect() as conn:
         conn.execute(
@@ -180,7 +175,7 @@ def approve_pairing(
             VALUES (?, ?, 'active')
             ON CONFLICT(human_id) DO UPDATE SET display_name=excluded.display_name, status='active', updated_at=CURRENT_TIMESTAMP
             """,
-            (human_id, resolved_name),
+            (human_id, display_name),
         )
         conn.execute(
             """
@@ -196,7 +191,7 @@ def approve_pairing(
             VALUES (?, ?, ?, ?, 'active')
             ON CONFLICT(account_id) DO UPDATE SET external_username=excluded.external_username, status='active', updated_at=CURRENT_TIMESTAMP
             """,
-            (account_id, channel_id, external_user_id, resolved_name),
+            (account_id, channel_id, external_user_id, display_name),
         )
         conn.execute(
             """
@@ -222,6 +217,31 @@ def approve_pairing(
             """,
             (session_id, agent_id, surface_id, channel_id, external_user_id),
         )
+        conn.commit()
+
+    return human_id, agent_id, session_id
+
+
+def approve_pairing(
+    *,
+    state_db: StateDB,
+    channel_id: str,
+    external_user_id: str,
+    display_name: str | None = None,
+    approved_by: str = LOCAL_OPERATOR_HUMAN_ID,
+) -> str:
+    _require_operator(state_db, approved_by)
+    pairing_id = f"pairing:{channel_id}:{external_user_id}"
+
+    resolved_name = display_name or f"{channel_id} user {external_user_id}"
+    human_id, _, _ = _activate_channel_access(
+        state_db=state_db,
+        channel_id=channel_id,
+        external_user_id=external_user_id,
+        display_name=resolved_name,
+    )
+
+    with state_db.connect() as conn:
         conn.execute(
             """
             INSERT INTO pairing_records(pairing_id, channel_id, external_user_id, human_id, status, approved_by)
@@ -304,9 +324,9 @@ def resolve_inbound_dm(
 
         allow_row = conn.execute(
             """
-            SELECT 1
+            SELECT role
             FROM allowlist_entries
-            WHERE channel_id = ? AND external_user_id = ? AND role = 'paired_user'
+            WHERE channel_id = ? AND external_user_id = ? AND role IN ('paired_user', 'configured_user')
             LIMIT 1
             """,
             (channel_id, external_user_id),
@@ -343,12 +363,21 @@ def resolve_inbound_dm(
             )
 
         if allow_row and not session_row:
-            approve_pairing(
-                state_db=state_db,
-                channel_id=channel_id,
-                external_user_id=external_user_id,
-                display_name=display_name,
-            )
+            allow_role = str(allow_row["role"])
+            if allow_role == "paired_user":
+                approve_pairing(
+                    state_db=state_db,
+                    channel_id=channel_id,
+                    external_user_id=external_user_id,
+                    display_name=display_name,
+                )
+            else:
+                _activate_channel_access(
+                    state_db=state_db,
+                    channel_id=channel_id,
+                    external_user_id=external_user_id,
+                    display_name=display_name,
+                )
             return InboundResolution(
                 allowed=True,
                 decision="allowed",

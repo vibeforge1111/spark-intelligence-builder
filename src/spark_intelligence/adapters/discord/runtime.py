@@ -58,7 +58,7 @@ def build_discord_runtime_summary(config_manager: ConfigManager, state_db: State
         )
     with state_db.connect() as conn:
         count = conn.execute(
-            "SELECT COUNT(*) AS c FROM allowlist_entries WHERE channel_id = 'discord'"
+            "SELECT COUNT(DISTINCT external_user_id) AS c FROM allowlist_entries WHERE channel_id = 'discord'"
         ).fetchone()["c"]
         installation = conn.execute(
             """

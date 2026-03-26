@@ -7,7 +7,6 @@ from urllib.error import HTTPError, URLError
 from spark_intelligence.adapters.telegram.client import TelegramBotApiClient, Transport
 from spark_intelligence.adapters.telegram.runtime import record_telegram_auth_result
 from spark_intelligence.config.loader import ConfigManager
-from spark_intelligence.identity.service import approve_pairing
 from spark_intelligence.state.db import StateDB
 
 
@@ -190,15 +189,16 @@ def add_channel(
             """,
             (channel_id, channel_kind, resolved_status, pairing_mode, auth_ref),
         )
-        conn.commit()
-
-    for user_id in allowed_users:
-        approve_pairing(
-            state_db=state_db,
-            channel_id=channel_id,
-            external_user_id=user_id,
-            display_name=f"{channel_kind} user {user_id}",
+        conn.execute(
+            "DELETE FROM allowlist_entries WHERE channel_id = ? AND role = 'configured_user'",
+            (channel_id,),
         )
+        for user_id in allowed_users:
+            conn.execute(
+                "INSERT INTO allowlist_entries(channel_id, external_user_id, role) VALUES (?, ?, 'configured_user')",
+                (channel_id, user_id),
+            )
+        conn.commit()
 
     return f"Configured channel '{channel_kind}' with pairing mode '{pairing_mode}' status '{resolved_status}'."
 
@@ -262,7 +262,7 @@ def test_configured_telegram_channel(
     token = env_map.get(auth_ref) if auth_ref else None
     with state_db.connect() as conn:
         count = conn.execute(
-            "SELECT COUNT(*) AS c FROM allowlist_entries WHERE channel_id = 'telegram'"
+            "SELECT COUNT(DISTINCT external_user_id) AS c FROM allowlist_entries WHERE channel_id = 'telegram'"
         ).fetchone()["c"]
     if not token:
         record_telegram_auth_result(

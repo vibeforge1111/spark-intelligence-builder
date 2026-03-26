@@ -124,7 +124,7 @@ def build_telegram_runtime_summary(config_manager: ConfigManager, state_db: Stat
     health = read_telegram_runtime_health(state_db)
     with state_db.connect() as conn:
         count = conn.execute(
-            "SELECT COUNT(*) AS c FROM allowlist_entries WHERE channel_id = 'telegram'"
+            "SELECT COUNT(DISTINCT external_user_id) AS c FROM allowlist_entries WHERE channel_id = 'telegram'"
         ).fetchone()["c"]
         installation = conn.execute(
             """

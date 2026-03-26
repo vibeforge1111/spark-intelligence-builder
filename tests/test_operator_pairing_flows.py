@@ -7,6 +7,27 @@ from tests.test_support import SparkTestCase, make_telegram_update
 
 
 class OperatorPairingFlowTests(SparkTestCase):
+    def test_allowlist_user_is_allowed_without_creating_pending_or_approved_pairing(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=100,
+                user_id="111",
+                username="alice",
+                text="hello",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.decision, "allowed")
+        pending = review_pairings(self.state_db, channel_id="telegram", status="pending")
+        self.assertEqual(pending.rows, [])
+        summary = pairing_summary(state_db=self.state_db, channel_id="telegram")
+        self.assertEqual(summary.counts["approved"], 0)
+
     def test_pending_pairing_creates_reviewable_request(self) -> None:
         self.add_telegram_channel()
 
@@ -156,3 +177,47 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertFalse(follow_up.ok)
         self.assertEqual(follow_up.decision, "revoked")
         self.assertIn("no longer paired", str(follow_up.detail["response_text"]))
+
+    def test_narrowing_allowlist_blocks_removed_user_even_after_prior_access(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111", "222"])
+
+        first_access = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=107,
+                user_id="222",
+                username="bob",
+                text="hello",
+            ),
+        )
+        self.assertTrue(first_access.ok)
+        self.assertEqual(first_access.decision, "allowed")
+
+        exit_code, _, stderr = self.run_cli(
+            "channel",
+            "add",
+            "telegram",
+            "--home",
+            str(self.home),
+            "--pairing-mode",
+            "allowlist",
+            "--allowed-user",
+            "111",
+        )
+        self.assertEqual(exit_code, 0, stderr)
+
+        follow_up = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=108,
+                user_id="222",
+                username="bob",
+                text="hello again",
+            ),
+        )
+
+        self.assertFalse(follow_up.ok)
+        self.assertEqual(follow_up.decision, "blocked")
+        self.assertIn("requires explicit allowlist access", str(follow_up.detail["response_text"]))
