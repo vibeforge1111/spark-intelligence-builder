@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from spark_intelligence.attachments import attachment_status
 from spark_intelligence.adapters.telegram.runtime import build_telegram_runtime_summary, read_telegram_runtime_health
+from spark_intelligence.auth.runtime import build_auth_status_report
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
 from spark_intelligence.state.db import StateDB
@@ -75,23 +76,22 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
     except sqlite3.Error as exc:
         checks.append(DoctorCheck("operator-authority", False, str(exc)))
 
-    env_map = config_manager.read_env_map()
-    provider_records = config_manager.load().get("providers", {}).get("records", {})
-    if provider_records:
-        missing_refs = []
-        for provider_id, record in provider_records.items():
-            env_key = record.get("api_key_env")
-            if env_key and env_key not in env_map:
-                missing_refs.append(f"{provider_id}:{env_key}")
+    auth_report = build_auth_status_report(config_manager=config_manager, state_db=state_db)
+    if auth_report.providers:
+        unresolved = [
+            f"{provider.provider_id}:{provider.secret_ref.ref_id if provider.secret_ref else 'missing'}"
+            for provider in auth_report.providers
+            if not provider.secret_present
+        ]
         checks.append(
             DoctorCheck(
-                "provider-secrets",
-                not missing_refs,
-                "all provider env refs resolved" if not missing_refs else ", ".join(missing_refs),
+                "provider-auth",
+                auth_report.ok,
+                "all provider auth profiles resolved" if not unresolved else ", ".join(unresolved),
             )
         )
     else:
-        checks.append(DoctorCheck("provider-secrets", True, "no providers configured yet"))
+        checks.append(DoctorCheck("provider-auth", True, "no providers configured yet"))
 
     researcher_enabled = bool(config_manager.get_path("spark.researcher.enabled", default=True))
     researcher_root, researcher_source = discover_researcher_runtime_root(config_manager)

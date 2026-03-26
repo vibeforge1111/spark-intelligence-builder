@@ -19,6 +19,7 @@ from spark_intelligence.adapters.telegram.runtime import (
     simulate_telegram_update,
 )
 from spark_intelligence.adapters.whatsapp.runtime import build_whatsapp_runtime_summary, simulate_whatsapp_message
+from spark_intelligence.auth.runtime import build_auth_status_report
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import run_doctor
 from spark_intelligence.gateway.tracing import append_gateway_trace, outbound_log_path, read_gateway_traces, read_outbound_audit, trace_log_path
@@ -65,7 +66,6 @@ class GatewayStartReport:
 
 def gateway_status(config_manager: ConfigManager, state_db: StateDB) -> GatewayStatus:
     config = config_manager.load()
-    provider_records = list(config.get("providers", {}).get("records", {}).keys())
     raw_channel_records = config.get("channels", {}).get("records", {})
     channel_records = list(raw_channel_records.keys())
     active_channel_records = [
@@ -73,15 +73,17 @@ def gateway_status(config_manager: ConfigManager, state_db: StateDB) -> GatewayS
         for channel_id, record in raw_channel_records.items()
         if isinstance(record, dict) and str(record.get("status") or "enabled") in {"enabled", "configured"}
     ]
+    auth_report = build_auth_status_report(config_manager=config_manager, state_db=state_db)
+    configured_providers = [provider.provider_id for provider in auth_report.providers]
     doctor_report = run_doctor(config_manager, state_db)
     telegram_summary = build_telegram_runtime_summary(config_manager, state_db)
     discord_summary = build_discord_runtime_summary(config_manager, state_db)
     whatsapp_summary = build_whatsapp_runtime_summary(config_manager, state_db)
-    ready = bool(provider_records) and bool(active_channel_records) and doctor_report.ok
+    ready = bool(configured_providers) and bool(active_channel_records) and doctor_report.ok
     return GatewayStatus(
         ready=ready,
         configured_channels=channel_records,
-        configured_providers=provider_records,
+        configured_providers=configured_providers,
         doctor_ok=doctor_report.ok,
         adapter_lines=[telegram_summary.to_line(), discord_summary.to_line(), whatsapp_summary.to_line()],
     )

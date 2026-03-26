@@ -140,3 +140,27 @@ class AuthProfileTests(SparkTestCase):
         self.assertTrue(report.ok)
         self.assertEqual(report.default_provider, None)
         self.assertEqual(report.providers, [])
+
+    def test_doctor_degrades_when_provider_auth_profile_secret_is_missing(self) -> None:
+        connect_exit, _, connect_stderr = self.run_cli(
+            "auth",
+            "connect",
+            "openrouter",
+            "--home",
+            str(self.home),
+            "--api-key-env",
+            "MISSING_OPENROUTER_KEY",
+            "--model",
+            "anthropic/claude-3.7-sonnet",
+        )
+        self.assertEqual(connect_exit, 0, connect_stderr)
+
+        doctor_exit, doctor_stdout, doctor_stderr = self.run_cli(
+            "doctor",
+            "--home",
+            str(self.home),
+        )
+
+        self.assertEqual(doctor_exit, 1, doctor_stderr)
+        self.assertIn("Doctor status: degraded", doctor_stdout)
+        self.assertIn("[fail] provider-auth: openrouter:MISSING_OPENROUTER_KEY", doctor_stdout)

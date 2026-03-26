@@ -127,6 +127,61 @@ class CliSmokeTests(SparkTestCase):
         self.assertIn("- channels: telegram", stdout)
         self.assertIn("- providers: none", stdout)
 
+    def test_gateway_status_lists_auth_profile_backed_provider_when_secret_is_missing(self) -> None:
+        self.add_telegram_channel()
+        connect_exit, _, connect_stderr = self.run_cli(
+            "auth",
+            "connect",
+            "openai",
+            "--home",
+            str(self.home),
+            "--api-key-env",
+            "MISSING_OPENAI_KEY",
+            "--model",
+            "gpt-5.4",
+        )
+        self.assertEqual(connect_exit, 0, connect_stderr)
+
+        exit_code, stdout, stderr = self.run_cli(
+            "gateway",
+            "status",
+            "--home",
+            str(self.home),
+        )
+
+        self.assertEqual(exit_code, 1, stderr)
+        self.assertIn("Gateway ready: no", stdout)
+        self.assertIn("- channels: telegram", stdout)
+        self.assertIn("- providers: openai", stdout)
+
+    def test_status_json_includes_auth_report(self) -> None:
+        connect_exit, _, connect_stderr = self.run_cli(
+            "auth",
+            "connect",
+            "anthropic",
+            "--home",
+            str(self.home),
+            "--api-key",
+            "anthropic-secret",
+            "--model",
+            "claude-opus-4-6",
+        )
+        self.assertEqual(connect_exit, 0, connect_stderr)
+
+        exit_code, stdout, stderr = self.run_cli(
+            "status",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertIn("auth", payload)
+        self.assertTrue(payload["auth"]["ok"])
+        self.assertEqual(payload["auth"]["default_provider"], "anthropic")
+        self.assertEqual(payload["auth"]["providers"][0]["auth_profile_id"], "anthropic:default")
+
     def test_setup_with_swarm_access_token_persists_named_env_ref(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             home = Path(tempdir)

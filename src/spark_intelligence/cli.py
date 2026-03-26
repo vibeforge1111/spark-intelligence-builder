@@ -722,6 +722,7 @@ def handle_status(args: argparse.Namespace) -> int:
     state_db.initialize()
 
     doctor_report = run_doctor(config_manager, state_db)
+    auth_report = build_auth_status_report(config_manager=config_manager, state_db=state_db)
     gateway = gateway_status(config_manager, state_db)
     researcher = researcher_bridge_status(config_manager=config_manager, state_db=state_db)
     swarm = swarm_status(config_manager, state_db)
@@ -731,6 +732,7 @@ def handle_status(args: argparse.Namespace) -> int:
 
     payload = {
         "doctor": {"ok": doctor_report.ok, "checks": [{"name": check.name, "ok": check.ok, "detail": check.detail} for check in doctor_report.checks]},
+        "auth": json.loads(auth_report.to_json()),
         "gateway": json.loads(gateway.to_json()),
         "researcher": json.loads(researcher.to_json()),
         "swarm": json.loads(swarm.to_json()),
