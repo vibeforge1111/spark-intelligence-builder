@@ -1302,6 +1302,30 @@ def _build_gateway_autostart_command(config_manager: ConfigManager) -> str:
     return subprocess.list2cmdline(command_parts)
 
 
+def _windows_startup_wrapper_path(config_manager: ConfigManager, task_name: str) -> Path:
+    appdata = os.environ.get("APPDATA")
+    if not appdata:
+        raise RuntimeError("APPDATA is not set; cannot resolve the Windows Startup folder.")
+    safe_name = "".join(char if char.isalnum() or char in ("-", "_", " ") else "_" for char in task_name).strip()
+    filename = f"{safe_name or 'Spark Intelligence Gateway'}.cmd"
+    return (
+        Path(appdata)
+        / "Microsoft"
+        / "Windows"
+        / "Start Menu"
+        / "Programs"
+        / "Startup"
+        / filename
+    )
+
+
+def _install_windows_startup_wrapper(config_manager: ConfigManager, task_name: str, task_command: str) -> Path:
+    wrapper_path = _windows_startup_wrapper_path(config_manager, task_name)
+    wrapper_path.parent.mkdir(parents=True, exist_ok=True)
+    wrapper_path.write_text(f"@echo off\r\n{task_command}\r\n", encoding="utf-8")
+    return wrapper_path
+
+
 def handle_install_autostart(args: argparse.Namespace) -> int:
     if os.name != "nt":
         print("install-autostart is currently implemented only for Windows Task Scheduler.", file=sys.stderr)
@@ -1319,6 +1343,9 @@ def handle_install_autostart(args: argparse.Namespace) -> int:
 
     task_name = _resolve_autostart_task_name(config_manager, args.task_name)
     task_command = _build_gateway_autostart_command(config_manager)
+    task_user = ConfigManager._windows_current_principal()
+    installed_platform = "windows_task_scheduler"
+    wrapper_path: Path | None = None
     try:
         subprocess.run(
             [
@@ -1328,6 +1355,10 @@ def handle_install_autostart(args: argparse.Namespace) -> int:
                 task_name,
                 "/SC",
                 "ONLOGON",
+                "/RL",
+                "LIMITED",
+                "/RU",
+                task_user,
                 "/TR",
                 task_command,
                 "/F",
@@ -1337,16 +1368,24 @@ def handle_install_autostart(args: argparse.Namespace) -> int:
             text=True,
         )
     except subprocess.CalledProcessError as exc:
-        print((exc.stderr or exc.stdout or "Task Scheduler install failed.").strip(), file=sys.stderr)
-        return 1
+        message = (exc.stderr or exc.stdout or "Task Scheduler install failed.").strip()
+        if "Access is denied" not in message:
+            print(message, file=sys.stderr)
+            return 1
+        wrapper_path = _install_windows_startup_wrapper(config_manager, task_name, task_command)
+        installed_platform = "windows_startup_folder"
 
     config_manager.set_path("runtime.autostart.enabled", True)
-    config_manager.set_path("runtime.autostart.platform", "windows_task_scheduler")
+    config_manager.set_path("runtime.autostart.platform", installed_platform)
     config_manager.set_path("runtime.autostart.task_name", task_name)
     config_manager.set_path("runtime.autostart.command", task_command)
     print("Installed autostart.")
-    print(f"- platform: windows_task_scheduler")
+    print(f"- platform: {installed_platform}")
     print(f"- task_name: {task_name}")
+    if installed_platform == "windows_task_scheduler":
+        print(f"- task_user: {task_user}")
+    if wrapper_path:
+        print(f"- startup_wrapper: {wrapper_path}")
     print(f"- command: {task_command}")
     return 0
 
@@ -1358,29 +1397,35 @@ def handle_uninstall_autostart(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
     task_name = _resolve_autostart_task_name(config_manager, args.task_name)
-    try:
-        subprocess.run(
-            [
-                "schtasks",
-                "/Delete",
-                "/TN",
-                task_name,
-                "/F",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except subprocess.CalledProcessError as exc:
-        print((exc.stderr or exc.stdout or "Task Scheduler uninstall failed.").strip(), file=sys.stderr)
-        return 1
+    platform = config_manager.get_path("runtime.autostart.platform")
+    if platform == "windows_startup_folder":
+        wrapper_path = _windows_startup_wrapper_path(config_manager, task_name)
+        if wrapper_path.exists():
+            wrapper_path.unlink()
+    else:
+        try:
+            subprocess.run(
+                [
+                    "schtasks",
+                    "/Delete",
+                    "/TN",
+                    task_name,
+                    "/F",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            print((exc.stderr or exc.stdout or "Task Scheduler uninstall failed.").strip(), file=sys.stderr)
+            return 1
 
     config_manager.set_path("runtime.autostart.enabled", False)
     config_manager.set_path("runtime.autostart.platform", None)
     config_manager.set_path("runtime.autostart.task_name", None)
     config_manager.set_path("runtime.autostart.command", None)
     print("Removed autostart.")
-    print(f"- platform: windows_task_scheduler")
+    print(f"- platform: {platform or 'windows_task_scheduler'}")
     print(f"- task_name: {task_name}")
     return 0
 

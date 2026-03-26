@@ -171,6 +171,9 @@ class CliSmokeTests(SparkTestCase):
         self.assertIn("--continuous", command)
         task_args = run_mock.call_args.args[0]
         self.assertEqual(task_args[:4], ["schtasks", "/Create", "/TN", "Spark Intelligence Test Task"])
+        self.assertIn("/RL", task_args)
+        self.assertIn("LIMITED", task_args)
+        self.assertIn("/RU", task_args)
 
     def test_uninstall_autostart_clears_windows_task_scheduler_wrapper(self) -> None:
         self.config_manager.set_path("runtime.autostart.enabled", True)
@@ -194,6 +197,65 @@ class CliSmokeTests(SparkTestCase):
         self.assertIsNone(self.config_manager.get_path("runtime.autostart.command"))
         task_args = run_mock.call_args.args[0]
         self.assertEqual(task_args[:4], ["schtasks", "/Delete", "/TN", "Spark Intelligence Test Task"])
+
+    def test_install_autostart_falls_back_to_startup_folder_when_task_scheduler_is_denied(self) -> None:
+        researcher_root = self.home / "spark-researcher"
+        researcher_root.mkdir()
+        researcher_config = researcher_root / "spark-researcher.project.json"
+        researcher_config.write_text("{}", encoding="utf-8")
+
+        bootstrap_exit, _, bootstrap_stderr = self.run_cli(
+            "bootstrap",
+            "telegram-agent",
+            "--home",
+            str(self.home),
+            "--researcher-root",
+            str(researcher_root),
+            "--researcher-config",
+            str(researcher_config),
+            "--provider",
+            "custom",
+            "--api-key",
+            "minimax-secret",
+            "--model",
+            "MiniMax-M2.7",
+            "--base-url",
+            "https://api.minimax.io/v1",
+            "--bot-token",
+            "telegram-test-token",
+            "--skip-validate",
+        )
+        self.assertEqual(bootstrap_exit, 0, bootstrap_stderr)
+
+        startup_root = self.home / "AppData" / "Roaming"
+        with patch.dict("os.environ", {"APPDATA": str(startup_root)}, clear=False), patch(
+            "spark_intelligence.config.loader.ConfigManager.harden_env_file_permissions",
+            return_value=None,
+        ), patch(
+            "spark_intelligence.cli.gateway_status",
+            return_value=SimpleNamespace(ready=True, repair_hints=[]),
+        ), patch("spark_intelligence.cli.subprocess.run") as run_mock:
+            run_mock.side_effect = subprocess.CalledProcessError(
+                1,
+                ["schtasks"],
+                stderr="ERROR: Access is denied.",
+            )
+            exit_code, stdout, stderr = self.run_cli(
+                "install-autostart",
+                "--home",
+                str(self.home),
+                "--task-name",
+                "Spark Intelligence Test Task",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertIn("Installed autostart.", stdout)
+        self.assertIn("- platform: windows_startup_folder", stdout)
+        self.assertEqual(self.config_manager.get_path("runtime.autostart.platform"), "windows_startup_folder")
+        wrapper_dir = startup_root / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+        wrapper_files = list(wrapper_dir.glob("*.cmd"))
+        self.assertEqual(len(wrapper_files), 1)
+        self.assertIn("--continuous", wrapper_files[0].read_text(encoding="utf-8"))
 
     def test_connect_status_surfaces_phase_plan_on_clean_home(self) -> None:
         exit_code, stdout, stderr = self.run_cli("connect", "status", "--home", str(self.home))
