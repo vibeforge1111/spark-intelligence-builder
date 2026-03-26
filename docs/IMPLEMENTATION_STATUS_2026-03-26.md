@@ -52,6 +52,7 @@ Shipped today:
 - local OAuth refresh via `auth refresh <provider>`
 - local OAuth logout via `auth logout <provider>`
 - expiry-aware `auth status`, `doctor`, and runtime-provider resolution for OAuth-backed providers
+- operator-visible reconnect and revoke guidance in `operator inbox` and `operator security` for expired, revoked, and refresh-error provider auth states
 - provider-aware Spark Researcher bridge routing instead of hardcoded `generic` advisory model selection
 - direct provider-backed LLM execution for API-key-backed bridge traffic via provider-aware HTTP wrapper commands
 - a gateway route-registry contract that now also owns OAuth callback serving
@@ -90,9 +91,9 @@ The next slice should stay focused on gateway and provider-auth architecture, no
 
 Start here in this exact order:
 
-1. Add operator-visible reconnect and revoke guidance on top of the new gateway-owned OAuth callback, refresh, and expiry states.
-2. Decide whether Codex/OAuth should stay CLI-wrapper-backed or gain a first-class direct runtime path with the same security bar as API-key-backed providers.
-3. Add refresh scheduling or proactive expiry repair without weakening the current fail-closed posture.
+1. Decide whether Codex/OAuth should stay CLI-wrapper-backed or gain a first-class direct runtime path with the same security bar as API-key-backed providers.
+2. Add refresh scheduling or proactive expiry repair without weakening the current fail-closed posture.
+3. Consider whether operator-facing auth repair should also live in `doctor` text and setup/runbooks, not only inbox/security.
 4. Only after that, widen Discord, WhatsApp, or webhook-heavy surfaces.
 
 The detailed execution direction is recorded in `GATEWAY_PROVIDER_AUTH_READINESS_REVIEW_2026-03-26.md`.
