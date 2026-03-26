@@ -224,3 +224,41 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(record["status"], "paused")
         self.assertEqual(config_manager.read_env_map()["TELEGRAM_BOT_TOKEN"], "new-token")
         self.assertIn("Configured channel 'telegram' with pairing mode 'pairing' status 'paused'.", stdout)
+
+    def test_channel_add_preserves_existing_auth_ref_and_status_without_new_token(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"], bot_token="old-token")
+        status_exit, _, status_stderr = self.run_cli(
+            "operator",
+            "set-channel",
+            "telegram",
+            "paused",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(status_exit, 0, status_stderr)
+
+        exit_code, stdout, stderr = self.run_cli(
+            "channel",
+            "add",
+            "telegram",
+            "--home",
+            str(self.home),
+            "--pairing-mode",
+            "allowlist",
+            "--allowed-user",
+            "111",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        config_manager = ConfigManager.from_home(str(self.home))
+        record = config_manager.get_path("channels.records.telegram")
+        self.assertEqual(record["auth_ref"], "TELEGRAM_BOT_TOKEN")
+        self.assertEqual(record["status"], "paused")
+        self.assertEqual(config_manager.read_env_map()["TELEGRAM_BOT_TOKEN"], "old-token")
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT status, auth_ref FROM channel_installations WHERE channel_id = 'telegram' LIMIT 1"
+            ).fetchone()
+        self.assertEqual(row["status"], "paused")
+        self.assertEqual(row["auth_ref"], "TELEGRAM_BOT_TOKEN")
+        self.assertIn("Configured channel 'telegram' with pairing mode 'allowlist' status 'paused'.", stdout)

@@ -137,14 +137,16 @@ def add_channel(
     bot_token: str | None,
     allowed_users: list[str],
     pairing_mode: str,
-    status: str = "enabled",
+    status: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> str:
     config = config_manager.load()
     config.setdefault("channels", {}).setdefault("records", {})
     channel_id = channel_kind
+    existing_record = config["channels"]["records"].get(channel_id)
+    existing_record = existing_record if isinstance(existing_record, dict) else {}
 
-    auth_ref = None
+    auth_ref = str(existing_record.get("auth_ref")) if existing_record.get("auth_ref") else None
     if channel_kind == "telegram" and bot_token:
         env_key = "TELEGRAM_BOT_TOKEN"
         config_manager.upsert_env_secret(env_key, bot_token)
@@ -158,15 +160,20 @@ def add_channel(
         config_manager.upsert_env_secret(env_key, bot_token)
         auth_ref = env_key
 
-    config["channels"]["records"][channel_id] = {
+    resolved_status = status or (str(existing_record.get("status")) if existing_record.get("status") else "enabled")
+    record = dict(existing_record)
+    record.update(
+        {
         "channel_kind": channel_kind,
-        "status": status,
+        "status": resolved_status,
         "pairing_mode": pairing_mode,
         "auth_ref": auth_ref,
         "allowed_users": allowed_users,
-    }
+        }
+    )
     if metadata:
-        config["channels"]["records"][channel_id].update(metadata)
+        record.update(metadata)
+    config["channels"]["records"][channel_id] = record
     config_manager.save(config)
 
     with state_db.connect() as conn:
@@ -181,7 +188,7 @@ def add_channel(
                 auth_ref=excluded.auth_ref,
                 updated_at=CURRENT_TIMESTAMP
             """,
-            (channel_id, channel_kind, status, pairing_mode, auth_ref),
+            (channel_id, channel_kind, resolved_status, pairing_mode, auth_ref),
         )
         conn.commit()
 
@@ -193,7 +200,7 @@ def add_channel(
             display_name=f"{channel_kind} user {user_id}",
         )
 
-    return f"Configured channel '{channel_kind}' with pairing mode '{pairing_mode}' status '{status}'."
+    return f"Configured channel '{channel_kind}' with pairing mode '{pairing_mode}' status '{resolved_status}'."
 
 
 def set_channel_status(
