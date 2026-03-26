@@ -145,6 +145,7 @@ class OperatorWebhookSnoozeReport:
             reason = f" reason={row['reason']}" if row.get("reason") else ""
             suppressed = (
                 f" suppressed_recent={row['suppressed_recent_count']} latest_reason={row['latest_suppressed_reason']}"
+                f" latest_suppressed_at={row['latest_suppressed_at']}"
                 if row.get("suppressed_recent_count")
                 else ""
             )
@@ -718,13 +719,15 @@ def _build_inbox_items(
         suppressed_suffix = ""
         if suppressed_recent_count:
             latest_reason = str(row.get("latest_suppressed_reason") or "unknown")
+            latest_suppressed_at = str(row.get("latest_suppressed_at") or "unknown")
             if latest_reason.endswith((".", "!", "?")):
                 latest_reason_text = latest_reason
             else:
                 latest_reason_text = f"{latest_reason}."
             suppressed_suffix = (
                 f" Suppressed {suppressed_recent_count} recent rejection(s); "
-                f"latest reason: {latest_reason_text}"
+                f"latest reason: {latest_reason_text} "
+                f"Last suppressed at: {latest_suppressed_at}."
             )
             if sustained_suppressed:
                 suppressed_suffix += " Snooze is still masking sustained ingress traffic."
@@ -844,13 +847,15 @@ def _build_security_items(
         suppressed_suffix = ""
         if suppressed_recent_count:
             latest_reason = str(row.get("latest_suppressed_reason") or "unknown")
+            latest_suppressed_at = str(row.get("latest_suppressed_at") or "unknown")
             if latest_reason.endswith((".", "!", "?")):
                 latest_reason_text = latest_reason
             else:
                 latest_reason_text = f"{latest_reason}."
             suppressed_suffix = (
                 f" Suppressed {suppressed_recent_count} recent rejection(s); "
-                f"latest reason: {latest_reason_text}"
+                f"latest reason: {latest_reason_text} "
+                f"Last suppressed at: {latest_suppressed_at}."
             )
             if sustained_suppressed:
                 suppressed_suffix += " Snooze is still masking sustained ingress traffic."
@@ -1119,8 +1124,10 @@ def _list_webhook_alert_snoozes_with_traces(
         ]
         remaining = row["snooze_until"] - now
         latest_reason = None
+        latest_suppressed_at = None
         if matching:
             latest_reason = str(matching[-1].get("reason") or "unknown")
+            latest_suppressed_at = _parse_iso_datetime(matching[-1].get("recorded_at"))
         suppressed_recent_count = len(matching)
         sustained_suppressed = suppressed_recent_count >= WEBHOOK_ALERT_SUSTAINED_THRESHOLD
         clear_command = f"spark-intelligence operator clear-webhook-alert-snooze {row['event']}"
@@ -1141,6 +1148,11 @@ def _list_webhook_alert_snoozes_with_traces(
                 "reason": row.get("reason"),
                 "suppressed_recent_count": suppressed_recent_count,
                 "latest_suppressed_reason": latest_reason,
+                "latest_suppressed_at": (
+                    latest_suppressed_at.isoformat(timespec="seconds")
+                    if latest_suppressed_at is not None
+                    else None
+                ),
                 "status": "sustained_rejections_suppressed" if sustained_suppressed else "snoozed",
                 "severity": "warning" if sustained_suppressed else "info",
                 "recommended_command": recommended_command,

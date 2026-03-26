@@ -271,6 +271,7 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["webhook_snoozes"][0]["reason"], "known noisy source")
         self.assertEqual(payload["webhook_snoozes"][0]["suppressed_recent_count"], 1)
         self.assertEqual(payload["webhook_snoozes"][0]["latest_suppressed_reason"], "Discord webhook secret header is missing.")
+        self.assertIsInstance(payload["webhook_snoozes"][0]["latest_suppressed_at"], str)
         snooze_items = [
             item
             for item in payload["items"]
@@ -288,6 +289,7 @@ class CliSmokeTests(SparkTestCase):
             "Suppressed 1 recent rejection(s); latest reason: Discord webhook secret header is missing.",
             snooze_items[0]["summary"],
         )
+        self.assertIn("Last suppressed at:", snooze_items[0]["summary"])
 
         history_exit, history_stdout, history_stderr = self.run_cli(
             "operator",
@@ -355,6 +357,7 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["webhook_snoozes"][0]["status"], "sustained_rejections_suppressed")
         self.assertEqual(payload["webhook_snoozes"][0]["severity"], "warning")
         self.assertEqual(payload["webhook_snoozes"][0]["suppressed_recent_count"], 3)
+        self.assertIsInstance(payload["webhook_snoozes"][0]["latest_suppressed_at"], str)
         snooze_items = [
             item
             for item in payload["items"]
@@ -380,6 +383,7 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(len(list_payload["rows"]), 1)
         self.assertEqual(list_payload["rows"][0]["status"], "sustained_rejections_suppressed")
         self.assertEqual(list_payload["rows"][0]["severity"], "warning")
+        self.assertIsInstance(list_payload["rows"][0]["latest_suppressed_at"], str)
         self.assertEqual(
             list_payload["rows"][0]["recommended_command"],
             "spark-intelligence gateway traces --event discord_webhook_auth_failed --limit 20",
@@ -440,6 +444,7 @@ class CliSmokeTests(SparkTestCase):
         self.assertIsNone(list_payload["rows"][0]["reason"])
         self.assertEqual(list_payload["rows"][0]["suppressed_recent_count"], 1)
         self.assertEqual(list_payload["rows"][0]["latest_suppressed_reason"], "Discord webhook secret header is missing.")
+        self.assertIsInstance(list_payload["rows"][0]["latest_suppressed_at"], str)
         self.assertEqual(list_payload["rows"][0]["status"], "snoozed")
         self.assertEqual(list_payload["rows"][0]["severity"], "info")
         self.assertEqual(
@@ -772,6 +777,7 @@ class CliSmokeTests(SparkTestCase):
         self.assertIsNone(payload["webhook_snoozes"][0]["reason"])
         self.assertEqual(payload["webhook_snoozes"][0]["suppressed_recent_count"], 1)
         self.assertEqual(payload["webhook_snoozes"][0]["latest_suppressed_reason"], "WhatsApp webhook verify token is invalid.")
+        self.assertIsInstance(payload["webhook_snoozes"][0]["latest_suppressed_at"], str)
         snooze_items = [item for item in payload["items"] if item["kind"] == "webhook_snooze"]
         self.assertEqual(len(snooze_items), 1)
         self.assertIn("was snoozed at", snooze_items[0]["summary"])
@@ -783,6 +789,7 @@ class CliSmokeTests(SparkTestCase):
             "Suppressed 1 recent rejection(s); latest reason: WhatsApp webhook verify token is invalid.",
             snooze_items[0]["summary"],
         )
+        self.assertIn("Last suppressed at:", snooze_items[0]["summary"])
         self.assertEqual(
             snooze_items[0]["recommended_command"],
             "spark-intelligence operator clear-webhook-alert-snooze whatsapp_webhook_verification_failed",
