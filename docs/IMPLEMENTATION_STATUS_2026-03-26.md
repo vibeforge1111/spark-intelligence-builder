@@ -161,6 +161,8 @@ That phase now also has a dedicated runtime explanation surface: `spark-intellig
 
 Phase D is now also starting to become operator-tunable instead of read-only. The bridge and Swarm evaluator now read persisted routing policy values for conversational fallback and Swarm recommendation thresholds, and `spark-intelligence connect set-route-policy` provides a dedicated control surface for those knobs without forcing operators to remember raw dotted config paths.
 
+Phase E now has its first real supported bootstrap profile instead of only a bag of working commands. `spark-intelligence bootstrap telegram-agent` reuses setup, provider connect, Telegram channel setup, and the existing continuous gateway path to establish the proven Telegram plus API-key provider shape in one command, while writing install/run metadata into local config so the home can be recognized as a supported bootstrapped profile later.
+
 ## 7. Current Non-Goals
 
 Do not start these next:

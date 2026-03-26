@@ -36,6 +36,86 @@ class CliSmokeTests(SparkTestCase):
             self.assertIn("Spark Intelligence status", status_stdout)
             self.assertIn("- doctor: ok", status_stdout)
 
+    def test_bootstrap_telegram_agent_configures_supported_profile(self) -> None:
+        researcher_root = self.home / "spark-researcher"
+        researcher_root.mkdir()
+        researcher_config = researcher_root / "spark-researcher.project.json"
+        researcher_config.write_text("{}", encoding="utf-8")
+
+        exit_code, stdout, stderr = self.run_cli(
+            "bootstrap",
+            "telegram-agent",
+            "--home",
+            str(self.home),
+            "--researcher-root",
+            str(researcher_root),
+            "--researcher-config",
+            str(researcher_config),
+            "--provider",
+            "custom",
+            "--api-key",
+            "minimax-secret",
+            "--model",
+            "MiniMax-M2.5",
+            "--base-url",
+            "https://api.minimax.io/v1",
+            "--bot-token",
+            "telegram-test-token",
+            "--allowed-user",
+            "12345",
+            "--skip-validate",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertIn("Spark Intelligence bootstrap: telegram-agent", stdout)
+        self.assertIn("- provider: custom", stdout)
+        self.assertIn("- gateway_ready: yes", stdout)
+        self.assertIn("gateway start --home", stdout)
+        self.assertEqual(self.config_manager.get_path("runtime.install.profile"), "telegram-agent")
+        self.assertEqual(self.config_manager.get_path("runtime.run.default_gateway_mode"), "continuous")
+        self.assertEqual(self.config_manager.get_path("providers.default_provider"), "custom")
+        self.assertEqual(self.config_manager.get_path("channels.records.telegram.pairing_mode"), "pairing")
+
+    def test_bootstrap_telegram_agent_imports_process_env_secrets(self) -> None:
+        researcher_root = self.home / "spark-researcher"
+        researcher_root.mkdir()
+        researcher_config = researcher_root / "spark-researcher.project.json"
+        researcher_config.write_text("{}", encoding="utf-8")
+
+        with patch.dict(
+            "os.environ",
+            {"CUSTOM_API_KEY": "minimax-secret", "BOOTSTRAP_TELEGRAM_TOKEN": "telegram-test-token"},
+            clear=False,
+        ):
+            exit_code, stdout, stderr = self.run_cli(
+                "bootstrap",
+                "telegram-agent",
+                "--home",
+                str(self.home),
+                "--researcher-root",
+                str(researcher_root),
+                "--researcher-config",
+                str(researcher_config),
+                "--provider",
+                "custom",
+                "--api-key-env",
+                "CUSTOM_API_KEY",
+                "--model",
+                "MiniMax-M2.5",
+                "--base-url",
+                "https://api.minimax.io/v1",
+                "--bot-token-env",
+                "BOOTSTRAP_TELEGRAM_TOKEN",
+                "--skip-validate",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        env_map = self.config_manager.read_env_map()
+        self.assertEqual(env_map["CUSTOM_API_KEY"], "minimax-secret")
+        self.assertEqual(env_map["BOOTSTRAP_TELEGRAM_TOKEN"], "telegram-test-token")
+        self.assertEqual(env_map["TELEGRAM_BOT_TOKEN"], "telegram-test-token")
+        self.assertIn("- gateway_ready: yes", stdout)
+
     def test_connect_status_surfaces_phase_plan_on_clean_home(self) -> None:
         exit_code, stdout, stderr = self.run_cli("connect", "status", "--home", str(self.home))
 

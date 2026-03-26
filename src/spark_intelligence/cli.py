@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -250,6 +251,56 @@ class RoutingContractStatus:
         return "\n".join(lines)
 
 
+@dataclass
+class BootstrapTelegramAgentStatus:
+    home: str
+    provider_id: str
+    provider_result: str
+    channel_result: str
+    setup_notes: list[str]
+    gateway_ready: bool
+    gateway_detail: str
+    repair_hints: list[str]
+    run_command: str
+    verify_commands: list[str]
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "home": self.home,
+                "provider_id": self.provider_id,
+                "provider_result": self.provider_result,
+                "channel_result": self.channel_result,
+                "setup_notes": self.setup_notes,
+                "gateway_ready": self.gateway_ready,
+                "gateway_detail": self.gateway_detail,
+                "repair_hints": self.repair_hints,
+                "run_command": self.run_command,
+                "verify_commands": self.verify_commands,
+            },
+            indent=2,
+        )
+
+    def to_text(self) -> str:
+        lines = ["Spark Intelligence bootstrap: telegram-agent"]
+        lines.append(f"- home: {self.home}")
+        lines.append(f"- provider: {self.provider_id}")
+        lines.append(f"- provider_result: {self.provider_result}")
+        lines.append(f"- channel_result: {self.channel_result}")
+        lines.append(f"- gateway_ready: {'yes' if self.gateway_ready else 'no'}")
+        lines.append(f"- gateway_detail: {self.gateway_detail}")
+        if self.setup_notes:
+            lines.append("- setup_notes:")
+            lines.extend(f"  - {note}" for note in self.setup_notes)
+        if self.repair_hints:
+            lines.append("- repair_hints:")
+            lines.extend(f"  - {hint}" for hint in self.repair_hints)
+        lines.append(f"- run_command: {self.run_command}")
+        lines.append("- verify_commands:")
+        lines.extend(f"  - {command}" for command in self.verify_commands)
+        return "\n".join(lines)
+
+
 def build_connection_plan_status(config_manager: ConfigManager, state_db: StateDB) -> ConnectionPlanStatus:
     gateway = gateway_status(config_manager, state_db)
     researcher = researcher_bridge_status(config_manager=config_manager, state_db=state_db)
@@ -388,19 +439,30 @@ def build_connection_plan_status(config_manager: ConfigManager, state_db: StateD
         ],
     )
 
+    install_profile = config_manager.get_path("runtime.install.profile")
+    default_gateway_mode = config_manager.get_path("runtime.run.default_gateway_mode")
     phase_e = ConnectionPhaseStatus(
         phase_id="phase-e-productization",
         title="Productize install and run",
-        status="in_progress",
-        summary="Bootstrap, setup, and continuous gateway mode exist, but the installer and always-on run story are not yet fully packaged for another operator.",
+        status=(
+            "in_progress"
+            if install_profile or phase_a.status == "ready"
+            else "blocked"
+        ),
+        summary=(
+            "A supported bootstrap profile now exists for the Telegram plus API-key path, but fresh-operator install validation and a cleaner always-on run wrapper still remain."
+            if install_profile
+            else "Bootstrap, setup, and continuous gateway mode exist, but the installer and always-on run story are not yet fully packaged for another operator."
+        ),
         checks=[
             "setup_command=yes",
             "continuous_gateway=yes",
-            "canonical_home=yes",
+            f"install_profile={install_profile or 'none'}",
+            f"default_gateway_mode={default_gateway_mode or 'none'}",
             "fresh_operator_install=not_done",
         ],
         next_steps=[
-            "spark-intelligence setup",
+            "spark-intelligence bootstrap telegram-agent",
             "spark-intelligence connect status",
             "docs/SYSTEM_CONNECTION_AND_PRODUCTIZATION_PLAN_2026-03-26.md",
         ],
@@ -538,6 +600,50 @@ def build_parser() -> argparse.ArgumentParser:
         default="SPARK_SWARM_ACCESS_TOKEN",
         help="Env var name used to store the Spark Swarm access token",
     )
+
+    bootstrap_parser = subparsers.add_parser("bootstrap", help="Run one supported end-to-end bootstrap profile")
+    bootstrap_subparsers = bootstrap_parser.add_subparsers(dest="bootstrap_command", required=True)
+    bootstrap_telegram_parser = bootstrap_subparsers.add_parser(
+        "telegram-agent",
+        help="Bootstrap the supported Telegram + API-key provider + continuous-gateway path",
+    )
+    bootstrap_telegram_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    bootstrap_telegram_parser.add_argument("--researcher-root", help="Connect a local spark-researcher repo")
+    bootstrap_telegram_parser.add_argument("--researcher-config", help="Override spark-researcher config path")
+    bootstrap_telegram_parser.add_argument("--swarm-runtime-root", help="Connect a local spark-swarm repo")
+    bootstrap_telegram_parser.add_argument("--swarm-api-url", help="Set the Spark Swarm API base URL")
+    bootstrap_telegram_parser.add_argument("--swarm-workspace-id", help="Set the Spark Swarm workspace id")
+    bootstrap_telegram_parser.add_argument("--swarm-access-token", help="Store a Spark Swarm access token")
+    bootstrap_telegram_parser.add_argument(
+        "--swarm-access-token-env",
+        default="SPARK_SWARM_ACCESS_TOKEN",
+        help="Env var name used to store the Spark Swarm access token",
+    )
+    bootstrap_telegram_parser.add_argument(
+        "--provider",
+        choices=list_api_key_provider_ids(),
+        default="custom",
+        help="API-key-backed provider to bootstrap",
+    )
+    bootstrap_telegram_parser.add_argument("--api-key", help="Provider API key to store in the home env")
+    bootstrap_telegram_parser.add_argument("--api-key-env", help="Provider API key env var name")
+    bootstrap_telegram_parser.add_argument("--model", help="Default model id for the provider")
+    bootstrap_telegram_parser.add_argument("--base-url", help="Custom provider base URL")
+    bootstrap_telegram_parser.add_argument("--bot-token", help="Telegram bot token to store in the home env")
+    bootstrap_telegram_parser.add_argument("--bot-token-env", help="Existing env var name holding the Telegram bot token")
+    bootstrap_telegram_parser.add_argument("--allowed-user", action="append", default=[], help="Allowed Telegram user id")
+    bootstrap_telegram_parser.add_argument(
+        "--pairing-mode",
+        choices=["allowlist", "pairing"],
+        default="pairing",
+        help="Inbound DM authorization mode",
+    )
+    bootstrap_telegram_parser.add_argument(
+        "--skip-validate",
+        action="store_true",
+        help="Skip remote Telegram token validation during bootstrap",
+    )
+    bootstrap_telegram_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     doctor_parser = subparsers.add_parser("doctor", help="Run environment and state checks")
     doctor_parser.add_argument("--home", help="Override Spark Intelligence home directory")
@@ -1017,6 +1123,125 @@ def handle_setup(args: argparse.Namespace) -> int:
     print("  - spark-intelligence swarm status")
     print("  - spark-intelligence swarm sync --dry-run")
     return 0
+
+
+def _sync_secret_from_env_if_present(config_manager: ConfigManager, env_name: str | None) -> bool:
+    if not env_name:
+        return False
+    env_map = config_manager.read_env_map()
+    if env_map.get(env_name):
+        return False
+    process_value = os.environ.get(env_name)
+    if not process_value:
+        return False
+    config_manager.upsert_env_secret(env_name, process_value)
+    return True
+
+
+def _resolve_bootstrap_secret(
+    *,
+    config_manager: ConfigManager,
+    explicit_value: str | None,
+    env_name: str | None,
+    label: str,
+) -> str | None:
+    if explicit_value:
+        return explicit_value
+    if not env_name:
+        return None
+    _sync_secret_from_env_if_present(config_manager, env_name)
+    env_map = config_manager.read_env_map()
+    value = env_map.get(env_name)
+    if value:
+        return value
+    raise ValueError(f"{label} env '{env_name}' is not set in the home env or process environment.")
+
+
+def handle_bootstrap_telegram_agent(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    created = config_manager.bootstrap()
+    state_db = StateDB(config_manager.paths.state_db)
+    state_db.initialize()
+    setup_notes = _apply_setup_integrations(config_manager, args)
+    if created:
+        setup_notes.insert(0, "created config, env, and state bootstrap")
+    else:
+        setup_notes.insert(0, "verified existing config, env, and state bootstrap")
+
+    try:
+        bot_token = _resolve_bootstrap_secret(
+            config_manager=config_manager,
+            explicit_value=args.bot_token,
+            env_name=args.bot_token_env,
+            label="Telegram bot token",
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if not bot_token:
+        print("Provide --bot-token or --bot-token-env for bootstrap telegram-agent.", file=sys.stderr)
+        return 2
+
+    if args.api_key_env:
+        _sync_secret_from_env_if_present(config_manager, args.api_key_env)
+
+    if args.provider == "custom" and not args.base_url:
+        print("Provider 'custom' requires --base-url during bootstrap.", file=sys.stderr)
+        return 2
+
+    provider_result = connect_provider(
+        config_manager=config_manager,
+        state_db=state_db,
+        provider=args.provider,
+        api_key=args.api_key,
+        api_key_env=args.api_key_env,
+        model=args.model,
+        base_url=args.base_url,
+    )
+
+    profile = None
+    if not args.skip_validate:
+        try:
+            profile = inspect_telegram_bot_token(bot_token)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+
+    channel_result = add_channel(
+        config_manager=config_manager,
+        state_db=state_db,
+        channel_kind="telegram",
+        bot_token=bot_token,
+        allowed_users=args.allowed_user,
+        pairing_mode=args.pairing_mode,
+        status="enabled",
+        metadata={"bot_profile": profile.to_dict()} if profile else None,
+    )
+    config_manager.set_path("runtime.install.profile", "telegram-agent")
+    config_manager.set_path("runtime.run.default_gateway_mode", "continuous")
+
+    gateway = gateway_status(config_manager, state_db)
+    run_command = f"spark-intelligence gateway start --home {config_manager.paths.home} --continuous"
+    verify_commands = [
+        f"spark-intelligence connect status --home {config_manager.paths.home}",
+        f"spark-intelligence status --home {config_manager.paths.home}",
+        f"spark-intelligence gateway status --home {config_manager.paths.home}",
+        run_command,
+    ]
+    status = BootstrapTelegramAgentStatus(
+        home=str(config_manager.paths.home),
+        provider_id=args.provider,
+        provider_result=provider_result,
+        channel_result=channel_result,
+        setup_notes=setup_notes,
+        gateway_ready=gateway.ready,
+        gateway_detail=gateway.provider_runtime_detail or gateway.provider_execution_detail or "ready",
+        repair_hints=list(gateway.repair_hints or []),
+        run_command=run_command,
+        verify_commands=verify_commands,
+    )
+    print(status.to_json() if args.json else status.to_text())
+    return 0 if gateway.ready else 1
 
 
 def handle_doctor(args: argparse.Namespace) -> int:
@@ -2365,6 +2590,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "setup":
         return handle_setup(args)
+    if args.command == "bootstrap" and args.bootstrap_command == "telegram-agent":
+        return handle_bootstrap_telegram_agent(args)
     if args.command == "doctor":
         return handle_doctor(args)
     if args.command == "status":

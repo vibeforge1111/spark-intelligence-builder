@@ -60,7 +60,12 @@ class ConfigManager:
     def default_config(self) -> dict[str, Any]:
         return {
             "workspace": {"id": "default", "home": str(self.paths.home), "owner_human_id": "local-operator"},
-            "runtime": {"foreground_only": True, "autostart": {"enabled": False}},
+            "runtime": {
+                "foreground_only": True,
+                "autostart": {"enabled": False},
+                "install": {"profile": None},
+                "run": {"default_gateway_mode": None},
+            },
             "providers": {"default_provider": None, "records": {}},
             "channels": {"records": {}},
             "identity": {"default_pairing_mode": "pairing", "shared_surfaces_enabled": False},

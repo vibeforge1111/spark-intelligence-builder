@@ -109,6 +109,19 @@ spark-intelligence gateway start
 # /think off
 ```
 
+The first supported phase-E bootstrap profile is now:
+
+```bash
+spark-intelligence bootstrap telegram-agent \
+  --provider custom \
+  --api-key-env CUSTOM_API_KEY \
+  --model MiniMax-M2.5 \
+  --base-url https://api.minimax.io/v1 \
+  --bot-token-env TELEGRAM_BOT_TOKEN
+```
+
+That command reuses the proven pieces already in this repo: config/state bootstrap, local Spark repo autodetection, API-key provider connect, Telegram channel setup, and the supported continuous run command. It also records the supported install profile in local config so the productization phase can see whether a home has actually been bootstrapped or only assembled manually.
+
 `setup` now auto-detects local `spark-researcher`, `spark-swarm`, domain-chip, and specialization-path repos on the Desktop when they are present. It can also wire hosted Swarm access in one command:
 
 ```bash
