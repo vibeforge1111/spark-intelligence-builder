@@ -127,6 +127,8 @@ The next phase-1 start-path patch is also in: `gateway start` now echoes the sam
 
 Phase 2 prep has now started with `DISCORD_OPERATOR_RUNBOOK_2026-03-26.md`, which locks the narrow live-validation target for Discord v1 to signed DM slash-command ingress only: `/spark message:<text>`.
 
+Execution is now explicitly refocused through `EXECUTION_REFOCUS_TELEGRAM_LLM_2026-03-26.md`: before live Discord or broader WhatsApp work, Spark should first prove the real Telegram plus LLM path end to end on the live home, including Codex auth and provider-backed gateway execution.
+
 ## 7. Current Non-Goals
 
 Do not start these next:

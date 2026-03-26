@@ -278,6 +278,8 @@ Today’s execution order is recorded in [docs/IMPLEMENTATION_WORKPLAN_2026-03-2
 
 The next architecture pass for gateway, provider auth, OAuth, and runtime model routing is recorded in [docs/GATEWAY_PROVIDER_AUTH_READINESS_REVIEW_2026-03-26.md](./docs/GATEWAY_PROVIDER_AUTH_READINESS_REVIEW_2026-03-26.md).
 
+The current execution refocus is recorded in [docs/EXECUTION_REFOCUS_TELEGRAM_LLM_2026-03-26.md](./docs/EXECUTION_REFOCUS_TELEGRAM_LLM_2026-03-26.md).
+
 ## Current Start
 
 Current work should continue with gateway/runtime and operator-recovery locking, not more adapter breadth.
@@ -301,3 +303,5 @@ The next phase-1 runtime-summary patch is also in: paused or disabled channels n
 The next phase-1 start-path patch is also in: `gateway start` now echoes the same channel repair hint when Telegram is paused or disabled, so the foreground runtime path matches the already-improved runtime summaries.
 
 Phase 2 prep is now in: [docs/DISCORD_OPERATOR_RUNBOOK_2026-03-26.md](./docs/DISCORD_OPERATOR_RUNBOOK_2026-03-26.md) defines the exact narrow live-validation target for Discord v1 signed interactions: DM-only `/spark message:<text>`, with setup, failure checks, and recovery commands.
+
+The current refocus is: finish the real Telegram plus LLM path first, then return to Discord live validation, then WhatsApp after that.
