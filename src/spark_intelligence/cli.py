@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -110,6 +111,17 @@ class SystemStatus:
         lines.append(
             f"- channels: {', '.join(self.payload['gateway']['configured_channels']) if self.payload['gateway']['configured_channels'] else 'none'}"
         )
+        runtime_payload = self.payload.get("runtime") or {}
+        autostart_payload = runtime_payload.get("autostart") or {}
+        lines.append(f"- install profile: {runtime_payload.get('install_profile') or 'none'}")
+        lines.append(f"- default gateway mode: {runtime_payload.get('default_gateway_mode') or 'none'}")
+        if autostart_payload.get("enabled"):
+            lines.append(
+                f"- autostart: enabled {autostart_payload.get('platform') or 'unknown'} "
+                f"task={autostart_payload.get('task_name') or 'unknown'}"
+            )
+        else:
+            lines.append("- autostart: disabled")
         lines.append(
             f"- provider runtime: {'ok' if self.payload['gateway'].get('provider_runtime_ok') else 'degraded'}"
         )
@@ -308,6 +320,7 @@ def build_connection_plan_status(config_manager: ConfigManager, state_db: StateD
     attachments = attachment_status(config_manager)
     active_chip_keys = config_manager.get_path("spark.chips.active_keys", default=[]) or []
     active_path_key = config_manager.get_path("spark.specialization_paths.active_path_key")
+    autostart_enabled = bool(config_manager.get_path("runtime.autostart.enabled", default=False))
     telegram_configured = "telegram" in gateway.configured_channels
     providers_configured = bool(gateway.configured_providers)
 
@@ -450,7 +463,9 @@ def build_connection_plan_status(config_manager: ConfigManager, state_db: StateD
             else "blocked"
         ),
         summary=(
-            "A supported bootstrap profile now exists for the Telegram plus API-key path, but fresh-operator install validation and a cleaner always-on run wrapper still remain."
+            "A supported bootstrap profile and native autostart wrapper now exist for the Telegram plus API-key path, but fresh-operator install validation still remains."
+            if install_profile and autostart_enabled
+            else "A supported bootstrap profile now exists for the Telegram plus API-key path, but fresh-operator install validation and a cleaner always-on run wrapper still remain."
             if install_profile
             else "Bootstrap, setup, and continuous gateway mode exist, but the installer and always-on run story are not yet fully packaged for another operator."
         ),
@@ -459,10 +474,12 @@ def build_connection_plan_status(config_manager: ConfigManager, state_db: StateD
             "continuous_gateway=yes",
             f"install_profile={install_profile or 'none'}",
             f"default_gateway_mode={default_gateway_mode or 'none'}",
+            f"autostart_enabled={'yes' if autostart_enabled else 'no'}",
             "fresh_operator_install=not_done",
         ],
         next_steps=[
             "spark-intelligence bootstrap telegram-agent",
+            "spark-intelligence install-autostart",
             "spark-intelligence connect status",
             "docs/SYSTEM_CONNECTION_AND_PRODUCTIZATION_PLAN_2026-03-26.md",
         ],
@@ -644,6 +661,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip remote Telegram token validation during bootstrap",
     )
     bootstrap_telegram_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+
+    install_autostart_parser = subparsers.add_parser(
+        "install-autostart",
+        help="Install the supported native always-on wrapper for the foreground gateway",
+    )
+    install_autostart_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    install_autostart_parser.add_argument("--task-name", help="Windows Task Scheduler task name override")
+
+    uninstall_autostart_parser = subparsers.add_parser(
+        "uninstall-autostart",
+        help="Remove the supported native always-on wrapper",
+    )
+    uninstall_autostart_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    uninstall_autostart_parser.add_argument("--task-name", help="Windows Task Scheduler task name override")
 
     doctor_parser = subparsers.add_parser("doctor", help="Run environment and state checks")
     doctor_parser.add_argument("--home", help="Override Spark Intelligence home directory")
@@ -1244,6 +1275,116 @@ def handle_bootstrap_telegram_agent(args: argparse.Namespace) -> int:
     return 0 if gateway.ready else 1
 
 
+def _default_autostart_task_name(config_manager: ConfigManager) -> str:
+    return f"Spark Intelligence Gateway ({config_manager.paths.home.name})"
+
+
+def _resolve_autostart_task_name(config_manager: ConfigManager, override: str | None) -> str:
+    if override:
+        return override
+    configured = config_manager.get_path("runtime.autostart.task_name")
+    if configured:
+        return str(configured)
+    return _default_autostart_task_name(config_manager)
+
+
+def _build_gateway_autostart_command(config_manager: ConfigManager) -> str:
+    command_parts = [
+        sys.executable,
+        "-m",
+        "spark_intelligence.cli",
+        "gateway",
+        "start",
+        "--home",
+        str(config_manager.paths.home),
+        "--continuous",
+    ]
+    return subprocess.list2cmdline(command_parts)
+
+
+def handle_install_autostart(args: argparse.Namespace) -> int:
+    if os.name != "nt":
+        print("install-autostart is currently implemented only for Windows Task Scheduler.", file=sys.stderr)
+        return 1
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    gateway = gateway_status(config_manager, state_db)
+    if not gateway.ready:
+        print("Gateway is not ready; refusing to install autostart.", file=sys.stderr)
+        for hint in gateway.repair_hints or []:
+            print(hint, file=sys.stderr)
+        return 1
+
+    task_name = _resolve_autostart_task_name(config_manager, args.task_name)
+    task_command = _build_gateway_autostart_command(config_manager)
+    try:
+        subprocess.run(
+            [
+                "schtasks",
+                "/Create",
+                "/TN",
+                task_name,
+                "/SC",
+                "ONLOGON",
+                "/TR",
+                task_command,
+                "/F",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        print((exc.stderr or exc.stdout or "Task Scheduler install failed.").strip(), file=sys.stderr)
+        return 1
+
+    config_manager.set_path("runtime.autostart.enabled", True)
+    config_manager.set_path("runtime.autostart.platform", "windows_task_scheduler")
+    config_manager.set_path("runtime.autostart.task_name", task_name)
+    config_manager.set_path("runtime.autostart.command", task_command)
+    print("Installed autostart.")
+    print(f"- platform: windows_task_scheduler")
+    print(f"- task_name: {task_name}")
+    print(f"- command: {task_command}")
+    return 0
+
+
+def handle_uninstall_autostart(args: argparse.Namespace) -> int:
+    if os.name != "nt":
+        print("uninstall-autostart is currently implemented only for Windows Task Scheduler.", file=sys.stderr)
+        return 1
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    task_name = _resolve_autostart_task_name(config_manager, args.task_name)
+    try:
+        subprocess.run(
+            [
+                "schtasks",
+                "/Delete",
+                "/TN",
+                task_name,
+                "/F",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        print((exc.stderr or exc.stdout or "Task Scheduler uninstall failed.").strip(), file=sys.stderr)
+        return 1
+
+    config_manager.set_path("runtime.autostart.enabled", False)
+    config_manager.set_path("runtime.autostart.platform", None)
+    config_manager.set_path("runtime.autostart.task_name", None)
+    config_manager.set_path("runtime.autostart.command", None)
+    print("Removed autostart.")
+    print(f"- platform: windows_task_scheduler")
+    print(f"- task_name: {task_name}")
+    return 0
+
+
 def handle_doctor(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -1548,6 +1689,12 @@ def handle_status(args: argparse.Namespace) -> int:
     attachments = attachment_status(config_manager)
     active_chip_keys = config_manager.get_path("spark.chips.active_keys", default=[]) or []
     active_path_key = config_manager.get_path("spark.specialization_paths.active_path_key")
+    autostart_payload = {
+        "enabled": bool(config_manager.get_path("runtime.autostart.enabled", default=False)),
+        "platform": config_manager.get_path("runtime.autostart.platform"),
+        "task_name": config_manager.get_path("runtime.autostart.task_name"),
+        "command": config_manager.get_path("runtime.autostart.command"),
+    }
 
     payload = {
         "doctor": {"ok": doctor_report.ok, "checks": [{"name": check.name, "ok": check.ok, "detail": check.detail} for check in doctor_report.checks]},
@@ -1555,6 +1702,11 @@ def handle_status(args: argparse.Namespace) -> int:
         "gateway": json.loads(gateway.to_json()),
         "researcher": json.loads(researcher.to_json()),
         "swarm": json.loads(swarm.to_json()),
+        "runtime": {
+            "install_profile": config_manager.get_path("runtime.install.profile"),
+            "default_gateway_mode": config_manager.get_path("runtime.run.default_gateway_mode"),
+            "autostart": autostart_payload,
+        },
         "attachments": {
             "record_count": len(attachments.records),
             "warning_count": len(attachments.warnings),
@@ -2592,6 +2744,10 @@ def main(argv: list[str] | None = None) -> int:
         return handle_setup(args)
     if args.command == "bootstrap" and args.bootstrap_command == "telegram-agent":
         return handle_bootstrap_telegram_agent(args)
+    if args.command == "install-autostart":
+        return handle_install_autostart(args)
+    if args.command == "uninstall-autostart":
+        return handle_uninstall_autostart(args)
     if args.command == "doctor":
         return handle_doctor(args)
     if args.command == "status":

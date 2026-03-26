@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.error import URLError
 
@@ -115,6 +117,83 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(env_map["BOOTSTRAP_TELEGRAM_TOKEN"], "telegram-test-token")
         self.assertEqual(env_map["TELEGRAM_BOT_TOKEN"], "telegram-test-token")
         self.assertIn("- gateway_ready: yes", stdout)
+
+    def test_install_autostart_registers_windows_task_scheduler_wrapper(self) -> None:
+        researcher_root = self.home / "spark-researcher"
+        researcher_root.mkdir()
+        researcher_config = researcher_root / "spark-researcher.project.json"
+        researcher_config.write_text("{}", encoding="utf-8")
+
+        bootstrap_exit, _, bootstrap_stderr = self.run_cli(
+            "bootstrap",
+            "telegram-agent",
+            "--home",
+            str(self.home),
+            "--researcher-root",
+            str(researcher_root),
+            "--researcher-config",
+            str(researcher_config),
+            "--provider",
+            "custom",
+            "--api-key",
+            "minimax-secret",
+            "--model",
+            "MiniMax-M2.5",
+            "--base-url",
+            "https://api.minimax.io/v1",
+            "--bot-token",
+            "telegram-test-token",
+            "--skip-validate",
+        )
+        self.assertEqual(bootstrap_exit, 0, bootstrap_stderr)
+
+        with patch(
+            "spark_intelligence.cli.gateway_status",
+            return_value=SimpleNamespace(ready=True, repair_hints=[]),
+        ), patch("spark_intelligence.cli.subprocess.run") as run_mock:
+            run_mock.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="ok", stderr="")
+            exit_code, stdout, stderr = self.run_cli(
+                "install-autostart",
+                "--home",
+                str(self.home),
+                "--task-name",
+                "Spark Intelligence Test Task",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertIn("Installed autostart.", stdout)
+        self.assertIn("Spark Intelligence Test Task", stdout)
+        self.assertTrue(self.config_manager.get_path("runtime.autostart.enabled"))
+        self.assertEqual(self.config_manager.get_path("runtime.autostart.platform"), "windows_task_scheduler")
+        self.assertEqual(self.config_manager.get_path("runtime.autostart.task_name"), "Spark Intelligence Test Task")
+        command = self.config_manager.get_path("runtime.autostart.command")
+        self.assertIn("gateway", command)
+        self.assertIn("--continuous", command)
+        task_args = run_mock.call_args.args[0]
+        self.assertEqual(task_args[:4], ["schtasks", "/Create", "/TN", "Spark Intelligence Test Task"])
+
+    def test_uninstall_autostart_clears_windows_task_scheduler_wrapper(self) -> None:
+        self.config_manager.set_path("runtime.autostart.enabled", True)
+        self.config_manager.set_path("runtime.autostart.platform", "windows_task_scheduler")
+        self.config_manager.set_path("runtime.autostart.task_name", "Spark Intelligence Test Task")
+        self.config_manager.set_path("runtime.autostart.command", "python -m spark_intelligence.cli gateway start")
+
+        with patch("spark_intelligence.cli.subprocess.run") as run_mock:
+            run_mock.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="ok", stderr="")
+            exit_code, stdout, stderr = self.run_cli(
+                "uninstall-autostart",
+                "--home",
+                str(self.home),
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertIn("Removed autostart.", stdout)
+        self.assertFalse(self.config_manager.get_path("runtime.autostart.enabled"))
+        self.assertIsNone(self.config_manager.get_path("runtime.autostart.platform"))
+        self.assertIsNone(self.config_manager.get_path("runtime.autostart.task_name"))
+        self.assertIsNone(self.config_manager.get_path("runtime.autostart.command"))
+        task_args = run_mock.call_args.args[0]
+        self.assertEqual(task_args[:4], ["schtasks", "/Delete", "/TN", "Spark Intelligence Test Task"])
 
     def test_connect_status_surfaces_phase_plan_on_clean_home(self) -> None:
         exit_code, stdout, stderr = self.run_cli("connect", "status", "--home", str(self.home))

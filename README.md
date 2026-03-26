@@ -122,6 +122,15 @@ spark-intelligence bootstrap telegram-agent \
 
 That command reuses the proven pieces already in this repo: config/state bootstrap, local Spark repo autodetection, API-key provider connect, Telegram channel setup, and the supported continuous run command. It also records the supported install profile in local config so the productization phase can see whether a home has actually been bootstrapped or only assembled manually.
 
+The matching supported always-on run wrapper on Windows is now:
+
+```bash
+spark-intelligence install-autostart --home .tmp-home-live-telegram-real
+spark-intelligence uninstall-autostart --home .tmp-home-live-telegram-real
+```
+
+That path uses native Windows Task Scheduler entries instead of a custom daemon layer and persists the installed wrapper metadata in local config so `status` and the productization phase can see whether the canonical home is still running in foreground-only mode or has a supported always-on wrapper installed.
+
 `setup` now auto-detects local `spark-researcher`, `spark-swarm`, domain-chip, and specialization-path repos on the Desktop when they are present. It can also wire hosted Swarm access in one command:
 
 ```bash

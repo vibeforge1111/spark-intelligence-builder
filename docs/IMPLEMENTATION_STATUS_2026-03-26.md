@@ -163,6 +163,8 @@ Phase D is now also starting to become operator-tunable instead of read-only. Th
 
 Phase E now has its first real supported bootstrap profile instead of only a bag of working commands. `spark-intelligence bootstrap telegram-agent` reuses setup, provider connect, Telegram channel setup, and the existing continuous gateway path to establish the proven Telegram plus API-key provider shape in one command, while writing install/run metadata into local config so the home can be recognized as a supported bootstrapped profile later.
 
+Phase E now also has the first supported native always-on wrapper on Windows: `install-autostart` and `uninstall-autostart` manage a Task Scheduler entry that runs the foreground gateway continuously for one home. That keeps the implementation aligned with the architecture rule to prefer native autostart registration over inventing a custom daemon layer, and it makes always-on operation visible in config and top-level status instead of remaining a manual terminal habit.
+
 ## 7. Current Non-Goals
 
 Do not start these next:
