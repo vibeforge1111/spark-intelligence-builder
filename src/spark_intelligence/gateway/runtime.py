@@ -434,6 +434,8 @@ def gateway_trace_view(
             f"event={trace.get('event')} update_id={trace.get('update_id')} "
             f"user={_record_user_ref(trace)} decision={trace.get('decision', 'n/a')} "
             f"trace_ref={trace.get('trace_ref', 'n/a')} mode={trace.get('bridge_mode', 'n/a')} "
+            f"route={trace.get('routing_decision', 'n/a')} "
+            f"chip={trace.get('active_chip_key', 'none')} "
             f"delivery_ok={trace.get('delivery_ok', 'n/a')} "
             f"guardrails={','.join(trace.get('guardrail_actions', [])) if trace.get('guardrail_actions') else 'none'}"
             f"{reason_suffix}"
@@ -473,6 +475,8 @@ def gateway_outbound_view(
             f"event={record.get('event')} update_id={record.get('update_id')} "
             f"user={_record_user_ref(record)} ok={record.get('delivery_ok')} "
             f"mode={record.get('bridge_mode', 'n/a')} "
+            f"route={record.get('routing_decision', 'n/a')} "
+            f"chip={record.get('active_chip_key', 'none')} "
             f"guardrails={','.join(record.get('guardrail_actions', [])) if record.get('guardrail_actions') else 'none'} "
             f"preview={record.get('response_preview', '')}"
         )

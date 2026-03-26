@@ -360,3 +360,72 @@ class OperatorPairingFlowTests(SparkTestCase):
         )
         self.assertTrue(disable_result.ok)
         self.assertIn("Thinking visibility disabled", str(disable_result.detail["response_text"]))
+
+    def test_status_and_gateway_traces_surface_bridge_route_and_active_chip(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            return_value=ResearcherBridgeResult(
+                request_id="req-route",
+                reply_text="Hello there.",
+                evidence_summary="status=under_supported provider_fallback=direct_http_chat",
+                escalation_hint=None,
+                trace_ref="trace:route",
+                mode="external_configured",
+                runtime_root="C:/fake-researcher",
+                config_path="C:/fake-researcher/spark-researcher.project.json",
+                attachment_context={"active_chip_keys": ["startup-yc"], "active_path_key": "startup-operator"},
+                provider_id="custom",
+                provider_auth_profile_id="custom:default",
+                provider_auth_method="api_key_env",
+                provider_model="MiniMax-M2.5",
+                provider_model_family="generic",
+                provider_execution_transport="direct_http",
+                provider_base_url="https://api.minimax.io/v1",
+                provider_source="config+env",
+                routing_decision="provider_fallback_chat",
+                active_chip_key="startup-yc",
+                active_chip_task_type="diagnostic_questioning",
+                active_chip_evaluate_used=True,
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=115,
+                    user_id="111",
+                    username="alice",
+                    text="hey",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+
+        status_exit, status_stdout, status_stderr = self.run_cli(
+            "status",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(status_exit, 1, status_stderr)
+        self.assertIn("- last bridge route: provider_fallback_chat", status_stdout)
+        self.assertIn("- last active chip route: startup-yc:diagnostic_questioning used=yes", status_stdout)
+
+        traces_exit, traces_stdout, traces_stderr = self.run_cli(
+            "gateway",
+            "traces",
+            "--home",
+            str(self.home),
+            "--json",
+            "--limit",
+            "5",
+        )
+        self.assertEqual(traces_exit, 0, traces_stderr)
+        payload = json.loads(traces_stdout)
+        processed = [record for record in payload if record.get("event") == "telegram_update_processed"]
+        self.assertEqual(len(processed), 1)
+        self.assertEqual(processed[0]["routing_decision"], "provider_fallback_chat")
+        self.assertEqual(processed[0]["active_chip_key"], "startup-yc")
+        self.assertEqual(processed[0]["active_chip_task_type"], "diagnostic_questioning")
+        self.assertTrue(processed[0]["active_chip_evaluate_used"])

@@ -37,6 +37,10 @@ class ResearcherBridgeResult:
     provider_execution_transport: str | None = None
     provider_base_url: str | None = None
     provider_source: str | None = None
+    routing_decision: str | None = None
+    active_chip_key: str | None = None
+    active_chip_task_type: str | None = None
+    active_chip_evaluate_used: bool = False
 
 
 @dataclass
@@ -60,6 +64,10 @@ class ResearcherBridgeStatus:
     last_provider_model_family: str | None
     last_provider_auth_method: str | None
     last_provider_execution_transport: str | None
+    last_routing_decision: str | None
+    last_active_chip_key: str | None
+    last_active_chip_task_type: str | None
+    last_active_chip_evaluate_used: bool
     failure_count: int
     last_failure: dict[str, Any] | None
 
@@ -85,6 +93,10 @@ class ResearcherBridgeStatus:
                 "last_provider_model_family": self.last_provider_model_family,
                 "last_provider_auth_method": self.last_provider_auth_method,
                 "last_provider_execution_transport": self.last_provider_execution_transport,
+                "last_routing_decision": self.last_routing_decision,
+                "last_active_chip_key": self.last_active_chip_key,
+                "last_active_chip_task_type": self.last_active_chip_task_type,
+                "last_active_chip_evaluate_used": self.last_active_chip_evaluate_used,
                 "failure_count": self.failure_count,
                 "last_failure": self.last_failure,
             },
@@ -122,6 +134,13 @@ class ResearcherBridgeStatus:
             lines.append(f"- last_provider_auth_method: {self.last_provider_auth_method}")
         if self.last_provider_execution_transport:
             lines.append(f"- last_provider_execution_transport: {self.last_provider_execution_transport}")
+        if self.last_routing_decision:
+            lines.append(f"- last_routing_decision: {self.last_routing_decision}")
+        if self.last_active_chip_key:
+            lines.append(f"- last_active_chip_key: {self.last_active_chip_key}")
+        if self.last_active_chip_task_type:
+            lines.append(f"- last_active_chip_task_type: {self.last_active_chip_task_type}")
+        lines.append(f"- last_active_chip_evaluate_used: {'yes' if self.last_active_chip_evaluate_used else 'no'}")
         lines.append(f"- failure_count: {self.failure_count}")
         if self.last_failure:
             lines.append(
@@ -425,6 +444,10 @@ def researcher_bridge_status(*, config_manager: ConfigManager, state_db: StateDB
         last_provider_model_family=runtime_state.get("researcher:last_provider_model_family"),
         last_provider_auth_method=runtime_state.get("researcher:last_provider_auth_method"),
         last_provider_execution_transport=runtime_state.get("researcher:last_provider_execution_transport"),
+        last_routing_decision=runtime_state.get("researcher:last_routing_decision"),
+        last_active_chip_key=runtime_state.get("researcher:last_active_chip_key"),
+        last_active_chip_task_type=runtime_state.get("researcher:last_active_chip_task_type"),
+        last_active_chip_evaluate_used=_parse_bool(runtime_state.get("researcher:last_active_chip_evaluate_used")),
         failure_count=_parse_int(runtime_state.get("researcher:failure_count")),
         last_failure=_loads_json(runtime_state.get("researcher:last_failure")),
     )
@@ -446,6 +469,14 @@ def record_researcher_bridge_result(*, state_db: StateDB, result: ResearcherBrid
             conn,
             "researcher:last_provider_execution_transport",
             result.provider_execution_transport or "",
+        )
+        _set_runtime_state(conn, "researcher:last_routing_decision", result.routing_decision or "")
+        _set_runtime_state(conn, "researcher:last_active_chip_key", result.active_chip_key or "")
+        _set_runtime_state(conn, "researcher:last_active_chip_task_type", result.active_chip_task_type or "")
+        _set_runtime_state(
+            conn,
+            "researcher:last_active_chip_evaluate_used",
+            "1" if result.active_chip_evaluate_used else "0",
         )
         _set_runtime_state(
             conn,
@@ -501,6 +532,9 @@ def build_researcher_reply(
         active_chip_evaluate=active_chip_evaluate,
     )
     provider_selection = _resolve_bridge_provider(config_manager=config_manager, state_db=state_db)
+    active_chip_key = str(active_chip_evaluate.get("chip_key")) if active_chip_evaluate else None
+    active_chip_task_type = str(active_chip_evaluate.get("task_type")) if active_chip_evaluate and active_chip_evaluate.get("task_type") else None
+    active_chip_evaluate_used = active_chip_evaluate is not None
     if not bool(config_manager.get_path("spark.researcher.enabled", default=True)):
         return ResearcherBridgeResult(
             request_id=request_id,
@@ -522,6 +556,10 @@ def build_researcher_reply(
             ),
             provider_base_url=provider_selection.provider.base_url if provider_selection.provider else None,
             provider_source=provider_selection.provider.source if provider_selection.provider else None,
+            routing_decision="bridge_disabled",
+            active_chip_key=active_chip_key,
+            active_chip_task_type=active_chip_task_type,
+            active_chip_evaluate_used=active_chip_evaluate_used,
         )
     if provider_selection.error:
         return ResearcherBridgeResult(
@@ -544,6 +582,10 @@ def build_researcher_reply(
             ),
             provider_base_url=provider_selection.provider.base_url if provider_selection.provider else None,
             provider_source=provider_selection.provider.source if provider_selection.provider else None,
+            routing_decision="provider_resolution_failed",
+            active_chip_key=active_chip_key,
+            active_chip_task_type=active_chip_task_type,
+            active_chip_evaluate_used=active_chip_evaluate_used,
         )
     runtime_root, runtime_source = discover_researcher_runtime_root(config_manager)
     if runtime_root is not None:
@@ -591,6 +633,10 @@ def build_researcher_reply(
                         provider_execution_transport=provider_selection.provider.execution_transport,
                         provider_base_url=provider_selection.provider.base_url,
                         provider_source=provider_selection.provider.source,
+                        routing_decision="provider_fallback_chat",
+                        active_chip_key=active_chip_key,
+                        active_chip_task_type=active_chip_task_type,
+                        active_chip_evaluate_used=active_chip_evaluate_used,
                     )
                 if provider_selection.provider and _supports_direct_or_cli_execution(provider_selection):
                     with _temporary_provider_env(provider_selection.provider):
@@ -624,6 +670,14 @@ def build_researcher_reply(
                     ),
                     provider_base_url=provider_selection.provider.base_url if provider_selection.provider else None,
                     provider_source=provider_selection.provider.source if provider_selection.provider else None,
+                    routing_decision=(
+                        "provider_execution"
+                        if provider_selection.provider and _supports_direct_or_cli_execution(provider_selection)
+                        else "researcher_advisory"
+                    ),
+                    active_chip_key=active_chip_key,
+                    active_chip_task_type=active_chip_task_type,
+                    active_chip_evaluate_used=active_chip_evaluate_used,
                 )
             except Exception as exc:  # pragma: no cover - external bridge safety
                 return ResearcherBridgeResult(
@@ -646,6 +700,10 @@ def build_researcher_reply(
                     ),
                     provider_base_url=provider_selection.provider.base_url if provider_selection.provider else None,
                     provider_source=provider_selection.provider.source if provider_selection.provider else None,
+                    routing_decision="bridge_error",
+                    active_chip_key=active_chip_key,
+                    active_chip_task_type=active_chip_task_type,
+                    active_chip_evaluate_used=active_chip_evaluate_used,
                 )
 
     reply_text = (
@@ -676,6 +734,10 @@ def build_researcher_reply(
         ),
         provider_base_url=provider_selection.provider.base_url if provider_selection.provider else None,
         provider_source=provider_selection.provider.source if provider_selection.provider else None,
+        routing_decision="stub",
+        active_chip_key=active_chip_key,
+        active_chip_task_type=active_chip_task_type,
+        active_chip_evaluate_used=active_chip_evaluate_used,
     )
 
 
@@ -791,6 +853,13 @@ def _parse_int(value: str | None) -> int:
         return int(value)
     except ValueError:
         return 0
+
+
+def _parse_bool(value: str | None) -> bool:
+    if value is None:
+        return False
+    normalized = str(value).strip().lower()
+    return normalized in {"1", "true", "yes", "on"}
 
 
 def _read_failure_count(conn: Any, state_key: str) -> int:

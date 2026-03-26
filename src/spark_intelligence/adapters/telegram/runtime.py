@@ -268,6 +268,11 @@ def simulate_telegram_update(
             trace_ref = None
             bridge_mode = "runtime_command"
             attachment_context = None
+            routing_decision = "runtime_command"
+            active_chip_key = None
+            active_chip_task_type = None
+            active_chip_evaluate_used = False
+            evidence_summary = None
         else:
             bridge_result = build_researcher_reply(
                 config_manager=config_manager,
@@ -288,6 +293,11 @@ def simulate_telegram_update(
             trace_ref = bridge_result.trace_ref
             bridge_mode = bridge_result.mode
             attachment_context = bridge_result.attachment_context
+            routing_decision = bridge_result.routing_decision
+            active_chip_key = bridge_result.active_chip_key
+            active_chip_task_type = bridge_result.active_chip_task_type
+            active_chip_evaluate_used = bridge_result.active_chip_evaluate_used
+            evidence_summary = bridge_result.evidence_summary
         outbound_text = _apply_think_visibility(
             state_db=state_db,
             external_user_id=normalized.telegram_user_id,
@@ -297,6 +307,11 @@ def simulate_telegram_update(
         trace_ref = None
         bridge_mode = None
         attachment_context = None
+        routing_decision = None
+        active_chip_key = None
+        active_chip_task_type = None
+        active_chip_evaluate_used = False
+        evidence_summary = None
     detail = {
         "telegram_user_id": normalized.telegram_user_id,
         "chat_id": normalized.chat_id,
@@ -307,8 +322,38 @@ def simulate_telegram_update(
         "response_text": outbound_text,
         "trace_ref": trace_ref,
         "bridge_mode": bridge_mode,
+        "routing_decision": routing_decision,
+        "active_chip_key": active_chip_key,
+        "active_chip_task_type": active_chip_task_type,
+        "active_chip_evaluate_used": active_chip_evaluate_used,
         "attachment_context": attachment_context,
     }
+    if resolution.allowed:
+        append_gateway_trace(
+            config_manager,
+            {
+                "event": "telegram_update_processed",
+                "channel_id": "telegram",
+                "update_id": normalized.update_id,
+                "telegram_user_id": normalized.telegram_user_id,
+                "chat_id": normalized.chat_id,
+                "session_id": resolution.session_id,
+                "trace_ref": trace_ref,
+                "bridge_mode": bridge_mode,
+                "routing_decision": routing_decision,
+                "evidence_summary": evidence_summary,
+                "attachment_context": attachment_context,
+                "active_chip_key": active_chip_key,
+                "active_chip_task_type": active_chip_task_type,
+                "active_chip_evaluate_used": active_chip_evaluate_used,
+                "response_preview": _preview_text(outbound_text),
+                "response_length": len(outbound_text),
+                "delivery_ok": True,
+                "delivery_error": None,
+                "guardrail_actions": [],
+                "simulation": True,
+            },
+        )
     return TelegramSimulationResult(ok=resolution.allowed, decision=resolution.decision, detail=detail)
 
 
@@ -609,6 +654,9 @@ def poll_telegram_updates_once(
             session_id=resolution.session_id,
             decision=resolution.decision,
             bridge_mode=bridge_result.mode,
+            routing_decision=bridge_result.routing_decision,
+            active_chip_key=bridge_result.active_chip_key,
+            active_chip_task_type=bridge_result.active_chip_task_type,
             trace_ref=bridge_result.trace_ref,
         )
         processed_count += 1
@@ -628,10 +676,14 @@ def poll_telegram_updates_once(
                 "session_id": resolution.session_id,
                 "trace_ref": bridge_result.trace_ref,
                 "bridge_mode": bridge_result.mode,
+                "routing_decision": bridge_result.routing_decision,
                 "runtime_root": bridge_result.runtime_root,
                 "config_path": bridge_result.config_path,
                 "evidence_summary": bridge_result.evidence_summary,
                 "attachment_context": bridge_result.attachment_context,
+                "active_chip_key": bridge_result.active_chip_key,
+                "active_chip_task_type": bridge_result.active_chip_task_type,
+                "active_chip_evaluate_used": bridge_result.active_chip_evaluate_used,
                 "response_preview": _preview_text(outbound_text),
                 "response_length": len(outbound_text),
                 "delivery_ok": send_result["ok"],
@@ -693,6 +745,9 @@ def _send_telegram_reply(
     session_id: str | None,
     decision: str,
     bridge_mode: str | None,
+    routing_decision: str | None = None,
+    active_chip_key: str | None = None,
+    active_chip_task_type: str | None = None,
     trace_ref: str | None,
 ) -> dict[str, Any]:
     policy = _telegram_security_policy(config_manager)
@@ -733,6 +788,9 @@ def _send_telegram_reply(
             "session_id": session_id,
             "decision": decision,
             "bridge_mode": bridge_mode,
+            "routing_decision": routing_decision,
+            "active_chip_key": active_chip_key,
+            "active_chip_task_type": active_chip_task_type,
             "trace_ref": trace_ref,
             "delivery_ok": ok,
             "delivery_error": error,

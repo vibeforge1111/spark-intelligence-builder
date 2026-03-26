@@ -132,6 +132,18 @@ class SystemStatus:
             lines.append(
                 f"- last provider transport: {self.payload['researcher']['last_provider_execution_transport']}"
             )
+        if self.payload['researcher'].get('last_routing_decision'):
+            lines.append(f"- last bridge route: {self.payload['researcher']['last_routing_decision']}")
+        if self.payload['researcher'].get('last_active_chip_key'):
+            chip_suffix = (
+                f":{self.payload['researcher']['last_active_chip_task_type']}"
+                if self.payload['researcher'].get('last_active_chip_task_type')
+                else ""
+            )
+            lines.append(
+                f"- last active chip route: {self.payload['researcher']['last_active_chip_key']}{chip_suffix} "
+                f"used={'yes' if self.payload['researcher'].get('last_active_chip_evaluate_used') else 'no'}"
+            )
         lines.append(f"- last researcher trace: {self.payload['researcher'].get('last_trace_ref') or 'none'}")
         lines.append(f"- last swarm decision: {(self.payload['swarm'].get('last_decision') or {}).get('mode', 'none')}")
         lines.append(f"- last swarm sync: {(self.payload['swarm'].get('last_sync') or {}).get('mode', 'none')}")

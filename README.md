@@ -174,6 +174,8 @@ spark-intelligence gateway outbound --limit 20
 spark-intelligence gateway outbound --channel-id telegram --delivery failed
 ```
 
+`status` now also surfaces the last bridge routing decision plus the last active chip route, and the text forms of `gateway traces` and `gateway outbound` now include `route=...` and `chip=...` when that metadata is available. That makes it possible to see whether a Telegram reply came from researcher advisory, direct provider fallback, or another bridge path without dropping to raw JSON.
+
 Config can be inspected and updated without editing `config.yaml` manually:
 
 ```bash

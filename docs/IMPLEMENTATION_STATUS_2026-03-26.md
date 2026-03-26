@@ -149,6 +149,14 @@ That plan now also has a first supporting runtime surface: `spark-intelligence c
 
 The next specialization/runtime bridge layer is now also real instead of docs-only: manifest-backed chips that expose `spark-hook-io.v1` commands can be invoked directly through `spark-intelligence attachments run-hook`, and active-chip `evaluate` output can now shape live bridge prompts. That gives Spark Intelligence one reusable DOP-style contract for future chips instead of adding bespoke prompt instructions per domain.
 
+The current canonical live home has also moved further through that connection plan:
+
+- phase A is ready on the real Telegram plus MiniMax home
+- phase B is ready with `startup-yc` and `startup-operator` active in live runtime state
+- phase C is builder-ready with live Swarm auth/config present locally, although the hosted Swarm sync endpoint is still returning a server-side `collective_sync_failed` `500` on real upload
+
+Phase D work is now underway in the runtime surfaces themselves: `status` records the last bridge route plus the last active chip route, and `gateway traces` / `gateway outbound` now expose route and chip metadata in their text views so operator debugging can answer "why did this reply happen" without reading raw JSON.
+
 ## 7. Current Non-Goals
 
 Do not start these next:
