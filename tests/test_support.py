@@ -53,12 +53,18 @@ class SparkTestCase(unittest.TestCase):
     def tearDown(self) -> None:
         self._tempdir.cleanup()
 
-    def add_telegram_channel(self, *, pairing_mode: str = "pairing", allowed_users: list[str] | None = None) -> None:
+    def add_telegram_channel(
+        self,
+        *,
+        pairing_mode: str = "pairing",
+        allowed_users: list[str] | None = None,
+        bot_token: str | None = None,
+    ) -> None:
         add_channel(
             config_manager=self.config_manager,
             state_db=self.state_db,
             channel_kind="telegram",
-            bot_token=None,
+            bot_token=bot_token,
             allowed_users=allowed_users or [],
             pairing_mode=pairing_mode,
         )
