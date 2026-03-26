@@ -44,6 +44,7 @@ Shipped today:
 - default auth-profile persistence for API-key-backed providers
 - a canonical provider registry with typed API-key vs OAuth auth methods
 - `auth providers` for local provider/auth capability discovery
+- explicit provider execution-transport metadata in the provider registry and `auth providers`
 - `auth status` for local provider secret-readiness inspection
 - OAuth callback-state persistence and single-use consumption rules
 - first OAuth-backed provider login flow via `auth login openai-codex`
@@ -55,6 +56,7 @@ Shipped today:
 - operator-visible reconnect and revoke guidance in `operator inbox` and `operator security` for expired, revoked, and refresh-error provider auth states
 - provider-aware Spark Researcher bridge routing instead of hardcoded `generic` advisory model selection
 - direct provider-backed LLM execution for API-key-backed bridge traffic via provider-aware HTTP wrapper commands
+- explicit runtime transport selection so API-key-backed providers use `direct_http` while Codex/OAuth stays `external_cli_wrapper`
 - a gateway route-registry contract that now also owns OAuth callback serving
 
 The practical result is that Telegram onboarding and moderation are much easier to operate locally, and the repo now has the first real foundations for secure provider auth growth without inventing ad hoc OAuth glue later.
@@ -91,9 +93,9 @@ The next slice should stay focused on gateway and provider-auth architecture, no
 
 Start here in this exact order:
 
-1. Decide whether Codex/OAuth should stay CLI-wrapper-backed or gain a first-class direct runtime path with the same security bar as API-key-backed providers.
-2. Add refresh scheduling or proactive expiry repair without weakening the current fail-closed posture.
-3. Consider whether operator-facing auth repair should also live in `doctor` text and setup/runbooks, not only inbox/security.
+1. Add refresh scheduling or proactive expiry repair without weakening the current fail-closed posture.
+2. Consider whether operator-facing auth repair should also live in `doctor` text and setup/runbooks, not only inbox/security.
+3. Design a first-class direct Codex/OAuth runtime only if it can match the current callback, expiry, and revocation guarantees.
 4. Only after that, widen Discord, WhatsApp, or webhook-heavy surfaces.
 
 The detailed execution direction is recorded in `GATEWAY_PROVIDER_AUTH_READINESS_REVIEW_2026-03-26.md`.

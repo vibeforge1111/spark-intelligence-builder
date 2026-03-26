@@ -26,6 +26,7 @@ This includes:
 Recommended v1 support:
 
 - OpenAI
+- OpenAI Codex via OAuth
 - Anthropic
 - OpenRouter
 - custom OpenAI-compatible endpoint
@@ -39,12 +40,14 @@ id
 provider_kind
 base_url
 default_model
+execution_transport
 default_auth_profile_id
 created_at
 updated_at
 ```
 
 The canonical provider record points at a default auth profile instead of owning raw secret material directly.
+`execution_transport` makes runtime delivery explicit so the gateway and bridge do not infer transport from model names or ad hoc provider checks.
 
 ## 4.1 Canonical Auth Profile Record
 
@@ -155,6 +158,8 @@ Model-provider OAuth should use:
 - explicit expiry tracking in local state
 - operator-visible refresh failures
 - explicit provider and redirect matching
+
+For v1, Spark should keep API-key-backed providers on a direct HTTP execution path and keep Codex/OAuth on an explicit external-wrapper path until a first-class direct OAuth runtime can match the same callback-state, expiry, and revoke guarantees.
 
 ## 9. Security Rules
 
