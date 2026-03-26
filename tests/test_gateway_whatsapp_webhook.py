@@ -264,3 +264,138 @@ class WhatsAppWebhookIngressTests(SparkTestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["decision"], "ignored")
         self.assertEqual(payload["detail"]["reason"], "status_event")
+
+    def test_rejects_stub_shaped_payload_on_real_webhook_route(self) -> None:
+        self._add_whatsapp_channel()
+        body = json.dumps(
+            {
+                "id": "wamid-1",
+                "chat_id": "phone-1",
+                "from": "wa-user-1",
+                "text": "hello from stub payload",
+            }
+        ).encode("utf-8")
+        response = handle_whatsapp_webhook(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            path=WHATSAPP_WEBHOOK_PATH,
+            method="POST",
+            content_type="application/json",
+            headers=self._signature_headers("whatsapp-app-secret", body),
+            body=body,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.body)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["decision"], "ignored")
+        self.assertEqual(payload["detail"]["reason"], "unsupported_event")
+
+    def test_rejects_batched_entries_payload(self) -> None:
+        self._add_whatsapp_channel()
+        body = json.dumps(
+            {
+                "object": "whatsapp_business_account",
+                "entry": [
+                    {"changes": [{"field": "messages", "value": {"messages": []}}]},
+                    {"changes": [{"field": "messages", "value": {"messages": []}}]},
+                ],
+            }
+        ).encode("utf-8")
+        response = handle_whatsapp_webhook(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            path=WHATSAPP_WEBHOOK_PATH,
+            method="POST",
+            content_type="application/json",
+            headers=self._signature_headers("whatsapp-app-secret", body),
+            body=body,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.body)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["decision"], "ignored")
+        self.assertEqual(payload["detail"]["reason"], "batched_entries_unsupported")
+
+    def test_rejects_batched_messages_payload(self) -> None:
+        self._add_whatsapp_channel()
+        body = json.dumps(
+            {
+                "object": "whatsapp_business_account",
+                "entry": [
+                    {
+                        "changes": [
+                            {
+                                "field": "messages",
+                                "value": {
+                                    "metadata": {"phone_number_id": "phone-1"},
+                                    "messages": [
+                                        {
+                                            "from": "wa-user-1",
+                                            "id": "wamid-1",
+                                            "type": "text",
+                                            "text": {"body": "first"},
+                                        },
+                                        {
+                                            "from": "wa-user-1",
+                                            "id": "wamid-2",
+                                            "type": "text",
+                                            "text": {"body": "second"},
+                                        },
+                                    ],
+                                },
+                            }
+                        ]
+                    }
+                ],
+            }
+        ).encode("utf-8")
+        response = handle_whatsapp_webhook(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            path=WHATSAPP_WEBHOOK_PATH,
+            method="POST",
+            content_type="application/json",
+            headers=self._signature_headers("whatsapp-app-secret", body),
+            body=body,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.body)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["decision"], "ignored")
+        self.assertEqual(payload["detail"]["reason"], "batched_messages_unsupported")
+
+    def test_rejects_non_message_change_field(self) -> None:
+        self._add_whatsapp_channel()
+        body = json.dumps(
+            {
+                "object": "whatsapp_business_account",
+                "entry": [
+                    {
+                        "changes": [
+                            {
+                                "field": "statuses",
+                                "value": {"statuses": [{"id": "status-1"}]},
+                            }
+                        ]
+                    }
+                ],
+            }
+        ).encode("utf-8")
+        response = handle_whatsapp_webhook(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            path=WHATSAPP_WEBHOOK_PATH,
+            method="POST",
+            content_type="application/json",
+            headers=self._signature_headers("whatsapp-app-secret", body),
+            body=body,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.body)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["decision"], "ignored")
+        self.assertEqual(payload["detail"]["reason"], "unsupported_change_field")

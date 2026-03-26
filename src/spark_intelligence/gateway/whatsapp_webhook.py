@@ -159,50 +159,65 @@ def _handle_whatsapp_event_post(
 
 
 def _extract_supported_whatsapp_payload(payload: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
-    if {"id", "chat_id", "from", "text"} <= payload.keys():
-        return payload, None
     if payload.get("object") != "whatsapp_business_account":
         return None, "unsupported_event"
-    for entry in payload.get("entry", []) or []:
-        if not isinstance(entry, dict):
-            continue
-        for change in entry.get("changes", []) or []:
-            if not isinstance(change, dict) or change.get("field") != "messages":
-                continue
-            value = change.get("value")
-            if not isinstance(value, dict):
-                continue
-            messages = value.get("messages")
-            if not isinstance(messages, list) or not messages:
-                if value.get("statuses"):
-                    return None, "status_event"
-                continue
-            message = messages[0]
-            if not isinstance(message, dict):
-                continue
-            if message.get("type") != "text":
-                return None, "unsupported_message_type"
-            text = ((message.get("text") or {}).get("body") if isinstance(message.get("text"), dict) else None)
-            if not isinstance(text, str) or not text.strip():
-                return None, "missing_text_body"
-            metadata = value.get("metadata") if isinstance(value.get("metadata"), dict) else {}
-            contacts = value.get("contacts") if isinstance(value.get("contacts"), list) else []
-            contact = contacts[0] if contacts and isinstance(contacts[0], dict) else {}
-            profile = contact.get("profile") if isinstance(contact.get("profile"), dict) else {}
-            whatsapp_user_id = str(message.get("from") or contact.get("wa_id") or "")
-            if not whatsapp_user_id:
-                return None, "missing_sender"
-            return (
-                {
-                    "id": str(message.get("id") or ""),
-                    "chat_id": str(metadata.get("phone_number_id") or whatsapp_user_id),
-                    "from": whatsapp_user_id,
-                    "profile_name": profile.get("name"),
-                    "text": text.strip(),
-                },
-                None,
-            )
-    return None, "unsupported_event"
+    entries = payload.get("entry")
+    if not isinstance(entries, list) or not entries:
+        return None, "missing_entries"
+    if len(entries) != 1:
+        return None, "batched_entries_unsupported"
+    entry = entries[0]
+    if not isinstance(entry, dict):
+        return None, "invalid_entry"
+
+    changes = entry.get("changes")
+    if not isinstance(changes, list) or not changes:
+        return None, "missing_changes"
+    if len(changes) != 1:
+        return None, "batched_changes_unsupported"
+    change = changes[0]
+    if not isinstance(change, dict):
+        return None, "invalid_change"
+    if change.get("field") != "messages":
+        return None, "unsupported_change_field"
+
+    value = change.get("value")
+    if not isinstance(value, dict):
+        return None, "invalid_change_value"
+    messages = value.get("messages")
+    if value.get("statuses") and not messages:
+        return None, "status_event"
+    if not isinstance(messages, list) or not messages:
+        return None, "missing_messages"
+    if len(messages) != 1:
+        return None, "batched_messages_unsupported"
+    message = messages[0]
+    if not isinstance(message, dict):
+        return None, "invalid_message"
+    if message.get("type") != "text":
+        return None, "unsupported_message_type"
+
+    text = ((message.get("text") or {}).get("body") if isinstance(message.get("text"), dict) else None)
+    if not isinstance(text, str) or not text.strip():
+        return None, "missing_text_body"
+
+    metadata = value.get("metadata") if isinstance(value.get("metadata"), dict) else {}
+    contacts = value.get("contacts") if isinstance(value.get("contacts"), list) else []
+    contact = contacts[0] if contacts and isinstance(contacts[0], dict) else {}
+    profile = contact.get("profile") if isinstance(contact.get("profile"), dict) else {}
+    whatsapp_user_id = str(message.get("from") or contact.get("wa_id") or "")
+    if not whatsapp_user_id:
+        return None, "missing_sender"
+    return (
+        {
+            "id": str(message.get("id") or ""),
+            "chat_id": str(metadata.get("phone_number_id") or whatsapp_user_id),
+            "from": whatsapp_user_id,
+            "profile_name": profile.get("name"),
+            "text": text.strip(),
+        },
+        None,
+    )
 
 
 def _request_error_response(message: str) -> WhatsAppWebhookResponse:
