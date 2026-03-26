@@ -62,7 +62,7 @@ Shipped today:
 - fail-closed `gateway start` behavior when configured runtime-provider or provider-execution readiness is not actually usable
 - stricter gateway OAuth callback capture so malformed callback requests are rejected at the HTTP edge and provider-denied callbacks become explicit auth failures with single-use state consumption
 - stricter route-registry ingress contracts so OAuth callback routes stay GET-only and future adapter webhooks must declare POST-only request content types
-- first Discord webhook skeleton on `/webhooks/discord` with route validation, Discord signature verification via interaction public key, legacy static-secret message ingress reduced to explicit compatibility mode, signed `PING` handling, and an explicit DM-only chat-input `/spark message:<text>` `APPLICATION_COMMAND` contract routed through the existing DM bridge with guarded callback replies
+- first Discord webhook skeleton on `/webhooks/discord` with route validation, Discord signature verification via interaction public key, legacy static-secret message ingress reduced to explicit compatibility mode, operator-visible readiness for signed-vs-legacy Discord ingress, signed `PING` handling, and an explicit DM-only chat-input `/spark message:<text>` `APPLICATION_COMMAND` contract routed through the existing DM bridge with guarded callback replies
 - operator-visible reconnect and revoke guidance in `operator inbox` and `operator security` for expired, revoked, and refresh-error provider auth states
 - provider-aware Spark Researcher bridge routing instead of hardcoded `generic` advisory model selection
 - direct provider-backed LLM execution for API-key-backed bridge traffic via provider-aware HTTP wrapper commands
