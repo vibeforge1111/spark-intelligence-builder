@@ -4,6 +4,8 @@
 
 This note records what is already real in the repo, what shipped on 2026-03-26, what landed in the first gateway/provider-auth architecture pass, and what the team should do next.
 
+For the latest end-of-day handoff after the phase D and phase E work landed, see [STATUS_HANDOFF_2026-03-27.md](./STATUS_HANDOFF_2026-03-27.md).
+
 ## 2. Current Build State
 
 The first serious Spark Intelligence vertical slice now exists.
