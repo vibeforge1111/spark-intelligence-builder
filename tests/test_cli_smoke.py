@@ -266,6 +266,7 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["webhook_alerts"], [])
         self.assertEqual(len(payload["webhook_snoozes"]), 1)
         self.assertEqual(payload["webhook_snoozes"][0]["event"], "discord_webhook_auth_failed")
+        self.assertEqual(payload["webhook_snoozes"][0]["reason"], "known noisy source")
         snooze_items = [
             item
             for item in payload["items"]
@@ -273,6 +274,7 @@ class CliSmokeTests(SparkTestCase):
         ]
         self.assertEqual(len(snooze_items), 1)
         self.assertEqual(snooze_items[0]["priority"], "info")
+        self.assertIn("Reason: known noisy source.", snooze_items[0]["summary"])
 
         history_exit, history_stdout, history_stderr = self.run_cli(
             "operator",
@@ -336,6 +338,7 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(len(list_payload["rows"]), 1)
         self.assertEqual(list_payload["rows"][0]["event"], "discord_webhook_auth_failed")
         self.assertGreaterEqual(list_payload["rows"][0]["remaining_minutes"], 1)
+        self.assertIsNone(list_payload["rows"][0]["reason"])
 
         clear_exit, clear_stdout, clear_stderr = self.run_cli(
             "operator",
@@ -646,6 +649,7 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["webhooks"], [])
         self.assertEqual(len(payload["webhook_snoozes"]), 1)
         self.assertEqual(payload["webhook_snoozes"][0]["event"], "whatsapp_webhook_verification_failed")
+        self.assertIsNone(payload["webhook_snoozes"][0]["reason"])
         snooze_items = [item for item in payload["items"] if item["kind"] == "webhook_snooze"]
         self.assertEqual(len(snooze_items), 1)
         self.assertEqual(

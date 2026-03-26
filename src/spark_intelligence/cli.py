@@ -817,6 +817,7 @@ def handle_operator_snooze_webhook_alert(args: argparse.Namespace) -> int:
         state_db=state_db,
         event_name=args.event,
         minutes=args.minutes,
+        reason=args.reason,
     )
     log_operator_event(
         state_db=state_db,

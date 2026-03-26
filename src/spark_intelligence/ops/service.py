@@ -140,9 +140,10 @@ class OperatorWebhookSnoozeReport:
             return "No active webhook alert snoozes."
         lines = ["Active webhook alert snoozes:"]
         for row in self.rows:
+            reason = f" reason={row['reason']}" if row.get("reason") else ""
             lines.append(
                 f"- event={row['event']} until={row['snooze_until']} "
-                f"remaining_minutes={row['remaining_minutes']}"
+                f"remaining_minutes={row['remaining_minutes']}{reason}"
             )
         return "\n".join(lines)
 
@@ -234,12 +235,16 @@ def list_webhook_alert_events() -> tuple[str, ...]:
     return tuple(WEBHOOK_ALERT_EVENT_SPECS.keys())
 
 
-def snooze_webhook_alert(*, state_db: StateDB, event_name: str, minutes: int) -> str:
+def snooze_webhook_alert(*, state_db: StateDB, event_name: str, minutes: int, reason: str | None = None) -> str:
     if event_name not in WEBHOOK_ALERT_EVENT_SPECS:
         raise ValueError(f"Unsupported webhook alert event: {event_name}")
     if minutes <= 0:
         raise ValueError("Webhook alert snooze minutes must be greater than zero.")
     snooze_until = _utc_now() + timedelta(minutes=minutes)
+    payload = {
+        "snooze_until": snooze_until.isoformat(timespec="seconds"),
+        "reason": reason or None,
+    }
     with state_db.connect() as conn:
         conn.execute(
             """
@@ -249,7 +254,7 @@ def snooze_webhook_alert(*, state_db: StateDB, event_name: str, minutes: int) ->
                 value=excluded.value,
                 updated_at=CURRENT_TIMESTAMP
             """,
-            (_webhook_alert_snooze_state_key(event_name), snooze_until.isoformat(timespec="seconds")),
+            (_webhook_alert_snooze_state_key(event_name), json.dumps(payload, sort_keys=True)),
         )
         conn.commit()
     return snooze_until.isoformat(timespec="seconds")
@@ -282,6 +287,7 @@ def list_webhook_alert_snoozes(*, state_db: StateDB) -> OperatorWebhookSnoozeRep
                 "event": row["event"],
                 "snooze_until": row["snooze_until"].isoformat(timespec="seconds"),
                 "remaining_minutes": max(1, int((remaining.total_seconds() + 59) // 60)),
+                "reason": row.get("reason"),
             }
         )
     return OperatorWebhookSnoozeReport(rows=payload)
@@ -684,6 +690,7 @@ def _build_inbox_items(
 
     for row in webhook_snoozes:
         event_name = str(row["event"])
+        reason_suffix = f" Reason: {row['reason']}." if row.get("reason") else ""
         items.append(
             {
                 "kind": "webhook_snooze",
@@ -693,7 +700,7 @@ def _build_inbox_items(
                 "item_ref": event_name,
                 "summary": (
                     f"Webhook alert {event_name} is snoozed until {row['snooze_until']} "
-                    f"({row['remaining_minutes']} minute(s) remaining)."
+                    f"({row['remaining_minutes']} minute(s) remaining).{reason_suffix}"
                 ),
                 "recommended_command": f"spark-intelligence operator clear-webhook-alert-snooze {event_name}",
             }
@@ -784,13 +791,14 @@ def _build_security_items(
 
     for row in webhook_snoozes:
         event_name = str(row["event"])
+        reason_suffix = f" Reason: {row['reason']}." if row.get("reason") else ""
         items.append(
             {
                 "priority": "info",
                 "sort_order": severity_order["info"],
                 "summary": (
                     f"Webhook alert {event_name} is snoozed until {row['snooze_until']} "
-                    f"({row['remaining_minutes']} minute(s) remaining)."
+                    f"({row['remaining_minutes']} minute(s) remaining).{reason_suffix}"
                 ),
                 "recommended_command": f"spark-intelligence operator clear-webhook-alert-snooze {event_name}",
             }
@@ -1036,7 +1044,8 @@ def _read_webhook_alert_snooze_rows(*, state_db: StateDB, now: datetime) -> list
         snoozed: list[dict[str, Any]] = []
         for row in rows:
             key = str(row["state_key"])
-            snooze_until = _parse_iso_datetime(row["value"])
+            snooze_state = _parse_webhook_alert_snooze_value(row["value"])
+            snooze_until = snooze_state["snooze_until"]
             if snooze_until is None or snooze_until < now:
                 stale_keys.append(key)
                 continue
@@ -1045,6 +1054,7 @@ def _read_webhook_alert_snooze_rows(*, state_db: StateDB, now: datetime) -> list
                     {
                         "event": key.removeprefix("ops:webhook_alert_snooze:"),
                         "snooze_until": snooze_until,
+                        "reason": snooze_state["reason"],
                     }
                 )
         if stale_keys:
@@ -1059,3 +1069,18 @@ def _read_webhook_alert_snooze_rows(*, state_db: StateDB, now: datetime) -> list
 
 def _webhook_alert_snooze_state_key(event_name: str) -> str:
     return f"ops:webhook_alert_snooze:{event_name}"
+
+
+def _parse_webhook_alert_snooze_value(value: Any) -> dict[str, Any]:
+    if isinstance(value, str):
+        try:
+            payload = json.loads(value)
+        except json.JSONDecodeError:
+            return {"snooze_until": _parse_iso_datetime(value), "reason": None}
+        if isinstance(payload, dict):
+            return {
+                "snooze_until": _parse_iso_datetime(payload.get("snooze_until")),
+                "reason": str(payload.get("reason")).strip() if payload.get("reason") else None,
+            }
+        return {"snooze_until": _parse_iso_datetime(value), "reason": None}
+    return {"snooze_until": None, "reason": None}
