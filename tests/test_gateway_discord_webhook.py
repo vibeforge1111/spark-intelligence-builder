@@ -192,10 +192,24 @@ class DiscordWebhookIngressTests(SparkTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.body), {"type": 1})
 
-    def test_returns_not_implemented_for_signed_non_ping_interaction(self) -> None:
+    def test_handles_signed_application_command_in_dm_context(self) -> None:
         signing_key = SigningKey.generate()
         self._add_discord_channel(interaction_public_key=signing_key.verify_key.encode().hex(), webhook_secret=None)
-        body = json.dumps({"type": 2, "data": {"name": "hello"}}).encode("utf-8")
+        body = json.dumps(
+            {
+                "id": "interaction-1",
+                "type": 2,
+                "channel_id": "dm-1",
+                "context": 1,
+                "user": {"id": "user-1", "username": "alice"},
+                "data": {
+                    "name": "spark",
+                    "options": [
+                        {"name": "message", "type": 3, "value": "hello from discord command"}
+                    ],
+                },
+            }
+        ).encode("utf-8")
         response = handle_discord_webhook(
             config_manager=self.config_manager,
             state_db=self.state_db,
@@ -206,9 +220,46 @@ class DiscordWebhookIngressTests(SparkTestCase):
             body=body,
         )
 
-        self.assertEqual(response.status_code, 501)
+        self.assertEqual(response.status_code, 200)
         payload = json.loads(response.body)
-        self.assertEqual(payload["error"], "Discord interaction payload handling is not implemented yet.")
+        self.assertEqual(payload["type"], 4)
+        self.assertEqual(payload["data"]["flags"], 64)
+        self.assertIn("Pairing approval is required", payload["data"]["content"])
+
+    def test_rejects_signed_application_command_in_guild_context(self) -> None:
+        signing_key = SigningKey.generate()
+        self._add_discord_channel(interaction_public_key=signing_key.verify_key.encode().hex(), webhook_secret=None)
+        body = json.dumps(
+            {
+                "id": "interaction-2",
+                "type": 2,
+                "channel_id": "guild-channel-1",
+                "guild_id": "guild-1",
+                "context": 0,
+                "member": {"user": {"id": "user-1", "username": "alice"}},
+                "data": {
+                    "name": "spark",
+                    "options": [
+                        {"name": "message", "type": 3, "value": "hello from guild"}
+                    ],
+                },
+            }
+        ).encode("utf-8")
+        response = handle_discord_webhook(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            path=DISCORD_WEBHOOK_PATH,
+            method="POST",
+            content_type="application/json",
+            headers=self._signed_headers(signing_key, body),
+            body=body,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["type"], 4)
+        self.assertEqual(payload["data"]["flags"], 64)
+        self.assertEqual(payload["data"]["content"], "Discord interactions are DM-only in Spark v1.")
 
     def test_handles_valid_dm_payload(self) -> None:
         self._add_discord_channel()

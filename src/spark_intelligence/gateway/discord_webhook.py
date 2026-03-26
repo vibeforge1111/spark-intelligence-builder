@@ -3,12 +3,14 @@ from __future__ import annotations
 import hmac
 import json
 from dataclasses import dataclass
+from typing import Any
 
 from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
 
 from spark_intelligence.adapters.discord.runtime import simulate_discord_message
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.gateway import resolve_simulated_dm
 from spark_intelligence.gateway.routes import GatewayRouteRegistration, GatewayRouteRegistry
 from spark_intelligence.state.db import StateDB
 
@@ -78,7 +80,11 @@ def handle_discord_webhook(
             body=json.dumps({"type": 1}, indent=2),
         )
     if "type" in payload and "content" not in payload:
-        return _json_error_response(501, "Discord interaction payload handling is not implemented yet.")
+        return _handle_discord_interaction_payload(
+            config_manager=config_manager,
+            state_db=state_db,
+            payload=payload,
+        )
 
     try:
         result = simulate_discord_message(
@@ -174,3 +180,93 @@ def _header_value(headers: dict[str, str] | None, name: str) -> str | None:
         if key.lower() == name.lower():
             return value
     return None
+
+
+def _handle_discord_interaction_payload(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    payload: dict[str, Any],
+) -> GatewayWebhookResponse:
+    interaction_type = payload.get("type")
+    if interaction_type != 2:
+        return _discord_interaction_message(
+            "Discord interaction type is not implemented yet.",
+            ephemeral=True,
+        )
+
+    if payload.get("guild_id") not in {None, "", "null"} or payload.get("context") == 0:
+        return _discord_interaction_message(
+            "Discord interactions are DM-only in Spark v1.",
+            ephemeral=True,
+        )
+
+    user = payload.get("user")
+    if not isinstance(user, dict):
+        member = payload.get("member") or {}
+        user = member.get("user") if isinstance(member, dict) else None
+    if not isinstance(user, dict) or not user.get("id"):
+        return _discord_interaction_message(
+            "Discord interaction payload is missing the invoking user.",
+            ephemeral=True,
+        )
+
+    prompt = _extract_discord_interaction_prompt(payload.get("data"))
+    if not prompt:
+        return _discord_interaction_message(
+            "Discord command is missing a text prompt option.",
+            ephemeral=True,
+        )
+
+    channel_id = str(payload.get("channel_id") or f"discord-interaction:{user['id']}")
+    bridge = resolve_simulated_dm(
+        config_manager=config_manager,
+        state_db=state_db,
+        channel_id="discord",
+        request_id=f"discord-interaction:{payload.get('id') or user['id']}",
+        external_user_id=str(user["id"]),
+        display_name=str(user.get("username") or f"discord user {user['id']}"),
+        user_message=prompt,
+    )
+    return _discord_interaction_message(
+        str(bridge.detail.get("response_text") or "Spark did not generate a reply."),
+        ephemeral=True,
+    )
+
+
+def _extract_discord_interaction_prompt(data: Any) -> str | None:
+    if not isinstance(data, dict):
+        return None
+    options = data.get("options")
+    prompt = _find_first_string_option(options)
+    if prompt:
+        return prompt
+    name = data.get("name")
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+    return None
+
+
+def _find_first_string_option(options: Any) -> str | None:
+    if not isinstance(options, list):
+        return None
+    for option in options:
+        if not isinstance(option, dict):
+            continue
+        value = option.get("value")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        nested = _find_first_string_option(option.get("options"))
+        if nested:
+            return nested
+    return None
+
+
+def _discord_interaction_message(content: str, *, ephemeral: bool) -> GatewayWebhookResponse:
+    data: dict[str, Any] = {"content": content}
+    if ephemeral:
+        data["flags"] = 64
+    return GatewayWebhookResponse(
+        status_code=200,
+        body=json.dumps({"type": 4, "data": data}, indent=2),
+    )
