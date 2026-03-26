@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from spark_intelligence.adapters.telegram.runtime import read_telegram_runtime_health
@@ -15,6 +16,7 @@ from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import swarm_status
 
 WEBHOOK_ALERT_SUSTAINED_THRESHOLD = 3
+WEBHOOK_ALERT_RECENT_WINDOW = timedelta(minutes=15)
 
 
 @dataclass
@@ -821,6 +823,7 @@ def _build_auth_alerts(*, config_manager: ConfigManager, state_db: StateDB) -> l
 
 
 def _build_webhook_alerts(*, traces: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    now = _utc_now()
     event_specs = {
         "discord_webhook_auth_failed": {
             "status": "auth_failed",
@@ -840,7 +843,11 @@ def _build_webhook_alerts(*, traces: list[dict[str, Any]]) -> list[dict[str, Any
     }
     alerts: list[dict[str, Any]] = []
     for event_name, spec in event_specs.items():
-        matching = [trace for trace in traces if trace.get("event") == event_name]
+        matching = [
+            trace
+            for trace in traces
+            if trace.get("event") == event_name and _webhook_trace_is_recent(trace, now=now)
+        ]
         if not matching:
             continue
         latest = matching[-1]
@@ -863,3 +870,26 @@ def _build_webhook_alerts(*, traces: list[dict[str, Any]]) -> list[dict[str, Any
             }
         )
     return alerts
+
+
+def _webhook_trace_is_recent(trace: dict[str, Any], *, now: datetime) -> bool:
+    recorded_at = _parse_iso_datetime(trace.get("recorded_at"))
+    if recorded_at is None:
+        return False
+    return now - recorded_at <= WEBHOOK_ALERT_RECENT_WINDOW
+
+
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
