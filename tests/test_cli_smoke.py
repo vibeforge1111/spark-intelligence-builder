@@ -1064,10 +1064,22 @@ class CliSmokeTests(SparkTestCase):
         self.assertIn("- provider-runtime: ok openai-codex:openai-codex:default:external_cli_wrapper", stdout)
         self.assertIn("- provider-execution: degraded openai-codex:external_cli_wrapper:researcher_disabled", stdout)
         self.assertIn("- oauth-maintenance: degraded oauth maintenance has never run; expiring_soon=openai-codex", stdout)
+        self.assertIn("- repair-hint: spark-intelligence jobs tick", stdout)
+        self.assertIn("- repair-hint: spark-intelligence researcher status", stdout)
         self.assertIn(
             "- provider=openai-codex method=oauth status=expiring_soon transport=external_cli_wrapper exec_ready=no dependency=researcher_disabled",
             stdout,
         )
+
+        status_exit, status_stdout, status_stderr = self.run_cli(
+            "status",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(status_exit, 1, status_stderr)
+        self.assertIn("- oauth maintenance detail: oauth maintenance has never run; expiring_soon=openai-codex", status_stdout)
+        self.assertIn("- repair hint: spark-intelligence jobs tick", status_stdout)
+        self.assertIn("- repair hint: spark-intelligence researcher status", status_stdout)
 
     def test_gateway_start_fails_closed_when_runtime_provider_is_unresolved(self) -> None:
         self.add_telegram_channel(bot_token="good-token")

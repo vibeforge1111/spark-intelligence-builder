@@ -288,3 +288,5 @@ The exact first move is:
 3. phase 3: harden the agent/provider execution contract before major breadth expansion
 
 Do not start broad live Discord or WhatsApp runtime work before that.
+
+The first phase-1 follow-up is already in: `status` and `gateway status` now surface explicit repair hints for degraded OAuth maintenance, provider runtime, and provider execution state so those summaries align with the operator recovery path instead of only reporting a degraded state.

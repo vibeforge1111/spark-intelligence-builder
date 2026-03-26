@@ -41,6 +41,7 @@ class GatewayStatus:
     provider_execution_detail: str
     oauth_maintenance_ok: bool
     oauth_maintenance_detail: str
+    repair_hints: list[str]
     provider_lines: list[str]
     adapter_lines: list[str]
 
@@ -57,6 +58,7 @@ class GatewayStatus:
                 "provider_execution_detail": self.provider_execution_detail,
                 "oauth_maintenance_ok": self.oauth_maintenance_ok,
                 "oauth_maintenance_detail": self.oauth_maintenance_detail,
+                "repair_hints": self.repair_hints,
                 "provider_lines": self.provider_lines,
                 "adapter_lines": self.adapter_lines,
             },
@@ -77,6 +79,7 @@ class GatewayStatus:
         lines.append(
             f"- oauth-maintenance: {'ok' if self.oauth_maintenance_ok else 'degraded'} {self.oauth_maintenance_detail}"
         )
+        lines.extend(f"- repair-hint: {hint}" for hint in self.repair_hints)
         lines.extend(f"- {line}" for line in self.provider_lines)
         lines.extend(self.adapter_lines)
         return "\n".join(lines)
@@ -132,6 +135,13 @@ def gateway_status(config_manager: ConfigManager, state_db: StateDB) -> GatewayS
         provider_execution_detail=provider_execution_detail,
         oauth_maintenance_ok=oauth_maintenance_ok,
         oauth_maintenance_detail=oauth_maintenance_detail,
+        repair_hints=_gateway_repair_hints(
+            auth_report=auth_report,
+            provider_runtime_ok=provider_runtime_ok,
+            provider_execution_ok=provider_execution_ok,
+            oauth_maintenance_ok=oauth_maintenance_ok,
+            provider_execution_detail=provider_execution_detail,
+        ),
         provider_lines=[
             _provider_status_line(
                 provider.provider_id,
@@ -283,6 +293,49 @@ def gateway_start(
         lines.append("")
         lines.append(f"Gateway exited cleanly after {cycle_index} cycle(s).")
     return GatewayStartReport(ok=ok, text="\n".join(lines))
+
+
+def _gateway_repair_hints(
+    *,
+    auth_report: Any,
+    provider_runtime_ok: bool,
+    provider_execution_ok: bool,
+    oauth_maintenance_ok: bool,
+    provider_execution_detail: str,
+) -> list[str]:
+    hints: list[str] = []
+    if not oauth_maintenance_ok:
+        hints.append("spark-intelligence jobs tick")
+    if not provider_runtime_ok:
+        runtime_hint = _primary_runtime_repair_hint(auth_report)
+        if runtime_hint not in hints:
+            hints.append(runtime_hint)
+    if not provider_execution_ok:
+        execution_hint = _provider_execution_repair_hint(provider_execution_detail)
+        if execution_hint not in hints:
+            hints.append(execution_hint)
+    return hints
+
+
+def _primary_runtime_repair_hint(auth_report: Any) -> str:
+    providers = getattr(auth_report, "providers", [])
+    for provider in providers:
+        if provider.auth_method == "oauth":
+            if provider.status in {"expired", "refresh_error"} or provider.last_refresh_error:
+                return f"spark-intelligence auth refresh {provider.provider_id}"
+            if provider.status == "expiring_soon":
+                return "spark-intelligence jobs tick"
+            if provider.status in {"revoked", "pending_oauth"} or not provider.secret_present:
+                return f"spark-intelligence auth login {provider.provider_id} --listen"
+        elif not provider.secret_present:
+            return f"spark-intelligence auth connect {provider.provider_id} --api-key <key>"
+    return "spark-intelligence auth status"
+
+
+def _provider_execution_repair_hint(provider_execution_detail: str) -> str:
+    if "researcher_" in provider_execution_detail:
+        return "spark-intelligence researcher status"
+    return "spark-intelligence operator security"
 
 
 def gateway_simulate_telegram_update(

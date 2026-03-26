@@ -129,6 +129,16 @@ Recommended next actions inside phase 1:
 2. do one pass that removes or tightens any duplicated recovery wording across `doctor`, `status`, `gateway status`, and operator surfaces
 3. only after that, do a live validation pass for one narrow Discord or WhatsApp path
 
+The first pass on step 2 is now landed:
+
+- `status` and `gateway status` now surface explicit repair hints when OAuth maintenance, provider runtime, or provider execution are degraded
+- those hints now reuse the same first actions already implied by operator surfaces:
+  - `spark-intelligence jobs tick`
+  - `spark-intelligence auth refresh <provider>`
+  - `spark-intelligence auth login <provider> --listen`
+  - `spark-intelligence auth connect <provider> --api-key <key>`
+  - `spark-intelligence researcher status`
+
 ## 9. Proposed Decision For Now
 
 The repo should explicitly treat the following as the v1 contract:

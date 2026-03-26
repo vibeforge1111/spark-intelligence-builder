@@ -115,6 +115,8 @@ The concrete phase plan is recorded in `NEXT_EXECUTION_PLAN_2026-03-26.md`.
 
 Phase 1 has now started with `GATEWAY_RUNTIME_OPERATOR_RECOVERY_REVIEW_2026-03-26.md`.
 
+The first phase-1 repair-guidance patch is also in: `status` and `gateway status` now surface explicit repair hints for degraded OAuth maintenance, provider runtime, and provider execution state so those surfaces no longer rely on operator views alone to reveal the first fix command.
+
 ## 7. Current Non-Goals
 
 Do not start these next:

@@ -122,6 +122,10 @@ class SystemStatus:
         )
         if self.payload['gateway'].get('oauth_maintenance_detail'):
             lines.append(f"- oauth maintenance detail: {self.payload['gateway']['oauth_maintenance_detail']}")
+        lines.extend(
+            f"- repair hint: {hint}"
+            for hint in (self.payload['gateway'].get('repair_hints') or [])
+        )
         if self.payload['researcher'].get('last_provider_execution_transport'):
             lines.append(
                 f"- last provider transport: {self.payload['researcher']['last_provider_execution_transport']}"
