@@ -127,7 +127,17 @@ The next phase-1 start-path patch is also in: `gateway start` now echoes the sam
 
 Phase 2 prep has now started with `DISCORD_OPERATOR_RUNBOOK_2026-03-26.md`, which locks the narrow live-validation target for Discord v1 to signed DM slash-command ingress only: `/spark message:<text>`.
 
-Execution is now explicitly refocused through `EXECUTION_REFOCUS_TELEGRAM_LLM_2026-03-26.md`: before live Discord or broader WhatsApp work, Spark should first prove the real Telegram plus LLM path end to end on the live home, including Codex auth and provider-backed gateway execution.
+Execution is now explicitly refocused through `EXECUTION_REFOCUS_TELEGRAM_LLM_2026-03-26.md`: before live Discord or broader WhatsApp work, Spark should first prove and stabilize the real Telegram plus LLM path end to end on the live home.
+
+That proof is now in place on the canonical home `.tmp-home-live-telegram-real`:
+
+- Telegram auth is healthy against the live BotFather bot `@SparkAGI_bot`
+- the live home is narrowed to one working provider path, `custom`, backed by MiniMax
+- `auth status`, `gateway status`, and top-level `status` are now all consistent on that same home
+- `gateway start --once` now exits cleanly on that same home with provider runtime and execution both healthy
+- one real inbound Telegram DM has been processed and one real outbound provider-backed reply has been sent successfully on that same home
+
+Codex OAuth is still not proven on the live home and is no longer the gating item for the Telegram vertical slice. The current remaining work is operational hardening around the already-proven Telegram plus MiniMax path, followed by a deliberate decision on whether to retry Codex auth or defer it behind the stable API-key-backed path.
 
 ## 7. Current Non-Goals
 
@@ -144,9 +154,8 @@ Do not start these next:
 
 The next slice is successful if all of this is true:
 
-- one shared runtime-provider resolver exists and is used by every model-call path
-- Spark supports both static API-key auth and at least one secure OAuth flow with login, logout, and refresh/expiry handling
-- callback state is single-use, auditable, and fail-closed
-- doctor and status can explain missing, expiring, failed, and healthy auth states
-- channel config points at auth profiles instead of raw token assumptions
+- the canonical Telegram live home stays on one working provider path and remains green after token, provider, or pairing changes
+- one controlled provider-failure drill is run on that same home and all recovery surfaces point at the correct repair flow
+- one real Telegram reply is re-proven after the recovery drill
+- Codex auth is either deliberately retried from a stable baseline or explicitly deferred behind the proven MiniMax path
 - expansion to another adapter happens only after those contracts are stable

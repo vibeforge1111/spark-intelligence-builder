@@ -304,4 +304,13 @@ The next phase-1 start-path patch is also in: `gateway start` now echoes the sam
 
 Phase 2 prep is now in: [docs/DISCORD_OPERATOR_RUNBOOK_2026-03-26.md](./docs/DISCORD_OPERATOR_RUNBOOK_2026-03-26.md) defines the exact narrow live-validation target for Discord v1 signed interactions: DM-only `/spark message:<text>`, with setup, failure checks, and recovery commands.
 
-The current refocus is: finish the real Telegram plus LLM path first, then return to Discord live validation, then WhatsApp after that.
+The current refocus is: keep the canonical live home `.tmp-home-live-telegram-real` healthy on the proven Telegram plus MiniMax path first, then tighten Telegram recovery and rotation behavior, then decide whether to retry Codex auth, and only after that return to Discord live validation and later WhatsApp.
+
+That Telegram plus LLM path is now proven end to end on the canonical live home:
+
+- `auth status`: `custom` active via `env:CUSTOM_API_KEY`
+- model: `MiniMax-M2.5`
+- base URL: `https://api.minimax.io/v1`
+- `gateway status`: ready
+- `status`: doctor ok, gateway ready
+- `gateway start --once`: real Telegram DM processed and real outbound reply sent successfully
