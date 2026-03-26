@@ -186,6 +186,11 @@ def _build_handler(*, parsed: SplitResult, capture: dict[str, str], registry: Ga
             if not route or route.path != parsed.path:
                 self.send_error(404, "Route not found.")
                 return
+            try:
+                _validate_callback_query(request_target.query)
+            except ValueError as exc:
+                self.send_error(400, str(exc))
+                return
 
             callback_url = urlunsplit(
                 (
@@ -217,6 +222,24 @@ def _build_handler(*, parsed: SplitResult, capture: dict[str, str], registry: Ga
             return
 
     return OAuthCallbackHandler
+
+
+def _validate_callback_query(query: str) -> None:
+    parsed = parse_qs(query, keep_blank_values=True)
+    state_values = [value for value in parsed.get("state", []) if value]
+    code_values = [value for value in parsed.get("code", []) if value]
+    error_values = [value for value in parsed.get("error", []) if value]
+
+    if len(state_values) != 1:
+        raise ValueError("OAuth callback must include exactly one non-empty 'state' value.")
+    if code_values and error_values:
+        raise ValueError("OAuth callback must not include both 'code' and 'error'.")
+    if len(code_values) > 1:
+        raise ValueError("OAuth callback must include at most one 'code' value.")
+    if len(error_values) > 1:
+        raise ValueError("OAuth callback must include at most one 'error' value.")
+    if not code_values and not error_values:
+        raise ValueError("OAuth callback must include either 'code' or 'error'.")
 
 
 def _validate_redirect_uri(redirect_uri: str) -> SplitResult:

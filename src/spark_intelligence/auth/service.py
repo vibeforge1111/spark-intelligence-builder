@@ -293,14 +293,32 @@ def complete_oauth_login(
         raise ValueError(f"Provider '{provider}' does not support OAuth login.")
 
     parsed = urllib.parse.urlparse(callback_url)
-    query = urllib.parse.parse_qs(parsed.query)
+    query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
     state = _required_query_value(query, "state")
+    callback_error = _oauth_callback_error(query)
+    redirect_uri = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+    if callback_error:
+        oauth_state = consume_oauth_callback_state(
+            state_db=state_db,
+            provider_id=provider,
+            oauth_state=state,
+            redirect_uri=redirect_uri,
+            expected_issuer=_issuer_from_url(spec.oauth.authorize_url),
+        )
+        _log_provider_runtime_event(
+            state_db=state_db,
+            provider_id=provider,
+            auth_profile_id=oauth_state.auth_profile_id or build_default_auth_profile_id(provider),
+            event_kind="oauth_login_failed",
+            detail={"error": callback_error, "issuer": _issuer_from_url(spec.oauth.authorize_url)},
+        )
+        raise ValueError(callback_error)
     code = _required_query_value(query, "code")
     oauth_state = consume_oauth_callback_state(
         state_db=state_db,
         provider_id=provider,
         oauth_state=state,
-        redirect_uri=f"{parsed.scheme}://{parsed.netloc}{parsed.path}",
+        redirect_uri=redirect_uri,
         expected_issuer=_issuer_from_url(spec.oauth.authorize_url),
     )
     token_payload = exchange_oauth_authorization_code(
@@ -824,6 +842,18 @@ def _required_query_value(query: dict[str, list[str]], key: str) -> str:
     if not values or not values[0]:
         raise ValueError(f"OAuth callback URL is missing '{key}'.")
     return values[0]
+
+
+def _oauth_callback_error(query: dict[str, list[str]]) -> str | None:
+    error_values = query.get("error") or []
+    error = next((value for value in error_values if value), "")
+    if not error:
+        return None
+    description_values = query.get("error_description") or []
+    description = next((value for value in description_values if value), "")
+    if description:
+        return f"OAuth callback returned error '{error}': {description}"
+    return f"OAuth callback returned error '{error}'."
 
 
 def _log_provider_runtime_event(
