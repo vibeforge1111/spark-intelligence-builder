@@ -16,10 +16,14 @@ class AttachmentRecord:
     repo_root: str
     manifest_path: str
     hook_manifest_path: str | None
+    schema_version: str | None
+    io_protocol: str | None
     status: str
     source: str
     capabilities: list[str]
+    commands: dict[str, list[str]]
     description: str | None
+    frontier: dict[str, Any] | None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -29,10 +33,14 @@ class AttachmentRecord:
             "repo_root": self.repo_root,
             "manifest_path": self.manifest_path,
             "hook_manifest_path": self.hook_manifest_path,
+            "schema_version": self.schema_version,
+            "io_protocol": self.io_protocol,
             "status": self.status,
             "source": self.source,
             "capabilities": self.capabilities,
+            "commands": self.commands,
             "description": self.description,
+            "frontier": self.frontier,
         }
 
 
@@ -150,10 +158,14 @@ def _scan_chip_roots(roots: list[Path], source: str, warnings: list[str]) -> lis
                 repo_root=str(repo_root),
                 manifest_path=str(manifest_path),
                 hook_manifest_path=None,
+                schema_version=_normalize_optional_string(payload.get("schema_version")),
+                io_protocol=_normalize_optional_string(payload.get("io_protocol")),
                 status="available",
                 source=source,
                 capabilities=capabilities,
+                commands=_normalize_commands(payload.get("commands")),
                 description=str(payload.get("description") or "").strip() or None,
+                frontier=payload.get("frontier") if isinstance(payload.get("frontier"), dict) else None,
             )
         )
     return records
@@ -184,10 +196,14 @@ def _scan_path_roots(roots: list[Path], source: str, warnings: list[str]) -> lis
                 repo_root=str(repo_root),
                 manifest_path=str(manifest_path),
                 hook_manifest_path=str(hook_manifest_path) if hook_manifest_path.exists() else None,
+                schema_version=_normalize_optional_string(hook_manifest.get("schema_version")),
+                io_protocol=_normalize_optional_string(hook_manifest.get("io_protocol")),
                 status="available",
                 source=source,
                 capabilities=capabilities,
+                commands=_normalize_commands(hook_manifest.get("commands")),
                 description=None,
+                frontier=hook_manifest.get("frontier") if isinstance(hook_manifest.get("frontier"), dict) else None,
             )
         )
     return records
@@ -234,3 +250,24 @@ def _append_duplicate_warnings(records: list[AttachmentRecord], warnings: list[s
     for (kind, key), roots in sorted(seen.items()):
         if len(roots) > 1:
             warnings.append(f"duplicate {kind} key '{key}' found in: {', '.join(roots)}")
+
+
+def _normalize_optional_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
+
+
+def _normalize_commands(value: Any) -> dict[str, list[str]]:
+    if not isinstance(value, dict):
+        return {}
+    normalized: dict[str, list[str]] = {}
+    for hook, command in value.items():
+        hook_name = str(hook).strip()
+        if not hook_name or not isinstance(command, list):
+            continue
+        parts = [str(item).strip() for item in command if str(item).strip()]
+        if parts:
+            normalized[hook_name] = parts
+    return normalized

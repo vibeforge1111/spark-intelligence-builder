@@ -16,6 +16,8 @@ from spark_intelligence.attachments import (
     deactivate_chip,
     list_attachments,
     pin_chip,
+    run_chip_hook,
+    run_first_active_chip_hook,
     set_active_path,
     sync_attachment_snapshot,
     unpin_chip,
@@ -660,6 +662,15 @@ def build_parser() -> argparse.ArgumentParser:
     attachments_set_path_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     attachments_clear_path_parser = attachments_subparsers.add_parser("clear-path", help="Clear the active specialization path")
     attachments_clear_path_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    attachments_run_hook_parser = attachments_subparsers.add_parser(
+        "run-hook",
+        help="Run a manifest-backed chip hook using the standard spark-hook-io.v1 contract",
+    )
+    attachments_run_hook_parser.add_argument("hook", choices=["evaluate", "suggest", "packets", "watchtower"])
+    attachments_run_hook_parser.add_argument("--chip-key", help="Chip key to run. Defaults to the first active chip that supports the hook.")
+    attachments_run_hook_parser.add_argument("--payload-json", default="{}", help="JSON payload to send to the hook")
+    attachments_run_hook_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    attachments_run_hook_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     auth_parser = subparsers.add_parser("auth", help="Manage model providers")
     auth_subparsers = auth_parser.add_subparsers(dest="auth_command", required=True)
@@ -1612,6 +1623,36 @@ def handle_attachments_clear_path(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_attachments_run_hook(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    try:
+        payload = json.loads(args.payload_json)
+    except json.JSONDecodeError as exc:
+        print(f"Invalid --payload-json: {exc}", file=sys.stderr)
+        return 2
+    if not isinstance(payload, dict):
+        print("Hook payload must be a JSON object.", file=sys.stderr)
+        return 2
+    try:
+        if args.chip_key:
+            execution = run_chip_hook(config_manager, chip_key=args.chip_key, hook=args.hook, payload=payload)
+        else:
+            execution = run_first_active_chip_hook(config_manager, hook=args.hook, payload=payload)
+            if execution is None:
+                print(
+                    f"No active chip exposes hook '{args.hook}'. Activate a chip first or pass --chip-key.",
+                    file=sys.stderr,
+                )
+                return 1
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    print(execution.to_json() if args.json else execution.to_text())
+    return 0 if execution.ok else 1
+
+
 def handle_auth_connect(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -2151,6 +2192,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_attachments_set_path(args)
     if args.command == "attachments" and args.attachments_command == "clear-path":
         return handle_attachments_clear_path(args)
+    if args.command == "attachments" and args.attachments_command == "run-hook":
+        return handle_attachments_run_hook(args)
     if args.command == "auth" and args.auth_command == "providers":
         return handle_auth_providers(args)
     if args.command == "auth" and args.auth_command == "connect":

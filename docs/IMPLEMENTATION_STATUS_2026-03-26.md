@@ -74,6 +74,8 @@ Shipped today:
 - a gateway route-registry contract that now also owns OAuth callback serving
 - a direct-provider conversational fallback so under-supported Telegram small-talk does not dead-end at the generic "no concrete guidance" placeholder when a real provider is configured
 - Telegram think-block visibility now defaults to hidden, with per-DM runtime controls available through `/think`, `/think on`, and `/think off`
+- manifest-backed domain-chip hook execution through the standard `spark-hook-io.v1` contract, surfaced locally through `attachments run-hook`
+- active-chip `evaluate` output can now be injected into the Spark Researcher/direct-provider fallback path, so live replies can be shaped by the currently active chip instead of leaving DOP-style chips as attachment-state only
 
 The practical result is that Telegram onboarding and moderation are much easier to operate locally, and the repo now has the first real foundations for secure provider auth growth without inventing ad hoc OAuth glue later.
 
@@ -144,6 +146,8 @@ Codex OAuth is still not proven on the live home and is no longer the gating ite
 The next broader connection and productization map is now recorded in `SYSTEM_CONNECTION_AND_PRODUCTIZATION_PLAN_2026-03-26.md`. That plan separates what is truly connected today from what is only wired, and defines the next step-by-step order for activating chips/path specialization, connecting real Swarm API access, and productizing the install/setup/run story for another operator.
 
 That plan now also has a first supporting runtime surface: `spark-intelligence connect status` turns the current system state into explicit connection phases, shows which phase is currently blocking progress, and points directly at the next command to run instead of leaving the phase plan as docs-only.
+
+The next specialization/runtime bridge layer is now also real instead of docs-only: manifest-backed chips that expose `spark-hook-io.v1` commands can be invoked directly through `spark-intelligence attachments run-hook`, and active-chip `evaluate` output can now shape live bridge prompts. That gives Spark Intelligence one reusable DOP-style contract for future chips instead of adding bespoke prompt instructions per domain.
 
 ## 7. Current Non-Goals
 

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from spark_intelligence.attachments import build_attachment_context
+from spark_intelligence.attachments import build_attachment_context, run_first_active_chip_hook
 from spark_intelligence.auth.runtime import RuntimeProviderResolution, resolve_runtime_provider
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.llm.direct_provider import DirectProviderRequest, execute_direct_provider_prompt
@@ -271,6 +271,7 @@ def _render_direct_provider_chat_fallback(
     user_message: str,
     channel_kind: str,
     attachment_context: dict[str, object],
+    active_chip_evaluate: dict[str, Any] | None = None,
 ) -> str:
     payload = execute_direct_provider_prompt(
         provider=DirectProviderRequest(
@@ -297,6 +298,7 @@ def _render_direct_provider_chat_fallback(
                 f"{user_message}"
             ),
             attachment_context=attachment_context,
+            active_chip_evaluate=active_chip_evaluate,
         ),
     )
     raw_response = str(payload.get("raw_response") or "").strip()
@@ -305,7 +307,12 @@ def _render_direct_provider_chat_fallback(
     return raw_response
 
 
-def _build_contextual_task(*, user_message: str, attachment_context: dict[str, object]) -> str:
+def _build_contextual_task(
+    *,
+    user_message: str,
+    attachment_context: dict[str, object],
+    active_chip_evaluate: dict[str, Any] | None = None,
+) -> str:
     active_chip_keys = attachment_context.get("active_chip_keys") or []
     pinned_chip_keys = attachment_context.get("pinned_chip_keys") or []
     active_path_key = attachment_context.get("active_path_key") or None
@@ -315,10 +322,79 @@ def _build_contextual_task(*, user_message: str, attachment_context: dict[str, o
         f"pinned_chip_keys={','.join(str(item) for item in pinned_chip_keys) if pinned_chip_keys else 'none'}",
         f"active_path_key={active_path_key or 'none'}",
         "",
+    ]
+    if active_chip_evaluate:
+        lines.extend(
+            [
+                "[Active chip evaluate]",
+                f"chip_key={active_chip_evaluate.get('chip_key') or 'unknown'}",
+                f"task_type={active_chip_evaluate.get('task_type') or 'unknown'}",
+                f"stage={active_chip_evaluate.get('stage') or 'unknown'}",
+                f"context_packet_ids={','.join(active_chip_evaluate.get('context_packet_ids') or []) or 'none'}",
+                f"activations={len(active_chip_evaluate.get('activations') or [])}",
+            ]
+        )
+        if active_chip_evaluate.get("stage_transition_suggested"):
+            lines.append(f"stage_transition_suggested={active_chip_evaluate['stage_transition_suggested']}")
+        if active_chip_evaluate.get("detected_state_updates"):
+            lines.append(
+                "detected_state_updates="
+                + json.dumps(active_chip_evaluate["detected_state_updates"], sort_keys=True)
+            )
+        if active_chip_evaluate.get("analysis"):
+            lines.extend(["", active_chip_evaluate["analysis"].strip(), ""])
+    lines.extend(
+        [
         "[User message]",
         user_message,
-    ]
+        ]
+    )
     return "\n".join(lines)
+
+
+def _run_active_chip_evaluate(
+    *,
+    config_manager: ConfigManager,
+    request_id: str,
+    channel_kind: str,
+    agent_id: str,
+    human_id: str,
+    session_id: str,
+    user_message: str,
+    attachment_context: dict[str, object],
+) -> dict[str, Any] | None:
+    payload = {
+        "situation": user_message,
+        "conversation_history": "",
+        "channel_kind": channel_kind,
+        "request_id": request_id,
+        "agent_id": agent_id,
+        "human_id": human_id,
+        "session_id": session_id,
+        "attachment_context": attachment_context,
+    }
+    try:
+        execution = run_first_active_chip_hook(config_manager, hook="evaluate", payload=payload)
+    except Exception:
+        return None
+    if not execution or not execution.ok:
+        return None
+    result = execution.output.get("result")
+    if not isinstance(result, dict):
+        return None
+    analysis = str(result.get("analysis") or "").strip()
+    if not analysis:
+        return None
+    return {
+        "chip_key": execution.chip_key,
+        "analysis": analysis,
+        "task_type": result.get("task_type"),
+        "stage": result.get("stage"),
+        "context_packet_ids": result.get("context_packet_ids") or [],
+        "activations": result.get("activations") or [],
+        "detected_state_updates": result.get("detected_state_updates") or [],
+        "stage_transition_suggested": result.get("stage_transition_suggested"),
+    }
 
 
 def researcher_bridge_status(*, config_manager: ConfigManager, state_db: StateDB) -> ResearcherBridgeStatus:
@@ -409,7 +485,21 @@ def build_researcher_reply(
     user_message: str,
 ) -> ResearcherBridgeResult:
     attachment_context = build_attachment_context(config_manager)
-    contextual_task = _build_contextual_task(user_message=user_message, attachment_context=attachment_context)
+    active_chip_evaluate = _run_active_chip_evaluate(
+        config_manager=config_manager,
+        request_id=request_id,
+        channel_kind=channel_kind,
+        agent_id=agent_id,
+        human_id=human_id,
+        session_id=session_id,
+        user_message=user_message,
+        attachment_context=attachment_context,
+    )
+    contextual_task = _build_contextual_task(
+        user_message=user_message,
+        attachment_context=attachment_context,
+        active_chip_evaluate=active_chip_evaluate,
+    )
     provider_selection = _resolve_bridge_provider(config_manager=config_manager, state_db=state_db)
     if not bool(config_manager.get_path("spark.researcher.enabled", default=True)):
         return ResearcherBridgeResult(
@@ -479,6 +569,7 @@ def build_researcher_reply(
                         user_message=user_message,
                         channel_kind=channel_kind,
                         attachment_context=attachment_context,
+                        active_chip_evaluate=active_chip_evaluate,
                     )
                     trace_ref = str(advisory.get("trace_path") or advisory.get("trace_id") or "trace:missing")
                     evidence_summary = "status=under_supported provider_fallback=direct_http_chat"

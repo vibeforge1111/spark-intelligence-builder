@@ -205,12 +205,15 @@ spark-intelligence attachments activate-chip content
 spark-intelligence attachments pin-chip startup-yc
 spark-intelligence attachments set-path startup-operator
 spark-intelligence attachments snapshot --json
+spark-intelligence attachments run-hook evaluate --chip-key startup-yc --payload-json "{\"situation\":\"How should we improve retention?\"}" --json
 spark-intelligence agent inspect
 ```
 
 The attachment snapshot is written to `SPARK_INTELLIGENCE_HOME/attachments.snapshot.json` and mirrored into SQLite runtime state so external Spark repos can consume the current attachment set without importing this repo's internals.
 
-The Spark Researcher bridge now also includes a compact attachment context envelope derived from that snapshot, so advisory requests can stay aware of active chips and the active specialization path without this repo importing chip logic.
+Chip manifests that expose the standard `spark-hook-io.v1` contract now also surface their hook commands directly into Spark Intelligence. That gives the builder one generic DOP-style path for future domains instead of one-off prompt wiring: a chip can declare `evaluate`, `suggest`, `packets`, and `watchtower` in `spark-chip.json`, Spark can run those hooks through `attachments run-hook`, and the Researcher bridge can inject active-chip `evaluate` output into live reply construction without giving chips ownership over identity, channels, or provider auth.
+
+The Spark Researcher bridge now also includes a compact attachment context envelope derived from that snapshot, and active-chip `evaluate` output can now be folded into the advisory/fallback prompt path so live requests can be shaped by the currently active chip and specialization path without this repo importing chip internals.
 
 ```bash
 spark-intelligence researcher status

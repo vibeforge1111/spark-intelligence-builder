@@ -70,6 +70,8 @@ Current Spark chip contracts already expose hooks such as:
 
 Spark Intelligence should reuse those shapes where possible instead of inventing a parallel chip protocol.
 
+For chips that expose `spark-hook-io.v1`, Spark Intelligence should treat the hook command map in `spark-chip.json` as the canonical runtime invocation contract.
+
 ## 7. Attachment Record
 
 Recommended v1 attachment record:
@@ -82,6 +84,9 @@ chip_manifest_path
 status
 attachment_mode
 priority
+schema_version
+io_protocol
+commands
 created_at
 updated_at
 ```
@@ -134,6 +139,15 @@ Attaching a chip must not silently widen tool authority.
 
 Chip invocation should remain contract-driven and auditable.
 
+### 11.5 Standard Hook I/O
+
+When a chip exposes `io_protocol = spark-hook-io.v1`, Spark Intelligence should invoke the chip through a temporary JSON input file plus a temporary JSON output file, not through ad hoc prompt-copying. That same contract should work for:
+
+- operator inspection
+- builder CLI execution
+- future bridge/runtime use
+- future domain chips beyond startup
+
 ## 12. v1 Practical Rule
 
 For v1:
@@ -141,6 +155,7 @@ For v1:
 - support a small starter chip set
 - expose chip attachment visibly in operator state
 - keep chip activation narrow and explicit
+- standardize chip execution through the existing Spark hook model rather than one-off prompt adapters
 
 ## 13. Final Decision
 
