@@ -77,7 +77,8 @@ class OperatorInboxReport:
             f"channel_alerts={counts['channel_alerts']} "
             f"bridge_alerts={counts['bridge_alerts']} "
             f"auth_alerts={counts['auth_alerts']} "
-            f"webhook_alerts={counts['webhook_alerts']}"
+            f"webhook_alerts={counts['webhook_alerts']} "
+            f"webhook_snoozes={counts['webhook_snoozes']}"
         )
 
         items = self.payload.get("items") or []
@@ -108,6 +109,7 @@ class OperatorSecurityReport:
             f"channel_alerts={counts['channel_alerts']} "
             f"auth_alerts={counts['auth_alerts']} "
             f"webhook_alerts={counts['webhook_alerts']} "
+            f"webhook_snoozes={counts['webhook_snoozes']} "
             f"duplicates={counts['duplicate_updates']} "
             f"rate_limited={counts['rate_limited_updates']} "
             f"delivery_failures={counts['delivery_failures']} "
@@ -293,6 +295,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
     bridge_alerts = _build_bridge_alerts(config_manager=config_manager, state_db=state_db)
     auth_alerts = _build_auth_alerts(config_manager=config_manager, state_db=state_db)
     webhook_alerts = _build_webhook_alerts(traces=read_gateway_traces(config_manager, limit=100), state_db=state_db)
+    webhook_snoozes = list_webhook_alert_snoozes(state_db=state_db).rows
     items = _build_inbox_items(
         pending_pairings=pending_pairings,
         held_pairings=held_pairings,
@@ -300,6 +303,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
         bridge_alerts=bridge_alerts,
         auth_alerts=auth_alerts,
         webhook_alerts=webhook_alerts,
+        webhook_snoozes=webhook_snoozes,
     )
 
     payload = {
@@ -310,6 +314,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
             "bridge_alerts": len(bridge_alerts),
             "auth_alerts": len(auth_alerts),
             "webhook_alerts": len(webhook_alerts),
+            "webhook_snoozes": len(webhook_snoozes),
             "total": (
                 len(pending_pairings)
                 + len(held_pairings)
@@ -317,6 +322,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
                 + len(bridge_alerts)
                 + len(auth_alerts)
                 + len(webhook_alerts)
+                + len(webhook_snoozes)
             ),
         },
         "pairings": {
@@ -327,6 +333,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
         "bridges": bridge_alerts,
         "auth": auth_alerts,
         "webhooks": webhook_alerts,
+        "webhook_snoozes": webhook_snoozes,
         "items": items,
     }
     return OperatorInboxReport(payload=payload)
@@ -344,6 +351,7 @@ def build_operator_security_report(
     traces = read_gateway_traces(config_manager, limit=limit)
     outbound = read_outbound_audit(config_manager, limit=limit)
     webhook_alerts = _build_webhook_alerts(traces=traces, state_db=state_db)
+    webhook_snoozes = list_webhook_alert_snoozes(state_db=state_db).rows
 
     duplicate_updates = [trace for trace in traces if trace.get("event") == "telegram_update_duplicate"]
     rate_limited_updates = [trace for trace in traces if trace.get("event") == "telegram_rate_limited"]
@@ -361,6 +369,7 @@ def build_operator_security_report(
         channel_alerts=channel_alerts,
         auth_alerts=auth_alerts,
         webhook_alerts=webhook_alerts,
+        webhook_snoozes=webhook_snoozes,
         duplicate_updates=duplicate_updates,
         rate_limited_updates=rate_limited_updates,
         delivery_failures=delivery_failures,
@@ -373,6 +382,7 @@ def build_operator_security_report(
             "channel_alerts": len(channel_alerts),
             "auth_alerts": len(auth_alerts),
             "webhook_alerts": len(webhook_alerts),
+            "webhook_snoozes": len(webhook_snoozes),
             "duplicate_updates": len(duplicate_updates),
             "rate_limited_updates": len(rate_limited_updates),
             "delivery_failures": len(delivery_failures),
@@ -384,6 +394,7 @@ def build_operator_security_report(
         "channel_alerts": channel_alerts,
         "auth_alerts": auth_alerts,
         "webhook_alerts": webhook_alerts,
+        "webhook_snoozes": webhook_snoozes,
         "recent": {
             "duplicates": duplicate_updates,
             "rate_limited": rate_limited_updates,
@@ -566,6 +577,7 @@ def _build_inbox_items(
     bridge_alerts: list[dict[str, Any]],
     auth_alerts: list[dict[str, Any]],
     webhook_alerts: list[dict[str, Any]],
+    webhook_snoozes: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
 
@@ -670,6 +682,23 @@ def _build_inbox_items(
             }
         )
 
+    for row in webhook_snoozes:
+        event_name = str(row["event"])
+        items.append(
+            {
+                "kind": "webhook_snooze",
+                "status": "snoozed",
+                "priority": "info",
+                "sort_order": 48,
+                "item_ref": event_name,
+                "summary": (
+                    f"Webhook alert {event_name} is snoozed until {row['snooze_until']} "
+                    f"({row['remaining_minutes']} minute(s) remaining)."
+                ),
+                "recommended_command": f"spark-intelligence operator clear-webhook-alert-snooze {event_name}",
+            }
+        )
+
     items.sort(key=lambda item: (int(item["sort_order"]), str(item["item_ref"])))
     for item in items:
         item.pop("sort_order", None)
@@ -682,6 +711,7 @@ def _build_security_items(
     channel_alerts: list[dict[str, Any]],
     auth_alerts: list[dict[str, Any]],
     webhook_alerts: list[dict[str, Any]],
+    webhook_snoozes: list[dict[str, Any]],
     duplicate_updates: list[dict[str, Any]],
     rate_limited_updates: list[dict[str, Any]],
     delivery_failures: list[dict[str, Any]],
@@ -749,6 +779,20 @@ def _build_security_items(
                 ),
                 "summary": str(row["summary"]),
                 "recommended_command": str(row["recommended_command"]),
+            }
+        )
+
+    for row in webhook_snoozes:
+        event_name = str(row["event"])
+        items.append(
+            {
+                "priority": "info",
+                "sort_order": severity_order["info"],
+                "summary": (
+                    f"Webhook alert {event_name} is snoozed until {row['snooze_until']} "
+                    f"({row['remaining_minutes']} minute(s) remaining)."
+                ),
+                "recommended_command": f"spark-intelligence operator clear-webhook-alert-snooze {event_name}",
             }
         )
 

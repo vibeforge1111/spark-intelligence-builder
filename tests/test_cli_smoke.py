@@ -262,7 +262,17 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(security_exit, 0, security_stderr)
         payload = json.loads(security_stdout)
         self.assertEqual(payload["counts"]["webhook_alerts"], 0)
+        self.assertEqual(payload["counts"]["webhook_snoozes"], 1)
         self.assertEqual(payload["webhook_alerts"], [])
+        self.assertEqual(len(payload["webhook_snoozes"]), 1)
+        self.assertEqual(payload["webhook_snoozes"][0]["event"], "discord_webhook_auth_failed")
+        snooze_items = [
+            item
+            for item in payload["items"]
+            if item["recommended_command"] == "spark-intelligence operator clear-webhook-alert-snooze discord_webhook_auth_failed"
+        ]
+        self.assertEqual(len(snooze_items), 1)
+        self.assertEqual(snooze_items[0]["priority"], "info")
 
         history_exit, history_stdout, history_stderr = self.run_cli(
             "operator",
@@ -575,7 +585,16 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(inbox_exit, 0, inbox_stderr)
         payload = json.loads(inbox_stdout)
         self.assertEqual(payload["counts"]["webhook_alerts"], 0)
+        self.assertEqual(payload["counts"]["webhook_snoozes"], 1)
         self.assertEqual(payload["webhooks"], [])
+        self.assertEqual(len(payload["webhook_snoozes"]), 1)
+        self.assertEqual(payload["webhook_snoozes"][0]["event"], "whatsapp_webhook_verification_failed")
+        snooze_items = [item for item in payload["items"] if item["kind"] == "webhook_snooze"]
+        self.assertEqual(len(snooze_items), 1)
+        self.assertEqual(
+            snooze_items[0]["recommended_command"],
+            "spark-intelligence operator clear-webhook-alert-snooze whatsapp_webhook_verification_failed",
+        )
 
     def test_doctor_degrades_after_telegram_poll_failure(self) -> None:
         self.add_telegram_channel(bot_token="good-token")
