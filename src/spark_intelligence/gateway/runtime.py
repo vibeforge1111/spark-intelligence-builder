@@ -356,6 +356,7 @@ def gateway_trace_view(
         return "No gateway traces recorded."
     lines = ["Gateway traces:"]
     for trace in traces:
+        reason_suffix = f" reason={trace.get('reason')}" if trace.get("reason") else ""
         lines.append(
             f"- at={trace.get('recorded_at')} channel={_record_channel_id(trace)} "
             f"event={trace.get('event')} update_id={trace.get('update_id')} "
@@ -363,6 +364,7 @@ def gateway_trace_view(
             f"trace_ref={trace.get('trace_ref', 'n/a')} mode={trace.get('bridge_mode', 'n/a')} "
             f"delivery_ok={trace.get('delivery_ok', 'n/a')} "
             f"guardrails={','.join(trace.get('guardrail_actions', [])) if trace.get('guardrail_actions') else 'none'}"
+            f"{reason_suffix}"
         )
     return "\n".join(lines)
 

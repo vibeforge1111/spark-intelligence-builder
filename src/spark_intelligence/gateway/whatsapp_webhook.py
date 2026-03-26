@@ -9,6 +9,7 @@ from typing import Any
 from spark_intelligence.adapters.whatsapp.runtime import simulate_whatsapp_message
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.gateway.routes import GatewayRouteRegistration, GatewayRouteRegistry
+from spark_intelligence.gateway.tracing import append_gateway_trace
 from spark_intelligence.state.db import StateDB
 
 
@@ -135,6 +136,15 @@ def _handle_whatsapp_event_post(
 
     normalized_payload, ignored_reason = _extract_supported_whatsapp_payload(payload)
     if normalized_payload is None:
+        append_gateway_trace(
+            config_manager,
+            {
+                "event": "whatsapp_webhook_ignored",
+                "channel_id": "whatsapp",
+                "decision": "ignored",
+                "reason": ignored_reason or "unsupported_event",
+            },
+        )
         return WhatsAppWebhookResponse(
             status_code=200,
             body=json.dumps(
@@ -151,6 +161,20 @@ def _handle_whatsapp_event_post(
         )
     except ValueError as exc:
         return _json_error_response(400, str(exc))
+
+    append_gateway_trace(
+        config_manager,
+        {
+            "event": "whatsapp_webhook_processed",
+            "channel_id": "whatsapp",
+            "update_id": normalized_payload.get("id"),
+            "external_user_id": normalized_payload.get("from"),
+            "chat_id": normalized_payload.get("chat_id"),
+            "decision": result.decision,
+            "bridge_mode": result.detail.get("bridge_mode"),
+            "trace_ref": result.detail.get("trace_ref"),
+        },
+    )
 
     return WhatsAppWebhookResponse(
         status_code=200,

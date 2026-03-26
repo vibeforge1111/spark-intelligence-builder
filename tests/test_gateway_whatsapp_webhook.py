@@ -5,6 +5,7 @@ import hmac
 import json
 
 from spark_intelligence.channel.service import add_channel
+from spark_intelligence.gateway.runtime import gateway_trace_view
 from spark_intelligence.gateway.whatsapp_webhook import WHATSAPP_WEBHOOK_PATH, handle_whatsapp_webhook
 
 from tests.test_support import SparkTestCase
@@ -231,6 +232,20 @@ class WhatsAppWebhookIngressTests(SparkTestCase):
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["decision"], "pending_pairing")
         self.assertEqual(payload["detail"]["whatsapp_user_id"], "wa-user-1")
+        traces = json.loads(
+            gateway_trace_view(
+                self.config_manager,
+                limit=10,
+                channel_id="whatsapp",
+                event="whatsapp_webhook_processed",
+                user="wa-user-1",
+                decision="pending_pairing",
+                as_json=True,
+            )
+        )
+        self.assertEqual(len(traces), 1)
+        self.assertEqual(traces[0]["update_id"], "wamid-1")
+        self.assertEqual(traces[0]["external_user_id"], "wa-user-1")
 
     def test_ignores_status_event_payload(self) -> None:
         self._add_whatsapp_channel()
@@ -264,6 +279,24 @@ class WhatsAppWebhookIngressTests(SparkTestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["decision"], "ignored")
         self.assertEqual(payload["detail"]["reason"], "status_event")
+        traces = json.loads(
+            gateway_trace_view(
+                self.config_manager,
+                limit=10,
+                channel_id="whatsapp",
+                event="whatsapp_webhook_ignored",
+                decision="ignored",
+                as_json=True,
+            )
+        )
+        self.assertEqual(len(traces), 1)
+        self.assertEqual(traces[0]["reason"], "status_event")
+        text_view = gateway_trace_view(
+            self.config_manager,
+            limit=10,
+            channel_id="whatsapp",
+        )
+        self.assertIn("reason=status_event", text_view)
 
     def test_rejects_stub_shaped_payload_on_real_webhook_route(self) -> None:
         self._add_whatsapp_channel()
