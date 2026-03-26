@@ -770,6 +770,51 @@ class AuthProfileTests(SparkTestCase):
             "spark-intelligence jobs tick",
         )
 
+    def test_doctor_flags_stale_oauth_maintenance_when_token_is_expiring_soon(self) -> None:
+        start_exit, start_stdout, start_stderr = self.run_cli(
+            "auth",
+            "login",
+            "openai-codex",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(start_exit, 0, start_stderr)
+        start_payload = json.loads(start_stdout)
+        callback_url = (
+            "http://127.0.0.1:1455/auth/callback"
+            f"?state={start_payload['callback_state']}&code=test-oauth-code"
+        )
+
+        with patch(
+            "spark_intelligence.auth.service.exchange_oauth_authorization_code",
+            return_value={
+                "access_token": "oauth-access-token",
+                "refresh_token": "oauth-refresh-token",
+                "expires_in": 60,
+            },
+        ):
+            complete_exit, _, complete_stderr = self.run_cli(
+                "auth",
+                "login",
+                "openai-codex",
+                "--home",
+                str(self.home),
+                "--callback-url",
+                callback_url,
+            )
+        self.assertEqual(complete_exit, 0, complete_stderr)
+
+        doctor_exit, doctor_stdout, doctor_stderr = self.run_cli(
+            "doctor",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(doctor_exit, 1, doctor_stderr)
+        self.assertIn("[fail] oauth-maintenance:", doctor_stdout)
+        self.assertIn("oauth maintenance has never run", doctor_stdout)
+        self.assertIn("expiring_soon=openai-codex", doctor_stdout)
+
     def test_jobs_tick_refreshes_due_oauth_profile(self) -> None:
         start_exit, start_stdout, start_stderr = self.run_cli(
             "auth",
@@ -824,6 +869,16 @@ class AuthProfileTests(SparkTestCase):
         self.assertEqual(tick_exit, 0, tick_stderr)
         self.assertIn("auth:oauth-refresh-maintenance", tick_stdout)
         self.assertIn("refreshed=1", tick_stdout)
+
+        list_exit, list_stdout, list_stderr = self.run_cli(
+            "jobs",
+            "list",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(list_exit, 0, list_stderr)
+        self.assertIn("auth:oauth-refresh-maintenance", list_stdout)
+        self.assertIn("last_result=scanned=1 due=1 refreshed=1 failed=0 skipped=0", list_stdout)
 
         with self.state_db.connect() as conn:
             oauth_row = conn.execute(

@@ -1,10 +1,26 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 from spark_intelligence.auth.service import run_oauth_refresh_maintenance
+from spark_intelligence.auth.runtime import AuthStatusReport, build_auth_status_report
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.state.db import StateDB
+
+
+OAUTH_MAINTENANCE_JOB_ID = "auth:oauth-refresh-maintenance"
+OAUTH_MAINTENANCE_STALE_SECONDS = 900
+
+
+@dataclass(frozen=True)
+class JobRecord:
+    job_id: str
+    job_kind: str
+    status: str
+    schedule_expr: str | None
+    last_run_at: str | None
+    last_result: str | None
 
 
 def jobs_tick(config_manager: ConfigManager, state_db: StateDB) -> str:
@@ -27,20 +43,83 @@ def jobs_tick(config_manager: ConfigManager, state_db: StateDB) -> str:
 
 
 def jobs_list(state_db: StateDB) -> str:
-    with state_db.connect() as conn:
-        jobs = conn.execute(
-            "SELECT job_id, job_kind, status, schedule_expr, last_run_at FROM job_records ORDER BY job_id"
-        ).fetchall()
+    jobs = list_job_records(state_db)
     if not jobs:
         return "No jobs configured."
 
     lines = ["Jobs:"]
     for job in jobs:
         lines.append(
-            f"- {job['job_id']} kind={job['job_kind']} status={job['status']} "
-            f"schedule={job['schedule_expr'] or 'none'} last_run={job['last_run_at'] or 'never'}"
+            f"- {job.job_id} kind={job.job_kind} status={job.status} "
+            f"schedule={job.schedule_expr or 'none'} last_run={job.last_run_at or 'never'} "
+            f"last_result={job.last_result or 'none'}"
         )
     return "\n".join(lines)
+
+
+def list_job_records(state_db: StateDB) -> list[JobRecord]:
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            "SELECT job_id, job_kind, status, schedule_expr, last_run_at, last_result FROM job_records ORDER BY job_id"
+        ).fetchall()
+    return [
+        JobRecord(
+            job_id=str(row["job_id"]),
+            job_kind=str(row["job_kind"]),
+            status=str(row["status"]),
+            schedule_expr=str(row["schedule_expr"]) if row["schedule_expr"] else None,
+            last_run_at=str(row["last_run_at"]) if row["last_run_at"] else None,
+            last_result=str(row["last_result"]) if row["last_result"] else None,
+        )
+        for row in rows
+    ]
+
+
+def oauth_maintenance_health(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    stale_seconds: int = OAUTH_MAINTENANCE_STALE_SECONDS,
+) -> tuple[bool, str]:
+    auth_report = build_auth_status_report(config_manager=config_manager, state_db=state_db)
+    return oauth_maintenance_health_from_report(
+        state_db=state_db,
+        auth_report=auth_report,
+        stale_seconds=stale_seconds,
+    )
+
+
+def oauth_maintenance_health_from_report(
+    *,
+    state_db: StateDB,
+    auth_report: AuthStatusReport,
+    stale_seconds: int = OAUTH_MAINTENANCE_STALE_SECONDS,
+) -> tuple[bool, str]:
+    oauth_providers = [provider for provider in auth_report.providers if provider.auth_method == "oauth"]
+    if not oauth_providers:
+        return True, "no oauth providers configured"
+
+    expiring_soon = [provider.provider_id for provider in oauth_providers if provider.status == "expiring_soon"]
+    if not expiring_soon:
+        job = _get_job_record(state_db=state_db, job_id=OAUTH_MAINTENANCE_JOB_ID)
+        if not job:
+            return False, "oauth maintenance job is missing"
+        return True, f"operator-driven via jobs tick last_run={job.last_run_at or 'never'}"
+
+    job = _get_job_record(state_db=state_db, job_id=OAUTH_MAINTENANCE_JOB_ID)
+    if not job:
+        return False, f"oauth maintenance job is missing; expiring_soon={','.join(expiring_soon)}"
+    if not job.last_run_at:
+        return False, f"oauth maintenance has never run; expiring_soon={','.join(expiring_soon)}"
+    if _timestamp_is_stale(job.last_run_at, stale_seconds=stale_seconds):
+        return False, (
+            f"oauth maintenance is stale last_run={job.last_run_at}; "
+            f"expiring_soon={','.join(expiring_soon)}"
+        )
+    return True, (
+        f"operator-driven via jobs tick last_run={job.last_run_at}; "
+        f"expiring_soon={','.join(expiring_soon)}"
+    )
 
 
 def _run_job(
@@ -79,3 +158,34 @@ def _record_job_result(*, state_db: StateDB, job_id: str, result: str) -> None:
 
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _get_job_record(*, state_db: StateDB, job_id: str) -> JobRecord | None:
+    with state_db.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT job_id, job_kind, status, schedule_expr, last_run_at, last_result
+            FROM job_records
+            WHERE job_id = ?
+            LIMIT 1
+            """,
+            (job_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return JobRecord(
+        job_id=str(row["job_id"]),
+        job_kind=str(row["job_kind"]),
+        status=str(row["status"]),
+        schedule_expr=str(row["schedule_expr"]) if row["schedule_expr"] else None,
+        last_run_at=str(row["last_run_at"]) if row["last_run_at"] else None,
+        last_result=str(row["last_result"]) if row["last_result"] else None,
+    )
+
+
+def _timestamp_is_stale(value: str, *, stale_seconds: int) -> bool:
+    try:
+        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+    except ValueError:
+        return True
+    return timestamp <= datetime.now(UTC) - timedelta(seconds=stale_seconds)

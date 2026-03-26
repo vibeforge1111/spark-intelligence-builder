@@ -8,6 +8,7 @@ from spark_intelligence.attachments import attachment_status
 from spark_intelligence.adapters.telegram.runtime import build_telegram_runtime_summary, read_telegram_runtime_health
 from spark_intelligence.auth.runtime import build_auth_status_report
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.jobs.service import oauth_maintenance_health
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import swarm_status
@@ -96,6 +97,11 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
         )
     else:
         checks.append(DoctorCheck("provider-auth", True, "no providers configured yet"))
+    oauth_maintenance_ok, oauth_maintenance_detail = oauth_maintenance_health(
+        config_manager=config_manager,
+        state_db=state_db,
+    )
+    checks.append(DoctorCheck("oauth-maintenance", oauth_maintenance_ok, oauth_maintenance_detail))
 
     researcher_enabled = bool(config_manager.get_path("spark.researcher.enabled", default=True))
     researcher_root, researcher_source = discover_researcher_runtime_root(config_manager)
