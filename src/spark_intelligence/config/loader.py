@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import os
+import stat
+import subprocess
 from dataclasses import dataclass
+from getpass import getuser
 from pathlib import Path
 from typing import Any
 
@@ -48,8 +51,10 @@ class ConfigManager:
             self.save(self.default_config())
             created = True
         if not self.paths.env_file.exists():
-            self.paths.env_file.write_text("# Spark Intelligence secrets\n", encoding="utf-8")
+            self._write_env_file("# Spark Intelligence secrets\n")
             created = True
+        else:
+            self.harden_env_file_permissions()
         return created
 
     def default_config(self) -> dict[str, Any]:
@@ -134,7 +139,7 @@ class ConfigManager:
         env_map = self.read_env_map()
         env_map[key] = value
         content = "# Spark Intelligence secrets\n" + "".join(f"{name}={env_map[name]}\n" for name in sorted(env_map))
-        self.paths.env_file.write_text(content, encoding="utf-8")
+        self._write_env_file(content)
 
     def read_env_map(self) -> dict[str, str]:
         if not self.paths.env_file.exists():
@@ -148,9 +153,92 @@ class ConfigManager:
             mapping[key] = value
         return mapping
 
+    def env_file_permission_status(self) -> tuple[bool, str]:
+        if not self.paths.env_file.exists():
+            return (False, "missing")
+        try:
+            if os.name == "nt":
+                return self._windows_env_permission_status()
+            return self._posix_env_permission_status()
+        except Exception as exc:
+            return (False, f"permission check failed: {exc}")
+
     @staticmethod
     def _split_path(dotted_path: str) -> list[str]:
         parts = [part.strip() for part in dotted_path.split(".") if part.strip()]
         if not parts:
             raise ValueError("Config path must not be empty.")
         return parts
+
+    def _write_env_file(self, content: str) -> None:
+        self.paths.env_file.write_text(content, encoding="utf-8")
+        self.harden_env_file_permissions()
+
+    def harden_env_file_permissions(self) -> None:
+        if not self.paths.env_file.exists():
+            return
+        if os.name == "nt":
+            self._harden_windows_env_file_permissions()
+            return
+        current_mode = stat.S_IMODE(self.paths.env_file.stat().st_mode)
+        target_mode = 0o600
+        if current_mode != target_mode:
+            os.chmod(self.paths.env_file, target_mode)
+
+    def _harden_windows_env_file_permissions(self) -> None:
+        principal = self._windows_current_principal()
+        subprocess.run(
+            [
+                "icacls",
+                str(self.paths.env_file),
+                "/inheritance:r",
+                "/grant:r",
+                f"{principal}:(R,W)",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def _windows_env_permission_status(self) -> tuple[bool, str]:
+        principal = self._windows_current_principal()
+        result = subprocess.run(
+            ["icacls", str(self.paths.env_file)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        acl_lines: list[str] = []
+        for line in lines:
+            if "Successfully processed" in line:
+                continue
+            normalized = line
+            path_prefix = f"{self.paths.env_file} "
+            if normalized.startswith(path_prefix):
+                normalized = normalized[len(path_prefix) :].strip()
+            acl_lines.append(normalized)
+        if not acl_lines:
+            return (False, "acl missing")
+        inherited_entries = [line for line in acl_lines if "(I)" in line]
+        if inherited_entries:
+            return (False, "inherited ACL entries present")
+        normalized_principal = principal.lower()
+        allowed_entries = [line for line in acl_lines if line.lower().startswith(normalized_principal)]
+        if len(allowed_entries) != 1:
+            return (False, f"expected one explicit ACL for {principal}")
+        if "(R,W)" not in allowed_entries[0]:
+            return (False, f"unexpected ACL rights for {principal}")
+        return (True, f"owner-only ACL for {principal}")
+
+    def _posix_env_permission_status(self) -> tuple[bool, str]:
+        mode = stat.S_IMODE(self.paths.env_file.stat().st_mode)
+        if mode & 0o077:
+            return (False, f"mode={oct(mode)}")
+        return (True, f"mode={oct(mode)}")
+
+    @staticmethod
+    def _windows_current_principal() -> str:
+        domain = os.environ.get("USERDOMAIN", "")
+        username = os.environ.get("USERNAME") or getuser()
+        return f"{domain}\\{username}" if domain else username

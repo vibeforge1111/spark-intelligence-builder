@@ -50,6 +50,8 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
     checks.append(DoctorCheck("config.yaml", paths.config_yaml.exists(), str(paths.config_yaml)))
     checks.append(DoctorCheck(".env", paths.env_file.exists(), str(paths.env_file)))
     checks.append(DoctorCheck("state.db", paths.state_db.exists(), str(paths.state_db)))
+    env_permissions_ok, env_permissions_detail = config_manager.env_file_permission_status()
+    checks.append(DoctorCheck(".env-permissions", env_permissions_ok, env_permissions_detail))
 
     try:
         config = config_manager.load()
