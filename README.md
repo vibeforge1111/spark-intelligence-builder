@@ -178,6 +178,13 @@ spark-intelligence gateway outbound --channel-id telegram --delivery failed
 
 `spark-intelligence connect route-policy` is the matching operator-facing summary for that behavior. It explains when Spark Intelligence stays on external Researcher advisory, when it falls back to direct provider chat, when it executes directly through the configured provider, and when Spark Swarm escalation should be considered.
 
+`spark-intelligence connect set-route-policy` is the matching operator control surface. It currently lets the operator tune:
+
+- whether short under-supported conversational traffic can use direct provider fallback
+- the maximum message length that still qualifies for that fallback
+- whether automatic Spark Swarm recommendation is enabled
+- the long-task word-count threshold used by the Swarm evaluator
+
 Config can be inspected and updated without editing `config.yaml` manually:
 
 ```bash

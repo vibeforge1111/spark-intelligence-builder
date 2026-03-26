@@ -389,6 +389,12 @@ def evaluate_swarm_escalation(
         return result
     lowered = task.lower()
     triggers: list[str] = []
+    auto_recommend_enabled = bool(
+        config_manager.get_path("spark.swarm.routing.auto_recommend_enabled", default=True)
+    )
+    long_task_word_count = int(
+        config_manager.get_path("spark.swarm.routing.long_task_word_count", default=40)
+    )
     keyword_groups = {
         "explicit_swarm": ["swarm", "delegate", "delegation"],
         "parallel_work": ["parallel", "multi-agent", "multi agent", "coordinate"],
@@ -398,7 +404,7 @@ def evaluate_swarm_escalation(
     for trigger, phrases in keyword_groups.items():
         if any(phrase in lowered for phrase in phrases):
             triggers.append(trigger)
-    if len(task.split()) >= 40:
+    if len(task.split()) >= long_task_word_count:
         triggers.append("long_task")
     if len(status.attachment_context.get("active_chip_keys", [])) >= 2:
         triggers.append("multi_chip_context")
@@ -416,7 +422,7 @@ def evaluate_swarm_escalation(
             api_ready=status.api_ready,
         )
         _record_swarm_failure_state(state_db, kind="decision", result=result)
-    elif triggers:
+    elif triggers and auto_recommend_enabled:
         result = SwarmDecisionResult(
             ok=True,
             escalate=True,

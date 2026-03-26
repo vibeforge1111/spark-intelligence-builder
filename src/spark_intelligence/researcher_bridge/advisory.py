@@ -231,14 +231,30 @@ def _render_reply_from_execution(execution: dict[str, Any], advisory: dict[str, 
     return reply_text, evidence_summary, trace_ref
 
 
-def _is_conversational_fallback_candidate(*, user_message: str, advisory: dict[str, Any]) -> bool:
+def _researcher_routing_policy(config_manager: ConfigManager) -> dict[str, Any]:
+    return {
+        "conversational_fallback_enabled": bool(
+            config_manager.get_path("spark.researcher.routing.conversational_fallback_enabled", default=True)
+        ),
+        "conversational_fallback_max_chars": int(
+            config_manager.get_path("spark.researcher.routing.conversational_fallback_max_chars", default=240)
+        ),
+    }
+
+
+def _is_conversational_fallback_candidate(
+    *,
+    user_message: str,
+    advisory: dict[str, Any],
+    fallback_max_chars: int,
+) -> bool:
     epistemic = advisory.get("epistemic_status", {}) if isinstance(advisory, dict) else {}
     if str(epistemic.get("status") or "") != "under_supported":
         return False
     lowered = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
     if not lowered:
         return False
-    if len(lowered) > 240:
+    if len(lowered) > fallback_max_chars:
         return False
     if any(char.isdigit() for char in lowered):
         return False
@@ -532,6 +548,7 @@ def build_researcher_reply(
         active_chip_evaluate=active_chip_evaluate,
     )
     provider_selection = _resolve_bridge_provider(config_manager=config_manager, state_db=state_db)
+    routing_policy = _researcher_routing_policy(config_manager)
     active_chip_key = str(active_chip_evaluate.get("chip_key")) if active_chip_evaluate else None
     active_chip_task_type = str(active_chip_evaluate.get("task_type")) if active_chip_evaluate and active_chip_evaluate.get("task_type") else None
     active_chip_evaluate_used = active_chip_evaluate is not None
@@ -604,7 +621,12 @@ def build_researcher_reply(
                 if (
                     provider_selection.provider
                     and provider_selection.provider.execution_transport == "direct_http"
-                    and _is_conversational_fallback_candidate(user_message=user_message, advisory=advisory)
+                    and routing_policy["conversational_fallback_enabled"]
+                    and _is_conversational_fallback_candidate(
+                        user_message=user_message,
+                        advisory=advisory,
+                        fallback_max_chars=int(routing_policy["conversational_fallback_max_chars"]),
+                    )
                 ):
                     reply_text = _render_direct_provider_chat_fallback(
                         provider=provider_selection.provider,

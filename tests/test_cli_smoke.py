@@ -46,6 +46,8 @@ class CliSmokeTests(SparkTestCase):
         self.assertIn("next: spark-intelligence channel telegram-onboard", stdout)
 
     def test_connect_route_policy_surfaces_bridge_and_swarm_contract(self) -> None:
+        self.config_manager.set_path("spark.researcher.routing.conversational_fallback_max_chars", 123)
+        self.config_manager.set_path("spark.swarm.routing.long_task_word_count", 55)
         with self.state_db.connect() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO runtime_state(state_key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
@@ -73,11 +75,46 @@ class CliSmokeTests(SparkTestCase):
 
         self.assertEqual(exit_code, 0, stderr)
         self.assertIn("Spark Intelligence routing contract", stdout)
+        self.assertIn("- conversational fallback policy: enabled (max_chars=123)", stdout)
+        self.assertIn("- swarm recommendation policy: enabled (long_task_word_count=55)", stdout)
         self.assertIn("- last bridge route: provider_fallback_chat", stdout)
         self.assertIn("- last active chip route: startup-yc:diagnostic_questioning used=yes", stdout)
         self.assertIn("- last swarm decision: manual_recommended", stdout)
         self.assertIn("- provider_fallback_chat:", stdout)
         self.assertIn("- manual_recommended:", stdout)
+
+    def test_connect_set_route_policy_updates_operator_knobs(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "connect",
+            "set-route-policy",
+            "--home",
+            str(self.home),
+            "--conversational-fallback",
+            "off",
+            "--conversational-max-chars",
+            "111",
+            "--swarm-auto-recommend",
+            "off",
+            "--swarm-long-task-word-count",
+            "77",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertIn("spark.researcher.routing.conversational_fallback_enabled=false", stdout)
+        self.assertIn("spark.researcher.routing.conversational_fallback_max_chars=111", stdout)
+        self.assertIn("spark.swarm.routing.auto_recommend_enabled=false", stdout)
+        self.assertIn("spark.swarm.routing.long_task_word_count=77", stdout)
+        self.assertFalse(
+            self.config_manager.get_path("spark.researcher.routing.conversational_fallback_enabled", default=True)
+        )
+        self.assertEqual(
+            self.config_manager.get_path("spark.researcher.routing.conversational_fallback_max_chars"),
+            111,
+        )
+        self.assertFalse(
+            self.config_manager.get_path("spark.swarm.routing.auto_recommend_enabled", default=True)
+        )
+        self.assertEqual(self.config_manager.get_path("spark.swarm.routing.long_task_word_count"), 77)
 
     def test_connect_status_marks_telegram_core_ready_when_live_prereqs_exist(self) -> None:
         researcher_root = self.home / "spark-researcher"

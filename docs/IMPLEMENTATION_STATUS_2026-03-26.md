@@ -159,6 +159,8 @@ Phase D work is now underway in the runtime surfaces themselves: `status` record
 
 That phase now also has a dedicated runtime explanation surface: `spark-intelligence connect route-policy` describes the current bridge and Swarm routing contract in operator language instead of leaving the contract implicit in code or post-hoc traces only.
 
+Phase D is now also starting to become operator-tunable instead of read-only. The bridge and Swarm evaluator now read persisted routing policy values for conversational fallback and Swarm recommendation thresholds, and `spark-intelligence connect set-route-policy` provides a dedicated control surface for those knobs without forcing operators to remember raw dotted config paths.
+
 ## 7. Current Non-Goals
 
 Do not start these next:

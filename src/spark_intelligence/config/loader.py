@@ -66,13 +66,24 @@ class ConfigManager:
             "identity": {"default_pairing_mode": "pairing", "shared_surfaces_enabled": False},
             "jobs": {"scheduler": {"enabled": True, "tick_seconds": 60}},
             "spark": {
-                "researcher": {"enabled": True, "runtime_root": None},
+                "researcher": {
+                    "enabled": True,
+                    "runtime_root": None,
+                    "routing": {
+                        "conversational_fallback_enabled": True,
+                        "conversational_fallback_max_chars": 240,
+                    },
+                },
                 "swarm": {
                     "enabled": True,
                     "runtime_root": None,
                     "api_url": None,
                     "workspace_id": None,
                     "access_token_env": None,
+                    "routing": {
+                        "auto_recommend_enabled": True,
+                        "long_task_word_count": 40,
+                    },
                 },
                 "chips": {"roots": [], "active_keys": [], "pinned_keys": []},
                 "specialization_paths": {"roots": [], "active_path_key": None},

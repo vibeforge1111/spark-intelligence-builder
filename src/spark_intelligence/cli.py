@@ -216,6 +216,16 @@ class RoutingContractStatus:
         lines.append(f"- provider runtime: {'ok' if researcher['provider_runtime_ok'] else 'degraded'}")
         lines.append(f"- provider execution: {'ok' if researcher['provider_execution_ok'] else 'degraded'}")
         lines.append(f"- swarm api: {'ready' if swarm['api_ready'] else 'not_ready'}")
+        lines.append(
+            f"- conversational fallback policy: "
+            f"{'enabled' if researcher['conversational_fallback_enabled'] else 'disabled'} "
+            f"(max_chars={researcher['conversational_fallback_max_chars']})"
+        )
+        lines.append(
+            f"- swarm recommendation policy: "
+            f"{'enabled' if swarm['auto_recommend_enabled'] else 'disabled'} "
+            f"(long_task_word_count={swarm['long_task_word_count']})"
+        )
         lines.append(f"- last bridge route: {researcher['last_routing_decision'] or 'none'}")
         if researcher.get("last_active_chip_key"):
             chip_suffix = (
@@ -417,6 +427,12 @@ def build_routing_contract_status(config_manager: ConfigManager, state_db: State
             "available": researcher.available,
             "provider_runtime_ok": gateway.provider_runtime_ok,
             "provider_execution_ok": gateway.provider_execution_ok,
+            "conversational_fallback_enabled": bool(
+                config_manager.get_path("spark.researcher.routing.conversational_fallback_enabled", default=True)
+            ),
+            "conversational_fallback_max_chars": int(
+                config_manager.get_path("spark.researcher.routing.conversational_fallback_max_chars", default=240)
+            ),
             "last_routing_decision": researcher.last_routing_decision,
             "last_active_chip_key": researcher.last_active_chip_key,
             "last_active_chip_task_type": researcher.last_active_chip_task_type,
@@ -427,6 +443,12 @@ def build_routing_contract_status(config_manager: ConfigManager, state_db: State
             "enabled": swarm.enabled,
             "payload_ready": swarm.payload_ready,
             "api_ready": swarm.api_ready,
+            "auto_recommend_enabled": bool(
+                config_manager.get_path("spark.swarm.routing.auto_recommend_enabled", default=True)
+            ),
+            "long_task_word_count": int(
+                config_manager.get_path("spark.swarm.routing.long_task_word_count", default=40)
+            ),
             "last_decision_mode": (swarm.last_decision or {}).get("mode"),
         },
         "bridge_routes": [
@@ -540,6 +562,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     connect_route_policy_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     connect_route_policy_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    connect_set_route_policy_parser = connect_subparsers.add_parser(
+        "set-route-policy",
+        help="Update the operator-facing routing policy knobs",
+    )
+    connect_set_route_policy_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    connect_set_route_policy_parser.add_argument(
+        "--conversational-fallback",
+        choices=["on", "off"],
+        help="Enable or disable direct provider fallback for short under-supported conversational traffic",
+    )
+    connect_set_route_policy_parser.add_argument(
+        "--conversational-max-chars",
+        type=int,
+        help="Maximum message length that still qualifies for conversational direct-provider fallback",
+    )
+    connect_set_route_policy_parser.add_argument(
+        "--swarm-auto-recommend",
+        choices=["on", "off"],
+        help="Enable or disable automatic Swarm recommendation when escalation triggers are present",
+    )
+    connect_set_route_policy_parser.add_argument(
+        "--swarm-long-task-word-count",
+        type=int,
+        help="Word-count threshold that marks a task as long enough to trigger Swarm recommendation",
+    )
 
     operator_parser = subparsers.add_parser("operator", help="Safe operator controls for bridges and pairing review")
     operator_subparsers = operator_parser.add_subparsers(dest="operator_command", required=True)
@@ -1322,6 +1369,47 @@ def handle_connect_route_policy(args: argparse.Namespace) -> int:
     state_db.initialize()
     status = build_routing_contract_status(config_manager=config_manager, state_db=state_db)
     print(status.to_json() if args.json else status.to_text())
+    return 0
+
+
+def handle_connect_set_route_policy(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    updates: list[str] = []
+    if args.conversational_fallback:
+        enabled = args.conversational_fallback == "on"
+        config_manager.set_path("spark.researcher.routing.conversational_fallback_enabled", enabled)
+        updates.append(f"spark.researcher.routing.conversational_fallback_enabled={json.dumps(enabled)}")
+    if args.conversational_max_chars is not None:
+        if args.conversational_max_chars <= 0:
+            print("--conversational-max-chars must be greater than zero.", file=sys.stderr)
+            return 2
+        config_manager.set_path(
+            "spark.researcher.routing.conversational_fallback_max_chars",
+            args.conversational_max_chars,
+        )
+        updates.append(
+            "spark.researcher.routing.conversational_fallback_max_chars="
+            f"{args.conversational_max_chars}"
+        )
+    if args.swarm_auto_recommend:
+        enabled = args.swarm_auto_recommend == "on"
+        config_manager.set_path("spark.swarm.routing.auto_recommend_enabled", enabled)
+        updates.append(f"spark.swarm.routing.auto_recommend_enabled={json.dumps(enabled)}")
+    if args.swarm_long_task_word_count is not None:
+        if args.swarm_long_task_word_count <= 0:
+            print("--swarm-long-task-word-count must be greater than zero.", file=sys.stderr)
+            return 2
+        config_manager.set_path("spark.swarm.routing.long_task_word_count", args.swarm_long_task_word_count)
+        updates.append(
+            f"spark.swarm.routing.long_task_word_count={args.swarm_long_task_word_count}"
+        )
+    if not updates:
+        print("No route-policy updates requested.", file=sys.stderr)
+        return 2
+    print("Updated route policy:")
+    for update in updates:
+        print(f"- {update}")
     return 0
 
 
@@ -2285,6 +2373,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_connect_status(args)
     if args.command == "connect" and args.connect_command == "route-policy":
         return handle_connect_route_policy(args)
+    if args.command == "connect" and args.connect_command == "set-route-policy":
+        return handle_connect_set_route_policy(args)
     if args.command == "operator" and args.operator_command == "set-bridge":
         return handle_operator_set_bridge(args)
     if args.command == "operator" and args.operator_command == "review-pairings":
