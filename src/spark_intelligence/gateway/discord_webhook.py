@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import json
 from dataclasses import dataclass
 
@@ -36,6 +37,7 @@ def handle_discord_webhook(
     path: str,
     method: str,
     content_type: str | None,
+    headers: dict[str, str] | None,
     body: bytes,
     registry: GatewayRouteRegistry | None = None,
 ) -> GatewayWebhookResponse:
@@ -51,6 +53,13 @@ def handle_discord_webhook(
         )
     except ValueError as exc:
         return _request_error_response(str(exc))
+
+    auth_error = _validate_discord_webhook_auth(
+        config_manager=config_manager,
+        provided_secret=_header_value(headers, "X-Spark-Webhook-Secret"),
+    )
+    if auth_error:
+        return _json_error_response(auth_error[0], auth_error[1])
 
     try:
         payload = json.loads(body.decode("utf-8-sig"))
@@ -89,3 +98,33 @@ def _json_error_response(status_code: int, message: str) -> GatewayWebhookRespon
         status_code=status_code,
         body=json.dumps({"ok": False, "error": message}, indent=2),
     )
+
+
+def _validate_discord_webhook_auth(
+    *,
+    config_manager: ConfigManager,
+    provided_secret: str | None,
+) -> tuple[int, str] | None:
+    record = config_manager.get_path("channels.records.discord", default={}) or {}
+    if not isinstance(record, dict):
+        return (503, "Discord webhook channel is not configured.")
+    secret_ref = record.get("webhook_auth_ref")
+    if not secret_ref:
+        return (503, "Discord webhook auth secret is not configured.")
+    expected_secret = config_manager.read_env_map().get(str(secret_ref), "")
+    if not expected_secret:
+        return (503, f"Discord webhook auth secret ref '{secret_ref}' is unresolved.")
+    if not provided_secret:
+        return (401, "Discord webhook secret header is missing.")
+    if not hmac.compare_digest(expected_secret, provided_secret):
+        return (401, "Discord webhook secret is invalid.")
+    return None
+
+
+def _header_value(headers: dict[str, str] | None, name: str) -> str | None:
+    if not headers:
+        return None
+    for key, value in headers.items():
+        if key.lower() == name.lower():
+            return value
+    return None

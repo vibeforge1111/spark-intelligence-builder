@@ -675,3 +675,52 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(record["pairing_mode"], "allowlist")
         self.assertEqual(record["auth_ref"], "DISCORD_BOT_TOKEN")
         self.assertIn("Configured channel 'discord' with pairing mode 'allowlist' status 'enabled'.", stdout)
+
+    def test_channel_add_persists_discord_webhook_secret_ref(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "channel",
+            "add",
+            "discord",
+            "--home",
+            str(self.home),
+            "--webhook-secret",
+            "discord-webhook-secret",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        config_manager = ConfigManager.from_home(str(self.home))
+        record = config_manager.get_path("channels.records.discord")
+        self.assertEqual(record["webhook_auth_ref"], "DISCORD_WEBHOOK_SECRET")
+        self.assertEqual(config_manager.read_env_map()["DISCORD_WEBHOOK_SECRET"], "discord-webhook-secret")
+        self.assertIn("Configured channel 'discord' with pairing mode 'pairing' status 'enabled'.", stdout)
+
+    def test_channel_add_preserves_existing_discord_webhook_secret_ref(self) -> None:
+        setup_exit, _, setup_stderr = self.run_cli(
+            "channel",
+            "add",
+            "discord",
+            "--home",
+            str(self.home),
+            "--webhook-secret",
+            "discord-webhook-secret",
+            "--allowed-user",
+            "111",
+            "--pairing-mode",
+            "allowlist",
+        )
+        self.assertEqual(setup_exit, 0, setup_stderr)
+
+        exit_code, stdout, stderr = self.run_cli(
+            "channel",
+            "add",
+            "discord",
+            "--home",
+            str(self.home),
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        config_manager = ConfigManager.from_home(str(self.home))
+        record = config_manager.get_path("channels.records.discord")
+        self.assertEqual(record["webhook_auth_ref"], "DISCORD_WEBHOOK_SECRET")
+        self.assertEqual(config_manager.read_env_map()["DISCORD_WEBHOOK_SECRET"], "discord-webhook-secret")
+        self.assertIn("Configured channel 'discord' with pairing mode 'allowlist' status 'enabled'.", stdout)

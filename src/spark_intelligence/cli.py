@@ -300,6 +300,8 @@ def build_parser() -> argparse.ArgumentParser:
     channel_add_parser.add_argument("channel_kind", choices=["telegram", "discord", "whatsapp"], help="Adapter kind")
     channel_add_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     channel_add_parser.add_argument("--bot-token", help="Adapter bot token")
+    channel_add_parser.add_argument("--webhook-secret", help="Static webhook secret for adapter HTTP ingress")
+    channel_add_parser.add_argument("--webhook-secret-env", help="Env var name used to store the webhook secret")
     channel_add_parser.add_argument("--allowed-user", action="append", default=[], help="Allowed adapter user id")
     channel_add_parser.add_argument(
         "--clear-allowed-users",
@@ -966,6 +968,16 @@ def handle_channel_add(args: argparse.Namespace) -> int:
     effective_pairing_mode = args.pairing_mode or (str(existing_pairing_mode) if existing_pairing_mode else "pairing")
     metadata: dict[str, object] | None = None
     validation_note: str | None = None
+    if args.webhook_secret:
+        if args.channel_kind == "discord":
+            env_key = args.webhook_secret_env or "DISCORD_WEBHOOK_SECRET"
+        elif args.channel_kind == "whatsapp":
+            env_key = args.webhook_secret_env or "WHATSAPP_WEBHOOK_SECRET"
+        else:
+            print("--webhook-secret is only supported for webhook-based adapters.", file=sys.stderr)
+            return 2
+        config_manager.upsert_env_secret(env_key, args.webhook_secret)
+        metadata = {**(metadata or {}), "webhook_auth_ref": env_key}
     if args.channel_kind == "telegram" and args.bot_token and not args.skip_validate:
         try:
             profile = inspect_telegram_bot_token(args.bot_token)
