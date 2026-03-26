@@ -291,7 +291,7 @@ def build_parser() -> argparse.ArgumentParser:
     channel_telegram_onboard_parser.add_argument(
         "--pairing-mode",
         choices=["allowlist", "pairing"],
-        default="pairing",
+        default=None,
         help="Inbound DM authorization mode",
     )
     channel_telegram_onboard_parser.add_argument(
@@ -903,11 +903,18 @@ def handle_channel_add(args: argparse.Namespace) -> int:
 
 
 def handle_channel_telegram_onboard(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    existing_record = config_manager.get_path("channels.records.telegram", default={}) or {}
+    existing_allowed_users = existing_record.get("allowed_users") if isinstance(existing_record, dict) else []
+    existing_pairing_mode = existing_record.get("pairing_mode") if isinstance(existing_record, dict) else None
+    effective_allowed_users = args.allowed_user or (existing_allowed_users if isinstance(existing_allowed_users, list) else [])
+    effective_pairing_mode = args.pairing_mode or (str(existing_pairing_mode) if existing_pairing_mode else "pairing")
+
     if not args.bot_token:
         print(
             render_telegram_botfather_guide(
-                allowed_users=args.allowed_user,
-                pairing_mode=args.pairing_mode,
+                allowed_users=effective_allowed_users,
+                pairing_mode=effective_pairing_mode,
             )
         )
         return 0
@@ -922,8 +929,8 @@ def handle_channel_telegram_onboard(args: argparse.Namespace) -> int:
             print("", file=sys.stderr)
             print(
                 render_telegram_botfather_guide(
-                    allowed_users=args.allowed_user,
-                    pairing_mode=args.pairing_mode,
+                    allowed_users=effective_allowed_users,
+                    pairing_mode=effective_pairing_mode,
                 ),
                 file=sys.stderr,
             )
@@ -941,7 +948,6 @@ def handle_channel_telegram_onboard(args: argparse.Namespace) -> int:
         print("Cannot use --validate-only together with --skip-validate.", file=sys.stderr)
         return 2
 
-    config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
@@ -950,14 +956,14 @@ def handle_channel_telegram_onboard(args: argparse.Namespace) -> int:
         state_db=state_db,
         channel_kind="telegram",
         bot_token=args.bot_token,
-        allowed_users=args.allowed_user,
-        pairing_mode=args.pairing_mode,
+        allowed_users=effective_allowed_users,
+        pairing_mode=effective_pairing_mode,
         metadata={"bot_profile": profile.to_dict()} if profile else None,
     )
     print(result)
     print("Telegram onboarding next steps:")
     print("  1. Open Telegram and send /start to the bot.")
-    if args.allowed_user:
+    if effective_allowed_users:
         print("  2. Confirm the listed allowed user ids are the accounts you want paired first.")
     else:
         print("  2. Run spark-intelligence operator review-pairings after the first DM arrives.")
