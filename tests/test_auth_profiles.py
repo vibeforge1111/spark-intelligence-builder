@@ -221,6 +221,8 @@ class AuthProfileTests(SparkTestCase):
                 "access_token": "oauth-access-token",
                 "refresh_token": "oauth-refresh-token",
                 "scope": "openid profile",
+                "expires_in": 3600,
+                "refresh_token_expires_in": 7200,
             },
         ):
             complete_exit, complete_stdout, complete_stderr = self.run_cli(
@@ -243,7 +245,7 @@ class AuthProfileTests(SparkTestCase):
         with self.state_db.connect() as conn:
             oauth_row = conn.execute(
                 """
-                SELECT issuer, scope, access_token_ciphertext, refresh_token_ciphertext, status
+                SELECT issuer, scope, access_token_ciphertext, refresh_token_ciphertext, status, access_expires_at, refresh_expires_at
                 FROM oauth_credentials
                 WHERE auth_profile_id = 'openai-codex:default'
                 LIMIT 1
@@ -264,6 +266,8 @@ class AuthProfileTests(SparkTestCase):
         self.assertEqual(oauth_row["access_token_ciphertext"], "oauth-access-token")
         self.assertEqual(oauth_row["refresh_token_ciphertext"], "oauth-refresh-token")
         self.assertEqual(oauth_row["status"], "active")
+        self.assertTrue(oauth_row["access_expires_at"])
+        self.assertTrue(oauth_row["refresh_expires_at"])
         self.assertEqual(callback_row["status"], "consumed")
         self.assertTrue(callback_row["consumed_at"])
 
@@ -278,6 +282,8 @@ class AuthProfileTests(SparkTestCase):
         self.assertEqual(report.providers[0].secret_ref.ref_id, "openai-codex:default")
         self.assertTrue(report.providers[0].secret_present)
         self.assertEqual(report.providers[0].status, "active")
+        self.assertTrue(report.providers[0].access_expires_at)
+        self.assertTrue(report.providers[0].refresh_expires_at)
 
         resolution = resolve_runtime_provider(
             config_manager=self.config_manager,
@@ -317,6 +323,7 @@ class AuthProfileTests(SparkTestCase):
             return_value={
                 "access_token": "oauth-access-token",
                 "refresh_token": "oauth-refresh-token",
+                "expires_in": 3600,
             },
         ):
             exit_code, stdout, stderr = self.run_cli(
@@ -356,6 +363,7 @@ class AuthProfileTests(SparkTestCase):
             return_value={
                 "access_token": "oauth-access-token",
                 "refresh_token": "oauth-refresh-token",
+                "expires_in": 3600,
             },
         ):
             complete_exit, _, complete_stderr = self.run_cli(
@@ -400,6 +408,231 @@ class AuthProfileTests(SparkTestCase):
                 config_manager=self.config_manager,
                 state_db=self.state_db,
             )
+
+    def test_auth_refresh_updates_expiry_and_clears_refresh_error(self) -> None:
+        start_exit, start_stdout, start_stderr = self.run_cli(
+            "auth",
+            "login",
+            "openai-codex",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(start_exit, 0, start_stderr)
+        start_payload = json.loads(start_stdout)
+        callback_url = (
+            "http://127.0.0.1:1455/auth/callback"
+            f"?state={start_payload['callback_state']}&code=test-oauth-code"
+        )
+
+        with patch(
+            "spark_intelligence.auth.service.exchange_oauth_authorization_code",
+            return_value={
+                "access_token": "oauth-access-token",
+                "refresh_token": "oauth-refresh-token",
+                "expires_in": 1,
+            },
+        ):
+            complete_exit, _, complete_stderr = self.run_cli(
+                "auth",
+                "login",
+                "openai-codex",
+                "--home",
+                str(self.home),
+                "--callback-url",
+                callback_url,
+            )
+        self.assertEqual(complete_exit, 0, complete_stderr)
+
+        with patch(
+            "spark_intelligence.auth.service.exchange_oauth_refresh_token",
+            return_value={
+                "access_token": "oauth-access-token-refreshed",
+                "refresh_token": "oauth-refresh-token-rotated",
+                "expires_in": 3600,
+                "refresh_token_expires_in": 7200,
+            },
+        ):
+            refresh_exit, refresh_stdout, refresh_stderr = self.run_cli(
+                "auth",
+                "refresh",
+                "openai-codex",
+                "--home",
+                str(self.home),
+                "--json",
+            )
+
+        self.assertEqual(refresh_exit, 0, refresh_stderr)
+        payload = json.loads(refresh_stdout)
+        self.assertEqual(payload["provider_id"], "openai-codex")
+        self.assertEqual(payload["status"], "active")
+        self.assertTrue(payload["access_expires_at"])
+        self.assertTrue(payload["refresh_expires_at"])
+
+        with self.state_db.connect() as conn:
+            oauth_row = conn.execute(
+                """
+                SELECT access_token_ciphertext, refresh_token_ciphertext, last_refresh_at, last_refresh_error
+                FROM oauth_credentials
+                WHERE auth_profile_id = 'openai-codex:default'
+                LIMIT 1
+                """
+            ).fetchone()
+
+        self.assertEqual(oauth_row["access_token_ciphertext"], "oauth-access-token-refreshed")
+        self.assertEqual(oauth_row["refresh_token_ciphertext"], "oauth-refresh-token-rotated")
+        self.assertTrue(oauth_row["last_refresh_at"])
+        self.assertEqual(oauth_row["last_refresh_error"], None)
+
+    def test_auth_status_and_doctor_degrade_when_oauth_token_is_expired(self) -> None:
+        start_exit, start_stdout, start_stderr = self.run_cli(
+            "auth",
+            "login",
+            "openai-codex",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(start_exit, 0, start_stderr)
+        start_payload = json.loads(start_stdout)
+        callback_url = (
+            "http://127.0.0.1:1455/auth/callback"
+            f"?state={start_payload['callback_state']}&code=test-oauth-code"
+        )
+
+        with patch(
+            "spark_intelligence.auth.service.exchange_oauth_authorization_code",
+            return_value={
+                "access_token": "oauth-access-token",
+                "refresh_token": "oauth-refresh-token",
+                "expires_in": 0,
+            },
+        ):
+            complete_exit, _, complete_stderr = self.run_cli(
+                "auth",
+                "login",
+                "openai-codex",
+                "--home",
+                str(self.home),
+                "--callback-url",
+                callback_url,
+            )
+        self.assertEqual(complete_exit, 0, complete_stderr)
+
+        status_exit, status_stdout, status_stderr = self.run_cli(
+            "auth",
+            "status",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(status_exit, 1, status_stderr)
+        status_payload = json.loads(status_stdout)
+        self.assertEqual(status_payload["providers"][0]["status"], "expired")
+        self.assertTrue(status_payload["providers"][0]["token_expired"])
+        self.assertFalse(status_payload["providers"][0]["secret_present"])
+
+        doctor_exit, doctor_stdout, doctor_stderr = self.run_cli(
+            "doctor",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(doctor_exit, 1, doctor_stderr)
+        self.assertIn("[fail] provider-auth: openai-codex:expired", doctor_stdout)
+
+        with self.assertRaisesRegex(RuntimeError, "expired OAuth access token"):
+            resolve_runtime_provider(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+            )
+
+    def test_auth_refresh_failure_records_error_and_returns_nonzero(self) -> None:
+        start_exit, start_stdout, start_stderr = self.run_cli(
+            "auth",
+            "login",
+            "openai-codex",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(start_exit, 0, start_stderr)
+        start_payload = json.loads(start_stdout)
+        callback_url = (
+            "http://127.0.0.1:1455/auth/callback"
+            f"?state={start_payload['callback_state']}&code=test-oauth-code"
+        )
+
+        with patch(
+            "spark_intelligence.auth.service.exchange_oauth_authorization_code",
+            return_value={
+                "access_token": "oauth-access-token",
+                "refresh_token": "oauth-refresh-token",
+                "expires_in": 3600,
+            },
+        ):
+            complete_exit, _, complete_stderr = self.run_cli(
+                "auth",
+                "login",
+                "openai-codex",
+                "--home",
+                str(self.home),
+                "--callback-url",
+                callback_url,
+            )
+        self.assertEqual(complete_exit, 0, complete_stderr)
+
+        with patch(
+            "spark_intelligence.auth.service.exchange_oauth_refresh_token",
+            side_effect=RuntimeError("refresh failed"),
+        ):
+            refresh_exit, refresh_stdout, refresh_stderr = self.run_cli(
+                "auth",
+                "refresh",
+                "openai-codex",
+                "--home",
+                str(self.home),
+            )
+
+        self.assertEqual(refresh_exit, 1)
+        self.assertEqual(refresh_stdout, "")
+        self.assertIn("refresh failed", refresh_stderr)
+
+        status_exit, status_stdout, status_stderr = self.run_cli(
+            "auth",
+            "status",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(status_exit, 0, status_stderr)
+        status_payload = json.loads(status_stdout)
+        self.assertEqual(status_payload["providers"][0]["status"], "refresh_error")
+        self.assertTrue(status_payload["providers"][0]["secret_present"])
+        self.assertEqual(status_payload["providers"][0]["last_refresh_error"], "refresh failed")
+
+        with self.state_db.connect() as conn:
+            oauth_row = conn.execute(
+                """
+                SELECT last_refresh_at, last_refresh_error
+                FROM oauth_credentials
+                WHERE auth_profile_id = 'openai-codex:default'
+                LIMIT 1
+                """
+            ).fetchone()
+            event_row = conn.execute(
+                """
+                SELECT event_kind, detail
+                FROM provider_runtime_events
+                WHERE auth_profile_id = 'openai-codex:default'
+                ORDER BY event_id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+
+        self.assertTrue(oauth_row["last_refresh_at"])
+        self.assertEqual(oauth_row["last_refresh_error"], "refresh failed")
+        self.assertEqual(event_row["event_kind"], "oauth_refresh_failed")
+        self.assertIn("refresh failed", event_row["detail"])
 
     def test_build_auth_status_report_handles_no_providers(self) -> None:
         report = build_auth_status_report(

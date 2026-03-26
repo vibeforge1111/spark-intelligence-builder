@@ -7,6 +7,7 @@ import os
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 from spark_intelligence.auth.oauth_state import consume_oauth_callback_state, issue_oauth_callback_state
 from spark_intelligence.auth.providers import ProviderSpec, get_provider_spec
@@ -106,6 +107,39 @@ class AuthLogoutResult:
                 f"- status: {self.status}",
             ]
         )
+
+
+@dataclass(frozen=True)
+class AuthRefreshResult:
+    provider_id: str
+    auth_profile_id: str
+    status: str
+    access_expires_at: str | None
+    refresh_expires_at: str | None
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "provider_id": self.provider_id,
+                "auth_profile_id": self.auth_profile_id,
+                "status": self.status,
+                "access_expires_at": self.access_expires_at,
+                "refresh_expires_at": self.refresh_expires_at,
+            },
+            indent=2,
+        )
+
+    def to_text(self) -> str:
+        lines = [
+            f"Auth refresh completed for {self.provider_id}",
+            f"- auth_profile: {self.auth_profile_id}",
+            f"- status: {self.status}",
+        ]
+        if self.access_expires_at:
+            lines.append(f"- access_expires_at: {self.access_expires_at}")
+        if self.refresh_expires_at:
+            lines.append(f"- refresh_expires_at: {self.refresh_expires_at}")
+        return "\n".join(lines)
 
 
 def connect_provider(
@@ -357,6 +391,107 @@ def logout_provider(
     )
 
 
+def refresh_provider(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    provider: str,
+) -> AuthRefreshResult:
+    spec = get_provider_spec(provider)
+    if not spec.supports_oauth_login or not spec.oauth:
+        raise ValueError(f"Provider '{provider}' does not support OAuth refresh.")
+
+    auth_profile_id = build_default_auth_profile_id(provider)
+    with state_db.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT refresh_token_ciphertext
+            FROM oauth_credentials
+            WHERE auth_profile_id = ?
+            LIMIT 1
+            """,
+            (auth_profile_id,),
+        ).fetchone()
+    refresh_token = str(row["refresh_token_ciphertext"]) if row and row["refresh_token_ciphertext"] else ""
+    if not refresh_token:
+        _mark_oauth_refresh_failure(
+            state_db=state_db,
+            auth_profile_id=auth_profile_id,
+            message="OAuth profile has no refresh token.",
+        )
+        _log_provider_runtime_event(
+            state_db=state_db,
+            provider_id=provider,
+            auth_profile_id=auth_profile_id,
+            event_kind="oauth_refresh_failed",
+            detail={"error": "OAuth profile has no refresh token."},
+        )
+        raise RuntimeError(f"Provider '{provider}' has no refresh token available.")
+
+    try:
+        token_payload = exchange_oauth_refresh_token(
+            provider=provider,
+            refresh_token=refresh_token,
+        )
+    except Exception as exc:
+        _mark_oauth_refresh_failure(
+            state_db=state_db,
+            auth_profile_id=auth_profile_id,
+            message=str(exc),
+        )
+        _log_provider_runtime_event(
+            state_db=state_db,
+            provider_id=provider,
+            auth_profile_id=auth_profile_id,
+            event_kind="oauth_refresh_failed",
+            detail={"error": str(exc)},
+        )
+        raise
+
+    _persist_oauth_tokens(
+        state_db=state_db,
+        auth_profile_id=auth_profile_id,
+        provider=provider,
+        token_payload={
+            **token_payload,
+            "refresh_token": token_payload.get("refresh_token") or refresh_token,
+        },
+        refreshed=True,
+    )
+    _upsert_oauth_provider_record(
+        config_manager=config_manager,
+        state_db=state_db,
+        spec=spec,
+        auth_profile_id=auth_profile_id,
+        status="active",
+    )
+    _log_provider_runtime_event(
+        state_db=state_db,
+        provider_id=provider,
+        auth_profile_id=auth_profile_id,
+        event_kind="oauth_refresh_completed",
+        detail={},
+    )
+
+    with state_db.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT access_expires_at, refresh_expires_at
+            FROM oauth_credentials
+            WHERE auth_profile_id = ?
+            LIMIT 1
+            """,
+            (auth_profile_id,),
+        ).fetchone()
+    return AuthRefreshResult(
+        provider_id=provider,
+        auth_profile_id=auth_profile_id,
+        status="active",
+        access_expires_at=str(row["access_expires_at"]) if row and row["access_expires_at"] else None,
+        refresh_expires_at=str(row["refresh_expires_at"]) if row and row["refresh_expires_at"] else None,
+    )
+
+
 def exchange_oauth_authorization_code(
     *,
     provider: str,
@@ -388,6 +523,34 @@ def exchange_oauth_authorization_code(
         payload = json.loads(response.read().decode("utf-8"))
     if not payload.get("access_token"):
         raise RuntimeError(f"OAuth token exchange for '{provider}' returned no access token.")
+    return payload
+
+
+def exchange_oauth_refresh_token(
+    *,
+    provider: str,
+    refresh_token: str,
+) -> dict[str, object]:
+    spec = get_provider_spec(provider)
+    if not spec.oauth:
+        raise ValueError(f"Provider '{provider}' does not support OAuth token refresh.")
+    data = urllib.parse.urlencode(
+        {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": spec.oauth.client_id,
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        spec.oauth.token_url,
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if not payload.get("access_token"):
+        raise RuntimeError(f"OAuth refresh for '{provider}' returned no access token.")
     return payload
 
 
@@ -454,8 +617,14 @@ def _persist_oauth_tokens(
     auth_profile_id: str,
     provider: str,
     token_payload: dict[str, object],
+    refreshed: bool = False,
 ) -> None:
     issuer = _issuer_from_url(get_provider_spec(provider).oauth.authorize_url)
+    access_expires_at = _timestamp_from_expires_in(token_payload.get("expires_in"))
+    refresh_expires_at = _timestamp_from_expires_in(
+        token_payload.get("refresh_token_expires_in") or token_payload.get("refresh_expires_in")
+    )
+    refreshed_at = _utc_now_iso() if refreshed else None
     with state_db.connect() as conn:
         conn.execute(
             """
@@ -492,10 +661,19 @@ def _persist_oauth_tokens(
                 str(token_payload.get("scope")) if token_payload.get("scope") else None,
                 str(token_payload.get("access_token")),
                 str(token_payload.get("refresh_token")) if token_payload.get("refresh_token") else None,
-                None,
-                None,
+                access_expires_at,
+                refresh_expires_at,
             ),
         )
+        if refreshed_at:
+            conn.execute(
+                """
+                UPDATE oauth_credentials
+                SET last_refresh_at = ?, last_refresh_error = NULL, updated_at = CURRENT_TIMESTAMP
+                WHERE auth_profile_id = ?
+                """,
+                (refreshed_at, auth_profile_id),
+            )
         conn.execute(
             """
             UPDATE auth_profiles
@@ -571,3 +749,46 @@ def _log_provider_runtime_event(
             ),
         )
         conn.commit()
+
+
+def _mark_oauth_refresh_failure(
+    *,
+    state_db: StateDB,
+    auth_profile_id: str,
+    message: str,
+) -> None:
+    recorded_at = _utc_now_iso()
+    with state_db.connect() as conn:
+        conn.execute(
+            """
+            UPDATE oauth_credentials
+            SET last_refresh_at = ?, last_refresh_error = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE auth_profile_id = ?
+            """,
+            (recorded_at, message, auth_profile_id),
+        )
+        conn.execute(
+            """
+            UPDATE auth_profiles
+            SET status = 'refresh_error', updated_at = CURRENT_TIMESTAMP
+            WHERE auth_profile_id = ?
+            """,
+            (auth_profile_id,),
+        )
+        conn.commit()
+
+
+def _timestamp_from_expires_in(value: object) -> str | None:
+    if value in {None, ""}:
+        return None
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        return None
+    if seconds <= 0:
+        return _utc_now_iso()
+    return (datetime.now(UTC) + timedelta(seconds=seconds)).isoformat().replace("+00:00", "Z")
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from dataclasses import asdict, dataclass
 
 from spark_intelligence.auth.providers import get_provider_spec
@@ -42,6 +43,11 @@ class ProviderAuthStatus:
     base_url: str | None
     secret_ref: StaticSecretRef | None
     secret_present: bool
+    access_expires_at: str | None = None
+    refresh_expires_at: str | None = None
+    last_refresh_at: str | None = None
+    last_refresh_error: str | None = None
+    token_expired: bool = False
 
 
 @dataclass(frozen=True)
@@ -106,6 +112,14 @@ class AuthStatusReport:
                 lines.append(f"  model={provider.default_model}")
             if provider.base_url:
                 lines.append(f"  base_url={provider.base_url}")
+            if provider.access_expires_at:
+                lines.append(f"  access_expires_at={provider.access_expires_at}")
+            if provider.refresh_expires_at:
+                lines.append(f"  refresh_expires_at={provider.refresh_expires_at}")
+            if provider.last_refresh_at:
+                lines.append(f"  last_refresh_at={provider.last_refresh_at}")
+            if provider.last_refresh_error:
+                lines.append(f"  last_refresh_error={provider.last_refresh_error}")
         return "\n".join(lines)
 
 
@@ -144,7 +158,7 @@ def build_auth_status_report(*, config_manager: ConfigManager, state_db: StateDB
             ).fetchone()
             oauth_row = conn.execute(
                 """
-                SELECT access_token_ciphertext, status
+                SELECT access_token_ciphertext, status, access_expires_at, refresh_expires_at, last_refresh_at, last_refresh_error
                 FROM oauth_credentials
                 WHERE auth_profile_id = ?
                 LIMIT 1
@@ -164,19 +178,25 @@ def build_auth_status_report(*, config_manager: ConfigManager, state_db: StateDB
                 oauth_row=oauth_row,
                 env_map=env_map,
             )
+            token_expired = _oauth_token_expired(oauth_row)
             providers.append(
                 ProviderAuthStatus(
                     provider_id=provider_id,
                     provider_kind=str(record.get("provider_kind") or provider_id),
                     auth_profile_id=profile_id,
                     auth_method=auth_method,
-                    status=_derive_profile_status(profile_row=profile_row, secret_present=secret_present),
+                    status=_derive_profile_status(profile_row=profile_row, secret_present=secret_present, oauth_row=oauth_row),
                     is_default_provider=provider_id == default_provider,
                     is_default_profile=bool(profile_row["is_default"]) if profile_row else True,
                     default_model=_optional_string(record.get("default_model")),
                     base_url=_optional_string(record.get("base_url")),
                     secret_ref=secret_ref,
                     secret_present=secret_present,
+                    access_expires_at=_optional_string(oauth_row["access_expires_at"]) if oauth_row else None,
+                    refresh_expires_at=_optional_string(oauth_row["refresh_expires_at"]) if oauth_row else None,
+                    last_refresh_at=_optional_string(oauth_row["last_refresh_at"]) if oauth_row else None,
+                    last_refresh_error=_optional_string(oauth_row["last_refresh_error"]) if oauth_row else None,
+                    token_expired=token_expired,
                 )
             )
     return AuthStatusReport(
@@ -213,7 +233,7 @@ def resolve_runtime_provider(
         ).fetchone()
         oauth_row = conn.execute(
             """
-            SELECT access_token_ciphertext, status
+            SELECT access_token_ciphertext, status, access_expires_at, refresh_expires_at, last_refresh_at, last_refresh_error
             FROM oauth_credentials
             WHERE auth_profile_id = ?
             LIMIT 1
@@ -296,7 +316,9 @@ def _select_provider_id(
     raise RuntimeError("No default provider is configured.")
 
 
-def _derive_profile_status(*, profile_row: object, secret_present: bool) -> str:
+def _derive_profile_status(*, profile_row: object, secret_present: bool, oauth_row: object) -> str:
+    if oauth_row and _oauth_token_expired(oauth_row):
+        return "expired"
     if profile_row and profile_row["status"]:
         if not secret_present and str(profile_row["status"]) == "active":
             return "pending_secret"
@@ -312,7 +334,12 @@ def _has_resolved_secret(
     env_map: dict[str, str],
 ) -> bool:
     if auth_method == "oauth":
-        return bool(oauth_row and oauth_row["access_token_ciphertext"] and str(oauth_row["status"]) == "active")
+        return bool(
+            oauth_row
+            and oauth_row["access_token_ciphertext"]
+            and str(oauth_row["status"]) == "active"
+            and not _oauth_token_expired(oauth_row)
+        )
     if secret_ref and secret_ref.source == "env":
         return secret_ref.ref_id in env_map and bool(env_map[secret_ref.ref_id])
     return False
@@ -329,6 +356,8 @@ def _resolve_secret_value(
     if auth_method == "oauth":
         if not oauth_row or not oauth_row["access_token_ciphertext"] or str(oauth_row["status"]) != "active":
             raise RuntimeError(f"Provider '{provider_id}' has no active OAuth access token.")
+        if _oauth_token_expired(oauth_row):
+            raise RuntimeError(f"Provider '{provider_id}' has an expired OAuth access token.")
         return str(oauth_row["access_token_ciphertext"])
     if not secret_ref:
         raise RuntimeError(f"Provider '{provider_id}' has no secret reference configured.")
@@ -347,3 +376,13 @@ def _optional_string(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _oauth_token_expired(oauth_row: object) -> bool:
+    if not oauth_row or not oauth_row["access_expires_at"]:
+        return False
+    try:
+        expires_at = datetime.fromisoformat(str(oauth_row["access_expires_at"]).replace("Z", "+00:00")).astimezone(UTC)
+    except ValueError:
+        return False
+    return expires_at <= datetime.now(UTC)

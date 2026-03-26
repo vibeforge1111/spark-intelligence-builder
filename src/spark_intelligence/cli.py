@@ -22,7 +22,7 @@ from spark_intelligence.attachments import (
 )
 from spark_intelligence.auth.providers import list_api_key_provider_ids, list_oauth_provider_ids, list_provider_specs
 from spark_intelligence.auth.runtime import build_auth_status_report
-from spark_intelligence.auth.service import complete_oauth_login, connect_provider, logout_provider, start_oauth_login
+from spark_intelligence.auth.service import complete_oauth_login, connect_provider, logout_provider, refresh_provider, start_oauth_login
 from spark_intelligence.channel.service import (
     add_channel,
     inspect_telegram_bot_token,
@@ -382,6 +382,10 @@ def build_parser() -> argparse.ArgumentParser:
     auth_logout_parser.add_argument("provider", choices=list_oauth_provider_ids())
     auth_logout_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     auth_logout_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    auth_refresh_parser = auth_subparsers.add_parser("refresh", help="Refresh locally stored OAuth credentials for a provider")
+    auth_refresh_parser.add_argument("provider", choices=list_oauth_provider_ids())
+    auth_refresh_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    auth_refresh_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     auth_status_parser = auth_subparsers.add_parser("status", help="Show configured auth profiles and secret readiness")
     auth_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     auth_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
@@ -1291,6 +1295,24 @@ def handle_auth_logout(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_auth_refresh(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    try:
+        result = refresh_provider(
+            config_manager=config_manager,
+            state_db=state_db,
+            provider=args.provider,
+        )
+    except (RuntimeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(result.to_json() if args.json else result.to_text())
+    return 0
+
+
 def handle_auth_status(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -1669,6 +1691,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_auth_login(args)
     if args.command == "auth" and args.auth_command == "logout":
         return handle_auth_logout(args)
+    if args.command == "auth" and args.auth_command == "refresh":
+        return handle_auth_refresh(args)
     if args.command == "auth" and args.auth_command == "status":
         return handle_auth_status(args)
     if args.command == "researcher" and args.researcher_command == "status":

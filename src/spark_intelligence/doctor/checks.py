@@ -79,7 +79,11 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
     auth_report = build_auth_status_report(config_manager=config_manager, state_db=state_db)
     if auth_report.providers:
         unresolved = [
-            f"{provider.provider_id}:{provider.secret_ref.ref_id if provider.secret_ref else 'missing'}"
+            (
+                f"{provider.provider_id}:{provider.status}"
+                if provider.auth_method == "oauth"
+                else f"{provider.provider_id}:{provider.secret_ref.ref_id if provider.secret_ref else 'missing'}"
+            )
             for provider in auth_report.providers
             if not provider.secret_present
         ]
