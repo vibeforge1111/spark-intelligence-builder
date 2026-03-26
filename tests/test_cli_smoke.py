@@ -376,6 +376,63 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(history_payload["rows"][0]["target_ref"], "discord_webhook_auth_failed")
         self.assertEqual(history_payload["rows"][0]["reason"], "noise resolved")
 
+    def test_operator_webhook_alert_snoozes_prunes_expired_runtime_state(self) -> None:
+        setup_exit, _, setup_stderr = self.run_cli(
+            "channel",
+            "add",
+            "discord",
+            "--home",
+            str(self.home),
+            "--allow-legacy-message-webhook",
+            "--webhook-secret",
+            "discord-webhook-secret",
+        )
+        self.assertEqual(setup_exit, 0, setup_stderr)
+
+        response = handle_discord_webhook(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            path=DISCORD_WEBHOOK_PATH,
+            method="POST",
+            content_type="application/json",
+            headers={},
+            body=b"{}",
+        )
+        self.assertEqual(response.status_code, 401)
+
+        snooze_exit, _, snooze_stderr = self.run_cli(
+            "operator",
+            "snooze-webhook-alert",
+            "discord_webhook_auth_failed",
+            "--minutes",
+            "30",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(snooze_exit, 0, snooze_stderr)
+
+        with patch(
+            "spark_intelligence.ops.service._utc_now",
+            return_value=datetime.now(timezone.utc) + timedelta(minutes=31),
+        ):
+            list_exit, list_stdout, list_stderr = self.run_cli(
+                "operator",
+                "webhook-alert-snoozes",
+                "--home",
+                str(self.home),
+                "--json",
+            )
+
+        self.assertEqual(list_exit, 0, list_stderr)
+        list_payload = json.loads(list_stdout)
+        self.assertEqual(list_payload["rows"], [])
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+                ("ops:webhook_alert_snooze:discord_webhook_auth_failed",),
+            ).fetchone()
+        self.assertIsNone(row)
+
     def test_operator_inbox_surfaces_whatsapp_verification_rejections(self) -> None:
         setup_exit, _, setup_stderr = self.run_cli(
             "channel",

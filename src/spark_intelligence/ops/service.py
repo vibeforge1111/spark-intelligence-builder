@@ -1032,19 +1032,27 @@ def _read_webhook_alert_snooze_rows(*, state_db: StateDB, now: datetime) -> list
             f"SELECT state_key, value FROM runtime_state WHERE state_key IN ({placeholders})",
             tuple(state_keys),
         ).fetchall()
-    snoozed: list[dict[str, Any]] = []
-    for row in rows:
-        snooze_until = _parse_iso_datetime(row["value"])
-        if snooze_until is None or snooze_until < now:
-            continue
-        key = str(row["state_key"])
-        if key.startswith("ops:webhook_alert_snooze:"):
-            snoozed.append(
-                {
-                    "event": key.removeprefix("ops:webhook_alert_snooze:"),
-                    "snooze_until": snooze_until,
-                }
+        stale_keys: list[str] = []
+        snoozed: list[dict[str, Any]] = []
+        for row in rows:
+            key = str(row["state_key"])
+            snooze_until = _parse_iso_datetime(row["value"])
+            if snooze_until is None or snooze_until < now:
+                stale_keys.append(key)
+                continue
+            if key.startswith("ops:webhook_alert_snooze:"):
+                snoozed.append(
+                    {
+                        "event": key.removeprefix("ops:webhook_alert_snooze:"),
+                        "snooze_until": snooze_until,
+                    }
+                )
+        if stale_keys:
+            conn.executemany(
+                "DELETE FROM runtime_state WHERE state_key = ?",
+                [(state_key,) for state_key in stale_keys],
             )
+            conn.commit()
     snoozed.sort(key=lambda row: (row["snooze_until"], row["event"]))
     return snoozed
 
