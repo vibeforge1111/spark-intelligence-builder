@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import sys
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
@@ -152,6 +154,14 @@ def _import_build_advisory(runtime_root: Path):
     return getattr(module, "build_advisory")
 
 
+def _import_execute_with_research(runtime_root: Path):
+    src_root = runtime_root / "src"
+    if str(src_root) not in sys.path:
+        sys.path.insert(0, str(src_root))
+    module = importlib.import_module("spark_researcher.research")
+    return getattr(module, "execute_with_research")
+
+
 def _render_reply_from_advisory(advisory: dict) -> tuple[str, str, str]:
     guidance = advisory.get("guidance") or []
     epistemic = advisory.get("epistemic_status") or {}
@@ -170,6 +180,29 @@ def _render_reply_from_advisory(advisory: dict) -> tuple[str, str, str]:
         f"stability={((epistemic.get('packet_stability') or {}).get('status', 'unknown'))}"
     )
     return reply_text, evidence_summary, str(trace_ref)
+
+
+def _render_reply_from_execution(execution: dict[str, Any], advisory: dict[str, Any]) -> tuple[str, str, str]:
+    response = execution.get("response")
+    reply_text = ""
+    if isinstance(response, dict):
+        raw = response.get("raw_response")
+        if isinstance(raw, str):
+            reply_text = raw.strip()
+    elif isinstance(response, str):
+        reply_text = response.strip()
+
+    if not reply_text:
+        reply_text, _, _ = _render_reply_from_advisory(advisory)
+
+    decision = str(execution.get("decision") or execution.get("status") or "unknown")
+    trace_ref = (
+        str(execution.get("research_trace_path") or "")
+        or str(execution.get("trace_path") or "")
+        or str(advisory.get("trace_path") or advisory.get("trace_id") or "trace:missing")
+    )
+    evidence_summary = f"status={decision} provider_execution=yes"
+    return reply_text, evidence_summary, trace_ref
 
 
 def _build_contextual_task(*, user_message: str, attachment_context: dict[str, object]) -> str:
@@ -316,6 +349,7 @@ def build_researcher_reply(
         if config_path.exists():
             try:
                 build_advisory = _import_build_advisory(runtime_root)
+                execute_with_research = _import_execute_with_research(runtime_root)
                 advisory = build_advisory(
                     config_path,
                     contextual_task,
@@ -323,7 +357,18 @@ def build_researcher_reply(
                     limit=3,
                     domain=None,
                 )
-                reply_text, evidence_summary, trace_ref = _render_reply_from_advisory(advisory)
+                if provider_selection.provider and _supports_direct_or_cli_execution(provider_selection):
+                    with _temporary_provider_env(provider_selection.provider):
+                        execution = execute_with_research(
+                            runtime_root,
+                            advisory=advisory,
+                            model=provider_selection.model_family,
+                            command_override=_command_override_for_provider(provider_selection),
+                            dry_run=False,
+                        )
+                    reply_text, evidence_summary, trace_ref = _render_reply_from_execution(execution, advisory)
+                else:
+                    reply_text, evidence_summary, trace_ref = _render_reply_from_advisory(advisory)
                 return ResearcherBridgeResult(
                     request_id=request_id,
                     reply_text=reply_text,
@@ -425,6 +470,55 @@ def _model_family_for_provider(provider: RuntimeProviderResolution) -> str:
     if "openclaw" in model_name:
         return "openclaw"
     return "generic"
+
+
+def _supports_direct_or_cli_execution(selection: ResearcherProviderSelection) -> bool:
+    provider = selection.provider
+    if provider is None:
+        return False
+    if selection.model_family == "codex":
+        return True
+    return provider.api_mode in {"chat_completions", "anthropic_messages"}
+
+
+def _command_override_for_provider(selection: ResearcherProviderSelection) -> list[str] | None:
+    provider = selection.provider
+    if provider is None:
+        return None
+    if selection.model_family == "codex":
+        return None
+    return [
+        sys.executable,
+        "-m",
+        "spark_intelligence.llm.provider_wrapper",
+        "{system_prompt_path}",
+        "{user_prompt_path}",
+        "{response_path}",
+    ]
+
+
+@contextmanager
+def _temporary_provider_env(provider: RuntimeProviderResolution):
+    values = {
+        "SPARK_INTELLIGENCE_PROVIDER_ID": provider.provider_id,
+        "SPARK_INTELLIGENCE_PROVIDER_KIND": provider.provider_kind,
+        "SPARK_INTELLIGENCE_PROVIDER_AUTH_METHOD": provider.auth_method,
+        "SPARK_INTELLIGENCE_PROVIDER_API_MODE": provider.api_mode,
+        "SPARK_INTELLIGENCE_PROVIDER_MODEL": provider.default_model or "",
+        "SPARK_INTELLIGENCE_PROVIDER_BASE_URL": provider.base_url or "",
+        "SPARK_INTELLIGENCE_PROVIDER_SECRET": provider.secret_value,
+    }
+    original = {key: os.environ.get(key) for key in values}
+    try:
+        for key, value in values.items():
+            os.environ[key] = value
+        yield
+    finally:
+        for key, value in original.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def _read_runtime_state(state_db: StateDB) -> dict[str, str]:
