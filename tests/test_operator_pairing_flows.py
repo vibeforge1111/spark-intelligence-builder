@@ -1,7 +1,9 @@
 import json
+from unittest.mock import patch
 
 from spark_intelligence.adapters.telegram.runtime import simulate_telegram_update
 from spark_intelligence.identity.service import approve_pairing, pairing_summary, review_pairings
+from spark_intelligence.researcher_bridge.advisory import ResearcherBridgeResult
 
 from tests.test_support import SparkTestCase, make_telegram_update
 
@@ -254,3 +256,107 @@ class OperatorPairingFlowTests(SparkTestCase):
 
         self.assertTrue(follow_up.ok)
         self.assertEqual(follow_up.decision, "allowed")
+
+    def test_telegram_replies_hide_think_blocks_by_default(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            return_value=ResearcherBridgeResult(
+                request_id="req-think-off",
+                reply_text="<think>private reasoning</think>\n\nHello there.",
+                evidence_summary="status=under_supported provider_fallback=direct_http_chat",
+                escalation_hint=None,
+                trace_ref="trace:think-off",
+                mode="external_configured",
+                runtime_root="C:/fake-researcher",
+                config_path="C:/fake-researcher/spark-researcher.project.json",
+                attachment_context={},
+                provider_id="custom",
+                provider_auth_profile_id="custom:default",
+                provider_auth_method="api_key_env",
+                provider_model="MiniMax-M2.5",
+                provider_model_family="generic",
+                provider_execution_transport="direct_http",
+                provider_base_url="https://api.minimax.io/v1",
+                provider_source="config+env",
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=110,
+                    user_id="111",
+                    username="alice",
+                    text="hey",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.detail["response_text"], "Hello there.")
+
+    def test_think_command_toggles_telegram_visibility(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        enable_result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=111,
+                user_id="111",
+                username="alice",
+                text="/think on",
+            ),
+        )
+        self.assertTrue(enable_result.ok)
+        self.assertIn("Thinking visibility enabled", str(enable_result.detail["response_text"]))
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            return_value=ResearcherBridgeResult(
+                request_id="req-think-on",
+                reply_text="<think>private reasoning</think>\n\nHello there.",
+                evidence_summary="status=under_supported provider_fallback=direct_http_chat",
+                escalation_hint=None,
+                trace_ref="trace:think-on",
+                mode="external_configured",
+                runtime_root="C:/fake-researcher",
+                config_path="C:/fake-researcher/spark-researcher.project.json",
+                attachment_context={},
+                provider_id="custom",
+                provider_auth_profile_id="custom:default",
+                provider_auth_method="api_key_env",
+                provider_model="MiniMax-M2.5",
+                provider_model_family="generic",
+                provider_execution_transport="direct_http",
+                provider_base_url="https://api.minimax.io/v1",
+                provider_source="config+env",
+            ),
+        ):
+            visible_result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=112,
+                    user_id="111",
+                    username="alice",
+                    text="hey again",
+                ),
+            )
+
+        self.assertTrue(visible_result.ok)
+        self.assertIn("<think>private reasoning</think>", str(visible_result.detail["response_text"]))
+
+        disable_result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=113,
+                user_id="111",
+                username="alice",
+                text="/think off",
+            ),
+        )
+        self.assertTrue(disable_result.ok)
+        self.assertIn("Thinking visibility disabled", str(disable_result.detail["response_text"]))

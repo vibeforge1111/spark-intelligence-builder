@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Any
@@ -257,25 +258,41 @@ def simulate_telegram_update(
         inbound_text=normalized.text,
     )
     if resolution.allowed and resolution.agent_id and resolution.human_id and resolution.session_id:
-        bridge_result = build_researcher_reply(
-            config_manager=config_manager,
-            state_db=state_db,
-            request_id=f"sim:{normalized.update_id}",
-            agent_id=resolution.agent_id,
-            human_id=resolution.human_id,
-            session_id=resolution.session_id,
-            channel_kind="telegram",
-            user_message=normalized.text,
-        )
-        record_researcher_bridge_result(state_db=state_db, result=bridge_result)
-        outbound_text = _apply_post_approval_welcome(
+        command_result = _handle_runtime_command(
             state_db=state_db,
             external_user_id=normalized.telegram_user_id,
-            reply_text=bridge_result.reply_text,
+            inbound_text=normalized.text,
         )
-        trace_ref = bridge_result.trace_ref
-        bridge_mode = bridge_result.mode
-        attachment_context = bridge_result.attachment_context
+        if command_result is not None:
+            outbound_text = command_result["reply_text"]
+            trace_ref = None
+            bridge_mode = "runtime_command"
+            attachment_context = None
+        else:
+            bridge_result = build_researcher_reply(
+                config_manager=config_manager,
+                state_db=state_db,
+                request_id=f"sim:{normalized.update_id}",
+                agent_id=resolution.agent_id,
+                human_id=resolution.human_id,
+                session_id=resolution.session_id,
+                channel_kind="telegram",
+                user_message=normalized.text,
+            )
+            record_researcher_bridge_result(state_db=state_db, result=bridge_result)
+            outbound_text = _apply_post_approval_welcome(
+                state_db=state_db,
+                external_user_id=normalized.telegram_user_id,
+                reply_text=bridge_result.reply_text,
+            )
+            trace_ref = bridge_result.trace_ref
+            bridge_mode = bridge_result.mode
+            attachment_context = bridge_result.attachment_context
+        outbound_text = _apply_think_visibility(
+            state_db=state_db,
+            external_user_id=normalized.telegram_user_id,
+            text=outbound_text,
+        )
     else:
         trace_ref = None
         bridge_mode = None
@@ -369,6 +386,7 @@ def poll_telegram_updates_once(
             if rate_limit["notice_allowed"]:
                 send_result = _send_telegram_reply(
                     config_manager=config_manager,
+                    state_db=state_db,
                     client=client,
                     chat_id=normalized.chat_id,
                     text=f"Rate limit reached. Try again in about {rate_limit['retry_after_seconds']} seconds.",
@@ -427,6 +445,7 @@ def poll_telegram_updates_once(
             pending_pairing_count += 1
             send_result = _send_telegram_reply(
                 config_manager=config_manager,
+                state_db=state_db,
                 client=client,
                 chat_id=normalized.chat_id,
                 text=_resolution_reply_text(
@@ -477,6 +496,7 @@ def poll_telegram_updates_once(
             )
             send_result = _send_telegram_reply(
                 config_manager=config_manager,
+                state_db=state_db,
                 client=client,
                 chat_id=normalized.chat_id,
                 text=denied_text,
@@ -513,6 +533,54 @@ def poll_telegram_updates_once(
             )
             continue
 
+        command_result = _handle_runtime_command(
+            state_db=state_db,
+            external_user_id=normalized.telegram_user_id,
+            inbound_text=normalized.text,
+        )
+        if command_result is not None:
+            outbound_text = _apply_think_visibility(
+                state_db=state_db,
+                external_user_id=normalized.telegram_user_id,
+                text=command_result["reply_text"],
+            )
+            send_result = _send_telegram_reply(
+                config_manager=config_manager,
+                state_db=state_db,
+                client=client,
+                chat_id=normalized.chat_id,
+                text=outbound_text,
+                event="telegram_runtime_command_outbound",
+                update_id=normalized.update_id,
+                telegram_user_id=normalized.telegram_user_id,
+                session_id=resolution.session_id,
+                decision=resolution.decision,
+                bridge_mode="runtime_command",
+                trace_ref=None,
+            )
+            processed_count += 1
+            if send_result["ok"]:
+                sent_count += 1
+            else:
+                failed_send_count += 1
+            append_gateway_trace(
+                config_manager,
+                {
+                    "event": "telegram_runtime_command_processed",
+                    "channel_id": "telegram",
+                    "update_id": normalized.update_id,
+                    "telegram_user_id": normalized.telegram_user_id,
+                    "chat_id": normalized.chat_id,
+                    "session_id": resolution.session_id,
+                    "command": command_result["command"],
+                    "delivery_ok": send_result["ok"],
+                    "delivery_error": send_result["error"],
+                    "guardrail_actions": send_result["guardrail_actions"],
+                    "response_preview": _preview_text(outbound_text),
+                },
+            )
+            continue
+
         bridge_result = build_researcher_reply(
             config_manager=config_manager,
             state_db=state_db,
@@ -531,6 +599,7 @@ def poll_telegram_updates_once(
         )
         send_result = _send_telegram_reply(
             config_manager=config_manager,
+            state_db=state_db,
             client=client,
             chat_id=normalized.chat_id,
             text=outbound_text,
@@ -614,6 +683,7 @@ def _telegram_security_policy(config_manager: ConfigManager) -> dict[str, Any]:
 def _send_telegram_reply(
     *,
     config_manager: ConfigManager,
+    state_db: StateDB,
     client: TelegramBotApiClient,
     chat_id: str,
     text: str,
@@ -626,12 +696,19 @@ def _send_telegram_reply(
     trace_ref: str | None,
 ) -> dict[str, Any]:
     policy = _telegram_security_policy(config_manager)
-    guarded = prepare_outbound_text(
+    visible_text = _apply_think_visibility(
+        state_db=state_db,
+        external_user_id=telegram_user_id,
         text=text,
+    )
+    guarded = prepare_outbound_text(
+        text=visible_text,
         bridge_mode=bridge_mode,
         max_reply_chars=policy["max_reply_chars"],
         redact_secret_like_replies=policy["redact_secret_like_replies"],
     )
+    if visible_text != text:
+        guarded["actions"] = ["strip_think_blocks", *list(guarded["actions"])]
     error: str | None = None
     ok = True
     try:
@@ -672,6 +749,77 @@ def _preview_text(text: str, *, limit: int = 160) -> str:
     if len(compact) <= limit:
         return compact
     return f"{compact[: limit - 3]}..."
+
+
+def _handle_runtime_command(
+    *,
+    state_db: StateDB,
+    external_user_id: str,
+    inbound_text: str,
+) -> dict[str, str] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    lowered = normalized.lower()
+    if lowered not in {"/think", "/think on", "/think off"}:
+        return None
+    if lowered == "/think":
+        enabled = _think_enabled_for_user(state_db=state_db, external_user_id=external_user_id)
+        state_text = "on" if enabled else "off"
+        return {
+            "command": "/think",
+            "reply_text": (
+                f"Thinking visibility is currently {state_text} for this Telegram DM. "
+                "Use `/think on` to show `<think>` blocks or `/think off` to hide them."
+            ),
+        }
+    enabled = lowered == "/think on"
+    _set_think_enabled_for_user(
+        state_db=state_db,
+        external_user_id=external_user_id,
+        enabled=enabled,
+    )
+    state_text = "enabled" if enabled else "disabled"
+    return {
+        "command": lowered,
+        "reply_text": (
+            f"Thinking visibility {state_text} for this Telegram DM. "
+            "This only affects `<think>` blocks in future replies."
+        ),
+    }
+
+
+def _think_state_key(*, external_user_id: str) -> str:
+    return f"telegram:think_visibility:{external_user_id}"
+
+
+def _think_enabled_for_user(*, state_db: StateDB, external_user_id: str) -> bool:
+    payload = _load_runtime_json_object(state_db, _think_state_key(external_user_id=external_user_id))
+    return bool(payload.get("enabled", False))
+
+
+def _set_think_enabled_for_user(
+    *,
+    state_db: StateDB,
+    external_user_id: str,
+    enabled: bool,
+) -> None:
+    set_runtime_state_value(
+        state_db=state_db,
+        state_key=_think_state_key(external_user_id=external_user_id),
+        value=json.dumps({"enabled": enabled}, sort_keys=True),
+    )
+
+
+def _apply_think_visibility(
+    *,
+    state_db: StateDB,
+    external_user_id: str,
+    text: str,
+) -> str:
+    if _think_enabled_for_user(state_db=state_db, external_user_id=external_user_id):
+        return text
+    without_think = re.sub(r"(?is)<think>.*?</think>", "", text)
+    collapsed = re.sub(r"\n{3,}", "\n\n", without_think).strip()
+    return collapsed or text.strip()
 
 
 def _apply_post_approval_welcome(
