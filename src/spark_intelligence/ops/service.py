@@ -704,23 +704,27 @@ def _build_inbox_items(
         event_name = str(row["event"])
         reason_suffix = f" Reason: {row['reason']}." if row.get("reason") else ""
         snoozed_at = str(row["snoozed_at"])
+        suppressed_recent_count = int(row.get("suppressed_recent_count") or 0)
+        sustained_suppressed = suppressed_recent_count >= WEBHOOK_ALERT_SUSTAINED_THRESHOLD
         suppressed_suffix = ""
-        if row.get("suppressed_recent_count"):
+        if suppressed_recent_count:
             latest_reason = str(row.get("latest_suppressed_reason") or "unknown")
             if latest_reason.endswith((".", "!", "?")):
                 latest_reason_text = latest_reason
             else:
                 latest_reason_text = f"{latest_reason}."
             suppressed_suffix = (
-                f" Suppressed {row['suppressed_recent_count']} recent rejection(s); "
+                f" Suppressed {suppressed_recent_count} recent rejection(s); "
                 f"latest reason: {latest_reason_text}"
             )
+            if sustained_suppressed:
+                suppressed_suffix += " Snooze is still masking sustained ingress traffic."
         items.append(
             {
                 "kind": "webhook_snooze",
-                "status": "snoozed",
-                "priority": "info",
-                "sort_order": 48,
+                "status": "sustained_rejections_suppressed" if sustained_suppressed else "snoozed",
+                "priority": "medium" if sustained_suppressed else "info",
+                "sort_order": 34 if sustained_suppressed else 48,
                 "item_ref": event_name,
                 "summary": (
                     f"Webhook alert {event_name} was snoozed at {snoozed_at} until {row['snooze_until']} "
@@ -817,21 +821,25 @@ def _build_security_items(
         event_name = str(row["event"])
         reason_suffix = f" Reason: {row['reason']}." if row.get("reason") else ""
         snoozed_at = str(row["snoozed_at"])
+        suppressed_recent_count = int(row.get("suppressed_recent_count") or 0)
+        sustained_suppressed = suppressed_recent_count >= WEBHOOK_ALERT_SUSTAINED_THRESHOLD
         suppressed_suffix = ""
-        if row.get("suppressed_recent_count"):
+        if suppressed_recent_count:
             latest_reason = str(row.get("latest_suppressed_reason") or "unknown")
             if latest_reason.endswith((".", "!", "?")):
                 latest_reason_text = latest_reason
             else:
                 latest_reason_text = f"{latest_reason}."
             suppressed_suffix = (
-                f" Suppressed {row['suppressed_recent_count']} recent rejection(s); "
+                f" Suppressed {suppressed_recent_count} recent rejection(s); "
                 f"latest reason: {latest_reason_text}"
             )
+            if sustained_suppressed:
+                suppressed_suffix += " Snooze is still masking sustained ingress traffic."
         items.append(
             {
-                "priority": "info",
-                "sort_order": severity_order["info"],
+                "priority": "medium" if sustained_suppressed else "info",
+                "sort_order": severity_order["medium"] if sustained_suppressed else severity_order["info"],
                 "summary": (
                     f"Webhook alert {event_name} was snoozed at {snoozed_at} until {row['snooze_until']} "
                     f"({row['remaining_minutes']} minute(s) remaining).{reason_suffix}{suppressed_suffix}"
@@ -1084,6 +1092,8 @@ def _list_webhook_alert_snoozes_with_traces(
         latest_reason = None
         if matching:
             latest_reason = str(matching[-1].get("reason") or "unknown")
+        suppressed_recent_count = len(matching)
+        sustained_suppressed = suppressed_recent_count >= WEBHOOK_ALERT_SUSTAINED_THRESHOLD
         payload.append(
             {
                 "event": row["event"],
@@ -1091,8 +1101,10 @@ def _list_webhook_alert_snoozes_with_traces(
                 "snooze_until": row["snooze_until"].isoformat(timespec="seconds"),
                 "remaining_minutes": max(1, int((remaining.total_seconds() + 59) // 60)),
                 "reason": row.get("reason"),
-                "suppressed_recent_count": len(matching),
+                "suppressed_recent_count": suppressed_recent_count,
                 "latest_suppressed_reason": latest_reason,
+                "status": "sustained_rejections_suppressed" if sustained_suppressed else "snoozed",
+                "severity": "warning" if sustained_suppressed else "info",
             }
         )
     return OperatorWebhookSnoozeReport(rows=payload)

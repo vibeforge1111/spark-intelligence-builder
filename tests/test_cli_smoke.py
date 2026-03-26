@@ -299,6 +299,65 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(history_payload["rows"][0]["target_ref"], "discord_webhook_auth_failed")
         self.assertEqual(history_payload["rows"][0]["reason"], "known noisy source")
 
+    def test_operator_security_escalates_sustained_suppressed_discord_webhook_traffic(self) -> None:
+        setup_exit, _, setup_stderr = self.run_cli(
+            "channel",
+            "add",
+            "discord",
+            "--home",
+            str(self.home),
+            "--allow-legacy-message-webhook",
+            "--webhook-secret",
+            "discord-webhook-secret",
+        )
+        self.assertEqual(setup_exit, 0, setup_stderr)
+
+        for _ in range(3):
+            response = handle_discord_webhook(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                path=DISCORD_WEBHOOK_PATH,
+                method="POST",
+                content_type="application/json",
+                headers={},
+                body=b"{}",
+            )
+            self.assertEqual(response.status_code, 401)
+
+        snooze_exit, _, snooze_stderr = self.run_cli(
+            "operator",
+            "snooze-webhook-alert",
+            "discord_webhook_auth_failed",
+            "--minutes",
+            "30",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(snooze_exit, 0, snooze_stderr)
+
+        security_exit, security_stdout, security_stderr = self.run_cli(
+            "operator",
+            "security",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(security_exit, 0, security_stderr)
+        payload = json.loads(security_stdout)
+        self.assertEqual(payload["counts"]["webhook_alerts"], 0)
+        self.assertEqual(payload["counts"]["webhook_snoozes"], 1)
+        self.assertEqual(payload["webhook_snoozes"][0]["status"], "sustained_rejections_suppressed")
+        self.assertEqual(payload["webhook_snoozes"][0]["severity"], "warning")
+        self.assertEqual(payload["webhook_snoozes"][0]["suppressed_recent_count"], 3)
+        snooze_items = [
+            item
+            for item in payload["items"]
+            if item["recommended_command"] == "spark-intelligence operator clear-webhook-alert-snooze discord_webhook_auth_failed"
+        ]
+        self.assertEqual(len(snooze_items), 1)
+        self.assertEqual(snooze_items[0]["priority"], "medium")
+        self.assertIn("Snooze is still masking sustained ingress traffic.", snooze_items[0]["summary"])
+
     def test_operator_can_list_and_clear_discord_webhook_alert_snooze(self) -> None:
         setup_exit, _, setup_stderr = self.run_cli(
             "channel",
