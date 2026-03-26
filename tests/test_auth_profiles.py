@@ -4,6 +4,7 @@ import json
 from unittest.mock import patch
 
 from spark_intelligence.auth.runtime import build_auth_status_report, resolve_runtime_provider
+from spark_intelligence.gateway.oauth_callback import OAuthCallbackCapture
 
 from tests.test_support import SparkTestCase
 
@@ -289,6 +290,116 @@ class AuthProfileTests(SparkTestCase):
         self.assertEqual(resolution.secret_ref.ref_id, "openai-codex:default")
         self.assertEqual(resolution.secret_value, "oauth-access-token")
         self.assertEqual(resolution.source, "oauth_store")
+
+    def test_auth_login_listen_completes_flow_via_callback_listener(self) -> None:
+        def callback_capture(*, redirect_uri: str, owner: str, timeout_seconds: int = 120):
+            with self.state_db.connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT oauth_state
+                    FROM oauth_callback_states
+                    WHERE provider_id = 'openai-codex' AND status = 'pending'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
+            return OAuthCallbackCapture(
+                callback_url=f"{redirect_uri}?state={row['oauth_state']}&code=listener-code",
+                path="/auth/callback",
+                query=f"state={row['oauth_state']}&code=listener-code",
+            )
+
+        with patch(
+            "spark_intelligence.cli.listen_for_oauth_callback",
+            side_effect=callback_capture,
+        ), patch(
+            "spark_intelligence.auth.service.exchange_oauth_authorization_code",
+            return_value={
+                "access_token": "oauth-access-token",
+                "refresh_token": "oauth-refresh-token",
+            },
+        ):
+            exit_code, stdout, stderr = self.run_cli(
+                "auth",
+                "login",
+                "openai-codex",
+                "--home",
+                str(self.home),
+                "--listen",
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["start"]["provider_id"], "openai-codex")
+        self.assertEqual(payload["callback"]["path"], "/auth/callback")
+        self.assertEqual(payload["result"]["status"], "active")
+
+    def test_auth_logout_revokes_oauth_credentials(self) -> None:
+        start_exit, start_stdout, start_stderr = self.run_cli(
+            "auth",
+            "login",
+            "openai-codex",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(start_exit, 0, start_stderr)
+        start_payload = json.loads(start_stdout)
+        callback_url = (
+            "http://127.0.0.1:1455/auth/callback"
+            f"?state={start_payload['callback_state']}&code=test-oauth-code"
+        )
+
+        with patch(
+            "spark_intelligence.auth.service.exchange_oauth_authorization_code",
+            return_value={
+                "access_token": "oauth-access-token",
+                "refresh_token": "oauth-refresh-token",
+            },
+        ):
+            complete_exit, _, complete_stderr = self.run_cli(
+                "auth",
+                "login",
+                "openai-codex",
+                "--home",
+                str(self.home),
+                "--callback-url",
+                callback_url,
+            )
+        self.assertEqual(complete_exit, 0, complete_stderr)
+
+        logout_exit, logout_stdout, logout_stderr = self.run_cli(
+            "auth",
+            "logout",
+            "openai-codex",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+
+        self.assertEqual(logout_exit, 0, logout_stderr)
+        payload = json.loads(logout_stdout)
+        self.assertEqual(payload["provider_id"], "openai-codex")
+        self.assertEqual(payload["status"], "revoked")
+
+        status_exit, status_stdout, status_stderr = self.run_cli(
+            "auth",
+            "status",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(status_exit, 1, status_stderr)
+        status_payload = json.loads(status_stdout)
+        self.assertEqual(status_payload["providers"][0]["status"], "revoked")
+        self.assertFalse(status_payload["providers"][0]["secret_present"])
+
+        with self.assertRaisesRegex(RuntimeError, "no active OAuth access token"):
+            resolve_runtime_provider(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+            )
 
     def test_build_auth_status_report_handles_no_providers(self) -> None:
         report = build_auth_status_report(

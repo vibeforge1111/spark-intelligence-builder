@@ -82,6 +82,32 @@ class OAuthLoginResult:
         return "\n".join(lines)
 
 
+@dataclass(frozen=True)
+class AuthLogoutResult:
+    provider_id: str
+    auth_profile_id: str
+    status: str
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "provider_id": self.provider_id,
+                "auth_profile_id": self.auth_profile_id,
+                "status": self.status,
+            },
+            indent=2,
+        )
+
+    def to_text(self) -> str:
+        return "\n".join(
+            [
+                f"Auth logout completed for {self.provider_id}",
+                f"- auth_profile: {self.auth_profile_id}",
+                f"- status: {self.status}",
+            ]
+        )
+
+
 def connect_provider(
     *,
     config_manager: ConfigManager,
@@ -186,6 +212,13 @@ def start_oauth_login(
         expected_issuer=_issuer_from_url(oauth.authorize_url),
         pkce_verifier=pkce_verifier,
     )
+    _log_provider_runtime_event(
+        state_db=state_db,
+        provider_id=provider,
+        auth_profile_id=auth_profile_id,
+        event_kind="oauth_login_started",
+        detail={"redirect_uri": resolved_redirect_uri},
+    )
     _upsert_oauth_provider_record(
         config_manager=config_manager,
         state_db=state_db,
@@ -245,6 +278,13 @@ def complete_oauth_login(
         provider=provider,
         token_payload=token_payload,
     )
+    _log_provider_runtime_event(
+        state_db=state_db,
+        provider_id=provider,
+        auth_profile_id=oauth_state.auth_profile_id or build_default_auth_profile_id(provider),
+        event_kind="oauth_login_completed",
+        detail={"issuer": _issuer_from_url(spec.oauth.authorize_url)},
+    )
     _upsert_oauth_provider_record(
         config_manager=config_manager,
         state_db=state_db,
@@ -258,6 +298,62 @@ def complete_oauth_login(
         status="active",
         default_model=spec.default_model,
         base_url=spec.default_base_url,
+    )
+
+
+def logout_provider(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    provider: str,
+) -> AuthLogoutResult:
+    spec = get_provider_spec(provider)
+    if not spec.supports_oauth_login:
+        raise ValueError(f"Provider '{provider}' does not support OAuth logout.")
+
+    auth_profile_id = build_default_auth_profile_id(provider)
+    with state_db.connect() as conn:
+        conn.execute(
+            """
+            UPDATE oauth_credentials
+            SET
+                access_token_ciphertext = NULL,
+                refresh_token_ciphertext = NULL,
+                access_expires_at = NULL,
+                refresh_expires_at = NULL,
+                status = 'revoked',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE auth_profile_id = ?
+            """,
+            (auth_profile_id,),
+        )
+        conn.execute(
+            """
+            UPDATE auth_profiles
+            SET status = 'revoked', updated_at = CURRENT_TIMESTAMP
+            WHERE auth_profile_id = ?
+            """,
+            (auth_profile_id,),
+        )
+        conn.commit()
+
+    config = config_manager.load()
+    record = config.setdefault("providers", {}).setdefault("records", {}).get(provider)
+    if isinstance(record, dict):
+        record["status"] = "revoked"
+        config_manager.save(config)
+
+    _log_provider_runtime_event(
+        state_db=state_db,
+        provider_id=provider,
+        auth_profile_id=auth_profile_id,
+        event_kind="oauth_logout",
+        detail={},
+    )
+    return AuthLogoutResult(
+        provider_id=provider,
+        auth_profile_id=auth_profile_id,
+        status="revoked",
     )
 
 
@@ -451,3 +547,27 @@ def _required_query_value(query: dict[str, list[str]], key: str) -> str:
     if not values or not values[0]:
         raise ValueError(f"OAuth callback URL is missing '{key}'.")
     return values[0]
+
+
+def _log_provider_runtime_event(
+    *,
+    state_db: StateDB,
+    provider_id: str,
+    auth_profile_id: str,
+    event_kind: str,
+    detail: dict[str, object],
+) -> None:
+    with state_db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO provider_runtime_events(provider_id, auth_profile_id, event_kind, detail)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                provider_id,
+                auth_profile_id,
+                event_kind,
+                json.dumps(detail, sort_keys=True),
+            ),
+        )
+        conn.commit()

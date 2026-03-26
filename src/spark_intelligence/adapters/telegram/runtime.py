@@ -259,6 +259,7 @@ def simulate_telegram_update(
     if resolution.allowed and resolution.agent_id and resolution.human_id and resolution.session_id:
         bridge_result = build_researcher_reply(
             config_manager=config_manager,
+            state_db=state_db,
             request_id=f"sim:{normalized.update_id}",
             agent_id=resolution.agent_id,
             human_id=resolution.human_id,
@@ -514,6 +515,7 @@ def poll_telegram_updates_once(
 
         bridge_result = build_researcher_reply(
             config_manager=config_manager,
+            state_db=state_db,
             request_id=f"telegram:{normalized.update_id}",
             agent_id=resolution.agent_id,
             human_id=resolution.human_id,

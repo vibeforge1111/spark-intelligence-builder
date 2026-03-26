@@ -22,7 +22,7 @@ from spark_intelligence.attachments import (
 )
 from spark_intelligence.auth.providers import list_api_key_provider_ids, list_oauth_provider_ids, list_provider_specs
 from spark_intelligence.auth.runtime import build_auth_status_report
-from spark_intelligence.auth.service import complete_oauth_login, connect_provider, start_oauth_login
+from spark_intelligence.auth.service import complete_oauth_login, connect_provider, logout_provider, start_oauth_login
 from spark_intelligence.channel.service import (
     add_channel,
     inspect_telegram_bot_token,
@@ -41,6 +41,7 @@ from spark_intelligence.gateway.runtime import (
     gateway_status,
     gateway_trace_view,
 )
+from spark_intelligence.gateway.oauth_callback import listen_for_oauth_callback
 from spark_intelligence.identity.service import (
     agent_inspect,
     approve_latest_pairing,
@@ -374,7 +375,13 @@ def build_parser() -> argparse.ArgumentParser:
     auth_login_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     auth_login_parser.add_argument("--redirect-uri", help="Override the default OAuth callback URI")
     auth_login_parser.add_argument("--callback-url", help="Full callback URL captured after OAuth approval")
+    auth_login_parser.add_argument("--listen", action="store_true", help="Wait for the loopback OAuth callback and complete login automatically")
+    auth_login_parser.add_argument("--timeout-seconds", type=int, default=120, help="Maximum time to wait for a loopback OAuth callback")
     auth_login_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    auth_logout_parser = auth_subparsers.add_parser("logout", help="Revoke locally stored OAuth credentials for a provider")
+    auth_logout_parser.add_argument("provider", choices=list_oauth_provider_ids())
+    auth_logout_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    auth_logout_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     auth_status_parser = auth_subparsers.add_parser("status", help="Show configured auth profiles and secret readiness")
     auth_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     auth_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
@@ -1203,6 +1210,10 @@ def handle_auth_login(args: argparse.Namespace) -> int:
     config_manager.bootstrap()
     state_db.initialize()
 
+    if args.listen and args.callback_url:
+        print("Cannot combine --listen with --callback-url.", file=sys.stderr)
+        return 2
+
     if args.callback_url:
         result = complete_oauth_login(
             config_manager=config_manager,
@@ -1210,14 +1221,72 @@ def handle_auth_login(args: argparse.Namespace) -> int:
             provider=args.provider,
             callback_url=args.callback_url,
         )
-    else:
-        result = start_oauth_login(
-            config_manager=config_manager,
-            state_db=state_db,
-            provider=args.provider,
-            redirect_uri=args.redirect_uri,
-        )
+        print(result.to_json() if args.json else result.to_text())
+        return 0
 
+    start = start_oauth_login(
+        config_manager=config_manager,
+        state_db=state_db,
+        provider=args.provider,
+        redirect_uri=args.redirect_uri,
+    )
+
+    if not args.listen:
+        print(start.to_json() if args.json else start.to_text())
+        return 0
+
+    if not args.json:
+        print(start.to_text(), flush=True)
+        print("", flush=True)
+        print(
+            f"Waiting up to {args.timeout_seconds} seconds for OAuth callback on {start.redirect_uri} ...",
+            flush=True,
+        )
+        print("", flush=True)
+
+    callback = listen_for_oauth_callback(
+        redirect_uri=start.redirect_uri,
+        owner=f"auth:{args.provider}",
+        timeout_seconds=args.timeout_seconds,
+    )
+    result = complete_oauth_login(
+        config_manager=config_manager,
+        state_db=state_db,
+        provider=args.provider,
+        callback_url=callback.callback_url,
+    )
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "start": json.loads(start.to_json()),
+                    "callback": {
+                        "callback_url": callback.callback_url,
+                        "path": callback.path,
+                        "query": callback.query,
+                    },
+                    "result": json.loads(result.to_json()),
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    print(result.to_text())
+    return 0
+
+
+def handle_auth_logout(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = logout_provider(
+        config_manager=config_manager,
+        state_db=state_db,
+        provider=args.provider,
+    )
     print(result.to_json() if args.json else result.to_text())
     return 0
 
@@ -1598,6 +1667,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_auth_connect(args)
     if args.command == "auth" and args.auth_command == "login":
         return handle_auth_login(args)
+    if args.command == "auth" and args.auth_command == "logout":
+        return handle_auth_logout(args)
     if args.command == "auth" and args.auth_command == "status":
         return handle_auth_status(args)
     if args.command == "researcher" and args.researcher_command == "status":

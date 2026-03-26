@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from spark_intelligence.attachments import build_attachment_context
+from spark_intelligence.auth.runtime import RuntimeProviderResolution, resolve_runtime_provider
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.state.db import StateDB
 
@@ -24,6 +25,13 @@ class ResearcherBridgeResult:
     runtime_root: str | None
     config_path: str | None
     attachment_context: dict[str, object] | None
+    provider_id: str | None = None
+    provider_auth_profile_id: str | None = None
+    provider_auth_method: str | None = None
+    provider_model: str | None = None
+    provider_model_family: str | None = None
+    provider_base_url: str | None = None
+    provider_source: str | None = None
 
 
 @dataclass
@@ -42,6 +50,10 @@ class ResearcherBridgeStatus:
     last_config_path: str | None
     last_evidence_summary: str | None
     last_attachment_context: dict[str, Any] | None
+    last_provider_id: str | None
+    last_provider_model: str | None
+    last_provider_model_family: str | None
+    last_provider_auth_method: str | None
     failure_count: int
     last_failure: dict[str, Any] | None
 
@@ -62,6 +74,10 @@ class ResearcherBridgeStatus:
                 "last_config_path": self.last_config_path,
                 "last_evidence_summary": self.last_evidence_summary,
                 "last_attachment_context": self.last_attachment_context,
+                "last_provider_id": self.last_provider_id,
+                "last_provider_model": self.last_provider_model,
+                "last_provider_model_family": self.last_provider_model_family,
+                "last_provider_auth_method": self.last_provider_auth_method,
                 "failure_count": self.failure_count,
                 "last_failure": self.last_failure,
             },
@@ -89,6 +105,14 @@ class ResearcherBridgeStatus:
             lines.append(f"- last_config_path: {self.last_config_path}")
         if self.last_evidence_summary:
             lines.append(f"- last_evidence_summary: {self.last_evidence_summary}")
+        if self.last_provider_id:
+            lines.append(f"- last_provider_id: {self.last_provider_id}")
+        if self.last_provider_model:
+            lines.append(f"- last_provider_model: {self.last_provider_model}")
+        if self.last_provider_model_family:
+            lines.append(f"- last_provider_model_family: {self.last_provider_model_family}")
+        if self.last_provider_auth_method:
+            lines.append(f"- last_provider_auth_method: {self.last_provider_auth_method}")
         lines.append(f"- failure_count: {self.failure_count}")
         if self.last_failure:
             lines.append(
@@ -187,6 +211,10 @@ def researcher_bridge_status(*, config_manager: ConfigManager, state_db: StateDB
         last_config_path=runtime_state.get("researcher:last_config_path"),
         last_evidence_summary=runtime_state.get("researcher:last_evidence_summary"),
         last_attachment_context=_loads_json(runtime_state.get("researcher:last_attachment_context")),
+        last_provider_id=runtime_state.get("researcher:last_provider_id"),
+        last_provider_model=runtime_state.get("researcher:last_provider_model"),
+        last_provider_model_family=runtime_state.get("researcher:last_provider_model_family"),
+        last_provider_auth_method=runtime_state.get("researcher:last_provider_auth_method"),
         failure_count=_parse_int(runtime_state.get("researcher:failure_count")),
         last_failure=_loads_json(runtime_state.get("researcher:last_failure")),
     )
@@ -200,6 +228,10 @@ def record_researcher_bridge_result(*, state_db: StateDB, result: ResearcherBrid
         _set_runtime_state(conn, "researcher:last_runtime_root", result.runtime_root or "")
         _set_runtime_state(conn, "researcher:last_config_path", result.config_path or "")
         _set_runtime_state(conn, "researcher:last_evidence_summary", result.evidence_summary)
+        _set_runtime_state(conn, "researcher:last_provider_id", result.provider_id or "")
+        _set_runtime_state(conn, "researcher:last_provider_model", result.provider_model or "")
+        _set_runtime_state(conn, "researcher:last_provider_model_family", result.provider_model_family or "")
+        _set_runtime_state(conn, "researcher:last_provider_auth_method", result.provider_auth_method or "")
         _set_runtime_state(
             conn,
             "researcher:last_attachment_context",
@@ -229,6 +261,7 @@ def record_researcher_bridge_result(*, state_db: StateDB, result: ResearcherBrid
 def build_researcher_reply(
     *,
     config_manager: ConfigManager,
+    state_db: StateDB,
     request_id: str,
     agent_id: str,
     human_id: str,
@@ -238,6 +271,7 @@ def build_researcher_reply(
 ) -> ResearcherBridgeResult:
     attachment_context = build_attachment_context(config_manager)
     contextual_task = _build_contextual_task(user_message=user_message, attachment_context=attachment_context)
+    provider_selection = _resolve_bridge_provider(config_manager=config_manager, state_db=state_db)
     if not bool(config_manager.get_path("spark.researcher.enabled", default=True)):
         return ResearcherBridgeResult(
             request_id=request_id,
@@ -249,6 +283,32 @@ def build_researcher_reply(
             runtime_root=None,
             config_path=None,
             attachment_context=attachment_context,
+            provider_id=provider_selection.provider.provider_id if provider_selection.provider else None,
+            provider_auth_profile_id=provider_selection.provider.auth_profile_id if provider_selection.provider else None,
+            provider_auth_method=provider_selection.provider.auth_method if provider_selection.provider else None,
+            provider_model=provider_selection.provider.default_model if provider_selection.provider else None,
+            provider_model_family=provider_selection.model_family,
+            provider_base_url=provider_selection.provider.base_url if provider_selection.provider else None,
+            provider_source=provider_selection.provider.source if provider_selection.provider else None,
+        )
+    if provider_selection.error:
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=f"[Spark Researcher provider auth error] {provider_selection.error}",
+            evidence_summary="Provider resolution failed closed before bridge execution.",
+            escalation_hint="provider_auth_error",
+            trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+            mode="bridge_error",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            provider_id=provider_selection.provider.provider_id if provider_selection.provider else None,
+            provider_auth_profile_id=provider_selection.provider.auth_profile_id if provider_selection.provider else None,
+            provider_auth_method=provider_selection.provider.auth_method if provider_selection.provider else None,
+            provider_model=provider_selection.provider.default_model if provider_selection.provider else None,
+            provider_model_family=provider_selection.model_family,
+            provider_base_url=provider_selection.provider.base_url if provider_selection.provider else None,
+            provider_source=provider_selection.provider.source if provider_selection.provider else None,
         )
     runtime_root, runtime_source = discover_researcher_runtime_root(config_manager)
     if runtime_root is not None:
@@ -256,7 +316,13 @@ def build_researcher_reply(
         if config_path.exists():
             try:
                 build_advisory = _import_build_advisory(runtime_root)
-                advisory = build_advisory(config_path, contextual_task, model="generic", limit=3, domain=None)
+                advisory = build_advisory(
+                    config_path,
+                    contextual_task,
+                    model=provider_selection.model_family,
+                    limit=3,
+                    domain=None,
+                )
                 reply_text, evidence_summary, trace_ref = _render_reply_from_advisory(advisory)
                 return ResearcherBridgeResult(
                     request_id=request_id,
@@ -268,6 +334,13 @@ def build_researcher_reply(
                     runtime_root=str(runtime_root),
                     config_path=str(config_path),
                     attachment_context=attachment_context,
+                    provider_id=provider_selection.provider.provider_id if provider_selection.provider else None,
+                    provider_auth_profile_id=provider_selection.provider.auth_profile_id if provider_selection.provider else None,
+                    provider_auth_method=provider_selection.provider.auth_method if provider_selection.provider else None,
+                    provider_model=provider_selection.provider.default_model if provider_selection.provider else None,
+                    provider_model_family=provider_selection.model_family,
+                    provider_base_url=provider_selection.provider.base_url if provider_selection.provider else None,
+                    provider_source=provider_selection.provider.source if provider_selection.provider else None,
                 )
             except Exception as exc:  # pragma: no cover - external bridge safety
                 return ResearcherBridgeResult(
@@ -280,6 +353,13 @@ def build_researcher_reply(
                     runtime_root=str(runtime_root),
                     config_path=str(config_path),
                     attachment_context=attachment_context,
+                    provider_id=provider_selection.provider.provider_id if provider_selection.provider else None,
+                    provider_auth_profile_id=provider_selection.provider.auth_profile_id if provider_selection.provider else None,
+                    provider_auth_method=provider_selection.provider.auth_method if provider_selection.provider else None,
+                    provider_model=provider_selection.provider.default_model if provider_selection.provider else None,
+                    provider_model_family=provider_selection.model_family,
+                    provider_base_url=provider_selection.provider.base_url if provider_selection.provider else None,
+                    provider_source=provider_selection.provider.source if provider_selection.provider else None,
                 )
 
     reply_text = (
@@ -300,7 +380,51 @@ def build_researcher_reply(
         runtime_root=str(runtime_root) if runtime_root else None,
         config_path=str(resolve_researcher_config_path(config_manager, runtime_root)) if runtime_root else None,
         attachment_context=attachment_context,
+        provider_id=provider_selection.provider.provider_id if provider_selection.provider else None,
+        provider_auth_profile_id=provider_selection.provider.auth_profile_id if provider_selection.provider else None,
+        provider_auth_method=provider_selection.provider.auth_method if provider_selection.provider else None,
+        provider_model=provider_selection.provider.default_model if provider_selection.provider else None,
+        provider_model_family=provider_selection.model_family,
+        provider_base_url=provider_selection.provider.base_url if provider_selection.provider else None,
+        provider_source=provider_selection.provider.source if provider_selection.provider else None,
     )
+
+
+@dataclass(frozen=True)
+class ResearcherProviderSelection:
+    provider: RuntimeProviderResolution | None
+    model_family: str
+    error: str | None = None
+
+
+def _resolve_bridge_provider(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+) -> ResearcherProviderSelection:
+    provider_records = config_manager.load().get("providers", {}).get("records", {}) or {}
+    if not provider_records:
+        return ResearcherProviderSelection(provider=None, model_family="generic")
+    try:
+        provider = resolve_runtime_provider(config_manager=config_manager, state_db=state_db)
+    except RuntimeError as exc:
+        return ResearcherProviderSelection(provider=None, model_family="generic", error=str(exc))
+    return ResearcherProviderSelection(
+        provider=provider,
+        model_family=_model_family_for_provider(provider),
+    )
+
+
+def _model_family_for_provider(provider: RuntimeProviderResolution) -> str:
+    provider_id = provider.provider_id.lower()
+    model_name = (provider.default_model or "").lower()
+    if provider_id == "openai-codex" or "codex" in model_name:
+        return "codex"
+    if provider.api_mode == "anthropic_messages" or provider_id == "anthropic" or "claude" in model_name:
+        return "claude"
+    if "openclaw" in model_name:
+        return "openclaw"
+    return "generic"
 
 
 def _read_runtime_state(state_db: StateDB) -> dict[str, str]:
