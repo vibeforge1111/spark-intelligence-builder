@@ -161,7 +161,7 @@ Model-provider OAuth should use:
 - explicit provider and redirect matching
 
 For v1, Spark should keep API-key-backed providers on a direct HTTP execution path and keep Codex/OAuth on an explicit external-wrapper path until a first-class direct OAuth runtime can match the same callback-state, expiry, and revoke guarantees.
-Short-horizon expiry should be surfaced before failure, and scheduled maintenance should remain explicit and auditable. A built-in `jobs tick` maintenance pass is acceptable in v1; hidden background refresh is not.
+Short-horizon expiry should be surfaced before failure, and scheduled maintenance should remain explicit and auditable. A built-in `jobs tick` maintenance pass is acceptable in v1; hidden background refresh is not. `doctor` and `jobs list` should make stale or never-run maintenance obvious to the operator.
 
 ## 9. Security Rules
 
