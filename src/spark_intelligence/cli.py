@@ -757,8 +757,8 @@ def handle_gateway_start(args: argparse.Namespace) -> int:
         max_cycles=args.max_cycles,
         poll_timeout_seconds=args.poll_timeout_seconds,
     )
-    print(report)
-    return 0
+    print(report.text)
+    return 0 if report.ok else 1
 
 
 def handle_gateway_status(args: argparse.Namespace) -> int:

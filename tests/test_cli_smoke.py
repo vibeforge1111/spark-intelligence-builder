@@ -57,7 +57,7 @@ class CliSmokeTests(SparkTestCase):
                 "--once",
             )
 
-        self.assertEqual(gateway_exit, 0, gateway_stderr)
+        self.assertEqual(gateway_exit, 1, gateway_stderr)
         self.assertIn("Telegram polling failure", gateway_stdout)
 
         security_exit, security_stdout, security_stderr = self.run_cli(

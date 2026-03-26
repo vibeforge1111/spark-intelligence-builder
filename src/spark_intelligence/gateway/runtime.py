@@ -54,6 +54,15 @@ class GatewayStatus:
         return "\n".join(lines)
 
 
+@dataclass
+class GatewayStartReport:
+    ok: bool
+    text: str
+
+    def __str__(self) -> str:
+        return self.text
+
+
 def gateway_status(config_manager: ConfigManager, state_db: StateDB) -> GatewayStatus:
     config = config_manager.load()
     provider_records = list(config.get("providers", {}).get("records", {}).keys())
@@ -86,11 +95,12 @@ def gateway_start(
     continuous: bool = False,
     max_cycles: int | None = None,
     poll_timeout_seconds: int = 5,
-) -> str:
+) -> GatewayStartReport:
     status = gateway_status(config_manager, state_db)
     lines = ["Spark Intelligence gateway start"]
     lines.append(status.to_text())
     lines.append("")
+    ok = True
     config = config_manager.load()
     telegram_record = config.get("channels", {}).get("records", {}).get("telegram")
     discord_record = config.get("channels", {}).get("records", {}).get("discord")
@@ -101,15 +111,15 @@ def gateway_start(
         lines.append("WhatsApp adapter is configured, but a foreground runtime is not implemented yet.")
     if not telegram_record:
         lines.append("No Telegram adapter configured. Gateway is idle.")
-        return "\n".join(lines)
+        return GatewayStartReport(ok=True, text="\n".join(lines))
     telegram_summary = build_telegram_runtime_summary(config_manager, state_db)
     telegram_status = str(telegram_summary.status or "enabled")
     if telegram_status == "disabled":
         lines.append("Telegram adapter is disabled by operator. Gateway did not start polling.")
-        return "\n".join(lines)
+        return GatewayStartReport(ok=True, text="\n".join(lines))
     if telegram_status == "paused":
         lines.append("Telegram adapter is paused by operator. Gateway did not start polling.")
-        return "\n".join(lines)
+        return GatewayStartReport(ok=True, text="\n".join(lines))
 
     auth_ref = telegram_record.get("auth_ref")
     env_map = config_manager.read_env_map()
@@ -117,7 +127,7 @@ def gateway_start(
     if not token:
         record_telegram_auth_result(state_db=state_db, status="missing", error="Telegram auth ref is missing or unresolved.")
         lines.append("Telegram auth ref is missing or unresolved. Gateway did not start polling.")
-        return "\n".join(lines)
+        return GatewayStartReport(ok=False, text="\n".join(lines))
 
     client = TelegramBotApiClient(token=token)
     try:
@@ -125,15 +135,15 @@ def gateway_start(
     except urllib.error.HTTPError as exc:
         record_telegram_auth_result(state_db=state_db, status="failed", error=f"HTTP {exc.code}")
         lines.append(f"Telegram auth check failed with HTTP {exc.code}. Gateway did not start polling.")
-        return "\n".join(lines)
+        return GatewayStartReport(ok=False, text="\n".join(lines))
     except urllib.error.URLError as exc:
         record_telegram_auth_result(state_db=state_db, status="failed", error=str(exc.reason))
         lines.append(f"Telegram auth check failed: {exc.reason}. Gateway did not start polling.")
-        return "\n".join(lines)
+        return GatewayStartReport(ok=False, text="\n".join(lines))
     except RuntimeError as exc:
         record_telegram_auth_result(state_db=state_db, status="failed", error=str(exc))
         lines.append(f"Telegram auth check failed: {exc}. Gateway did not start polling.")
-        return "\n".join(lines)
+        return GatewayStartReport(ok=False, text="\n".join(lines))
     record_telegram_auth_result(
         state_db=state_db,
         status="ok",
@@ -169,6 +179,7 @@ def gateway_start(
                 lines.append(f"Cycle {cycle_index + 1}:")
                 lines.append(f"  Telegram polling failure: type={failure_type} message={failure_message}")
                 lines.append(f"  Backoff seconds: {backoff_seconds}")
+                ok = False
                 cycle_index += 1
                 if once or not continuous:
                     break
@@ -186,6 +197,7 @@ def gateway_start(
                 lines.append(f"Cycle {cycle_index + 1}:")
                 lines.append(f"  Telegram polling failure: type={failure_type} message={failure_message}")
                 lines.append(f"  Backoff seconds: {backoff_seconds}")
+                ok = False
                 cycle_index += 1
                 if once or not continuous:
                     break
@@ -205,7 +217,7 @@ def gateway_start(
     else:
         lines.append("")
         lines.append(f"Gateway exited cleanly after {cycle_index} cycle(s).")
-    return "\n".join(lines)
+    return GatewayStartReport(ok=ok, text="\n".join(lines))
 
 
 def gateway_simulate_telegram_update(

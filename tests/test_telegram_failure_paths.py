@@ -45,7 +45,8 @@ class TelegramFailurePathTests(SparkTestCase):
             )
 
         health = read_telegram_runtime_health(self.state_db)
-        self.assertIn("auth check failed", report)
+        self.assertFalse(report.ok)
+        self.assertIn("auth check failed", report.text)
         self.assertEqual(health.auth_status, "failed")
         self.assertIn("unauthorized token", str(health.auth_error))
 
@@ -82,7 +83,8 @@ class TelegramFailurePathTests(SparkTestCase):
             )
         )
 
-        self.assertIn("Telegram polling failure", report)
+        self.assertFalse(report.ok)
+        self.assertIn("Telegram polling failure", report.text)
         self.assertEqual(health.auth_status, "ok")
         self.assertEqual(health.last_failure_type, "network_error")
         self.assertEqual(health.consecutive_failures, 1)
