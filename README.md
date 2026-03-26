@@ -47,6 +47,7 @@ This repo currently includes:
 - [docs/OPENCLAW_HERMES_DEEP_COMPARATIVE_ANALYSIS_2026-03-25.md](./docs/OPENCLAW_HERMES_DEEP_COMPARATIVE_ANALYSIS_2026-03-25.md)
 - [docs/SECURITY_HISTORY_THEME_APPENDIX_2026-03-25.md](./docs/SECURITY_HISTORY_THEME_APPENDIX_2026-03-25.md)
 - [docs/TELEGRAM_ADAPTER_SPEC_V1.md](./docs/TELEGRAM_ADAPTER_SPEC_V1.md)
+- [docs/TELEGRAM_OPERATOR_RUNBOOK_2026-03-26.md](./docs/TELEGRAM_OPERATOR_RUNBOOK_2026-03-26.md)
 - [docs/SPARK_RESEARCHER_INTEGRATION_CONTRACT_V1.md](./docs/SPARK_RESEARCHER_INTEGRATION_CONTRACT_V1.md)
 - [docs/SPARK_SWARM_ESCALATION_CONTRACT_V1.md](./docs/SPARK_SWARM_ESCALATION_CONTRACT_V1.md)
 - [docs/DOMAIN_CHIP_ATTACHMENT_CONTRACT_V1.md](./docs/DOMAIN_CHIP_ATTACHMENT_CONTRACT_V1.md)
@@ -109,6 +110,8 @@ spark-intelligence channel test telegram
 
 `channel telegram-onboard` prints the BotFather steps when no token is provided, and validates the token before storing it when a token is provided. `channel add telegram` stays scriptable, but now validates the token by default unless `--skip-validate` is explicitly used.
 `channel test telegram` rechecks the stored token, refreshes Telegram auth health, and shows the configured bot identity and pairing posture without starting the gateway.
+
+The practical live-ops flow for Telegram onboarding, pairing approval, token rotation, and recovery is documented in [docs/TELEGRAM_OPERATOR_RUNBOOK_2026-03-26.md](./docs/TELEGRAM_OPERATOR_RUNBOOK_2026-03-26.md).
 
 Telegram runtime verification is available in two forms:
 
