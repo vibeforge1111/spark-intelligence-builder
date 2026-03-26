@@ -142,7 +142,7 @@ class OperatorWebhookSnoozeReport:
         for row in self.rows:
             reason = f" reason={row['reason']}" if row.get("reason") else ""
             lines.append(
-                f"- event={row['event']} until={row['snooze_until']} "
+                f"- event={row['event']} snoozed_at={row['snoozed_at']} until={row['snooze_until']} "
                 f"remaining_minutes={row['remaining_minutes']}{reason}"
             )
         return "\n".join(lines)
@@ -285,6 +285,7 @@ def list_webhook_alert_snoozes(*, state_db: StateDB) -> OperatorWebhookSnoozeRep
         payload.append(
             {
                 "event": row["event"],
+                "snoozed_at": row["snoozed_at"].isoformat(timespec="seconds"),
                 "snooze_until": row["snooze_until"].isoformat(timespec="seconds"),
                 "remaining_minutes": max(1, int((remaining.total_seconds() + 59) // 60)),
                 "reason": row.get("reason"),
@@ -691,6 +692,7 @@ def _build_inbox_items(
     for row in webhook_snoozes:
         event_name = str(row["event"])
         reason_suffix = f" Reason: {row['reason']}." if row.get("reason") else ""
+        snoozed_at = str(row["snoozed_at"])
         items.append(
             {
                 "kind": "webhook_snooze",
@@ -699,7 +701,7 @@ def _build_inbox_items(
                 "sort_order": 48,
                 "item_ref": event_name,
                 "summary": (
-                    f"Webhook alert {event_name} is snoozed until {row['snooze_until']} "
+                    f"Webhook alert {event_name} was snoozed at {snoozed_at} until {row['snooze_until']} "
                     f"({row['remaining_minutes']} minute(s) remaining).{reason_suffix}"
                 ),
                 "recommended_command": f"spark-intelligence operator clear-webhook-alert-snooze {event_name}",
@@ -792,12 +794,13 @@ def _build_security_items(
     for row in webhook_snoozes:
         event_name = str(row["event"])
         reason_suffix = f" Reason: {row['reason']}." if row.get("reason") else ""
+        snoozed_at = str(row["snoozed_at"])
         items.append(
             {
                 "priority": "info",
                 "sort_order": severity_order["info"],
                 "summary": (
-                    f"Webhook alert {event_name} is snoozed until {row['snooze_until']} "
+                    f"Webhook alert {event_name} was snoozed at {snoozed_at} until {row['snooze_until']} "
                     f"({row['remaining_minutes']} minute(s) remaining).{reason_suffix}"
                 ),
                 "recommended_command": f"spark-intelligence operator clear-webhook-alert-snooze {event_name}",
@@ -1037,7 +1040,7 @@ def _read_webhook_alert_snooze_rows(*, state_db: StateDB, now: datetime) -> list
     placeholders = ",".join("?" for _ in state_keys)
     with state_db.connect() as conn:
         rows = conn.execute(
-            f"SELECT state_key, value FROM runtime_state WHERE state_key IN ({placeholders})",
+            f"SELECT state_key, value, updated_at FROM runtime_state WHERE state_key IN ({placeholders})",
             tuple(state_keys),
         ).fetchall()
         stale_keys: list[str] = []
@@ -1046,6 +1049,7 @@ def _read_webhook_alert_snooze_rows(*, state_db: StateDB, now: datetime) -> list
             key = str(row["state_key"])
             snooze_state = _parse_webhook_alert_snooze_value(row["value"])
             snooze_until = snooze_state["snooze_until"]
+            snoozed_at = _parse_iso_datetime(row["updated_at"])
             if snooze_until is None or snooze_until < now:
                 stale_keys.append(key)
                 continue
@@ -1053,6 +1057,7 @@ def _read_webhook_alert_snooze_rows(*, state_db: StateDB, now: datetime) -> list
                 snoozed.append(
                     {
                         "event": key.removeprefix("ops:webhook_alert_snooze:"),
+                        "snoozed_at": snoozed_at or now,
                         "snooze_until": snooze_until,
                         "reason": snooze_state["reason"],
                     }
