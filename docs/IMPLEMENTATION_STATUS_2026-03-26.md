@@ -117,6 +117,8 @@ Phase 1 has now started with `GATEWAY_RUNTIME_OPERATOR_RECOVERY_REVIEW_2026-03-2
 
 The first phase-1 repair-guidance patch is also in: `status` and `gateway status` now surface explicit repair hints for degraded OAuth maintenance, provider runtime, and provider execution state so those surfaces no longer rely on operator views alone to reveal the first fix command.
 
+The next phase-1 role split is also now explicit: `doctor` remains a diagnostic and fail-closed readiness surface, but degraded doctor output now points operators at `status` and `operator security` for repair guidance instead of trying to duplicate command selection itself.
+
 ## 7. Current Non-Goals
 
 Do not start these next:

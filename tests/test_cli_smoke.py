@@ -1199,6 +1199,8 @@ class CliSmokeTests(SparkTestCase):
 
         self.assertEqual(doctor_exit, 1, doctor_stderr)
         self.assertIn("[fail] provider-execution: openai-codex:external_cli_wrapper:researcher_disabled", doctor_stdout)
+        self.assertIn("spark-intelligence status", doctor_stdout)
+        self.assertIn("spark-intelligence operator security", doctor_stdout)
 
     def test_setup_with_swarm_access_token_persists_named_env_ref(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

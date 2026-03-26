@@ -139,12 +139,21 @@ The first pass on step 2 is now landed:
   - `spark-intelligence auth connect <provider> --api-key <key>`
   - `spark-intelligence researcher status`
 
+The next surface-alignment decision is also now landed:
+
+- `doctor` remains diagnostic and fail-closed
+- degraded `doctor` output now points operators at:
+  - `spark-intelligence status`
+  - `spark-intelligence operator security`
+- `doctor` does not try to become a second repair-command surface
+
 ## 9. Proposed Decision For Now
 
 The repo should explicitly treat the following as the v1 contract:
 
 - gateway owns ingress, readiness gating, and audit trails
 - operator owns repair actions
+- doctor owns diagnosis, not command selection
 - maintenance is operator-driven, not daemon-driven
 - Discord and WhatsApp remain narrow live surfaces until one of them is proven end to end
 - Codex/OAuth remains wrapper-backed until a direct runtime can match current security and recovery guarantees

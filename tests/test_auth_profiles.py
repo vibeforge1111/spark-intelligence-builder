@@ -581,6 +581,8 @@ class AuthProfileTests(SparkTestCase):
         self.assertEqual(doctor_exit, 1, doctor_stderr)
         self.assertIn("[fail] provider-auth: openai-codex:expired", doctor_stdout)
         self.assertIn("[fail] provider-runtime: Provider 'openai-codex' has an expired OAuth access token.", doctor_stdout)
+        self.assertIn("spark-intelligence status", doctor_stdout)
+        self.assertIn("spark-intelligence operator security", doctor_stdout)
 
         with self.assertRaisesRegex(RuntimeError, "expired OAuth access token"):
             resolve_runtime_provider(
@@ -815,6 +817,7 @@ class AuthProfileTests(SparkTestCase):
         self.assertIn("[fail] oauth-maintenance:", doctor_stdout)
         self.assertIn("oauth maintenance has never run", doctor_stdout)
         self.assertIn("expiring_soon=openai-codex", doctor_stdout)
+        self.assertIn("spark-intelligence status", doctor_stdout)
 
     def test_jobs_tick_refreshes_due_oauth_profile(self) -> None:
         start_exit, start_stdout, start_stderr = self.run_cli(

@@ -36,6 +36,7 @@ class DoctorReport:
         payload = {
             "ok": self.ok,
             "checks": [{"name": c.name, "ok": c.ok, "detail": c.detail} for c in self.checks],
+            "follow_up_surfaces": self.follow_up_surfaces(),
         }
         return json.dumps(payload, indent=2)
 
@@ -44,7 +45,20 @@ class DoctorReport:
         for check in self.checks:
             marker = "ok" if check.ok else "fail"
             lines.append(f"- [{marker}] {check.name}: {check.detail}")
+        if not self.ok:
+            lines.append(
+                "- follow-up: use `spark-intelligence status` for repair hints and "
+                "`spark-intelligence operator security` for operator/security triage"
+            )
         return "\n".join(lines)
+
+    def follow_up_surfaces(self) -> list[str]:
+        if self.ok:
+            return []
+        return [
+            "spark-intelligence status",
+            "spark-intelligence operator security",
+        ]
 
 
 def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport:
