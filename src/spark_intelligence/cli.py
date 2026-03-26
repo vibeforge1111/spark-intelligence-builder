@@ -200,6 +200,46 @@ class ConnectionPlanStatus:
         return "\n".join(lines)
 
 
+@dataclass
+class RoutingContractStatus:
+    payload: dict[str, object]
+
+    def to_json(self) -> str:
+        return json.dumps(self.payload, indent=2)
+
+    def to_text(self) -> str:
+        researcher = self.payload["researcher"]
+        swarm = self.payload["swarm"]
+        lines = ["Spark Intelligence routing contract"]
+        lines.append(f"- bridge enabled: {'yes' if researcher['bridge_enabled'] else 'no'}")
+        lines.append(f"- researcher available: {'yes' if researcher['available'] else 'no'}")
+        lines.append(f"- provider runtime: {'ok' if researcher['provider_runtime_ok'] else 'degraded'}")
+        lines.append(f"- provider execution: {'ok' if researcher['provider_execution_ok'] else 'degraded'}")
+        lines.append(f"- swarm api: {'ready' if swarm['api_ready'] else 'not_ready'}")
+        lines.append(f"- last bridge route: {researcher['last_routing_decision'] or 'none'}")
+        if researcher.get("last_active_chip_key"):
+            chip_suffix = (
+                f":{researcher['last_active_chip_task_type']}"
+                if researcher.get("last_active_chip_task_type")
+                else ""
+            )
+            lines.append(
+                f"- last active chip route: {researcher['last_active_chip_key']}{chip_suffix} "
+                f"used={'yes' if researcher.get('last_active_chip_evaluate_used') else 'no'}"
+            )
+        lines.append(f"- last swarm decision: {swarm['last_decision_mode'] or 'none'}")
+        lines.append("Bridge routes:")
+        for route in self.payload["bridge_routes"]:
+            lines.append(f"- {route['route']}: {route['when']}")
+        lines.append("Swarm escalation:")
+        for route in self.payload["swarm_routes"]:
+            lines.append(f"- {route['mode']}: {route['when']}")
+        lines.append("Operator checks:")
+        for command in self.payload["operator_checks"]:
+            lines.append(f"- {command}")
+        return "\n".join(lines)
+
+
 def build_connection_plan_status(config_manager: ConfigManager, state_db: StateDB) -> ConnectionPlanStatus:
     gateway = gateway_status(config_manager, state_db)
     researcher = researcher_bridge_status(config_manager=config_manager, state_db=state_db)
@@ -329,8 +369,10 @@ def build_connection_plan_status(config_manager: ConfigManager, state_db: StateD
             f"specialization={phase_b.status}",
             f"swarm_api={phase_c.status}",
             f"last_provider_transport={researcher.last_provider_execution_transport or 'none'}",
+            f"last_bridge_route={researcher.last_routing_decision or 'none'}",
         ],
         next_steps=[
+            "spark-intelligence connect route-policy",
             "docs/SYSTEM_CONNECTION_AND_PRODUCTIZATION_PLAN_2026-03-26.md",
             "spark-intelligence gateway traces --limit 20",
         ],
@@ -363,6 +405,98 @@ def build_connection_plan_status(config_manager: ConfigManager, state_db: StateD
         current_phase_title=current.title,
         phases=phases,
     )
+
+
+def build_routing_contract_status(config_manager: ConfigManager, state_db: StateDB) -> RoutingContractStatus:
+    gateway = gateway_status(config_manager, state_db)
+    researcher = researcher_bridge_status(config_manager=config_manager, state_db=state_db)
+    swarm = swarm_status(config_manager, state_db)
+    payload = {
+        "researcher": {
+            "bridge_enabled": researcher.enabled,
+            "available": researcher.available,
+            "provider_runtime_ok": gateway.provider_runtime_ok,
+            "provider_execution_ok": gateway.provider_execution_ok,
+            "last_routing_decision": researcher.last_routing_decision,
+            "last_active_chip_key": researcher.last_active_chip_key,
+            "last_active_chip_task_type": researcher.last_active_chip_task_type,
+            "last_active_chip_evaluate_used": researcher.last_active_chip_evaluate_used,
+            "last_provider_transport": researcher.last_provider_execution_transport,
+        },
+        "swarm": {
+            "enabled": swarm.enabled,
+            "payload_ready": swarm.payload_ready,
+            "api_ready": swarm.api_ready,
+            "last_decision_mode": (swarm.last_decision or {}).get("mode"),
+        },
+        "bridge_routes": [
+            {
+                "route": "provider_execution",
+                "when": (
+                    "Use external Spark Researcher plus provider execution when a provider is active and "
+                    "its transport supports direct HTTP or CLI execution."
+                ),
+            },
+            {
+                "route": "researcher_advisory",
+                "when": (
+                    "Use external Spark Researcher advisory output when the runtime is available but no "
+                    "executable provider path is active."
+                ),
+            },
+            {
+                "route": "provider_fallback_chat",
+                "when": (
+                    "Use direct provider chat for short under-supported conversational traffic when the "
+                    "active provider uses direct_http transport."
+                ),
+            },
+            {
+                "route": "provider_resolution_failed",
+                "when": "Fail closed when provider auth or runtime resolution breaks before bridge execution starts.",
+            },
+            {
+                "route": "bridge_disabled",
+                "when": "Return the explicit disabled response when the operator turns the bridge off.",
+            },
+            {
+                "route": "bridge_error",
+                "when": "Fail closed when the external Researcher bridge raises during execution.",
+            },
+            {
+                "route": "stub",
+                "when": "Use the local stub response only when no external Spark Researcher runtime is configured or discovered.",
+            },
+        ],
+        "swarm_routes": [
+            {
+                "mode": "manual_recommended",
+                "when": (
+                    "Recommend Swarm when the task explicitly asks for swarm or delegation, parallel multi-agent work, "
+                    "deep research, orchestration, long tasks, or multi-chip context."
+                ),
+            },
+            {
+                "mode": "hold_local",
+                "when": "Keep the task on the primary agent when no strong escalation signals are present.",
+            },
+            {
+                "mode": "unavailable",
+                "when": "Do not recommend Swarm when the local payload path is not ready.",
+            },
+            {
+                "mode": "disabled",
+                "when": "Do not recommend Swarm when the operator has disabled the Swarm bridge.",
+            },
+        ],
+        "operator_checks": [
+            "spark-intelligence connect status",
+            "spark-intelligence gateway traces --limit 20",
+            "spark-intelligence gateway outbound --limit 20",
+            'spark-intelligence swarm evaluate --task "<task>"',
+        ],
+    }
+    return RoutingContractStatus(payload=payload)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -399,6 +533,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     connect_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     connect_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+
+    connect_route_policy_parser = connect_subparsers.add_parser(
+        "route-policy",
+        help="Show the current bridge and Swarm routing contract",
+    )
+    connect_route_policy_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    connect_route_policy_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     operator_parser = subparsers.add_parser("operator", help="Safe operator controls for bridges and pairing review")
     operator_subparsers = operator_parser.add_subparsers(dest="operator_command", required=True)
@@ -1170,6 +1311,16 @@ def handle_connect_status(args: argparse.Namespace) -> int:
     config_manager.bootstrap()
     state_db.initialize()
     status = build_connection_plan_status(config_manager=config_manager, state_db=state_db)
+    print(status.to_json() if args.json else status.to_text())
+    return 0
+
+
+def handle_connect_route_policy(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    status = build_routing_contract_status(config_manager=config_manager, state_db=state_db)
     print(status.to_json() if args.json else status.to_text())
     return 0
 
@@ -2132,6 +2283,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_status(args)
     if args.command == "connect" and args.connect_command == "status":
         return handle_connect_status(args)
+    if args.command == "connect" and args.connect_command == "route-policy":
+        return handle_connect_route_policy(args)
     if args.command == "operator" and args.operator_command == "set-bridge":
         return handle_operator_set_bridge(args)
     if args.command == "operator" and args.operator_command == "review-pairings":

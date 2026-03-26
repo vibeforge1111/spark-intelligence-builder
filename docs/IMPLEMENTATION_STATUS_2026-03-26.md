@@ -157,6 +157,8 @@ The current canonical live home has also moved further through that connection p
 
 Phase D work is now underway in the runtime surfaces themselves: `status` records the last bridge route plus the last active chip route, and `gateway traces` / `gateway outbound` now expose route and chip metadata in their text views so operator debugging can answer "why did this reply happen" without reading raw JSON.
 
+That phase now also has a dedicated runtime explanation surface: `spark-intelligence connect route-policy` describes the current bridge and Swarm routing contract in operator language instead of leaving the contract implicit in code or post-hoc traces only.
+
 ## 7. Current Non-Goals
 
 Do not start these next:

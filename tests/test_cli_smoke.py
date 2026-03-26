@@ -45,6 +45,40 @@ class CliSmokeTests(SparkTestCase):
         self.assertIn("- phase-a-telegram-core: blocked Lock Telegram core", stdout)
         self.assertIn("next: spark-intelligence channel telegram-onboard", stdout)
 
+    def test_connect_route_policy_surfaces_bridge_and_swarm_contract(self) -> None:
+        with self.state_db.connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO runtime_state(state_key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                ("researcher:last_routing_decision", "provider_fallback_chat"),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO runtime_state(state_key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                ("researcher:last_active_chip_key", "startup-yc"),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO runtime_state(state_key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                ("researcher:last_active_chip_task_type", "diagnostic_questioning"),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO runtime_state(state_key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                ("researcher:last_active_chip_evaluate_used", "1"),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO runtime_state(state_key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                ("swarm:last_decision", json.dumps({"mode": "manual_recommended"})),
+            )
+            conn.commit()
+
+        exit_code, stdout, stderr = self.run_cli("connect", "route-policy", "--home", str(self.home))
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertIn("Spark Intelligence routing contract", stdout)
+        self.assertIn("- last bridge route: provider_fallback_chat", stdout)
+        self.assertIn("- last active chip route: startup-yc:diagnostic_questioning used=yes", stdout)
+        self.assertIn("- last swarm decision: manual_recommended", stdout)
+        self.assertIn("- provider_fallback_chat:", stdout)
+        self.assertIn("- manual_recommended:", stdout)
+
     def test_connect_status_marks_telegram_core_ready_when_live_prereqs_exist(self) -> None:
         researcher_root = self.home / "spark-researcher"
         researcher_root.mkdir()
