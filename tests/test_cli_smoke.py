@@ -121,6 +121,56 @@ class CliSmokeTests(SparkTestCase):
             "spark-intelligence gateway traces --event discord_webhook_auth_failed --limit 20",
         )
 
+    def test_operator_security_escalates_sustained_discord_webhook_auth_rejections(self) -> None:
+        setup_exit, _, setup_stderr = self.run_cli(
+            "channel",
+            "add",
+            "discord",
+            "--home",
+            str(self.home),
+            "--allow-legacy-message-webhook",
+            "--webhook-secret",
+            "discord-webhook-secret",
+        )
+        self.assertEqual(setup_exit, 0, setup_stderr)
+
+        for _ in range(3):
+            response = handle_discord_webhook(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                path=DISCORD_WEBHOOK_PATH,
+                method="POST",
+                content_type="application/json",
+                headers={},
+                body=b"{}",
+            )
+            self.assertEqual(response.status_code, 401)
+
+        security_exit, security_stdout, security_stderr = self.run_cli(
+            "operator",
+            "security",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+
+        self.assertEqual(security_exit, 0, security_stderr)
+        payload = json.loads(security_stdout)
+        self.assertEqual(payload["counts"]["webhook_alerts"], 1)
+        alert = payload["webhook_alerts"][0]
+        self.assertEqual(alert["event"], "discord_webhook_auth_failed")
+        self.assertEqual(alert["status"], "sustained_rejections")
+        self.assertEqual(alert["severity"], "critical")
+        self.assertEqual(alert["count"], 3)
+        self.assertIn("sustained discord webhook auth rejected detected", alert["summary"].lower())
+        webhook_items = [
+            item
+            for item in payload["items"]
+            if item["recommended_command"] == "spark-intelligence gateway traces --event discord_webhook_auth_failed --limit 20"
+        ]
+        self.assertEqual(len(webhook_items), 1)
+        self.assertEqual(webhook_items[0]["priority"], "high")
+
     def test_operator_inbox_surfaces_whatsapp_verification_rejections(self) -> None:
         setup_exit, _, setup_stderr = self.run_cli(
             "channel",
@@ -172,6 +222,59 @@ class CliSmokeTests(SparkTestCase):
             webhook_items[0]["recommended_command"],
             "spark-intelligence gateway traces --event whatsapp_webhook_verification_failed --limit 20",
         )
+
+    def test_operator_inbox_escalates_sustained_whatsapp_verification_rejections(self) -> None:
+        setup_exit, _, setup_stderr = self.run_cli(
+            "channel",
+            "add",
+            "whatsapp",
+            "--home",
+            str(self.home),
+            "--bot-token",
+            "whatsapp-token",
+            "--webhook-secret",
+            "whatsapp-webhook-secret",
+            "--webhook-verify-token",
+            "whatsapp-verify-token",
+        )
+        self.assertEqual(setup_exit, 0, setup_stderr)
+
+        for _ in range(3):
+            response = handle_whatsapp_webhook(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                path=WHATSAPP_WEBHOOK_PATH,
+                method="GET",
+                content_type=None,
+                headers={},
+                body=b"",
+                query_params={
+                    "hub.mode": "subscribe",
+                    "hub.verify_token": "wrong-token",
+                    "hub.challenge": "challenge-code",
+                },
+            )
+            self.assertEqual(response.status_code, 401)
+
+        inbox_exit, inbox_stdout, inbox_stderr = self.run_cli(
+            "operator",
+            "inbox",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+
+        self.assertEqual(inbox_exit, 0, inbox_stderr)
+        payload = json.loads(inbox_stdout)
+        self.assertEqual(payload["counts"]["webhook_alerts"], 1)
+        alert = payload["webhooks"][0]
+        self.assertEqual(alert["event"], "whatsapp_webhook_verification_failed")
+        self.assertEqual(alert["status"], "sustained_rejections")
+        self.assertEqual(alert["severity"], "critical")
+        self.assertEqual(alert["count"], 3)
+        webhook_items = [item for item in payload["items"] if item["kind"] == "webhook"]
+        self.assertEqual(len(webhook_items), 1)
+        self.assertEqual(webhook_items[0]["priority"], "high")
 
     def test_doctor_degrades_after_telegram_poll_failure(self) -> None:
         self.add_telegram_channel(bot_token="good-token")

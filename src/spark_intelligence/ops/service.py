@@ -14,6 +14,8 @@ from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import swarm_status
 
+WEBHOOK_ALERT_SUSTAINED_THRESHOLD = 3
+
 
 @dataclass
 class OperatorEventReport:
@@ -842,14 +844,21 @@ def _build_webhook_alerts(*, traces: list[dict[str, Any]]) -> list[dict[str, Any
         if not matching:
             continue
         latest = matching[-1]
+        count = len(matching)
         latest_reason = str(latest.get("reason") or "unknown")
         latest_status_code = int(latest.get("status_code") or 0)
+        sustained = count >= WEBHOOK_ALERT_SUSTAINED_THRESHOLD
         alerts.append(
             {
                 "event": event_name,
-                "status": spec["status"],
-                "severity": "critical" if latest_status_code >= 500 else "warning",
-                "summary": f"{spec['summary_prefix']} {len(matching)} time(s); latest reason: {latest_reason}.",
+                "status": "sustained_rejections" if sustained else spec["status"],
+                "severity": "critical" if latest_status_code >= 500 or sustained else "warning",
+                "count": count,
+                "summary": (
+                    f"{spec['summary_prefix']} {count} time(s); latest reason: {latest_reason}."
+                    if not sustained
+                    else f"Sustained {spec['summary_prefix'].lower()} detected: {count} recent rejection(s); latest reason: {latest_reason}."
+                ),
                 "recommended_command": spec["recommended_command"],
             }
         )
