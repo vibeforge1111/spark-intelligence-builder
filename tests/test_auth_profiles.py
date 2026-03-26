@@ -114,6 +114,7 @@ class AuthProfileTests(SparkTestCase):
         self.assertIn("openai-codex", provider_ids)
         openai_codex = next(provider for provider in payload["providers"] if provider["id"] == "openai-codex")
         self.assertEqual(openai_codex["auth_methods"], ["oauth"])
+        self.assertEqual(openai_codex["execution_transport"], "external_cli_wrapper")
         self.assertEqual(openai_codex["oauth_redirect_uri"], "http://127.0.0.1:1455/auth/callback")
 
     def test_resolve_runtime_provider_uses_default_profile_and_env_secret(self) -> None:
@@ -142,6 +143,7 @@ class AuthProfileTests(SparkTestCase):
         self.assertEqual(resolution.auth_profile_id, "anthropic:default")
         self.assertEqual(resolution.auth_method, "api_key_env")
         self.assertEqual(resolution.api_mode, "anthropic_messages")
+        self.assertEqual(resolution.execution_transport, "direct_http")
         self.assertEqual(resolution.base_url, "https://api.anthropic.com")
         self.assertEqual(resolution.default_model, "claude-opus-4-6")
         self.assertEqual(resolution.secret_ref.source, "env")
@@ -292,6 +294,7 @@ class AuthProfileTests(SparkTestCase):
         self.assertEqual(resolution.provider_id, "openai-codex")
         self.assertEqual(resolution.auth_method, "oauth")
         self.assertEqual(resolution.api_mode, "codex_responses")
+        self.assertEqual(resolution.execution_transport, "external_cli_wrapper")
         self.assertEqual(resolution.secret_ref.source, "oauth_store")
         self.assertEqual(resolution.secret_ref.ref_id, "openai-codex:default")
         self.assertEqual(resolution.secret_value, "oauth-access-token")

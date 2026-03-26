@@ -21,6 +21,7 @@ class ProviderSpec:
     default_base_url: str | None = None
     default_api_key_env: str | None = None
     api_mode: str = "chat_completions"
+    execution_transport: str = "direct_http"
     oauth: OAuthProviderConfig | None = None
 
     @property
@@ -51,6 +52,7 @@ PROVIDER_REGISTRY: dict[str, ProviderSpec] = {
         default_model="gpt-5.4",
         default_base_url="https://chatgpt.com/backend-api/codex",
         api_mode="codex_responses",
+        execution_transport="external_cli_wrapper",
         oauth=OAuthProviderConfig(
             authorize_url="https://auth.openai.com/oauth/authorize",
             token_url="https://auth.openai.com/oauth/token",

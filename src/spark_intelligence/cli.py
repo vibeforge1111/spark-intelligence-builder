@@ -1220,6 +1220,7 @@ def handle_auth_providers(args: argparse.Namespace) -> int:
                 "default_model": spec.default_model,
                 "default_base_url": spec.default_base_url,
                 "default_api_key_env": spec.default_api_key_env,
+                "execution_transport": spec.execution_transport,
                 "oauth_redirect_uri": spec.oauth.redirect_uri if spec.oauth else None,
             }
             for spec in list_provider_specs()
@@ -1239,6 +1240,7 @@ def handle_auth_providers(args: argparse.Namespace) -> int:
             print(f"  default_base_url={provider['default_base_url']}")
         if provider["default_api_key_env"]:
             print(f"  default_api_key_env={provider['default_api_key_env']}")
+        print(f"  execution_transport={provider['execution_transport']}")
         if provider["oauth_redirect_uri"]:
             print(f"  oauth_redirect_uri={provider['oauth_redirect_uri']}")
     return 0

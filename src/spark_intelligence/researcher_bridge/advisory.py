@@ -32,6 +32,7 @@ class ResearcherBridgeResult:
     provider_auth_method: str | None = None
     provider_model: str | None = None
     provider_model_family: str | None = None
+    provider_execution_transport: str | None = None
     provider_base_url: str | None = None
     provider_source: str | None = None
 
@@ -56,6 +57,7 @@ class ResearcherBridgeStatus:
     last_provider_model: str | None
     last_provider_model_family: str | None
     last_provider_auth_method: str | None
+    last_provider_execution_transport: str | None
     failure_count: int
     last_failure: dict[str, Any] | None
 
@@ -80,6 +82,7 @@ class ResearcherBridgeStatus:
                 "last_provider_model": self.last_provider_model,
                 "last_provider_model_family": self.last_provider_model_family,
                 "last_provider_auth_method": self.last_provider_auth_method,
+                "last_provider_execution_transport": self.last_provider_execution_transport,
                 "failure_count": self.failure_count,
                 "last_failure": self.last_failure,
             },
@@ -115,6 +118,8 @@ class ResearcherBridgeStatus:
             lines.append(f"- last_provider_model_family: {self.last_provider_model_family}")
         if self.last_provider_auth_method:
             lines.append(f"- last_provider_auth_method: {self.last_provider_auth_method}")
+        if self.last_provider_execution_transport:
+            lines.append(f"- last_provider_execution_transport: {self.last_provider_execution_transport}")
         lines.append(f"- failure_count: {self.failure_count}")
         if self.last_failure:
             lines.append(
@@ -248,6 +253,7 @@ def researcher_bridge_status(*, config_manager: ConfigManager, state_db: StateDB
         last_provider_model=runtime_state.get("researcher:last_provider_model"),
         last_provider_model_family=runtime_state.get("researcher:last_provider_model_family"),
         last_provider_auth_method=runtime_state.get("researcher:last_provider_auth_method"),
+        last_provider_execution_transport=runtime_state.get("researcher:last_provider_execution_transport"),
         failure_count=_parse_int(runtime_state.get("researcher:failure_count")),
         last_failure=_loads_json(runtime_state.get("researcher:last_failure")),
     )
@@ -265,6 +271,11 @@ def record_researcher_bridge_result(*, state_db: StateDB, result: ResearcherBrid
         _set_runtime_state(conn, "researcher:last_provider_model", result.provider_model or "")
         _set_runtime_state(conn, "researcher:last_provider_model_family", result.provider_model_family or "")
         _set_runtime_state(conn, "researcher:last_provider_auth_method", result.provider_auth_method or "")
+        _set_runtime_state(
+            conn,
+            "researcher:last_provider_execution_transport",
+            result.provider_execution_transport or "",
+        )
         _set_runtime_state(
             conn,
             "researcher:last_attachment_context",
@@ -321,6 +332,9 @@ def build_researcher_reply(
             provider_auth_method=provider_selection.provider.auth_method if provider_selection.provider else None,
             provider_model=provider_selection.provider.default_model if provider_selection.provider else None,
             provider_model_family=provider_selection.model_family,
+            provider_execution_transport=(
+                provider_selection.provider.execution_transport if provider_selection.provider else None
+            ),
             provider_base_url=provider_selection.provider.base_url if provider_selection.provider else None,
             provider_source=provider_selection.provider.source if provider_selection.provider else None,
         )
@@ -340,6 +354,9 @@ def build_researcher_reply(
             provider_auth_method=provider_selection.provider.auth_method if provider_selection.provider else None,
             provider_model=provider_selection.provider.default_model if provider_selection.provider else None,
             provider_model_family=provider_selection.model_family,
+            provider_execution_transport=(
+                provider_selection.provider.execution_transport if provider_selection.provider else None
+            ),
             provider_base_url=provider_selection.provider.base_url if provider_selection.provider else None,
             provider_source=provider_selection.provider.source if provider_selection.provider else None,
         )
@@ -384,6 +401,9 @@ def build_researcher_reply(
                     provider_auth_method=provider_selection.provider.auth_method if provider_selection.provider else None,
                     provider_model=provider_selection.provider.default_model if provider_selection.provider else None,
                     provider_model_family=provider_selection.model_family,
+                    provider_execution_transport=(
+                        provider_selection.provider.execution_transport if provider_selection.provider else None
+                    ),
                     provider_base_url=provider_selection.provider.base_url if provider_selection.provider else None,
                     provider_source=provider_selection.provider.source if provider_selection.provider else None,
                 )
@@ -403,6 +423,9 @@ def build_researcher_reply(
                     provider_auth_method=provider_selection.provider.auth_method if provider_selection.provider else None,
                     provider_model=provider_selection.provider.default_model if provider_selection.provider else None,
                     provider_model_family=provider_selection.model_family,
+                    provider_execution_transport=(
+                        provider_selection.provider.execution_transport if provider_selection.provider else None
+                    ),
                     provider_base_url=provider_selection.provider.base_url if provider_selection.provider else None,
                     provider_source=provider_selection.provider.source if provider_selection.provider else None,
                 )
@@ -430,6 +453,9 @@ def build_researcher_reply(
         provider_auth_method=provider_selection.provider.auth_method if provider_selection.provider else None,
         provider_model=provider_selection.provider.default_model if provider_selection.provider else None,
         provider_model_family=provider_selection.model_family,
+        provider_execution_transport=(
+            provider_selection.provider.execution_transport if provider_selection.provider else None
+        ),
         provider_base_url=provider_selection.provider.base_url if provider_selection.provider else None,
         provider_source=provider_selection.provider.source if provider_selection.provider else None,
     )
@@ -476,17 +502,17 @@ def _supports_direct_or_cli_execution(selection: ResearcherProviderSelection) ->
     provider = selection.provider
     if provider is None:
         return False
-    if selection.model_family == "codex":
-        return True
-    return provider.api_mode in {"chat_completions", "anthropic_messages"}
+    return provider.execution_transport in {"direct_http", "external_cli_wrapper"}
 
 
 def _command_override_for_provider(selection: ResearcherProviderSelection) -> list[str] | None:
     provider = selection.provider
     if provider is None:
         return None
-    if selection.model_family == "codex":
+    if provider.execution_transport == "external_cli_wrapper":
         return None
+    if provider.execution_transport != "direct_http":
+        raise RuntimeError(f"Unsupported provider execution transport '{provider.execution_transport}'.")
     return [
         sys.executable,
         "-m",
@@ -504,6 +530,7 @@ def _temporary_provider_env(provider: RuntimeProviderResolution):
         "SPARK_INTELLIGENCE_PROVIDER_KIND": provider.provider_kind,
         "SPARK_INTELLIGENCE_PROVIDER_AUTH_METHOD": provider.auth_method,
         "SPARK_INTELLIGENCE_PROVIDER_API_MODE": provider.api_mode,
+        "SPARK_INTELLIGENCE_PROVIDER_EXECUTION_TRANSPORT": provider.execution_transport,
         "SPARK_INTELLIGENCE_PROVIDER_MODEL": provider.default_model or "",
         "SPARK_INTELLIGENCE_PROVIDER_BASE_URL": provider.base_url or "",
         "SPARK_INTELLIGENCE_PROVIDER_SECRET": provider.secret_value,

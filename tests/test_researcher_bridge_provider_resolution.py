@@ -101,6 +101,111 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual(result.provider_auth_method, "api_key_env")
         self.assertEqual(result.provider_model, "claude-opus-4-6")
         self.assertEqual(result.provider_model_family, "claude")
+        self.assertEqual(result.provider_execution_transport, "direct_http")
+
+    def test_build_researcher_reply_keeps_codex_on_external_wrapper_transport(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        start_exit, start_stdout, start_stderr = self.run_cli(
+            "auth",
+            "login",
+            "openai-codex",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(start_exit, 0, start_stderr)
+
+        import json
+
+        start_payload = json.loads(start_stdout)
+        callback_url = (
+            "http://127.0.0.1:1455/auth/callback"
+            f"?state={start_payload['callback_state']}&code=test-oauth-code"
+        )
+
+        with patch(
+            "spark_intelligence.auth.service.exchange_oauth_authorization_code",
+            return_value={
+                "access_token": "oauth-access-token",
+                "refresh_token": "oauth-refresh-token",
+                "expires_in": 3600,
+            },
+        ):
+            complete_exit, _, complete_stderr = self.run_cli(
+                "auth",
+                "login",
+                "openai-codex",
+                "--home",
+                str(self.home),
+                "--callback-url",
+                callback_url,
+            )
+        self.assertEqual(complete_exit, 0, complete_stderr)
+
+        runtime_root = self.home / "fake-researcher"
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        config_path = runtime_root / "spark-researcher.project.json"
+        config_path.write_text("{}", encoding="utf-8")
+        captured: dict[str, object] = {}
+
+        def fake_build_advisory(path: Path, task: str, *, model: str = "generic", limit: int = 4, domain: str | None = None):
+            captured["advisory_model"] = model
+            return {
+                "guidance": ["Use evidence-backed guidance."],
+                "epistemic_status": {"status": "grounded", "packet_stability": {"status": "durable_supported"}},
+                "selected_packet_ids": ["packet-1"],
+                "trace_path": "trace:test",
+            }
+
+        def fake_execute_with_research(
+            runtime_root: Path,
+            *,
+            advisory: dict[str, object],
+            model: str,
+            command_override: list[str] | None = None,
+            dry_run: bool = False,
+        ) -> dict[str, object]:
+            captured["execution_model"] = model
+            captured["command_override"] = command_override
+            return {
+                "status": "ok",
+                "decision": "approve",
+                "response": {"raw_response": "Codex-backed reply"},
+                "trace_path": "trace:execution",
+            }
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
+            return_value=(runtime_root, "configured"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
+            return_value=config_path,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_build_advisory",
+            return_value=fake_build_advisory,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_execute_with_research",
+            return_value=fake_execute_with_research,
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-3",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-1",
+                channel_kind="telegram",
+                user_message="Should codex run through the shared bridge?",
+            )
+
+        self.assertEqual(captured["advisory_model"], "codex")
+        self.assertEqual(captured["execution_model"], "codex")
+        self.assertEqual(captured["command_override"], None)
+        self.assertEqual(result.reply_text, "Codex-backed reply")
+        self.assertEqual(result.provider_id, "openai-codex")
+        self.assertEqual(result.provider_auth_method, "oauth")
+        self.assertEqual(result.provider_model_family, "codex")
+        self.assertEqual(result.provider_execution_transport, "external_cli_wrapper")
 
     def test_build_researcher_reply_fails_closed_when_provider_auth_is_unresolved(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)

@@ -23,6 +23,7 @@ class RuntimeProviderResolution:
     auth_profile_id: str
     auth_method: str
     api_mode: str
+    execution_transport: str
     base_url: str | None
     default_model: str | None
     secret_ref: StaticSecretRef | None
@@ -270,6 +271,7 @@ def resolve_runtime_provider(
         auth_profile_id=auth_profile_id,
         auth_method=auth_method,
         api_mode=spec.api_mode,
+        execution_transport=spec.execution_transport,
         base_url=_optional_string(record.get("base_url")),
         default_model=_optional_string(record.get("default_model")),
         secret_ref=secret_ref,
