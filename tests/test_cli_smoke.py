@@ -347,3 +347,84 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(record["allowed_users"], [])
         self.assertEqual(config_manager.read_env_map()["TELEGRAM_BOT_TOKEN"], "new-token")
         self.assertIn("Configured channel 'telegram' with pairing mode 'allowlist' status 'enabled'.", stdout)
+
+    def test_channel_add_preserves_existing_status_and_auth_for_discord(self) -> None:
+        setup_exit, _, setup_stderr = self.run_cli(
+            "channel",
+            "add",
+            "discord",
+            "--home",
+            str(self.home),
+            "--bot-token",
+            "discord-old-token",
+            "--allowed-user",
+            "111",
+            "--pairing-mode",
+            "allowlist",
+        )
+        self.assertEqual(setup_exit, 0, setup_stderr)
+
+        status_exit, _, status_stderr = self.run_cli(
+            "operator",
+            "set-channel",
+            "discord",
+            "paused",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(status_exit, 0, status_stderr)
+
+        exit_code, stdout, stderr = self.run_cli(
+            "channel",
+            "add",
+            "discord",
+            "--home",
+            str(self.home),
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        config_manager = ConfigManager.from_home(str(self.home))
+        record = config_manager.get_path("channels.records.discord")
+        self.assertEqual(record["pairing_mode"], "allowlist")
+        self.assertEqual(record["allowed_users"], ["111"])
+        self.assertEqual(record["status"], "paused")
+        self.assertEqual(record["auth_ref"], "DISCORD_BOT_TOKEN")
+        self.assertEqual(config_manager.read_env_map()["DISCORD_BOT_TOKEN"], "discord-old-token")
+        self.assertIn("Configured channel 'discord' with pairing mode 'allowlist' status 'paused'.", stdout)
+
+    def test_channel_add_can_clear_existing_allowlist_explicitly_for_discord(self) -> None:
+        setup_exit, _, setup_stderr = self.run_cli(
+            "channel",
+            "add",
+            "discord",
+            "--home",
+            str(self.home),
+            "--bot-token",
+            "discord-old-token",
+            "--allowed-user",
+            "111",
+            "--allowed-user",
+            "222",
+            "--pairing-mode",
+            "allowlist",
+        )
+        self.assertEqual(setup_exit, 0, setup_stderr)
+
+        exit_code, stdout, stderr = self.run_cli(
+            "channel",
+            "add",
+            "discord",
+            "--home",
+            str(self.home),
+            "--clear-allowed-users",
+            "--pairing-mode",
+            "allowlist",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        config_manager = ConfigManager.from_home(str(self.home))
+        record = config_manager.get_path("channels.records.discord")
+        self.assertEqual(record["allowed_users"], [])
+        self.assertEqual(record["pairing_mode"], "allowlist")
+        self.assertEqual(record["auth_ref"], "DISCORD_BOT_TOKEN")
+        self.assertIn("Configured channel 'discord' with pairing mode 'allowlist' status 'enabled'.", stdout)
