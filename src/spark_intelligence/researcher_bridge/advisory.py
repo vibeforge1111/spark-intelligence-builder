@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import re
 import sys
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -13,6 +14,7 @@ from typing import Any
 from spark_intelligence.attachments import build_attachment_context
 from spark_intelligence.auth.runtime import RuntimeProviderResolution, resolve_runtime_provider
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.llm.direct_provider import DirectProviderRequest, execute_direct_provider_prompt
 from spark_intelligence.state.db import StateDB
 
 
@@ -210,6 +212,99 @@ def _render_reply_from_execution(execution: dict[str, Any], advisory: dict[str, 
     return reply_text, evidence_summary, trace_ref
 
 
+def _is_conversational_fallback_candidate(*, user_message: str, advisory: dict[str, Any]) -> bool:
+    epistemic = advisory.get("epistemic_status", {}) if isinstance(advisory, dict) else {}
+    if str(epistemic.get("status") or "") != "under_supported":
+        return False
+    lowered = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
+    if not lowered:
+        return False
+    if len(lowered) > 240:
+        return False
+    if any(char.isdigit() for char in lowered):
+        return False
+    blocked_terms = (
+        "http://",
+        "https://",
+        "latest",
+        "today",
+        "news",
+        "price",
+        "stock",
+        "lawsuit",
+        "legal",
+        "medical",
+        "diagnose",
+        "treatment",
+        "tax",
+        "invest",
+        "contract",
+        "traceback",
+        "exception",
+        "stack trace",
+        "error code",
+    )
+    if any(term in lowered for term in blocked_terms):
+        return False
+    if lowered in {
+        "hi",
+        "hey",
+        "hello",
+        "yo",
+        "sup",
+        "what's up",
+        "whats up",
+        "how are you",
+        "how are you doing",
+        "good morning",
+        "good afternoon",
+        "good evening",
+    }:
+        return True
+    tokens = lowered.split()
+    return len(tokens) <= 10
+
+
+def _render_direct_provider_chat_fallback(
+    *,
+    provider: RuntimeProviderResolution,
+    user_message: str,
+    channel_kind: str,
+    attachment_context: dict[str, object],
+) -> str:
+    payload = execute_direct_provider_prompt(
+        provider=DirectProviderRequest(
+            provider_id=provider.provider_id,
+            provider_kind=provider.provider_kind,
+            auth_method=provider.auth_method,
+            api_mode=provider.api_mode,
+            base_url=provider.base_url,
+            model=provider.default_model,
+            secret_value=provider.secret_value,
+        ),
+        system_prompt=(
+            "You are Spark AGI in a 1:1 messaging conversation. "
+            "Reply naturally, briefly, and helpfully. "
+            "For casual greetings or small talk, respond like a normal assistant. "
+            "If the user asks for factual, legal, medical, financial, or time-sensitive guidance "
+            "and you are not confident, say you need more context or verification before giving a hard answer. "
+            "Do not mention internal advisory or verification systems."
+        ),
+        user_prompt=_build_contextual_task(
+            user_message=(
+                f"[channel_kind={channel_kind}]\n"
+                f"[fallback_mode=conversational_under_supported]\n"
+                f"{user_message}"
+            ),
+            attachment_context=attachment_context,
+        ),
+    )
+    raw_response = str(payload.get("raw_response") or "").strip()
+    if not raw_response:
+        raise RuntimeError("Direct provider fallback returned no text content.")
+    return raw_response
+
+
 def _build_contextual_task(*, user_message: str, attachment_context: dict[str, object]) -> str:
     active_chip_keys = attachment_context.get("active_chip_keys") or []
     pinned_chip_keys = attachment_context.get("pinned_chip_keys") or []
@@ -374,6 +469,38 @@ def build_researcher_reply(
                     limit=3,
                     domain=None,
                 )
+                if (
+                    provider_selection.provider
+                    and provider_selection.provider.execution_transport == "direct_http"
+                    and _is_conversational_fallback_candidate(user_message=user_message, advisory=advisory)
+                ):
+                    reply_text = _render_direct_provider_chat_fallback(
+                        provider=provider_selection.provider,
+                        user_message=user_message,
+                        channel_kind=channel_kind,
+                        attachment_context=attachment_context,
+                    )
+                    trace_ref = str(advisory.get("trace_path") or advisory.get("trace_id") or "trace:missing")
+                    evidence_summary = "status=under_supported provider_fallback=direct_http_chat"
+                    return ResearcherBridgeResult(
+                        request_id=request_id,
+                        reply_text=reply_text,
+                        evidence_summary=evidence_summary,
+                        escalation_hint=None,
+                        trace_ref=trace_ref,
+                        mode=f"external_{runtime_source}",
+                        runtime_root=str(runtime_root),
+                        config_path=str(config_path),
+                        attachment_context=attachment_context,
+                        provider_id=provider_selection.provider.provider_id,
+                        provider_auth_profile_id=provider_selection.provider.auth_profile_id,
+                        provider_auth_method=provider_selection.provider.auth_method,
+                        provider_model=provider_selection.provider.default_model,
+                        provider_model_family=provider_selection.model_family,
+                        provider_execution_transport=provider_selection.provider.execution_transport,
+                        provider_base_url=provider_selection.provider.base_url,
+                        provider_source=provider_selection.provider.source,
+                    )
                 if provider_selection.provider and _supports_direct_or_cli_execution(provider_selection):
                     with _temporary_provider_env(provider_selection.provider):
                         execution = execute_with_research(
