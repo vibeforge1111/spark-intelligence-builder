@@ -122,6 +122,35 @@ class CliSmokeTests(SparkTestCase):
             "spark-intelligence gateway traces --event discord_webhook_auth_failed --limit 20",
         )
 
+    def test_operator_security_surfaces_discord_ingress_missing(self) -> None:
+        setup_exit, _, setup_stderr = self.run_cli(
+            "channel",
+            "add",
+            "discord",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(setup_exit, 0, setup_stderr)
+
+        security_exit, security_stdout, security_stderr = self.run_cli(
+            "operator",
+            "security",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+
+        self.assertEqual(security_exit, 0, security_stderr)
+        payload = json.loads(security_stdout)
+        self.assertEqual(payload["counts"]["channel_alerts"], 1)
+        self.assertEqual(payload["channel_alerts"][0]["channel_id"], "discord")
+        self.assertEqual(payload["channel_alerts"][0]["status"], "ingress_missing")
+        self.assertIn("Discord ingress is not ready", payload["channel_alerts"][0]["summary"])
+        self.assertEqual(
+            payload["channel_alerts"][0]["recommended_command"],
+            "spark-intelligence channel add discord --interaction-public-key <public-key>",
+        )
+
     def test_operator_security_escalates_sustained_discord_webhook_auth_rejections(self) -> None:
         setup_exit, _, setup_stderr = self.run_cli(
             "channel",
@@ -705,6 +734,39 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(
             webhook_items[0]["recommended_command"],
             "spark-intelligence gateway traces --event whatsapp_webhook_verification_failed --limit 20",
+        )
+
+    def test_operator_inbox_surfaces_whatsapp_ingress_missing(self) -> None:
+        setup_exit, _, setup_stderr = self.run_cli(
+            "channel",
+            "add",
+            "whatsapp",
+            "--home",
+            str(self.home),
+            "--bot-token",
+            "whatsapp-token",
+        )
+        self.assertEqual(setup_exit, 0, setup_stderr)
+
+        inbox_exit, inbox_stdout, inbox_stderr = self.run_cli(
+            "operator",
+            "inbox",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+
+        self.assertEqual(inbox_exit, 0, inbox_stderr)
+        payload = json.loads(inbox_stdout)
+        self.assertEqual(payload["counts"]["channel_alerts"], 1)
+        self.assertEqual(payload["channels"][0]["channel_id"], "whatsapp")
+        self.assertEqual(payload["channels"][0]["status"], "ingress_missing")
+        self.assertIn("WhatsApp ingress is not ready", payload["channels"][0]["summary"])
+        channel_items = [item for item in payload["items"] if item["kind"] == "channel"]
+        self.assertEqual(len(channel_items), 1)
+        self.assertEqual(
+            channel_items[0]["recommended_command"],
+            "spark-intelligence channel add whatsapp --webhook-secret <secret> --webhook-verify-token <token>",
         )
 
     def test_operator_inbox_escalates_sustained_whatsapp_verification_rejections(self) -> None:

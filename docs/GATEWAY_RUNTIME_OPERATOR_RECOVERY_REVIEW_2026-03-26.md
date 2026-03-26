@@ -147,6 +147,14 @@ The next surface-alignment decision is also now landed:
   - `spark-intelligence operator security`
 - `doctor` does not try to become a second repair-command surface
 
+The next channel-surface alignment is also now landed:
+
+- configured-but-ingress-broken Discord and WhatsApp channels now surface through operator channel alerts
+- this closes the gap where `doctor` and `gateway status` degraded on adapter ingress misconfiguration but operator surfaces stayed silent
+- secure default repair commands now point at:
+  - `spark-intelligence channel add discord --interaction-public-key <public-key>`
+  - `spark-intelligence channel add whatsapp --webhook-secret <secret> --webhook-verify-token <token>`
+
 ## 9. Proposed Decision For Now
 
 The repo should explicitly treat the following as the v1 contract:
@@ -154,6 +162,7 @@ The repo should explicitly treat the following as the v1 contract:
 - gateway owns ingress, readiness gating, and audit trails
 - operator owns repair actions
 - doctor owns diagnosis, not command selection
+- operator surfaces own channel-level ingress repair actions
 - maintenance is operator-driven, not daemon-driven
 - Discord and WhatsApp remain narrow live surfaces until one of them is proven end to end
 - Codex/OAuth remains wrapper-backed until a direct runtime can match current security and recovery guarantees

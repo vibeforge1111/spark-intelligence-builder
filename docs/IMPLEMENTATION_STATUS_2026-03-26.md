@@ -119,6 +119,8 @@ The first phase-1 repair-guidance patch is also in: `status` and `gateway status
 
 The next phase-1 role split is also now explicit: `doctor` remains a diagnostic and fail-closed readiness surface, but degraded doctor output now points operators at `status` and `operator security` for repair guidance instead of trying to duplicate command selection itself.
 
+The next phase-1 operator-alignment patch is also in: configured Discord or WhatsApp channels with broken ingress contracts now surface as operator channel alerts with explicit secure repair commands, so operator surfaces no longer stay quiet while `doctor` and `gateway status` are already degraded.
+
 ## 7. Current Non-Goals
 
 Do not start these next:

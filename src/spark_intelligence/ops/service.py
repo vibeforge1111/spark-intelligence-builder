@@ -5,7 +5,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from spark_intelligence.adapters.discord.runtime import build_discord_runtime_summary
 from spark_intelligence.adapters.telegram.runtime import read_telegram_runtime_health
+from spark_intelligence.adapters.whatsapp.runtime import build_whatsapp_runtime_summary
 from spark_intelligence.auth.runtime import build_auth_status_report
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.gateway.tracing import read_gateway_traces, read_outbound_audit
@@ -449,6 +451,8 @@ def _load_channel_alerts(*, config_manager: ConfigManager, state_db: StateDB) ->
         ).fetchall()
     alerts = [dict(row) for row in rows]
     telegram_health = read_telegram_runtime_health(state_db)
+    discord_summary = build_discord_runtime_summary(config_manager, state_db)
+    whatsapp_summary = build_whatsapp_runtime_summary(config_manager, state_db)
     if telegram_health.auth_status in {"failed", "missing"}:
         alerts.append(
             {
@@ -478,6 +482,39 @@ def _load_channel_alerts(*, config_manager: ConfigManager, state_db: StateDB) ->
                     f"backoff={telegram_health.last_backoff_seconds}s."
                 ),
                 "recommended_command": "spark-intelligence gateway traces --limit 20",
+            }
+        )
+    if discord_summary.configured and discord_summary.status not in {"paused", "disabled"} and not discord_summary.ingress_ready():
+        alerts.append(
+            {
+                "channel_id": "discord",
+                "channel_kind": "discord",
+                "status": "ingress_missing",
+                "pairing_mode": discord_summary.pairing_mode,
+                "updated_at": None,
+                "summary": (
+                    f"Discord ingress is not ready; current ingress mode is {discord_summary.ingress_mode()}. "
+                    "Configure signed interactions or explicitly enable legacy webhook compatibility."
+                ),
+                "recommended_command": "spark-intelligence channel add discord --interaction-public-key <public-key>",
+            }
+        )
+    if whatsapp_summary.configured and whatsapp_summary.status not in {"paused", "disabled"} and not whatsapp_summary.ingress_ready():
+        alerts.append(
+            {
+                "channel_id": "whatsapp",
+                "channel_kind": "whatsapp",
+                "status": "ingress_missing",
+                "pairing_mode": whatsapp_summary.pairing_mode,
+                "updated_at": None,
+                "summary": (
+                    f"WhatsApp ingress is not ready; current ingress mode is {whatsapp_summary.ingress_mode()}. "
+                    "Configure both webhook app-secret and verify-token refs."
+                ),
+                "recommended_command": (
+                    "spark-intelligence channel add whatsapp --webhook-secret <secret> "
+                    "--webhook-verify-token <token>"
+                ),
             }
         )
     return alerts
