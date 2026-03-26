@@ -16,6 +16,8 @@ from spark_intelligence.state.db import StateDB
 
 
 DISCORD_WEBHOOK_PATH = "/webhooks/discord"
+DISCORD_DM_COMMAND_NAME = "spark"
+DISCORD_DM_COMMAND_OPTION = "message"
 
 
 @dataclass(frozen=True)
@@ -211,12 +213,18 @@ def _handle_discord_interaction_payload(
             ephemeral=True,
         )
 
-    prompt = _extract_discord_interaction_prompt(payload.get("data"))
-    if not prompt:
+    command_prompt = _extract_discord_interaction_prompt(payload.get("data"))
+    if command_prompt is None:
         return _discord_interaction_message(
-            "Discord command is missing a text prompt option.",
+            (
+                "Discord DM commands must use "
+                f"/{DISCORD_DM_COMMAND_NAME} {DISCORD_DM_COMMAND_OPTION}:<text> in Spark v1."
+            ),
             ephemeral=True,
         )
+    prompt, error_message = command_prompt
+    if error_message:
+        return _discord_interaction_message(error_message, ephemeral=True)
 
     channel_id = str(payload.get("channel_id") or f"discord-interaction:{user['id']}")
     bridge = resolve_simulated_dm(
@@ -234,32 +242,46 @@ def _handle_discord_interaction_payload(
     )
 
 
-def _extract_discord_interaction_prompt(data: Any) -> str | None:
+def _extract_discord_interaction_prompt(data: Any) -> tuple[str | None, str | None] | None:
     if not isinstance(data, dict):
         return None
-    options = data.get("options")
-    prompt = _find_first_string_option(options)
-    if prompt:
-        return prompt
     name = data.get("name")
-    if isinstance(name, str) and name.strip():
-        return name.strip()
-    return None
+    if not isinstance(name, str) or name.strip() != DISCORD_DM_COMMAND_NAME:
+        return (
+            None,
+            f"Discord DM commands must use /{DISCORD_DM_COMMAND_NAME} in Spark v1.",
+        )
 
+    options = data.get("options")
+    if not isinstance(options, list) or len(options) != 1:
+        return (
+            None,
+            (
+                "Discord DM commands must provide exactly one "
+                f"{DISCORD_DM_COMMAND_OPTION} option in Spark v1."
+            ),
+        )
 
-def _find_first_string_option(options: Any) -> str | None:
-    if not isinstance(options, list):
-        return None
-    for option in options:
-        if not isinstance(option, dict):
-            continue
-        value = option.get("value")
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-        nested = _find_first_string_option(option.get("options"))
-        if nested:
-            return nested
-    return None
+    option = options[0]
+    if not isinstance(option, dict) or option.get("name") != DISCORD_DM_COMMAND_OPTION:
+        return (
+            None,
+            (
+                "Discord DM commands must provide exactly one "
+                f"{DISCORD_DM_COMMAND_OPTION} option in Spark v1."
+            ),
+        )
+
+    value = option.get("value")
+    if not isinstance(value, str) or not value.strip():
+        return (
+            None,
+            (
+                "Discord DM commands must provide a non-empty "
+                f"{DISCORD_DM_COMMAND_OPTION} value in Spark v1."
+            ),
+        )
+    return (value.strip(), None)
 
 
 def _discord_interaction_message(content: str, *, ephemeral: bool) -> GatewayWebhookResponse:
