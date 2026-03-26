@@ -137,6 +137,7 @@ Recommended commands:
 - `spark-intelligence gateway oauth-callback`
 - `spark-intelligence auth refresh <provider>`
 - `spark-intelligence auth logout <provider>`
+- `spark-intelligence jobs tick`
 
 ## 8. OAuth Boundaries
 
@@ -160,6 +161,7 @@ Model-provider OAuth should use:
 - explicit provider and redirect matching
 
 For v1, Spark should keep API-key-backed providers on a direct HTTP execution path and keep Codex/OAuth on an explicit external-wrapper path until a first-class direct OAuth runtime can match the same callback-state, expiry, and revoke guarantees.
+Short-horizon expiry should be surfaced before failure, and scheduled maintenance should remain explicit and auditable. A built-in `jobs tick` maintenance pass is acceptable in v1; hidden background refresh is not.
 
 ## 9. Security Rules
 

@@ -53,6 +53,8 @@ Shipped today:
 - local OAuth refresh via `auth refresh <provider>`
 - local OAuth logout via `auth logout <provider>`
 - expiry-aware `auth status`, `doctor`, and runtime-provider resolution for OAuth-backed providers
+- `expiring_soon` auth-status visibility plus operator guidance before OAuth tokens fail closed
+- built-in `jobs tick` OAuth maintenance that proactively refreshes due OAuth profiles
 - operator-visible reconnect and revoke guidance in `operator inbox` and `operator security` for expired, revoked, and refresh-error provider auth states
 - provider-aware Spark Researcher bridge routing instead of hardcoded `generic` advisory model selection
 - direct provider-backed LLM execution for API-key-backed bridge traffic via provider-aware HTTP wrapper commands
@@ -93,7 +95,7 @@ The next slice should stay focused on gateway and provider-auth architecture, no
 
 Start here in this exact order:
 
-1. Add refresh scheduling or proactive expiry repair without weakening the current fail-closed posture.
+1. Decide whether the built-in OAuth maintenance job should stay CLI-driven via `jobs tick` or graduate into a persistent scheduler surface.
 2. Consider whether operator-facing auth repair should also live in `doctor` text and setup/runbooks, not only inbox/security.
 3. Design a first-class direct Codex/OAuth runtime only if it can match the current callback, expiry, and revocation guarantees.
 4. Only after that, widen Discord, WhatsApp, or webhook-heavy surfaces.
