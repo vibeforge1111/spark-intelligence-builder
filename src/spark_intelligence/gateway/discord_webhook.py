@@ -10,6 +10,7 @@ from nacl.signing import VerifyKey
 
 from spark_intelligence.adapters.discord.runtime import simulate_discord_message
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.gateway.guardrails import prepare_outbound_text
 from spark_intelligence.gateway import resolve_simulated_dm
 from spark_intelligence.gateway.routes import GatewayRouteRegistration, GatewayRouteRegistry
 from spark_intelligence.state.db import StateDB
@@ -18,6 +19,9 @@ from spark_intelligence.state.db import StateDB
 DISCORD_WEBHOOK_PATH = "/webhooks/discord"
 DISCORD_DM_COMMAND_NAME = "spark"
 DISCORD_DM_COMMAND_OPTION = "message"
+DISCORD_CHAT_INPUT_COMMAND_TYPE = 1
+DISCORD_STRING_OPTION_TYPE = 3
+DISCORD_MAX_INTERACTION_RESPONSE_CHARS = 2000
 
 
 @dataclass(frozen=True)
@@ -238,6 +242,7 @@ def _handle_discord_interaction_payload(
     )
     return _discord_interaction_message(
         str(bridge.detail.get("response_text") or "Spark did not generate a reply."),
+        bridge_mode=str(bridge.detail.get("bridge_mode") or ""),
         ephemeral=True,
     )
 
@@ -250,6 +255,11 @@ def _extract_discord_interaction_prompt(data: Any) -> tuple[str | None, str | No
         return (
             None,
             f"Discord DM commands must use /{DISCORD_DM_COMMAND_NAME} in Spark v1.",
+        )
+    if data.get("type") != DISCORD_CHAT_INPUT_COMMAND_TYPE:
+        return (
+            None,
+            "Discord DM commands must use the chat-input slash command type in Spark v1.",
         )
 
     options = data.get("options")
@@ -271,6 +281,14 @@ def _extract_discord_interaction_prompt(data: Any) -> tuple[str | None, str | No
                 f"{DISCORD_DM_COMMAND_OPTION} option in Spark v1."
             ),
         )
+    if option.get("type") != DISCORD_STRING_OPTION_TYPE or option.get("options") not in (None, []):
+        return (
+            None,
+            (
+                "Discord DM commands must provide one plain string "
+                f"{DISCORD_DM_COMMAND_OPTION} option in Spark v1."
+            ),
+        )
 
     value = option.get("value")
     if not isinstance(value, str) or not value.strip():
@@ -284,8 +302,19 @@ def _extract_discord_interaction_prompt(data: Any) -> tuple[str | None, str | No
     return (value.strip(), None)
 
 
-def _discord_interaction_message(content: str, *, ephemeral: bool) -> GatewayWebhookResponse:
-    data: dict[str, Any] = {"content": content}
+def _discord_interaction_message(
+    content: str,
+    *,
+    ephemeral: bool,
+    bridge_mode: str | None = None,
+) -> GatewayWebhookResponse:
+    prepared = prepare_outbound_text(
+        text=content,
+        bridge_mode=bridge_mode,
+        max_reply_chars=DISCORD_MAX_INTERACTION_RESPONSE_CHARS,
+        redact_secret_like_replies=True,
+    )
+    data: dict[str, Any] = {"content": prepared["text"]}
     if ephemeral:
         data["flags"] = 64
     return GatewayWebhookResponse(

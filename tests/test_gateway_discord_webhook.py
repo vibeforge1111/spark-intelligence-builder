@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import patch
 
 from nacl.signing import SigningKey
 
@@ -203,6 +204,7 @@ class DiscordWebhookIngressTests(SparkTestCase):
                 "context": 1,
                 "user": {"id": "user-1", "username": "alice"},
                 "data": {
+                    "type": 1,
                     "name": "spark",
                     "options": [
                         {"name": "message", "type": 3, "value": "hello from discord command"}
@@ -226,6 +228,44 @@ class DiscordWebhookIngressTests(SparkTestCase):
         self.assertEqual(payload["data"]["flags"], 64)
         self.assertIn("Pairing approval is required", payload["data"]["content"])
 
+    def test_rejects_signed_application_command_with_non_chat_input_type(self) -> None:
+        signing_key = SigningKey.generate()
+        self._add_discord_channel(interaction_public_key=signing_key.verify_key.encode().hex(), webhook_secret=None)
+        body = json.dumps(
+            {
+                "id": "interaction-non-chat-input",
+                "type": 2,
+                "channel_id": "dm-1",
+                "context": 1,
+                "user": {"id": "user-1", "username": "alice"},
+                "data": {
+                    "type": 2,
+                    "name": "spark",
+                    "options": [
+                        {"name": "message", "type": 3, "value": "hello from discord command"}
+                    ],
+                },
+            }
+        ).encode("utf-8")
+        response = handle_discord_webhook(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            path=DISCORD_WEBHOOK_PATH,
+            method="POST",
+            content_type="application/json",
+            headers=self._signed_headers(signing_key, body),
+            body=body,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["type"], 4)
+        self.assertEqual(payload["data"]["flags"], 64)
+        self.assertEqual(
+            payload["data"]["content"],
+            "Discord DM commands must use the chat-input slash command type in Spark v1.",
+        )
+
     def test_rejects_signed_application_command_with_wrong_name(self) -> None:
         signing_key = SigningKey.generate()
         self._add_discord_channel(interaction_public_key=signing_key.verify_key.encode().hex(), webhook_secret=None)
@@ -237,6 +277,7 @@ class DiscordWebhookIngressTests(SparkTestCase):
                 "context": 1,
                 "user": {"id": "user-1", "username": "alice"},
                 "data": {
+                    "type": 1,
                     "name": "ask",
                     "options": [
                         {"name": "message", "type": 3, "value": "hello from discord command"}
@@ -271,6 +312,7 @@ class DiscordWebhookIngressTests(SparkTestCase):
                 "context": 1,
                 "user": {"id": "user-1", "username": "alice"},
                 "data": {
+                    "type": 1,
                     "name": "spark",
                     "options": [
                         {"name": "prompt", "type": 3, "value": "hello from discord command"}
@@ -297,6 +339,44 @@ class DiscordWebhookIngressTests(SparkTestCase):
             "Discord DM commands must provide exactly one message option in Spark v1.",
         )
 
+    def test_rejects_signed_application_command_with_non_string_message_option(self) -> None:
+        signing_key = SigningKey.generate()
+        self._add_discord_channel(interaction_public_key=signing_key.verify_key.encode().hex(), webhook_secret=None)
+        body = json.dumps(
+            {
+                "id": "interaction-non-string-option",
+                "type": 2,
+                "channel_id": "dm-1",
+                "context": 1,
+                "user": {"id": "user-1", "username": "alice"},
+                "data": {
+                    "type": 1,
+                    "name": "spark",
+                    "options": [
+                        {"name": "message", "type": 4, "value": 7}
+                    ],
+                },
+            }
+        ).encode("utf-8")
+        response = handle_discord_webhook(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            path=DISCORD_WEBHOOK_PATH,
+            method="POST",
+            content_type="application/json",
+            headers=self._signed_headers(signing_key, body),
+            body=body,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["type"], 4)
+        self.assertEqual(payload["data"]["flags"], 64)
+        self.assertEqual(
+            payload["data"]["content"],
+            "Discord DM commands must provide one plain string message option in Spark v1.",
+        )
+
     def test_rejects_signed_application_command_with_extra_options(self) -> None:
         signing_key = SigningKey.generate()
         self._add_discord_channel(interaction_public_key=signing_key.verify_key.encode().hex(), webhook_secret=None)
@@ -308,6 +388,7 @@ class DiscordWebhookIngressTests(SparkTestCase):
                 "context": 1,
                 "user": {"id": "user-1", "username": "alice"},
                 "data": {
+                    "type": 1,
                     "name": "spark",
                     "options": [
                         {"name": "message", "type": 3, "value": "hello from discord command"},
@@ -347,6 +428,7 @@ class DiscordWebhookIngressTests(SparkTestCase):
                 "context": 0,
                 "member": {"user": {"id": "user-1", "username": "alice"}},
                 "data": {
+                    "type": 1,
                     "name": "spark",
                     "options": [
                         {"name": "message", "type": 3, "value": "hello from guild"}
@@ -369,6 +451,49 @@ class DiscordWebhookIngressTests(SparkTestCase):
         self.assertEqual(payload["type"], 4)
         self.assertEqual(payload["data"]["flags"], 64)
         self.assertEqual(payload["data"]["content"], "Discord interactions are DM-only in Spark v1.")
+
+    def test_truncates_signed_application_command_reply_to_discord_limit(self) -> None:
+        signing_key = SigningKey.generate()
+        self._add_discord_channel(interaction_public_key=signing_key.verify_key.encode().hex(), webhook_secret=None)
+        body = json.dumps(
+            {
+                "id": "interaction-long-reply",
+                "type": 2,
+                "channel_id": "dm-1",
+                "context": 1,
+                "user": {"id": "user-1", "username": "alice"},
+                "data": {
+                    "type": 1,
+                    "name": "spark",
+                    "options": [
+                        {"name": "message", "type": 3, "value": "hello from discord command"}
+                    ],
+                },
+            }
+        ).encode("utf-8")
+        with patch("spark_intelligence.gateway.discord_webhook.resolve_simulated_dm") as resolve_simulated_dm:
+            resolve_simulated_dm.return_value.ok = True
+            resolve_simulated_dm.return_value.decision = "allowed"
+            resolve_simulated_dm.return_value.detail = {
+                "response_text": "x" * 2600,
+                "bridge_mode": "external_autodiscovered",
+            }
+            response = handle_discord_webhook(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                path=DISCORD_WEBHOOK_PATH,
+                method="POST",
+                content_type="application/json",
+                headers=self._signed_headers(signing_key, body),
+                body=body,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["type"], 4)
+        self.assertEqual(payload["data"]["flags"], 64)
+        self.assertLessEqual(len(payload["data"]["content"]), 2000)
+        self.assertTrue(payload["data"]["content"].endswith("[truncated for delivery]"))
 
     def test_handles_valid_dm_payload(self) -> None:
         self._add_discord_channel()
