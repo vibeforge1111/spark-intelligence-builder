@@ -519,6 +519,8 @@ def _build_collective_payload(
         export_info = write_payload(researcher_root, runtime_root, config)
     payload_path = Path(str(export_info["payload_path"]))
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    if _normalize_runtime_source(payload):
+        payload_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return payload, payload_path
 
 
@@ -542,6 +544,28 @@ def _post_collective_payload(
     with urllib.request.urlopen(request, timeout=15) as response:
         raw = response.read().decode("utf-8")
     return json.loads(raw) if raw.strip() else {}
+
+
+def _normalize_runtime_source(payload: dict[str, Any]) -> bool:
+    runtime_source = payload.get("runtimeSource")
+    if not isinstance(runtime_source, dict):
+        runtime_source = {}
+        payload["runtimeSource"] = runtime_source
+
+    changed = False
+    agent_id = str(payload.get("agentId") or "").strip()
+    if agent_id and not str(runtime_source.get("sourceInstanceId") or "").strip():
+        runtime_source["sourceInstanceId"] = agent_id
+        changed = True
+
+    emitted_at = str(payload.get("emittedAt") or "").strip()
+    runtime_kind = str(runtime_source.get("kind") or "spark_researcher").strip() or "spark_researcher"
+    run_prefix = "spark-researcher" if runtime_kind == "spark_researcher" else runtime_kind.replace("_", "-")
+    if emitted_at and not str(runtime_source.get("sourceRunId") or "").strip():
+        runtime_source["sourceRunId"] = f"{run_prefix}:{emitted_at}"
+        changed = True
+
+    return changed
 
 
 def _record_swarm_sync_state(
