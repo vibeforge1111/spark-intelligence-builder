@@ -21,7 +21,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             "--api-key",
             "minimax-secret",
             "--model",
-            "MiniMax-M2.5",
+            "MiniMax-M2.7",
             "--base-url",
             "https://api.minimax.io/v1",
         )
@@ -84,7 +84,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
 
         self.assertEqual(captured["advisory_model"], "generic")
         self.assertEqual(captured["provider_id"], "custom")
-        self.assertEqual(captured["provider_model"], "MiniMax-M2.5")
+        self.assertEqual(captured["provider_model"], "MiniMax-M2.7")
         self.assertIn("1:1 messaging conversation", str(captured["system_prompt"]))
         self.assertIn("[fallback_mode=conversational_under_supported]", str(captured["user_prompt"]))
         self.assertEqual(result.reply_text, "Hey there. How can I help?")
@@ -105,7 +105,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             "--api-key",
             "minimax-secret",
             "--model",
-            "MiniMax-M2.5",
+            "MiniMax-M2.7",
             "--base-url",
             "https://api.minimax.io/v1",
         )

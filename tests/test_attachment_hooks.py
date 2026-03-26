@@ -132,7 +132,7 @@ class AttachmentHookTests(SparkTestCase):
             api_mode="openai_chat_completions",
             execution_transport="direct_http",
             base_url="https://api.minimax.io/v1",
-            default_model="MiniMax-M2.5",
+            default_model="MiniMax-M2.7",
             secret_ref=None,
             secret_value="minimax-secret",
             source="test",

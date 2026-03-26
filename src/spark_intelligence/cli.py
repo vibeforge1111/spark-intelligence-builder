@@ -346,7 +346,7 @@ def build_connection_plan_status(config_manager: ConfigManager, state_db: StateD
             phase_a_steps.append("spark-intelligence channel telegram-onboard")
         if not providers_configured:
             phase_a_steps.append(
-                "spark-intelligence auth connect custom --api-key-env CUSTOM_API_KEY --base-url https://api.minimax.io/v1 --model MiniMax-M2.5"
+                "spark-intelligence auth connect custom --api-key-env CUSTOM_API_KEY --base-url https://api.minimax.io/v1 --model MiniMax-M2.7"
             )
         if providers_configured and not gateway.provider_runtime_ok:
             phase_a_steps.extend(gateway.repair_hints or ["spark-intelligence auth status"])
@@ -475,7 +475,7 @@ def build_connection_plan_status(config_manager: ConfigManager, state_db: StateD
             f"install_profile={install_profile or 'none'}",
             f"default_gateway_mode={default_gateway_mode or 'none'}",
             f"autostart_enabled={'yes' if autostart_enabled else 'no'}",
-            "fresh_operator_install=not_done",
+            "fresh_operator_install=validated_by_clean_home_smoke",
         ],
         next_steps=[
             "spark-intelligence bootstrap telegram-agent",

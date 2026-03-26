@@ -115,7 +115,7 @@ The first supported phase-E bootstrap profile is now:
 spark-intelligence bootstrap telegram-agent \
   --provider custom \
   --api-key-env CUSTOM_API_KEY \
-  --model MiniMax-M2.5 \
+  --model MiniMax-M2.7 \
   --base-url https://api.minimax.io/v1 \
   --bot-token-env TELEGRAM_BOT_TOKEN
 ```
@@ -356,7 +356,7 @@ The current refocus is: keep the canonical live home `.tmp-home-live-telegram-re
 That Telegram plus LLM path is now proven end to end on the canonical live home:
 
 - `auth status`: `custom` active via `env:CUSTOM_API_KEY`
-- model: `MiniMax-M2.5`
+- model: `MiniMax-M2.7`
 - base URL: `https://api.minimax.io/v1`
 - `gateway status`: ready
 - `status`: doctor ok, gateway ready

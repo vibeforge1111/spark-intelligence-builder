@@ -165,6 +165,8 @@ Phase E now has its first real supported bootstrap profile instead of only a bag
 
 Phase E now also has the first supported native always-on wrapper on Windows: `install-autostart` and `uninstall-autostart` manage a Task Scheduler entry that runs the foreground gateway continuously for one home. That keeps the implementation aligned with the architecture rule to prefer native autostart registration over inventing a custom daemon layer, and it makes always-on operation visible in config and top-level status instead of remaining a manual terminal habit.
 
+The supported MiniMax path is now also aligned on `MiniMax-M2.7` instead of `MiniMax-M2.5`, and the clean-home bootstrap/autostart path is now covered by smoke tests instead of still being tracked as an unvalidated fresh-operator install gap.
+
 ## 7. Current Non-Goals
 
 Do not start these next:

@@ -57,7 +57,7 @@ That target is now reached on the canonical home:
 - home: `.tmp-home-live-telegram-real`
 - channel: Telegram
 - provider: `custom` via MiniMax
-- model: `MiniMax-M2.5`
+- model: `MiniMax-M2.7`
 - base URL: `https://api.minimax.io/v1`
 - live result: one real inbound Telegram DM processed and one outbound reply sent successfully
 

@@ -58,7 +58,7 @@ class CliSmokeTests(SparkTestCase):
             "--api-key",
             "minimax-secret",
             "--model",
-            "MiniMax-M2.5",
+            "MiniMax-M2.7",
             "--base-url",
             "https://api.minimax.io/v1",
             "--bot-token",
@@ -103,7 +103,7 @@ class CliSmokeTests(SparkTestCase):
                 "--api-key-env",
                 "CUSTOM_API_KEY",
                 "--model",
-                "MiniMax-M2.5",
+                "MiniMax-M2.7",
                 "--base-url",
                 "https://api.minimax.io/v1",
                 "--bot-token-env",
@@ -138,7 +138,7 @@ class CliSmokeTests(SparkTestCase):
             "--api-key",
             "minimax-secret",
             "--model",
-            "MiniMax-M2.5",
+            "MiniMax-M2.7",
             "--base-url",
             "https://api.minimax.io/v1",
             "--bot-token",
@@ -297,7 +297,7 @@ class CliSmokeTests(SparkTestCase):
             "--base-url",
             "https://api.minimax.io/v1",
             "--model",
-            "MiniMax-M2.5",
+            "MiniMax-M2.7",
         )
         self.assertEqual(connect_exit, 0, connect_stderr)
 
