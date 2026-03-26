@@ -863,3 +863,80 @@ class CliSmokeTests(SparkTestCase):
             "- discord: status=enabled pairing_mode=pairing auth_ref=missing allowed_users=0 ingress=signed_interactions",
             stdout,
         )
+
+    def test_doctor_degrades_when_whatsapp_has_no_webhook_secret(self) -> None:
+        setup_exit, _, setup_stderr = self.run_cli(
+            "channel",
+            "add",
+            "whatsapp",
+            "--home",
+            str(self.home),
+            "--bot-token",
+            "whatsapp-token",
+        )
+        self.assertEqual(setup_exit, 0, setup_stderr)
+
+        doctor_exit, doctor_stdout, doctor_stderr = self.run_cli(
+            "doctor",
+            "--home",
+            str(self.home),
+        )
+
+        self.assertEqual(doctor_exit, 1, doctor_stderr)
+        self.assertIn(
+            "[fail] whatsapp-runtime: configured but webhook ingress secret is missing",
+            doctor_stdout,
+        )
+
+    def test_doctor_reports_whatsapp_webhook_ingress_mode(self) -> None:
+        setup_exit, _, setup_stderr = self.run_cli(
+            "channel",
+            "add",
+            "whatsapp",
+            "--home",
+            str(self.home),
+            "--bot-token",
+            "whatsapp-token",
+            "--webhook-secret",
+            "whatsapp-webhook-secret",
+        )
+        self.assertEqual(setup_exit, 0, setup_stderr)
+
+        doctor_exit, doctor_stdout, doctor_stderr = self.run_cli(
+            "doctor",
+            "--home",
+            str(self.home),
+        )
+
+        self.assertEqual(doctor_exit, 0, doctor_stderr)
+        self.assertIn(
+            "[ok] whatsapp-runtime: status=enabled pairing_mode=pairing auth_ref=WHATSAPP_BOT_TOKEN allowed_users=0 ingress=webhook_secret webhook_auth_ref=WHATSAPP_WEBHOOK_SECRET",
+            doctor_stdout,
+        )
+
+    def test_gateway_status_reports_whatsapp_ingress_mode(self) -> None:
+        setup_exit, _, setup_stderr = self.run_cli(
+            "channel",
+            "add",
+            "whatsapp",
+            "--home",
+            str(self.home),
+            "--bot-token",
+            "whatsapp-token",
+            "--webhook-secret",
+            "whatsapp-webhook-secret",
+        )
+        self.assertEqual(setup_exit, 0, setup_stderr)
+
+        exit_code, stdout, stderr = self.run_cli(
+            "gateway",
+            "status",
+            "--home",
+            str(self.home),
+        )
+
+        self.assertEqual(exit_code, 1, stderr)
+        self.assertIn(
+            "- whatsapp: status=enabled pairing_mode=pairing auth_ref=WHATSAPP_BOT_TOKEN allowed_users=0 ingress=webhook_secret",
+            stdout,
+        )

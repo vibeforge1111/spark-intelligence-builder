@@ -18,13 +18,23 @@ class WhatsAppRuntimeSummary:
     pairing_mode: str | None
     auth_ref: str | None
     allowed_user_count: int
+    webhook_auth_ref: str | None
+
+    def ingress_mode(self) -> str:
+        if self.webhook_auth_ref:
+            return "webhook_secret"
+        return "missing"
+
+    def ingress_ready(self) -> bool:
+        return bool(self.webhook_auth_ref)
 
     def to_line(self) -> str:
         if not self.configured:
             return "- whatsapp: not configured"
         return (
             f"- whatsapp: status={self.status or 'unknown'} pairing_mode={self.pairing_mode} "
-            f"auth_ref={self.auth_ref or 'missing'} allowed_users={self.allowed_user_count}"
+            f"auth_ref={self.auth_ref or 'missing'} allowed_users={self.allowed_user_count} "
+            f"ingress={self.ingress_mode()}"
         )
 
 
@@ -55,6 +65,7 @@ def build_whatsapp_runtime_summary(config_manager: ConfigManager, state_db: Stat
             pairing_mode=None,
             auth_ref=None,
             allowed_user_count=0,
+            webhook_auth_ref=None,
         )
     with state_db.connect() as conn:
         count = conn.execute(
@@ -75,6 +86,7 @@ def build_whatsapp_runtime_summary(config_manager: ConfigManager, state_db: Stat
         pairing_mode=(installation["pairing_mode"] if installation else record.get("pairing_mode")),
         auth_ref=(installation["auth_ref"] if installation else record.get("auth_ref")),
         allowed_user_count=count,
+        webhook_auth_ref=(str(record.get("webhook_auth_ref")) if record.get("webhook_auth_ref") else None),
     )
 
 

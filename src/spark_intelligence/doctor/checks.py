@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from spark_intelligence.attachments import attachment_status
 from spark_intelligence.adapters.discord.runtime import build_discord_runtime_summary
 from spark_intelligence.adapters.telegram.runtime import build_telegram_runtime_summary, read_telegram_runtime_health
+from spark_intelligence.adapters.whatsapp.runtime import build_whatsapp_runtime_summary
 from spark_intelligence.auth.providers import get_provider_spec
 from spark_intelligence.auth.runtime import build_auth_status_report, runtime_provider_health
 from spark_intelligence.config.loader import ConfigManager
@@ -212,6 +213,7 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
 
     checks.append(_telegram_runtime_check(config_manager=config_manager, state_db=state_db))
     checks.append(_discord_runtime_check(config_manager=config_manager, state_db=state_db))
+    checks.append(_whatsapp_runtime_check(config_manager=config_manager, state_db=state_db))
 
     return DoctorReport(checks=checks)
 
@@ -279,6 +281,28 @@ def _discord_runtime_check(*, config_manager: ConfigManager, state_db: StateDB) 
             "no signed interaction public key configured and "
             "legacy message webhook compatibility is disabled"
         ),
+    )
+
+
+def _whatsapp_runtime_check(*, config_manager: ConfigManager, state_db: StateDB) -> DoctorCheck:
+    summary = build_whatsapp_runtime_summary(config_manager, state_db)
+    if not summary.configured:
+        return DoctorCheck("whatsapp-runtime", True, "not configured")
+
+    detail_parts = [
+        f"status={summary.status or 'unknown'}",
+        f"pairing_mode={summary.pairing_mode or 'unknown'}",
+        f"auth_ref={summary.auth_ref or 'missing'}",
+        f"allowed_users={summary.allowed_user_count}",
+        f"ingress={summary.ingress_mode()}",
+    ]
+    if summary.webhook_auth_ref:
+        detail_parts.append(f"webhook_auth_ref={summary.webhook_auth_ref}")
+        return DoctorCheck("whatsapp-runtime", True, " ".join(detail_parts))
+    return DoctorCheck(
+        "whatsapp-runtime",
+        False,
+        "configured but webhook ingress secret is missing",
     )
 
 
