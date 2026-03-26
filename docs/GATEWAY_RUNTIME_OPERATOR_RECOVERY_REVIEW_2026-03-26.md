@@ -162,6 +162,11 @@ The next runtime-summary alignment is also now landed:
 - the current v1 repair hint for that state is:
   - `spark-intelligence operator set-channel <channel> enabled`
 
+The next start-path alignment is also now landed:
+
+- `gateway start` now echoes the same channel repair hint when it exits early because Telegram is paused or disabled
+- this closes the last local mismatch between runtime summaries and the actual foreground start path for channel-state gating
+
 ## 9. Proposed Decision For Now
 
 The repo should explicitly treat the following as the v1 contract:

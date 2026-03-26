@@ -192,9 +192,11 @@ def gateway_start(
     telegram_status = str(telegram_summary.status or "enabled")
     if telegram_status == "disabled":
         lines.append("Telegram adapter is disabled by operator. Gateway did not start polling.")
+        lines.append("- repair-hint: spark-intelligence operator set-channel telegram enabled")
         return GatewayStartReport(ok=True, text="\n".join(lines))
     if telegram_status == "paused":
         lines.append("Telegram adapter is paused by operator. Gateway did not start polling.")
+        lines.append("- repair-hint: spark-intelligence operator set-channel telegram enabled")
         return GatewayStartReport(ok=True, text="\n".join(lines))
 
     auth_ref = telegram_record.get("auth_ref")

@@ -1260,6 +1260,44 @@ class CliSmokeTests(SparkTestCase):
         self.assertIn("Provider execution readiness is degraded. Gateway did not start polling.", stdout)
         self.assertNotIn("Telegram bot authenticated:", stdout)
 
+    def test_gateway_start_surfaces_repair_hint_for_paused_channel(self) -> None:
+        self.add_telegram_channel(bot_token="good-token")
+        connect_exit, _, connect_stderr = self.run_cli(
+            "auth",
+            "connect",
+            "openai",
+            "--home",
+            str(self.home),
+            "--api-key",
+            "openai-secret",
+            "--model",
+            "gpt-5.4",
+        )
+        self.assertEqual(connect_exit, 0, connect_stderr)
+
+        pause_exit, _, pause_stderr = self.run_cli(
+            "operator",
+            "set-channel",
+            "telegram",
+            "paused",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(pause_exit, 0, pause_stderr)
+
+        exit_code, stdout, stderr = self.run_cli(
+            "gateway",
+            "start",
+            "--home",
+            str(self.home),
+            "--once",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertIn("Telegram adapter is paused by operator. Gateway did not start polling.", stdout)
+        self.assertIn("- repair-hint: spark-intelligence operator set-channel telegram enabled", stdout)
+        self.assertNotIn("Telegram bot authenticated:", stdout)
+
     def test_doctor_degrades_when_codex_wrapper_transport_lacks_researcher_bridge(self) -> None:
         start_exit, start_stdout, start_stderr = self.run_cli(
             "auth",

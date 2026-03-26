@@ -296,3 +296,5 @@ The next phase-1 decision is also in: `doctor` stays diagnostic and fail-closed,
 The next phase-1 operator-alignment patch is also in: configured Discord or WhatsApp channels with broken ingress contracts now surface as operator channel alerts with explicit secure repair commands, so operator surfaces match the degraded runtime surfaces instead of staying silent.
 
 The next phase-1 runtime-summary patch is also in: paused or disabled channels now surface explicit repair hints in `gateway status` and top-level `status`, so those runtime summaries no longer leave channel-state blockage entirely implicit.
+
+The next phase-1 start-path patch is also in: `gateway start` now echoes the same channel repair hint when Telegram is paused or disabled, so the foreground runtime path matches the already-improved runtime summaries.
