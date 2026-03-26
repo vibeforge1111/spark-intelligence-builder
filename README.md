@@ -227,7 +227,7 @@ spark-intelligence operator history --action approve_latest_pairing --target-kin
 `operator inbox` now emits direct recommended commands for each actionable item so the operator surface stays lightweight and local-first without a separate ticketing subsystem.
 `operator security` also reads durable bridge failure counters and last-failure metadata from local state, not just recent logs.
 Both `operator inbox` and `operator security` now also surface provider-auth reconnect actions, so expired, revoked, or refresh-error OAuth states point directly at `auth refresh` or `auth login --listen` instead of requiring manual diagnosis from `auth status`.
-Those same operator surfaces now also aggregate repeated Discord/WhatsApp webhook auth and verification rejections into direct trace commands, so bad-signature traffic and broken verify-token attempts are visible without manually grepping the trace log.
+Those same operator surfaces now also aggregate repeated Discord/WhatsApp webhook auth and verification rejections into direct trace commands, and sustained repeats now escalate into higher-severity operator alerts instead of staying flat one-off warnings.
 For `expiring_soon` OAuth states, the recommended first repair path is `jobs tick`, because OAuth maintenance is intentionally operator-driven and auditable in the current design.
 Telegram pending pairings now also carry lightweight local context, so `operator review-pairings` can show the most recent Telegram username, chat id, and last inbound message preview.
 `operator review-pairings` now also supports lightweight `--channel-id`, `--status`, and `--limit` filters so the queue stays usable once there are multiple channels or repeated onboarding attempts.

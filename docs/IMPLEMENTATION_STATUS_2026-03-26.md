@@ -66,6 +66,7 @@ Shipped today:
 - operator-visible WhatsApp ingress readiness so missing verify-token/app-secret configuration degrades `doctor` and `gateway status` instead of looking silently configured
 - first WhatsApp webhook skeleton on `/webhooks/whatsapp` with route validation, Meta-style GET verification, `X-Hub-Signature-256` POST auth, fail-closed JSON parsing, one explicit Meta text-message event contract routed through the existing simulated WhatsApp bridge instead of opportunistic stub or batch normalization, and trace-visible plus operator-visible ignore/auth/verification rejection reasons
 - operator-visible reconnect and revoke guidance in `operator inbox` and `operator security` for expired, revoked, and refresh-error provider auth states
+- sustained Discord/WhatsApp webhook auth or verification rejections now escalate to higher-severity operator alerts instead of staying flat warnings
 - provider-aware Spark Researcher bridge routing instead of hardcoded `generic` advisory model selection
 - direct provider-backed LLM execution for API-key-backed bridge traffic via provider-aware HTTP wrapper commands
 - explicit runtime transport selection so API-key-backed providers use `direct_http` while Codex/OAuth stays `external_cli_wrapper`
