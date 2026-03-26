@@ -125,6 +125,8 @@ The next phase-1 runtime-summary patch is also in: paused or disabled channels n
 
 The next phase-1 start-path patch is also in: `gateway start` now echoes the same channel repair hint when Telegram is paused or disabled, so the foreground runtime path matches the already-improved runtime summaries.
 
+Phase 2 prep has now started with `DISCORD_OPERATOR_RUNBOOK_2026-03-26.md`, which locks the narrow live-validation target for Discord v1 to signed DM slash-command ingress only: `/spark message:<text>`.
+
 ## 7. Current Non-Goals
 
 Do not start these next:

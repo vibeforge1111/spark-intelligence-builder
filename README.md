@@ -48,6 +48,7 @@ This repo currently includes:
 - [docs/SECURITY_HISTORY_THEME_APPENDIX_2026-03-25.md](./docs/SECURITY_HISTORY_THEME_APPENDIX_2026-03-25.md)
 - [docs/TELEGRAM_ADAPTER_SPEC_V1.md](./docs/TELEGRAM_ADAPTER_SPEC_V1.md)
 - [docs/TELEGRAM_OPERATOR_RUNBOOK_2026-03-26.md](./docs/TELEGRAM_OPERATOR_RUNBOOK_2026-03-26.md)
+- [docs/DISCORD_OPERATOR_RUNBOOK_2026-03-26.md](./docs/DISCORD_OPERATOR_RUNBOOK_2026-03-26.md)
 - [docs/GATEWAY_PROVIDER_AUTH_READINESS_REVIEW_2026-03-26.md](./docs/GATEWAY_PROVIDER_AUTH_READINESS_REVIEW_2026-03-26.md)
 - [docs/NEXT_EXECUTION_PLAN_2026-03-26.md](./docs/NEXT_EXECUTION_PLAN_2026-03-26.md)
 - [docs/GATEWAY_RUNTIME_OPERATOR_RECOVERY_REVIEW_2026-03-26.md](./docs/GATEWAY_RUNTIME_OPERATOR_RECOVERY_REVIEW_2026-03-26.md)
@@ -298,3 +299,5 @@ The next phase-1 operator-alignment patch is also in: configured Discord or What
 The next phase-1 runtime-summary patch is also in: paused or disabled channels now surface explicit repair hints in `gateway status` and top-level `status`, so those runtime summaries no longer leave channel-state blockage entirely implicit.
 
 The next phase-1 start-path patch is also in: `gateway start` now echoes the same channel repair hint when Telegram is paused or disabled, so the foreground runtime path matches the already-improved runtime summaries.
+
+Phase 2 prep is now in: [docs/DISCORD_OPERATOR_RUNBOOK_2026-03-26.md](./docs/DISCORD_OPERATOR_RUNBOOK_2026-03-26.md) defines the exact narrow live-validation target for Discord v1 signed interactions: DM-only `/spark message:<text>`, with setup, failure checks, and recovery commands.
