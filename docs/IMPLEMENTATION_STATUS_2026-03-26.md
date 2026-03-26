@@ -47,6 +47,9 @@ Shipped today:
 - `auth status` for local provider secret-readiness inspection
 - OAuth callback-state persistence and single-use consumption rules
 - first OAuth-backed provider login flow via `auth login openai-codex`
+- loopback OAuth callback capture via `auth login <provider> --listen`
+- local OAuth logout via `auth logout <provider>`
+- provider-aware Spark Researcher bridge routing instead of hardcoded `generic` advisory model selection
 - a gateway route-registry contract for future OAuth callbacks and webhook ownership
 
 The practical result is that Telegram onboarding and moderation are much easier to operate locally, and the repo now has the first real foundations for secure provider auth growth without inventing ad hoc OAuth glue later.
@@ -83,9 +86,9 @@ The next slice should stay focused on gateway and provider-auth architecture, no
 
 Start here in this exact order:
 
-1. Start using the shared runtime-provider resolver in the real model-execution paths, not just CLI and readiness surfaces.
-2. Harden the first OAuth-backed provider flow with refresh, logout, and callback-route ownership instead of one-shot login only.
-3. Add secure token-storage and expiry handling without weakening existing Telegram/operator safety.
+1. Extend provider-aware runtime selection past advisory-build routing into the full LLM execution path, not just bridge selection and readiness surfaces.
+2. Harden the OAuth profile lifecycle with refresh, expiry handling, and operator-visible revoke/reconnect details.
+3. Move the loopback callback listener from CLI-owned flow to a fuller gateway-owned HTTP surface without weakening the current fail-closed posture.
 4. Only after that, widen Discord, WhatsApp, or webhook-heavy surfaces.
 
 The detailed execution direction is recorded in `GATEWAY_PROVIDER_AUTH_READINESS_REVIEW_2026-03-26.md`.
@@ -106,7 +109,7 @@ Do not start these next:
 The next slice is successful if all of this is true:
 
 - one shared runtime-provider resolver exists and is used by every model-call path
-- Spark supports both static API-key auth and at least one secure OAuth flow with rotation/refresh handling
+- Spark supports both static API-key auth and at least one secure OAuth flow with login, logout, and refresh/expiry handling
 - callback state is single-use, auditable, and fail-closed
 - doctor and status can explain missing, expiring, failed, and healthy auth states
 - channel config points at auth profiles instead of raw token assumptions

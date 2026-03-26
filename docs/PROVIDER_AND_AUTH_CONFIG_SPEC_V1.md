@@ -129,7 +129,9 @@ Recommended commands:
 - `spark-intelligence auth connect <provider> --api-key-env <ENV>`
 - `spark-intelligence auth status`
 - `spark-intelligence auth login <provider>`
+- `spark-intelligence auth login <provider> --listen`
 - `spark-intelligence auth login <provider> --callback-url <full_url>`
+- `spark-intelligence auth logout <provider>`
 
 ## 8. OAuth Boundaries
 

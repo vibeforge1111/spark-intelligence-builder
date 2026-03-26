@@ -81,7 +81,8 @@ spark-intelligence operator review-pairings
 spark-intelligence auth providers
 spark-intelligence auth connect openai --api-key <key> --model <model>
 spark-intelligence auth connect openrouter --api-key-env WORK_OPENROUTER_KEY --model anthropic/claude-3.7-sonnet
-spark-intelligence auth login openai-codex
+spark-intelligence auth login openai-codex --listen
+spark-intelligence auth logout openai-codex
 spark-intelligence auth status
 spark-intelligence channel telegram-onboard
 spark-intelligence channel add discord --bot-token <token> --allowed-user <id>
@@ -104,7 +105,9 @@ spark-intelligence setup \
   --swarm-access-token <token>
 ```
 
-Model-provider auth now has a first-class provider registry plus default auth-profile layer. `auth providers` shows the supported auth methods, `auth connect` writes a canonical API-key-backed profile such as `openai:default` or `anthropic:default`, `auth login openai-codex` starts or completes the first OAuth-backed provider flow, and `auth status` shows whether the configured provider auth is actually resolvable in the local Spark Intelligence runtime.
+Model-provider auth now has a first-class provider registry plus default auth-profile layer. `auth providers` shows the supported auth methods, `auth connect` writes a canonical API-key-backed profile such as `openai:default` or `anthropic:default`, `auth login openai-codex --listen` can capture the loopback callback automatically, `auth logout openai-codex` revokes the locally stored OAuth profile, and `auth status` shows whether the configured provider auth is actually resolvable in the local Spark Intelligence runtime.
+
+The Spark Researcher bridge is now provider-aware on the live path. When a provider is configured and resolvable, Spark uses that runtime selection to choose the advisory model family for the external researcher bridge instead of always falling back to `generic`. If provider auth is configured but unresolved, the bridge fails closed.
 
 Telegram setup is BotFather-first and DM-first. The guided path is:
 
