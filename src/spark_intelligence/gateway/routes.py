@@ -82,8 +82,15 @@ class GatewayRouteRegistry:
         method: str,
         content_type: str | None = None,
     ) -> GatewayRouteRegistration:
-        route = self.resolve(path=path, method=method)
+        normalized_path = _normalize_path(path)
+        normalized_method = _normalize_methods((method,))[0]
+        route = self.resolve(path=normalized_path, method=normalized_method)
         if route is None:
+            allowed_methods = self.allowed_methods_for_path(path=normalized_path)
+            if allowed_methods:
+                raise ValueError(
+                    f"Gateway route {normalized_path} rejects method '{normalized_method}'."
+                )
             raise ValueError("Gateway route not found.")
         if route.content_types:
             normalized_content_type = _normalize_request_content_type(content_type)
@@ -96,6 +103,16 @@ class GatewayRouteRegistry:
                     f"Gateway route {route.path} rejects Content-Type '{normalized_content_type}'."
                 )
         return route
+
+    def allowed_methods_for_path(self, *, path: str) -> tuple[str, ...]:
+        normalized_path = _normalize_path(path)
+        methods = {
+            method
+            for route in self._routes
+            if _path_matches(route=route, path=normalized_path)
+            for method in route.methods
+        }
+        return tuple(sorted(methods))
 
     def _find_conflict_index(self, candidate: GatewayRouteRegistration) -> int | None:
         for index, existing in enumerate(self._routes):
@@ -146,3 +163,9 @@ def _validate_registration(route: GatewayRouteRegistration) -> None:
             raise ValueError("Adapter webhook routes must use POST only.")
         if not route.content_types:
             raise ValueError("Adapter webhook routes must declare at least one request content type.")
+
+
+def _path_matches(*, route: GatewayRouteRegistration, path: str) -> bool:
+    if route.match_mode == "exact":
+        return route.path == path
+    return path.startswith(route.path)
