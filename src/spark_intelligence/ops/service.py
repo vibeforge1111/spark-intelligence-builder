@@ -1115,7 +1115,7 @@ def _list_webhook_alert_snoozes_with_traces(
 ) -> OperatorWebhookSnoozeReport:
     now = _utc_now()
     rows = _read_webhook_alert_snooze_rows(state_db=state_db, now=now)
-    payload: list[dict[str, Any]] = []
+    payload_with_sort: list[tuple[tuple[int, int, int, float, str, str], dict[str, Any]]] = []
     for row in rows:
         matching = [
             trace
@@ -1139,27 +1139,38 @@ def _list_webhook_alert_snoozes_with_traces(
                     f"spark-intelligence gateway traces --event {row['event']} --limit 20",
                 )
             )
-        payload.append(
-            {
-                "event": row["event"],
-                "snoozed_at": row["snoozed_at"].isoformat(timespec="seconds"),
-                "snooze_until": row["snooze_until"].isoformat(timespec="seconds"),
-                "remaining_minutes": max(1, int((remaining.total_seconds() + 59) // 60)),
-                "reason": row.get("reason"),
-                "suppressed_recent_count": suppressed_recent_count,
-                "latest_suppressed_reason": latest_reason,
-                "latest_suppressed_at": (
-                    latest_suppressed_at.isoformat(timespec="seconds")
-                    if latest_suppressed_at is not None
-                    else None
+        payload_with_sort.append(
+            (
+                (
+                    0 if sustained_suppressed else 1,
+                    0 if suppressed_recent_count > 0 else 1,
+                    -suppressed_recent_count,
+                    -(latest_suppressed_at.timestamp()) if latest_suppressed_at is not None else float("inf"),
+                    row["snooze_until"].isoformat(timespec="seconds"),
+                    row["event"],
                 ),
-                "status": "sustained_rejections_suppressed" if sustained_suppressed else "snoozed",
-                "severity": "warning" if sustained_suppressed else "info",
-                "recommended_command": recommended_command,
-                "clear_command": clear_command,
-            }
+                {
+                    "event": row["event"],
+                    "snoozed_at": row["snoozed_at"].isoformat(timespec="seconds"),
+                    "snooze_until": row["snooze_until"].isoformat(timespec="seconds"),
+                    "remaining_minutes": max(1, int((remaining.total_seconds() + 59) // 60)),
+                    "reason": row.get("reason"),
+                    "suppressed_recent_count": suppressed_recent_count,
+                    "latest_suppressed_reason": latest_reason,
+                    "latest_suppressed_at": (
+                        latest_suppressed_at.isoformat(timespec="seconds")
+                        if latest_suppressed_at is not None
+                        else None
+                    ),
+                    "status": "sustained_rejections_suppressed" if sustained_suppressed else "snoozed",
+                    "severity": "warning" if sustained_suppressed else "info",
+                    "recommended_command": recommended_command,
+                    "clear_command": clear_command,
+                },
+            )
         )
-    return OperatorWebhookSnoozeReport(rows=payload)
+    payload_with_sort.sort(key=lambda pair: pair[0])
+    return OperatorWebhookSnoozeReport(rows=[row for _, row in payload_with_sort])
 
 
 def _read_webhook_alert_snooze_rows(*, state_db: StateDB, now: datetime) -> list[dict[str, Any]]:
