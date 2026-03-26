@@ -277,6 +277,10 @@ class CliSmokeTests(SparkTestCase):
         ]
         self.assertEqual(len(snooze_items), 1)
         self.assertEqual(snooze_items[0]["priority"], "info")
+        self.assertEqual(
+            snooze_items[0]["clear_command"],
+            "spark-intelligence operator clear-webhook-alert-snooze discord_webhook_auth_failed",
+        )
         self.assertIn("was snoozed at", snooze_items[0]["summary"])
         self.assertIn("Reason: known noisy source.", snooze_items[0]["summary"])
         self.assertIn(
@@ -352,10 +356,14 @@ class CliSmokeTests(SparkTestCase):
         snooze_items = [
             item
             for item in payload["items"]
-            if item["recommended_command"] == "spark-intelligence operator clear-webhook-alert-snooze discord_webhook_auth_failed"
+            if item.get("clear_command") == "spark-intelligence operator clear-webhook-alert-snooze discord_webhook_auth_failed"
         ]
         self.assertEqual(len(snooze_items), 1)
         self.assertEqual(snooze_items[0]["priority"], "medium")
+        self.assertEqual(
+            snooze_items[0]["recommended_command"],
+            "spark-intelligence gateway traces --event discord_webhook_auth_failed --limit 20",
+        )
         self.assertIn("Snooze is still masking sustained ingress traffic.", snooze_items[0]["summary"])
 
     def test_operator_can_list_and_clear_discord_webhook_alert_snooze(self) -> None:
@@ -733,6 +741,10 @@ class CliSmokeTests(SparkTestCase):
         snooze_items = [item for item in payload["items"] if item["kind"] == "webhook_snooze"]
         self.assertEqual(len(snooze_items), 1)
         self.assertIn("was snoozed at", snooze_items[0]["summary"])
+        self.assertEqual(
+            snooze_items[0]["clear_command"],
+            "spark-intelligence operator clear-webhook-alert-snooze whatsapp_webhook_verification_failed",
+        )
         self.assertIn(
             "Suppressed 1 recent rejection(s); latest reason: WhatsApp webhook verify token is invalid.",
             snooze_items[0]["summary"],

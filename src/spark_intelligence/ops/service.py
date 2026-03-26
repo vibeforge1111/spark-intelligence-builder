@@ -706,6 +706,8 @@ def _build_inbox_items(
         snoozed_at = str(row["snoozed_at"])
         suppressed_recent_count = int(row.get("suppressed_recent_count") or 0)
         sustained_suppressed = suppressed_recent_count >= WEBHOOK_ALERT_SUSTAINED_THRESHOLD
+        clear_command = f"spark-intelligence operator clear-webhook-alert-snooze {event_name}"
+        recommended_command = clear_command
         suppressed_suffix = ""
         if suppressed_recent_count:
             latest_reason = str(row.get("latest_suppressed_reason") or "unknown")
@@ -719,6 +721,12 @@ def _build_inbox_items(
             )
             if sustained_suppressed:
                 suppressed_suffix += " Snooze is still masking sustained ingress traffic."
+                recommended_command = str(
+                    WEBHOOK_ALERT_EVENT_SPECS.get(event_name, {}).get(
+                        "recommended_command",
+                        f"spark-intelligence gateway traces --event {event_name} --limit 20",
+                    )
+                )
         items.append(
             {
                 "kind": "webhook_snooze",
@@ -730,7 +738,8 @@ def _build_inbox_items(
                     f"Webhook alert {event_name} was snoozed at {snoozed_at} until {row['snooze_until']} "
                     f"({row['remaining_minutes']} minute(s) remaining).{reason_suffix}{suppressed_suffix}"
                 ),
-                "recommended_command": f"spark-intelligence operator clear-webhook-alert-snooze {event_name}",
+                "recommended_command": recommended_command,
+                "clear_command": clear_command,
             }
         )
 
@@ -823,6 +832,8 @@ def _build_security_items(
         snoozed_at = str(row["snoozed_at"])
         suppressed_recent_count = int(row.get("suppressed_recent_count") or 0)
         sustained_suppressed = suppressed_recent_count >= WEBHOOK_ALERT_SUSTAINED_THRESHOLD
+        clear_command = f"spark-intelligence operator clear-webhook-alert-snooze {event_name}"
+        recommended_command = clear_command
         suppressed_suffix = ""
         if suppressed_recent_count:
             latest_reason = str(row.get("latest_suppressed_reason") or "unknown")
@@ -836,6 +847,12 @@ def _build_security_items(
             )
             if sustained_suppressed:
                 suppressed_suffix += " Snooze is still masking sustained ingress traffic."
+                recommended_command = str(
+                    WEBHOOK_ALERT_EVENT_SPECS.get(event_name, {}).get(
+                        "recommended_command",
+                        f"spark-intelligence gateway traces --event {event_name} --limit 20",
+                    )
+                )
         items.append(
             {
                 "priority": "medium" if sustained_suppressed else "info",
@@ -844,7 +861,8 @@ def _build_security_items(
                     f"Webhook alert {event_name} was snoozed at {snoozed_at} until {row['snooze_until']} "
                     f"({row['remaining_minutes']} minute(s) remaining).{reason_suffix}{suppressed_suffix}"
                 ),
-                "recommended_command": f"spark-intelligence operator clear-webhook-alert-snooze {event_name}",
+                "recommended_command": recommended_command,
+                "clear_command": clear_command,
             }
         )
 
