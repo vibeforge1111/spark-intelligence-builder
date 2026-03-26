@@ -86,6 +86,8 @@ spark-intelligence gateway oauth-callback --provider openai-codex
 spark-intelligence auth refresh openai-codex
 spark-intelligence auth logout openai-codex
 spark-intelligence auth status
+spark-intelligence jobs list
+spark-intelligence jobs tick
 spark-intelligence channel telegram-onboard
 spark-intelligence channel add discord --bot-token <token> --allowed-user <id>
 spark-intelligence channel add whatsapp --bot-token <token> --allowed-user <id>
@@ -209,6 +211,7 @@ spark-intelligence operator history --action approve_latest_pairing --target-kin
 `operator inbox` now emits direct recommended commands for each actionable item so the operator surface stays lightweight and local-first without a separate ticketing subsystem.
 `operator security` also reads durable bridge failure counters and last-failure metadata from local state, not just recent logs.
 Both `operator inbox` and `operator security` now also surface provider-auth reconnect actions, so expired, revoked, or refresh-error OAuth states point directly at `auth refresh` or `auth login --listen` instead of requiring manual diagnosis from `auth status`.
+For `expiring_soon` OAuth states, the recommended first repair path is `jobs tick`, because OAuth maintenance is intentionally operator-driven and auditable in the current design.
 Telegram pending pairings now also carry lightweight local context, so `operator review-pairings` can show the most recent Telegram username, chat id, and last inbound message preview.
 `operator review-pairings` now also supports lightweight `--channel-id`, `--status`, and `--limit` filters so the queue stays usable once there are multiple channels or repeated onboarding attempts.
 `operator pairing-summary telegram` provides a compact channel-level view of pending, held, approved, and revoked pairing state in one command.

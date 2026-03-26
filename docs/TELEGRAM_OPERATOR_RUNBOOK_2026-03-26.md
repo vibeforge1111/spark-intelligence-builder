@@ -9,6 +9,7 @@ Use it for:
 - first BotFather setup
 - first pairing approval
 - token rotation
+- provider-auth recovery when gateway execution is blocked by OAuth state
 - gateway health checks
 - local recovery when Telegram auth or polling breaks
 
@@ -185,6 +186,28 @@ Interpretation:
 - `gateway outbound`:
   - shows what replies were attempted and whether delivery succeeded
 
+If Telegram auth is healthy but the gateway still fails closed on model execution, check provider auth next:
+
+```bash
+spark-intelligence auth status
+spark-intelligence jobs list
+spark-intelligence operator inbox
+spark-intelligence operator security
+spark-intelligence jobs tick
+```
+
+Interpretation:
+
+- `auth status`:
+  - `expired` means refresh or login is required now
+  - `expiring_soon` means the token is close to expiry and should be repaired before it blocks runtime use
+- `jobs list`:
+  - shows whether the built-in OAuth maintenance job has run recently and what it last did
+- `operator inbox` and `operator security`:
+  - surface the exact repair command Spark currently recommends
+- `jobs tick`:
+  - runs the operator-driven OAuth maintenance pass; use this before escalating to a persistent scheduler design
+
 ## 8. Common Recovery Commands
 
 Pause Telegram ingress without deleting config:
@@ -210,6 +233,20 @@ Revoke the latest pending or held request:
 ```bash
 spark-intelligence operator revoke-latest telegram --reason "denied"
 ```
+
+Repair provider auth manually if the bridge is blocked:
+
+```bash
+spark-intelligence jobs tick
+spark-intelligence auth refresh openai-codex
+spark-intelligence auth login openai-codex --listen
+```
+
+Use them in this order:
+
+1. `jobs tick` when `auth status` shows `expiring_soon` or `doctor` reports stale OAuth maintenance.
+2. `auth refresh` when the token is already expired or the maintenance job could not repair it.
+3. `auth login --listen` when credentials were revoked or refresh is no longer possible.
 
 ## 9. Security Rules
 
