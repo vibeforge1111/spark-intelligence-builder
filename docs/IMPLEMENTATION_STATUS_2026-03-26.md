@@ -141,6 +141,8 @@ That proof is now in place on the canonical home `.tmp-home-live-telegram-real`:
 
 Codex OAuth is still not proven on the live home and is no longer the gating item for the Telegram vertical slice. The current remaining work is operational hardening around the already-proven Telegram plus MiniMax path, followed by a deliberate decision on whether to retry Codex auth or defer it behind the stable API-key-backed path.
 
+The next broader connection and productization map is now recorded in `SYSTEM_CONNECTION_AND_PRODUCTIZATION_PLAN_2026-03-26.md`. That plan separates what is truly connected today from what is only wired, and defines the next step-by-step order for activating chips/path specialization, connecting real Swarm API access, and productizing the install/setup/run story for another operator.
+
 ## 7. Current Non-Goals
 
 Do not start these next:
