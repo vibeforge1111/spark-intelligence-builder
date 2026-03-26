@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-This note records what is already real in the repo, what shipped on 2026-03-26, and what the team should do next.
+This note records what is already real in the repo, what shipped on 2026-03-26, what landed in the first gateway/provider-auth architecture pass, and what the team should do next.
 
 ## 2. Current Build State
 
@@ -41,8 +41,12 @@ Shipped today:
 - owner-only `.env` permission hardening with doctor visibility
 - token rotation paths that preserve existing Telegram status, pairing mode, allowlists, and auth linkage by default
 - safe separation between configured allowlists and operator-approved pairings so narrowing `allowed_users` actually removes stale config-driven access
+- default auth-profile persistence for API-key-backed providers
+- `auth status` for local provider secret-readiness inspection
+- OAuth callback-state persistence and single-use consumption rules
+- a gateway route-registry contract for future OAuth callbacks and webhook ownership
 
-The practical result is that Telegram onboarding and moderation are now much easier to operate locally without adding any heavy dashboard or background subsystem.
+The practical result is that Telegram onboarding and moderation are much easier to operate locally, and the repo now has the first real foundations for secure provider auth growth without inventing ad hoc OAuth glue later.
 
 ## 4. What Is Stable Enough
 

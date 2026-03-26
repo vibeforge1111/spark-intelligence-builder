@@ -9,7 +9,8 @@ This includes:
 - LLM provider configuration
 - OpenAI-compatible endpoint support
 - token and secret handling
-- future OAuth-backed connector posture
+- auth-profile storage and runtime resolution
+- OAuth callback-state posture
 
 ## 2. Design Goals
 
@@ -36,13 +37,58 @@ Recommended fields:
 ```text
 id
 provider_kind
-display_name
 base_url
 default_model
-status
+default_auth_profile_id
 created_at
 updated_at
 ```
+
+The canonical provider record points at a default auth profile instead of owning raw secret material directly.
+
+## 4.1 Canonical Auth Profile Record
+
+Recommended fields:
+
+```text
+auth_profile_id
+provider_id
+auth_method
+display_label
+subject_hint
+status
+is_default
+created_at
+updated_at
+```
+
+For static API-key-backed providers, the auth profile should point at a secret ref instead of copying plaintext into SQLite.
+
+## 4.2 OAuth Callback-State Record
+
+Recommended fields:
+
+```text
+callback_id
+provider_id
+auth_profile_id
+flow_kind
+oauth_state
+pkce_verifier
+redirect_uri
+expected_issuer
+status
+expires_at
+consumed_at
+created_at
+```
+
+Rules:
+
+- `oauth_state` must be random and single-use
+- expired states must fail closed
+- consumed states must fail closed
+- callback completion should be atomic with credential persistence
 
 ## 5. Secret Handling
 
@@ -51,8 +97,9 @@ Secrets should not be spread across many files.
 Recommended v1:
 
 - provider metadata in canonical config
-- secrets in `.env` or OS-native secret store where practical
+- static secrets in `.env` or env/file/exec secret refs
 - clear secret references from config into runtime
+- refreshable OAuth material in a dedicated local auth store
 
 Do not:
 
@@ -68,6 +115,7 @@ Every provider setup flow should validate:
 - base URL sane if custom
 - selected model reachable enough for a lightweight probe
 - response shape compatible enough for runtime use
+- auth-profile resolution deterministic enough for CLI and gateway parity
 
 ## 7. CLI Surface
 
@@ -77,21 +125,29 @@ Recommended commands:
 - `spark-intelligence auth connect anthropic`
 - `spark-intelligence auth connect openrouter`
 - `spark-intelligence auth connect custom`
+- `spark-intelligence auth connect <provider> --api-key-env <ENV>`
 - `spark-intelligence auth status`
-- `spark-intelligence auth test`
+- `spark-intelligence auth login <provider>`
+- `spark-intelligence auth profiles`
 
-## 8. Future OAuth Connectors
+## 8. OAuth Boundaries
 
-OAuth-backed external tools should not be mixed into base provider config.
-
-Keep them as a separate connector layer later.
+OAuth-backed model auth and external-tool OAuth should not be blurred.
 
 Recommended rule:
 
-- provider auth = model/runtime auth
+- provider auth = model and runtime auth
 - connector OAuth = external tool access
 
-Do not blur them.
+Both may use OAuth, but they should not share storage or callback handling casually.
+
+Model-provider OAuth should use:
+
+- PKCE where applicable
+- one-time callback state
+- short expiry
+- locked refresh
+- explicit provider and redirect matching
 
 ## 9. Security Rules
 
@@ -100,6 +156,8 @@ Do not blur them.
 - never downgrade to insecure defaults silently
 - log validation failures without leaking secrets
 - require explicit operator action to rotate or replace auth
+- never silently remap one provider to another
+- never let one provider key leak to another base URL
 
 ## 10. Final Decision
 
