@@ -101,6 +101,10 @@ spark-intelligence agent inspect
 spark-intelligence pairings list
 spark-intelligence sessions list
 spark-intelligence gateway start
+# Telegram DM controls:
+# /think
+# /think on
+# /think off
 ```
 
 `setup` now auto-detects local `spark-researcher`, `spark-swarm`, domain-chip, and specialization-path repos on the Desktop when they are present. It can also wire hosted Swarm access in one command:
@@ -240,6 +244,7 @@ The fast-path pairing commands now also write exact `channel:user` targets into 
 `operator history` now also supports lightweight `--action`, `--target-kind`, and `--contains` filters so local audit review stays usable as the event log grows.
 After approval, the first successful Telegram reply also carries a one-time "pairing approved" welcome so the user gets a cleaner handoff into the active agent.
 Held, revoked, paused, disabled, and generic blocked Telegram DMs now also return explicit user-facing replies instead of failing silently.
+Telegram DMs now also hide `<think>...</think>` blocks by default, and the paired user can control that visibility per Telegram DM with `/think`, `/think on`, and `/think off`.
 `gateway traces` and `gateway outbound` now support lightweight filters like `--channel-id`, `--event`, `--user`, and `--delivery` so Telegram onboarding failures can be narrowed quickly without another dashboard.
 
 Telegram ingress now also applies lightweight runtime guardrails:

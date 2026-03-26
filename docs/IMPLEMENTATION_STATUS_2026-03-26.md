@@ -72,6 +72,8 @@ Shipped today:
 - direct provider-backed LLM execution for API-key-backed bridge traffic via provider-aware HTTP wrapper commands
 - explicit runtime transport selection so API-key-backed providers use `direct_http` while Codex/OAuth stays `external_cli_wrapper`
 - a gateway route-registry contract that now also owns OAuth callback serving
+- a direct-provider conversational fallback so under-supported Telegram small-talk does not dead-end at the generic "no concrete guidance" placeholder when a real provider is configured
+- Telegram think-block visibility now defaults to hidden, with per-DM runtime controls available through `/think`, `/think on`, and `/think off`
 
 The practical result is that Telegram onboarding and moderation are much easier to operate locally, and the repo now has the first real foundations for secure provider auth growth without inventing ad hoc OAuth glue later.
 

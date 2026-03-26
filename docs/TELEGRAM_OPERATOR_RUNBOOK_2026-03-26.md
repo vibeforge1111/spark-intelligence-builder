@@ -53,6 +53,25 @@ spark-intelligence channel test telegram
 spark-intelligence doctor
 ```
 
+## 3A. Telegram DM Controls
+
+Once a Telegram DM is paired and active, the user can control think-block visibility inside that DM:
+
+```text
+/think
+/think on
+/think off
+```
+
+Expected behavior:
+
+- Telegram hides `<think>...</think>` blocks by default
+- `/think` shows the current visibility state for that Telegram DM
+- `/think on` allows `<think>` blocks through for that Telegram DM
+- `/think off` hides them again
+
+This is a per-DM runtime control, not a global provider setting.
+
 ## 4. First User Pairing
 
 1. Ask the user to send `/start` to the Telegram bot.
@@ -268,5 +287,6 @@ The following path was validated live on 2026-03-26:
 5. next DM was routed through the approved canonical Telegram session
 6. reply delivered successfully through the Telegram gateway
 7. rotated token was revalidated successfully
+8. Telegram think-block visibility control was added with `/think`, `/think on`, and `/think off`
 
 That means this runbook reflects an operator path that has already been proven in a real Telegram bot session, not only in simulation tests.
