@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import patch
 
 from spark_intelligence.auth.runtime import build_auth_status_report, resolve_runtime_provider
 
@@ -98,6 +99,22 @@ class AuthProfileTests(SparkTestCase):
         self.assertFalse(payload["providers"][0]["secret_present"])
         self.assertEqual(payload["providers"][0]["status"], "pending_secret")
 
+    def test_auth_providers_lists_api_key_and_oauth_options(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "auth",
+            "providers",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        provider_ids = [provider["id"] for provider in payload["providers"]]
+        self.assertIn("openai", provider_ids)
+        self.assertIn("openai-codex", provider_ids)
+        openai_codex = next(provider for provider in payload["providers"] if provider["id"] == "openai-codex")
+        self.assertEqual(openai_codex["auth_methods"], ["oauth"])
+        self.assertEqual(openai_codex["oauth_redirect_uri"], "http://127.0.0.1:1455/auth/callback")
+
     def test_resolve_runtime_provider_uses_default_profile_and_env_secret(self) -> None:
         connect_exit, _, connect_stderr = self.run_cli(
             "auth",
@@ -130,6 +147,148 @@ class AuthProfileTests(SparkTestCase):
         self.assertEqual(resolution.secret_ref.ref_id, "ANTHROPIC_API_KEY")
         self.assertEqual(resolution.secret_value, "anthropic-secret")
         self.assertEqual(resolution.source, "config+env")
+
+    def test_auth_login_start_creates_pending_oauth_profile_and_callback_state(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "auth",
+            "login",
+            "openai-codex",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["provider_id"], "openai-codex")
+        self.assertEqual(payload["auth_profile_id"], "openai-codex:default")
+        self.assertEqual(payload["status"], "pending_oauth")
+        self.assertIn("code_challenge=", payload["authorize_url"])
+        self.assertIn("state=", payload["authorize_url"])
+
+        config = self.config_manager.load()
+        self.assertEqual(config["providers"]["records"]["openai-codex"]["default_auth_profile_id"], "openai-codex:default")
+        self.assertEqual(config["providers"]["records"]["openai-codex"]["status"], "pending_oauth")
+
+        with self.state_db.connect() as conn:
+            profile_row = conn.execute(
+                """
+                SELECT provider_id, auth_method, status, is_default
+                FROM auth_profiles
+                WHERE auth_profile_id = 'openai-codex:default'
+                LIMIT 1
+                """
+            ).fetchone()
+            callback_row = conn.execute(
+                """
+                SELECT provider_id, auth_profile_id, flow_kind, status, redirect_uri, pkce_verifier
+                FROM oauth_callback_states
+                WHERE auth_profile_id = 'openai-codex:default'
+                LIMIT 1
+                """
+            ).fetchone()
+
+        self.assertEqual(profile_row["provider_id"], "openai-codex")
+        self.assertEqual(profile_row["auth_method"], "oauth")
+        self.assertEqual(profile_row["status"], "pending_oauth")
+        self.assertEqual(profile_row["is_default"], 1)
+        self.assertEqual(callback_row["provider_id"], "openai-codex")
+        self.assertEqual(callback_row["flow_kind"], "oauth_login")
+        self.assertEqual(callback_row["status"], "pending")
+        self.assertEqual(callback_row["redirect_uri"], "http://127.0.0.1:1455/auth/callback")
+        self.assertTrue(callback_row["pkce_verifier"])
+
+    def test_auth_login_complete_persists_oauth_credentials_and_runtime_resolution(self) -> None:
+        start_exit, start_stdout, start_stderr = self.run_cli(
+            "auth",
+            "login",
+            "openai-codex",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(start_exit, 0, start_stderr)
+        start_payload = json.loads(start_stdout)
+        callback_url = (
+            "http://127.0.0.1:1455/auth/callback"
+            f"?state={start_payload['callback_state']}&code=test-oauth-code"
+        )
+
+        with patch(
+            "spark_intelligence.auth.service.exchange_oauth_authorization_code",
+            return_value={
+                "access_token": "oauth-access-token",
+                "refresh_token": "oauth-refresh-token",
+                "scope": "openid profile",
+            },
+        ):
+            complete_exit, complete_stdout, complete_stderr = self.run_cli(
+                "auth",
+                "login",
+                "openai-codex",
+                "--home",
+                str(self.home),
+                "--callback-url",
+                callback_url,
+                "--json",
+            )
+
+        self.assertEqual(complete_exit, 0, complete_stderr)
+        payload = json.loads(complete_stdout)
+        self.assertEqual(payload["provider_id"], "openai-codex")
+        self.assertEqual(payload["auth_profile_id"], "openai-codex:default")
+        self.assertEqual(payload["status"], "active")
+
+        with self.state_db.connect() as conn:
+            oauth_row = conn.execute(
+                """
+                SELECT issuer, scope, access_token_ciphertext, refresh_token_ciphertext, status
+                FROM oauth_credentials
+                WHERE auth_profile_id = 'openai-codex:default'
+                LIMIT 1
+                """
+            ).fetchone()
+            callback_row = conn.execute(
+                """
+                SELECT status, consumed_at
+                FROM oauth_callback_states
+                WHERE oauth_state = ?
+                LIMIT 1
+                """,
+                (start_payload["callback_state"],),
+            ).fetchone()
+
+        self.assertEqual(oauth_row["issuer"], "https://auth.openai.com")
+        self.assertEqual(oauth_row["scope"], "openid profile")
+        self.assertEqual(oauth_row["access_token_ciphertext"], "oauth-access-token")
+        self.assertEqual(oauth_row["refresh_token_ciphertext"], "oauth-refresh-token")
+        self.assertEqual(oauth_row["status"], "active")
+        self.assertEqual(callback_row["status"], "consumed")
+        self.assertTrue(callback_row["consumed_at"])
+
+        report = build_auth_status_report(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+        )
+        self.assertTrue(report.ok)
+        self.assertEqual(report.providers[0].provider_id, "openai-codex")
+        self.assertEqual(report.providers[0].auth_method, "oauth")
+        self.assertEqual(report.providers[0].secret_ref.source, "oauth_store")
+        self.assertEqual(report.providers[0].secret_ref.ref_id, "openai-codex:default")
+        self.assertTrue(report.providers[0].secret_present)
+        self.assertEqual(report.providers[0].status, "active")
+
+        resolution = resolve_runtime_provider(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+        )
+        self.assertEqual(resolution.provider_id, "openai-codex")
+        self.assertEqual(resolution.auth_method, "oauth")
+        self.assertEqual(resolution.api_mode, "codex_responses")
+        self.assertEqual(resolution.secret_ref.source, "oauth_store")
+        self.assertEqual(resolution.secret_ref.ref_id, "openai-codex:default")
+        self.assertEqual(resolution.secret_value, "oauth-access-token")
+        self.assertEqual(resolution.source, "oauth_store")
 
     def test_build_auth_status_report_handles_no_providers(self) -> None:
         report = build_auth_status_report(

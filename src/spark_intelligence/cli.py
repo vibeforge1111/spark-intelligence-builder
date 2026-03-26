@@ -20,8 +20,9 @@ from spark_intelligence.attachments import (
     sync_attachment_snapshot,
     unpin_chip,
 )
+from spark_intelligence.auth.providers import list_api_key_provider_ids, list_oauth_provider_ids, list_provider_specs
 from spark_intelligence.auth.runtime import build_auth_status_report
-from spark_intelligence.auth.service import connect_provider
+from spark_intelligence.auth.service import complete_oauth_login, connect_provider, start_oauth_login
 from spark_intelligence.channel.service import (
     add_channel,
     inspect_telegram_bot_token,
@@ -359,13 +360,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     auth_parser = subparsers.add_parser("auth", help="Manage model providers")
     auth_subparsers = auth_parser.add_subparsers(dest="auth_command", required=True)
+    auth_providers_parser = auth_subparsers.add_parser("providers", help="List supported provider/auth options")
+    auth_providers_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     auth_connect_parser = auth_subparsers.add_parser("connect", help="Connect a model provider")
-    auth_connect_parser.add_argument("provider", choices=["openai", "anthropic", "openrouter", "custom"])
+    auth_connect_parser.add_argument("provider", choices=list_api_key_provider_ids())
     auth_connect_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     auth_connect_parser.add_argument("--api-key", help="API key for the provider")
     auth_connect_parser.add_argument("--api-key-env", help="Existing or target env var name for the provider secret")
     auth_connect_parser.add_argument("--model", help="Default model id")
     auth_connect_parser.add_argument("--base-url", help="Custom provider base URL")
+    auth_login_parser = auth_subparsers.add_parser("login", help="Start or complete an OAuth provider login")
+    auth_login_parser.add_argument("provider", choices=list_oauth_provider_ids())
+    auth_login_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    auth_login_parser.add_argument("--redirect-uri", help="Override the default OAuth callback URI")
+    auth_login_parser.add_argument("--callback-url", help="Full callback URL captured after OAuth approval")
+    auth_login_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     auth_status_parser = auth_subparsers.add_parser("status", help="Show configured auth profiles and secret readiness")
     auth_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     auth_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
@@ -1154,6 +1163,65 @@ def handle_auth_connect(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_auth_providers(args: argparse.Namespace) -> int:
+    payload = {
+        "providers": [
+            {
+                "id": spec.id,
+                "display_name": spec.display_name,
+                "auth_methods": list(spec.auth_methods),
+                "default_model": spec.default_model,
+                "default_base_url": spec.default_base_url,
+                "default_api_key_env": spec.default_api_key_env,
+                "oauth_redirect_uri": spec.oauth.redirect_uri if spec.oauth else None,
+            }
+            for spec in list_provider_specs()
+        ]
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    print("Supported providers")
+    for provider in payload["providers"]:
+        methods = ", ".join(provider["auth_methods"])
+        print(f"- {provider['id']}: {provider['display_name']} ({methods})")
+        if provider["default_model"]:
+            print(f"  default_model={provider['default_model']}")
+        if provider["default_base_url"]:
+            print(f"  default_base_url={provider['default_base_url']}")
+        if provider["default_api_key_env"]:
+            print(f"  default_api_key_env={provider['default_api_key_env']}")
+        if provider["oauth_redirect_uri"]:
+            print(f"  oauth_redirect_uri={provider['oauth_redirect_uri']}")
+    return 0
+
+
+def handle_auth_login(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+
+    if args.callback_url:
+        result = complete_oauth_login(
+            config_manager=config_manager,
+            state_db=state_db,
+            provider=args.provider,
+            callback_url=args.callback_url,
+        )
+    else:
+        result = start_oauth_login(
+            config_manager=config_manager,
+            state_db=state_db,
+            provider=args.provider,
+            redirect_uri=args.redirect_uri,
+        )
+
+    print(result.to_json() if args.json else result.to_text())
+    return 0
+
+
 def handle_auth_status(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -1524,8 +1592,12 @@ def main(argv: list[str] | None = None) -> int:
         return handle_attachments_set_path(args)
     if args.command == "attachments" and args.attachments_command == "clear-path":
         return handle_attachments_clear_path(args)
+    if args.command == "auth" and args.auth_command == "providers":
+        return handle_auth_providers(args)
     if args.command == "auth" and args.auth_command == "connect":
         return handle_auth_connect(args)
+    if args.command == "auth" and args.auth_command == "login":
+        return handle_auth_login(args)
     if args.command == "auth" and args.auth_command == "status":
         return handle_auth_status(args)
     if args.command == "researcher" and args.researcher_command == "status":

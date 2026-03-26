@@ -3,16 +3,9 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 
+from spark_intelligence.auth.providers import get_provider_spec
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.state.db import StateDB
-
-
-API_MODE_BY_PROVIDER = {
-    "anthropic": "anthropic_messages",
-    "custom": "chat_completions",
-    "openai": "chat_completions",
-    "openrouter": "chat_completions",
-}
 
 
 @dataclass(frozen=True)
@@ -31,7 +24,7 @@ class RuntimeProviderResolution:
     api_mode: str
     base_url: str | None
     default_model: str | None
-    secret_ref: StaticSecretRef
+    secret_ref: StaticSecretRef | None
     secret_value: str
     source: str
 
@@ -149,16 +142,34 @@ def build_auth_status_report(*, config_manager: ConfigManager, state_db: StateDB
                 """,
                 (profile_id,),
             ).fetchone()
-            secret_ref = _resolve_secret_ref(record=record, ref_row=ref_row)
-            secret_present = False
-            if secret_ref and secret_ref.source == "env":
-                secret_present = secret_ref.ref_id in env_map and bool(env_map[secret_ref.ref_id])
+            oauth_row = conn.execute(
+                """
+                SELECT access_token_ciphertext, status
+                FROM oauth_credentials
+                WHERE auth_profile_id = ?
+                LIMIT 1
+                """,
+                (profile_id,),
+            ).fetchone()
+            auth_method = str(profile_row["auth_method"]) if profile_row else "api_key_env"
+            secret_ref = _resolve_secret_ref(
+                record=record,
+                ref_row=ref_row,
+                auth_method=auth_method,
+                auth_profile_id=profile_id,
+            )
+            secret_present = _has_resolved_secret(
+                auth_method=auth_method,
+                secret_ref=secret_ref,
+                oauth_row=oauth_row,
+                env_map=env_map,
+            )
             providers.append(
                 ProviderAuthStatus(
                     provider_id=provider_id,
                     provider_kind=str(record.get("provider_kind") or provider_id),
                     auth_profile_id=profile_id,
-                    auth_method=str(profile_row["auth_method"]) if profile_row else "api_key_env",
+                    auth_method=auth_method,
                     status=_derive_profile_status(profile_row=profile_row, secret_present=secret_present),
                     is_default_provider=provider_id == default_provider,
                     is_default_profile=bool(profile_row["is_default"]) if profile_row else True,
@@ -200,6 +211,15 @@ def resolve_runtime_provider(
             """,
             (auth_profile_id,),
         ).fetchone()
+        oauth_row = conn.execute(
+            """
+            SELECT access_token_ciphertext, status
+            FROM oauth_credentials
+            WHERE auth_profile_id = ?
+            LIMIT 1
+            """,
+            (auth_profile_id,),
+        ).fetchone()
         ref_row = conn.execute(
             """
             SELECT ref_source, ref_provider, ref_id
@@ -209,31 +229,44 @@ def resolve_runtime_provider(
             """,
             (auth_profile_id,),
         ).fetchone()
-    secret_ref = _resolve_secret_ref(record=record, ref_row=ref_row)
-    if not secret_ref:
-        raise RuntimeError(f"Provider '{provider_id}' has no secret reference configured.")
-    if secret_ref.source != "env":
-        raise RuntimeError(f"Provider '{provider_id}' uses unsupported secret source '{secret_ref.source}'.")
-    secret_value = env_map.get(secret_ref.ref_id)
-    if not secret_value:
-        raise RuntimeError(
-            f"Provider '{provider_id}' is missing secret value for env ref '{secret_ref.ref_id}'."
-        )
+    auth_method = str(profile_row["auth_method"]) if profile_row else "api_key_env"
+    secret_ref = _resolve_secret_ref(
+        record=record,
+        ref_row=ref_row,
+        auth_method=auth_method,
+        auth_profile_id=auth_profile_id,
+    )
+    secret_value = _resolve_secret_value(
+        provider_id=provider_id,
+        auth_method=auth_method,
+        secret_ref=secret_ref,
+        oauth_row=oauth_row,
+        env_map=env_map,
+    )
+    spec = get_provider_spec(provider_id)
     return RuntimeProviderResolution(
         provider_id=provider_id,
         provider_kind=str(record.get("provider_kind") or provider_id),
         auth_profile_id=auth_profile_id,
-        auth_method=str(profile_row["auth_method"]) if profile_row else "api_key_env",
-        api_mode=API_MODE_BY_PROVIDER.get(str(record.get("provider_kind") or provider_id), "chat_completions"),
+        auth_method=auth_method,
+        api_mode=spec.api_mode,
         base_url=_optional_string(record.get("base_url")),
         default_model=_optional_string(record.get("default_model")),
         secret_ref=secret_ref,
         secret_value=secret_value,
-        source="config+env",
+        source="oauth_store" if auth_method == "oauth" else "config+env",
     )
 
 
-def _resolve_secret_ref(*, record: dict[str, object], ref_row: object) -> StaticSecretRef | None:
+def _resolve_secret_ref(
+    *,
+    record: dict[str, object],
+    ref_row: object,
+    auth_method: str,
+    auth_profile_id: str,
+) -> StaticSecretRef | None:
+    if auth_method == "oauth":
+        return StaticSecretRef(source="oauth_store", provider=None, ref_id=auth_profile_id)
     if ref_row:
         return StaticSecretRef(
             source=str(ref_row["ref_source"]),
@@ -269,6 +302,44 @@ def _derive_profile_status(*, profile_row: object, secret_present: bool) -> str:
             return "pending_secret"
         return str(profile_row["status"])
     return "active" if secret_present else "pending_secret"
+
+
+def _has_resolved_secret(
+    *,
+    auth_method: str,
+    secret_ref: StaticSecretRef | None,
+    oauth_row: object,
+    env_map: dict[str, str],
+) -> bool:
+    if auth_method == "oauth":
+        return bool(oauth_row and oauth_row["access_token_ciphertext"] and str(oauth_row["status"]) == "active")
+    if secret_ref and secret_ref.source == "env":
+        return secret_ref.ref_id in env_map and bool(env_map[secret_ref.ref_id])
+    return False
+
+
+def _resolve_secret_value(
+    *,
+    provider_id: str,
+    auth_method: str,
+    secret_ref: StaticSecretRef | None,
+    oauth_row: object,
+    env_map: dict[str, str],
+) -> str:
+    if auth_method == "oauth":
+        if not oauth_row or not oauth_row["access_token_ciphertext"] or str(oauth_row["status"]) != "active":
+            raise RuntimeError(f"Provider '{provider_id}' has no active OAuth access token.")
+        return str(oauth_row["access_token_ciphertext"])
+    if not secret_ref:
+        raise RuntimeError(f"Provider '{provider_id}' has no secret reference configured.")
+    if secret_ref.source != "env":
+        raise RuntimeError(f"Provider '{provider_id}' uses unsupported secret source '{secret_ref.source}'.")
+    secret_value = env_map.get(secret_ref.ref_id)
+    if not secret_value:
+        raise RuntimeError(
+            f"Provider '{provider_id}' is missing secret value for env ref '{secret_ref.ref_id}'."
+        )
+    return secret_value
 
 
 def _optional_string(value: object) -> str | None:
