@@ -60,7 +60,7 @@ In concrete repo terms, the current state is:
 - `src/spark_intelligence/state/db.py` stores one `auth_ref` string on `channel_installations`, which is not enough for profile selection, rotation metadata, or auth method typing
 - `src/spark_intelligence/gateway/runtime.py` is focused on inbound polling and runtime processing, not HTTP callback ownership or shared auth route management
 - `src/spark_intelligence/doctor/checks.py` can verify env-backed provider refs, but not runtime OAuth freshness or route readiness
-- `src/spark_intelligence/cli.py` exposes `auth connect <provider> --api-key --model --base-url`, but not `login`, `logout`, `status`, `refresh`, or callback-bound OAuth flows
+- At review time, `src/spark_intelligence/cli.py` only exposed `auth connect <provider> --api-key --model --base-url`. Since then, `auth providers`, `auth status`, and the first `auth login <provider>` OAuth flow have landed; the remaining gap is refresh/logout plus callback-route ownership in the gateway layer.
 
 ## 4. External Research Read
 

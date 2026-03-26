@@ -125,10 +125,11 @@ Recommended commands:
 - `spark-intelligence auth connect anthropic`
 - `spark-intelligence auth connect openrouter`
 - `spark-intelligence auth connect custom`
+- `spark-intelligence auth providers`
 - `spark-intelligence auth connect <provider> --api-key-env <ENV>`
 - `spark-intelligence auth status`
 - `spark-intelligence auth login <provider>`
-- `spark-intelligence auth profiles`
+- `spark-intelligence auth login <provider> --callback-url <full_url>`
 
 ## 8. OAuth Boundaries
 

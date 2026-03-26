@@ -42,8 +42,11 @@ Shipped today:
 - token rotation paths that preserve existing Telegram status, pairing mode, allowlists, and auth linkage by default
 - safe separation between configured allowlists and operator-approved pairings so narrowing `allowed_users` actually removes stale config-driven access
 - default auth-profile persistence for API-key-backed providers
+- a canonical provider registry with typed API-key vs OAuth auth methods
+- `auth providers` for local provider/auth capability discovery
 - `auth status` for local provider secret-readiness inspection
 - OAuth callback-state persistence and single-use consumption rules
+- first OAuth-backed provider login flow via `auth login openai-codex`
 - a gateway route-registry contract for future OAuth callbacks and webhook ownership
 
 The practical result is that Telegram onboarding and moderation are much easier to operate locally, and the repo now has the first real foundations for secure provider auth growth without inventing ad hoc OAuth glue later.
@@ -80,9 +83,9 @@ The next slice should stay focused on gateway and provider-auth architecture, no
 
 Start here in this exact order:
 
-1. Lock the provider registry, auth-profile shape, OAuth callback-state shape, and gateway route-registry contract.
-2. Add one shared runtime-provider resolver used by CLI, gateway, and future bridge execution paths.
-3. Add secure OAuth support alongside static API-key support without weakening existing Telegram/operator safety.
+1. Start using the shared runtime-provider resolver in the real model-execution paths, not just CLI and readiness surfaces.
+2. Harden the first OAuth-backed provider flow with refresh, logout, and callback-route ownership instead of one-shot login only.
+3. Add secure token-storage and expiry handling without weakening existing Telegram/operator safety.
 4. Only after that, widen Discord, WhatsApp, or webhook-heavy surfaces.
 
 The detailed execution direction is recorded in `GATEWAY_PROVIDER_AUTH_READINESS_REVIEW_2026-03-26.md`.
@@ -103,7 +106,7 @@ Do not start these next:
 The next slice is successful if all of this is true:
 
 - one shared runtime-provider resolver exists and is used by every model-call path
-- Spark supports both static API-key auth and at least one secure OAuth flow
+- Spark supports both static API-key auth and at least one secure OAuth flow with rotation/refresh handling
 - callback state is single-use, auditable, and fail-closed
 - doctor and status can explain missing, expiring, failed, and healthy auth states
 - channel config points at auth profiles instead of raw token assumptions
