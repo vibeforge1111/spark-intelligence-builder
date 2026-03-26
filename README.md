@@ -113,11 +113,11 @@ Model-provider auth now has a first-class provider registry plus default auth-pr
 
 OAuth-backed runtime resolution now fails closed on expired access tokens. If a stored OAuth token has expired, `auth status` marks it as `expired`, `doctor` degrades with the provider id and failing auth state, and runtime provider selection refuses to silently continue with stale credentials.
 
-`gateway status` and unified `status` now also surface provider auth method, auth state, execution transport, and OAuth-maintenance health in one place. That keeps the current architecture decision operationally visible: API-key-backed providers stay on `direct_http`, while Codex/OAuth stays on `external_cli_wrapper`.
+`gateway status` and unified `status` now also surface provider auth method, runtime-provider readiness, execution transport, and OAuth-maintenance health in one place. That keeps the current architecture decision operationally visible: API-key-backed providers stay on `direct_http`, while Codex/OAuth stays on `external_cli_wrapper`.
 
-`doctor` now also checks provider execution readiness directly. If `openai-codex` is configured while the researcher bridge is disabled or unavailable, Spark degrades with a `provider-execution` failure instead of pretending the wrapper-backed path is usable.
+`doctor` now also distinguishes between `provider-runtime` and `provider-execution`. If the selected runtime provider cannot actually be resolved, Spark degrades before message handling instead of deferring the failure to the first inbound request. If `openai-codex` is configured while the researcher bridge is disabled or unavailable, Spark also degrades with a separate `provider-execution` failure instead of pretending the wrapper-backed path is usable.
 
-`gateway start` now follows that same rule and fails closed before polling when provider execution readiness is degraded. That keeps wrapper-backed Codex auth from looking healthy until the first inbound message proves otherwise.
+`gateway start` now follows those same rules and fails closed before polling when runtime-provider readiness or provider-execution readiness is degraded. That keeps missing secrets, expired default OAuth profiles, no-default-provider config drift, and wrapper-backed Codex auth from looking healthy until the first inbound message proves otherwise.
 
 The Spark Researcher bridge is now provider-aware on the live path. When a provider is configured and resolvable, Spark uses that runtime selection to choose the advisory model family and run real provider execution instead of always falling back to `generic`. API-key-backed providers now execute through Spark's direct HTTP wrapper path, while the Codex/OAuth branch stays on the external CLI-wrapper transport until there is a first-class direct OAuth runtime with the same security guarantees. If provider auth is configured but unresolved, the bridge fails closed.
 
