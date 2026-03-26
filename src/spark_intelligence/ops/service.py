@@ -126,6 +126,25 @@ class OperatorSecurityReport:
         return "\n".join(lines)
 
 
+@dataclass
+class OperatorWebhookSnoozeReport:
+    rows: list[dict[str, Any]]
+
+    def to_json(self) -> str:
+        return json.dumps({"rows": self.rows}, indent=2)
+
+    def to_text(self) -> str:
+        if not self.rows:
+            return "No active webhook alert snoozes."
+        lines = ["Active webhook alert snoozes:"]
+        for row in self.rows:
+            lines.append(
+                f"- event={row['event']} until={row['snooze_until']} "
+                f"remaining_minutes={row['remaining_minutes']}"
+            )
+        return "\n".join(lines)
+
+
 def log_operator_event(
     *,
     state_db: StateDB,
@@ -232,6 +251,38 @@ def snooze_webhook_alert(*, state_db: StateDB, event_name: str, minutes: int) ->
         )
         conn.commit()
     return snooze_until.isoformat(timespec="seconds")
+
+
+def clear_webhook_alert_snooze(*, state_db: StateDB, event_name: str) -> bool:
+    if event_name not in WEBHOOK_ALERT_EVENT_SPECS:
+        raise ValueError(f"Unsupported webhook alert event: {event_name}")
+    with state_db.connect() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM runtime_state WHERE state_key = ? LIMIT 1",
+            (_webhook_alert_snooze_state_key(event_name),),
+        ).fetchone()
+        conn.execute(
+            "DELETE FROM runtime_state WHERE state_key = ?",
+            (_webhook_alert_snooze_state_key(event_name),),
+        )
+        conn.commit()
+    return row is not None
+
+
+def list_webhook_alert_snoozes(*, state_db: StateDB) -> OperatorWebhookSnoozeReport:
+    now = _utc_now()
+    rows = _read_webhook_alert_snooze_rows(state_db=state_db, now=now)
+    payload: list[dict[str, Any]] = []
+    for row in rows:
+        remaining = row["snooze_until"] - now
+        payload.append(
+            {
+                "event": row["event"],
+                "snooze_until": row["snooze_until"].isoformat(timespec="seconds"),
+                "remaining_minutes": max(1, int((remaining.total_seconds() + 59) // 60)),
+            }
+        )
+    return OperatorWebhookSnoozeReport(rows=payload)
 
 
 def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) -> OperatorInboxReport:
@@ -924,23 +975,33 @@ def _utc_now() -> datetime:
 
 
 def _load_snoozed_webhook_events(*, state_db: StateDB, now: datetime) -> set[str]:
+    return {row["event"] for row in _read_webhook_alert_snooze_rows(state_db=state_db, now=now)}
+
+
+def _read_webhook_alert_snooze_rows(*, state_db: StateDB, now: datetime) -> list[dict[str, Any]]:
     state_keys = [_webhook_alert_snooze_state_key(event_name) for event_name in WEBHOOK_ALERT_EVENT_SPECS]
     if not state_keys:
-        return set()
+        return []
     placeholders = ",".join("?" for _ in state_keys)
     with state_db.connect() as conn:
         rows = conn.execute(
             f"SELECT state_key, value FROM runtime_state WHERE state_key IN ({placeholders})",
             tuple(state_keys),
         ).fetchall()
-    snoozed: set[str] = set()
+    snoozed: list[dict[str, Any]] = []
     for row in rows:
         snooze_until = _parse_iso_datetime(row["value"])
         if snooze_until is None or snooze_until < now:
             continue
         key = str(row["state_key"])
         if key.startswith("ops:webhook_alert_snooze:"):
-            snoozed.add(key.removeprefix("ops:webhook_alert_snooze:"))
+            snoozed.append(
+                {
+                    "event": key.removeprefix("ops:webhook_alert_snooze:"),
+                    "snooze_until": snooze_until,
+                }
+            )
+    snoozed.sort(key=lambda row: (row["snooze_until"], row["event"]))
     return snoozed
 
 

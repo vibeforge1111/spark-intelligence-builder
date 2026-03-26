@@ -61,8 +61,10 @@ from spark_intelligence.jobs.service import jobs_list, jobs_tick
 from spark_intelligence.ops import (
     build_operator_inbox,
     build_operator_security_report,
+    clear_webhook_alert_snooze,
     list_operator_events,
     list_webhook_alert_events,
+    list_webhook_alert_snoozes,
     log_operator_event,
     snooze_webhook_alert,
 )
@@ -235,6 +237,19 @@ def build_parser() -> argparse.ArgumentParser:
     operator_snooze_webhook_parser.add_argument("--minutes", type=int, default=60, help="Snooze duration in minutes")
     operator_snooze_webhook_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     operator_snooze_webhook_parser.add_argument("--reason", help="Short audit reason for this snooze")
+    operator_list_webhook_snoozes_parser = operator_subparsers.add_parser(
+        "webhook-alert-snoozes",
+        help="Show active webhook alert snoozes",
+    )
+    operator_list_webhook_snoozes_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    operator_list_webhook_snoozes_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    operator_clear_webhook_snooze_parser = operator_subparsers.add_parser(
+        "clear-webhook-alert-snooze",
+        help="Remove one active webhook alert snooze",
+    )
+    operator_clear_webhook_snooze_parser.add_argument("event", choices=list_webhook_alert_events())
+    operator_clear_webhook_snooze_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    operator_clear_webhook_snooze_parser.add_argument("--reason", help="Short audit reason for clearing this snooze")
 
     gateway_parser = subparsers.add_parser("gateway", help="Gateway operations")
     gateway_subparsers = gateway_parser.add_subparsers(dest="gateway_command", required=True)
@@ -812,6 +827,37 @@ def handle_operator_snooze_webhook_alert(args: argparse.Namespace) -> int:
         details={"minutes": args.minutes, "snooze_until": snooze_until},
     )
     print(f"Snoozed webhook alert '{args.event}' until {snooze_until}.")
+    return 0
+
+
+def handle_operator_webhook_alert_snoozes(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    report = list_webhook_alert_snoozes(state_db=state_db)
+    print(report.to_json() if args.json else report.to_text())
+    return 0
+
+
+def handle_operator_clear_webhook_alert_snooze(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    removed = clear_webhook_alert_snooze(state_db=state_db, event_name=args.event)
+    log_operator_event(
+        state_db=state_db,
+        action="clear_webhook_alert_snooze",
+        target_kind="webhook_alert",
+        target_ref=args.event,
+        reason=args.reason,
+        details={"removed": removed},
+    )
+    if removed:
+        print(f"Cleared webhook alert snooze for '{args.event}'.")
+    else:
+        print(f"No active webhook alert snooze found for '{args.event}'.")
     return 0
 
 
@@ -1810,6 +1856,10 @@ def main(argv: list[str] | None = None) -> int:
         return handle_operator_security(args)
     if args.command == "operator" and args.operator_command == "snooze-webhook-alert":
         return handle_operator_snooze_webhook_alert(args)
+    if args.command == "operator" and args.operator_command == "webhook-alert-snoozes":
+        return handle_operator_webhook_alert_snoozes(args)
+    if args.command == "operator" and args.operator_command == "clear-webhook-alert-snooze":
+        return handle_operator_clear_webhook_alert_snooze(args)
     if args.command == "gateway" and args.gateway_command == "start":
         return handle_gateway_start(args)
     if args.command == "gateway" and args.gateway_command == "status":
