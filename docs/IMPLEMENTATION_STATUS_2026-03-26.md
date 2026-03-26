@@ -121,6 +121,8 @@ The next phase-1 role split is also now explicit: `doctor` remains a diagnostic 
 
 The next phase-1 operator-alignment patch is also in: configured Discord or WhatsApp channels with broken ingress contracts now surface as operator channel alerts with explicit secure repair commands, so operator surfaces no longer stay quiet while `doctor` and `gateway status` are already degraded.
 
+The next phase-1 runtime-summary patch is also in: paused or disabled channels now surface explicit repair hints in `gateway status` and top-level `status`, so those runtime summaries no longer leave channel-state blockage entirely implicit.
+
 ## 7. Current Non-Goals
 
 Do not start these next:

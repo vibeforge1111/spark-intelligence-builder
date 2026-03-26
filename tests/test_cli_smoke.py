@@ -1040,6 +1040,48 @@ class CliSmokeTests(SparkTestCase):
             stdout,
         )
 
+    def test_gateway_status_surfaces_repair_hint_for_paused_channel(self) -> None:
+        self.add_telegram_channel(bot_token="good-token")
+        connect_exit, _, connect_stderr = self.run_cli(
+            "auth",
+            "connect",
+            "openai",
+            "--home",
+            str(self.home),
+            "--api-key",
+            "openai-secret",
+            "--model",
+            "gpt-5.4",
+        )
+        self.assertEqual(connect_exit, 0, connect_stderr)
+
+        pause_exit, _, pause_stderr = self.run_cli(
+            "operator",
+            "set-channel",
+            "telegram",
+            "paused",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(pause_exit, 0, pause_stderr)
+
+        gateway_exit, gateway_stdout, gateway_stderr = self.run_cli(
+            "gateway",
+            "status",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(gateway_exit, 1, gateway_stderr)
+        self.assertIn("- repair-hint: spark-intelligence operator set-channel telegram enabled", gateway_stdout)
+
+        status_exit, status_stdout, status_stderr = self.run_cli(
+            "status",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(status_exit, 0, status_stderr)
+        self.assertIn("- repair hint: spark-intelligence operator set-channel telegram enabled", status_stdout)
+
     def test_status_json_includes_auth_report(self) -> None:
         connect_exit, _, connect_stderr = self.run_cli(
             "auth",

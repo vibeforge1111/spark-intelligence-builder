@@ -136,6 +136,7 @@ def gateway_status(config_manager: ConfigManager, state_db: StateDB) -> GatewayS
         oauth_maintenance_ok=oauth_maintenance_ok,
         oauth_maintenance_detail=oauth_maintenance_detail,
         repair_hints=_gateway_repair_hints(
+            config=config,
             auth_report=auth_report,
             provider_runtime_ok=provider_runtime_ok,
             provider_execution_ok=provider_execution_ok,
@@ -297,6 +298,7 @@ def gateway_start(
 
 def _gateway_repair_hints(
     *,
+    config: dict[str, Any],
     auth_report: Any,
     provider_runtime_ok: bool,
     provider_execution_ok: bool,
@@ -304,6 +306,9 @@ def _gateway_repair_hints(
     provider_execution_detail: str,
 ) -> list[str]:
     hints: list[str] = []
+    for hint in _channel_repair_hints(config):
+        if hint not in hints:
+            hints.append(hint)
     if not oauth_maintenance_ok:
         hints.append("spark-intelligence jobs tick")
     if not provider_runtime_ok:
@@ -314,6 +319,18 @@ def _gateway_repair_hints(
         execution_hint = _provider_execution_repair_hint(provider_execution_detail)
         if execution_hint not in hints:
             hints.append(execution_hint)
+    return hints
+
+
+def _channel_repair_hints(config: dict[str, Any]) -> list[str]:
+    hints: list[str] = []
+    channel_records = config.get("channels", {}).get("records", {}) or {}
+    for channel_id, record in sorted(channel_records.items()):
+        if not isinstance(record, dict):
+            continue
+        status = str(record.get("status") or "enabled")
+        if status in {"paused", "disabled"}:
+            hints.append(f"spark-intelligence operator set-channel {channel_id} enabled")
     return hints
 
 

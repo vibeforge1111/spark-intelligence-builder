@@ -294,3 +294,5 @@ The first phase-1 follow-up is already in: `status` and `gateway status` now sur
 The next phase-1 decision is also in: `doctor` stays diagnostic and fail-closed, but degraded doctor output now points at `status` and `operator security` instead of trying to become a second command-selection surface.
 
 The next phase-1 operator-alignment patch is also in: configured Discord or WhatsApp channels with broken ingress contracts now surface as operator channel alerts with explicit secure repair commands, so operator surfaces match the degraded runtime surfaces instead of staying silent.
+
+The next phase-1 runtime-summary patch is also in: paused or disabled channels now surface explicit repair hints in `gateway status` and top-level `status`, so those runtime summaries no longer leave channel-state blockage entirely implicit.

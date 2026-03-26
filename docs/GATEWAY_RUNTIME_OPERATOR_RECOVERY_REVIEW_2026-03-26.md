@@ -155,6 +155,13 @@ The next channel-surface alignment is also now landed:
   - `spark-intelligence channel add discord --interaction-public-key <public-key>`
   - `spark-intelligence channel add whatsapp --webhook-secret <secret> --webhook-verify-token <token>`
 
+The next runtime-summary alignment is also now landed:
+
+- paused or disabled channels now contribute explicit repair hints in `gateway status` and top-level `status`
+- this closes the gap where operator surfaces knew the fix but runtime summaries only reported "not ready"
+- the current v1 repair hint for that state is:
+  - `spark-intelligence operator set-channel <channel> enabled`
+
 ## 9. Proposed Decision For Now
 
 The repo should explicitly treat the following as the v1 contract:
@@ -163,6 +170,7 @@ The repo should explicitly treat the following as the v1 contract:
 - operator owns repair actions
 - doctor owns diagnosis, not command selection
 - operator surfaces own channel-level ingress repair actions
+- runtime summaries may surface the first repair hint when channel state directly blocks gateway readiness
 - maintenance is operator-driven, not daemon-driven
 - Discord and WhatsApp remain narrow live surfaces until one of them is proven end to end
 - Codex/OAuth remains wrapper-backed until a direct runtime can match current security and recovery guarantees
