@@ -155,7 +155,7 @@ The current canonical live home has also moved further through that connection p
 
 - phase A is ready on the real Telegram plus MiniMax home
 - phase B is ready with `startup-yc` and `startup-operator` active in live runtime state
-- phase C is builder-ready with live Swarm auth/config present locally, although the hosted Swarm sync endpoint is still returning a server-side `collective_sync_failed` `500` on real upload
+- phase C is locally wired with live Swarm auth/config present locally, although the hosted Swarm side is still rejecting the current session with `authentication_required` on real sync
 
 Phase D work is now underway in the runtime surfaces themselves: `status` records the last bridge route plus the last active chip route, and `gateway traces` / `gateway outbound` now expose route and chip metadata in their text views so operator debugging can answer "why did this reply happen" without reading raw JSON.
 
@@ -168,6 +168,16 @@ Phase E now has its first real supported bootstrap profile instead of only a bag
 Phase E now also has the first supported native always-on wrapper on Windows: `install-autostart` and `uninstall-autostart` manage a Task Scheduler entry that runs the foreground gateway continuously for one home. That keeps the implementation aligned with the architecture rule to prefer native autostart registration over inventing a custom daemon layer, and it makes always-on operation visible in config and top-level status instead of remaining a manual terminal habit.
 
 The supported MiniMax path is now also aligned on `MiniMax-M2.7` instead of `MiniMax-M2.5`, and the clean-home bootstrap/autostart path is now covered by smoke tests instead of still being tracked as an unvalidated fresh-operator install gap.
+
+The end-of-day local finish pass tightened two more pieces without widening scope again. First, the Telegram runtime no longer feeds raw active-chip memo scaffolding straight through to live DM replies: active-chip doctrine is now summarized as hidden background guidance for provider chat, and Telegram reply cleanup strips common internal memo labels such as `Primary Focus`, `Confidence`, and `Evidence gap` before delivery. Second, the Swarm operator surfaces now distinguish "token exists" from "hosted auth/session is actually accepted": `connect status`, `connect route-policy`, and `swarm status` now surface hosted auth rejection directly, so phase C no longer looks deceptively green when the hosted Swarm side is returning `authentication_required`.
+
+That means the current state has shifted slightly:
+
+- phase A remains ready
+- phase B remains ready
+- phase C is locally wired but still blocked on hosted Swarm auth/session acceptance
+- phase D is locally stronger again because the Telegram runtime quality and route/operator visibility both improved
+- phase E remains materially real on the canonical Telegram path
 
 ## 7. Current Non-Goals
 

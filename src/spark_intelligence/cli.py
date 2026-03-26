@@ -229,6 +229,7 @@ class RoutingContractStatus:
         lines.append(f"- provider runtime: {'ok' if researcher['provider_runtime_ok'] else 'degraded'}")
         lines.append(f"- provider execution: {'ok' if researcher['provider_execution_ok'] else 'degraded'}")
         lines.append(f"- swarm api: {'ready' if swarm['api_ready'] else 'not_ready'}")
+        lines.append(f"- swarm api auth: {swarm.get('auth_state') or 'missing'}")
         lines.append(
             f"- conversational fallback policy: "
             f"{'enabled' if researcher['conversational_fallback_enabled'] else 'disabled'} "
@@ -251,6 +252,10 @@ class RoutingContractStatus:
                 f"used={'yes' if researcher.get('last_active_chip_evaluate_used') else 'no'}"
             )
         lines.append(f"- last swarm decision: {swarm['last_decision_mode'] or 'none'}")
+        if swarm.get("last_failure_mode"):
+            lines.append(f"- last swarm failure: {swarm['last_failure_mode']}")
+        if swarm.get("last_failure_error"):
+            lines.append(f"- last swarm failure error: {swarm['last_failure_error']}")
         lines.append("Bridge routes:")
         for route in self.payload["bridge_routes"]:
             lines.append(f"- {route['route']}: {route['when']}")
@@ -311,6 +316,21 @@ class BootstrapTelegramAgentStatus:
         lines.append("- verify_commands:")
         lines.extend(f"  - {command}" for command in self.verify_commands)
         return "\n".join(lines)
+
+
+def _swarm_last_failure_payload(swarm) -> dict[str, object]:
+    payload = getattr(swarm, "last_failure", None)
+    return payload if isinstance(payload, dict) else {}
+
+
+def _swarm_auth_state(swarm) -> str:
+    last_failure = _swarm_last_failure_payload(swarm)
+    response_body = last_failure.get("response_body")
+    if isinstance(response_body, dict) and response_body.get("error") == "authentication_required":
+        return "auth_rejected"
+    if bool(getattr(swarm, "api_ready", False)):
+        return "configured"
+    return "missing"
 
 
 def build_connection_plan_status(config_manager: ConfigManager, state_db: StateDB) -> ConnectionPlanStatus:
@@ -400,11 +420,12 @@ def build_connection_plan_status(config_manager: ConfigManager, state_db: StateD
     phase_c_checks = [
         f"payload_ready={'yes' if swarm.payload_ready else 'no'}",
         f"api_ready={'yes' if swarm.api_ready else 'no'}",
+        f"api_auth={_swarm_auth_state(swarm)}",
         f"api_url={swarm.api_url or 'missing'}",
         f"workspace_id={swarm.workspace_id or 'missing'}",
         f"access_token_env={swarm.access_token_env or 'missing'}",
     ]
-    if swarm.payload_ready and swarm.api_ready:
+    if swarm.payload_ready and swarm.api_ready and _swarm_auth_state(swarm) != "auth_rejected":
         phase_c = ConnectionPhaseStatus(
             phase_id="phase-c-swarm-api",
             title="Connect Spark Swarm",
@@ -414,18 +435,28 @@ def build_connection_plan_status(config_manager: ConfigManager, state_db: StateD
             next_steps=[],
         )
     else:
+        phase_c_summary = "Swarm plumbing exists, but the bridge is not yet fully API-connected and proven reachable."
+        phase_c_steps = [
+            "spark-intelligence swarm status",
+            "spark-intelligence swarm configure --api-url <url> --workspace-id <workspace-id> --access-token <token>",
+            "spark-intelligence swarm sync --dry-run",
+            "spark-intelligence swarm sync",
+        ]
+        if _swarm_auth_state(swarm) == "auth_rejected":
+            phase_c_summary = "Swarm payload build is ready, but the hosted API rejected the current access token or session."
+            phase_c_steps = [
+                "spark-intelligence swarm status",
+                "spark-intelligence swarm configure --access-token <fresh-token>",
+                "spark-intelligence swarm sync --dry-run",
+                "spark-intelligence swarm sync",
+            ]
         phase_c = ConnectionPhaseStatus(
             phase_id="phase-c-swarm-api",
             title="Connect Spark Swarm",
             status="in_progress" if swarm.payload_ready or swarm.runtime_root or swarm.api_url else "blocked",
-            summary="Swarm plumbing exists, but the bridge is not yet fully API-connected and proven reachable.",
+            summary=phase_c_summary,
             checks=phase_c_checks,
-            next_steps=[
-                "spark-intelligence swarm status",
-                "spark-intelligence swarm configure --api-url <url> --workspace-id <workspace-id> --access-token <token>",
-                "spark-intelligence swarm sync --dry-run",
-                "spark-intelligence swarm sync",
-            ],
+            next_steps=phase_c_steps,
         )
 
     phase_d_prereq_ready = phase_a.status == "ready" and phase_b.status == "ready" and phase_c.status == "ready"
@@ -522,6 +553,7 @@ def build_routing_contract_status(config_manager: ConfigManager, state_db: State
             "enabled": swarm.enabled,
             "payload_ready": swarm.payload_ready,
             "api_ready": swarm.api_ready,
+            "auth_state": _swarm_auth_state(swarm),
             "auto_recommend_enabled": bool(
                 config_manager.get_path("spark.swarm.routing.auto_recommend_enabled", default=True)
             ),
@@ -529,6 +561,12 @@ def build_routing_contract_status(config_manager: ConfigManager, state_db: State
                 config_manager.get_path("spark.swarm.routing.long_task_word_count", default=40)
             ),
             "last_decision_mode": (swarm.last_decision or {}).get("mode"),
+            "last_failure_mode": _swarm_last_failure_payload(swarm).get("mode"),
+            "last_failure_error": (
+                (_swarm_last_failure_payload(swarm).get("response_body") or {}).get("error")
+                if isinstance(_swarm_last_failure_payload(swarm).get("response_body"), dict)
+                else None
+            ),
         },
         "bridge_routes": [
             {

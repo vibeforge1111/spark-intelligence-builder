@@ -266,6 +266,57 @@ class CliSmokeTests(SparkTestCase):
         self.assertIn("- phase-a-telegram-core: blocked Lock Telegram core", stdout)
         self.assertIn("next: spark-intelligence channel telegram-onboard", stdout)
 
+    def test_connect_status_keeps_phase_c_current_when_swarm_auth_is_rejected(self) -> None:
+        self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
+        self.config_manager.set_path("spark.specialization_paths.active_path_key", "startup-operator")
+        with patch(
+            "spark_intelligence.cli.gateway_status",
+            return_value=SimpleNamespace(
+                configured_channels=["telegram"],
+                configured_providers=["custom"],
+                ready=True,
+                provider_runtime_ok=True,
+                provider_execution_ok=True,
+                repair_hints=[],
+            ),
+        ), patch(
+            "spark_intelligence.cli.researcher_bridge_status",
+            return_value=SimpleNamespace(
+                available=True,
+                last_provider_execution_transport="direct_http",
+                last_routing_decision="provider_execution",
+            ),
+        ), patch(
+            "spark_intelligence.cli.attachment_status",
+            return_value=SimpleNamespace(
+                records=[
+                    SimpleNamespace(kind="chip"),
+                    SimpleNamespace(kind="path"),
+                ]
+            ),
+        ), patch(
+            "spark_intelligence.cli.swarm_status",
+            return_value=SimpleNamespace(
+                payload_ready=True,
+                api_ready=True,
+                api_url="https://sparkswarm.ai",
+                workspace_id="ws_123",
+                access_token_env="SPARK_SWARM_ACCESS_TOKEN",
+                runtime_root="C:\\spark-swarm",
+                last_failure={
+                    "mode": "http_error",
+                    "response_body": {"error": "authentication_required"},
+                },
+            ),
+        ):
+            exit_code, stdout, stderr = self.run_cli("connect", "status", "--home", str(self.home))
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertIn("- current phase: phase-c-swarm-api Connect Spark Swarm", stdout)
+        self.assertIn("check: api_auth=auth_rejected", stdout)
+        self.assertIn("hosted API rejected the current access token or session", stdout)
+        self.assertIn("next: spark-intelligence swarm configure --access-token <fresh-token>", stdout)
+
     def test_connect_route_policy_surfaces_bridge_and_swarm_contract(self) -> None:
         self.config_manager.set_path("spark.researcher.routing.conversational_fallback_max_chars", 123)
         self.config_manager.set_path("spark.swarm.routing.long_task_word_count", 55)
@@ -303,6 +354,41 @@ class CliSmokeTests(SparkTestCase):
         self.assertIn("- last swarm decision: manual_recommended", stdout)
         self.assertIn("- provider_fallback_chat:", stdout)
         self.assertIn("- manual_recommended:", stdout)
+
+    def test_connect_route_policy_surfaces_swarm_auth_rejection(self) -> None:
+        with patch(
+            "spark_intelligence.cli.gateway_status",
+            return_value=SimpleNamespace(provider_runtime_ok=True, provider_execution_ok=True),
+        ), patch(
+            "spark_intelligence.cli.researcher_bridge_status",
+            return_value=SimpleNamespace(
+                enabled=True,
+                available=True,
+                last_routing_decision="provider_execution",
+                last_active_chip_key=None,
+                last_active_chip_task_type=None,
+                last_active_chip_evaluate_used=False,
+                last_provider_execution_transport="direct_http",
+            ),
+        ), patch(
+            "spark_intelligence.cli.swarm_status",
+            return_value=SimpleNamespace(
+                enabled=True,
+                payload_ready=True,
+                api_ready=True,
+                last_decision={"mode": "hold_local"},
+                last_failure={
+                    "mode": "http_error",
+                    "response_body": {"error": "authentication_required"},
+                },
+            ),
+        ):
+            exit_code, stdout, stderr = self.run_cli("connect", "route-policy", "--home", str(self.home))
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertIn("- swarm api auth: auth_rejected", stdout)
+        self.assertIn("- last swarm failure: http_error", stdout)
+        self.assertIn("- last swarm failure error: authentication_required", stdout)
 
     def test_connect_set_route_policy_updates_operator_knobs(self) -> None:
         exit_code, stdout, stderr = self.run_cli(

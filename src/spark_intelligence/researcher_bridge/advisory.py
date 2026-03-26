@@ -322,6 +322,9 @@ def _render_direct_provider_chat_fallback(
             "You are Spark AGI in a 1:1 messaging conversation. "
             "Reply naturally, briefly, and helpfully. "
             "For casual greetings or small talk, respond like a normal assistant. "
+            "When domain chip guidance is attached, treat it as hidden background context rather than an output template. "
+            "Do not echo internal headings, confidence scores, packet ids, doctrine labels, or evidence-gap sections unless the user explicitly asks for them. "
+            "For Telegram-style DMs, prefer a short paragraph or a short flat list over memo formatting. "
             "If the user asks for factual, legal, medical, financial, or time-sensitive guidance "
             "and you are not confident, say you need more context or verification before giving a hard answer. "
             "Do not mention internal advisory or verification systems."
@@ -359,25 +362,32 @@ def _build_contextual_task(
         "",
     ]
     if active_chip_evaluate:
+        chip_guidance = _summarize_active_chip_guidance(str(active_chip_evaluate.get("analysis") or ""))
         lines.extend(
             [
-                "[Active chip evaluate]",
+                "[Active chip guidance]",
                 f"chip_key={active_chip_evaluate.get('chip_key') or 'unknown'}",
                 f"task_type={active_chip_evaluate.get('task_type') or 'unknown'}",
                 f"stage={active_chip_evaluate.get('stage') or 'unknown'}",
-                f"context_packet_ids={','.join(active_chip_evaluate.get('context_packet_ids') or []) or 'none'}",
-                f"activations={len(active_chip_evaluate.get('activations') or [])}",
+                (
+                    "Use this guidance as background context only. "
+                    "Do not copy its headings, confidence labels, packet ids, or memo structure into the user-visible reply."
+                ),
             ]
         )
         if active_chip_evaluate.get("stage_transition_suggested"):
-            lines.append(f"stage_transition_suggested={active_chip_evaluate['stage_transition_suggested']}")
+            lines.append(
+                f"possible_stage_transition={active_chip_evaluate['stage_transition_suggested']} "
+                "(confirm with the user before treating it as true)"
+            )
         if active_chip_evaluate.get("detected_state_updates"):
             lines.append(
-                "detected_state_updates="
+                "possible_state_updates="
                 + json.dumps(active_chip_evaluate["detected_state_updates"], sort_keys=True)
+                + " (confirm with the user before treating them as true)"
             )
-        if active_chip_evaluate.get("analysis"):
-            lines.extend(["", active_chip_evaluate["analysis"].strip(), ""])
+        if chip_guidance:
+            lines.extend(["", chip_guidance, ""])
     lines.extend(
         [
         "[User message]",
@@ -385,6 +395,63 @@ def _build_contextual_task(
         ]
     )
     return "\n".join(lines)
+
+
+def _summarize_active_chip_guidance(analysis: str, *, max_lines: int = 4, max_chars: int = 700) -> str:
+    cleaned_lines: list[str] = []
+    for raw_line in analysis.splitlines():
+        line = raw_line.strip()
+        if not line or line == "---":
+            continue
+        line = re.sub(r"^#+\s*", "", line)
+        line = re.sub(r"^\*\*(.*?)\*\*$", r"\1", line)
+        line = re.sub(r"^[-*]\s*", "", line)
+        lowered = line.lower().rstrip(":")
+        if lowered in {"primary focus", "why this works", "what changes this", "next step"}:
+            continue
+        if lowered.startswith(("confidence:", "evidence gap:", "note:")):
+            continue
+        if lowered.startswith("recommendation:") or lowered.startswith("revised:"):
+            _, _, remainder = line.partition(":")
+            line = remainder.strip()
+            if not line:
+                continue
+        cleaned_lines.append(line)
+        if len(cleaned_lines) >= max_lines:
+            break
+    summary = "\n".join(cleaned_lines).strip()
+    if len(summary) > max_chars:
+        summary = f"{summary[: max_chars - 3].rstrip()}..."
+    return summary
+
+
+def _clean_messaging_reply(text: str, *, channel_kind: str) -> str:
+    if channel_kind != "telegram":
+        return text.strip()
+    cleaned_lines: list[str] = []
+    for raw_line in text.replace("\r\n", "\n").split("\n"):
+        line = raw_line.strip()
+        if not line or line == "---":
+            if cleaned_lines and cleaned_lines[-1] != "":
+                cleaned_lines.append("")
+            continue
+        normalized = re.sub(r"^#+\s*", "", line)
+        normalized = re.sub(r"^\*\*(.*?)\*\*$", r"\1", normalized)
+        normalized_for_meta = re.sub(r"^[-*]\s*", "", normalized)
+        lowered = normalized_for_meta.lower().rstrip(":")
+        if lowered in {"primary focus", "why this works", "what changes this", "next step"}:
+            continue
+        if lowered.startswith(("confidence:", "evidence gap:", "note: advisory")):
+            continue
+        if lowered.startswith("recommendation:") or lowered.startswith("revised:"):
+            _, _, remainder = normalized_for_meta.partition(":")
+            normalized = remainder.strip()
+            if not normalized:
+                continue
+        cleaned_lines.append(normalized)
+    reply = "\n".join(cleaned_lines)
+    reply = re.sub(r"\n{3,}", "\n\n", reply).strip()
+    return reply or text.strip()
 
 
 def _run_active_chip_evaluate(
@@ -628,12 +695,15 @@ def build_researcher_reply(
                         fallback_max_chars=int(routing_policy["conversational_fallback_max_chars"]),
                     )
                 ):
-                    reply_text = _render_direct_provider_chat_fallback(
-                        provider=provider_selection.provider,
-                        user_message=user_message,
+                    reply_text = _clean_messaging_reply(
+                        _render_direct_provider_chat_fallback(
+                            provider=provider_selection.provider,
+                            user_message=user_message,
+                            channel_kind=channel_kind,
+                            attachment_context=attachment_context,
+                            active_chip_evaluate=active_chip_evaluate,
+                        ),
                         channel_kind=channel_kind,
-                        attachment_context=attachment_context,
-                        active_chip_evaluate=active_chip_evaluate,
                     )
                     trace_ref = str(advisory.get("trace_path") or advisory.get("trace_id") or "trace:missing")
                     evidence_summary = "status=under_supported provider_fallback=direct_http_chat"
@@ -672,6 +742,7 @@ def build_researcher_reply(
                     reply_text, evidence_summary, trace_ref = _render_reply_from_execution(execution, advisory)
                 else:
                     reply_text, evidence_summary, trace_ref = _render_reply_from_advisory(advisory)
+                reply_text = _clean_messaging_reply(reply_text, channel_kind=channel_kind)
                 return ResearcherBridgeResult(
                     request_id=request_id,
                     reply_text=reply_text,

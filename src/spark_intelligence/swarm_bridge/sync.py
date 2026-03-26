@@ -62,26 +62,33 @@ class SwarmStatus:
         )
 
     def to_text(self) -> str:
-        return "\n".join(
-            [
-                f"Swarm enabled: {'yes' if self.enabled else 'no'}",
-                f"Swarm configured: {'yes' if self.configured else 'no'}",
-                f"- researcher_ready: {'yes' if self.researcher_ready else 'no'}",
-                f"- payload_ready: {'yes' if self.payload_ready else 'no'}",
-                f"- api_ready: {'yes' if self.api_ready else 'no'}",
-                f"- runtime_root: {self.runtime_root or 'missing'}",
-                f"- researcher_runtime_root: {self.researcher_runtime_root or 'missing'}",
-                f"- researcher_config_path: {self.researcher_config_path or 'missing'}",
-                f"- api_url: {self.api_url or 'missing'}",
-                f"- workspace_id: {self.workspace_id or 'missing'}",
-                f"- access_token_env: {self.access_token_env or 'missing'}",
-                f"- active_chip_keys: {', '.join(self.attachment_context.get('active_chip_keys', [])) if self.attachment_context.get('active_chip_keys') else 'none'}",
-                f"- active_path_key: {self.attachment_context.get('active_path_key') or 'none'}",
-                f"- last_sync_mode: {(self.last_sync or {}).get('mode', 'none')}",
-                f"- last_decision_mode: {(self.last_decision or {}).get('mode', 'none')}",
-                f"- failure_count: {self.failure_count}",
-            ]
-        )
+        lines = [
+            f"Swarm enabled: {'yes' if self.enabled else 'no'}",
+            f"Swarm configured: {'yes' if self.configured else 'no'}",
+            f"- researcher_ready: {'yes' if self.researcher_ready else 'no'}",
+            f"- payload_ready: {'yes' if self.payload_ready else 'no'}",
+            f"- api_ready: {'yes' if self.api_ready else 'no'}",
+            f"- runtime_root: {self.runtime_root or 'missing'}",
+            f"- researcher_runtime_root: {self.researcher_runtime_root or 'missing'}",
+            f"- researcher_config_path: {self.researcher_config_path or 'missing'}",
+            f"- api_url: {self.api_url or 'missing'}",
+            f"- workspace_id: {self.workspace_id or 'missing'}",
+            f"- access_token_env: {self.access_token_env or 'missing'}",
+            f"- active_chip_keys: {', '.join(self.attachment_context.get('active_chip_keys', [])) if self.attachment_context.get('active_chip_keys') else 'none'}",
+            f"- active_path_key: {self.attachment_context.get('active_path_key') or 'none'}",
+            f"- last_sync_mode: {(self.last_sync or {}).get('mode', 'none')}",
+            f"- last_decision_mode: {(self.last_decision or {}).get('mode', 'none')}",
+            f"- failure_count: {self.failure_count}",
+        ]
+        if self.last_failure:
+            lines.append(
+                f"- last_failure: mode={self.last_failure.get('mode') or 'unknown'} "
+                f"message={self.last_failure.get('message') or 'unknown'}"
+            )
+            response_body = self.last_failure.get("response_body")
+            if isinstance(response_body, dict) and response_body.get("error"):
+                lines.append(f"- last_failure_error: {response_body.get('error')}")
+        return "\n".join(lines)
 
 
 @dataclass
@@ -637,6 +644,7 @@ def _record_swarm_failure_state(
                 "api_url": result.api_url,
                 "workspace_id": result.workspace_id,
                 "payload_path": result.payload_path,
+                "response_body": result.response_body,
                 "recorded_at": _utc_now_iso(),
             }
         else:

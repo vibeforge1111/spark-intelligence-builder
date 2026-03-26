@@ -4,12 +4,123 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
+from spark_intelligence.researcher_bridge.advisory import _build_contextual_task, build_researcher_reply
 
 from tests.test_support import SparkTestCase
 
 
 class ResearcherBridgeProviderResolutionTests(SparkTestCase):
+    def test_build_contextual_task_summarizes_chip_guidance_without_meta_scaffolding(self) -> None:
+        prompt = _build_contextual_task(
+            user_message="what next",
+            attachment_context={
+                "active_chip_keys": ["startup-yc"],
+                "pinned_chip_keys": [],
+                "active_path_key": "startup-operator",
+            },
+            active_chip_evaluate={
+                "chip_key": "startup-yc",
+                "task_type": "diagnostic_questioning",
+                "stage": "idea",
+                "analysis": (
+                    "# Revised: Decision Clarity Infrastructure\n\n"
+                    "**Recommendation**: Prioritize interpretation scaffolding.\n\n"
+                    "## Primary Focus\n"
+                    "Build operator-facing guidance for no actionable diff outputs.\n\n"
+                    "- Confidence: 0.45\n"
+                    "- Evidence gap: No verification operators lack this layer.\n\n"
+                    "## Next Step\n"
+                    "Survey a few operator workflows."
+                ),
+            },
+        )
+
+        self.assertIn("[Active chip guidance]", prompt)
+        self.assertIn("Use this guidance as background context only.", prompt)
+        self.assertIn("Prioritize interpretation scaffolding.", prompt)
+        self.assertNotIn("Confidence:", prompt)
+        self.assertNotIn("Evidence gap:", prompt)
+        self.assertNotIn("## Primary Focus", prompt)
+
+    def test_build_researcher_reply_cleans_memo_style_execution_reply_for_telegram(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        connect_exit, _, connect_stderr = self.run_cli(
+            "auth",
+            "connect",
+            "custom",
+            "--home",
+            str(self.home),
+            "--api-key",
+            "minimax-secret",
+            "--model",
+            "MiniMax-M2.7",
+            "--base-url",
+            "https://api.minimax.io/v1",
+        )
+        self.assertEqual(connect_exit, 0, connect_stderr)
+
+        runtime_root = self.home / "fake-researcher"
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        config_path = runtime_root / "spark-researcher.project.json"
+        config_path.write_text("{}", encoding="utf-8")
+
+        def fake_build_advisory(path: Path, task: str, *, model: str = "generic", limit: int = 4, domain: str | None = None):
+            return {
+                "guidance": ["Use evidence-backed guidance."],
+                "epistemic_status": {"status": "grounded", "packet_stability": {"status": "durable_supported"}},
+                "selected_packet_ids": ["packet-1"],
+                "trace_path": "trace:test",
+            }
+
+        def fake_execute_with_research(*args, **kwargs):
+            return {
+                "status": "ok",
+                "decision": "approve",
+                "response": {
+                    "raw_response": (
+                        "# Revised: Decision Clarity Infrastructure\n\n"
+                        "## Primary Focus\n"
+                        "Build operator-facing guidance for no actionable diff outputs.\n\n"
+                        "- Confidence: 0.45\n"
+                        "- Evidence gap: No verification operators lack this layer.\n\n"
+                        "## Next Step\n"
+                        "Survey operator workflows."
+                    )
+                },
+                "trace_path": "trace:execution",
+            }
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
+            return_value=(runtime_root, "configured"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
+            return_value=config_path,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_build_advisory",
+            return_value=fake_build_advisory,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_execute_with_research",
+            return_value=fake_execute_with_research,
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-clean-telegram",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-1",
+                channel_kind="telegram",
+                user_message="What should we focus on next?",
+            )
+
+        self.assertEqual(result.routing_decision, "provider_execution")
+        self.assertIn("Build operator-facing guidance", result.reply_text)
+        self.assertIn("Survey operator workflows.", result.reply_text)
+        self.assertNotIn("Confidence:", result.reply_text)
+        self.assertNotIn("Evidence gap:", result.reply_text)
+        self.assertNotIn("Primary Focus", result.reply_text)
+
     def test_build_researcher_reply_uses_direct_provider_chat_fallback_for_under_supported_conversation(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         connect_exit, _, connect_stderr = self.run_cli(

@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from spark_intelligence.swarm_bridge.sync import _normalize_runtime_source, evaluate_swarm_escalation
+import json
+
+from spark_intelligence.swarm_bridge.sync import (
+    SwarmSyncResult,
+    _normalize_runtime_source,
+    _record_swarm_failure_state,
+    evaluate_swarm_escalation,
+)
 
 from tests.test_support import SparkTestCase
 
@@ -75,3 +82,29 @@ class SwarmSyncTests(SparkTestCase):
         self.assertTrue(result.escalate)
         self.assertEqual(result.mode, "manual_recommended")
         self.assertIn("long_task", result.triggers)
+
+    def test_record_swarm_failure_state_persists_http_error_response_body(self) -> None:
+        _record_swarm_failure_state(
+            self.state_db,
+            kind="sync",
+            result=SwarmSyncResult(
+                ok=False,
+                mode="http_error",
+                message="Swarm API rejected the sync with HTTP 401.",
+                payload_path="payload.json",
+                api_url="https://sparkswarm.ai",
+                workspace_id="ws_123",
+                accepted=False,
+                response_body={"error": "authentication_required"},
+            ),
+        )
+
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = 'swarm:last_failure' LIMIT 1"
+            ).fetchone()
+
+        self.assertIsNotNone(row)
+        payload = json.loads(str(row["value"]))
+        self.assertEqual(payload["mode"], "http_error")
+        self.assertEqual(payload["response_body"]["error"], "authentication_required")

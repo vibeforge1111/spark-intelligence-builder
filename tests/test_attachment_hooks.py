@@ -217,6 +217,6 @@ class AttachmentHookTests(SparkTestCase):
             )
 
         self.assertEqual(result.reply_text, "Tighten the user pain wedge first.")
-        self.assertIn("[Active chip evaluate]", str(captured["user_prompt"]))
+        self.assertIn("[Active chip guidance]", str(captured["user_prompt"]))
         self.assertIn("chip_key=startup-yc", str(captured["user_prompt"]))
         self.assertIn("Startup YC doctrine: focus on the narrowest urgent founder pain first.", str(captured["user_prompt"]))

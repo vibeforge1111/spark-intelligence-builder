@@ -73,6 +73,12 @@ Shipped today:
 - MiniMax support path corrected and aligned
   - supported path is now `MiniMax-M2.7`
   - canonical live home updated to match
+- Telegram runtime-quality hardening
+  - active-chip doctrine is now passed to provider chat as hidden background guidance instead of raw memo scaffolding
+  - Telegram reply cleanup now strips common internal memo headings plus `Confidence` / `Evidence gap` residue before delivery
+- Swarm phase/operator surfacing hardening
+  - `connect status` now treats hosted Swarm auth rejection as a real phase C blocker instead of counting any token-shaped value as effectively ready
+  - `connect route-policy` and `swarm status` now surface the latest auth rejection/failure mode directly
 
 ## 4. What Is Proven
 
@@ -96,35 +102,41 @@ Connection phases right now:
 
 - phase A: ready
 - phase B: ready
-- phase C: ready on the builder side
-- phase D: still current
+- phase C: locally configured but currently blocked on hosted auth acceptance
+- phase D: locally hardened again
 - phase E: materially real
 
 Interpretation:
 
 - phase A is real because Telegram + provider + Researcher are working together on the canonical home
 - phase B is real because specialization is active in live runtime state
-- phase C is locally ready because Swarm auth/config is present and `swarm status` is healthy
-- phase D is still current because routing quality and escalation behavior still need refinement
+- phase C is not complete because the hosted Swarm side is still rejecting the current live session/token path even though local payload/config wiring is present
+- phase D is more mature now because routing visibility, route tuning, and Telegram delivery cleanup are all in place, but escalation behavior still needs refinement
 - phase E is materially real because there is now one supported bootstrap path and one supported always-on wrapper path
 
 ## 6. Main Remaining Blockers
 
-### 6.1 Upstream Swarm Sync
+### 6.1 Upstream Swarm Sync / Auth Acceptance
 
-The main non-local blocker is still the hosted Spark Swarm sync endpoint.
+The main non-local blocker is still the hosted Spark Swarm side.
 
 Current state:
 
-- local Swarm auth/config is present
+- local Swarm payload/config wiring is present
 - local Swarm readiness is good
-- real `swarm sync` still returns hosted API `500`
+- real `swarm sync` currently returns hosted API `401 authentication_required`
+- live `connect status` now correctly keeps phase C as the current blocker instead of marking it ready
+- live `connect route-policy` now reports `swarm api auth: auth_rejected`
 
-Known request id:
+Latest request id:
 
-- `88c83e64-395d-4f87-857f-73aebe282ece`
+- `51362320-7457-49b8-b8aa-5bcb4d8cc594`
 
-This is now an upstream/server-side issue, not a local Spark Intelligence auth/config issue.
+Interpretation:
+
+- the builder now knows how to surface this as a phase C auth/session blocker
+- the remaining fix is on the hosted Swarm/session side, not in the local Telegram/productization path
+- the earlier `500 collective_sync_failed` investigation should now be treated as stale until reproduced again after hosted auth/session health is restored
 
 ### 6.2 Runtime Quality
 
@@ -134,6 +146,11 @@ The Telegram path is working, but the next important quality step is not infrast
 - when to use direct conversational fallback
 - when to recommend Swarm
 - how specialized replies should feel for operator/startup use instead of sounding like internal memos
+
+One useful local cleanup already landed at end of day:
+
+- active-chip memo scaffolding is no longer passed through as raw template text to Telegram replies
+- common internal memo labels are now stripped before Telegram delivery
 
 ### 6.3 Reproducibility Polish
 
@@ -149,7 +166,7 @@ There are two strong next options.
 
 ### Option A: Swarm Backend Debugging
 
-Use tomorrow to inspect why hosted `swarm sync` is failing with `collective_sync_failed`.
+Use tomorrow to inspect why hosted `swarm sync` is currently failing with `authentication_required`.
 
 Best if the goal is to unblock:
 
@@ -181,7 +198,7 @@ Recommended order:
    - Swarm backend day
    - Telegram runtime-quality day
 3. If Swarm:
-   - start from the hosted `500` request id
+   - start from the hosted `401 authentication_required` request id
 4. If Telegram quality:
    - inspect live traces
    - tighten route policy defaults
@@ -189,13 +206,13 @@ Recommended order:
 
 ## 9. Repo State
 
-Latest pushed commit at handoff:
+Latest pushed commit before this handoff note was extended:
 
 - `60a5910` `fix: fall back to windows startup folder autostart`
 
 Current test status at handoff:
 
-- `162` tests passing
+- full suite is green: `166` tests passing
 
 Verification command:
 
