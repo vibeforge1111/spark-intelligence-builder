@@ -262,3 +262,36 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(row["status"], "paused")
         self.assertEqual(row["auth_ref"], "TELEGRAM_BOT_TOKEN")
         self.assertIn("Configured channel 'telegram' with pairing mode 'allowlist' status 'paused'.", stdout)
+
+    def test_channel_add_preserves_existing_allowlist_on_token_rotation(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"], bot_token="old-token")
+
+        with patch(
+            "spark_intelligence.cli.inspect_telegram_bot_token",
+            return_value=TelegramBotProfile(
+                bot_id="42",
+                username="sparkbot",
+                first_name="Spark Bot",
+                can_join_groups=True,
+                can_read_all_group_messages=False,
+                supports_inline_queries=False,
+            ),
+        ):
+            exit_code, stdout, stderr = self.run_cli(
+                "channel",
+                "add",
+                "telegram",
+                "--home",
+                str(self.home),
+                "--bot-token",
+                "new-token",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        config_manager = ConfigManager.from_home(str(self.home))
+        record = config_manager.get_path("channels.records.telegram")
+        self.assertEqual(record["pairing_mode"], "allowlist")
+        self.assertEqual(record["allowed_users"], ["111"])
+        self.assertEqual(record["status"], "enabled")
+        self.assertEqual(config_manager.read_env_map()["TELEGRAM_BOT_TOKEN"], "new-token")
+        self.assertIn("Configured channel 'telegram' with pairing mode 'allowlist' status 'enabled'.", stdout)

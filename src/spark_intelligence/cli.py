@@ -273,7 +273,7 @@ def build_parser() -> argparse.ArgumentParser:
     channel_add_parser.add_argument(
         "--pairing-mode",
         choices=["allowlist", "pairing"],
-        default="pairing",
+        default=None,
         help="Inbound DM authorization mode",
     )
     channel_add_parser.add_argument(
@@ -861,6 +861,11 @@ def handle_channel_add(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
+    existing_record = config_manager.get_path(f"channels.records.{args.channel_kind}", default={}) or {}
+    existing_allowed_users = existing_record.get("allowed_users") if isinstance(existing_record, dict) else []
+    existing_pairing_mode = existing_record.get("pairing_mode") if isinstance(existing_record, dict) else None
+    effective_allowed_users = args.allowed_user or (existing_allowed_users if isinstance(existing_allowed_users, list) else [])
+    effective_pairing_mode = args.pairing_mode or (str(existing_pairing_mode) if existing_pairing_mode else "pairing")
     metadata: dict[str, object] | None = None
     validation_note: str | None = None
     if args.channel_kind == "telegram" and args.bot_token and not args.skip_validate:
@@ -871,8 +876,8 @@ def handle_channel_add(args: argparse.Namespace) -> int:
             print("", file=sys.stderr)
             print(
                 render_telegram_botfather_guide(
-                    allowed_users=args.allowed_user,
-                    pairing_mode=args.pairing_mode,
+                    allowed_users=effective_allowed_users,
+                    pairing_mode=effective_pairing_mode,
                 ),
                 file=sys.stderr,
             )
@@ -887,8 +892,8 @@ def handle_channel_add(args: argparse.Namespace) -> int:
         state_db=state_db,
         channel_kind=args.channel_kind,
         bot_token=args.bot_token,
-        allowed_users=args.allowed_user,
-        pairing_mode=args.pairing_mode,
+        allowed_users=effective_allowed_users,
+        pairing_mode=effective_pairing_mode,
         metadata=metadata,
     )
     if validation_note:
