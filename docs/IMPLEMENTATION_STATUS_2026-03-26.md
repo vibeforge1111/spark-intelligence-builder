@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-This note records what is already real in the repo, what shipped today, and what the team should start with tomorrow.
+This note records what is already real in the repo, what shipped on 2026-03-26, and what the team should do next.
 
 ## 2. Current Build State
 
@@ -36,12 +36,17 @@ Shipped today:
 - `operator revoke-latest <channel>` for fast deny flow on pending or held requests
 - exact `channel:user` targets in `operator history` for fast-path pairing actions
 - filtered `operator history` by action, target kind, and substring match
+- a repeatable `tests/` suite for CLI smoke, operator flows, observability, and Telegram failure paths
+- fail-closed Telegram startup on auth and poll errors
+- owner-only `.env` permission hardening with doctor visibility
+- token rotation paths that preserve existing Telegram status, pairing mode, allowlists, and auth linkage by default
+- safe separation between configured allowlists and operator-approved pairings so narrowing `allowed_users` actually removes stale config-driven access
 
 The practical result is that Telegram onboarding and moderation are now much easier to operate locally without adding any heavy dashboard or background subsystem.
 
 ## 4. What Is Stable Enough
 
-These areas are stable enough to keep and build on:
+These areas are now stable enough to keep and build on:
 
 - federated repo boundaries
 - Telegram-first runtime shape
@@ -51,51 +56,34 @@ These areas are stable enough to keep and build on:
 
 ## 5. Main Remaining Risk
 
-The biggest risk is no longer missing architecture.
+The biggest risk is no longer missing architecture or a total lack of tests.
 
-The biggest risk is regression drift because the repo still relies mostly on manual and one-off scenario verification.
+The biggest risk is config and operator-path drift as the repo expands into more adapters and more recovery flows.
 
 Right now we have:
 
-- manual CLI verification
-- ad hoc fake-client checks
-- skill validation and scenario packs
-
-But we do not yet have:
-
 - a real `tests/` directory
 - repeatable regression coverage for Telegram pairing/operator flows
-- a single smoke harness for the current vertical slice
+- CLI smoke coverage for the current vertical slice
+- failure-path coverage for Telegram auth, polling, duplicates, and rate limits
+- live Telegram validation against a real BotFather bot
 
-## 6. Tomorrow Start Exactly
+The remaining risk is that more adapters or more config mutation paths could reintroduce silent authorization drift if they are not held to the same standard.
 
-Tomorrow should start with stabilization, not new feature breadth.
+## 6. Next Start Exactly
+
+The next slice should stay focused on stabilization and operator clarity, not new feature breadth.
 
 Start here in this exact order:
 
-1. Create a lightweight `tests/` suite for the current vertical slice.
-2. Cover Telegram pairing/operator flows first:
-   - pending pairing
-   - hold latest
-   - approve latest
-   - revoke latest
-   - explicit denied replies
-   - operator history exact target logging
-3. Add regression coverage for gateway/operator observability:
-   - filtered `gateway traces`
-   - filtered `gateway outbound`
-   - filtered `operator review-pairings`
-   - filtered `operator history`
-4. Add bridge/runtime failure-path tests:
-   - Telegram auth failure
-   - poll failure persistence
-   - duplicate update suppression
-   - rate limiting
-5. Only after that, tighten doctor output or start the next runtime-hardening pass.
+1. Keep operator and channel config mutation paths regression-safe as more adapters land.
+2. Tighten docs and runbooks so allowlists, pairings, token rotation, and recovery are described exactly as shipped.
+3. Add any remaining `doctor`, `status`, or audit polish only where it materially improves live operations.
+4. Only after that, start the next adapter or broader runtime-hardening pass.
 
-## 7. Tomorrow Non-Goals
+## 7. Current Non-Goals
 
-Do not start these tomorrow:
+Do not start these next:
 
 - live Discord runtime
 - live WhatsApp runtime
@@ -103,11 +91,11 @@ Do not start these tomorrow:
 - new memory logic in this repo
 - copied Spark Researcher or Spark Swarm internals
 
-## 8. Tomorrow Definition Of Done
+## 8. Next Definition Of Done
 
-Tomorrow is successful if all of this is true:
+The next slice is successful if all of this is true:
 
-- the current Telegram/operator slice has repeatable regression coverage
-- the most important local audit and trace surfaces are covered by tests
-- the vertical slice is harder to break by accident
-- the implementation path becomes test-first stabilization before expansion
+- the Telegram/operator slice stays regression-safe under config mutation and token rotation
+- the docs match the shipped operator behavior closely enough for reuse without guesswork
+- any remaining live-ops polish improves recovery and audit clarity instead of adding surface area
+- expansion to another adapter happens only after the current slice stays stable

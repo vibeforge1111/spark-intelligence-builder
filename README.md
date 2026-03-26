@@ -110,6 +110,9 @@ spark-intelligence channel test telegram
 
 `channel telegram-onboard` prints the BotFather steps when no token is provided, and validates the token before storing it when a token is provided. `channel add telegram` stays scriptable, but now validates the token by default unless `--skip-validate` is explicitly used.
 `channel test telegram` rechecks the stored token, refreshes Telegram auth health, and shows the configured bot identity and pairing posture without starting the gateway.
+Configured `--allowed-user` entries are explicit allowlist access, not implicit operator-approved pairings. Allowlisted users can DM immediately, but they do not appear in pairing review unless the operator explicitly approves them.
+Re-running `channel telegram-onboard` or `channel add telegram` now preserves existing status, pairing mode, and bot auth linkage by default, so token rotation does not silently widen access or re-enable a paused channel.
+Narrowing the configured allowlist also removes stale config-driven access on later messages instead of leaving old users authorized in local state.
 
 The practical live-ops flow for Telegram onboarding, pairing approval, token rotation, and recovery is documented in [docs/TELEGRAM_OPERATOR_RUNBOOK_2026-03-26.md](./docs/TELEGRAM_OPERATOR_RUNBOOK_2026-03-26.md).
 
@@ -228,6 +231,7 @@ The current build already includes:
 - Spark Swarm sync and evaluation bridge
 - attachment snapshot support for chips and specialization paths
 - operator pairing, audit, and review controls
+- a repeatable `tests/` suite for CLI smoke, operator flows, observability, and Telegram failure paths
 
 Today’s implementation summary is recorded in [docs/IMPLEMENTATION_STATUS_2026-03-26.md](./docs/IMPLEMENTATION_STATUS_2026-03-26.md).
 
@@ -235,13 +239,13 @@ Today’s execution order is recorded in [docs/IMPLEMENTATION_WORKPLAN_2026-03-2
 
 ## Current Start
 
-Current work should start with stabilization, not more channel breadth.
+Current work should continue with hardening and operational polish, not more channel breadth.
 
 The exact first move is:
 
-1. create a lightweight `tests/` suite
-2. lock down Telegram pairing and operator-control regressions
-3. lock down filtered trace/outbound/history surfaces
-4. add failure-path tests for Telegram auth, polling, duplicates, and rate limits
+1. keep operator and channel config mutations regression-safe
+2. tighten docs and runbooks around real Telegram onboarding, allowlist semantics, and recovery
+3. add any remaining `doctor` or `status` polish only where it improves live ops directly
+4. expand to another adapter only after the Telegram/operator slice stays stable
 
 Do not start with live Discord or WhatsApp runtime work before that.

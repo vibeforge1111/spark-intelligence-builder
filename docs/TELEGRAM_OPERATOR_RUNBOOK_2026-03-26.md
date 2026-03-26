@@ -43,6 +43,7 @@ Expected result:
 - the token is validated live
 - Telegram channel config is written locally
 - `TELEGRAM_BOT_TOKEN` is stored in the Spark Intelligence `.env`
+- existing channel status, pairing mode, and auth linkage are preserved on reruns unless you explicitly change them
 
 Optional verification:
 
@@ -101,7 +102,22 @@ Expected result:
 - one `telegram_bridge_outbound` audit row
 - first successful reply includes the one-time pairing-approved welcome
 
-## 5. Token Rotation
+## 5. Allowlist-Only Access
+
+If you want explicit access without creating a pending pairing queue, configure Telegram in allowlist mode:
+
+```bash
+spark-intelligence channel telegram-onboard --bot-token <token> --pairing-mode allowlist --allowed-user <telegram_user_id>
+```
+
+Expected result:
+
+- the listed Telegram user can DM immediately
+- the user does not appear in `operator review-pairings` unless the operator later approves an explicit pairing
+- rerunning the command with a narrower `--allowed-user` set removes stale config-driven access on later messages
+- rerunning the command without `--pairing-mode` or `--allowed-user` preserves the current posture instead of silently widening access
+
+## 6. Token Rotation
 
 When rotating the Telegram bot token:
 
@@ -126,8 +142,9 @@ Expected result:
 - `doctor` reports `telegram-runtime` as healthy
 - `doctor` also reports `.env-permissions` as healthy
 - `gateway start --once` authenticates the bot cleanly
+- the existing Telegram status and pairing posture remain unchanged unless you explicitly change them
 
-## 6. Fast Recovery Checks
+## 7. Fast Recovery Checks
 
 If Telegram stops working, run these in order:
 
@@ -154,7 +171,7 @@ Interpretation:
 - `gateway outbound`:
   - shows what replies were attempted and whether delivery succeeded
 
-## 7. Common Recovery Commands
+## 8. Common Recovery Commands
 
 Pause Telegram ingress without deleting config:
 
@@ -180,15 +197,16 @@ Revoke the latest pending or held request:
 spark-intelligence operator revoke-latest telegram --reason "denied"
 ```
 
-## 8. Security Rules
+## 9. Security Rules
 
 - do not commit the Telegram token
 - keep the token only in the local Spark Intelligence `.env`
 - rotate the token after accidental exposure
 - keep Telegram in DM-first mode unless group behavior is intentionally designed later
 - use operator commands for pairing decisions; do not treat normal chat access as control-plane authority
+- treat configured allowlists and operator-approved pairings as different tools: allowlists are for explicit static access, pairings are for operator-reviewed DM identity approval
 
-## 9. Proven Live Path
+## 10. Proven Live Path
 
 The following path was validated live on 2026-03-26:
 
