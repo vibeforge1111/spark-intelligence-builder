@@ -22,7 +22,7 @@ from spark_intelligence.adapters.whatsapp.runtime import build_whatsapp_runtime_
 from spark_intelligence.auth.providers import get_provider_spec
 from spark_intelligence.auth.runtime import build_auth_status_report
 from spark_intelligence.config.loader import ConfigManager
-from spark_intelligence.doctor.checks import run_doctor
+from spark_intelligence.doctor.checks import provider_execution_health, run_doctor
 from spark_intelligence.gateway.tracing import append_gateway_trace, outbound_log_path, read_gateway_traces, read_outbound_audit, trace_log_path
 from spark_intelligence.jobs.service import oauth_maintenance_health_from_report
 from spark_intelligence.researcher_bridge import researcher_bridge_status
@@ -35,6 +35,8 @@ class GatewayStatus:
     configured_channels: list[str]
     configured_providers: list[str]
     doctor_ok: bool
+    provider_execution_ok: bool
+    provider_execution_detail: str
     oauth_maintenance_ok: bool
     oauth_maintenance_detail: str
     provider_lines: list[str]
@@ -47,6 +49,8 @@ class GatewayStatus:
                 "configured_channels": self.configured_channels,
                 "configured_providers": self.configured_providers,
                 "doctor_ok": self.doctor_ok,
+                "provider_execution_ok": self.provider_execution_ok,
+                "provider_execution_detail": self.provider_execution_detail,
                 "oauth_maintenance_ok": self.oauth_maintenance_ok,
                 "oauth_maintenance_detail": self.oauth_maintenance_detail,
                 "provider_lines": self.provider_lines,
@@ -60,6 +64,9 @@ class GatewayStatus:
         lines.append(f"- providers: {', '.join(self.configured_providers) if self.configured_providers else 'none'}")
         lines.append(f"- channels: {', '.join(self.configured_channels) if self.configured_channels else 'none'}")
         lines.append(f"- doctor: {'ok' if self.doctor_ok else 'degraded'}")
+        lines.append(
+            f"- provider-execution: {'ok' if self.provider_execution_ok else 'degraded'} {self.provider_execution_detail}"
+        )
         lines.append(
             f"- oauth-maintenance: {'ok' if self.oauth_maintenance_ok else 'degraded'} {self.oauth_maintenance_detail}"
         )
@@ -92,6 +99,11 @@ def gateway_status(config_manager: ConfigManager, state_db: StateDB) -> GatewayS
         state_db=state_db,
         auth_report=auth_report,
     )
+    provider_execution_ok, provider_execution_detail = provider_execution_health(
+        config_manager=config_manager,
+        state_db=state_db,
+        auth_report=auth_report,
+    )
     doctor_report = run_doctor(config_manager, state_db)
     researcher = researcher_bridge_status(config_manager=config_manager, state_db=state_db)
     telegram_summary = build_telegram_runtime_summary(config_manager, state_db)
@@ -103,6 +115,8 @@ def gateway_status(config_manager: ConfigManager, state_db: StateDB) -> GatewayS
         configured_channels=channel_records,
         configured_providers=configured_providers,
         doctor_ok=doctor_report.ok,
+        provider_execution_ok=provider_execution_ok,
+        provider_execution_detail=provider_execution_detail,
         oauth_maintenance_ok=oauth_maintenance_ok,
         oauth_maintenance_detail=oauth_maintenance_detail,
         provider_lines=[
@@ -141,6 +155,9 @@ def gateway_start(
         lines.append("Discord adapter is configured, but a foreground runtime is not implemented yet.")
     if whatsapp_record:
         lines.append("WhatsApp adapter is configured, but a foreground runtime is not implemented yet.")
+    if status.configured_providers and not status.provider_execution_ok:
+        lines.append("Provider execution readiness is degraded. Gateway did not start polling.")
+        return GatewayStartReport(ok=False, text="\n".join(lines))
     if not telegram_record:
         lines.append("No Telegram adapter configured. Gateway is idle.")
         return GatewayStartReport(ok=True, text="\n".join(lines))

@@ -98,6 +98,11 @@ class SystemStatus:
             f"- channels: {', '.join(self.payload['gateway']['configured_channels']) if self.payload['gateway']['configured_channels'] else 'none'}"
         )
         lines.append(
+            f"- provider execution: {'ok' if self.payload['gateway'].get('provider_execution_ok') else 'degraded'}"
+        )
+        if self.payload['gateway'].get('provider_execution_detail'):
+            lines.append(f"- provider execution detail: {self.payload['gateway']['provider_execution_detail']}")
+        lines.append(
             f"- oauth maintenance: {'ok' if self.payload['gateway'].get('oauth_maintenance_ok') else 'degraded'}"
         )
         if self.payload['gateway'].get('oauth_maintenance_detail'):

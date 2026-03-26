@@ -153,6 +153,7 @@ class CliSmokeTests(SparkTestCase):
         self.assertIn("Gateway ready: no", stdout)
         self.assertIn("- channels: telegram", stdout)
         self.assertIn("- providers: openai", stdout)
+        self.assertIn("- provider-execution: ok openai:direct_http", stdout)
         self.assertIn("- oauth-maintenance: ok no oauth providers configured", stdout)
         self.assertIn(
             "- provider=openai method=api_key_env status=pending_secret transport=direct_http exec_ready=yes dependency=direct_http",
@@ -189,6 +190,8 @@ class CliSmokeTests(SparkTestCase):
         self.assertIn("gateway", payload)
         self.assertTrue(payload["gateway"]["oauth_maintenance_ok"])
         self.assertEqual(payload["gateway"]["oauth_maintenance_detail"], "no oauth providers configured")
+        self.assertTrue(payload["gateway"]["provider_execution_ok"])
+        self.assertEqual(payload["gateway"]["provider_execution_detail"], "anthropic:direct_http")
         self.assertIn(
             "provider=anthropic method=api_key_env status=active transport=direct_http exec_ready=yes dependency=direct_http",
             payload["gateway"]["provider_lines"],
@@ -238,11 +241,60 @@ class CliSmokeTests(SparkTestCase):
         )
 
         self.assertEqual(exit_code, 1, stderr)
+        self.assertIn("- provider-execution: degraded openai-codex:external_cli_wrapper:researcher_disabled", stdout)
         self.assertIn("- oauth-maintenance: degraded oauth maintenance has never run; expiring_soon=openai-codex", stdout)
         self.assertIn(
             "- provider=openai-codex method=oauth status=expiring_soon transport=external_cli_wrapper exec_ready=no dependency=researcher_disabled",
             stdout,
         )
+
+    def test_gateway_start_fails_closed_when_provider_execution_is_unavailable(self) -> None:
+        self.add_telegram_channel(bot_token="good-token")
+        start_exit, start_stdout, start_stderr = self.run_cli(
+            "auth",
+            "login",
+            "openai-codex",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(start_exit, 0, start_stderr)
+        start_payload = json.loads(start_stdout)
+        callback_url = (
+            "http://127.0.0.1:1455/auth/callback"
+            f"?state={start_payload['callback_state']}&code=test-oauth-code"
+        )
+
+        with patch(
+            "spark_intelligence.auth.service.exchange_oauth_authorization_code",
+            return_value={
+                "access_token": "oauth-access-token",
+                "refresh_token": "oauth-refresh-token",
+                "expires_in": 3600,
+            },
+        ):
+            complete_exit, _, complete_stderr = self.run_cli(
+                "auth",
+                "login",
+                "openai-codex",
+                "--home",
+                str(self.home),
+                "--callback-url",
+                callback_url,
+            )
+        self.assertEqual(complete_exit, 0, complete_stderr)
+
+        exit_code, stdout, stderr = self.run_cli(
+            "gateway",
+            "start",
+            "--home",
+            str(self.home),
+            "--once",
+        )
+
+        self.assertEqual(exit_code, 1, stderr)
+        self.assertIn("Provider execution readiness is degraded. Gateway did not start polling.", stdout)
+        self.assertNotIn("Telegram bot authenticated:", stdout)
 
     def test_doctor_degrades_when_codex_wrapper_transport_lacks_researcher_bridge(self) -> None:
         start_exit, start_stdout, start_stderr = self.run_cli(

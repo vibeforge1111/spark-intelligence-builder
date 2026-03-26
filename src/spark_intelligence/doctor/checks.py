@@ -103,7 +103,7 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
         state_db=state_db,
     )
     checks.append(DoctorCheck("oauth-maintenance", oauth_maintenance_ok, oauth_maintenance_detail))
-    provider_execution_ok, provider_execution_detail = _provider_execution_health(
+    provider_execution_ok, provider_execution_detail = provider_execution_health(
         config_manager=config_manager,
         state_db=state_db,
         auth_report=auth_report,
@@ -245,7 +245,7 @@ def _telegram_runtime_check(*, config_manager: ConfigManager, state_db: StateDB)
     return DoctorCheck("telegram-runtime", True, " ".join(detail_parts))
 
 
-def _provider_execution_health(
+def provider_execution_health(
     *,
     config_manager: ConfigManager,
     state_db: StateDB,
