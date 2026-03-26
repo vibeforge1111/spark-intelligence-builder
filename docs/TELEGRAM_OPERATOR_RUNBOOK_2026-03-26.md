@@ -117,6 +117,20 @@ Expected result:
 - rerunning the command with a narrower `--allowed-user` set removes stale config-driven access on later messages
 - rerunning the command without `--pairing-mode` or `--allowed-user` preserves the current posture instead of silently widening access
 
+If you want to intentionally clear the configured allowlist without changing the rest of the Telegram posture, run:
+
+```bash
+spark-intelligence channel telegram-onboard --bot-token <token> --clear-allowed-users
+```
+
+For generic scripted updates, the equivalent is:
+
+```bash
+spark-intelligence channel add telegram --clear-allowed-users
+```
+
+Do not combine `--clear-allowed-users` with `--allowed-user` in the same command.
+
 ## 6. Token Rotation
 
 When rotating the Telegram bot token:

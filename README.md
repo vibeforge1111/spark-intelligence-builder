@@ -113,6 +113,7 @@ spark-intelligence channel test telegram
 Configured `--allowed-user` entries are explicit allowlist access, not implicit operator-approved pairings. Allowlisted users can DM immediately, but they do not appear in pairing review unless the operator explicitly approves them.
 Re-running `channel telegram-onboard` or `channel add telegram` now preserves existing status, pairing mode, and bot auth linkage by default, so token rotation does not silently widen access or re-enable a paused channel.
 Narrowing the configured allowlist also removes stale config-driven access on later messages instead of leaving old users authorized in local state.
+If you need to intentionally clear all configured allowlist entries while preserving the rest of the channel posture, use `--clear-allowed-users`.
 
 The practical live-ops flow for Telegram onboarding, pairing approval, token rotation, and recovery is documented in [docs/TELEGRAM_OPERATOR_RUNBOOK_2026-03-26.md](./docs/TELEGRAM_OPERATOR_RUNBOOK_2026-03-26.md).
 
