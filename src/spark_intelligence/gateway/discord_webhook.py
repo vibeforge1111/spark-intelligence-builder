@@ -142,6 +142,11 @@ def _validate_discord_webhook_auth(
             timestamp=_header_value(headers, "X-Signature-Timestamp"),
             body=body,
         )
+    if not bool(record.get("allow_legacy_message_webhook")):
+        return (
+            503,
+            "Discord legacy message webhook is disabled. Configure an interaction public key or enable legacy compatibility.",
+        )
     secret_ref = record.get("webhook_auth_ref")
     if not secret_ref:
         return (503, "Discord webhook auth secret is not configured.")

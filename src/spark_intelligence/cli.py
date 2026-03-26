@@ -303,6 +303,16 @@ def build_parser() -> argparse.ArgumentParser:
     channel_add_parser.add_argument("--webhook-secret", help="Static webhook secret for adapter HTTP ingress")
     channel_add_parser.add_argument("--webhook-secret-env", help="Env var name used to store the webhook secret")
     channel_add_parser.add_argument("--interaction-public-key", help="Discord interactions public key for signed HTTP ingress")
+    channel_add_parser.add_argument(
+        "--allow-legacy-message-webhook",
+        action="store_true",
+        help="Enable the legacy Discord message-shaped webhook compatibility path.",
+    )
+    channel_add_parser.add_argument(
+        "--disable-legacy-message-webhook",
+        action="store_true",
+        help="Disable the legacy Discord message-shaped webhook compatibility path and clear its auth ref.",
+    )
     channel_add_parser.add_argument("--allowed-user", action="append", default=[], help="Allowed adapter user id")
     channel_add_parser.add_argument(
         "--clear-allowed-users",
@@ -959,9 +969,16 @@ def handle_channel_add(args: argparse.Namespace) -> int:
     if args.clear_allowed_users and args.allowed_user:
         print("Cannot combine --clear-allowed-users with --allowed-user.", file=sys.stderr)
         return 2
+    if args.allow_legacy_message_webhook and args.disable_legacy_message_webhook:
+        print(
+            "Cannot combine --allow-legacy-message-webhook with --disable-legacy-message-webhook.",
+            file=sys.stderr,
+        )
+        return 2
     existing_record = config_manager.get_path(f"channels.records.{args.channel_kind}", default={}) or {}
     existing_allowed_users = existing_record.get("allowed_users") if isinstance(existing_record, dict) else []
     existing_pairing_mode = existing_record.get("pairing_mode") if isinstance(existing_record, dict) else None
+    existing_legacy_message_webhook = bool(existing_record.get("allow_legacy_message_webhook")) if isinstance(existing_record, dict) else False
     if args.clear_allowed_users:
         effective_allowed_users: list[str] = []
     else:
@@ -969,8 +986,26 @@ def handle_channel_add(args: argparse.Namespace) -> int:
     effective_pairing_mode = args.pairing_mode or (str(existing_pairing_mode) if existing_pairing_mode else "pairing")
     metadata: dict[str, object] | None = None
     validation_note: str | None = None
+    if args.allow_legacy_message_webhook or args.disable_legacy_message_webhook:
+        if args.channel_kind != "discord":
+            print(
+                "--allow-legacy-message-webhook and --disable-legacy-message-webhook are only supported for Discord.",
+                file=sys.stderr,
+            )
+            return 2
+    effective_legacy_message_webhook = existing_legacy_message_webhook
+    if args.allow_legacy_message_webhook:
+        effective_legacy_message_webhook = True
+    if args.disable_legacy_message_webhook:
+        effective_legacy_message_webhook = False
     if args.webhook_secret:
         if args.channel_kind == "discord":
+            if not effective_legacy_message_webhook:
+                print(
+                    "Discord legacy message webhooks require --allow-legacy-message-webhook.",
+                    file=sys.stderr,
+                )
+                return 2
             env_key = args.webhook_secret_env or "DISCORD_WEBHOOK_SECRET"
         elif args.channel_kind == "whatsapp":
             env_key = args.webhook_secret_env or "WHATSAPP_WEBHOOK_SECRET"
@@ -979,6 +1014,15 @@ def handle_channel_add(args: argparse.Namespace) -> int:
             return 2
         config_manager.upsert_env_secret(env_key, args.webhook_secret)
         metadata = {**(metadata or {}), "webhook_auth_ref": env_key}
+    if args.channel_kind == "discord":
+        if args.disable_legacy_message_webhook:
+            metadata = {**(metadata or {}), "webhook_auth_ref": None}
+        if (
+            args.allow_legacy_message_webhook
+            or args.disable_legacy_message_webhook
+            or existing_legacy_message_webhook
+        ):
+            metadata = {**(metadata or {}), "allow_legacy_message_webhook": effective_legacy_message_webhook}
     if args.interaction_public_key:
         if args.channel_kind != "discord":
             print("--interaction-public-key is only supported for Discord.", file=sys.stderr)

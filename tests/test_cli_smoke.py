@@ -683,6 +683,7 @@ class CliSmokeTests(SparkTestCase):
             "discord",
             "--home",
             str(self.home),
+            "--allow-legacy-message-webhook",
             "--webhook-secret",
             "discord-webhook-secret",
         )
@@ -691,8 +692,24 @@ class CliSmokeTests(SparkTestCase):
         config_manager = ConfigManager.from_home(str(self.home))
         record = config_manager.get_path("channels.records.discord")
         self.assertEqual(record["webhook_auth_ref"], "DISCORD_WEBHOOK_SECRET")
+        self.assertTrue(record["allow_legacy_message_webhook"])
         self.assertEqual(config_manager.read_env_map()["DISCORD_WEBHOOK_SECRET"], "discord-webhook-secret")
         self.assertIn("Configured channel 'discord' with pairing mode 'pairing' status 'enabled'.", stdout)
+
+    def test_channel_add_rejects_discord_webhook_secret_without_explicit_legacy_opt_in(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "channel",
+            "add",
+            "discord",
+            "--home",
+            str(self.home),
+            "--webhook-secret",
+            "discord-webhook-secret",
+        )
+
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(stdout, "")
+        self.assertIn("Discord legacy message webhooks require --allow-legacy-message-webhook.", stderr)
 
     def test_channel_add_preserves_existing_discord_webhook_secret_ref(self) -> None:
         setup_exit, _, setup_stderr = self.run_cli(
@@ -701,6 +718,7 @@ class CliSmokeTests(SparkTestCase):
             "discord",
             "--home",
             str(self.home),
+            "--allow-legacy-message-webhook",
             "--webhook-secret",
             "discord-webhook-secret",
             "--allowed-user",
@@ -722,8 +740,38 @@ class CliSmokeTests(SparkTestCase):
         config_manager = ConfigManager.from_home(str(self.home))
         record = config_manager.get_path("channels.records.discord")
         self.assertEqual(record["webhook_auth_ref"], "DISCORD_WEBHOOK_SECRET")
+        self.assertTrue(record["allow_legacy_message_webhook"])
         self.assertEqual(config_manager.read_env_map()["DISCORD_WEBHOOK_SECRET"], "discord-webhook-secret")
         self.assertIn("Configured channel 'discord' with pairing mode 'allowlist' status 'enabled'.", stdout)
+
+    def test_channel_add_can_disable_existing_discord_legacy_message_webhook(self) -> None:
+        setup_exit, _, setup_stderr = self.run_cli(
+            "channel",
+            "add",
+            "discord",
+            "--home",
+            str(self.home),
+            "--allow-legacy-message-webhook",
+            "--webhook-secret",
+            "discord-webhook-secret",
+        )
+        self.assertEqual(setup_exit, 0, setup_stderr)
+
+        exit_code, stdout, stderr = self.run_cli(
+            "channel",
+            "add",
+            "discord",
+            "--home",
+            str(self.home),
+            "--disable-legacy-message-webhook",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        config_manager = ConfigManager.from_home(str(self.home))
+        record = config_manager.get_path("channels.records.discord")
+        self.assertFalse(record["allow_legacy_message_webhook"])
+        self.assertIsNone(record["webhook_auth_ref"])
+        self.assertIn("Configured channel 'discord' with pairing mode 'pairing' status 'enabled'.", stdout)
 
     def test_channel_add_persists_discord_interaction_public_key(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
