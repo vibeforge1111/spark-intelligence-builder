@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from spark_intelligence.adapters.telegram.runtime import read_telegram_runtime_health
+from spark_intelligence.auth.runtime import build_auth_status_report
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.gateway.tracing import read_gateway_traces, read_outbound_audit
 from spark_intelligence.identity.service import LOCAL_OPERATOR_HUMAN_ID
@@ -53,7 +54,8 @@ class OperatorInboxReport:
             f"pending_pairings={counts['pending_pairings']} "
             f"held_pairings={counts['held_pairings']} "
             f"channel_alerts={counts['channel_alerts']} "
-            f"bridge_alerts={counts['bridge_alerts']}"
+            f"bridge_alerts={counts['bridge_alerts']} "
+            f"auth_alerts={counts['auth_alerts']}"
         )
 
         items = self.payload.get("items") or []
@@ -82,6 +84,7 @@ class OperatorSecurityReport:
             "- counts: "
             f"bridge_alerts={counts['bridge_alerts']} "
             f"channel_alerts={counts['channel_alerts']} "
+            f"auth_alerts={counts['auth_alerts']} "
             f"duplicates={counts['duplicate_updates']} "
             f"rate_limited={counts['rate_limited_updates']} "
             f"delivery_failures={counts['delivery_failures']} "
@@ -189,11 +192,13 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
     held_pairings = [row for row in pairing_rows if row.get("status") == "held"]
     channel_alerts = _load_channel_alerts(config_manager=config_manager, state_db=state_db)
     bridge_alerts = _build_bridge_alerts(config_manager=config_manager, state_db=state_db)
+    auth_alerts = _build_auth_alerts(config_manager=config_manager, state_db=state_db)
     items = _build_inbox_items(
         pending_pairings=pending_pairings,
         held_pairings=held_pairings,
         channel_alerts=channel_alerts,
         bridge_alerts=bridge_alerts,
+        auth_alerts=auth_alerts,
     )
 
     payload = {
@@ -202,7 +207,8 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
             "held_pairings": len(held_pairings),
             "channel_alerts": len(channel_alerts),
             "bridge_alerts": len(bridge_alerts),
-            "total": len(pending_pairings) + len(held_pairings) + len(channel_alerts) + len(bridge_alerts),
+            "auth_alerts": len(auth_alerts),
+            "total": len(pending_pairings) + len(held_pairings) + len(channel_alerts) + len(bridge_alerts) + len(auth_alerts),
         },
         "pairings": {
             "pending": pending_pairings,
@@ -210,6 +216,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
         },
         "channels": channel_alerts,
         "bridges": bridge_alerts,
+        "auth": auth_alerts,
         "items": items,
     }
     return OperatorInboxReport(payload=payload)
@@ -223,6 +230,7 @@ def build_operator_security_report(
 ) -> OperatorSecurityReport:
     channel_alerts = _load_channel_alerts(config_manager=config_manager, state_db=state_db)
     bridge_alerts = _build_bridge_alerts(config_manager=config_manager, state_db=state_db)
+    auth_alerts = _build_auth_alerts(config_manager=config_manager, state_db=state_db)
     traces = read_gateway_traces(config_manager, limit=limit)
     outbound = read_outbound_audit(config_manager, limit=limit)
 
@@ -240,6 +248,7 @@ def build_operator_security_report(
     items = _build_security_items(
         bridge_alerts=bridge_alerts,
         channel_alerts=channel_alerts,
+        auth_alerts=auth_alerts,
         duplicate_updates=duplicate_updates,
         rate_limited_updates=rate_limited_updates,
         delivery_failures=delivery_failures,
@@ -250,6 +259,7 @@ def build_operator_security_report(
         "counts": {
             "bridge_alerts": len(bridge_alerts),
             "channel_alerts": len(channel_alerts),
+            "auth_alerts": len(auth_alerts),
             "duplicate_updates": len(duplicate_updates),
             "rate_limited_updates": len(rate_limited_updates),
             "delivery_failures": len(delivery_failures),
@@ -259,6 +269,7 @@ def build_operator_security_report(
         },
         "bridge_alerts": bridge_alerts,
         "channel_alerts": channel_alerts,
+        "auth_alerts": auth_alerts,
         "recent": {
             "duplicates": duplicate_updates,
             "rate_limited": rate_limited_updates,
@@ -438,6 +449,7 @@ def _build_inbox_items(
     held_pairings: list[dict[str, Any]],
     channel_alerts: list[dict[str, Any]],
     bridge_alerts: list[dict[str, Any]],
+    auth_alerts: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
 
@@ -510,6 +522,22 @@ def _build_inbox_items(
             }
         )
 
+    auth_priority = {"critical": "high", "warning": "medium", "info": "info"}
+    auth_sort_order = {"critical": 18, "warning": 28, "info": 42}
+    for row in auth_alerts:
+        severity = str(row["severity"])
+        items.append(
+            {
+                "kind": "auth",
+                "status": str(row["status"]),
+                "priority": auth_priority.get(severity, "medium"),
+                "sort_order": auth_sort_order.get(severity, 45),
+                "item_ref": str(row["provider_id"]),
+                "summary": str(row["summary"]),
+                "recommended_command": str(row["recommended_command"]),
+            }
+        )
+
     items.sort(key=lambda item: (int(item["sort_order"]), str(item["item_ref"])))
     for item in items:
         item.pop("sort_order", None)
@@ -520,6 +548,7 @@ def _build_security_items(
     *,
     bridge_alerts: list[dict[str, Any]],
     channel_alerts: list[dict[str, Any]],
+    auth_alerts: list[dict[str, Any]],
     duplicate_updates: list[dict[str, Any]],
     rate_limited_updates: list[dict[str, Any]],
     delivery_failures: list[dict[str, Any]],
@@ -562,6 +591,17 @@ def _build_security_items(
                 "sort_order": severity_order.get("medium" if status in {"paused", "poll_failure"} else "high", 60),
                 "summary": summary,
                 "recommended_command": str(row.get("recommended_command") or f"spark-intelligence operator set-channel {channel_id} enabled"),
+            }
+        )
+
+    for row in auth_alerts:
+        severity = str(row["severity"])
+        items.append(
+            {
+                "priority": "high" if severity == "critical" else ("medium" if severity == "warning" else "info"),
+                "sort_order": severity_order.get("high" if severity == "critical" else ("medium" if severity == "warning" else "info"), 60),
+                "summary": str(row["summary"]),
+                "recommended_command": str(row["recommended_command"]),
             }
         )
 
@@ -622,3 +662,92 @@ def _build_security_items(
     for item in items:
         item.pop("sort_order", None)
     return items
+
+
+def _build_auth_alerts(*, config_manager: ConfigManager, state_db: StateDB) -> list[dict[str, Any]]:
+    auth_report = build_auth_status_report(config_manager=config_manager, state_db=state_db)
+    alerts: list[dict[str, Any]] = []
+
+    for provider in auth_report.providers:
+        if provider.status == "active" and provider.secret_present and not provider.last_refresh_error:
+            continue
+
+        if provider.auth_method == "oauth":
+            if provider.status == "expired":
+                summary = (
+                    f"Provider {provider.provider_id} OAuth access token is expired. "
+                    "Try a refresh first; if that fails, re-run OAuth login."
+                )
+                if provider.last_refresh_error:
+                    summary += f" Last refresh error: {provider.last_refresh_error}."
+                alerts.append(
+                    {
+                        "provider_id": provider.provider_id,
+                        "status": "expired",
+                        "severity": "critical",
+                        "summary": summary,
+                        "recommended_command": f"spark-intelligence auth refresh {provider.provider_id}",
+                    }
+                )
+                continue
+
+            if provider.status == "refresh_error":
+                summary = f"Provider {provider.provider_id} recorded an OAuth refresh failure."
+                if provider.last_refresh_error:
+                    summary += f" Last refresh error: {provider.last_refresh_error}."
+                alerts.append(
+                    {
+                        "provider_id": provider.provider_id,
+                        "status": "refresh_error",
+                        "severity": "warning",
+                        "summary": summary,
+                        "recommended_command": f"spark-intelligence auth refresh {provider.provider_id}",
+                    }
+                )
+                continue
+
+            if provider.status in {"revoked", "pending_oauth"} or not provider.secret_present:
+                summary = (
+                    f"Provider {provider.provider_id} needs OAuth login before runtime use."
+                    if provider.status != "revoked"
+                    else f"Provider {provider.provider_id} OAuth credentials were revoked and must be reconnected."
+                )
+                alerts.append(
+                    {
+                        "provider_id": provider.provider_id,
+                        "status": provider.status,
+                        "severity": "critical" if provider.status == "revoked" else "warning",
+                        "summary": summary,
+                        "recommended_command": f"spark-intelligence auth login {provider.provider_id} --listen",
+                    }
+                )
+                continue
+
+            if provider.last_refresh_error:
+                alerts.append(
+                    {
+                        "provider_id": provider.provider_id,
+                        "status": "refresh_error",
+                        "severity": "warning",
+                        "summary": (
+                            f"Provider {provider.provider_id} is still usable but the last OAuth refresh failed. "
+                            f"Last refresh error: {provider.last_refresh_error}."
+                        ),
+                        "recommended_command": f"spark-intelligence auth refresh {provider.provider_id}",
+                    }
+                )
+                continue
+
+        elif not provider.secret_present:
+            ref_id = provider.secret_ref.ref_id if provider.secret_ref else "missing"
+            alerts.append(
+                {
+                    "provider_id": provider.provider_id,
+                    "status": provider.status,
+                    "severity": "warning",
+                    "summary": f"Provider {provider.provider_id} is missing its configured secret ref {ref_id}.",
+                    "recommended_command": f"spark-intelligence auth connect {provider.provider_id} --api-key <key>",
+                }
+            )
+
+    return alerts

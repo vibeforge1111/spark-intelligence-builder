@@ -584,6 +584,22 @@ class AuthProfileTests(SparkTestCase):
                 state_db=self.state_db,
             )
 
+        inbox_exit, inbox_stdout, inbox_stderr = self.run_cli(
+            "operator",
+            "inbox",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(inbox_exit, 0, inbox_stderr)
+        inbox_payload = json.loads(inbox_stdout)
+        self.assertEqual(inbox_payload["counts"]["auth_alerts"], 1)
+        self.assertEqual(inbox_payload["auth"][0]["status"], "expired")
+        self.assertEqual(
+            inbox_payload["auth"][0]["recommended_command"],
+            "spark-intelligence auth refresh openai-codex",
+        )
+
     def test_auth_refresh_failure_records_error_and_returns_nonzero(self) -> None:
         start_exit, start_stdout, start_stderr = self.run_cli(
             "auth",
@@ -671,6 +687,82 @@ class AuthProfileTests(SparkTestCase):
         self.assertEqual(oauth_row["last_refresh_error"], "refresh failed")
         self.assertEqual(event_row["event_kind"], "oauth_refresh_failed")
         self.assertIn("refresh failed", event_row["detail"])
+
+        security_exit, security_stdout, security_stderr = self.run_cli(
+            "operator",
+            "security",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(security_exit, 0, security_stderr)
+        security_payload = json.loads(security_stdout)
+        self.assertEqual(security_payload["counts"]["auth_alerts"], 1)
+        self.assertEqual(security_payload["auth_alerts"][0]["status"], "refresh_error")
+        self.assertEqual(
+            security_payload["auth_alerts"][0]["recommended_command"],
+            "spark-intelligence auth refresh openai-codex",
+        )
+
+    def test_operator_security_surfaces_revoked_oauth_reconnect_guidance(self) -> None:
+        start_exit, start_stdout, start_stderr = self.run_cli(
+            "auth",
+            "login",
+            "openai-codex",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(start_exit, 0, start_stderr)
+        start_payload = json.loads(start_stdout)
+        callback_url = (
+            "http://127.0.0.1:1455/auth/callback"
+            f"?state={start_payload['callback_state']}&code=test-oauth-code"
+        )
+
+        with patch(
+            "spark_intelligence.auth.service.exchange_oauth_authorization_code",
+            return_value={
+                "access_token": "oauth-access-token",
+                "refresh_token": "oauth-refresh-token",
+                "expires_in": 3600,
+            },
+        ):
+            complete_exit, _, complete_stderr = self.run_cli(
+                "auth",
+                "login",
+                "openai-codex",
+                "--home",
+                str(self.home),
+                "--callback-url",
+                callback_url,
+            )
+        self.assertEqual(complete_exit, 0, complete_stderr)
+
+        logout_exit, _, logout_stderr = self.run_cli(
+            "auth",
+            "logout",
+            "openai-codex",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(logout_exit, 0, logout_stderr)
+
+        security_exit, security_stdout, security_stderr = self.run_cli(
+            "operator",
+            "security",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(security_exit, 0, security_stderr)
+        payload = json.loads(security_stdout)
+        self.assertEqual(payload["counts"]["auth_alerts"], 1)
+        self.assertEqual(payload["auth_alerts"][0]["status"], "revoked")
+        self.assertEqual(
+            payload["auth_alerts"][0]["recommended_command"],
+            "spark-intelligence auth login openai-codex --listen",
+        )
 
     def test_build_auth_status_report_handles_no_providers(self) -> None:
         report = build_auth_status_report(
