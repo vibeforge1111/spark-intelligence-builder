@@ -78,7 +78,8 @@ class OperatorInboxReport:
             f"bridge_alerts={counts['bridge_alerts']} "
             f"auth_alerts={counts['auth_alerts']} "
             f"webhook_alerts={counts['webhook_alerts']} "
-            f"webhook_snoozes={counts['webhook_snoozes']}"
+            f"webhook_snoozes={counts['webhook_snoozes']} "
+            f"active_suppressed_webhook_snoozes={counts['active_suppressed_webhook_snoozes']}"
         )
 
         items = self.payload.get("items") or []
@@ -110,6 +111,7 @@ class OperatorSecurityReport:
             f"auth_alerts={counts['auth_alerts']} "
             f"webhook_alerts={counts['webhook_alerts']} "
             f"webhook_snoozes={counts['webhook_snoozes']} "
+            f"active_suppressed_webhook_snoozes={counts['active_suppressed_webhook_snoozes']} "
             f"duplicates={counts['duplicate_updates']} "
             f"rate_limited={counts['rate_limited_updates']} "
             f"delivery_failures={counts['delivery_failures']} "
@@ -336,6 +338,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
             "auth_alerts": len(auth_alerts),
             "webhook_alerts": len(webhook_alerts),
             "webhook_snoozes": len(webhook_snoozes),
+            "active_suppressed_webhook_snoozes": _active_suppressed_webhook_snooze_count(webhook_snoozes),
             "total": (
                 len(pending_pairings)
                 + len(held_pairings)
@@ -404,6 +407,7 @@ def build_operator_security_report(
             "auth_alerts": len(auth_alerts),
             "webhook_alerts": len(webhook_alerts),
             "webhook_snoozes": len(webhook_snoozes),
+            "active_suppressed_webhook_snoozes": _active_suppressed_webhook_snooze_count(webhook_snoozes),
             "duplicate_updates": len(duplicate_updates),
             "rate_limited_updates": len(rate_limited_updates),
             "delivery_failures": len(delivery_failures),
@@ -1093,6 +1097,10 @@ def _utc_now() -> datetime:
 
 def _load_snoozed_webhook_events(*, state_db: StateDB, now: datetime) -> set[str]:
     return {row["event"] for row in _read_webhook_alert_snooze_rows(state_db=state_db, now=now)}
+
+
+def _active_suppressed_webhook_snooze_count(rows: list[dict[str, Any]]) -> int:
+    return len([row for row in rows if int(row.get("suppressed_recent_count") or 0) > 0])
 
 
 def _list_webhook_alert_snoozes_with_traces(
