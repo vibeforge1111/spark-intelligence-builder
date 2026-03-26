@@ -103,16 +103,17 @@ The remaining risk is that more adapters or more config mutation paths could rei
 
 ## 6. Next Start Exactly
 
-The next slice should stay focused on gateway and provider-auth architecture, not more adapter breadth.
+The next slice should stay focused on runtime and operator integrity, not more breadth.
 
 Start here in this exact order:
 
-1. Keep the built-in OAuth maintenance job operator-driven for now, and only add a persistent scheduler if it can preserve the same auditability and fail-closed guarantees.
-2. Consider whether operator-facing auth repair should also live in setup/runbooks, not only inbox/security/doctor.
-3. Design a first-class direct Codex/OAuth runtime only if it can match the current callback, expiry, and revocation guarantees.
-4. Only after that, widen Discord, WhatsApp, or webhook-heavy surfaces.
+1. Phase 1: lock the gateway runtime and operator recovery boundary.
+2. Phase 2: prove one narrow live webhook/runtime path beyond Telegram.
+3. Phase 3: harden the agent/provider execution contract before major breadth expansion.
 
-The detailed execution direction is recorded in `GATEWAY_PROVIDER_AUTH_READINESS_REVIEW_2026-03-26.md`.
+The concrete phase plan is recorded in `NEXT_EXECUTION_PLAN_2026-03-26.md`.
+
+Phase 1 has now started with `GATEWAY_RUNTIME_OPERATOR_RECOVERY_REVIEW_2026-03-26.md`.
 
 ## 7. Current Non-Goals
 

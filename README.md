@@ -49,6 +49,8 @@ This repo currently includes:
 - [docs/TELEGRAM_ADAPTER_SPEC_V1.md](./docs/TELEGRAM_ADAPTER_SPEC_V1.md)
 - [docs/TELEGRAM_OPERATOR_RUNBOOK_2026-03-26.md](./docs/TELEGRAM_OPERATOR_RUNBOOK_2026-03-26.md)
 - [docs/GATEWAY_PROVIDER_AUTH_READINESS_REVIEW_2026-03-26.md](./docs/GATEWAY_PROVIDER_AUTH_READINESS_REVIEW_2026-03-26.md)
+- [docs/NEXT_EXECUTION_PLAN_2026-03-26.md](./docs/NEXT_EXECUTION_PLAN_2026-03-26.md)
+- [docs/GATEWAY_RUNTIME_OPERATOR_RECOVERY_REVIEW_2026-03-26.md](./docs/GATEWAY_RUNTIME_OPERATOR_RECOVERY_REVIEW_2026-03-26.md)
 - [docs/SPARK_RESEARCHER_INTEGRATION_CONTRACT_V1.md](./docs/SPARK_RESEARCHER_INTEGRATION_CONTRACT_V1.md)
 - [docs/SPARK_SWARM_ESCALATION_CONTRACT_V1.md](./docs/SPARK_SWARM_ESCALATION_CONTRACT_V1.md)
 - [docs/DOMAIN_CHIP_ATTACHMENT_CONTRACT_V1.md](./docs/DOMAIN_CHIP_ATTACHMENT_CONTRACT_V1.md)
@@ -277,13 +279,12 @@ The next architecture pass for gateway, provider auth, OAuth, and runtime model 
 
 ## Current Start
 
-Current work should continue with gateway and provider-auth architecture locking, not more adapter breadth.
+Current work should continue with gateway/runtime and operator-recovery locking, not more adapter breadth.
 
 The exact first move is:
 
-1. lock the provider registry, auth-profile model, callback-state model, and route-registry contract
-2. add one shared runtime-provider resolver used by CLI, gateway, and future bridge execution
-3. implement secure OAuth alongside static API-key auth without weakening existing Telegram/operator safety
-4. expand Discord or WhatsApp only after those contracts are real and regression-covered
+1. phase 1: lock the gateway runtime and operator recovery boundary
+2. phase 2: prove one narrow live webhook/runtime path beyond Telegram
+3. phase 3: harden the agent/provider execution contract before major breadth expansion
 
-Do not start with live Discord or WhatsApp runtime work before that.
+Do not start broad live Discord or WhatsApp runtime work before that.
