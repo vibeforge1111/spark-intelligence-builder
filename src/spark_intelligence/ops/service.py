@@ -141,9 +141,14 @@ class OperatorWebhookSnoozeReport:
         lines = ["Active webhook alert snoozes:"]
         for row in self.rows:
             reason = f" reason={row['reason']}" if row.get("reason") else ""
+            suppressed = (
+                f" suppressed_recent={row['suppressed_recent_count']} latest_reason={row['latest_suppressed_reason']}"
+                if row.get("suppressed_recent_count")
+                else ""
+            )
             lines.append(
                 f"- event={row['event']} snoozed_at={row['snoozed_at']} until={row['snooze_until']} "
-                f"remaining_minutes={row['remaining_minutes']}{reason}"
+                f"remaining_minutes={row['remaining_minutes']}{reason}{suppressed}"
             )
         return "\n".join(lines)
 
@@ -289,22 +294,14 @@ def clear_webhook_alert_snooze(*, state_db: StateDB, event_name: str) -> dict[st
     }
 
 
-def list_webhook_alert_snoozes(*, state_db: StateDB) -> OperatorWebhookSnoozeReport:
-    now = _utc_now()
-    rows = _read_webhook_alert_snooze_rows(state_db=state_db, now=now)
-    payload: list[dict[str, Any]] = []
-    for row in rows:
-        remaining = row["snooze_until"] - now
-        payload.append(
-            {
-                "event": row["event"],
-                "snoozed_at": row["snoozed_at"].isoformat(timespec="seconds"),
-                "snooze_until": row["snooze_until"].isoformat(timespec="seconds"),
-                "remaining_minutes": max(1, int((remaining.total_seconds() + 59) // 60)),
-                "reason": row.get("reason"),
-            }
-        )
-    return OperatorWebhookSnoozeReport(rows=payload)
+def list_webhook_alert_snoozes(
+    *,
+    state_db: StateDB,
+    traces: list[dict[str, Any]] | None = None,
+) -> OperatorWebhookSnoozeReport:
+    if traces is None:
+        traces = []
+    return _list_webhook_alert_snoozes_with_traces(state_db=state_db, traces=traces)
 
 
 def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) -> OperatorInboxReport:
@@ -314,8 +311,9 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
     channel_alerts = _load_channel_alerts(config_manager=config_manager, state_db=state_db)
     bridge_alerts = _build_bridge_alerts(config_manager=config_manager, state_db=state_db)
     auth_alerts = _build_auth_alerts(config_manager=config_manager, state_db=state_db)
-    webhook_alerts = _build_webhook_alerts(traces=read_gateway_traces(config_manager, limit=100), state_db=state_db)
-    webhook_snoozes = list_webhook_alert_snoozes(state_db=state_db).rows
+    traces = read_gateway_traces(config_manager, limit=100)
+    webhook_alerts = _build_webhook_alerts(traces=traces, state_db=state_db)
+    webhook_snoozes = list_webhook_alert_snoozes(state_db=state_db, traces=traces).rows
     items = _build_inbox_items(
         pending_pairings=pending_pairings,
         held_pairings=held_pairings,
@@ -371,7 +369,7 @@ def build_operator_security_report(
     traces = read_gateway_traces(config_manager, limit=limit)
     outbound = read_outbound_audit(config_manager, limit=limit)
     webhook_alerts = _build_webhook_alerts(traces=traces, state_db=state_db)
-    webhook_snoozes = list_webhook_alert_snoozes(state_db=state_db).rows
+    webhook_snoozes = list_webhook_alert_snoozes(state_db=state_db, traces=traces).rows
 
     duplicate_updates = [trace for trace in traces if trace.get("event") == "telegram_update_duplicate"]
     rate_limited_updates = [trace for trace in traces if trace.get("event") == "telegram_rate_limited"]
@@ -706,6 +704,17 @@ def _build_inbox_items(
         event_name = str(row["event"])
         reason_suffix = f" Reason: {row['reason']}." if row.get("reason") else ""
         snoozed_at = str(row["snoozed_at"])
+        suppressed_suffix = ""
+        if row.get("suppressed_recent_count"):
+            latest_reason = str(row.get("latest_suppressed_reason") or "unknown")
+            if latest_reason.endswith((".", "!", "?")):
+                latest_reason_text = latest_reason
+            else:
+                latest_reason_text = f"{latest_reason}."
+            suppressed_suffix = (
+                f" Suppressed {row['suppressed_recent_count']} recent rejection(s); "
+                f"latest reason: {latest_reason_text}"
+            )
         items.append(
             {
                 "kind": "webhook_snooze",
@@ -715,7 +724,7 @@ def _build_inbox_items(
                 "item_ref": event_name,
                 "summary": (
                     f"Webhook alert {event_name} was snoozed at {snoozed_at} until {row['snooze_until']} "
-                    f"({row['remaining_minutes']} minute(s) remaining).{reason_suffix}"
+                    f"({row['remaining_minutes']} minute(s) remaining).{reason_suffix}{suppressed_suffix}"
                 ),
                 "recommended_command": f"spark-intelligence operator clear-webhook-alert-snooze {event_name}",
             }
@@ -808,13 +817,24 @@ def _build_security_items(
         event_name = str(row["event"])
         reason_suffix = f" Reason: {row['reason']}." if row.get("reason") else ""
         snoozed_at = str(row["snoozed_at"])
+        suppressed_suffix = ""
+        if row.get("suppressed_recent_count"):
+            latest_reason = str(row.get("latest_suppressed_reason") or "unknown")
+            if latest_reason.endswith((".", "!", "?")):
+                latest_reason_text = latest_reason
+            else:
+                latest_reason_text = f"{latest_reason}."
+            suppressed_suffix = (
+                f" Suppressed {row['suppressed_recent_count']} recent rejection(s); "
+                f"latest reason: {latest_reason_text}"
+            )
         items.append(
             {
                 "priority": "info",
                 "sort_order": severity_order["info"],
                 "summary": (
                     f"Webhook alert {event_name} was snoozed at {snoozed_at} until {row['snooze_until']} "
-                    f"({row['remaining_minutes']} minute(s) remaining).{reason_suffix}"
+                    f"({row['remaining_minutes']} minute(s) remaining).{reason_suffix}{suppressed_suffix}"
                 ),
                 "recommended_command": f"spark-intelligence operator clear-webhook-alert-snooze {event_name}",
             }
@@ -1044,6 +1064,38 @@ def _utc_now() -> datetime:
 
 def _load_snoozed_webhook_events(*, state_db: StateDB, now: datetime) -> set[str]:
     return {row["event"] for row in _read_webhook_alert_snooze_rows(state_db=state_db, now=now)}
+
+
+def _list_webhook_alert_snoozes_with_traces(
+    *,
+    state_db: StateDB,
+    traces: list[dict[str, Any]],
+) -> OperatorWebhookSnoozeReport:
+    now = _utc_now()
+    rows = _read_webhook_alert_snooze_rows(state_db=state_db, now=now)
+    payload: list[dict[str, Any]] = []
+    for row in rows:
+        matching = [
+            trace
+            for trace in traces
+            if trace.get("event") == row["event"] and _webhook_trace_is_recent(trace, now=now)
+        ]
+        remaining = row["snooze_until"] - now
+        latest_reason = None
+        if matching:
+            latest_reason = str(matching[-1].get("reason") or "unknown")
+        payload.append(
+            {
+                "event": row["event"],
+                "snoozed_at": row["snoozed_at"].isoformat(timespec="seconds"),
+                "snooze_until": row["snooze_until"].isoformat(timespec="seconds"),
+                "remaining_minutes": max(1, int((remaining.total_seconds() + 59) // 60)),
+                "reason": row.get("reason"),
+                "suppressed_recent_count": len(matching),
+                "latest_suppressed_reason": latest_reason,
+            }
+        )
+    return OperatorWebhookSnoozeReport(rows=payload)
 
 
 def _read_webhook_alert_snooze_rows(*, state_db: StateDB, now: datetime) -> list[dict[str, Any]]:

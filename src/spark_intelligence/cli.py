@@ -41,6 +41,7 @@ from spark_intelligence.gateway.runtime import (
     gateway_status,
     gateway_trace_view,
 )
+from spark_intelligence.gateway.tracing import read_gateway_traces
 from spark_intelligence.gateway.oauth_callback import pending_oauth_redirect_uri, serve_gateway_oauth_callback
 from spark_intelligence.identity.service import (
     agent_inspect,
@@ -836,7 +837,10 @@ def handle_operator_webhook_alert_snoozes(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
-    report = list_webhook_alert_snoozes(state_db=state_db)
+    report = list_webhook_alert_snoozes(
+        state_db=state_db,
+        traces=read_gateway_traces(config_manager, limit=100),
+    )
     print(report.to_json() if args.json else report.to_text())
     return 0
 
