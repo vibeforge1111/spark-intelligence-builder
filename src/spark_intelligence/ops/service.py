@@ -260,12 +260,12 @@ def snooze_webhook_alert(*, state_db: StateDB, event_name: str, minutes: int, re
     return snooze_until.isoformat(timespec="seconds")
 
 
-def clear_webhook_alert_snooze(*, state_db: StateDB, event_name: str) -> bool:
+def clear_webhook_alert_snooze(*, state_db: StateDB, event_name: str) -> dict[str, Any] | None:
     if event_name not in WEBHOOK_ALERT_EVENT_SPECS:
         raise ValueError(f"Unsupported webhook alert event: {event_name}")
     with state_db.connect() as conn:
         row = conn.execute(
-            "SELECT 1 FROM runtime_state WHERE state_key = ? LIMIT 1",
+            "SELECT state_key, value, updated_at FROM runtime_state WHERE state_key = ? LIMIT 1",
             (_webhook_alert_snooze_state_key(event_name),),
         ).fetchone()
         conn.execute(
@@ -273,7 +273,20 @@ def clear_webhook_alert_snooze(*, state_db: StateDB, event_name: str) -> bool:
             (_webhook_alert_snooze_state_key(event_name),),
         )
         conn.commit()
-    return row is not None
+    if row is None:
+        return None
+    snooze_state = _parse_webhook_alert_snooze_value(row["value"])
+    snoozed_at = _parse_iso_datetime(row["updated_at"])
+    return {
+        "event": event_name,
+        "snoozed_at": snoozed_at.isoformat(timespec="seconds") if snoozed_at is not None else None,
+        "snooze_until": (
+            snooze_state["snooze_until"].isoformat(timespec="seconds")
+            if snooze_state["snooze_until"] is not None
+            else None
+        ),
+        "reason": snooze_state["reason"],
+    }
 
 
 def list_webhook_alert_snoozes(*, state_db: StateDB) -> OperatorWebhookSnoozeReport:

@@ -846,17 +846,20 @@ def handle_operator_clear_webhook_alert_snooze(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
-    removed = clear_webhook_alert_snooze(state_db=state_db, event_name=args.event)
+    cleared = clear_webhook_alert_snooze(state_db=state_db, event_name=args.event)
     log_operator_event(
         state_db=state_db,
         action="clear_webhook_alert_snooze",
         target_kind="webhook_alert",
         target_ref=args.event,
         reason=args.reason,
-        details={"removed": removed},
+        details={"removed": cleared is not None, "cleared_snooze": cleared},
     )
-    if removed:
-        print(f"Cleared webhook alert snooze for '{args.event}'.")
+    if cleared is not None:
+        detail_suffix = ""
+        if cleared.get("snoozed_at") and cleared.get("snooze_until"):
+            detail_suffix = f" (set at {cleared['snoozed_at']}, until {cleared['snooze_until']})"
+        print(f"Cleared webhook alert snooze for '{args.event}'{detail_suffix}.")
     else:
         print(f"No active webhook alert snooze found for '{args.event}'.")
     return 0

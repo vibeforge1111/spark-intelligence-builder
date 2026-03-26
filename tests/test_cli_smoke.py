@@ -353,7 +353,9 @@ class CliSmokeTests(SparkTestCase):
             "noise resolved",
         )
         self.assertEqual(clear_exit, 0, clear_stderr)
-        self.assertIn("Cleared webhook alert snooze for 'discord_webhook_auth_failed'.", clear_stdout)
+        self.assertIn("Cleared webhook alert snooze for 'discord_webhook_auth_failed'", clear_stdout)
+        self.assertIn("set at", clear_stdout)
+        self.assertIn("until", clear_stdout)
 
         security_exit, security_stdout, security_stderr = self.run_cli(
             "operator",
@@ -381,6 +383,11 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(len(history_payload["rows"]), 1)
         self.assertEqual(history_payload["rows"][0]["target_ref"], "discord_webhook_auth_failed")
         self.assertEqual(history_payload["rows"][0]["reason"], "noise resolved")
+        self.assertEqual(history_payload["rows"][0]["details"]["removed"], True)
+        self.assertEqual(history_payload["rows"][0]["details"]["cleared_snooze"]["event"], "discord_webhook_auth_failed")
+        self.assertIsInstance(history_payload["rows"][0]["details"]["cleared_snooze"]["snoozed_at"], str)
+        self.assertIsInstance(history_payload["rows"][0]["details"]["cleared_snooze"]["snooze_until"], str)
+        self.assertIsNone(history_payload["rows"][0]["details"]["cleared_snooze"]["reason"])
 
     def test_operator_webhook_alert_snoozes_prunes_expired_runtime_state(self) -> None:
         setup_exit, _, setup_stderr = self.run_cli(
