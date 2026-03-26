@@ -864,7 +864,7 @@ class CliSmokeTests(SparkTestCase):
             stdout,
         )
 
-    def test_doctor_degrades_when_whatsapp_has_no_webhook_secret(self) -> None:
+    def test_doctor_degrades_when_whatsapp_has_no_webhook_contract(self) -> None:
         setup_exit, _, setup_stderr = self.run_cli(
             "channel",
             "add",
@@ -884,11 +884,11 @@ class CliSmokeTests(SparkTestCase):
 
         self.assertEqual(doctor_exit, 1, doctor_stderr)
         self.assertIn(
-            "[fail] whatsapp-runtime: configured but webhook ingress secret is missing",
+            "[fail] whatsapp-runtime: status=enabled pairing_mode=pairing auth_ref=WHATSAPP_BOT_TOKEN allowed_users=0 ingress=missing",
             doctor_stdout,
         )
 
-    def test_doctor_reports_whatsapp_webhook_ingress_mode(self) -> None:
+    def test_doctor_reports_whatsapp_meta_webhook_ingress_mode(self) -> None:
         setup_exit, _, setup_stderr = self.run_cli(
             "channel",
             "add",
@@ -899,6 +899,8 @@ class CliSmokeTests(SparkTestCase):
             "whatsapp-token",
             "--webhook-secret",
             "whatsapp-webhook-secret",
+            "--webhook-verify-token",
+            "whatsapp-verify-token",
         )
         self.assertEqual(setup_exit, 0, setup_stderr)
 
@@ -910,7 +912,7 @@ class CliSmokeTests(SparkTestCase):
 
         self.assertEqual(doctor_exit, 0, doctor_stderr)
         self.assertIn(
-            "[ok] whatsapp-runtime: status=enabled pairing_mode=pairing auth_ref=WHATSAPP_BOT_TOKEN allowed_users=0 ingress=webhook_secret webhook_auth_ref=WHATSAPP_WEBHOOK_SECRET",
+            "[ok] whatsapp-runtime: status=enabled pairing_mode=pairing auth_ref=WHATSAPP_BOT_TOKEN allowed_users=0 ingress=meta_webhook webhook_auth_ref=WHATSAPP_WEBHOOK_SECRET webhook_verify_token_ref=WHATSAPP_WEBHOOK_VERIFY_TOKEN",
             doctor_stdout,
         )
 
@@ -925,6 +927,8 @@ class CliSmokeTests(SparkTestCase):
             "whatsapp-token",
             "--webhook-secret",
             "whatsapp-webhook-secret",
+            "--webhook-verify-token",
+            "whatsapp-verify-token",
         )
         self.assertEqual(setup_exit, 0, setup_stderr)
 
@@ -937,6 +941,31 @@ class CliSmokeTests(SparkTestCase):
 
         self.assertEqual(exit_code, 1, stderr)
         self.assertIn(
-            "- whatsapp: status=enabled pairing_mode=pairing auth_ref=WHATSAPP_BOT_TOKEN allowed_users=0 ingress=webhook_secret",
+            "- whatsapp: status=enabled pairing_mode=pairing auth_ref=WHATSAPP_BOT_TOKEN allowed_users=0 ingress=meta_webhook",
             stdout,
         )
+
+    def test_channel_add_persists_whatsapp_verify_token_ref(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "channel",
+            "add",
+            "whatsapp",
+            "--home",
+            str(self.home),
+            "--bot-token",
+            "whatsapp-token",
+            "--webhook-secret",
+            "whatsapp-webhook-secret",
+            "--webhook-verify-token",
+            "whatsapp-verify-token",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        config_manager = ConfigManager.from_home(str(self.home))
+        record = config_manager.get_path("channels.records.whatsapp")
+        self.assertEqual(record["webhook_auth_ref"], "WHATSAPP_WEBHOOK_SECRET")
+        self.assertEqual(record["webhook_verify_token_ref"], "WHATSAPP_WEBHOOK_VERIFY_TOKEN")
+        env_map = config_manager.read_env_map()
+        self.assertEqual(env_map["WHATSAPP_WEBHOOK_SECRET"], "whatsapp-webhook-secret")
+        self.assertEqual(env_map["WHATSAPP_WEBHOOK_VERIFY_TOKEN"], "whatsapp-verify-token")
+        self.assertIn("Configured channel 'whatsapp' with pairing mode 'pairing' status 'enabled'.", stdout)

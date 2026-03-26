@@ -302,6 +302,8 @@ def build_parser() -> argparse.ArgumentParser:
     channel_add_parser.add_argument("--bot-token", help="Adapter bot token")
     channel_add_parser.add_argument("--webhook-secret", help="Static webhook secret for adapter HTTP ingress")
     channel_add_parser.add_argument("--webhook-secret-env", help="Env var name used to store the webhook secret")
+    channel_add_parser.add_argument("--webhook-verify-token", help="Verification token for adapter webhook handshake flows")
+    channel_add_parser.add_argument("--webhook-verify-token-env", help="Env var name used to store the webhook verification token")
     channel_add_parser.add_argument("--interaction-public-key", help="Discord interactions public key for signed HTTP ingress")
     channel_add_parser.add_argument(
         "--allow-legacy-message-webhook",
@@ -1014,6 +1016,13 @@ def handle_channel_add(args: argparse.Namespace) -> int:
             return 2
         config_manager.upsert_env_secret(env_key, args.webhook_secret)
         metadata = {**(metadata or {}), "webhook_auth_ref": env_key}
+    if args.webhook_verify_token:
+        if args.channel_kind != "whatsapp":
+            print("--webhook-verify-token is only supported for WhatsApp.", file=sys.stderr)
+            return 2
+        verify_env_key = args.webhook_verify_token_env or "WHATSAPP_WEBHOOK_VERIFY_TOKEN"
+        config_manager.upsert_env_secret(verify_env_key, args.webhook_verify_token)
+        metadata = {**(metadata or {}), "webhook_verify_token_ref": verify_env_key}
     if args.channel_kind == "discord":
         if args.disable_legacy_message_webhook:
             metadata = {**(metadata or {}), "webhook_auth_ref": None}

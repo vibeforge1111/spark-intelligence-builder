@@ -298,11 +298,14 @@ def _whatsapp_runtime_check(*, config_manager: ConfigManager, state_db: StateDB)
     ]
     if summary.webhook_auth_ref:
         detail_parts.append(f"webhook_auth_ref={summary.webhook_auth_ref}")
+    if summary.webhook_verify_token_ref:
+        detail_parts.append(f"webhook_verify_token_ref={summary.webhook_verify_token_ref}")
+    if summary.ingress_ready():
         return DoctorCheck("whatsapp-runtime", True, " ".join(detail_parts))
     return DoctorCheck(
         "whatsapp-runtime",
         False,
-        "configured but webhook ingress secret is missing",
+        " ".join(detail_parts),
     )
 
 

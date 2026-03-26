@@ -19,14 +19,19 @@ class WhatsAppRuntimeSummary:
     auth_ref: str | None
     allowed_user_count: int
     webhook_auth_ref: str | None
+    webhook_verify_token_ref: str | None
 
     def ingress_mode(self) -> str:
-        if self.webhook_auth_ref:
-            return "webhook_secret"
+        if self.webhook_auth_ref and self.webhook_verify_token_ref:
+            return "meta_webhook"
+        if self.webhook_auth_ref and not self.webhook_verify_token_ref:
+            return "missing_verify_token"
+        if self.webhook_verify_token_ref and not self.webhook_auth_ref:
+            return "missing_app_secret"
         return "missing"
 
     def ingress_ready(self) -> bool:
-        return bool(self.webhook_auth_ref)
+        return self.ingress_mode() == "meta_webhook"
 
     def to_line(self) -> str:
         if not self.configured:
@@ -66,6 +71,7 @@ def build_whatsapp_runtime_summary(config_manager: ConfigManager, state_db: Stat
             auth_ref=None,
             allowed_user_count=0,
             webhook_auth_ref=None,
+            webhook_verify_token_ref=None,
         )
     with state_db.connect() as conn:
         count = conn.execute(
@@ -87,6 +93,9 @@ def build_whatsapp_runtime_summary(config_manager: ConfigManager, state_db: Stat
         auth_ref=(installation["auth_ref"] if installation else record.get("auth_ref")),
         allowed_user_count=count,
         webhook_auth_ref=(str(record.get("webhook_auth_ref")) if record.get("webhook_auth_ref") else None),
+        webhook_verify_token_ref=(
+            str(record.get("webhook_verify_token_ref")) if record.get("webhook_verify_token_ref") else None
+        ),
     )
 
 
