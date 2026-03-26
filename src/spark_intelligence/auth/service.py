@@ -9,7 +9,7 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from spark_intelligence.auth.oauth_state import consume_oauth_callback_state, issue_oauth_callback_state
+from spark_intelligence.auth.oauth_state import consume_oauth_callback_state, get_oauth_callback_state, issue_oauth_callback_state
 from spark_intelligence.auth.providers import ProviderSpec, get_provider_spec
 from spark_intelligence.auth.runtime import build_default_auth_profile_id
 from spark_intelligence.config.loader import ConfigManager
@@ -332,6 +332,34 @@ def complete_oauth_login(
         status="active",
         default_model=spec.default_model,
         base_url=spec.default_base_url,
+    )
+
+
+def complete_oauth_login_from_callback_url(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    callback_url: str,
+    expected_provider: str | None = None,
+) -> OAuthLoginResult:
+    parsed = urllib.parse.urlparse(callback_url)
+    query = urllib.parse.parse_qs(parsed.query)
+    state = _required_query_value(query, "state")
+    oauth_state = get_oauth_callback_state(
+        state_db=state_db,
+        oauth_state=state,
+    )
+    if not oauth_state:
+        raise ValueError("OAuth callback state was not found.")
+    if expected_provider and oauth_state.provider_id != expected_provider:
+        raise ValueError(
+            f"OAuth callback provider mismatch: expected '{expected_provider}', got '{oauth_state.provider_id}'."
+        )
+    return complete_oauth_login(
+        config_manager=config_manager,
+        state_db=state_db,
+        provider=oauth_state.provider_id,
+        callback_url=callback_url,
     )
 
 

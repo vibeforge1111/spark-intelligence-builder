@@ -52,6 +52,26 @@ class GatewayRouteRegistry:
     def list_routes(self) -> list[GatewayRouteRegistration]:
         return list(self._routes)
 
+    def resolve(self, *, path: str, method: str) -> GatewayRouteRegistration | None:
+        normalized_path = _normalize_path(path)
+        normalized_method = _normalize_methods((method,))[0]
+
+        for route in self._routes:
+            if route.match_mode == "exact" and route.path == normalized_path and normalized_method in route.methods:
+                return route
+
+        prefix_matches = [
+            route
+            for route in self._routes
+            if route.match_mode == "prefix"
+            and normalized_path.startswith(route.path)
+            and normalized_method in route.methods
+        ]
+        if not prefix_matches:
+            return None
+        prefix_matches.sort(key=lambda route: len(route.path), reverse=True)
+        return prefix_matches[0]
+
     def _find_conflict_index(self, candidate: GatewayRouteRegistration) -> int | None:
         for index, existing in enumerate(self._routes):
             if existing.path != candidate.path or existing.match_mode != candidate.match_mode:

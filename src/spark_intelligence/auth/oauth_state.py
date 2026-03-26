@@ -133,6 +133,21 @@ def consume_oauth_callback_state(
     return _row_to_record(updated)
 
 
+def get_oauth_callback_state(
+    *,
+    state_db: StateDB,
+    oauth_state: str,
+) -> OAuthCallbackStateRecord | None:
+    with state_db.connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM oauth_callback_states WHERE oauth_state = ? LIMIT 1",
+            (oauth_state,),
+        ).fetchone()
+    if not row:
+        return None
+    return _row_to_record(row)
+
+
 def expire_stale_oauth_callback_states(*, state_db: StateDB, now: datetime | None = None) -> int:
     effective_now = now or datetime.now(UTC)
     with state_db.connect() as conn:

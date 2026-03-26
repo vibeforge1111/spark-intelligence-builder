@@ -4,7 +4,7 @@ import json
 from unittest.mock import patch
 
 from spark_intelligence.auth.runtime import build_auth_status_report, resolve_runtime_provider
-from spark_intelligence.gateway.oauth_callback import OAuthCallbackCapture
+from spark_intelligence.gateway.oauth_callback import GatewayOAuthCallbackResult, OAuthCallbackCapture
 
 from tests.test_support import SparkTestCase
 
@@ -298,26 +298,18 @@ class AuthProfileTests(SparkTestCase):
         self.assertEqual(resolution.source, "oauth_store")
 
     def test_auth_login_listen_completes_flow_via_callback_listener(self) -> None:
-        def callback_capture(*, redirect_uri: str, owner: str, timeout_seconds: int = 120):
-            with self.state_db.connect() as conn:
-                row = conn.execute(
-                    """
-                    SELECT oauth_state
-                    FROM oauth_callback_states
-                    WHERE provider_id = 'openai-codex' AND status = 'pending'
-                    ORDER BY created_at DESC
-                    LIMIT 1
-                    """
-                ).fetchone()
-            return OAuthCallbackCapture(
-                callback_url=f"{redirect_uri}?state={row['oauth_state']}&code=listener-code",
-                path="/auth/callback",
-                query=f"state={row['oauth_state']}&code=listener-code",
-            )
-
         with patch(
-            "spark_intelligence.cli.listen_for_oauth_callback",
-            side_effect=callback_capture,
+            "spark_intelligence.cli.serve_gateway_oauth_callback",
+            return_value=GatewayOAuthCallbackResult(
+                callback_url="http://127.0.0.1:1455/auth/callback?state=test-state&code=listener-code",
+                path="/auth/callback",
+                query="state=test-state&code=listener-code",
+                provider_id="openai-codex",
+                auth_profile_id="openai-codex:default",
+                status="active",
+                default_model="gpt-5-codex",
+                base_url="https://api.openai.com/v1",
+            ),
         ), patch(
             "spark_intelligence.auth.service.exchange_oauth_authorization_code",
             return_value={
@@ -341,6 +333,52 @@ class AuthProfileTests(SparkTestCase):
         self.assertEqual(payload["start"]["provider_id"], "openai-codex")
         self.assertEqual(payload["callback"]["path"], "/auth/callback")
         self.assertEqual(payload["result"]["status"], "active")
+
+    def test_gateway_oauth_callback_completes_pending_login_with_inferred_redirect(self) -> None:
+        start_exit, start_stdout, start_stderr = self.run_cli(
+            "auth",
+            "login",
+            "openai-codex",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(start_exit, 0, start_stderr)
+        start_payload = json.loads(start_stdout)
+        callback_url = (
+            f"{start_payload['redirect_uri']}?state={start_payload['callback_state']}&code=gateway-code"
+        )
+
+        with patch(
+            "spark_intelligence.gateway.oauth_callback._capture_oauth_callback",
+            return_value=OAuthCallbackCapture(
+                callback_url=callback_url,
+                path="/auth/callback",
+                query=f"state={start_payload['callback_state']}&code=gateway-code",
+            ),
+        ), patch(
+            "spark_intelligence.auth.service.exchange_oauth_authorization_code",
+            return_value={
+                "access_token": "oauth-access-token",
+                "refresh_token": "oauth-refresh-token",
+                "expires_in": 3600,
+            },
+        ):
+            exit_code, stdout, stderr = self.run_cli(
+                "gateway",
+                "oauth-callback",
+                "--home",
+                str(self.home),
+                "--provider",
+                "openai-codex",
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["provider_id"], "openai-codex")
+        self.assertEqual(payload["auth_profile_id"], "openai-codex:default")
+        self.assertEqual(payload["status"], "active")
 
     def test_auth_logout_revokes_oauth_credentials(self) -> None:
         start_exit, start_stdout, start_stderr = self.run_cli(

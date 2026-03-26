@@ -41,7 +41,7 @@ from spark_intelligence.gateway.runtime import (
     gateway_status,
     gateway_trace_view,
 )
-from spark_intelligence.gateway.oauth_callback import listen_for_oauth_callback
+from spark_intelligence.gateway.oauth_callback import pending_oauth_redirect_uri, serve_gateway_oauth_callback
 from spark_intelligence.identity.service import (
     agent_inspect,
     approve_latest_pairing,
@@ -222,6 +222,15 @@ def build_parser() -> argparse.ArgumentParser:
     gateway_status_parser = gateway_subparsers.add_parser("status", help="Inspect gateway readiness")
     gateway_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     gateway_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    gateway_oauth_callback_parser = gateway_subparsers.add_parser(
+        "oauth-callback",
+        help="Serve one loopback OAuth callback through the gateway surface and complete login automatically",
+    )
+    gateway_oauth_callback_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    gateway_oauth_callback_parser.add_argument("--redirect-uri", help="Explicit redirect URI to bind for the callback")
+    gateway_oauth_callback_parser.add_argument("--provider", choices=list_oauth_provider_ids(), help="Restrict callback completion to one provider")
+    gateway_oauth_callback_parser.add_argument("--timeout-seconds", type=int, default=120, help="Maximum time to wait for the OAuth callback")
+    gateway_oauth_callback_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     gateway_simulate_parser = gateway_subparsers.add_parser(
         "simulate-telegram-update",
         help="Simulate one Telegram update through normalization and authorization routing",
@@ -809,6 +818,33 @@ def handle_gateway_status(args: argparse.Namespace) -> int:
     return 0 if status.ready else 1
 
 
+def handle_gateway_oauth_callback(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    redirect_uri = args.redirect_uri or pending_oauth_redirect_uri(
+        state_db=state_db,
+        provider_id=args.provider,
+    )
+    if not redirect_uri:
+        print("No pending OAuth callback redirect URI was found. Start auth login first or pass --redirect-uri.", file=sys.stderr)
+        return 1
+    try:
+        result = serve_gateway_oauth_callback(
+            config_manager=config_manager,
+            state_db=state_db,
+            redirect_uri=redirect_uri,
+            expected_provider=args.provider,
+            timeout_seconds=args.timeout_seconds,
+        )
+    except (RuntimeError, ValueError, TimeoutError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(result.to_json() if args.json else result.to_text())
+    return 0
+
+
 def handle_gateway_simulate_telegram_update(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -1248,17 +1284,17 @@ def handle_auth_login(args: argparse.Namespace) -> int:
         )
         print("", flush=True)
 
-    callback = listen_for_oauth_callback(
-        redirect_uri=start.redirect_uri,
-        owner=f"auth:{args.provider}",
-        timeout_seconds=args.timeout_seconds,
-    )
-    result = complete_oauth_login(
-        config_manager=config_manager,
-        state_db=state_db,
-        provider=args.provider,
-        callback_url=callback.callback_url,
-    )
+    try:
+        gateway_result = serve_gateway_oauth_callback(
+            config_manager=config_manager,
+            state_db=state_db,
+            redirect_uri=start.redirect_uri,
+            expected_provider=args.provider,
+            timeout_seconds=args.timeout_seconds,
+        )
+    except (RuntimeError, ValueError, TimeoutError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
     if args.json:
         print(
@@ -1266,18 +1302,18 @@ def handle_auth_login(args: argparse.Namespace) -> int:
                 {
                     "start": json.loads(start.to_json()),
                     "callback": {
-                        "callback_url": callback.callback_url,
-                        "path": callback.path,
-                        "query": callback.query,
+                        "callback_url": gateway_result.callback_url,
+                        "path": gateway_result.path,
+                        "query": gateway_result.query,
                     },
-                    "result": json.loads(result.to_json()),
+                    "result": json.loads(gateway_result.to_json()),
                 },
                 indent=2,
             )
         )
         return 0
 
-    print(result.to_text())
+    print(gateway_result.to_text())
     return 0
 
 
@@ -1647,6 +1683,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_gateway_start(args)
     if args.command == "gateway" and args.gateway_command == "status":
         return handle_gateway_status(args)
+    if args.command == "gateway" and args.gateway_command == "oauth-callback":
+        return handle_gateway_oauth_callback(args)
     if args.command == "gateway" and args.gateway_command == "simulate-telegram-update":
         return handle_gateway_simulate_telegram_update(args)
     if args.command == "gateway" and args.gateway_command == "simulate-discord-message":

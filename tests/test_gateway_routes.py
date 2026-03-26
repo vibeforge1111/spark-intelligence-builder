@@ -89,3 +89,45 @@ class GatewayRouteRegistryTests(SparkTestCase):
                 ),
                 replace_existing=True,
             )
+
+    def test_resolves_exact_route_by_path_and_method(self) -> None:
+        registry = GatewayRouteRegistry()
+        registry.register(
+            GatewayRouteRegistration(
+                path="/oauth/callback",
+                methods=("GET",),
+                auth_mode="oauth_callback",
+                owner="gateway-core.oauth",
+            )
+        )
+
+        route = registry.resolve(path="/oauth/callback", method="get")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route.owner, "gateway-core.oauth")
+
+    def test_resolves_longest_prefix_route(self) -> None:
+        registry = GatewayRouteRegistry()
+        registry.register(
+            GatewayRouteRegistration(
+                path="/api",
+                methods=("POST",),
+                auth_mode="provider_internal",
+                owner="gateway-core",
+                match_mode="prefix",
+            )
+        )
+        registry.register(
+            GatewayRouteRegistration(
+                path="/api/channels",
+                methods=("POST",),
+                auth_mode="adapter_webhook",
+                owner="channel-adapter",
+                match_mode="prefix",
+            )
+        )
+
+        route = registry.resolve(path="/api/channels/telegram", method="POST")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route.owner, "channel-adapter")
