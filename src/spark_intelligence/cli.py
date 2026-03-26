@@ -20,6 +20,7 @@ from spark_intelligence.attachments import (
     sync_attachment_snapshot,
     unpin_chip,
 )
+from spark_intelligence.auth.runtime import build_auth_status_report
 from spark_intelligence.auth.service import connect_provider
 from spark_intelligence.channel.service import (
     add_channel,
@@ -362,8 +363,12 @@ def build_parser() -> argparse.ArgumentParser:
     auth_connect_parser.add_argument("provider", choices=["openai", "anthropic", "openrouter", "custom"])
     auth_connect_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     auth_connect_parser.add_argument("--api-key", help="API key for the provider")
+    auth_connect_parser.add_argument("--api-key-env", help="Existing or target env var name for the provider secret")
     auth_connect_parser.add_argument("--model", help="Default model id")
     auth_connect_parser.add_argument("--base-url", help="Custom provider base URL")
+    auth_status_parser = auth_subparsers.add_parser("status", help="Show configured auth profiles and secret readiness")
+    auth_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    auth_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     researcher_parser = subparsers.add_parser("researcher", help="Inspect Spark Researcher bridge state")
     researcher_subparsers = researcher_parser.add_subparsers(dest="researcher_command", required=True)
@@ -1139,11 +1144,22 @@ def handle_auth_connect(args: argparse.Namespace) -> int:
         state_db=state_db,
         provider=args.provider,
         api_key=args.api_key,
+        api_key_env=args.api_key_env,
         model=args.model,
         base_url=args.base_url,
     )
     print(result)
     return 0
+
+
+def handle_auth_status(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    report = build_auth_status_report(config_manager=config_manager, state_db=state_db)
+    print(report.to_json() if args.json else report.to_text())
+    return 0 if report.ok else 1
 
 
 def handle_researcher_status(args: argparse.Namespace) -> int:
@@ -1508,6 +1524,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_attachments_clear_path(args)
     if args.command == "auth" and args.auth_command == "connect":
         return handle_auth_connect(args)
+    if args.command == "auth" and args.auth_command == "status":
+        return handle_auth_status(args)
     if args.command == "researcher" and args.researcher_command == "status":
         return handle_researcher_status(args)
     if args.command == "config" and args.config_command == "show":

@@ -18,8 +18,75 @@ SCHEMA_STATEMENTS = [
         default_model TEXT,
         base_url TEXT,
         api_key_env TEXT,
+        default_auth_profile_id TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS auth_profiles (
+        auth_profile_id TEXT PRIMARY KEY,
+        provider_id TEXT NOT NULL,
+        auth_method TEXT NOT NULL,
+        display_label TEXT NOT NULL,
+        subject_hint TEXT,
+        status TEXT NOT NULL,
+        is_default INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS auth_profile_static_refs (
+        auth_profile_id TEXT PRIMARY KEY,
+        ref_source TEXT NOT NULL,
+        ref_provider TEXT,
+        ref_id TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS oauth_credentials (
+        auth_profile_id TEXT PRIMARY KEY,
+        issuer TEXT,
+        account_subject TEXT,
+        scope TEXT,
+        access_token_ciphertext TEXT,
+        refresh_token_ciphertext TEXT,
+        access_expires_at TEXT,
+        refresh_expires_at TEXT,
+        last_refresh_at TEXT,
+        last_refresh_error TEXT,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS oauth_callback_states (
+        callback_id TEXT PRIMARY KEY,
+        provider_id TEXT NOT NULL,
+        auth_profile_id TEXT,
+        flow_kind TEXT NOT NULL,
+        oauth_state TEXT NOT NULL UNIQUE,
+        pkce_verifier TEXT,
+        redirect_uri TEXT,
+        expected_issuer TEXT,
+        status TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        consumed_at TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS provider_runtime_events (
+        event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider_id TEXT NOT NULL,
+        auth_profile_id TEXT,
+        event_kind TEXT NOT NULL,
+        detail TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
     """
@@ -183,6 +250,7 @@ class StateDB:
         with self.connect() as conn:
             for statement in SCHEMA_STATEMENTS:
                 conn.execute(statement)
+            self._ensure_column(conn, "provider_records", "default_auth_profile_id", "TEXT")
             conn.execute("INSERT OR IGNORE INTO schema_info(version) VALUES (1)")
             conn.execute(
                 """
@@ -204,3 +272,13 @@ class StateDB:
         conn = sqlite3.connect(self.path, factory=ClosingConnection)
         conn.row_factory = sqlite3.Row
         return conn
+
+    @staticmethod
+    def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        columns = {
+            str(row["name"])
+            for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column in columns:
+            return
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
