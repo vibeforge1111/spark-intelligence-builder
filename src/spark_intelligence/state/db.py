@@ -162,6 +162,18 @@ SCHEMA_STATEMENTS = [
 ]
 
 
+class ClosingConnection(sqlite3.Connection):
+    def __exit__(self, exc_type, exc_value, traceback) -> bool:
+        try:
+            if exc_type is None:
+                self.commit()
+            else:
+                self.rollback()
+        finally:
+            self.close()
+        return False
+
+
 class StateDB:
     def __init__(self, path: Path):
         self.path = path
@@ -189,6 +201,6 @@ class StateDB:
             conn.commit()
 
     def connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.path)
+        conn = sqlite3.connect(self.path, factory=ClosingConnection)
         conn.row_factory = sqlite3.Row
         return conn
