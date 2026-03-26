@@ -302,6 +302,7 @@ def build_parser() -> argparse.ArgumentParser:
     channel_add_parser.add_argument("--bot-token", help="Adapter bot token")
     channel_add_parser.add_argument("--webhook-secret", help="Static webhook secret for adapter HTTP ingress")
     channel_add_parser.add_argument("--webhook-secret-env", help="Env var name used to store the webhook secret")
+    channel_add_parser.add_argument("--interaction-public-key", help="Discord interactions public key for signed HTTP ingress")
     channel_add_parser.add_argument("--allowed-user", action="append", default=[], help="Allowed adapter user id")
     channel_add_parser.add_argument(
         "--clear-allowed-users",
@@ -978,6 +979,11 @@ def handle_channel_add(args: argparse.Namespace) -> int:
             return 2
         config_manager.upsert_env_secret(env_key, args.webhook_secret)
         metadata = {**(metadata or {}), "webhook_auth_ref": env_key}
+    if args.interaction_public_key:
+        if args.channel_kind != "discord":
+            print("--interaction-public-key is only supported for Discord.", file=sys.stderr)
+            return 2
+        metadata = {**(metadata or {}), "interaction_public_key": args.interaction_public_key.strip()}
     if args.channel_kind == "telegram" and args.bot_token and not args.skip_validate:
         try:
             profile = inspect_telegram_bot_token(args.bot_token)

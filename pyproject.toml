@@ -9,6 +9,7 @@ description = "Spark-native persistent agent runtime shell"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "PyNaCl>=1.6.2",
   "PyYAML>=6.0",
 ]
 

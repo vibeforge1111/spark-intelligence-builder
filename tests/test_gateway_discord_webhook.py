@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+from nacl.signing import SigningKey
+
 from spark_intelligence.channel.service import add_channel
 from spark_intelligence.gateway.discord_webhook import DISCORD_WEBHOOK_PATH, handle_discord_webhook
 
@@ -9,10 +11,17 @@ from tests.test_support import SparkTestCase
 
 
 class DiscordWebhookIngressTests(SparkTestCase):
-    def _add_discord_channel(self, *, webhook_secret: str | None = "discord-webhook-secret") -> None:
+    def _add_discord_channel(
+        self,
+        *,
+        webhook_secret: str | None = "discord-webhook-secret",
+        interaction_public_key: str | None = None,
+    ) -> None:
         metadata = {"webhook_auth_ref": "DISCORD_WEBHOOK_SECRET"} if webhook_secret else None
         if webhook_secret:
             self.config_manager.upsert_env_secret("DISCORD_WEBHOOK_SECRET", webhook_secret)
+        if interaction_public_key:
+            metadata = {**(metadata or {}), "interaction_public_key": interaction_public_key}
         add_channel(
             config_manager=self.config_manager,
             state_db=self.state_db,
@@ -22,6 +31,14 @@ class DiscordWebhookIngressTests(SparkTestCase):
             pairing_mode="pairing",
             metadata=metadata,
         )
+
+    @staticmethod
+    def _signed_headers(signing_key: SigningKey, body: bytes, *, timestamp: str = "1700000000") -> dict[str, str]:
+        signature = signing_key.sign(timestamp.encode("utf-8") + body).signature.hex()
+        return {
+            "X-Signature-Ed25519": signature,
+            "X-Signature-Timestamp": timestamp,
+        }
 
     def test_rejects_wrong_method_before_payload_parsing(self) -> None:
         self._add_discord_channel()
@@ -120,6 +137,78 @@ class DiscordWebhookIngressTests(SparkTestCase):
         self.assertEqual(response.status_code, 503)
         payload = json.loads(response.body)
         self.assertEqual(payload["error"], "Discord webhook auth secret is not configured.")
+
+    def test_rejects_missing_signature_header_when_public_key_is_configured(self) -> None:
+        signing_key = SigningKey.generate()
+        self._add_discord_channel(interaction_public_key=signing_key.verify_key.encode().hex(), webhook_secret=None)
+        response = handle_discord_webhook(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            path=DISCORD_WEBHOOK_PATH,
+            method="POST",
+            content_type="application/json",
+            headers={"X-Signature-Timestamp": "1700000000"},
+            body=b"{}",
+        )
+
+        self.assertEqual(response.status_code, 401)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["error"], "Discord signature header is missing.")
+
+    def test_rejects_invalid_signature_when_public_key_is_configured(self) -> None:
+        signing_key = SigningKey.generate()
+        self._add_discord_channel(interaction_public_key=signing_key.verify_key.encode().hex(), webhook_secret=None)
+        response = handle_discord_webhook(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            path=DISCORD_WEBHOOK_PATH,
+            method="POST",
+            content_type="application/json",
+            headers={
+                "X-Signature-Ed25519": "00" * 64,
+                "X-Signature-Timestamp": "1700000000",
+            },
+            body=b"{}",
+        )
+
+        self.assertEqual(response.status_code, 401)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["error"], "Discord request signature is invalid.")
+
+    def test_handles_valid_signed_ping_payload(self) -> None:
+        signing_key = SigningKey.generate()
+        self._add_discord_channel(interaction_public_key=signing_key.verify_key.encode().hex(), webhook_secret=None)
+        body = json.dumps({"type": 1}).encode("utf-8")
+        response = handle_discord_webhook(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            path=DISCORD_WEBHOOK_PATH,
+            method="POST",
+            content_type="application/json",
+            headers=self._signed_headers(signing_key, body),
+            body=body,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.body), {"type": 1})
+
+    def test_returns_not_implemented_for_signed_non_ping_interaction(self) -> None:
+        signing_key = SigningKey.generate()
+        self._add_discord_channel(interaction_public_key=signing_key.verify_key.encode().hex(), webhook_secret=None)
+        body = json.dumps({"type": 2, "data": {"name": "hello"}}).encode("utf-8")
+        response = handle_discord_webhook(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            path=DISCORD_WEBHOOK_PATH,
+            method="POST",
+            content_type="application/json",
+            headers=self._signed_headers(signing_key, body),
+            body=body,
+        )
+
+        self.assertEqual(response.status_code, 501)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["error"], "Discord interaction payload handling is not implemented yet.")
 
     def test_handles_valid_dm_payload(self) -> None:
         self._add_discord_channel()

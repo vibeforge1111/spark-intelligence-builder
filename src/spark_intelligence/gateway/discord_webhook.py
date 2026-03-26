@@ -4,6 +4,9 @@ import hmac
 import json
 from dataclasses import dataclass
 
+from nacl.exceptions import BadSignatureError
+from nacl.signing import VerifyKey
+
 from spark_intelligence.adapters.discord.runtime import simulate_discord_message
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.gateway.routes import GatewayRouteRegistration, GatewayRouteRegistry
@@ -57,6 +60,8 @@ def handle_discord_webhook(
     auth_error = _validate_discord_webhook_auth(
         config_manager=config_manager,
         provided_secret=_header_value(headers, "X-Spark-Webhook-Secret"),
+        headers=headers,
+        body=body,
     )
     if auth_error:
         return _json_error_response(auth_error[0], auth_error[1])
@@ -67,6 +72,13 @@ def handle_discord_webhook(
         return _json_error_response(400, "Discord webhook body must be valid JSON.")
     if not isinstance(payload, dict):
         return _json_error_response(400, "Discord webhook body must be a JSON object.")
+    if payload.get("type") == 1:
+        return GatewayWebhookResponse(
+            status_code=200,
+            body=json.dumps({"type": 1}, indent=2),
+        )
+    if "type" in payload and "content" not in payload:
+        return _json_error_response(501, "Discord interaction payload handling is not implemented yet.")
 
     try:
         result = simulate_discord_message(
@@ -104,10 +116,20 @@ def _validate_discord_webhook_auth(
     *,
     config_manager: ConfigManager,
     provided_secret: str | None,
+    headers: dict[str, str] | None,
+    body: bytes,
 ) -> tuple[int, str] | None:
     record = config_manager.get_path("channels.records.discord", default={}) or {}
     if not isinstance(record, dict):
         return (503, "Discord webhook channel is not configured.")
+    interaction_public_key = str(record.get("interaction_public_key") or "").strip()
+    if interaction_public_key:
+        return _validate_discord_interaction_signature(
+            interaction_public_key=interaction_public_key,
+            signature=_header_value(headers, "X-Signature-Ed25519"),
+            timestamp=_header_value(headers, "X-Signature-Timestamp"),
+            body=body,
+        )
     secret_ref = record.get("webhook_auth_ref")
     if not secret_ref:
         return (503, "Discord webhook auth secret is not configured.")
@@ -118,6 +140,30 @@ def _validate_discord_webhook_auth(
         return (401, "Discord webhook secret header is missing.")
     if not hmac.compare_digest(expected_secret, provided_secret):
         return (401, "Discord webhook secret is invalid.")
+    return None
+
+
+def _validate_discord_interaction_signature(
+    *,
+    interaction_public_key: str,
+    signature: str | None,
+    timestamp: str | None,
+    body: bytes,
+) -> tuple[int, str] | None:
+    if not signature:
+        return (401, "Discord signature header is missing.")
+    if not timestamp:
+        return (401, "Discord signature timestamp header is missing.")
+    try:
+        verify_key = VerifyKey(bytes.fromhex(interaction_public_key))
+    except ValueError:
+        return (503, "Discord interaction public key is invalid.")
+    try:
+        verify_key.verify(timestamp.encode("utf-8") + body, bytes.fromhex(signature))
+    except ValueError:
+        return (401, "Discord signature header is invalid.")
+    except BadSignatureError:
+        return (401, "Discord request signature is invalid.")
     return None
 
 
