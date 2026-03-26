@@ -15,6 +15,7 @@ class GatewayRouteRegistration:
     auth_mode: GatewayRouteAuthMode
     owner: str
     match_mode: GatewayRouteMatchMode = "exact"
+    content_types: tuple[str, ...] = ()
 
 
 class GatewayRouteRegistry:
@@ -28,9 +29,11 @@ class GatewayRouteRegistry:
             auth_mode=route.auth_mode,
             owner=route.owner.strip(),
             match_mode=route.match_mode,
+            content_types=_normalize_content_types(route.content_types),
         )
         if not normalized.owner:
             raise ValueError("Gateway route owner must not be empty.")
+        _validate_registration(normalized)
 
         existing_index = self._find_conflict_index(normalized)
         if existing_index is None:
@@ -72,6 +75,28 @@ class GatewayRouteRegistry:
         prefix_matches.sort(key=lambda route: len(route.path), reverse=True)
         return prefix_matches[0]
 
+    def validate_request(
+        self,
+        *,
+        path: str,
+        method: str,
+        content_type: str | None = None,
+    ) -> GatewayRouteRegistration:
+        route = self.resolve(path=path, method=method)
+        if route is None:
+            raise ValueError("Gateway route not found.")
+        if route.content_types:
+            normalized_content_type = _normalize_request_content_type(content_type)
+            if not normalized_content_type:
+                raise ValueError(
+                    f"Gateway route {route.path} requires Content-Type {', '.join(route.content_types)}."
+                )
+            if normalized_content_type not in route.content_types:
+                raise ValueError(
+                    f"Gateway route {route.path} rejects Content-Type '{normalized_content_type}'."
+                )
+        return route
+
     def _find_conflict_index(self, candidate: GatewayRouteRegistration) -> int | None:
         for index, existing in enumerate(self._routes):
             if existing.path != candidate.path or existing.match_mode != candidate.match_mode:
@@ -97,3 +122,27 @@ def _normalize_methods(methods: tuple[str, ...]) -> tuple[str, ...]:
     if not normalized:
         raise ValueError("Gateway route must declare at least one HTTP method.")
     return normalized
+
+
+def _normalize_content_types(content_types: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(sorted({_normalize_request_content_type(content_type) for content_type in content_types if content_type.strip()}))
+
+
+def _normalize_request_content_type(content_type: str | None) -> str:
+    if not content_type:
+        return ""
+    return content_type.split(";", 1)[0].strip().lower()
+
+
+def _validate_registration(route: GatewayRouteRegistration) -> None:
+    if route.auth_mode == "oauth_callback":
+        if route.methods != ("GET",):
+            raise ValueError("OAuth callback routes must use GET only.")
+        if route.content_types:
+            raise ValueError("OAuth callback routes must not declare request body content types.")
+        return
+    if route.auth_mode == "adapter_webhook":
+        if route.methods != ("POST",):
+            raise ValueError("Adapter webhook routes must use POST only.")
+        if not route.content_types:
+            raise ValueError("Adapter webhook routes must declare at least one request content type.")

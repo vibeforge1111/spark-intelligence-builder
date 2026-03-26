@@ -21,6 +21,7 @@ class GatewayRouteRegistryTests(SparkTestCase):
         self.assertEqual(route.path, "/oauth/callback")
         self.assertEqual(route.methods, ("GET",))
         self.assertEqual(route.owner, "auth-service")
+        self.assertEqual(route.content_types, ())
         self.assertEqual(len(registry.list_routes()), 1)
 
     def test_rejects_conflicting_route_without_replace(self) -> None:
@@ -58,14 +59,14 @@ class GatewayRouteRegistryTests(SparkTestCase):
         route = registry.register(
             GatewayRouteRegistration(
                 path="/oauth/callback",
-                methods=("GET", "POST"),
+                methods=("GET",),
                 auth_mode="oauth_callback",
                 owner="auth-service",
             ),
             replace_existing=True,
         )
 
-        self.assertEqual(route.methods, ("GET", "POST"))
+        self.assertEqual(route.methods, ("GET",))
         self.assertEqual(len(registry.list_routes()), 1)
 
     def test_denies_cross_owner_replacement(self) -> None:
@@ -76,6 +77,7 @@ class GatewayRouteRegistryTests(SparkTestCase):
                 methods=("POST",),
                 auth_mode="adapter_webhook",
                 owner="telegram-adapter",
+                content_types=("application/json",),
             )
         )
 
@@ -86,6 +88,7 @@ class GatewayRouteRegistryTests(SparkTestCase):
                     methods=("POST",),
                     auth_mode="adapter_webhook",
                     owner="gateway-core",
+                    content_types=("application/json",),
                 ),
                 replace_existing=True,
             )
@@ -124,6 +127,7 @@ class GatewayRouteRegistryTests(SparkTestCase):
                 auth_mode="adapter_webhook",
                 owner="channel-adapter",
                 match_mode="prefix",
+                content_types=("application/json",),
             )
         )
 
@@ -131,3 +135,68 @@ class GatewayRouteRegistryTests(SparkTestCase):
 
         self.assertIsNotNone(route)
         self.assertEqual(route.owner, "channel-adapter")
+
+    def test_rejects_adapter_webhook_without_content_type_contract(self) -> None:
+        registry = GatewayRouteRegistry()
+
+        with self.assertRaisesRegex(ValueError, "request content type"):
+            registry.register(
+                GatewayRouteRegistration(
+                    path="/webhooks/discord",
+                    methods=("POST",),
+                    auth_mode="adapter_webhook",
+                    owner="discord-adapter",
+                )
+            )
+
+    def test_rejects_oauth_callback_with_post_method(self) -> None:
+        registry = GatewayRouteRegistry()
+
+        with self.assertRaisesRegex(ValueError, "GET only"):
+            registry.register(
+                GatewayRouteRegistration(
+                    path="/auth/callback",
+                    methods=("POST",),
+                    auth_mode="oauth_callback",
+                    owner="gateway-core.oauth",
+                )
+            )
+
+    def test_validate_request_accepts_registered_content_type_with_charset(self) -> None:
+        registry = GatewayRouteRegistry()
+        registry.register(
+            GatewayRouteRegistration(
+                path="/webhooks/discord",
+                methods=("POST",),
+                auth_mode="adapter_webhook",
+                owner="discord-adapter",
+                content_types=("application/json",),
+            )
+        )
+
+        route = registry.validate_request(
+            path="/webhooks/discord",
+            method="POST",
+            content_type="application/json; charset=utf-8",
+        )
+
+        self.assertEqual(route.owner, "discord-adapter")
+
+    def test_validate_request_rejects_wrong_content_type(self) -> None:
+        registry = GatewayRouteRegistry()
+        registry.register(
+            GatewayRouteRegistration(
+                path="/webhooks/whatsapp",
+                methods=("POST",),
+                auth_mode="adapter_webhook",
+                owner="whatsapp-adapter",
+                content_types=("application/json",),
+            )
+        )
+
+        with self.assertRaisesRegex(ValueError, "rejects Content-Type"):
+            registry.validate_request(
+                path="/webhooks/whatsapp",
+                method="POST",
+                content_type="text/plain",
+            )
