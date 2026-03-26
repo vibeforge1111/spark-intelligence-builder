@@ -789,3 +789,77 @@ class CliSmokeTests(SparkTestCase):
         record = config_manager.get_path("channels.records.discord")
         self.assertEqual(record["interaction_public_key"], "abcdef123456")
         self.assertIn("Configured channel 'discord' with pairing mode 'pairing' status 'enabled'.", stdout)
+
+    def test_doctor_degrades_when_discord_has_no_ingress_mode(self) -> None:
+        setup_exit, _, setup_stderr = self.run_cli(
+            "channel",
+            "add",
+            "discord",
+            "--home",
+            str(self.home),
+            "--bot-token",
+            "discord-token",
+        )
+        self.assertEqual(setup_exit, 0, setup_stderr)
+
+        doctor_exit, doctor_stdout, doctor_stderr = self.run_cli(
+            "doctor",
+            "--home",
+            str(self.home),
+        )
+
+        self.assertEqual(doctor_exit, 1, doctor_stderr)
+        self.assertIn(
+            "[fail] discord-runtime: no signed interaction public key configured and legacy message webhook compatibility is disabled",
+            doctor_stdout,
+        )
+
+    def test_doctor_reports_discord_legacy_ingress_mode(self) -> None:
+        setup_exit, _, setup_stderr = self.run_cli(
+            "channel",
+            "add",
+            "discord",
+            "--home",
+            str(self.home),
+            "--allow-legacy-message-webhook",
+            "--webhook-secret",
+            "discord-webhook-secret",
+        )
+        self.assertEqual(setup_exit, 0, setup_stderr)
+
+        doctor_exit, doctor_stdout, doctor_stderr = self.run_cli(
+            "doctor",
+            "--home",
+            str(self.home),
+        )
+
+        self.assertEqual(doctor_exit, 0, doctor_stderr)
+        self.assertIn(
+            "[ok] discord-runtime: status=enabled pairing_mode=pairing auth_ref=missing allowed_users=0 ingress=legacy_message_webhook webhook_auth_ref=DISCORD_WEBHOOK_SECRET",
+            doctor_stdout,
+        )
+
+    def test_gateway_status_reports_signed_discord_ingress_mode(self) -> None:
+        setup_exit, _, setup_stderr = self.run_cli(
+            "channel",
+            "add",
+            "discord",
+            "--home",
+            str(self.home),
+            "--interaction-public-key",
+            "abcdef123456",
+        )
+        self.assertEqual(setup_exit, 0, setup_stderr)
+
+        exit_code, stdout, stderr = self.run_cli(
+            "gateway",
+            "status",
+            "--home",
+            str(self.home),
+        )
+
+        self.assertEqual(exit_code, 1, stderr)
+        self.assertIn(
+            "- discord: status=enabled pairing_mode=pairing auth_ref=missing allowed_users=0 ingress=signed_interactions",
+            stdout,
+        )

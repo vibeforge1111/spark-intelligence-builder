@@ -5,6 +5,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from spark_intelligence.attachments import attachment_status
+from spark_intelligence.adapters.discord.runtime import build_discord_runtime_summary
 from spark_intelligence.adapters.telegram.runtime import build_telegram_runtime_summary, read_telegram_runtime_health
 from spark_intelligence.auth.providers import get_provider_spec
 from spark_intelligence.auth.runtime import build_auth_status_report, runtime_provider_health
@@ -210,6 +211,7 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
         )
 
     checks.append(_telegram_runtime_check(config_manager=config_manager, state_db=state_db))
+    checks.append(_discord_runtime_check(config_manager=config_manager, state_db=state_db))
 
     return DoctorReport(checks=checks)
 
@@ -248,6 +250,36 @@ def _telegram_runtime_check(*, config_manager: ConfigManager, state_db: StateDB)
     if health.bot_username:
         detail_parts.append(f"bot=@{health.bot_username}")
     return DoctorCheck("telegram-runtime", True, " ".join(detail_parts))
+
+
+def _discord_runtime_check(*, config_manager: ConfigManager, state_db: StateDB) -> DoctorCheck:
+    summary = build_discord_runtime_summary(config_manager, state_db)
+    if not summary.configured:
+        return DoctorCheck("discord-runtime", True, "not configured")
+
+    detail_parts = [
+        f"status={summary.status or 'unknown'}",
+        f"pairing_mode={summary.pairing_mode or 'unknown'}",
+        f"auth_ref={summary.auth_ref or 'missing'}",
+        f"allowed_users={summary.allowed_user_count}",
+        f"ingress={summary.ingress_mode()}",
+    ]
+    if summary.interaction_public_key_configured:
+        detail_parts.append("interaction_public_key=configured")
+    if summary.legacy_message_webhook_enabled:
+        detail_parts.append(f"webhook_auth_ref={summary.webhook_auth_ref or 'missing'}")
+    if summary.ingress_ready():
+        return DoctorCheck("discord-runtime", True, " ".join(detail_parts))
+    if summary.legacy_message_webhook_enabled:
+        return DoctorCheck("discord-runtime", False, " ".join(detail_parts))
+    return DoctorCheck(
+        "discord-runtime",
+        False,
+        (
+            "no signed interaction public key configured and "
+            "legacy message webhook compatibility is disabled"
+        ),
+    )
 
 
 def provider_execution_health(
