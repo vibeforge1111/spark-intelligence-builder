@@ -6,6 +6,7 @@ from spark_intelligence.memory.orchestrator import (
     inspect_memory_sdk_runtime,
     read_personality_preferences_from_memory,
     run_memory_sdk_smoke_test,
+    write_profile_fact_to_memory,
     write_personality_preferences_to_memory,
 )
 from spark_intelligence.memory.sdk_maintenance import (
@@ -42,6 +43,7 @@ __all__ = [
     "inspect_memory_sdk_runtime",
     "read_personality_preferences_from_memory",
     "run_memory_sdk_smoke_test",
+    "write_profile_fact_to_memory",
     "run_sdk_maintenance_report",
     "run_shadow_report",
     "run_shadow_report_batch",

@@ -19,6 +19,8 @@ from spark_intelligence.attachments import (
 )
 from spark_intelligence.auth.runtime import RuntimeProviderResolution, resolve_runtime_provider
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.memory import write_profile_fact_to_memory
+from spark_intelligence.memory.profile_facts import detect_profile_fact_observation
 from spark_intelligence.observability.policy import screen_model_visible_text
 from spark_intelligence.llm.direct_provider import (
     DirectProviderGovernance,
@@ -1025,6 +1027,7 @@ def build_researcher_reply(
     personality_query_kind = "none"
     evolved_deltas = None
     observation_record = None
+    detected_profile_fact = None
     try:
         personality_profile = load_personality_profile(
             human_id=human_id,
@@ -1084,6 +1087,25 @@ def build_researcher_reply(
         except Exception:
             pass
 
+    if not personality_context_extra:
+        try:
+            detected_profile_fact = detect_profile_fact_observation(user_message)
+            if detected_profile_fact is not None:
+                write_profile_fact_to_memory(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    human_id=human_id,
+                    predicate=detected_profile_fact.predicate,
+                    value=detected_profile_fact.value,
+                    evidence_text=detected_profile_fact.evidence_text,
+                    fact_name=detected_profile_fact.fact_name,
+                    session_id=session_id,
+                    turn_id=request_id,
+                    channel_kind=channel_kind,
+                )
+        except Exception:
+            pass
+
     # Periodically trigger self-evolution based on accumulated observations
     try:
         evolved_deltas = maybe_evolve_traits(human_id=human_id, state_db=state_db)
@@ -1102,10 +1124,12 @@ def build_researcher_reply(
     except Exception:
         pass
 
-    if personality_profile or personality_context_extra or detected_deltas or evolved_deltas or observation_record:
+    if personality_profile or personality_context_extra or detected_deltas or evolved_deltas or observation_record or detected_profile_fact:
         source_kind = "personality_profile"
         if detected_deltas:
             source_kind = "personality_preference_update"
+        elif detected_profile_fact is not None:
+            source_kind = "profile_fact_update"
         elif personality_query_kind != "none":
             source_kind = f"personality_query_{personality_query_kind}"
         elif evolved_deltas:
@@ -1130,6 +1154,16 @@ def build_researcher_reply(
                 "user_deltas_applied": bool(personality_profile.get("user_deltas_applied")) if personality_profile else False,
                 "query_kind": personality_query_kind,
                 "detected_deltas": detected_deltas or {},
+                "detected_profile_fact": (
+                    {
+                        "predicate": detected_profile_fact.predicate,
+                        "value": detected_profile_fact.value,
+                        "operation": detected_profile_fact.operation,
+                        "fact_name": detected_profile_fact.fact_name,
+                    }
+                    if detected_profile_fact is not None
+                    else None
+                ),
                 "evolved_deltas": evolved_deltas or {},
                 "observation_state": (
                     observation_record.get("user_state")

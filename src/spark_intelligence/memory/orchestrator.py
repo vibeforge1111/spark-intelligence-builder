@@ -493,6 +493,115 @@ def delete_personality_preferences_from_memory(
     )
 
 
+def write_profile_fact_to_memory(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str,
+    predicate: str,
+    value: str,
+    evidence_text: str,
+    fact_name: str,
+    session_id: str | None,
+    turn_id: str | None,
+    channel_kind: str | None,
+    actor_id: str = "profile_fact_loader",
+) -> MemoryWriteResult:
+    if not predicate or not str(value or "").strip():
+        return MemoryWriteResult(
+            status="skipped",
+            operation="update",
+            method="write_observation",
+            memory_role="current_state",
+            accepted_count=0,
+            rejected_count=0,
+            skipped_count=1,
+            abstained=False,
+            retrieval_trace=None,
+            provenance=[],
+            reason="no_durable_profile_fact",
+        )
+    if not _memory_enabled(config_manager):
+        return _disabled_write_result(operation="update")
+    if not bool(config_manager.get_path("spark.memory.write_profile_facts", default=True)):
+        return _disabled_write_result(operation="update", reason="profile_fact_memory_writes_disabled")
+    client = _load_sdk_client(config_manager)
+    if client is None:
+        result = MemoryWriteResult(
+            status="abstained",
+            operation="update",
+            method="write_observation",
+            memory_role="current_state",
+            accepted_count=0,
+            rejected_count=0,
+            skipped_count=1,
+            abstained=True,
+            retrieval_trace=None,
+            provenance=[],
+            reason="sdk_unavailable",
+        )
+        _record_memory_write_event(
+            state_db=state_db,
+            result=result,
+            human_id=human_id,
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=actor_id,
+        )
+        return result
+    observation = {
+        "subject": f"human:{human_id}",
+        "predicate": predicate,
+        "value": value,
+        "operation": "update",
+        "memory_role": "current_state",
+        "text": evidence_text,
+    }
+    _record_memory_write_requested_observations(
+        state_db=state_db,
+        operation="update",
+        human_id=human_id,
+        observations=[observation],
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+    )
+    raw = _call_sdk_method(
+        client,
+        "write_observation",
+        {
+            "operation": "update",
+            "subject": f"human:{human_id}",
+            "predicate": predicate,
+            "value": value,
+            "text": evidence_text,
+            "memory_role": "current_state",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "timestamp": _now_iso(),
+            "metadata": {
+                "entity_type": "human",
+                "field_name": predicate.rsplit(".", 1)[-1],
+                "channel_kind": channel_kind,
+                "memory_role": "current_state",
+                "source_surface": "researcher_bridge",
+                "fact_name": fact_name,
+                "normalized_value": value,
+            },
+        },
+    )
+    result = _normalize_write_result(raw=raw, operation="update")
+    _record_memory_write_event(
+        state_db=state_db,
+        result=result,
+        human_id=human_id,
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+    )
+    return result
+
+
 def read_personality_preferences_from_memory(
     *,
     config_manager: ConfigManager,
@@ -975,6 +1084,38 @@ def _record_memory_write_requested(
             "subject": f"human:{human_id}",
             "predicate_count": len(trait_values),
             "predicates": [f"{PREFERENCE_PREDICATE_PREFIX}{trait}" for trait in sorted(trait_values)],
+            "observations": observations,
+        },
+        provenance={"memory_role": "current_state"},
+    )
+
+
+def _record_memory_write_requested_observations(
+    *,
+    state_db: StateDB,
+    operation: str,
+    human_id: str,
+    observations: list[dict[str, Any]],
+    session_id: str | None,
+    turn_id: str | None,
+    actor_id: str,
+) -> None:
+    record_event(
+        state_db,
+        event_type="memory_write_requested",
+        component="memory_orchestrator",
+        summary="Spark memory write requested for durable structured facts.",
+        request_id=turn_id,
+        session_id=session_id,
+        human_id=human_id,
+        actor_id=actor_id,
+        facts={
+            "operation": operation,
+            "method": "write_observation",
+            "memory_role": "current_state",
+            "subject": f"human:{human_id}",
+            "predicate_count": len(observations),
+            "predicates": [str(item.get("predicate") or "") for item in observations if item.get("predicate")],
             "observations": observations,
         },
         provenance={"memory_role": "current_state"},

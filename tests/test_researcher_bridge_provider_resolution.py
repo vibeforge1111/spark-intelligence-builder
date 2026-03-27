@@ -268,6 +268,87 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual(result.provider_execution_transport, "direct_http")
         self.assertEqual(result.evidence_summary, "status=under_supported provider_fallback=direct_http_chat")
 
+    def test_build_researcher_reply_persists_city_profile_fact_before_bridge_execution(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        connect_exit, _, connect_stderr = self.run_cli(
+            "auth",
+            "connect",
+            "custom",
+            "--home",
+            str(self.home),
+            "--api-key",
+            "minimax-secret",
+            "--model",
+            "MiniMax-M2.7",
+            "--base-url",
+            "https://api.minimax.io/v1",
+        )
+        self.assertEqual(connect_exit, 0, connect_stderr)
+
+        runtime_root = self.home / "fake-researcher"
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        config_path = runtime_root / "spark-researcher.project.json"
+        config_path.write_text("{}", encoding="utf-8")
+
+        def fake_build_advisory(path: Path, task: str, *, model: str = "generic", limit: int = 4, domain: str | None = None):
+            return {
+                "guidance": [],
+                "epistemic_status": {
+                    "status": "under_supported",
+                    "packet_stability": {"status": "no_belief_packets"},
+                },
+                "selected_packet_ids": [],
+                "trace_path": "trace:city-under-supported",
+            }
+
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
+            return {"raw_response": "Noted."}
+
+        def fail_execute_with_research(*args, **kwargs):
+            raise AssertionError("execute_with_research should not run for direct conversational fallback")
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
+            return_value=(runtime_root, "configured"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
+            return_value=config_path,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_build_advisory",
+            return_value=fake_build_advisory,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_execute_with_research",
+            return_value=fail_execute_with_research,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=fake_direct_provider_prompt,
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-city-fact",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-city",
+                channel_kind="telegram",
+                user_message="I moved to Dubai.",
+            )
+
+        self.assertEqual(result.reply_text, "Noted.")
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(write_events)
+        observations = (write_events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(observations[0]["predicate"], "profile.city")
+        self.assertEqual(observations[0]["value"], "Dubai")
+        self.assertEqual(observations[0]["text"], "I moved to Dubai.")
+        influence_events = latest_events_by_type(self.state_db, event_type="plugin_or_chip_influence_recorded", limit=10)
+        self.assertTrue(influence_events)
+        detected = (influence_events[0]["facts_json"] or {}).get("detected_profile_fact") or {}
+        self.assertEqual(detected.get("predicate"), "profile.city")
+        self.assertEqual(detected.get("value"), "Dubai")
+
     def test_build_researcher_reply_appends_swarm_recommendation_for_explicit_delegation(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         connect_exit, _, connect_stderr = self.run_cli(

@@ -10,7 +10,9 @@ from spark_intelligence.memory import (
     build_shadow_replay_payload,
     export_shadow_replay_batch,
     run_memory_sdk_smoke_test,
+    write_profile_fact_to_memory,
 )
+from spark_intelligence.memory.profile_facts import detect_profile_fact_observation
 from spark_intelligence.observability.store import build_watchtower_snapshot, latest_events_by_type
 from spark_intelligence.personality.loader import (
     detect_and_persist_nl_preferences,
@@ -65,6 +67,43 @@ class _AbstainingMemoryClient(_FakeMemoryClient):
 
 
 class MemoryOrchestratorTests(SparkTestCase):
+    def test_profile_city_detection_and_write_use_structured_current_state_observation(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        detected = detect_profile_fact_observation("I moved to Dubai.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.city")
+        self.assertEqual(detected.value, "Dubai")
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            result = write_profile_fact_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                predicate=detected.predicate,
+                value=detected.value,
+                evidence_text=detected.evidence_text,
+                fact_name=detected.fact_name,
+                session_id="session:city",
+                turn_id="turn:city",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        self.assertEqual(len(fake_client.observation_calls), 1)
+        call = fake_client.observation_calls[0]
+        self.assertEqual(call["subject"], "human:human:test")
+        self.assertEqual(call["predicate"], "profile.city")
+        self.assertEqual(call["value"], "Dubai")
+        self.assertEqual(call["text"], "I moved to Dubai.")
+        events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(events)
+        observations = (events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(observations[0]["predicate"], "profile.city")
+        self.assertEqual(observations[0]["value"], "Dubai")
+
     def test_memory_sdk_smoke_test_runs_real_domain_chip_roundtrip(self) -> None:
         result = run_memory_sdk_smoke_test(
             config_manager=self.config_manager,
