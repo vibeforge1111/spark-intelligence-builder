@@ -209,6 +209,43 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["read_result"]["records"][0]["predicate"], "system.memory.lookup")
         self.assertEqual(payload["read_result"]["records"][0]["value"], "ok")
 
+    def test_memory_inspect_human_reports_current_facts_and_recent_events(self) -> None:
+        for predicate, value in (("system.memory.one", "alpha"), ("system.memory.two", "beta")):
+            smoke_exit, _, smoke_stderr = self.run_cli(
+                "memory",
+                "direct-smoke",
+                "--home",
+                str(self.home),
+                "--subject",
+                "human:inspect:test",
+                "--predicate",
+                predicate,
+                "--value",
+                value,
+                "--no-cleanup",
+                "--json",
+            )
+            self.assertEqual(smoke_exit, 0, smoke_stderr)
+
+        exit_code, stdout, stderr = self.run_cli(
+            "memory",
+            "inspect-human",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "inspect:test",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["sdk_module"], "domain_chip_memory")
+        self.assertEqual(payload["human_id"], "inspect:test")
+        self.assertTrue(payload["runtime"]["ready"])
+        predicates = {str(record.get("predicate") or "") for record in payload["current_state"]["records"]}
+        self.assertEqual(predicates, {"system.memory.one", "system.memory.two"})
+        self.assertTrue(payload["recent_events"])
+
     def test_memory_export_shadow_replay_writes_contract_shaped_json(self) -> None:
         with self.state_db.connect() as conn:
             conn.execute(

@@ -1,9 +1,11 @@
 from spark_intelligence.memory.orchestrator import (
+    HumanMemoryInspectionResult,
     MemoryCurrentStateLookupResult,
     MemoryReadResult,
     MemorySdkSmokeResult,
     MemoryWriteResult,
     delete_personality_preferences_from_memory,
+    inspect_human_memory_in_memory,
     inspect_memory_sdk_runtime,
     lookup_current_state_in_memory,
     read_personality_preferences_from_memory,
@@ -30,6 +32,7 @@ from spark_intelligence.memory.shadow_replay import (
 )
 
 __all__ = [
+    "HumanMemoryInspectionResult",
     "MemoryCurrentStateLookupResult",
     "MemoryReadResult",
     "MemorySdkSmokeResult",
@@ -43,6 +46,7 @@ __all__ = [
     "export_sdk_maintenance_replay",
     "export_shadow_replay",
     "export_shadow_replay_batch",
+    "inspect_human_memory_in_memory",
     "inspect_memory_sdk_runtime",
     "lookup_current_state_in_memory",
     "read_personality_preferences_from_memory",

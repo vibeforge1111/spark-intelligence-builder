@@ -10,6 +10,7 @@ from spark_intelligence.memory import (
     build_sdk_maintenance_payload,
     build_shadow_replay_payload,
     export_shadow_replay_batch,
+    inspect_human_memory_in_memory,
     lookup_current_state_in_memory,
     run_memory_sdk_smoke_test,
     write_profile_fact_to_memory,
@@ -178,6 +179,38 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertTrue(result.read_result.records)
         self.assertEqual(result.read_result.records[0]["predicate"], "system.memory.persisted")
         self.assertEqual(result.read_result.records[0]["value"], "ok")
+
+    def test_inspect_human_memory_in_memory_returns_all_current_state_records_for_subject(self) -> None:
+        run_memory_sdk_smoke_test(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            sdk_module="domain_chip_memory",
+            subject="human:inspect:test",
+            predicate="system.memory.one",
+            value="alpha",
+            cleanup=False,
+        )
+        run_memory_sdk_smoke_test(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            sdk_module="domain_chip_memory",
+            subject="human:inspect:test",
+            predicate="system.memory.two",
+            value="beta",
+            cleanup=False,
+        )
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+
+        result = inspect_human_memory_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="inspect:test",
+            sdk_module="domain_chip_memory",
+        )
+
+        self.assertFalse(result.read_result.abstained)
+        predicates = {str(record.get("predicate") or "") for record in result.read_result.records}
+        self.assertEqual(predicates, {"system.memory.one", "system.memory.two"})
 
     def test_domain_chip_memory_sdk_module_supports_live_preference_write_then_read(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

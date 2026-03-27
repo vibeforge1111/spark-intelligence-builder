@@ -166,6 +166,43 @@ class MemoryCurrentStateLookupResult:
         return "\n".join(lines)
 
 
+@dataclass(frozen=True)
+class HumanMemoryInspectionResult:
+    sdk_module: str
+    human_id: str
+    subject: str
+    runtime: dict[str, Any]
+    read_result: MemoryReadResult
+    shadow_only_eval: bool = True
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "sdk_module": self.sdk_module,
+                "human_id": self.human_id,
+                "subject": self.subject,
+                "runtime": self.runtime,
+                "shadow_only_eval": self.shadow_only_eval,
+                "read_result": MemorySdkSmokeResult._read_payload(self.read_result),
+            },
+            indent=2,
+        )
+
+    def to_text(self) -> str:
+        lines = ["Spark memory human inspection"]
+        lines.append(f"- sdk_module: {self.sdk_module}")
+        lines.append(f"- human_id: {self.human_id}")
+        lines.append(f"- subject: {self.subject}")
+        lines.append(f"- ready: {'yes' if self.runtime.get('ready') else 'no'}")
+        lines.append(
+            f"- current_state: status={self.read_result.status} records={len(self.read_result.records)} "
+            f"abstained={'yes' if self.read_result.abstained else 'no'}"
+        )
+        if self.read_result.reason:
+            lines.append(f"- reason: {self.read_result.reason}")
+        return "\n".join(lines)
+
+
 class _DomainChipMemoryClientAdapter:
     def __init__(self, sdk: Any, module: ModuleType, *, persistence_path: Path | None = None) -> None:
         self._sdk = sdk
@@ -210,8 +247,9 @@ class _DomainChipMemoryClientAdapter:
     def get_current_state(self, **payload: Any) -> dict[str, Any]:
         subject = _optional_string(payload.get("subject"))
         predicate = _optional_string(payload.get("predicate"))
-        predicate_prefix = _optional_string(payload.get("predicate_prefix"))
-        if subject and predicate_prefix and not predicate:
+        raw_predicate_prefix = payload.get("predicate_prefix")
+        predicate_prefix = None if raw_predicate_prefix is None else str(raw_predicate_prefix)
+        if subject and raw_predicate_prefix is not None and not predicate:
             return self._get_current_state_prefix(subject=subject, predicate_prefix=predicate_prefix)
         if not subject or not predicate:
             return {"status": "abstained", "reason": "invalid_request", "memory_role": "unknown"}
@@ -536,6 +574,86 @@ def lookup_current_state_in_memory(
         sdk_module=module_name,
         subject=subject,
         predicate=predicate,
+        runtime=runtime,
+        read_result=read_result,
+    )
+
+
+def inspect_human_memory_in_memory(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str,
+    sdk_module: str | None = None,
+    actor_id: str = "memory_cli",
+) -> HumanMemoryInspectionResult:
+    module_name = str(sdk_module or config_manager.get_path("spark.memory.sdk_module", default=DEFAULT_SDK_MODULE) or DEFAULT_SDK_MODULE)
+    runtime = inspect_memory_sdk_runtime(config_manager=config_manager, sdk_module=module_name)
+    client = _load_sdk_client_for_module(module_name=module_name, home_path=config_manager.paths.home)
+    subject = f"human:{human_id}"
+    if client is None:
+        read_result = MemoryReadResult(
+            status="abstained",
+            method="get_current_state",
+            memory_role="current_state",
+            records=[],
+            provenance=[],
+            retrieval_trace=None,
+            answer_explanation=None,
+            abstained=True,
+            reason="sdk_unavailable",
+            shadow_only=False,
+        )
+        _record_memory_read_event(
+            state_db=state_db,
+            result=read_result,
+            human_id=human_id,
+            session_id=f"memory-inspect:{actor_id}",
+            turn_id=f"{actor_id}:inspect-human",
+            actor_id=actor_id,
+        )
+        return HumanMemoryInspectionResult(
+            sdk_module=module_name,
+            human_id=human_id,
+            subject=subject,
+            runtime=runtime,
+            read_result=read_result,
+        )
+    _record_memory_read_requested_subject(
+        state_db=state_db,
+        method="get_current_state",
+        subject=subject,
+        predicate=None,
+        predicate_prefix="",
+        session_id=f"memory-inspect:{actor_id}",
+        turn_id=f"{actor_id}:inspect-human",
+        actor_id=actor_id,
+    )
+    raw = _call_sdk_method(
+        client,
+        "get_current_state",
+        {
+            "subject": subject,
+            "predicate_prefix": "",
+            "session_id": f"memory-inspect:{actor_id}",
+            "turn_id": f"{actor_id}:inspect-human",
+            "timestamp": _now_iso(),
+            "metadata": {"source_surface": "memory_cli_inspect_human"},
+        },
+    )
+    read_result = _normalize_read_result(raw=raw, method="get_current_state", shadow_only=False)
+    _record_memory_read_event(
+        state_db=state_db,
+        result=read_result,
+        human_id=human_id,
+        session_id=f"memory-inspect:{actor_id}",
+        turn_id=f"{actor_id}:inspect-human",
+        actor_id=actor_id,
+    )
+    return HumanMemoryInspectionResult(
+        sdk_module=module_name,
+        human_id=human_id,
+        subject=subject,
         runtime=runtime,
         read_result=read_result,
     )
@@ -1369,11 +1487,17 @@ def _record_memory_read_requested_subject(
     state_db: StateDB,
     method: str,
     subject: str,
-    predicate: str,
+    predicate: str | None,
+    predicate_prefix: str | None = None,
     session_id: str | None,
     turn_id: str | None,
     actor_id: str,
 ) -> None:
+    facts = {"method": method, "memory_role": "current_state", "subject": subject}
+    if predicate is not None:
+        facts["predicate"] = predicate
+    if predicate_prefix is not None:
+        facts["predicate_prefix"] = predicate_prefix
     record_event(
         state_db,
         event_type="memory_read_requested",
@@ -1383,7 +1507,7 @@ def _record_memory_read_requested_subject(
         session_id=session_id,
         human_id=_human_id_from_subject(subject),
         actor_id=actor_id,
-        facts={"method": method, "memory_role": "current_state", "subject": subject, "predicate": predicate},
+        facts=facts,
         provenance={"memory_role": "current_state"},
     )
 

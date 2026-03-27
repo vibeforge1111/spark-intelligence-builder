@@ -69,6 +69,7 @@ from spark_intelligence.memory import (
     export_sdk_maintenance_replay,
     export_shadow_replay,
     export_shadow_replay_batch,
+    inspect_human_memory_in_memory,
     inspect_memory_sdk_runtime,
     lookup_current_state_in_memory,
     run_memory_sdk_smoke_test,
@@ -402,6 +403,51 @@ class MemoryStatus:
                     f"  - {failure.get('event_type') or 'unknown'} "
                     f"{failure.get('created_at') or 'unknown'} "
                     f"reason={failure.get('reason') or 'n/a'}"
+                )
+        return "\n".join(lines)
+
+
+@dataclass
+class MemoryHumanInspection:
+    payload: dict[str, object]
+
+    def to_json(self) -> str:
+        return json.dumps(self.payload, indent=2)
+
+    def to_text(self) -> str:
+        runtime = self.payload.get("runtime") or {}
+        current_state = self.payload.get("current_state") or {}
+        records = current_state.get("records") or []
+        lines = ["Spark memory inspect human"]
+        lines.append(f"- human_id: {self.payload.get('human_id') or 'unknown'}")
+        lines.append(f"- subject: {self.payload.get('subject') or 'unknown'}")
+        lines.append(
+            f"- configured module: {runtime.get('configured_module') or 'unknown'} "
+            f"ready={'yes' if runtime.get('ready') else 'no'}"
+        )
+        lines.append(
+            f"- current facts: status={current_state.get('status') or 'unknown'} "
+            f"records={len(records)} abstained={'yes' if current_state.get('abstained') else 'no'}"
+        )
+        if records:
+            lines.append("- current-state facts:")
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                lines.append(
+                    f"  - {record.get('predicate') or 'unknown'} = {record.get('value')}"
+                )
+        recent_events = self.payload.get("recent_events") or []
+        if recent_events:
+            lines.append("- recent memory events:")
+            for event in recent_events:
+                if not isinstance(event, dict):
+                    continue
+                lines.append(
+                    f"  - {event.get('event_type') or 'unknown'} "
+                    f"{event.get('created_at') or 'unknown'} "
+                    f"reason={event.get('reason') or 'n/a'} "
+                    f"predicate={event.get('predicate') or event.get('predicate_prefix') or 'n/a'}"
                 )
         return "\n".join(lines)
 
@@ -1209,6 +1255,15 @@ def build_parser() -> argparse.ArgumentParser:
     memory_lookup_parser.add_argument("--subject", required=True, help="Structured memory subject to read")
     memory_lookup_parser.add_argument("--predicate", required=True, help="Structured memory predicate to read")
     memory_lookup_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_inspect_human_parser = memory_subparsers.add_parser(
+        "inspect-human",
+        help="Show current structured memory facts and recent memory activity for one Builder human id",
+    )
+    memory_inspect_human_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_inspect_human_parser.add_argument("--sdk-module", help="Override the SDK module for this inspection")
+    memory_inspect_human_parser.add_argument("--human-id", required=True, help="Builder human id to inspect")
+    memory_inspect_human_parser.add_argument("--event-limit", type=int, default=10, help="Maximum recent memory events to include")
+    memory_inspect_human_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_export_parser = memory_subparsers.add_parser(
         "export-shadow-replay",
         help="Export a Spark shadow replay JSON file for domain-chip-memory validation",
@@ -2875,6 +2930,36 @@ def handle_memory_lookup_current_state(args: argparse.Namespace) -> int:
     return 0 if not result.read_result.abstained and bool(result.read_result.records) else 1
 
 
+def handle_memory_inspect_human(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = inspect_human_memory_in_memory(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=args.human_id,
+        sdk_module=args.sdk_module,
+    )
+    inspection = MemoryHumanInspection(
+        payload={
+            "sdk_module": result.sdk_module,
+            "human_id": args.human_id,
+            "subject": result.subject,
+            "runtime": result.runtime,
+            "current_state": json.loads(result.to_json()).get("read_result"),
+            "recent_events": _build_recent_human_memory_events(
+                state_db=state_db,
+                human_id=args.human_id,
+                subject=result.subject,
+                limit=args.event_limit,
+            ),
+        }
+    )
+    print(inspection.to_json() if args.json else inspection.to_text())
+    return 0
+
+
 def handle_memory_export_shadow_replay(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -3020,6 +3105,52 @@ def _build_recent_memory_failures(state_db: StateDB) -> list[dict[str, object]]:
         limit=10,
     )
     return [_memory_status_event_payload(event) for event in events]
+
+
+def _build_recent_human_memory_events(
+    *,
+    state_db: StateDB,
+    human_id: str,
+    subject: str,
+    limit: int,
+) -> list[dict[str, object]]:
+    events = _latest_memory_status_events(
+        state_db,
+        event_types=(
+            "memory_write_requested",
+            "memory_write_succeeded",
+            "memory_write_abstained",
+            "memory_read_requested",
+            "memory_read_succeeded",
+            "memory_read_abstained",
+            "memory_smoke_succeeded",
+            "memory_smoke_failed",
+        ),
+        limit=max(limit * 6, 30),
+    )
+    filtered: list[dict[str, object]] = []
+    for event in events:
+        event_human_id = str(event.get("human_id") or "")
+        facts = event.get("facts_json")
+        facts_dict = facts if isinstance(facts, dict) else {}
+        fact_subject = str(facts_dict.get("subject") or "")
+        if event_human_id != human_id and fact_subject != subject:
+            continue
+        filtered.append(
+            {
+                "event_type": event.get("event_type"),
+                "created_at": event.get("created_at"),
+                "reason": facts_dict.get("reason"),
+                "subject": facts_dict.get("subject"),
+                "predicate": facts_dict.get("predicate"),
+                "predicate_prefix": facts_dict.get("predicate_prefix"),
+                "memory_role": facts_dict.get("memory_role"),
+                "accepted_count": facts_dict.get("accepted_count"),
+            }
+        )
+        if len(filtered) >= limit:
+            break
+    return filtered
 
 
 def handle_config_show(args: argparse.Namespace) -> int:
@@ -3441,6 +3572,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_memory_status(args)
     if args.command == "memory" and args.memory_command == "lookup-current-state":
         return handle_memory_lookup_current_state(args)
+    if args.command == "memory" and args.memory_command == "inspect-human":
+        return handle_memory_inspect_human(args)
     if args.command == "memory" and args.memory_command == "export-shadow-replay":
         return handle_memory_export_shadow_replay(args)
     if args.command == "memory" and args.memory_command == "export-shadow-replay-batch":
