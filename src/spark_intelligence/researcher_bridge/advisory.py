@@ -358,6 +358,46 @@ def _render_direct_provider_chat_fallback(
     return raw_response
 
 
+
+def _maybe_apply_swarm_recommendation(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    user_message: str,
+    channel_kind: str,
+    reply_text: str,
+    evidence_summary: str,
+    routing_decision: str | None,
+) -> tuple[str, str, str | None, str | None]:
+    try:
+        from spark_intelligence.swarm_bridge import evaluate_swarm_escalation
+    except Exception:  # pragma: no cover - defensive import guard
+        return reply_text, evidence_summary, None, routing_decision
+
+    decision = evaluate_swarm_escalation(
+        config_manager=config_manager,
+        state_db=state_db,
+        task=user_message,
+    )
+    if not decision.escalate or decision.mode != "manual_recommended":
+        return reply_text, evidence_summary, None, routing_decision
+
+    triggers = ", ".join(decision.triggers) if decision.triggers else "explicit request"
+    escalation_hint = decision.mode
+    next_line = (
+        "Swarm: recommended for this task because it asks for delegation or multi-agent work "
+        f"({triggers})."
+    )
+    if channel_kind == "telegram":
+        reply_text = f"{reply_text}\n\n{next_line}"
+    evidence_summary = f"{evidence_summary} swarm={decision.mode}"
+    if routing_decision:
+        routing_decision = f"{routing_decision}+{decision.mode}"
+    else:
+        routing_decision = decision.mode
+    return reply_text, evidence_summary, escalation_hint, routing_decision
+
+
 def _build_contextual_task(
     *,
     user_message: str,
@@ -880,11 +920,20 @@ def build_researcher_reply(
                     )
                     trace_ref = str(advisory.get("trace_path") or advisory.get("trace_id") or "trace:missing")
                     evidence_summary = "status=under_supported provider_fallback=direct_http_chat"
+                    reply_text, evidence_summary, escalation_hint, routing_decision = _maybe_apply_swarm_recommendation(
+                        config_manager=config_manager,
+                        state_db=state_db,
+                        user_message=user_message,
+                        channel_kind=channel_kind,
+                        reply_text=reply_text,
+                        evidence_summary=evidence_summary,
+                        routing_decision="provider_fallback_chat",
+                    )
                     return ResearcherBridgeResult(
                         request_id=request_id,
                         reply_text=reply_text,
                         evidence_summary=evidence_summary,
-                        escalation_hint=None,
+                        escalation_hint=escalation_hint,
                         trace_ref=trace_ref,
                         mode=f"external_{runtime_source}",
                         runtime_root=str(runtime_root),
@@ -898,7 +947,7 @@ def build_researcher_reply(
                         provider_execution_transport=provider_selection.provider.execution_transport,
                         provider_base_url=provider_selection.provider.base_url,
                         provider_source=provider_selection.provider.source,
-                        routing_decision="provider_fallback_chat",
+                        routing_decision=routing_decision,
                         active_chip_key=active_chip_key,
                         active_chip_task_type=active_chip_task_type,
                         active_chip_evaluate_used=active_chip_evaluate_used,
@@ -916,11 +965,25 @@ def build_researcher_reply(
                 else:
                     reply_text, evidence_summary, trace_ref = _render_reply_from_advisory(advisory)
                 reply_text = _clean_messaging_reply(reply_text, channel_kind=channel_kind)
+                base_routing_decision = (
+                    "provider_execution"
+                    if provider_selection.provider and _supports_direct_or_cli_execution(provider_selection)
+                    else "researcher_advisory"
+                )
+                reply_text, evidence_summary, escalation_hint, routing_decision = _maybe_apply_swarm_recommendation(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    user_message=user_message,
+                    channel_kind=channel_kind,
+                    reply_text=reply_text,
+                    evidence_summary=evidence_summary,
+                    routing_decision=base_routing_decision,
+                )
                 return ResearcherBridgeResult(
                     request_id=request_id,
                     reply_text=reply_text,
                     evidence_summary=evidence_summary,
-                    escalation_hint=None,
+                    escalation_hint=escalation_hint,
                     trace_ref=trace_ref,
                     mode=f"external_{runtime_source}",
                     runtime_root=str(runtime_root),
@@ -936,11 +999,7 @@ def build_researcher_reply(
                     ),
                     provider_base_url=provider_selection.provider.base_url if provider_selection.provider else None,
                     provider_source=provider_selection.provider.source if provider_selection.provider else None,
-                    routing_decision=(
-                        "provider_execution"
-                        if provider_selection.provider and _supports_direct_or_cli_execution(provider_selection)
-                        else "researcher_advisory"
-                    ),
+                    routing_decision=routing_decision,
                     active_chip_key=active_chip_key,
                     active_chip_task_type=active_chip_task_type,
                     active_chip_evaluate_used=active_chip_evaluate_used,

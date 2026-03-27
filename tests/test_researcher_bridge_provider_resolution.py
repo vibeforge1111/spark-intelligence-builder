@@ -248,6 +248,157 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual(result.provider_execution_transport, "direct_http")
         self.assertEqual(result.evidence_summary, "status=under_supported provider_fallback=direct_http_chat")
 
+    def test_build_researcher_reply_appends_swarm_recommendation_for_explicit_delegation(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        connect_exit, _, connect_stderr = self.run_cli(
+            "auth",
+            "connect",
+            "custom",
+            "--home",
+            str(self.home),
+            "--api-key",
+            "minimax-secret",
+            "--model",
+            "MiniMax-M2.7",
+            "--base-url",
+            "https://api.minimax.io/v1",
+        )
+        self.assertEqual(connect_exit, 0, connect_stderr)
+
+        runtime_root = self.home / "fake-researcher"
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        config_path = runtime_root / "spark-researcher.project.json"
+        config_path.write_text("{}", encoding="utf-8")
+
+        def fake_build_advisory(path: Path, task: str, *, model: str = "generic", limit: int = 4, domain: str | None = None):
+            return {
+                "guidance": ["Use evidence-backed guidance."],
+                "epistemic_status": {"status": "grounded", "packet_stability": {"status": "durable_supported"}},
+                "selected_packet_ids": ["packet-1"],
+                "trace_path": "trace:test",
+            }
+
+        def fake_execute_with_research(*args, **kwargs):
+            return {
+                "status": "ok",
+                "decision": "approve",
+                "response": {"raw_response": "We should break this into steps and assign owners."},
+                "trace_path": "trace:execution",
+            }
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
+            return_value=(runtime_root, "configured"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
+            return_value=config_path,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_build_advisory",
+            return_value=fake_build_advisory,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_execute_with_research",
+            return_value=fake_execute_with_research,
+        ), patch(
+            "spark_intelligence.swarm_bridge.evaluate_swarm_escalation",
+            return_value=type(
+                "Decision",
+                (),
+                {
+                    "escalate": True,
+                    "mode": "manual_recommended",
+                    "triggers": ["explicit_swarm", "parallel_work"],
+                },
+            )(),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-swarm-recommend",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-1",
+                channel_kind="telegram",
+                user_message="Please delegate this as parallel swarm work.",
+            )
+
+        self.assertEqual(result.escalation_hint, "manual_recommended")
+        self.assertEqual(result.routing_decision, "provider_execution+manual_recommended")
+        self.assertIn("Swarm: recommended for this task", result.reply_text)
+        self.assertIn("swarm=manual_recommended", result.evidence_summary)
+
+    def test_build_researcher_reply_appends_swarm_recommendation_to_fallback_chat(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        connect_exit, _, connect_stderr = self.run_cli(
+            "auth",
+            "connect",
+            "custom",
+            "--home",
+            str(self.home),
+            "--api-key",
+            "minimax-secret",
+            "--model",
+            "MiniMax-M2.7",
+            "--base-url",
+            "https://api.minimax.io/v1",
+        )
+        self.assertEqual(connect_exit, 0, connect_stderr)
+
+        runtime_root = self.home / "fake-researcher"
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        config_path = runtime_root / "spark-researcher.project.json"
+        config_path.write_text("{}", encoding="utf-8")
+
+        def fake_build_advisory(path: Path, task: str, *, model: str = "generic", limit: int = 4, domain: str | None = None):
+            return {
+                "guidance": [],
+                "epistemic_status": {
+                    "status": "under_supported",
+                    "packet_stability": {"status": "no_belief_packets"},
+                },
+                "selected_packet_ids": [],
+                "trace_path": "trace:under-supported",
+            }
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
+            return_value=(runtime_root, "configured"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
+            return_value=config_path,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_build_advisory",
+            return_value=fake_build_advisory,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            return_value={"raw_response": "We can do that."},
+        ), patch(
+            "spark_intelligence.swarm_bridge.evaluate_swarm_escalation",
+            return_value=type(
+                "Decision",
+                (),
+                {
+                    "escalate": True,
+                    "mode": "manual_recommended",
+                    "triggers": ["explicit_swarm"],
+                },
+            )(),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-swarm-fallback",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-1",
+                channel_kind="telegram",
+                user_message="swarm this",
+            )
+
+        self.assertEqual(result.escalation_hint, "manual_recommended")
+        self.assertEqual(result.routing_decision, "provider_fallback_chat+manual_recommended")
+        self.assertIn("Swarm: recommended for this task", result.reply_text)
+        self.assertIn("swarm=manual_recommended", result.evidence_summary)
+
     def test_build_researcher_reply_respects_disabled_conversational_fallback_policy(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.researcher.routing.conversational_fallback_enabled", False)
