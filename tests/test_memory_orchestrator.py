@@ -464,12 +464,18 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(len(conversation["turns"]), 3)
         self.assertEqual(conversation["turns"][0]["role"], "user")
         self.assertEqual(conversation["turns"][0]["content"], "Please be more direct with me.")
+        self.assertEqual(conversation["turns"][0]["metadata"]["subject"], "human:human:test")
+        self.assertEqual(conversation["turns"][0]["metadata"]["predicate"], "personality.preference.directness")
+        self.assertEqual(conversation["turns"][0]["metadata"]["value"], 0.35)
+        self.assertEqual(conversation["turns"][0]["metadata"]["operation"], "update")
         self.assertEqual(conversation["turns"][1]["role"], "assistant")
         self.assertEqual(conversation["turns"][1]["content"], "Noted. I will be more direct.")
         probe_types = {probe["probe_type"] for probe in conversation["probes"]}
         self.assertIn("current_state", probe_types)
         self.assertIn("evidence", probe_types)
         self.assertIn("historical_state", probe_types)
+        historical_probe = next(probe for probe in conversation["probes"] if probe["probe_type"] == "historical_state")
+        self.assertEqual(historical_probe["expected_value"], 0.35)
 
     def test_shadow_replay_batch_export_runs_validation_and_batch_report(self) -> None:
         with self.state_db.connect() as conn:

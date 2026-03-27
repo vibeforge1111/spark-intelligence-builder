@@ -561,7 +561,13 @@ def _build_turn(
             if str(observation.get("request_id") or "") == request_id
         ]
         if observation_hints:
-            metadata["memory_kind"] = "current_state"
+            primary = observation_hints[0]
+            metadata["memory_kind"] = str(primary.get("memory_role") or "observation")
+            metadata["subject"] = str(primary.get("subject") or "") or None
+            metadata["predicate"] = str(primary.get("predicate") or "") or None
+            metadata["value"] = primary.get("value")
+            metadata["operation"] = str(primary.get("operation") or "") or None
+            metadata["memory_role"] = str(primary.get("memory_role") or "current_state")
             metadata["entity_hints"] = sorted({str(item.get("subject") or "") for item in observation_hints if item.get("subject")})
             metadata["predicate_hints"] = [str(item.get("predicate") or "") for item in observation_hints if item.get("predicate")]
             metadata["source_tags"] = ["spark_memory_sdk_shadow_candidate"]
@@ -618,15 +624,14 @@ def _build_conversation_probes(
                 distinct_values.append(value)
         if len(distinct_values) < 2:
             continue
-        latest = history[-1]
         probes.append(
             {
                 "probe_id": f"{session_id}:historical:{index}",
                 "probe_type": "historical_state",
                 "subject": subject,
                 "predicate": predicate,
-                "as_of": latest.get("timestamp"),
-                "expected_value": latest.get("value"),
+                "as_of": observation.get("timestamp"),
+                "expected_value": observation.get("value"),
             }
         )
     return probes
