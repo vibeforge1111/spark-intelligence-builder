@@ -10,10 +10,16 @@ from spark_intelligence.state.db import StateDB
 def looks_secret_like(text: str) -> bool:
     patterns = [
         r"(?i)bearer\s+[A-Za-z0-9._-]{20,}",
-        r"(?m)^[A-Z0-9_]{3,}=(?:ghp_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,}|[0-9]{7,}:[A-Za-z0-9_-]{20,})$",
+        r"(?m)^[A-Z0-9_]{3,}=(?:ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-|live-|test-|ant-)?[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|[0-9]{7,10}:[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})$",
         r"ghp_[A-Za-z0-9]{20,}",
-        r"sk-[A-Za-z0-9]{20,}",
-        r"\b[0-9]{7,}:[A-Za-z0-9_-]{20,}\b",
+        r"github_pat_[A-Za-z0-9_]{20,}",
+        r"sk-(?:proj-|live-|test-|ant-)?[A-Za-z0-9_-]{20,}",
+        r"xox[baprs]-[A-Za-z0-9-]{20,}",
+        r"\b[0-9]{7,10}:[A-Za-z0-9_-]{20,}\b",
+        r"\bAKIA[0-9A-Z]{16}\b",
+        r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b",
+        r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
+        r"(?i)(?:secret|token|api[_ -]?key|access[_ -]?key|refresh[_ -]?token|password)\s*[:=]\s*['\"]?[A-Za-z0-9._:/+=-]{16,}",
     ]
     return any(re.search(pattern, text) for pattern in patterns)
 

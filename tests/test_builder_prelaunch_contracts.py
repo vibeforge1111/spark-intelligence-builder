@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from spark_intelligence.gateway.guardrails import prepare_outbound_text
+from spark_intelligence.observability.policy import looks_secret_like
 from spark_intelligence.jobs.service import jobs_tick
 from spark_intelligence.observability.checks import evaluate_stop_ship_issues
 from spark_intelligence.observability.store import (
@@ -15,6 +16,13 @@ from tests.test_support import SparkTestCase
 
 
 class BuilderPrelaunchContractTests(SparkTestCase):
+    def test_secret_policy_detects_common_secret_families(self) -> None:
+        self.assertTrue(looks_secret_like("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl"))
+        self.assertTrue(looks_secret_like("TELEGRAM_BOT_TOKEN=1234567890:abcdefghijklmnopqrstuvwxyzABCDE"))
+        self.assertTrue(looks_secret_like("api_key: sk-proj-abcdefghijklmnopqrstuvwxyz123456"))
+        self.assertTrue(looks_secret_like("-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----"))
+        self.assertFalse(looks_secret_like("This is a normal operational note with no credentials in it."))
+
     def test_config_set_path_records_typed_mutation_audit(self) -> None:
         self.config_manager.set_path("runtime.install.profile", "telegram-agent")
 
