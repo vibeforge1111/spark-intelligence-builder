@@ -30,6 +30,7 @@ def screen_model_visible_text(
     run_id: str | None = None,
     request_id: str | None = None,
     trace_ref: str | None = None,
+    blocked_stage: str = "pre_model",
     provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not looks_secret_like(text):
@@ -44,7 +45,7 @@ def screen_model_visible_text(
         trace_ref=trace_ref,
         reason_code=reason_code,
         severity="high",
-        facts={"source_kind": source_kind, "source_ref": source_ref, "blocked_stage": "pre_model"},
+        facts={"source_kind": source_kind, "source_ref": source_ref, "blocked_stage": blocked_stage},
         provenance=provenance,
     )
     quarantine_id = record_quarantine(

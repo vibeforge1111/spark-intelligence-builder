@@ -63,6 +63,8 @@ from spark_intelligence.identity.service import (
     revoke_session,
 )
 from spark_intelligence.jobs.service import jobs_list, jobs_tick
+from spark_intelligence.observability.policy import screen_model_visible_text
+from spark_intelligence.observability.store import close_run, open_run, record_event
 from spark_intelligence.ops import (
     build_operator_inbox,
     build_operator_security_report,
@@ -2369,7 +2371,9 @@ def handle_attachments_clear_path(args: argparse.Namespace) -> int:
 
 def handle_attachments_run_hook(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
+    state_db.initialize()
     try:
         payload = json.loads(args.payload_json)
     except json.JSONDecodeError as exc:
@@ -2378,22 +2382,145 @@ def handle_attachments_run_hook(args: argparse.Namespace) -> int:
     if not isinstance(payload, dict):
         print("Hook payload must be a JSON object.", file=sys.stderr)
         return 2
+    run = open_run(
+        state_db,
+        run_kind=f"operator:attachments_hook:{args.hook}",
+        origin_surface="attachments_cli",
+        summary="Operator started an attachments chip hook execution.",
+        request_id=f"attachments-hook:{args.hook}",
+        actor_id="local-operator",
+        reason_code="attachments_run_hook",
+        facts={"chip_key": args.chip_key or "active", "hook": args.hook},
+    )
     try:
         if args.chip_key:
             execution = run_chip_hook(config_manager, chip_key=args.chip_key, hook=args.hook, payload=payload)
         else:
             execution = run_first_active_chip_hook(config_manager, hook=args.hook, payload=payload)
             if execution is None:
+                close_run(
+                    state_db,
+                    run_id=run.run_id,
+                    status="stalled",
+                    close_reason="no_active_chip_for_hook",
+                    summary="Attachments CLI run-hook found no active chip for the requested hook.",
+                    facts={"hook": args.hook},
+                )
                 print(
                     f"No active chip exposes hook '{args.hook}'. Activate a chip first or pass --chip-key.",
                     file=sys.stderr,
                 )
                 return 1
     except ValueError as exc:
+        close_run(
+            state_db,
+            run_id=run.run_id,
+            status="stalled",
+            close_reason="attachments_hook_invalid",
+            summary="Attachments CLI run-hook failed validation before execution.",
+            facts={"hook": args.hook, "error": str(exc)},
+        )
         print(str(exc), file=sys.stderr)
         return 2
 
-    print(execution.to_json() if args.json else execution.to_text())
+    output_text = execution.to_json() if args.json else execution.to_text()
+    record_event(
+        state_db,
+        event_type="plugin_or_chip_influence_recorded",
+        component="attachments_cli",
+        summary="Operator executed a chip hook via the attachments CLI.",
+        run_id=run.run_id,
+        request_id=run.request_id,
+        actor_id="local-operator",
+        reason_code="attachments_run_hook",
+        facts={
+            "chip_key": execution.chip_key,
+            "hook": execution.hook,
+            "ok": execution.ok,
+            "exit_code": execution.exit_code,
+            "keepability": "operator_debug_only",
+        },
+        provenance={"source_kind": "chip_hook_cli", "source_ref": execution.chip_key},
+    )
+    screened_output = screen_model_visible_text(
+        state_db=state_db,
+        source_kind="chip_hook_output",
+        source_ref=f"{execution.chip_key}:{execution.hook}",
+        text=output_text,
+        summary="Attachments CLI blocked secret-like chip hook output before operator display.",
+        reason_code="attachments_run_hook_secret_like",
+        policy_domain="attachments_cli",
+        run_id=run.run_id,
+        request_id=run.request_id,
+        blocked_stage="operator_output",
+        provenance={"chip_key": execution.chip_key, "hook": execution.hook},
+    )
+    if not screened_output["allowed"]:
+        record_event(
+            state_db,
+            event_type="dispatch_failed",
+            component="attachments_cli",
+            summary="Attachments CLI blocked chip hook output because it contained secret-like material.",
+            run_id=run.run_id,
+            request_id=run.request_id,
+            actor_id="local-operator",
+            reason_code="secret_boundary_blocked",
+            severity="high",
+            facts={
+                "chip_key": execution.chip_key,
+                "hook": execution.hook,
+                "quarantine_id": screened_output["quarantine_id"],
+            },
+        )
+        close_run(
+            state_db,
+            run_id=run.run_id,
+            status="stalled",
+            close_reason="secret_boundary_blocked",
+            summary="Attachments CLI run-hook was blocked by the secret boundary.",
+            facts={
+                "chip_key": execution.chip_key,
+                "hook": execution.hook,
+                "quarantine_id": screened_output["quarantine_id"],
+            },
+        )
+        print(
+            "Chip hook output was blocked because it contained secret-like material. "
+            "Review quarantine records instead of raw output.",
+            file=sys.stderr,
+        )
+        return 1
+
+    record_event(
+        state_db,
+        event_type="tool_result_received",
+        component="attachments_cli",
+        summary="Attachments CLI produced a chip hook result.",
+        run_id=run.run_id,
+        request_id=run.request_id,
+        actor_id="local-operator",
+        reason_code="attachments_run_hook",
+        facts={
+            "chip_key": execution.chip_key,
+            "hook": execution.hook,
+            "ok": execution.ok,
+            "exit_code": execution.exit_code,
+        },
+    )
+    close_run(
+        state_db,
+        run_id=run.run_id,
+        status="closed",
+        close_reason="attachments_hook_completed",
+        summary="Attachments CLI run-hook completed.",
+        facts={
+            "chip_key": execution.chip_key,
+            "hook": execution.hook,
+            "ok": execution.ok,
+            "exit_code": execution.exit_code,
+        },
+    )
+    print(output_text)
     return 0 if execution.ok else 1
 
 

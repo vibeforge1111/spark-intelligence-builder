@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
+from spark_intelligence.observability.store import latest_events_by_type
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
 
 from tests.test_support import SparkTestCase
@@ -113,6 +114,71 @@ class AttachmentHookTests(SparkTestCase):
         self.assertEqual(payload["chip_key"], "startup-yc")
         self.assertTrue(payload["ok"])
         self.assertIn("Startup YC doctrine", payload["output"]["result"]["analysis"])
+        events = latest_events_by_type(self.state_db, event_type="plugin_or_chip_influence_recorded", limit=10)
+        self.assertTrue(
+            any(
+                str(event.get("component") or "") == "attachments_cli"
+                and str((event.get("provenance_json") or {}).get("source_kind") or "") == "chip_hook_cli"
+                for event in events
+            )
+        )
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT status, close_reason
+                FROM builder_runs
+                WHERE run_kind = 'operator:attachments_hook:evaluate'
+                ORDER BY opened_at DESC, run_id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["status"], "closed")
+        self.assertEqual(row["close_reason"], "attachments_hook_completed")
+
+    def test_attachments_run_hook_blocks_secret_like_output(self) -> None:
+        chip_root = _create_fake_hook_chip(self.home)
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+
+        activate_exit, _, activate_stderr = self.run_cli(
+            "attachments",
+            "activate-chip",
+            "startup-yc",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(activate_exit, 0, activate_stderr)
+
+        hook_exit, hook_stdout, hook_stderr = self.run_cli(
+            "attachments",
+            "run-hook",
+            "evaluate",
+            "--home",
+            str(self.home),
+            "--json",
+            "--payload-json",
+            json.dumps({"situation": "sk-abcdefghijklmnopqrstuvwxyz123456"}),
+        )
+        self.assertEqual(hook_stdout, "")
+        self.assertNotEqual(hook_exit, 0)
+        self.assertIn("blocked", hook_stderr.lower())
+        self.assertTrue(latest_events_by_type(self.state_db, event_type="secret_boundary_violation", limit=10))
+        with self.state_db.connect() as conn:
+            row = conn.execute("SELECT COUNT(*) AS c FROM quarantine_records").fetchone()
+        self.assertGreaterEqual(int(row["c"]), 1)
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT status, close_reason
+                FROM builder_runs
+                WHERE run_kind = 'operator:attachments_hook:evaluate'
+                ORDER BY opened_at DESC, run_id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["status"], "stalled")
+        self.assertEqual(row["close_reason"], "secret_boundary_blocked")
 
     def test_researcher_bridge_includes_active_chip_evaluate_context_in_provider_fallback(self) -> None:
         self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])

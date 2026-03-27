@@ -73,6 +73,8 @@ Structural now:
 - Swarm sync, decision, and auth-refresh outcomes now emit typed event mirrors instead of depending only on `runtime_state`
 - secret-like chip/output material can be quarantined before model-visible prompt assembly
 - the final assembled bridge prompt is now screened before any Researcher or direct-provider execution
+- operator-triggered `attachments run-hook` executions now emit typed provenance and block secret-like hook output before terminal display
+- operator-triggered `attachments run-hook` executions now open and close typed runs instead of existing only as CLI residue
 - outbound secret-like replies now emit typed violation and quarantine records instead of only trace-side evidence
 - doctor and operator security now expose explicit stop-ship failures
 
