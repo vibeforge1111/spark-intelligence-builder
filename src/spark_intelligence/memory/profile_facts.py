@@ -9,6 +9,10 @@ _CITY_PATTERNS = [
     re.compile(r"\bi\s+live\s+in\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
     re.compile(r"\bi(?:'m| am)\s+in\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
 ]
+_NAME_PATTERNS = [
+    re.compile(r"\bmy\s+name\s+is\s+([a-z][a-z\s\-'.`]{0,40})", re.I),
+    re.compile(r"\bcall\s+me\s+([a-z][a-z\s\-'.`]{0,40})", re.I),
+]
 _COUNTRY_PATTERNS = [
     re.compile(r"\bmy\s+country\s+is\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
     re.compile(r"\bi(?:'m| am)\s+from\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
@@ -43,6 +47,15 @@ def detect_profile_fact_observation(user_message: str) -> ProfileFactObservation
     text = str(user_message or "").strip()
     if not text:
         return None
+    preferred_name = _extract_name(text)
+    if preferred_name:
+        return ProfileFactObservation(
+            predicate="profile.preferred_name",
+            value=preferred_name,
+            operation="update",
+            evidence_text=text,
+            fact_name="profile_preferred_name",
+        )
     country = _extract_country(text)
     if country:
         return ProfileFactObservation(
@@ -77,6 +90,17 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
     text = str(user_message or "").strip().lower()
     if not text:
         return None
+    if any(
+        phrase in text
+        for phrase in (
+            "what name do you have for me",
+            "what name do you have saved for me",
+            "which name do you have for me",
+            "what's my name",
+            "what is my name",
+        )
+    ):
+        return ProfileFactQuery(predicate="profile.preferred_name", fact_name="profile_preferred_name", label="name")
     if any(
         phrase in text
         for phrase in (
@@ -140,6 +164,17 @@ def _extract_city(text: str) -> str | None:
     return None
 
 
+def _extract_name(text: str) -> str | None:
+    for pattern in _NAME_PATTERNS:
+        match = pattern.search(text)
+        if not match:
+            continue
+        candidate = _normalize_name(match.group(1))
+        if candidate:
+            return candidate
+    return None
+
+
 def _extract_country(text: str) -> str | None:
     for pattern in _COUNTRY_PATTERNS:
         match = pattern.search(text)
@@ -164,6 +199,32 @@ def _extract_timezone(text: str) -> str | None:
 
 def _normalize_city(raw: str) -> str | None:
     return _normalize_place(raw)
+
+
+def _normalize_name(raw: str) -> str | None:
+    candidate = re.split(r"[.!?,;:\n]", str(raw or ""), maxsplit=1)[0].strip(" '\"`")
+    if not candidate:
+        return None
+    parts = []
+    for token in candidate.split():
+        lowered = token.lower()
+        if lowered in _STOP_WORDS:
+            break
+        cleaned = re.sub(r"[^A-Za-z'\-]", "", token)
+        if not cleaned:
+            continue
+        parts.append(cleaned)
+        if len(parts) >= 3:
+            break
+    if not parts:
+        return None
+    normalized = []
+    for token in parts:
+        if token.isupper() and len(token) <= 4:
+            normalized.append(token)
+        else:
+            normalized.append(token[0].upper() + token[1:].lower())
+    return " ".join(normalized)
 
 
 def _normalize_place(raw: str) -> str | None:

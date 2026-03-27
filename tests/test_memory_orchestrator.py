@@ -121,6 +121,13 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(detected.predicate, "profile.home_country")
         self.assertEqual(detected.value, "UAE")
 
+    def test_profile_preferred_name_detection_normalizes_structured_fact(self) -> None:
+        detected = detect_profile_fact_observation("My name is Sarah.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.preferred_name")
+        self.assertEqual(detected.value, "Sarah")
+
     def test_memory_sdk_smoke_test_runs_real_domain_chip_roundtrip(self) -> None:
         result = run_memory_sdk_smoke_test(
             config_manager=self.config_manager,
