@@ -120,7 +120,7 @@ class ConfigManager:
                 "memory": {
                     "enabled": False,
                     "shadow_mode": True,
-                    "sdk_module": "spark_memory_sdk",
+                    "sdk_module": "domain_chip_memory",
                     "write_personality_preferences": True,
                     "read_personality_preferences": True,
                 },

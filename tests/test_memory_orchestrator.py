@@ -64,6 +64,46 @@ class _AbstainingMemoryClient(_FakeMemoryClient):
 
 
 class MemoryOrchestratorTests(SparkTestCase):
+    def test_domain_chip_memory_sdk_module_supports_live_preference_write_then_read(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        self.config_manager.set_path("spark.memory.sdk_module", "domain_chip_memory")
+
+        deltas = detect_and_persist_nl_preferences(
+            human_id="human:test",
+            user_message="be more direct and stop hedging",
+            state_db=self.state_db,
+            config_manager=self.config_manager,
+            session_id="session:domain-chip",
+            turn_id="turn:domain-chip-write",
+            channel_kind="telegram",
+        )
+
+        self.assertIsNotNone(deltas)
+
+        query = detect_personality_query(
+            user_message="what's my personality",
+            human_id="human:test",
+            state_db=self.state_db,
+            profile=load_personality_profile(
+                human_id="human:test",
+                state_db=self.state_db,
+                config_manager=self.config_manager,
+            ),
+            config_manager=self.config_manager,
+            session_id="session:domain-chip",
+            turn_id="turn:domain-chip-read",
+        )
+
+        self.assertEqual(query.kind, "status")
+        self.assertIn("Memory-backed current-state facts:", query.context_injection)
+        self.assertIn("directness:", query.context_injection)
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_succeeded", limit=10)
+        read_events = latest_events_by_type(self.state_db, event_type="memory_read_succeeded", limit=10)
+        self.assertTrue(write_events)
+        self.assertTrue(read_events)
+        self.assertFalse(bool((read_events[0]["facts_json"] or {}).get("shadow_only")))
+
     def test_durable_preference_updates_write_structured_memory_observations(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

@@ -11,8 +11,9 @@ from spark_intelligence.observability.store import record_event
 from spark_intelligence.state.db import StateDB
 
 
-DEFAULT_SDK_MODULE = "spark_memory_sdk"
+DEFAULT_SDK_MODULE = "domain_chip_memory"
 PREFERENCE_PREDICATE_PREFIX = "personality.preference."
+_SDK_CLIENT_CACHE: dict[tuple[str, str], Any] = {}
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,153 @@ class MemoryReadResult:
     abstained: bool
     reason: str | None = None
     shadow_only: bool = False
+
+
+class _DomainChipMemoryClientAdapter:
+    def __init__(self, sdk: Any, module: ModuleType) -> None:
+        self._sdk = sdk
+        self._module = module
+        self._sdk_module = self._resolve_sdk_module(module)
+
+    def write_observation(self, **payload: Any) -> dict[str, Any]:
+        request = self._module.MemoryWriteRequest(
+            text=_memory_write_text(payload),
+            speaker=str(payload.get("speaker") or "user"),
+            timestamp=_optional_string(payload.get("timestamp")),
+            session_id=_optional_string(payload.get("session_id")),
+            turn_id=_optional_string(payload.get("turn_id")),
+            operation=str(payload.get("operation") or "auto"),
+            subject=_optional_string(payload.get("subject")),
+            predicate=_optional_string(payload.get("predicate")),
+            value=None if payload.get("value") is None else str(payload.get("value")),
+            metadata=dict(payload.get("metadata") or {}),
+        )
+        result = self._sdk.write_observation(request)
+        return _normalize_domain_write_result(result=result, default_role=str(payload.get("memory_role") or "current_state"))
+
+    def write_event(self, **payload: Any) -> dict[str, Any]:
+        request = self._module.MemoryWriteRequest(
+            text=_memory_write_text(payload),
+            speaker=str(payload.get("speaker") or "user"),
+            timestamp=_optional_string(payload.get("timestamp")),
+            session_id=_optional_string(payload.get("session_id")),
+            turn_id=_optional_string(payload.get("turn_id")),
+            operation=str(payload.get("operation") or "event"),
+            subject=_optional_string(payload.get("subject")),
+            predicate=_optional_string(payload.get("predicate")),
+            value=None if payload.get("value") is None else str(payload.get("value")),
+            metadata=dict(payload.get("metadata") or {}),
+        )
+        result = self._sdk.write_event(request)
+        return _normalize_domain_write_result(result=result, default_role="event")
+
+    def get_current_state(self, **payload: Any) -> dict[str, Any]:
+        subject = _optional_string(payload.get("subject"))
+        predicate = _optional_string(payload.get("predicate"))
+        predicate_prefix = _optional_string(payload.get("predicate_prefix"))
+        if subject and predicate_prefix and not predicate:
+            return self._get_current_state_prefix(subject=subject, predicate_prefix=predicate_prefix)
+        if not subject or not predicate:
+            return {"status": "abstained", "reason": "invalid_request", "memory_role": "unknown"}
+        request = self._module.CurrentStateRequest(subject=subject, predicate=predicate)
+        result = self._sdk.get_current_state(request)
+        return _normalize_domain_lookup_result(result=result, subject=subject, predicate=predicate)
+
+    def get_historical_state(self, **payload: Any) -> dict[str, Any]:
+        subject = _optional_string(payload.get("subject"))
+        predicate = _optional_string(payload.get("predicate"))
+        as_of = _optional_string(payload.get("as_of"))
+        if not subject or not predicate or not as_of:
+            return {"status": "abstained", "reason": "invalid_request", "memory_role": "unknown"}
+        request = self._module.HistoricalStateRequest(subject=subject, predicate=predicate, as_of=as_of)
+        result = self._sdk.get_historical_state(request)
+        return _normalize_domain_lookup_result(result=result, subject=subject, predicate=predicate)
+
+    def retrieve_evidence(self, **payload: Any) -> dict[str, Any]:
+        request = self._module.EvidenceRetrievalRequest(
+            query=_optional_string(payload.get("query")),
+            subject=_optional_string(payload.get("subject")),
+            predicate=_optional_string(payload.get("predicate")),
+            limit=int(payload.get("limit") or 5),
+        )
+        result = self._sdk.retrieve_evidence(request)
+        return _normalize_domain_retrieval_result(result=result)
+
+    def retrieve_events(self, **payload: Any) -> dict[str, Any]:
+        request = self._module.EventRetrievalRequest(
+            query=_optional_string(payload.get("query")),
+            subject=_optional_string(payload.get("subject")),
+            predicate=_optional_string(payload.get("predicate")),
+            limit=int(payload.get("limit") or 5),
+        )
+        result = self._sdk.retrieve_events(request)
+        return _normalize_domain_retrieval_result(result=result)
+
+    def explain_answer(self, **payload: Any) -> dict[str, Any]:
+        subject = _optional_string(payload.get("subject"))
+        predicate = _optional_string(payload.get("predicate"))
+        question = _optional_string(payload.get("question")) or f"What is {predicate} for {subject}?"
+        if not subject or not predicate:
+            return {"status": "abstained", "reason": "invalid_request", "memory_role": "unknown"}
+        request = self._module.AnswerExplanationRequest(
+            question=question,
+            subject=subject,
+            predicate=predicate,
+            as_of=_optional_string(payload.get("as_of")),
+            evidence_limit=int(payload.get("evidence_limit") or 3),
+            event_limit=int(payload.get("event_limit") or 3),
+        )
+        result = self._sdk.explain_answer(request)
+        return {
+            "status": "supported" if bool(result.found) else "not_found",
+            "memory_role": str(result.memory_role or "unknown"),
+            "records": [{"answer": result.answer}] if result.answer else [],
+            "provenance": [_domain_record_to_dict(item) for item in result.provenance],
+            "retrieval_trace": dict(result.trace or {}),
+            "answer_explanation": {
+                "answer": result.answer,
+                "explanation": result.explanation,
+                "evidence": [_domain_record_to_dict(item) for item in result.evidence],
+                "events": [_domain_record_to_dict(item) for item in result.events],
+            },
+        }
+
+    def _get_current_state_prefix(self, *, subject: str, predicate_prefix: str) -> dict[str, Any]:
+        observations = self._sdk._current_state_observations()
+        normalized_subject = self._sdk._normalize_subject(subject)
+        reflected = self._sdk_module.build_current_state_view(observations)
+        matches = [
+            entry
+            for entry in reflected
+            if entry.subject == normalized_subject and str(entry.predicate or "").startswith(predicate_prefix)
+        ]
+        records = [_domain_current_state_record(entry) for entry in matches]
+        provenance = [
+            _domain_record_to_dict(self._sdk._observation_record(entry, memory_role="current_state"))
+            for entry in matches
+        ]
+        return {
+            "status": "supported" if records else "not_found",
+            "memory_role": "current_state" if records else "unknown",
+            "records": records,
+            "provenance": provenance,
+            "retrieval_trace": {
+                "operation": "get_current_state",
+                "subject": subject,
+                "predicate_prefix": predicate_prefix,
+                "record_count": len(records),
+            },
+            "answer_explanation": {
+                "method": "get_current_state",
+                "predicate_prefix": predicate_prefix,
+            },
+        }
+
+    def _resolve_sdk_module(self, module: ModuleType) -> ModuleType:
+        if hasattr(module, "build_current_state_view"):
+            return module
+        nested_name = f"{module.__name__}.sdk"
+        return importlib.import_module(nested_name)
 
 
 def write_personality_preferences_to_memory(
@@ -312,6 +460,9 @@ def _write_personality_observations(
 
 def _load_sdk_client(config_manager: ConfigManager) -> Any | None:
     module_name = str(config_manager.get_path("spark.memory.sdk_module", default=DEFAULT_SDK_MODULE) or DEFAULT_SDK_MODULE)
+    cache_key = (module_name, str(config_manager.paths.home))
+    if cache_key in _SDK_CLIENT_CACHE:
+        return _SDK_CLIENT_CACHE[cache_key]
     try:
         module = importlib.import_module(module_name)
     except Exception:
@@ -319,9 +470,16 @@ def _load_sdk_client(config_manager: ConfigManager) -> Any | None:
     if hasattr(module, "SparkMemorySDK"):
         sdk_factory = getattr(module, "SparkMemorySDK")
         try:
-            return sdk_factory()
+            client = sdk_factory()
         except Exception:
             return None
+        if _supports_domain_chip_memory_adapter(module):
+            adapted = _DomainChipMemoryClientAdapter(client, module)
+            _SDK_CLIENT_CACHE[cache_key] = adapted
+            return adapted
+        _SDK_CLIENT_CACHE[cache_key] = client
+        return client
+    _SDK_CLIENT_CACHE[cache_key] = module
     return module
 
 
@@ -339,6 +497,117 @@ def _call_sdk_method(client: Any, method_name: str, payload: dict[str, Any]) -> 
     if isinstance(result, dict):
         return result
     return {"status": "accepted", "result": result}
+
+
+def _supports_domain_chip_memory_adapter(module: ModuleType) -> bool:
+    return all(
+        hasattr(module, attribute)
+        for attribute in (
+            "MemoryWriteRequest",
+            "CurrentStateRequest",
+            "HistoricalStateRequest",
+            "EvidenceRetrievalRequest",
+            "EventRetrievalRequest",
+            "AnswerExplanationRequest",
+        )
+    )
+
+
+def _memory_write_text(payload: dict[str, Any]) -> str:
+    explicit = _optional_string(payload.get("text"))
+    if explicit:
+        return explicit
+    subject = _optional_string(payload.get("subject")) or "unknown-subject"
+    predicate = _optional_string(payload.get("predicate")) or "unknown-predicate"
+    operation = _optional_string(payload.get("operation")) or "auto"
+    value = payload.get("value")
+    if value is None:
+        return f"{operation} {subject} {predicate}"
+    return f"{operation} {subject} {predicate} {value}"
+
+
+def _optional_string(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _normalize_domain_write_result(*, result: Any, default_role: str) -> dict[str, Any]:
+    provenance = [
+        _domain_record_to_dict(item)
+        for item in [*list(getattr(result, "observations", []) or []), *list(getattr(result, "events", []) or [])]
+    ]
+    accepted = bool(getattr(result, "accepted", False))
+    unsupported_reason = _optional_string(getattr(result, "unsupported_reason", None))
+    return {
+        "status": "accepted" if accepted else ("unsupported" if unsupported_reason else "rejected"),
+        "memory_role": provenance[0]["memory_role"] if provenance else default_role,
+        "provenance": provenance,
+        "retrieval_trace": dict(getattr(result, "trace", {}) or {}),
+        "reason": unsupported_reason,
+        "accepted_count": int(getattr(result, "observations_written", 0) or 0) + int(getattr(result, "events_written", 0) or 0),
+        "rejected_count": 0 if accepted else 1,
+        "skipped_count": 0,
+    }
+
+
+def _normalize_domain_lookup_result(*, result: Any, subject: str, predicate: str) -> dict[str, Any]:
+    provenance = [_domain_record_to_dict(item) for item in list(getattr(result, "provenance", []) or [])]
+    records = []
+    if bool(getattr(result, "found", False)):
+        records.append(
+            {
+                "subject": subject,
+                "predicate": predicate,
+                "value": getattr(result, "value", None),
+                "text": getattr(result, "text", None),
+            }
+        )
+    return {
+        "status": "supported" if bool(getattr(result, "found", False)) else "not_found",
+        "memory_role": str(getattr(result, "memory_role", "unknown") or "unknown"),
+        "records": records,
+        "provenance": provenance,
+        "retrieval_trace": dict(getattr(result, "trace", {}) or {}),
+    }
+
+
+def _normalize_domain_retrieval_result(*, result: Any) -> dict[str, Any]:
+    records = [_domain_record_to_dict(item) for item in list(getattr(result, "items", []) or [])]
+    return {
+        "status": "supported" if records else "not_found",
+        "memory_role": records[0]["memory_role"] if records else "unknown",
+        "records": records,
+        "provenance": records,
+        "retrieval_trace": dict(getattr(result, "trace", {}) or {}),
+    }
+
+
+def _domain_record_to_dict(record: Any) -> dict[str, Any]:
+    return {
+        "memory_role": str(getattr(record, "memory_role", "unknown") or "unknown"),
+        "subject": _optional_string(getattr(record, "subject", None)),
+        "predicate": _optional_string(getattr(record, "predicate", None)),
+        "text": _optional_string(getattr(record, "text", None)),
+        "session_id": _optional_string(getattr(record, "session_id", None)),
+        "turn_ids": list(getattr(record, "turn_ids", []) or []),
+        "timestamp": _optional_string(getattr(record, "timestamp", None)),
+        "metadata": dict(getattr(record, "metadata", {}) or {}),
+        "value": getattr(record, "metadata", {}).get("value") if isinstance(getattr(record, "metadata", {}), dict) else None,
+    }
+
+
+def _domain_current_state_record(entry: Any) -> dict[str, Any]:
+    metadata = dict(getattr(entry, "metadata", {}) or {})
+    return {
+        "subject": _optional_string(getattr(entry, "subject", None)),
+        "predicate": _optional_string(getattr(entry, "predicate", None)),
+        "value": metadata.get("value"),
+        "text": _optional_string(getattr(entry, "text", None)),
+        "session_id": _optional_string(getattr(entry, "session_id", None)),
+        "turn_ids": list(getattr(entry, "turn_ids", []) or []),
+        "timestamp": _optional_string(getattr(entry, "timestamp", None)),
+        "metadata": metadata,
+    }
 
 
 def _normalize_read_result(
