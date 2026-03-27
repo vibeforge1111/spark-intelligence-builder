@@ -81,6 +81,7 @@ Structural now:
 - the final assembled bridge prompt is now screened before any Researcher or direct-provider execution
 - direct-provider execution now supports a lower-layer governed prompt contract, and the external provider wrapper uses it by default when Builder passes run/request context
 - external subprocess-style tool ingress now has shared governed execution helpers for typed result recording and secret-boundary screening instead of caller-specific glue only
+- stop-ship checks now scan source call sites and fail if new raw `subprocess.run(...)` or direct-provider execution entry points appear outside the governed modules
 - operator-triggered `attachments run-hook` executions now emit typed provenance and block secret-like hook output before terminal display
 - operator-triggered `attachments run-hook` executions now open and close typed runs instead of existing only as CLI residue
 - chip-hook provenance and screening now live in shared hook-layer helpers instead of only in caller-specific glue

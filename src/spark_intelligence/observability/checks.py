@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
@@ -51,6 +53,7 @@ def evaluate_stop_ship_issues(
         _keepability_issue(state_db),
         _environment_parity_issue(state_db),
         _daemon_reentry_issue(config_manager=config_manager),
+        _external_execution_governance_issue(),
     ]
     if emit_contradictions:
         for issue in issues:
@@ -410,3 +413,71 @@ def _daemon_reentry_issue(*, config_manager: ConfigManager) -> StopShipIssue:
         detail="Autostart remains on the native wrapper posture.",
         severity="high",
     )
+
+
+def _external_execution_governance_issue() -> StopShipIssue:
+    allowed_subprocess_paths = {
+        "src/spark_intelligence/cli.py",
+        "src/spark_intelligence/config/loader.py",
+        "src/spark_intelligence/execution/governed.py",
+    }
+    allowed_direct_provider_paths = {
+        "src/spark_intelligence/llm/direct_provider.py",
+        "src/spark_intelligence/llm/provider_wrapper.py",
+        "src/spark_intelligence/researcher_bridge/advisory.py",
+    }
+    unexpected_subprocess = _find_source_pattern_paths("subprocess.run(", allowed_paths=allowed_subprocess_paths)
+    unexpected_provider = _find_source_pattern_paths(
+        "execute_direct_provider_prompt(",
+        allowed_paths=allowed_direct_provider_paths,
+    )
+    offenders = sorted(set(unexpected_subprocess + unexpected_provider))
+    if offenders:
+        return StopShipIssue(
+            name="stop_ship_external_execution_governance",
+            ok=False,
+            detail="Ungoverned external execution entry points detected: " + ", ".join(offenders[:4]),
+            severity="high",
+        )
+    return StopShipIssue(
+        name="stop_ship_external_execution_governance",
+        ok=True,
+        detail="External execution is limited to governed helper and approved wrapper modules.",
+        severity="high",
+    )
+
+
+def _find_source_pattern_paths(pattern: str, *, allowed_paths: set[str]) -> list[str]:
+    repo_root = Path(__file__).resolve().parents[3]
+    src_root = repo_root / "src"
+    matches: list[str] = []
+    for path in src_root.rglob("*.py"):
+        relative = path.relative_to(repo_root).as_posix()
+        if relative in allowed_paths:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if _source_contains_governed_pattern(text, pattern):
+            matches.append(relative)
+    return matches
+
+
+def _source_contains_governed_pattern(text: str, pattern: str) -> bool:
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return False
+    if pattern == "subprocess.run(":
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                if isinstance(node.func.value, ast.Name) and node.func.value.id == "subprocess" and node.func.attr == "run":
+                    return True
+        return False
+    if pattern == "execute_direct_provider_prompt(":
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "execute_direct_provider_prompt":
+                return True
+        return False
+    return pattern in text

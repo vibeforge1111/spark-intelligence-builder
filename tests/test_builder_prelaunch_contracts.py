@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import patch
 
 from spark_intelligence.attachments.snapshot import sync_attachment_snapshot
 from spark_intelligence.gateway.guardrails import prepare_outbound_text
@@ -303,6 +304,25 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
         self.assertFalse(issues["stop_ship_runtime_state_authority"].ok)
         self.assertIn("attachments", issues["stop_ship_runtime_state_authority"].detail)
+
+    def test_stop_ship_flags_ungoverned_external_execution_entry_points(self) -> None:
+        with patch(
+            "spark_intelligence.observability.checks._find_source_pattern_paths",
+            side_effect=[
+                ["src/spark_intelligence/future_tooling/raw_exec.py"],
+                [],
+            ],
+        ):
+            issues = {
+                issue.name: issue
+                for issue in evaluate_stop_ship_issues(
+                    config_manager=self.config_manager,
+                    state_db=self.state_db,
+                )
+            }
+
+        self.assertFalse(issues["stop_ship_external_execution_governance"].ok)
+        self.assertIn("future_tooling/raw_exec.py", issues["stop_ship_external_execution_governance"].detail)
 
     def test_build_researcher_reply_blocks_secret_like_model_visible_context(self) -> None:
         result = build_researcher_reply(
