@@ -5,7 +5,11 @@ import os
 import sys
 from pathlib import Path
 
-from spark_intelligence.llm.direct_provider import DirectProviderRequest, execute_direct_provider_prompt
+from spark_intelligence.llm.direct_provider import (
+    DirectProviderGovernance,
+    DirectProviderRequest,
+    execute_direct_provider_prompt,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -34,6 +38,7 @@ def main(argv: list[str] | None = None) -> int:
         provider=provider,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
+        governance=_governance_from_env(provider),
     )
     response_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     return 0
@@ -44,6 +49,36 @@ def _required_env(name: str) -> str:
     if not value:
         raise RuntimeError(f"Missing required provider wrapper env var: {name}")
     return value
+
+
+def _governance_from_env(provider: DirectProviderRequest) -> DirectProviderGovernance | None:
+    state_db_path = os.environ.get("SPARK_INTELLIGENCE_STATE_DB_PATH", "").strip()
+    if not state_db_path:
+        return None
+    provenance: dict[str, object] = {
+        "source_kind": "provider_wrapper",
+        "source_ref": provider.provider_id,
+        "provider_id": provider.provider_id,
+        "provider_kind": provider.provider_kind,
+        "api_mode": provider.api_mode,
+        "execution_transport": os.environ.get("SPARK_INTELLIGENCE_PROVIDER_EXECUTION_TRANSPORT", "").strip(),
+    }
+    request_id = os.environ.get("SPARK_INTELLIGENCE_REQUEST_ID", "").strip() or None
+    run_id = os.environ.get("SPARK_INTELLIGENCE_RUN_ID", "").strip() or None
+    trace_ref = os.environ.get("SPARK_INTELLIGENCE_TRACE_REF", "").strip() or None
+    return DirectProviderGovernance(
+        state_db_path=state_db_path,
+        source_kind="provider_wrapper_prompt",
+        source_ref=provider.provider_id,
+        summary="Builder blocked provider-wrapper model-visible context before execution.",
+        reason_code="provider_wrapper_prompt_secret_like",
+        policy_domain="researcher_bridge",
+        blocked_stage="pre_model",
+        run_id=run_id,
+        request_id=request_id,
+        trace_ref=trace_ref,
+        provenance=provenance,
+    )
 
 
 if __name__ == "__main__":

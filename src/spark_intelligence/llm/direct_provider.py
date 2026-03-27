@@ -4,6 +4,10 @@ import json
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
+
+from spark_intelligence.observability.policy import screen_model_visible_text
+from spark_intelligence.state.db import StateDB
 
 
 @dataclass(frozen=True)
@@ -17,12 +21,46 @@ class DirectProviderRequest:
     secret_value: str
 
 
+@dataclass(frozen=True)
+class DirectProviderGovernance:
+    state_db_path: str
+    source_kind: str
+    source_ref: str
+    summary: str
+    reason_code: str
+    policy_domain: str
+    blocked_stage: str
+    run_id: str | None = None
+    request_id: str | None = None
+    trace_ref: str | None = None
+    provenance: dict[str, object] | None = None
+
+
 def execute_direct_provider_prompt(
     *,
     provider: DirectProviderRequest,
     system_prompt: str,
     user_prompt: str,
+    governance: DirectProviderGovernance | None = None,
 ) -> dict[str, object]:
+    if governance and governance.state_db_path:
+        state_db = StateDB(Path(governance.state_db_path))
+        screening = screen_model_visible_text(
+            state_db=state_db,
+            source_kind=governance.source_kind,
+            source_ref=governance.source_ref,
+            text=_render_model_visible_prompt(system_prompt=system_prompt, user_prompt=user_prompt),
+            summary=governance.summary,
+            reason_code=governance.reason_code,
+            policy_domain=governance.policy_domain,
+            run_id=governance.run_id,
+            request_id=governance.request_id,
+            trace_ref=governance.trace_ref,
+            blocked_stage=governance.blocked_stage,
+            provenance=governance.provenance,
+        )
+        if not screening["allowed"]:
+            raise RuntimeError("Direct provider execution blocked by the pre-model secret boundary.")
     if not provider.model:
         raise RuntimeError(f"Provider '{provider.provider_id}' has no default model configured.")
     if not provider.base_url:
@@ -130,6 +168,10 @@ def _merge_prompts(*, system_prompt: str, user_prompt: str) -> str:
     if system_prompt.strip():
         return f"{system_prompt.strip()}\n\n{user_prompt.strip()}".strip()
     return user_prompt.strip()
+
+
+def _render_model_visible_prompt(*, system_prompt: str, user_prompt: str) -> str:
+    return _merge_prompts(system_prompt=system_prompt, user_prompt=user_prompt)
 
 
 def _extract_chat_completion_text(payload: dict[str, object]) -> str:

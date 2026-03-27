@@ -215,8 +215,9 @@ class AttachmentHookTests(SparkTestCase):
                 "trace_path": "trace:under-supported",
             }
 
-        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str):
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
             captured["user_prompt"] = user_prompt
+            captured["governance"] = governance
             return {"raw_response": "Tighten the user pain wedge first."}
 
         def fail_execute_with_research(*args, **kwargs):
@@ -286,3 +287,4 @@ class AttachmentHookTests(SparkTestCase):
         self.assertIn("[Active chip guidance]", str(captured["user_prompt"]))
         self.assertIn("chip_key=startup-yc", str(captured["user_prompt"]))
         self.assertIn("Startup YC doctrine: focus on the narrowest urgent founder pain first.", str(captured["user_prompt"]))
+        self.assertIsNotNone(captured["governance"])

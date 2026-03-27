@@ -20,7 +20,11 @@ from spark_intelligence.attachments import (
 from spark_intelligence.auth.runtime import RuntimeProviderResolution, resolve_runtime_provider
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.observability.policy import screen_model_visible_text
-from spark_intelligence.llm.direct_provider import DirectProviderRequest, execute_direct_provider_prompt
+from spark_intelligence.llm.direct_provider import (
+    DirectProviderGovernance,
+    DirectProviderRequest,
+    execute_direct_provider_prompt,
+)
 from spark_intelligence.observability.store import record_environment_snapshot, record_event
 from spark_intelligence.personality import (
     build_personality_context,
@@ -319,6 +323,7 @@ def _is_conversational_fallback_candidate(
 
 def _render_direct_provider_chat_fallback(
     *,
+    state_db: StateDB,
     provider: RuntimeProviderResolution,
     user_message: str,
     channel_kind: str,
@@ -326,6 +331,9 @@ def _render_direct_provider_chat_fallback(
     active_chip_evaluate: dict[str, Any] | None = None,
     personality_profile: dict[str, Any] | None = None,
     personality_context_extra: str = "",
+    run_id: str | None = None,
+    request_id: str | None = None,
+    trace_ref: str | None = None,
 ) -> str:
     base_system_prompt = (
         "You are Spark AGI in a 1:1 messaging conversation. "
@@ -361,8 +369,28 @@ def _render_direct_provider_chat_fallback(
             ),
             attachment_context=attachment_context,
             active_chip_evaluate=active_chip_evaluate,
-            personality_profile=personality_profile,
-            personality_context_extra=personality_context_extra,
+                personality_profile=personality_profile,
+                personality_context_extra=personality_context_extra,
+            ),
+        governance=DirectProviderGovernance(
+            state_db_path=str(state_db.path),
+            source_kind="researcher_bridge_direct_prompt",
+            source_ref=request_id or provider.provider_id,
+            summary="Builder blocked direct-provider fallback context before execution.",
+            reason_code="provider_fallback_prompt_secret_like",
+            policy_domain="researcher_bridge",
+            blocked_stage="pre_model",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            provenance={
+                "source_kind": "researcher_bridge",
+                "source_ref": provider.provider_id,
+                "channel_kind": channel_kind,
+                "active_chip_key": active_chip_evaluate.get("chip_key") if active_chip_evaluate else None,
+                "active_path_key": attachment_context.get("active_path_key"),
+                "personality_name": personality_profile.get("personality_name") if personality_profile else None,
+            },
         ),
     )
     raw_response = str(payload.get("raw_response") or "").strip()
@@ -1230,6 +1258,7 @@ def build_researcher_reply(
                 ):
                     reply_text = _clean_messaging_reply(
                         _render_direct_provider_chat_fallback(
+                            state_db=state_db,
                             provider=provider_selection.provider,
                             user_message=user_message,
                             channel_kind=channel_kind,
@@ -1237,6 +1266,9 @@ def build_researcher_reply(
                             active_chip_evaluate=active_chip_evaluate,
                             personality_profile=personality_profile,
                             personality_context_extra=personality_context_extra,
+                            run_id=run_id,
+                            request_id=request_id,
+                            trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
                         ),
                         channel_kind=channel_kind,
                     )
@@ -1301,7 +1333,13 @@ def build_researcher_reply(
                         active_chip_evaluate_used=active_chip_evaluate_used,
                     )
                 if provider_selection.provider and _supports_direct_or_cli_execution(provider_selection):
-                    with _temporary_provider_env(provider_selection.provider):
+                    with _temporary_provider_env(
+                        provider_selection.provider,
+                        state_db=state_db,
+                        run_id=run_id,
+                        request_id=request_id,
+                        trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+                    ):
                         execution = execute_with_research(
                             runtime_root,
                             advisory=advisory,
@@ -1535,7 +1573,14 @@ def _command_override_for_provider(selection: ResearcherProviderSelection) -> li
 
 
 @contextmanager
-def _temporary_provider_env(provider: RuntimeProviderResolution):
+def _temporary_provider_env(
+    provider: RuntimeProviderResolution,
+    *,
+    state_db: StateDB | None = None,
+    run_id: str | None = None,
+    request_id: str | None = None,
+    trace_ref: str | None = None,
+):
     values = {
         "SPARK_INTELLIGENCE_PROVIDER_ID": provider.provider_id,
         "SPARK_INTELLIGENCE_PROVIDER_KIND": provider.provider_kind,
@@ -1546,6 +1591,14 @@ def _temporary_provider_env(provider: RuntimeProviderResolution):
         "SPARK_INTELLIGENCE_PROVIDER_BASE_URL": provider.base_url or "",
         "SPARK_INTELLIGENCE_PROVIDER_SECRET": provider.secret_value,
     }
+    if state_db is not None:
+        values["SPARK_INTELLIGENCE_STATE_DB_PATH"] = str(state_db.path)
+    if run_id:
+        values["SPARK_INTELLIGENCE_RUN_ID"] = run_id
+    if request_id:
+        values["SPARK_INTELLIGENCE_REQUEST_ID"] = request_id
+    if trace_ref:
+        values["SPARK_INTELLIGENCE_TRACE_REF"] = trace_ref
     original = {key: os.environ.get(key) for key in values}
     try:
         for key, value in values.items():

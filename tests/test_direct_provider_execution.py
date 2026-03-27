@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 from unittest.mock import patch
 
 from spark_intelligence.llm.direct_provider import DirectProviderRequest, execute_direct_provider_prompt
+from spark_intelligence.llm.provider_wrapper import main as provider_wrapper_main
+from spark_intelligence.observability.store import latest_events_by_type
 
 from tests.test_support import SparkTestCase
 
@@ -128,3 +131,44 @@ class DirectProviderExecutionTests(SparkTestCase):
                 system_prompt="System instructions",
                 user_prompt="User task",
             )
+
+    def test_provider_wrapper_blocks_secret_like_prompt_with_state_db_context(self) -> None:
+        system_prompt_path = self.home / "system.txt"
+        user_prompt_path = self.home / "user.txt"
+        response_path = self.home / "response.json"
+        system_prompt_path.write_text("System instructions", encoding="utf-8")
+        user_prompt_path.write_text("User token sk-abcdefghijklmnopqrstuvwxyz123456", encoding="utf-8")
+
+        env = {
+            "SPARK_INTELLIGENCE_PROVIDER_ID": "custom",
+            "SPARK_INTELLIGENCE_PROVIDER_KIND": "custom",
+            "SPARK_INTELLIGENCE_PROVIDER_AUTH_METHOD": "api_key_env",
+            "SPARK_INTELLIGENCE_PROVIDER_API_MODE": "chat_completions",
+            "SPARK_INTELLIGENCE_PROVIDER_EXECUTION_TRANSPORT": "direct_http",
+            "SPARK_INTELLIGENCE_PROVIDER_BASE_URL": "https://api.example.com/v1",
+            "SPARK_INTELLIGENCE_PROVIDER_MODEL": "MiniMax-M2.7",
+            "SPARK_INTELLIGENCE_PROVIDER_SECRET": "provider-secret",
+            "SPARK_INTELLIGENCE_STATE_DB_PATH": str(self.state_db.path),
+            "SPARK_INTELLIGENCE_RUN_ID": "run-provider-wrapper",
+            "SPARK_INTELLIGENCE_REQUEST_ID": "req-provider-wrapper",
+            "SPARK_INTELLIGENCE_TRACE_REF": "trace:provider-wrapper",
+        }
+
+        with patch.dict(os.environ, env, clear=False), patch(
+            "spark_intelligence.llm.direct_provider.urllib.request.urlopen",
+            side_effect=AssertionError("network should not run when prompt is blocked"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "pre-model secret boundary"):
+                provider_wrapper_main(
+                    [
+                        str(system_prompt_path),
+                        str(user_prompt_path),
+                        str(response_path),
+                    ]
+                )
+
+        self.assertFalse(response_path.exists())
+        self.assertTrue(latest_events_by_type(self.state_db, event_type="secret_boundary_violation", limit=10))
+        with self.state_db.connect() as conn:
+            row = conn.execute("SELECT COUNT(*) AS count FROM quarantine_records").fetchone()
+        self.assertGreaterEqual(int(row["count"]), 1)

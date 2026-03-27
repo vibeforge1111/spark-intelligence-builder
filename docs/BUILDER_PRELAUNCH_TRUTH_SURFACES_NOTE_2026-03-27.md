@@ -79,6 +79,7 @@ Structural now:
 - personality preference, observation, and evolution truth now lands in dedicated personality tables instead of generic `runtime_state` keys
 - secret-like chip/output material can be quarantined before model-visible prompt assembly
 - the final assembled bridge prompt is now screened before any Researcher or direct-provider execution
+- direct-provider execution now supports a lower-layer governed prompt contract, and the external provider wrapper uses it by default when Builder passes run/request context
 - operator-triggered `attachments run-hook` executions now emit typed provenance and block secret-like hook output before terminal display
 - operator-triggered `attachments run-hook` executions now open and close typed runs instead of existing only as CLI residue
 - chip-hook provenance and screening now live in shared hook-layer helpers instead of only in caller-specific glue

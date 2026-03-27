@@ -200,11 +200,12 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 "trace_path": "trace:under-supported",
             }
 
-        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str):
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
             captured["provider_id"] = provider.provider_id
             captured["provider_model"] = provider.model
             captured["system_prompt"] = system_prompt
             captured["user_prompt"] = user_prompt
+            captured["governance"] = governance
             return {"raw_response": "Hey there. How can I help?"}
 
         def fail_execute_with_research(*args, **kwargs):
@@ -242,6 +243,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual(captured["provider_model"], "MiniMax-M2.7")
         self.assertIn("1:1 messaging conversation", str(captured["system_prompt"]))
         self.assertIn("[fallback_mode=conversational_under_supported]", str(captured["user_prompt"]))
+        self.assertIsNotNone(captured["governance"])
         self.assertEqual(result.reply_text, "Hey there. How can I help?")
         self.assertEqual(result.trace_ref, "trace:under-supported")
         self.assertEqual(result.provider_id, "custom")
