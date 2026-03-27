@@ -464,6 +464,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(len(conversation["turns"]), 3)
         self.assertEqual(conversation["turns"][0]["role"], "user")
         self.assertEqual(conversation["turns"][0]["content"], "Please be more direct with me.")
+        self.assertEqual(conversation["turns"][0]["metadata"]["memory_kind"], "observation")
         self.assertEqual(conversation["turns"][0]["metadata"]["subject"], "human:human:test")
         self.assertEqual(conversation["turns"][0]["metadata"]["predicate"], "personality.preference.directness")
         self.assertEqual(conversation["turns"][0]["metadata"]["value"], 0.35)
@@ -476,6 +477,266 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertIn("historical_state", probe_types)
         historical_probe = next(probe for probe in conversation["probes"] if probe["probe_type"] == "historical_state")
         self.assertEqual(historical_probe["expected_value"], 0.35)
+
+    def test_shadow_replay_delete_probes_skip_current_and_target_pre_delete_history(self) -> None:
+        with self.state_db.connect() as conn:
+            events = [
+                (
+                    "evt-user-1",
+                    "intent_committed",
+                    "run-1",
+                    "turn-1",
+                    "session-delete",
+                    "2026-03-27T10:00:00Z",
+                    {"message_text": "My cat is named Nova."},
+                ),
+                (
+                    "evt-user-2",
+                    "intent_committed",
+                    "run-2",
+                    "turn-2",
+                    "session-delete",
+                    "2026-03-27T10:05:00Z",
+                    {"message_text": "I do not have that cat anymore."},
+                ),
+            ]
+            for event_id, event_type, run_id, request_id, session_id, created_at, facts in events:
+                conn.execute(
+                    """
+                    INSERT INTO builder_events(
+                        event_id, event_type, truth_kind, target_surface, component, run_id, request_id, channel_id,
+                        session_id, human_id, agent_id, actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event_id,
+                        event_type,
+                        "fact",
+                        "spark_intelligence_builder",
+                        "telegram_runtime",
+                        run_id,
+                        request_id,
+                        "telegram",
+                        session_id,
+                        "human:test",
+                        "agent:test",
+                        "telegram_runtime",
+                        "realworld_validated",
+                        "medium",
+                        "recorded",
+                        "Turn committed.",
+                        created_at,
+                        json.dumps(facts),
+                    ),
+                )
+            for event_id, request_id, created_at, facts in (
+                (
+                    "evt-mem-req-1",
+                    "turn-1",
+                    "2026-03-27T10:00:01Z",
+                    {
+                        "observations": [
+                            {
+                                "subject": "human:human:test",
+                                "predicate": "profile.pet_name",
+                                "value": "Nova",
+                                "operation": "update",
+                                "memory_role": "current_state",
+                            }
+                        ]
+                    },
+                ),
+                (
+                    "evt-mem-req-2",
+                    "turn-2",
+                    "2026-03-27T10:05:01Z",
+                    {
+                        "observations": [
+                            {
+                                "subject": "human:human:test",
+                                "predicate": "profile.pet_name",
+                                "value": None,
+                                "operation": "delete",
+                                "memory_role": "current_state",
+                            }
+                        ]
+                    },
+                ),
+            ):
+                conn.execute(
+                    """
+                    INSERT INTO builder_events(
+                        event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                        actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event_id,
+                        "memory_write_requested",
+                        "fact",
+                        "spark_intelligence_builder",
+                        "memory_orchestrator",
+                        request_id,
+                        "session-delete",
+                        "human:test",
+                        "personality_loader",
+                        "realworld_validated",
+                        "medium",
+                        "recorded",
+                        "Memory write requested.",
+                        created_at,
+                        json.dumps(facts),
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO builder_events(
+                        event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                        actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        f"{event_id}:ok",
+                        "memory_write_succeeded",
+                        "fact",
+                        "spark_intelligence_builder",
+                        "memory_orchestrator",
+                        request_id,
+                        "session-delete",
+                        "human:test",
+                        "personality_loader",
+                        "realworld_validated",
+                        "medium",
+                        "recorded",
+                        "Memory write succeeded.",
+                        created_at,
+                        json.dumps({"accepted_count": 1, "rejected_count": 0, "skipped_count": 0}),
+                    ),
+                )
+            conn.commit()
+
+        payload = build_shadow_replay_payload(
+            state_db=self.state_db,
+            conversation_limit=10,
+            event_limit=100,
+        )
+
+        conversation = payload["conversations"][0]
+        probes = conversation["probes"]
+        current_state_probes = [probe for probe in probes if probe["probe_type"] == "current_state"]
+        evidence_probes = [probe for probe in probes if probe["probe_type"] == "evidence"]
+        historical_probes = [probe for probe in probes if probe["probe_type"] == "historical_state"]
+
+        self.assertEqual(len(current_state_probes), 0)
+        self.assertEqual(len(evidence_probes), 2)
+        self.assertEqual(len(historical_probes), 1)
+        self.assertEqual(historical_probes[0]["expected_value"], "Nova")
+        self.assertEqual(historical_probes[0]["as_of"], "2026-03-27T10:00:01Z")
+
+    def test_shadow_replay_event_memory_omits_observation_probes(self) -> None:
+        with self.state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, run_id, request_id, channel_id,
+                    session_id, human_id, agent_id, actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-user-event",
+                    "intent_committed",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "telegram_runtime",
+                    "run-event",
+                    "turn-event",
+                    "telegram",
+                    "session-event",
+                    "human:test",
+                    "agent:test",
+                    "telegram_runtime",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Turn committed.",
+                    "2026-03-27T11:00:00Z",
+                    json.dumps({"message_text": "I booked a dentist appointment for April 4 at 3pm."}),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-mem-req-event",
+                    "memory_write_requested",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "turn-event",
+                    "session-event",
+                    "human:test",
+                    "personality_loader",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Memory write requested.",
+                    "2026-03-27T11:00:01Z",
+                    json.dumps(
+                        {
+                            "observations": [
+                                {
+                                    "subject": "human:human:test",
+                                    "predicate": "calendar.dentist_visit.at",
+                                    "value": "2026-04-04T15:00:00+04:00",
+                                    "operation": "event",
+                                    "memory_role": "event",
+                                }
+                            ]
+                        }
+                    ),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-mem-ok-event",
+                    "memory_write_succeeded",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "turn-event",
+                    "session-event",
+                    "human:test",
+                    "personality_loader",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Memory write succeeded.",
+                    "2026-03-27T11:00:02Z",
+                    json.dumps({"accepted_count": 1, "rejected_count": 0, "skipped_count": 0}),
+                ),
+            )
+            conn.commit()
+
+        payload = build_shadow_replay_payload(
+            state_db=self.state_db,
+            conversation_limit=10,
+            event_limit=100,
+        )
+
+        conversation = payload["conversations"][0]
+        self.assertEqual(conversation["turns"][0]["metadata"]["memory_kind"], "event")
+        self.assertEqual(conversation["turns"][0]["metadata"]["memory_role"], "event")
+        self.assertNotIn("probes", conversation)
 
     def test_shadow_replay_batch_export_runs_validation_and_batch_report(self) -> None:
         with self.state_db.connect() as conn:

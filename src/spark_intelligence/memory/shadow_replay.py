@@ -562,7 +562,7 @@ def _build_turn(
         ]
         if observation_hints:
             primary = observation_hints[0]
-            metadata["memory_kind"] = str(primary.get("memory_role") or "observation")
+            metadata["memory_kind"] = _memory_kind_for_observation(primary)
             metadata["subject"] = str(primary.get("subject") or "") or None
             metadata["predicate"] = str(primary.get("predicate") or "") or None
             metadata["value"] = primary.get("value")
@@ -597,15 +597,20 @@ def _build_conversation_probes(
         predicate = str(observation.get("predicate") or "")
         if not subject or not predicate:
             continue
-        probes.append(
-            {
-                "probe_id": f"{session_id}:current:{index}",
-                "probe_type": "current_state",
-                "subject": subject,
-                "predicate": predicate,
-                "expected_value": observation.get("value"),
-            }
-        )
+        memory_kind = _memory_kind_for_observation(observation)
+        operation = str(observation.get("operation") or "").strip().lower()
+        if memory_kind == "event":
+            continue
+        if memory_kind != "event" and operation != "delete" and not _has_later_delete(observation=observation, history=histories.get((subject, predicate)) or []):
+            probes.append(
+                {
+                    "probe_id": f"{session_id}:current:{index}",
+                    "probe_type": "current_state",
+                    "subject": subject,
+                    "predicate": predicate,
+                    "expected_value": observation.get("value"),
+                }
+            )
         probes.append(
             {
                 "probe_id": f"{session_id}:evidence:{index}",
@@ -619,22 +624,97 @@ def _build_conversation_probes(
         history = histories.get((subject, predicate)) or []
         distinct_values = []
         for item in history:
+            if str(item.get("operation") or "").strip().lower() == "delete":
+                continue
             value = item.get("value")
             if value not in distinct_values:
                 distinct_values.append(value)
-        if len(distinct_values) < 2:
-            continue
-        probes.append(
-            {
-                "probe_id": f"{session_id}:historical:{index}",
-                "probe_type": "historical_state",
-                "subject": subject,
-                "predicate": predicate,
-                "as_of": observation.get("timestamp"),
-                "expected_value": observation.get("value"),
-            }
+        historical_probe = _historical_probe_for_observation(
+            session_id=session_id,
+            index=index,
+            observation=observation,
+            history=history,
+            distinct_value_count=len(distinct_values),
         )
+        if historical_probe is None:
+            continue
+        probes.append(historical_probe)
     return probes
+
+
+def _memory_kind_for_observation(observation: dict[str, Any]) -> str:
+    operation = str(observation.get("operation") or "").strip().lower()
+    memory_role = str(observation.get("memory_role") or "").strip().lower()
+    return "event" if operation == "event" or memory_role == "event" else "observation"
+
+
+def _historical_probe_for_observation(
+    *,
+    session_id: str,
+    index: int,
+    observation: dict[str, Any],
+    history: list[dict[str, Any]],
+    distinct_value_count: int,
+) -> dict[str, Any] | None:
+    operation = str(observation.get("operation") or "").strip().lower()
+    subject = str(observation.get("subject") or "")
+    predicate = str(observation.get("predicate") or "")
+    if operation == "delete":
+        previous_value = _previous_non_delete_observation(observation=observation, history=history)
+        if previous_value is None:
+            return None
+        return {
+            "probe_id": f"{session_id}:historical:{index}",
+            "probe_type": "historical_state",
+            "subject": subject,
+            "predicate": predicate,
+            "as_of": previous_value.get("timestamp"),
+            "expected_value": previous_value.get("value"),
+        }
+    if distinct_value_count < 2:
+        return None
+    return {
+        "probe_id": f"{session_id}:historical:{index}",
+        "probe_type": "historical_state",
+        "subject": subject,
+        "predicate": predicate,
+        "as_of": observation.get("timestamp"),
+        "expected_value": observation.get("value"),
+    }
+
+
+def _previous_non_delete_observation(
+    *,
+    observation: dict[str, Any],
+    history: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    target_request_id = str(observation.get("request_id") or "")
+    for item in reversed(history):
+        if str(item.get("request_id") or "") == target_request_id:
+            continue
+        if str(item.get("operation") or "").strip().lower() == "delete":
+            continue
+        return item
+    return None
+
+
+def _has_later_delete(
+    *,
+    observation: dict[str, Any],
+    history: list[dict[str, Any]],
+) -> bool:
+    target_request_id = str(observation.get("request_id") or "")
+    seen_current = False
+    for item in history:
+        item_request_id = str(item.get("request_id") or "")
+        if item_request_id == target_request_id:
+            seen_current = True
+            continue
+        if not seen_current:
+            continue
+        if str(item.get("operation") or "").strip().lower() == "delete":
+            return True
+    return False
 
 
 def _conversation_id(row: dict[str, Any]) -> str:
