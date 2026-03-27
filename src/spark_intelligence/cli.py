@@ -65,7 +65,11 @@ from spark_intelligence.identity.service import (
     revoke_session,
 )
 from spark_intelligence.jobs.service import jobs_list, jobs_tick
-from spark_intelligence.memory import export_shadow_replay, export_shadow_replay_batch
+from spark_intelligence.memory import (
+    export_sdk_maintenance_replay,
+    export_shadow_replay,
+    export_shadow_replay_batch,
+)
 from spark_intelligence.observability.policy import screen_model_visible_text
 from spark_intelligence.observability.store import build_watchtower_snapshot, close_run, open_run, record_event
 from spark_intelligence.ops import (
@@ -1149,6 +1153,17 @@ def build_parser() -> argparse.ArgumentParser:
     memory_export_batch_parser.add_argument("--run-report", action="store_true", help="Run run-spark-shadow-report-batch after export")
     memory_export_batch_parser.add_argument("--report-write", help="Optional output path for the generated batch shadow report JSON")
     memory_export_batch_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_maintenance_parser = memory_subparsers.add_parser(
+        "export-sdk-maintenance-replay",
+        help="Export accepted Spark memory writes as a Domain Chip Memory SDK maintenance replay JSON file",
+    )
+    memory_maintenance_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_maintenance_parser.add_argument("--write", help="Maintenance replay JSON output path")
+    memory_maintenance_parser.add_argument("--event-limit", type=int, default=2000, help="Maximum Builder events to scan")
+    memory_maintenance_parser.add_argument("--validator-root", help="domain-chip-memory repo root used for maintenance replay")
+    memory_maintenance_parser.add_argument("--run-report", action="store_true", help="Run run-sdk-maintenance-report after export")
+    memory_maintenance_parser.add_argument("--report-write", help="Optional output path for the generated SDK maintenance report JSON")
+    memory_maintenance_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     config_parser = subparsers.add_parser("config", help="Inspect and update config values")
     config_subparsers = config_parser.add_subparsers(dest="config_command", required=True)
@@ -2776,6 +2791,28 @@ def handle_memory_export_shadow_replay_batch(args: argparse.Namespace) -> int:
     return 0 if bool(result.validation.get("valid")) and not (result.validation.get("errors") or []) else 1
 
 
+def handle_memory_export_sdk_maintenance_replay(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = export_sdk_maintenance_replay(
+        config_manager=config_manager,
+        state_db=state_db,
+        write_path=args.write,
+        event_limit=args.event_limit,
+        run_report=bool(args.run_report),
+        report_write_path=args.report_write,
+        validator_root=args.validator_root,
+    )
+    print(result.to_json() if args.json else result.to_text())
+    if result.write_count == 0:
+        return 1
+    if args.run_report and _memory_report_failed(result.report):
+        return 1
+    return 0
+
+
 def _memory_report_failed(report: dict[str, object] | None) -> bool:
     if report is None:
         return True
@@ -3205,6 +3242,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_memory_export_shadow_replay(args)
     if args.command == "memory" and args.memory_command == "export-shadow-replay-batch":
         return handle_memory_export_shadow_replay_batch(args)
+    if args.command == "memory" and args.memory_command == "export-sdk-maintenance-replay":
+        return handle_memory_export_sdk_maintenance_replay(args)
     if args.command == "config" and args.config_command == "show":
         return handle_config_show(args)
     if args.command == "config" and args.config_command == "set":

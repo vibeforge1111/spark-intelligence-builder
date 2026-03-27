@@ -215,6 +215,117 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(first_export["writable_roles"], ["user"])
         self.assertEqual(len(first_export["conversations"]), 1)
 
+    def test_memory_export_sdk_maintenance_replay_writes_contract_shaped_json(self) -> None:
+        with self.state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-user-maint-cli",
+                    "intent_committed",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "telegram_runtime",
+                    "turn-maint-cli",
+                    "session-maint-cli",
+                    "human:test",
+                    "telegram_runtime",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Turn committed.",
+                    "2026-03-27T11:00:00Z",
+                    json.dumps({"message_text": "I moved to Dubai."}),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-mem-req-maint-cli",
+                    "memory_write_requested",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "turn-maint-cli",
+                    "session-maint-cli",
+                    "human:test",
+                    "personality_loader",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Memory write requested.",
+                    "2026-03-27T11:00:01Z",
+                    json.dumps(
+                        {
+                            "operation": "update",
+                            "method": "write_observation",
+                            "observations": [
+                                {
+                                    "subject": "human:human:test",
+                                    "predicate": "profile.city",
+                                    "value": "Dubai",
+                                    "operation": "update",
+                                    "memory_role": "current_state",
+                                }
+                            ],
+                        }
+                    ),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-mem-ok-maint-cli",
+                    "memory_write_succeeded",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "turn-maint-cli",
+                    "session-maint-cli",
+                    "human:test",
+                    "personality_loader",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Memory write succeeded.",
+                    "2026-03-27T11:00:02Z",
+                    json.dumps({"accepted_count": 1, "rejected_count": 0, "skipped_count": 0}),
+                ),
+            )
+            conn.commit()
+
+        output_path = self.home / "artifacts" / "sdk-maintenance-replay.json"
+        exit_code, stdout, stderr = self.run_cli(
+            "memory",
+            "export-sdk-maintenance-replay",
+            "--home",
+            str(self.home),
+            "--write",
+            str(output_path),
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["write_count"], 1)
+        exported = json.loads(output_path.read_text(encoding="utf-8"))
+        self.assertEqual(exported["writes"][0]["text"], "I moved to Dubai.")
+        self.assertEqual(exported["checks"]["current_state"][0]["predicate"], "profile.city")
+
     def test_setup_creates_bootstrap_and_doctor_and_status_report_clean_temp_home(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             home = Path(tempdir)

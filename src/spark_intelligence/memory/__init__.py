@@ -5,6 +5,12 @@ from spark_intelligence.memory.orchestrator import (
     read_personality_preferences_from_memory,
     write_personality_preferences_to_memory,
 )
+from spark_intelligence.memory.sdk_maintenance import (
+    SdkMaintenanceExportResult,
+    build_sdk_maintenance_payload,
+    export_sdk_maintenance_replay,
+    run_sdk_maintenance_report,
+)
 from spark_intelligence.memory.shadow_replay import (
     ShadowReplayBatchExportResult,
     ShadowReplayExportResult,
@@ -20,13 +26,17 @@ from spark_intelligence.memory.shadow_replay import (
 __all__ = [
     "MemoryReadResult",
     "MemoryWriteResult",
+    "SdkMaintenanceExportResult",
     "ShadowReplayBatchExportResult",
     "ShadowReplayExportResult",
+    "build_sdk_maintenance_payload",
     "build_shadow_replay_payload",
     "delete_personality_preferences_from_memory",
+    "export_sdk_maintenance_replay",
     "export_shadow_replay",
     "export_shadow_replay_batch",
     "read_personality_preferences_from_memory",
+    "run_sdk_maintenance_report",
     "run_shadow_report",
     "run_shadow_report_batch",
     "validate_shadow_replay",

@@ -5,7 +5,11 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from spark_intelligence.doctor.checks import run_doctor
-from spark_intelligence.memory import build_shadow_replay_payload, export_shadow_replay_batch
+from spark_intelligence.memory import (
+    build_sdk_maintenance_payload,
+    build_shadow_replay_payload,
+    export_shadow_replay_batch,
+)
 from spark_intelligence.observability.store import build_watchtower_snapshot, latest_events_by_type
 from spark_intelligence.personality.loader import (
     detect_and_persist_nl_preferences,
@@ -524,3 +528,175 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertTrue(result.validation["valid"])
         self.assertEqual(result.report["report"]["run_count"], 3)
         self.assertEqual(governed.call_count, 2)
+
+    def test_sdk_maintenance_payload_uses_only_accepted_explicit_memory_writes(self) -> None:
+        with self.state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-user-maint-1",
+                    "intent_committed",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "telegram_runtime",
+                    "turn-maint-1",
+                    "session-maint",
+                    "human:test",
+                    "telegram_runtime",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Turn committed.",
+                    "2026-03-27T10:00:00Z",
+                    json.dumps({"message_text": "I moved to Dubai."}),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-mem-req-maint-1",
+                    "memory_write_requested",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "turn-maint-1",
+                    "session-maint",
+                    "human:test",
+                    "personality_loader",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Memory write requested.",
+                    "2026-03-27T10:00:01Z",
+                    json.dumps(
+                        {
+                            "operation": "update",
+                            "method": "write_observation",
+                            "observations": [
+                                {
+                                    "subject": "human:human:test",
+                                    "predicate": "profile.city",
+                                    "value": "Dubai",
+                                    "operation": "update",
+                                    "memory_role": "current_state",
+                                }
+                            ],
+                        }
+                    ),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-mem-ok-maint-1",
+                    "memory_write_succeeded",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "turn-maint-1",
+                    "session-maint",
+                    "human:test",
+                    "personality_loader",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Memory write succeeded.",
+                    "2026-03-27T10:00:02Z",
+                    json.dumps({"accepted_count": 1, "rejected_count": 0, "skipped_count": 0}),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-mem-req-maint-2",
+                    "memory_write_requested",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "turn-maint-2",
+                    "session-maint",
+                    "human:test",
+                    "personality_loader",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Memory write requested.",
+                    "2026-03-27T10:05:00Z",
+                    json.dumps(
+                        {
+                            "operation": "update",
+                            "method": "write_observation",
+                            "observations": [
+                                {
+                                    "subject": "human:human:test",
+                                    "predicate": "profile.city",
+                                    "value": "Abu Dhabi",
+                                    "operation": "update",
+                                    "memory_role": "current_state",
+                                }
+                            ],
+                        }
+                    ),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-mem-ok-maint-2",
+                    "memory_write_succeeded",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "turn-maint-2",
+                    "session-maint",
+                    "human:test",
+                    "personality_loader",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Memory write succeeded.",
+                    "2026-03-27T10:05:01Z",
+                    json.dumps({"accepted_count": 0, "rejected_count": 1, "skipped_count": 0}),
+                ),
+            )
+            conn.commit()
+
+        payload = build_sdk_maintenance_payload(
+            state_db=self.state_db,
+            event_limit=100,
+        )
+
+        self.assertEqual(len(payload["writes"]), 1)
+        write = payload["writes"][0]
+        self.assertEqual(write["write_kind"], "observation")
+        self.assertEqual(write["text"], "I moved to Dubai.")
+        self.assertEqual(write["subject"], "human:human:test")
+        self.assertEqual(write["predicate"], "profile.city")
+        self.assertEqual(write["value"], "Dubai")
+        self.assertEqual(payload["checks"]["current_state"][0]["predicate"], "profile.city")
+        self.assertNotIn("historical_state", payload["checks"])
