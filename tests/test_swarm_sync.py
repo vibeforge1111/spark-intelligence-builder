@@ -1,18 +1,35 @@
 from __future__ import annotations
 
+import base64
+import io
 import json
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from unittest.mock import patch
+from urllib.error import HTTPError
 
 from spark_intelligence.swarm_bridge.sync import (
     SwarmSyncResult,
     _normalize_runtime_source,
     _record_swarm_failure_state,
     evaluate_swarm_escalation,
+    swarm_status,
+    sync_swarm_collective,
 )
 
 from tests.test_support import SparkTestCase
 
 
 class SwarmSyncTests(SparkTestCase):
+    def _make_jwt(self, *, expires_in_seconds: int) -> str:
+        header = {"alg": "none", "typ": "JWT"}
+        payload = {
+            "iss": "https://sfjcvvyvdwjdvphefggg.supabase.co/auth/v1",
+            "exp": int((datetime.now(timezone.utc) + timedelta(seconds=expires_in_seconds)).timestamp()),
+        }
+        encode = lambda value: base64.urlsafe_b64encode(json.dumps(value).encode("utf-8")).decode("ascii").rstrip("=")
+        return f"{encode(header)}.{encode(payload)}."
+
     def test_normalize_runtime_source_injects_required_swarm_fields(self) -> None:
         payload = {
             "agentId": "agent:spark-researcher",
@@ -108,3 +125,125 @@ class SwarmSyncTests(SparkTestCase):
         payload = json.loads(str(row["value"]))
         self.assertEqual(payload["mode"], "http_error")
         self.assertEqual(payload["response_body"]["error"], "authentication_required")
+
+    def test_swarm_status_marks_expired_token_refreshable_when_refresh_path_exists(self) -> None:
+        self.config_manager.set_path("spark.swarm.api_url", "https://api-production-6ea6.up.railway.app")
+        self.config_manager.set_path("spark.swarm.workspace_id", "ws_123")
+        self.config_manager.set_path("spark.swarm.auth_client_key_env", "SPARK_SWARM_AUTH_CLIENT_KEY")
+        self.config_manager.upsert_env_secret("SPARK_SWARM_ACCESS_TOKEN", self._make_jwt(expires_in_seconds=-300))
+        self.config_manager.upsert_env_secret("SPARK_SWARM_REFRESH_TOKEN", "refresh-token")
+        self.config_manager.upsert_env_secret("SPARK_SWARM_AUTH_CLIENT_KEY", "anon-key")
+
+        status = swarm_status(self.config_manager, self.state_db)
+
+        self.assertEqual(status.auth_state, "refreshable")
+        self.assertEqual(status.refresh_token_env, "SPARK_SWARM_REFRESH_TOKEN")
+        self.assertEqual(status.auth_client_key_env, "SPARK_SWARM_AUTH_CLIENT_KEY")
+        self.assertTrue(status.access_token_expires_at)
+
+    def test_sync_refreshes_expired_access_token_before_upload(self) -> None:
+        researcher_root = self.home / "spark-researcher"
+        researcher_root.mkdir()
+        researcher_config = researcher_root / "spark-researcher.project.json"
+        researcher_config.write_text("{}", encoding="utf-8")
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.researcher.runtime_root", str(researcher_root))
+        self.config_manager.set_path("spark.researcher.config_path", str(researcher_config))
+        self.config_manager.set_path("spark.swarm.api_url", "https://api-production-6ea6.up.railway.app")
+        self.config_manager.set_path("spark.swarm.workspace_id", "ws_123")
+        self.config_manager.upsert_env_secret("SPARK_SWARM_ACCESS_TOKEN", self._make_jwt(expires_in_seconds=-300))
+        self.config_manager.upsert_env_secret("SPARK_SWARM_REFRESH_TOKEN", "refresh-token")
+        self.config_manager.upsert_env_secret("SPARK_SWARM_AUTH_CLIENT_KEY", "anon-key")
+
+        with patch(
+            "spark_intelligence.swarm_bridge.sync._researcher_has_ledger",
+            return_value=True,
+        ), patch(
+            "spark_intelligence.swarm_bridge.sync._build_collective_payload",
+            return_value=({"agentId": "agent:spark-researcher"}, self.home / "payload.json"),
+        ), patch(
+            "spark_intelligence.swarm_bridge.sync._refresh_swarm_access_token",
+        ) as refresh_mock, patch(
+            "spark_intelligence.swarm_bridge.sync._post_collective_payload",
+            return_value={"accepted": True},
+        ) as post_mock:
+            refresh_mock.return_value = type(
+                "Session",
+                (),
+                {
+                    "access_token": "fresh-access",
+                    "refresh_token": "refresh-token-rotated",
+                    "refresh_token_env": "SPARK_SWARM_REFRESH_TOKEN",
+                    "auth_client_key": "anon-key",
+                    "auth_client_key_env": "SPARK_SWARM_AUTH_CLIENT_KEY",
+                    "supabase_url": "https://sfjcvvyvdwjdvphefggg.supabase.co",
+                    "access_token_env": "SPARK_SWARM_ACCESS_TOKEN",
+                    "auth_state": "configured",
+                    "access_token_expires_at": None,
+                },
+            )()
+
+            result = sync_swarm_collective(config_manager=self.config_manager, state_db=self.state_db, dry_run=False)
+
+        self.assertTrue(result.ok)
+        refresh_mock.assert_called_once()
+        post_mock.assert_called_once()
+        self.assertEqual(post_mock.call_args.kwargs["access_token"], "fresh-access")
+
+    def test_sync_retries_once_after_authentication_required_with_refreshable_session(self) -> None:
+        researcher_root = self.home / "spark-researcher"
+        researcher_root.mkdir()
+        researcher_config = researcher_root / "spark-researcher.project.json"
+        researcher_config.write_text("{}", encoding="utf-8")
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.researcher.runtime_root", str(researcher_root))
+        self.config_manager.set_path("spark.researcher.config_path", str(researcher_config))
+        self.config_manager.set_path("spark.swarm.api_url", "https://api-production-6ea6.up.railway.app")
+        self.config_manager.set_path("spark.swarm.workspace_id", "ws_123")
+        self.config_manager.upsert_env_secret("SPARK_SWARM_ACCESS_TOKEN", self._make_jwt(expires_in_seconds=3600))
+        self.config_manager.upsert_env_secret("SPARK_SWARM_REFRESH_TOKEN", "refresh-token")
+        self.config_manager.upsert_env_secret("SPARK_SWARM_AUTH_CLIENT_KEY", "anon-key")
+
+        auth_error = HTTPError(
+            url="https://api-production-6ea6.up.railway.app/api/workspaces/ws_123/collective/sync",
+            code=401,
+            msg="Unauthorized",
+            hdrs=None,
+            fp=io.BytesIO(b'{"error":"authentication_required"}'),
+        )
+        refreshed_session = type(
+            "Session",
+            (),
+            {
+                "access_token": "fresh-access",
+                "refresh_token": "refresh-token-rotated",
+                "refresh_token_env": "SPARK_SWARM_REFRESH_TOKEN",
+                "auth_client_key": "anon-key",
+                "auth_client_key_env": "SPARK_SWARM_AUTH_CLIENT_KEY",
+                "supabase_url": "https://sfjcvvyvdwjdvphefggg.supabase.co",
+                "access_token_env": "SPARK_SWARM_ACCESS_TOKEN",
+                "auth_state": "configured",
+                "access_token_expires_at": None,
+            },
+        )()
+
+        with patch(
+            "spark_intelligence.swarm_bridge.sync._researcher_has_ledger",
+            return_value=True,
+        ), patch(
+            "spark_intelligence.swarm_bridge.sync._build_collective_payload",
+            return_value=({"agentId": "agent:spark-researcher"}, self.home / "payload.json"),
+        ), patch(
+            "spark_intelligence.swarm_bridge.sync._post_collective_payload",
+            side_effect=[auth_error, {"accepted": True}],
+        ) as post_mock, patch(
+            "spark_intelligence.swarm_bridge.sync._refresh_swarm_access_token",
+            return_value=refreshed_session,
+        ) as refresh_mock:
+            result = sync_swarm_collective(config_manager=self.config_manager, state_db=self.state_db, dry_run=False)
+
+        self.assertTrue(result.ok)
+        self.assertIn("after refreshing the session", result.message)
+        self.assertEqual(post_mock.call_count, 2)
+        self.assertEqual(post_mock.call_args.kwargs["access_token"], "fresh-access")
+        refresh_mock.assert_called_once()

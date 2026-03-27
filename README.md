@@ -97,7 +97,7 @@ spark-intelligence channel telegram-onboard
 spark-intelligence channel add discord --bot-token <token> --allowed-user <id>
 spark-intelligence channel add whatsapp --bot-token <token> --allowed-user <id>
 spark-intelligence config set spark.researcher.runtime_root "C:/Users/USER/Desktop/spark-researcher"
-spark-intelligence swarm configure --api-url https://your-swarm-host --workspace-id <workspace_id> --access-token <token>
+spark-intelligence swarm configure --api-url https://your-swarm-host --workspace-id <workspace_id> --access-token <token> --refresh-token <refresh_token> --auth-client-key-env SPARK_SWARM_AUTH_CLIENT_KEY
 spark-intelligence doctor
 spark-intelligence agent inspect
 spark-intelligence pairings list
@@ -200,7 +200,7 @@ spark-intelligence gateway outbound --channel-id telegram --delivery failed
 
 `spark-intelligence connect route-policy` is the matching operator-facing summary for that behavior. It explains when Spark Intelligence stays on external Researcher advisory, when it falls back to direct provider chat, when it executes directly through the configured provider, and when Spark Swarm escalation should be considered.
 
-Those same surfaces now also distinguish "Swarm token is configured" from "hosted Swarm is actually accepting the current session", so `connect status`, `connect route-policy`, and `swarm status` will surface hosted auth rejection directly instead of treating any token-shaped value as effectively ready.
+Those same surfaces now also distinguish "Swarm token is configured" from "hosted Swarm is actually accepting the current session", and now also distinguish an expired one-hour access token from a refreshable session. `connect status`, `connect route-policy`, and `swarm status` surface `configured`, `expired`, `refreshable`, or `auth_rejected` instead of treating any token-shaped value as effectively ready.
 
 `spark-intelligence connect set-route-policy` is the matching operator control surface. It currently lets the operator tune:
 
@@ -222,7 +222,7 @@ Spark Swarm stays manual-first in v1. The builder can export the latest real col
 
 ```bash
 spark-intelligence swarm status
-spark-intelligence swarm configure --api-url https://your-swarm-host --workspace-id <workspace_id> --access-token <token>
+spark-intelligence swarm configure --api-url https://your-swarm-host --workspace-id <workspace_id> --access-token <token> --refresh-token <refresh_token> --auth-client-key-env SPARK_SWARM_AUTH_CLIENT_KEY
 spark-intelligence swarm sync --dry-run
 spark-intelligence swarm sync
 spark-intelligence swarm evaluate "Break this into a multi-step parallel research workflow"

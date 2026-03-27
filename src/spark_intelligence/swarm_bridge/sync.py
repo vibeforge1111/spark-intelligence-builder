@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import importlib
 import json
 import os
@@ -26,17 +27,24 @@ class SwarmStatus:
     researcher_ready: bool
     payload_ready: bool
     api_ready: bool
+    auth_state: str
     runtime_root: str | None
     researcher_runtime_root: str | None
     researcher_config_path: str | None
     api_url: str | None
+    supabase_url: str | None
     workspace_id: str | None
     access_token_env: str | None
+    refresh_token_env: str | None
+    auth_client_key_env: str | None
+    access_token_expires_at: str | None
     attachment_context: dict[str, Any]
     last_sync: dict[str, Any] | None
     last_decision: dict[str, Any] | None
     failure_count: int
     last_failure: dict[str, Any] | None
+    last_refresh_at: str | None
+    last_refresh_error: str | None
 
     def to_json(self) -> str:
         return json.dumps(
@@ -46,17 +54,24 @@ class SwarmStatus:
                 "researcher_ready": self.researcher_ready,
                 "payload_ready": self.payload_ready,
                 "api_ready": self.api_ready,
+                "auth_state": self.auth_state,
                 "runtime_root": self.runtime_root,
                 "researcher_runtime_root": self.researcher_runtime_root,
                 "researcher_config_path": self.researcher_config_path,
                 "api_url": self.api_url,
+                "supabase_url": self.supabase_url,
                 "workspace_id": self.workspace_id,
                 "access_token_env": self.access_token_env,
+                "refresh_token_env": self.refresh_token_env,
+                "auth_client_key_env": self.auth_client_key_env,
+                "access_token_expires_at": self.access_token_expires_at,
                 "attachment_context": self.attachment_context,
                 "last_sync": self.last_sync,
                 "last_decision": self.last_decision,
                 "failure_count": self.failure_count,
                 "last_failure": self.last_failure,
+                "last_refresh_at": self.last_refresh_at,
+                "last_refresh_error": self.last_refresh_error,
             },
             indent=2,
         )
@@ -68,18 +83,27 @@ class SwarmStatus:
             f"- researcher_ready: {'yes' if self.researcher_ready else 'no'}",
             f"- payload_ready: {'yes' if self.payload_ready else 'no'}",
             f"- api_ready: {'yes' if self.api_ready else 'no'}",
+            f"- auth_state: {self.auth_state}",
             f"- runtime_root: {self.runtime_root or 'missing'}",
             f"- researcher_runtime_root: {self.researcher_runtime_root or 'missing'}",
             f"- researcher_config_path: {self.researcher_config_path or 'missing'}",
             f"- api_url: {self.api_url or 'missing'}",
+            f"- supabase_url: {self.supabase_url or 'missing'}",
             f"- workspace_id: {self.workspace_id or 'missing'}",
             f"- access_token_env: {self.access_token_env or 'missing'}",
+            f"- refresh_token_env: {self.refresh_token_env or 'missing'}",
+            f"- auth_client_key_env: {self.auth_client_key_env or 'missing'}",
+            f"- access_token_expires_at: {self.access_token_expires_at or 'unknown'}",
             f"- active_chip_keys: {', '.join(self.attachment_context.get('active_chip_keys', [])) if self.attachment_context.get('active_chip_keys') else 'none'}",
             f"- active_path_key: {self.attachment_context.get('active_path_key') or 'none'}",
             f"- last_sync_mode: {(self.last_sync or {}).get('mode', 'none')}",
             f"- last_decision_mode: {(self.last_decision or {}).get('mode', 'none')}",
             f"- failure_count: {self.failure_count}",
         ]
+        if self.last_refresh_at:
+            lines.append(f"- last_refresh_at: {self.last_refresh_at}")
+        if self.last_refresh_error:
+            lines.append(f"- last_refresh_error: {self.last_refresh_error}")
         if self.last_failure:
             lines.append(
                 f"- last_failure: mode={self.last_failure.get('mode') or 'unknown'} "
@@ -174,6 +198,19 @@ class SwarmDecisionResult:
         return "\n".join(lines)
 
 
+@dataclass
+class SwarmSession:
+    access_token_env: str | None
+    access_token: str | None
+    refresh_token_env: str | None
+    refresh_token: str | None
+    auth_client_key_env: str | None
+    auth_client_key: str | None
+    supabase_url: str | None
+    access_token_expires_at: str | None
+    auth_state: str
+
+
 def swarm_status(config_manager: ConfigManager, state_db: StateDB | None = None) -> SwarmStatus:
     enabled = bool(config_manager.get_path("spark.swarm.enabled", default=True))
     runtime_root, _ = _discover_swarm_runtime_root(config_manager)
@@ -181,30 +218,36 @@ def swarm_status(config_manager: ConfigManager, state_db: StateDB | None = None)
     researcher_config_path = resolve_researcher_config_path(config_manager, researcher_root) if researcher_root else None
     api_url = _resolve_swarm_api_url(config_manager)
     workspace_id = _resolve_swarm_workspace_id(config_manager)
-    access_token_env = _resolve_swarm_access_token_env(config_manager)
-    access_token = _resolve_swarm_access_token(config_manager)
+    session = _resolve_swarm_session(config_manager, state_db=state_db)
     attachment_context = build_attachment_context(config_manager)
     runtime_state = _read_swarm_runtime_state(state_db) if state_db is not None else {}
     researcher_ready = enabled and bool(researcher_root and researcher_config_path and researcher_config_path.exists())
     payload_ready = researcher_ready and _researcher_has_ledger(researcher_config_path)
-    api_ready = enabled and bool(api_url and workspace_id and access_token)
+    api_ready = enabled and bool(api_url and workspace_id and session.access_token)
     return SwarmStatus(
         enabled=enabled,
-        configured=bool(runtime_root or api_url or workspace_id or access_token_env),
+        configured=bool(runtime_root or api_url or workspace_id or session.access_token_env or session.refresh_token_env),
         researcher_ready=researcher_ready,
         payload_ready=payload_ready,
         api_ready=api_ready,
+        auth_state=session.auth_state,
         runtime_root=str(runtime_root) if runtime_root else None,
         researcher_runtime_root=str(researcher_root) if researcher_root else None,
         researcher_config_path=str(researcher_config_path) if researcher_config_path else None,
         api_url=api_url,
+        supabase_url=session.supabase_url,
         workspace_id=workspace_id,
-        access_token_env=access_token_env,
+        access_token_env=session.access_token_env,
+        refresh_token_env=session.refresh_token_env,
+        auth_client_key_env=session.auth_client_key_env,
+        access_token_expires_at=session.access_token_expires_at,
         attachment_context=attachment_context,
         last_sync=_loads_json_object(runtime_state.get("swarm:last_sync")),
         last_decision=_loads_json_object(runtime_state.get("swarm:last_decision")),
         failure_count=_parse_int(runtime_state.get("swarm:failure_count")),
         last_failure=_loads_json_object(runtime_state.get("swarm:last_failure")),
+        last_refresh_at=runtime_state.get("swarm:last_auth_refresh_at") or None,
+        last_refresh_error=runtime_state.get("swarm:last_auth_refresh_error") or None,
     )
 
 
@@ -287,8 +330,8 @@ def sync_swarm_collective(
         )
 
     api_url = status.api_url
-    access_token = _resolve_swarm_access_token(config_manager)
-    if not api_url or not access_token:
+    session = _resolve_swarm_session(config_manager, state_db=state_db)
+    if not api_url or (not session.access_token and session.auth_state != "refreshable"):
         result = SwarmSyncResult(
             ok=False,
             mode="api_not_configured",
@@ -302,10 +345,140 @@ def sync_swarm_collective(
         _record_swarm_failure_state(state_db, kind="sync", result=result)
         return result
 
+    if session.auth_state == "expired":
+        result = SwarmSyncResult(
+            ok=False,
+            mode="auth_expired",
+            message="Swarm access token is expired and no refresh path is configured.",
+            payload_path=str(payload_path),
+            api_url=api_url,
+            workspace_id=workspace_id,
+            accepted=False,
+            response_body={"error": "access_token_expired"},
+        )
+        _record_swarm_failure_state(state_db, kind="sync", result=result)
+        return result
+
+    if session.auth_state == "refreshable":
+        try:
+            session = _refresh_swarm_access_token(config_manager=config_manager, state_db=state_db, session=session)
+        except RuntimeError as exc:
+            result = SwarmSyncResult(
+                ok=False,
+                mode="refresh_error",
+                message=str(exc),
+                payload_path=str(payload_path),
+                api_url=api_url,
+                workspace_id=workspace_id,
+                accepted=False,
+                response_body={"error": "refresh_failed"},
+            )
+            _record_swarm_failure_state(state_db, kind="sync", result=result)
+            return result
+
     try:
-        response_body = _post_collective_payload(api_url=api_url, workspace_id=workspace_id, access_token=access_token, payload=payload)
+        response_body = _post_collective_payload(
+            api_url=api_url,
+            workspace_id=workspace_id,
+            access_token=session.access_token or "",
+            payload=payload,
+        )
     except urllib.error.HTTPError as exc:
         body = _read_http_error_body(exc)
+        if (
+            exc.code == 401
+            and _http_error_requires_auth(body)
+            and session.refresh_token
+            and session.auth_client_key
+            and session.supabase_url
+        ):
+            try:
+                session = _refresh_swarm_access_token(config_manager=config_manager, state_db=state_db, session=session)
+                response_body = _post_collective_payload(
+                    api_url=api_url,
+                    workspace_id=workspace_id,
+                    access_token=session.access_token or "",
+                    payload=payload,
+                )
+            except RuntimeError as refresh_exc:
+                result = SwarmSyncResult(
+                    ok=False,
+                    mode="refresh_error",
+                    message=str(refresh_exc),
+                    payload_path=str(payload_path),
+                    api_url=api_url,
+                    workspace_id=workspace_id,
+                    accepted=False,
+                    response_body=body,
+                )
+                _record_swarm_failure_state(state_db, kind="sync", result=result)
+                return result
+            except urllib.error.HTTPError as retry_exc:
+                retry_body = _read_http_error_body(retry_exc)
+                _record_swarm_sync_state(
+                    state_db,
+                    mode="http_error",
+                    payload_path=str(payload_path),
+                    api_url=api_url,
+                    workspace_id=workspace_id,
+                    accepted=False,
+                )
+                result = SwarmSyncResult(
+                    ok=False,
+                    mode="http_error",
+                    message=f"Swarm API rejected the sync with HTTP {retry_exc.code} after refresh retry.",
+                    payload_path=str(payload_path),
+                    api_url=api_url,
+                    workspace_id=workspace_id,
+                    accepted=False,
+                    response_body=retry_body,
+                )
+                _record_swarm_failure_state(state_db, kind="sync", result=result)
+                return result
+            except urllib.error.URLError as retry_exc:
+                _record_swarm_sync_state(
+                    state_db,
+                    mode="network_error",
+                    payload_path=str(payload_path),
+                    api_url=api_url,
+                    workspace_id=workspace_id,
+                    accepted=False,
+                )
+                result = SwarmSyncResult(
+                    ok=False,
+                    mode="network_error",
+                    message=f"Could not reach Swarm API after refresh retry: {retry_exc.reason}",
+                    payload_path=str(payload_path),
+                    api_url=api_url,
+                    workspace_id=workspace_id,
+                    accepted=False,
+                    response_body=None,
+                )
+                _record_swarm_failure_state(state_db, kind="sync", result=result)
+                return result
+            else:
+                accepted = bool(response_body.get("accepted"))
+                _record_swarm_sync_state(
+                    state_db,
+                    mode="uploaded",
+                    payload_path=str(payload_path),
+                    api_url=api_url,
+                    workspace_id=workspace_id,
+                    accepted=accepted,
+                )
+                result = SwarmSyncResult(
+                    ok=accepted,
+                    mode="uploaded",
+                    message="Uploaded the latest Spark Researcher collective payload to Spark Swarm after refreshing the session.",
+                    payload_path=str(payload_path),
+                    api_url=api_url,
+                    workspace_id=workspace_id,
+                    accepted=accepted,
+                    response_body=response_body,
+                )
+                if not accepted:
+                    _record_swarm_failure_state(state_db, kind="sync", result=result)
+                return result
         _record_swarm_sync_state(
             state_db,
             mode="http_error",
@@ -499,6 +672,107 @@ def _resolve_swarm_access_token(config_manager: ConfigManager) -> str | None:
     if not env_ref:
         return None
     return config_manager.read_env_map().get(env_ref)
+
+
+def _resolve_swarm_refresh_token_env(config_manager: ConfigManager) -> str | None:
+    configured = config_manager.get_path("spark.swarm.refresh_token_env")
+    if configured:
+        return str(configured)
+    env_map = config_manager.read_env_map()
+    if "SPARK_SWARM_REFRESH_TOKEN" in env_map:
+        return "SPARK_SWARM_REFRESH_TOKEN"
+    return None
+
+
+def _resolve_swarm_refresh_token(config_manager: ConfigManager) -> str | None:
+    env_ref = _resolve_swarm_refresh_token_env(config_manager)
+    if not env_ref:
+        return None
+    return config_manager.read_env_map().get(env_ref)
+
+
+def _resolve_swarm_auth_client_key_env(config_manager: ConfigManager) -> str | None:
+    configured = config_manager.get_path("spark.swarm.auth_client_key_env")
+    if configured:
+        return str(configured)
+    env_map = config_manager.read_env_map()
+    if "SPARK_SWARM_AUTH_CLIENT_KEY" in env_map:
+        return "SPARK_SWARM_AUTH_CLIENT_KEY"
+    local_env = _read_local_swarm_env_map(config_manager)
+    for key in (
+        "SUPABASE_PUBLISHABLE_KEY",
+        "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+        "SUPABASE_ANON_KEY",
+        "SUPABASE_SERVICE_ROLE_KEY",
+    ):
+        if local_env.get(key):
+            return f"local:{key}"
+    return None
+
+
+def _resolve_swarm_auth_client_key(config_manager: ConfigManager) -> str | None:
+    env_ref = _resolve_swarm_auth_client_key_env(config_manager)
+    if not env_ref:
+        return None
+    if env_ref.startswith("local:"):
+        return _read_local_swarm_env_map(config_manager).get(env_ref.split(":", 1)[1])
+    return config_manager.read_env_map().get(env_ref)
+
+
+def _resolve_swarm_supabase_url(config_manager: ConfigManager, access_token: str | None) -> str | None:
+    configured = config_manager.get_path("spark.swarm.supabase_url")
+    if configured:
+        return str(configured).rstrip("/")
+    env_map = config_manager.read_env_map()
+    if env_map.get("SPARK_SWARM_SUPABASE_URL"):
+        return env_map["SPARK_SWARM_SUPABASE_URL"].rstrip("/")
+    local_env = _read_local_swarm_env_map(config_manager)
+    if local_env.get("SUPABASE_URL"):
+        return str(local_env["SUPABASE_URL"]).rstrip("/")
+    claims = _decode_jwt_claims(access_token)
+    issuer = claims.get("iss") if isinstance(claims, dict) else None
+    if isinstance(issuer, str) and issuer:
+        if issuer.endswith("/auth/v1"):
+            return issuer[: -len("/auth/v1")]
+        return issuer.rstrip("/")
+    return None
+
+
+def _resolve_swarm_session(config_manager: ConfigManager, *, state_db: StateDB | None = None) -> SwarmSession:
+    access_token_env = _resolve_swarm_access_token_env(config_manager)
+    access_token = _resolve_swarm_access_token(config_manager)
+    refresh_token_env = _resolve_swarm_refresh_token_env(config_manager)
+    refresh_token = _resolve_swarm_refresh_token(config_manager)
+    auth_client_key_env = _resolve_swarm_auth_client_key_env(config_manager)
+    auth_client_key = _resolve_swarm_auth_client_key(config_manager)
+    supabase_url = _resolve_swarm_supabase_url(config_manager, access_token)
+    access_token_expires_at = _token_expiry_iso(access_token)
+    token_expired = _token_is_expired(access_token)
+    last_failure = {}
+    if state_db is not None:
+        runtime_state = _read_swarm_runtime_state(state_db)
+        last_failure = _loads_json_object(runtime_state.get("swarm:last_failure")) or {}
+    auth_state = "missing"
+    if access_token:
+        if token_expired:
+            auth_state = "refreshable" if refresh_token and auth_client_key and supabase_url else "expired"
+        elif _http_error_requires_auth(last_failure.get("response_body")):
+            auth_state = "auth_rejected"
+        else:
+            auth_state = "configured"
+    elif refresh_token and auth_client_key and supabase_url:
+        auth_state = "refreshable"
+    return SwarmSession(
+        access_token_env=access_token_env,
+        access_token=access_token,
+        refresh_token_env=refresh_token_env,
+        refresh_token=refresh_token,
+        auth_client_key_env=auth_client_key_env,
+        auth_client_key=auth_client_key,
+        supabase_url=supabase_url,
+        access_token_expires_at=access_token_expires_at,
+        auth_state=auth_state,
+    )
 
 
 def _researcher_has_ledger(config_path: Path) -> bool:
@@ -719,6 +993,129 @@ def _import_researcher_symbol(runtime_root: Path, module_name: str, symbol: str)
         sys.path.insert(0, str(src_root))
     module = importlib.import_module(module_name)
     return getattr(module, symbol)
+
+
+def _refresh_swarm_access_token(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    session: SwarmSession,
+) -> SwarmSession:
+    if not session.refresh_token:
+        raise RuntimeError("Swarm refresh token is missing.")
+    if not session.auth_client_key:
+        raise RuntimeError("Swarm auth client key is missing.")
+    if not session.supabase_url:
+        raise RuntimeError("Swarm Supabase URL is missing.")
+    request = urllib.request.Request(
+        url=urllib.parse.urljoin(f"{session.supabase_url}/", "auth/v1/token?grant_type=refresh_token"),
+        data=json.dumps({"refresh_token": session.refresh_token}).encode("utf-8"),
+        headers={
+            "apikey": session.auth_client_key,
+            "Authorization": f"Bearer {session.auth_client_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            raw = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        body = _read_http_error_body(exc)
+        message = f"Swarm session refresh failed with HTTP {exc.code}."
+        if isinstance(body, dict) and body.get("msg"):
+            message = f"{message} {body['msg']}"
+        _record_swarm_refresh_state(state_db, error=message)
+        raise RuntimeError(message) from exc
+    except urllib.error.URLError as exc:
+        message = f"Could not reach Swarm auth endpoint: {exc.reason}"
+        _record_swarm_refresh_state(state_db, error=message)
+        raise RuntimeError(message) from exc
+
+    payload = json.loads(raw) if raw.strip() else {}
+    access_token = str(payload.get("access_token") or "").strip()
+    refresh_token = str(payload.get("refresh_token") or session.refresh_token or "").strip()
+    if not access_token:
+        message = "Swarm refresh completed without returning a new access token."
+        _record_swarm_refresh_state(state_db, error=message)
+        raise RuntimeError(message)
+
+    access_env = session.access_token_env or "SPARK_SWARM_ACCESS_TOKEN"
+    refresh_env = session.refresh_token_env or "SPARK_SWARM_REFRESH_TOKEN"
+    config_manager.upsert_env_secret(access_env, access_token)
+    config_manager.set_path("spark.swarm.access_token_env", access_env)
+    config_manager.upsert_env_secret(refresh_env, refresh_token)
+    config_manager.set_path("spark.swarm.refresh_token_env", refresh_env)
+    _record_swarm_refresh_state(state_db, refreshed=True)
+    return _resolve_swarm_session(config_manager, state_db=state_db)
+
+
+def _record_swarm_refresh_state(state_db: StateDB, *, refreshed: bool = False, error: str | None = None) -> None:
+    with state_db.connect() as conn:
+        if refreshed:
+            _set_runtime_state(conn, "swarm:last_auth_refresh_at", _utc_now_iso())
+            _set_runtime_state(conn, "swarm:last_auth_refresh_error", "")
+        if error is not None:
+            _set_runtime_state(conn, "swarm:last_auth_refresh_error", error)
+        conn.commit()
+
+
+def _read_local_swarm_env_map(config_manager: ConfigManager) -> dict[str, str]:
+    runtime_root, _ = _discover_swarm_runtime_root(config_manager)
+    if not runtime_root:
+        return {}
+    mapping: dict[str, str] = {}
+    for path in (
+        runtime_root / ".env.alpha",
+        runtime_root / "apps" / "api" / ".env",
+        runtime_root / "apps" / "web" / ".env",
+    ):
+        if not path.exists():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, value = stripped.split("=", 1)
+            mapping.setdefault(key, value)
+    return mapping
+
+
+def _decode_jwt_claims(token: str | None) -> dict[str, Any]:
+    if not token or token.count(".") < 2:
+        return {}
+    segment = token.split(".")[1]
+    padded = segment + "=" * (-len(segment) % 4)
+    try:
+        raw = base64.urlsafe_b64decode(padded.encode("ascii"))
+        payload = json.loads(raw.decode("utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _token_expiry_iso(token: str | None) -> str | None:
+    claims = _decode_jwt_claims(token)
+    exp = claims.get("exp")
+    if not isinstance(exp, (int, float)):
+        return None
+    return datetime.fromtimestamp(float(exp), tz=timezone.utc).isoformat(timespec="seconds")
+
+
+def _token_is_expired(token: str | None, *, skew_seconds: int = 60) -> bool:
+    claims = _decode_jwt_claims(token)
+    exp = claims.get("exp")
+    if not isinstance(exp, (int, float)):
+        return False
+    expires_at = datetime.fromtimestamp(float(exp), tz=timezone.utc)
+    return expires_at <= datetime.now(timezone.utc).replace(microsecond=0) if skew_seconds <= 0 else (
+        expires_at.timestamp() - skew_seconds <= datetime.now(timezone.utc).timestamp()
+    )
+
+
+def _http_error_requires_auth(body: dict[str, Any] | None) -> bool:
+    return isinstance(body, dict) and body.get("error") == "authentication_required"
 
 
 def _read_http_error_body(exc: urllib.error.HTTPError) -> dict[str, Any] | None:

@@ -173,11 +173,13 @@ The end-of-day local finish pass tightened two more pieces without widening scop
 
 One more Telegram runtime-quality pass is now also in place: when a provider or chip returns a memo-shaped response, Spark Intelligence rewrites that structure into a cleaner Telegram reply instead of leaking report formatting directly to the DM surface. The cleanup now also strips common internal prefixes such as "Based on the research notes provided, ..." before delivery, which keeps the specialized Telegram path feeling more like a direct operator assistant and less like a pasted research artifact.
 
+The next Swarm hardening pass is now also in place on the Builder side. Swarm session state is no longer treated as a binary "token exists or does not exist" shape: `swarm status`, `connect status`, and `connect route-policy` now distinguish `configured`, `expired`, `refreshable`, and `auth_rejected`. `swarm sync` can now attempt one local session refresh and retry the hosted upload when the Builder home has a refresh token plus auth client key configured, and `swarm configure` now accepts `--refresh-token`, `--refresh-token-env`, `--auth-client-key`, `--auth-client-key-env`, and `--supabase-url` so the Builder home can carry a durable session model instead of relying on a pasted short-lived JWT alone.
+
 That means the current state has shifted slightly:
 
 - phase A remains ready
 - phase B remains ready
-- phase C is locally wired but still blocked on hosted Swarm auth/session acceptance
+- phase C is locally wired but still blocked on Swarm session freshness on the canonical home
 - phase D is locally stronger again because the Telegram runtime quality and route/operator visibility both improved
 - phase E remains materially real on the canonical Telegram path
 

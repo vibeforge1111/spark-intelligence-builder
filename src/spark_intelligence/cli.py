@@ -324,6 +324,9 @@ def _swarm_last_failure_payload(swarm) -> dict[str, object]:
 
 
 def _swarm_auth_state(swarm) -> str:
+    auth_state = getattr(swarm, "auth_state", None)
+    if auth_state:
+        return str(auth_state)
     last_failure = _swarm_last_failure_payload(swarm)
     response_body = last_failure.get("response_body")
     if isinstance(response_body, dict) and response_body.get("error") == "authentication_required":
@@ -424,8 +427,10 @@ def build_connection_plan_status(config_manager: ConfigManager, state_db: StateD
         f"api_url={swarm.api_url or 'missing'}",
         f"workspace_id={swarm.workspace_id or 'missing'}",
         f"access_token_env={swarm.access_token_env or 'missing'}",
+        f"refresh_token_env={getattr(swarm, 'refresh_token_env', None) or 'missing'}",
     ]
-    if swarm.payload_ready and swarm.api_ready and _swarm_auth_state(swarm) != "auth_rejected":
+    auth_state = _swarm_auth_state(swarm)
+    if swarm.payload_ready and swarm.api_ready and auth_state == "configured":
         phase_c = ConnectionPhaseStatus(
             phase_id="phase-c-swarm-api",
             title="Connect Spark Swarm",
@@ -442,11 +447,26 @@ def build_connection_plan_status(config_manager: ConfigManager, state_db: StateD
             "spark-intelligence swarm sync --dry-run",
             "spark-intelligence swarm sync",
         ]
-        if _swarm_auth_state(swarm) == "auth_rejected":
+        if auth_state == "refreshable":
+            phase_c_summary = "Swarm payload build is ready, and the local session is refreshable, but a fresh sync still needs to re-establish hosted acceptance."
+            phase_c_steps = [
+                "spark-intelligence swarm status",
+                "spark-intelligence swarm sync --dry-run",
+                "spark-intelligence swarm sync",
+            ]
+        elif auth_state == "expired":
+            phase_c_summary = "Swarm payload build is ready, but the local session is expired and no refresh path is configured yet."
+            phase_c_steps = [
+                "spark-intelligence swarm status",
+                "spark-intelligence swarm configure --access-token <fresh-token> --refresh-token <refresh-token> --auth-client-key-env <env>",
+                "spark-intelligence swarm sync --dry-run",
+                "spark-intelligence swarm sync",
+            ]
+        elif auth_state == "auth_rejected":
             phase_c_summary = "Swarm payload build is ready, but the hosted API rejected the current access token or session."
             phase_c_steps = [
                 "spark-intelligence swarm status",
-                "spark-intelligence swarm configure --access-token <fresh-token>",
+                "spark-intelligence swarm configure --access-token <fresh-token> --refresh-token <refresh-token> --auth-client-key-env <env>",
                 "spark-intelligence swarm sync --dry-run",
                 "spark-intelligence swarm sync",
             ]
@@ -1106,12 +1126,25 @@ def build_parser() -> argparse.ArgumentParser:
     swarm_configure_parser = swarm_subparsers.add_parser("configure", help="Configure Spark Swarm API settings")
     swarm_configure_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     swarm_configure_parser.add_argument("--api-url", help="Base URL for the Spark Swarm API")
+    swarm_configure_parser.add_argument("--supabase-url", help="Supabase auth URL used for Swarm session refresh")
     swarm_configure_parser.add_argument("--workspace-id", help="Workspace id used by Spark Swarm")
     swarm_configure_parser.add_argument("--access-token", help="Access token for the Spark Swarm API")
     swarm_configure_parser.add_argument(
         "--access-token-env",
         default="SPARK_SWARM_ACCESS_TOKEN",
         help="Env var name used to store the Spark Swarm access token",
+    )
+    swarm_configure_parser.add_argument("--refresh-token", help="Refresh token for the Spark Swarm API session")
+    swarm_configure_parser.add_argument(
+        "--refresh-token-env",
+        default="SPARK_SWARM_REFRESH_TOKEN",
+        help="Env var name used to store the Spark Swarm refresh token",
+    )
+    swarm_configure_parser.add_argument("--auth-client-key", help="Supabase client key used for refresh exchange")
+    swarm_configure_parser.add_argument(
+        "--auth-client-key-env",
+        default="SPARK_SWARM_AUTH_CLIENT_KEY",
+        help="Env var name used to store the Swarm auth client key",
     )
     swarm_configure_parser.add_argument("--runtime-root", help="Override local spark-swarm repo path")
     swarm_sync_parser = swarm_subparsers.add_parser(
@@ -2592,10 +2625,15 @@ def handle_swarm_configure(args: argparse.Namespace) -> int:
     _configure_swarm(
         config_manager,
         api_url=args.api_url,
+        supabase_url=args.supabase_url,
         workspace_id=args.workspace_id,
         runtime_root=args.runtime_root,
         access_token=args.access_token,
         access_token_env=args.access_token_env,
+        refresh_token=args.refresh_token,
+        refresh_token_env=args.refresh_token_env,
+        auth_client_key=args.auth_client_key,
+        auth_client_key_env=args.auth_client_key_env,
     )
     print("Spark Swarm bridge config updated.")
     print("Recommended checks:")
@@ -2669,10 +2707,15 @@ def _apply_setup_integrations(config_manager: ConfigManager, args: argparse.Name
         _configure_swarm(
             config_manager,
             api_url=args.swarm_api_url,
+            supabase_url=None,
             workspace_id=args.swarm_workspace_id,
             runtime_root=swarm_runtime_root,
             access_token=args.swarm_access_token,
             access_token_env=args.swarm_access_token_env if args.swarm_access_token else None,
+            refresh_token=None,
+            refresh_token_env=None,
+            auth_client_key=None,
+            auth_client_key_env=None,
         )
         if args.swarm_api_url:
             notes.append(f"configured spark.swarm.api_url = {args.swarm_api_url.rstrip('/')}")
@@ -2703,13 +2746,20 @@ def _configure_swarm(
     config_manager: ConfigManager,
     *,
     api_url: str | None,
+    supabase_url: str | None,
     workspace_id: str | None,
     runtime_root: str | None,
     access_token: str | None,
     access_token_env: str | None,
+    refresh_token: str | None,
+    refresh_token_env: str | None,
+    auth_client_key: str | None,
+    auth_client_key_env: str | None,
 ) -> None:
     if api_url:
         config_manager.set_path("spark.swarm.api_url", api_url.rstrip("/"))
+    if supabase_url:
+        config_manager.set_path("spark.swarm.supabase_url", supabase_url.rstrip("/"))
     if workspace_id:
         config_manager.set_path("spark.swarm.workspace_id", workspace_id)
         config_manager.upsert_env_secret("SPARK_SWARM_WORKSPACE_ID", workspace_id)
@@ -2721,6 +2771,18 @@ def _configure_swarm(
         config_manager.set_path("spark.swarm.access_token_env", env_name)
     elif access_token_env:
         config_manager.set_path("spark.swarm.access_token_env", access_token_env)
+    if refresh_token:
+        env_name = refresh_token_env or "SPARK_SWARM_REFRESH_TOKEN"
+        config_manager.upsert_env_secret(env_name, refresh_token)
+        config_manager.set_path("spark.swarm.refresh_token_env", env_name)
+    elif refresh_token_env:
+        config_manager.set_path("spark.swarm.refresh_token_env", refresh_token_env)
+    if auth_client_key:
+        env_name = auth_client_key_env or "SPARK_SWARM_AUTH_CLIENT_KEY"
+        config_manager.upsert_env_secret(env_name, auth_client_key)
+        config_manager.set_path("spark.swarm.auth_client_key_env", env_name)
+    elif auth_client_key_env:
+        config_manager.set_path("spark.swarm.auth_client_key_env", auth_client_key_env)
 
 
 def handle_jobs_tick(args: argparse.Namespace) -> int:

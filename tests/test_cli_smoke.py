@@ -390,6 +390,52 @@ class CliSmokeTests(SparkTestCase):
         self.assertIn("- last swarm failure: http_error", stdout)
         self.assertIn("- last swarm failure error: authentication_required", stdout)
 
+    def test_connect_status_surfaces_refreshable_swarm_session(self) -> None:
+        self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
+        self.config_manager.set_path("spark.specialization_paths.active_path_key", "startup-operator")
+        with patch(
+            "spark_intelligence.cli.gateway_status",
+            return_value=SimpleNamespace(
+                configured_channels=["telegram"],
+                configured_providers=["custom"],
+                ready=True,
+                provider_runtime_ok=True,
+                provider_execution_ok=True,
+                repair_hints=[],
+            ),
+        ), patch(
+            "spark_intelligence.cli.researcher_bridge_status",
+            return_value=SimpleNamespace(
+                available=True,
+                last_provider_execution_transport="direct_http",
+                last_routing_decision="provider_execution",
+            ),
+        ), patch(
+            "spark_intelligence.cli.attachment_status",
+            return_value=SimpleNamespace(
+                records=[SimpleNamespace(kind="chip"), SimpleNamespace(kind="path")]
+            ),
+        ), patch(
+            "spark_intelligence.cli.swarm_status",
+            return_value=SimpleNamespace(
+                payload_ready=True,
+                api_ready=True,
+                auth_state="refreshable",
+                api_url="https://sparkswarm.ai",
+                workspace_id="ws_123",
+                access_token_env="SPARK_SWARM_ACCESS_TOKEN",
+                refresh_token_env="SPARK_SWARM_REFRESH_TOKEN",
+                runtime_root="C:\\spark-swarm",
+                last_failure={},
+            ),
+        ):
+            exit_code, stdout, stderr = self.run_cli("connect", "status", "--home", str(self.home))
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertIn("check: api_auth=refreshable", stdout)
+        self.assertIn("local session is refreshable", stdout)
+        self.assertIn("next: spark-intelligence swarm sync", stdout)
+
     def test_connect_set_route_policy_updates_operator_knobs(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
             "connect",
@@ -1794,6 +1840,39 @@ class CliSmokeTests(SparkTestCase):
             self.assertEqual(config_manager.get_path("spark.swarm.api_url"), "https://swarm.example")
             self.assertEqual(config_manager.get_path("spark.swarm.workspace_id"), "ws-test")
             self.assertEqual(config_manager.get_path("spark.swarm.access_token_env"), env_key)
+
+    def test_swarm_configure_persists_refresh_token_and_auth_client_key_refs(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "swarm",
+            "configure",
+            "--home",
+            str(self.home),
+            "--api-url",
+            "https://api-production-6ea6.up.railway.app",
+            "--supabase-url",
+            "https://sfjcvvyvdwjdvphefggg.supabase.co",
+            "--workspace-id",
+            "ws-test",
+            "--access-token",
+            "secret-access-token",
+            "--refresh-token",
+            "secret-refresh-token",
+            "--auth-client-key",
+            "secret-client-key",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        env_map = self.config_manager.read_env_map()
+        self.assertEqual(env_map["SPARK_SWARM_ACCESS_TOKEN"], "secret-access-token")
+        self.assertEqual(env_map["SPARK_SWARM_REFRESH_TOKEN"], "secret-refresh-token")
+        self.assertEqual(env_map["SPARK_SWARM_AUTH_CLIENT_KEY"], "secret-client-key")
+        self.assertEqual(
+            self.config_manager.get_path("spark.swarm.supabase_url"),
+            "https://sfjcvvyvdwjdvphefggg.supabase.co",
+        )
+        self.assertEqual(self.config_manager.get_path("spark.swarm.refresh_token_env"), "SPARK_SWARM_REFRESH_TOKEN")
+        self.assertEqual(self.config_manager.get_path("spark.swarm.auth_client_key_env"), "SPARK_SWARM_AUTH_CLIENT_KEY")
+        self.assertIn("Spark Swarm bridge config updated.", stdout)
 
     def test_telegram_onboard_preserves_existing_allowlist_and_pairing_mode_on_token_rotation(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"], bot_token="old-token")

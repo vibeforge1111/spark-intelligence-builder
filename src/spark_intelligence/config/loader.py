@@ -83,8 +83,11 @@ class ConfigManager:
                     "enabled": True,
                     "runtime_root": None,
                     "api_url": None,
+                    "supabase_url": None,
                     "workspace_id": None,
                     "access_token_env": None,
+                    "refresh_token_env": None,
+                    "auth_client_key_env": None,
                     "routing": {
                         "auto_recommend_enabled": True,
                         "long_task_word_count": 40,

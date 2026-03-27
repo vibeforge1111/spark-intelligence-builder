@@ -81,6 +81,10 @@ Shipped today:
 - Swarm phase/operator surfacing hardening
   - `connect status` now treats hosted Swarm auth rejection as a real phase C blocker instead of counting any token-shaped value as effectively ready
   - `connect route-policy` and `swarm status` now surface the latest auth rejection/failure mode directly
+- Swarm session lifecycle hardening
+  - Builder now distinguishes `configured`, `expired`, `refreshable`, and `auth_rejected` Swarm session states instead of collapsing all token-shaped values into one state
+  - `swarm sync` can now refresh an expired session once and retry the hosted upload when a refresh token and auth client key are configured
+  - `swarm configure` now accepts `--refresh-token`, `--refresh-token-env`, `--auth-client-key`, `--auth-client-key-env`, and `--supabase-url`
 
 ## 4. What Is Proven
 
@@ -112,7 +116,7 @@ Interpretation:
 
 - phase A is real because Telegram + provider + Researcher are working together on the canonical home
 - phase B is real because specialization is active in live runtime state
-- phase C is not complete because the hosted Swarm side is still rejecting the current live session/token path even though local payload/config wiring is present
+- phase C is not complete because the canonical home currently holds an expired Swarm access token and no Builder-side refresh token even though local payload/config wiring is present
 - phase D is more mature now because routing visibility, route tuning, and Telegram delivery cleanup are all in place, but escalation behavior still needs refinement
 - phase E is materially real because there is now one supported bootstrap path and one supported always-on wrapper path
 
@@ -122,23 +126,24 @@ Interpretation:
 
 The main non-local blocker is still the hosted Spark Swarm side.
 
-Current state:
+Current live state on the canonical home:
 
 - local Swarm payload/config wiring is present
 - local Swarm readiness is good
-- real `swarm sync` currently returns hosted API `401 authentication_required`
+- `swarm status` now reports:
+  - `auth_state: expired`
+  - `access_token_expires_at: 2026-03-26T22:46:08+00:00`
+  - `refresh_token_env: missing`
+  - `auth_client_key_env: local:SUPABASE_SERVICE_ROLE_KEY`
 - live `connect status` now correctly keeps phase C as the current blocker instead of marking it ready
-- live `connect route-policy` now reports `swarm api auth: auth_rejected`
-
-Latest request id:
-
-- `51362320-7457-49b8-b8aa-5bcb4d8cc594`
+- phase C now points at the real missing repair surface:
+  - `spark-intelligence swarm configure --access-token <fresh-token> --refresh-token <refresh-token> --auth-client-key-env <env>`
 
 Interpretation:
 
-- the builder now knows how to surface this as a phase C auth/session blocker
-- the remaining fix is on the hosted Swarm/session side, not in the local Telegram/productization path
-- the earlier `500 collective_sync_failed` investigation should now be treated as stale until reproduced again after hosted auth/session health is restored
+- the builder now has a real Swarm session model instead of assuming a pasted short-lived JWT is enough
+- the remaining live fix is to establish a fresh Swarm session with both access and refresh token material available to the Builder home
+- once that is configured, Builder can refresh and retry hosted sync automatically instead of immediately falling back to manual token replacement
 
 ### 6.2 Runtime Quality
 
@@ -170,7 +175,7 @@ What is still left from here, grouped by practical priority:
 
 ### 7.1 Must-Finish Core Work
 
-- unblock hosted Spark Swarm auth/session acceptance so `swarm sync` stops failing with `401 authentication_required`
+- configure one fresh Builder-side Swarm session with both access and refresh token material so `swarm sync` stops failing at `auth_state: expired`
 - prove one real successful hosted `swarm sync`
 - prove one intentional Telegram-originated Swarm escalation path instead of only local payload readiness
 - tighten live Telegram response quality further so specialized replies feel operator-useful and not just technically correct
@@ -203,9 +208,9 @@ What is still left from here, grouped by practical priority:
 
 There are two strong next options.
 
-### Option A: Swarm Backend Debugging
+### Option A: Swarm Session Recovery
 
-Use tomorrow to inspect why hosted `swarm sync` is currently failing with `authentication_required`.
+Use tomorrow to establish a fresh Swarm session for the canonical Builder home and then retry hosted sync.
 
 Best if the goal is to unblock:
 
@@ -237,7 +242,9 @@ Recommended order:
    - Swarm backend day
    - Telegram runtime-quality day
 3. If Swarm:
-   - start from the hosted `401 authentication_required` request id
+   - start from `spark-intelligence swarm status --home .tmp-home-live-telegram-real`
+   - confirm `refresh_token_env` and `auth_client_key_env`
+   - rerun `spark-intelligence swarm sync`
 4. If Telegram quality:
    - inspect live traces
    - tighten route policy defaults
@@ -247,11 +254,11 @@ Recommended order:
 
 Latest pushed commit:
 
-- `8dcddc2` `fix: harden telegram routing and swarm auth phases`
+- `ecf317d` `fix: clean telegram memo-style replies`
 
 Current test status at handoff:
 
-- full suite is green: `169` tests passing
+- full suite is green: `174` tests passing
 
 Verification command:
 
