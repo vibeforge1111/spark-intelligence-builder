@@ -25,6 +25,7 @@ from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import provider_execution_health, run_doctor
 from spark_intelligence.gateway.tracing import append_gateway_trace, outbound_log_path, read_gateway_traces, read_outbound_audit, trace_log_path
 from spark_intelligence.jobs.service import oauth_maintenance_health_from_report
+from spark_intelligence.observability.store import record_environment_snapshot
 from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.state.db import StateDB
 
@@ -167,6 +168,23 @@ def gateway_start(
     poll_timeout_seconds: int = 5,
 ) -> GatewayStartReport:
     status = gateway_status(config_manager, state_db)
+    record_environment_snapshot(
+        state_db,
+        surface="gateway_runtime",
+        summary="Gateway runtime environment snapshot recorded.",
+        provider_id=str(config_manager.get_path("providers.default_provider")) if config_manager.get_path("providers.default_provider") else None,
+        runtime_root=str(config_manager.get_path("spark.researcher.runtime_root")) if config_manager.get_path("spark.researcher.runtime_root") else None,
+        config_path=str(config_manager.get_path("spark.researcher.config_path")) if config_manager.get_path("spark.researcher.config_path") else None,
+        env_refs={
+            "configured_channels": status.configured_channels,
+            "configured_providers": status.configured_providers,
+        },
+        facts={
+            "provider_runtime_ok": status.provider_runtime_ok,
+            "provider_execution_ok": status.provider_execution_ok,
+            "oauth_maintenance_ok": status.oauth_maintenance_ok,
+        },
+    )
     lines = ["Spark Intelligence gateway start"]
     lines.append(status.to_text())
     lines.append("")

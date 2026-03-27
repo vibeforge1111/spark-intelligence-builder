@@ -14,11 +14,17 @@ from typing import Any
 from spark_intelligence.attachments import build_attachment_context, run_first_active_chip_hook
 from spark_intelligence.auth.runtime import RuntimeProviderResolution, resolve_runtime_provider
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.observability.policy import screen_model_visible_text
 from spark_intelligence.llm.direct_provider import DirectProviderRequest, execute_direct_provider_prompt
+from spark_intelligence.observability.store import record_environment_snapshot, record_event
 from spark_intelligence.personality import (
     build_personality_context,
+    build_preference_acknowledgment,
     detect_and_persist_nl_preferences,
+    detect_personality_query,
     load_personality_profile,
+    maybe_evolve_traits,
+    record_observation,
 )
 from spark_intelligence.personality.loader import build_personality_system_directive
 from spark_intelligence.state.db import StateDB
@@ -314,6 +320,7 @@ def _render_direct_provider_chat_fallback(
     attachment_context: dict[str, object],
     active_chip_evaluate: dict[str, Any] | None = None,
     personality_profile: dict[str, Any] | None = None,
+    personality_context_extra: str = "",
 ) -> str:
     base_system_prompt = (
         "You are Spark AGI in a 1:1 messaging conversation. "
@@ -350,13 +357,13 @@ def _render_direct_provider_chat_fallback(
             attachment_context=attachment_context,
             active_chip_evaluate=active_chip_evaluate,
             personality_profile=personality_profile,
+            personality_context_extra=personality_context_extra,
         ),
     )
     raw_response = str(payload.get("raw_response") or "").strip()
     if not raw_response:
         raise RuntimeError("Direct provider fallback returned no text content.")
     return raw_response
-
 
 
 def _maybe_apply_swarm_recommendation(
@@ -368,6 +375,12 @@ def _maybe_apply_swarm_recommendation(
     reply_text: str,
     evidence_summary: str,
     routing_decision: str | None,
+    run_id: str | None = None,
+    request_id: str | None = None,
+    trace_ref: str | None = None,
+    session_id: str | None = None,
+    human_id: str | None = None,
+    agent_id: str | None = None,
 ) -> tuple[str, str, str | None, str | None]:
     try:
         from spark_intelligence.swarm_bridge import evaluate_swarm_escalation
@@ -378,6 +391,14 @@ def _maybe_apply_swarm_recommendation(
         config_manager=config_manager,
         state_db=state_db,
         task=user_message,
+        run_id=run_id,
+        request_id=request_id,
+        trace_ref=trace_ref,
+        channel_id=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id="researcher_bridge",
     )
     if not decision.escalate or decision.mode != "manual_recommended":
         return reply_text, evidence_summary, None, routing_decision
@@ -404,6 +425,7 @@ def _build_contextual_task(
     attachment_context: dict[str, object],
     active_chip_evaluate: dict[str, Any] | None = None,
     personality_profile: dict[str, Any] | None = None,
+    personality_context_extra: str = "",
 ) -> str:
     active_chip_keys = attachment_context.get("active_chip_keys") or []
     pinned_chip_keys = attachment_context.get("pinned_chip_keys") or []
@@ -419,6 +441,8 @@ def _build_contextual_task(
         personality_ctx = build_personality_context(personality_profile)
         if personality_ctx:
             lines.extend([personality_ctx, ""])
+    if personality_context_extra:
+        lines.extend([personality_context_extra, ""])
     if active_chip_evaluate:
         chip_guidance = _summarize_active_chip_guidance(str(active_chip_evaluate.get("analysis") or ""))
         lines.extend(
@@ -777,11 +801,16 @@ def build_researcher_reply(
     session_id: str,
     channel_kind: str,
     user_message: str,
+    run_id: str | None = None,
 ) -> ResearcherBridgeResult:
     attachment_context = build_attachment_context(config_manager)
 
     # ── Personality integration ──
     personality_profile = None
+    personality_context_extra = ""  # extra context for acknowledgments/queries
+    personality_query_kind = "none"
+    evolved_deltas = None
+    observation_record = None
     try:
         personality_profile = load_personality_profile(
             human_id=human_id,
@@ -791,16 +820,40 @@ def build_researcher_reply(
     except Exception:
         pass
 
+    # Check for personality queries (status, reset) before NL detection
+    try:
+        query_result = detect_personality_query(
+            user_message=user_message,
+            human_id=human_id,
+            state_db=state_db,
+            profile=personality_profile,
+        )
+        if query_result.kind != "none":
+            personality_query_kind = query_result.kind
+            personality_context_extra = query_result.context_injection
+            if query_result.kind == "reset":
+                # Reload profile after reset
+                personality_profile = load_personality_profile(
+                    human_id=human_id,
+                    state_db=state_db,
+                    config_manager=config_manager,
+                )
+    except Exception:
+        pass
+
     # Detect NL personality preferences and persist per-user deltas
     nl_pref_enabled = config_manager.get_path("spark.personality.nl_preference_detection", default=True)
-    if nl_pref_enabled:
+    detected_deltas = None
+    if nl_pref_enabled and not personality_context_extra:
         try:
             detected_deltas = detect_and_persist_nl_preferences(
                 human_id=human_id,
                 user_message=user_message,
                 state_db=state_db,
             )
-            if detected_deltas and personality_profile:
+            if detected_deltas:
+                # Build acknowledgment context for the LLM
+                personality_context_extra = build_preference_acknowledgment(detected_deltas)
                 # Reload profile with updated deltas applied
                 personality_profile = load_personality_profile(
                     human_id=human_id,
@@ -809,6 +862,71 @@ def build_researcher_reply(
                 )
         except Exception:
             pass
+
+    # Periodically trigger self-evolution based on accumulated observations
+    try:
+        evolved_deltas = maybe_evolve_traits(human_id=human_id, state_db=state_db)
+    except Exception:
+        pass
+
+    # Record observation for self-evolution (runs on every message)
+    try:
+        if personality_profile and personality_profile.get("traits"):
+            observation_record = record_observation(
+                human_id=human_id,
+                user_message=user_message,
+                traits_active=personality_profile["traits"],
+                state_db=state_db,
+            )
+    except Exception:
+        pass
+
+    if personality_profile or personality_context_extra or detected_deltas or evolved_deltas or observation_record:
+        source_kind = "personality_profile"
+        if detected_deltas:
+            source_kind = "personality_preference_update"
+        elif personality_query_kind != "none":
+            source_kind = f"personality_query_{personality_query_kind}"
+        elif evolved_deltas:
+            source_kind = "personality_evolution"
+        record_event(
+            state_db,
+            event_type="plugin_or_chip_influence_recorded",
+            component="researcher_bridge",
+            summary="Personality influence was recorded before bridge execution.",
+            run_id=run_id,
+            request_id=request_id,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="personality_context_applied",
+            facts={
+                "personality_name": personality_profile.get("personality_name") if personality_profile else None,
+                "personality_id": personality_profile.get("personality_id") if personality_profile else None,
+                "personality_source": personality_profile.get("source") if personality_profile else None,
+                "user_deltas_applied": bool(personality_profile.get("user_deltas_applied")) if personality_profile else False,
+                "query_kind": personality_query_kind,
+                "detected_deltas": detected_deltas or {},
+                "evolved_deltas": evolved_deltas or {},
+                "observation_state": (
+                    observation_record.get("user_state")
+                    if isinstance(observation_record, dict)
+                    else None
+                ),
+                "observation_confidence": (
+                    observation_record.get("confidence")
+                    if isinstance(observation_record, dict)
+                    else None
+                ),
+                "keepability": "user_preference_ephemeral",
+            },
+            provenance={
+                "source_kind": source_kind,
+                "source_ref": personality_profile.get("personality_id") if personality_profile else human_id,
+            },
+        )
 
     active_chip_evaluate = _run_active_chip_evaluate(
         config_manager=config_manager,
@@ -820,18 +938,106 @@ def build_researcher_reply(
         user_message=user_message,
         attachment_context=attachment_context,
     )
+    if attachment_context.get("active_chip_keys") or attachment_context.get("active_path_key") or active_chip_evaluate:
+        record_event(
+            state_db,
+            event_type="plugin_or_chip_influence_recorded",
+            component="researcher_bridge",
+            summary="Attachment or chip influence was recorded before bridge execution.",
+            run_id=run_id,
+            request_id=request_id,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="attachment_context_applied",
+            facts={
+                "active_chip_keys": attachment_context.get("active_chip_keys") or [],
+                "pinned_chip_keys": attachment_context.get("pinned_chip_keys") or [],
+                "active_path_key": attachment_context.get("active_path_key"),
+                "active_chip_key": active_chip_evaluate.get("chip_key") if active_chip_evaluate else None,
+                "active_chip_task_type": active_chip_evaluate.get("task_type") if active_chip_evaluate else None,
+                "keepability": "ephemeral_context",
+            },
+            provenance={
+                "source_kind": "chip_hook" if active_chip_evaluate else "attachment_snapshot",
+                "source_ref": active_chip_evaluate.get("chip_key") if active_chip_evaluate else "attachments",
+            },
+        )
+    if active_chip_evaluate:
+        screened = screen_model_visible_text(
+            state_db=state_db,
+            source_kind="chip_hook_output",
+            source_ref=str(active_chip_evaluate.get("chip_key") or "unknown"),
+            text=str(active_chip_evaluate.get("analysis") or ""),
+            summary="Chip guidance was quarantined before model-visible prompt assembly.",
+            reason_code="chip_guidance_secret_like",
+            policy_domain="researcher_bridge",
+            run_id=run_id,
+            request_id=request_id,
+            provenance={"task_type": active_chip_evaluate.get("task_type"), "stage": active_chip_evaluate.get("stage")},
+        )
+        if not screened["allowed"]:
+            active_chip_evaluate = {
+                **active_chip_evaluate,
+                "analysis": "",
+                "quarantined": True,
+                "quarantine_id": screened["quarantine_id"],
+            }
     contextual_task = _build_contextual_task(
         user_message=user_message,
         attachment_context=attachment_context,
         active_chip_evaluate=active_chip_evaluate,
         personality_profile=personality_profile,
+        personality_context_extra=personality_context_extra,
     )
     provider_selection = _resolve_bridge_provider(config_manager=config_manager, state_db=state_db)
     routing_policy = _researcher_routing_policy(config_manager)
     active_chip_key = str(active_chip_evaluate.get("chip_key")) if active_chip_evaluate else None
     active_chip_task_type = str(active_chip_evaluate.get("task_type")) if active_chip_evaluate and active_chip_evaluate.get("task_type") else None
     active_chip_evaluate_used = active_chip_evaluate is not None
+    runtime_root, runtime_source = discover_researcher_runtime_root(config_manager)
+    config_path = resolve_researcher_config_path(config_manager, runtime_root) if runtime_root is not None else None
+    record_environment_snapshot(
+        state_db,
+        surface="researcher_bridge",
+        run_id=run_id,
+        request_id=request_id,
+        summary="Researcher bridge environment snapshot recorded.",
+        provider_id=provider_selection.provider.provider_id if provider_selection.provider else None,
+        provider_model=provider_selection.provider.default_model if provider_selection.provider else None,
+        provider_base_url=provider_selection.provider.base_url if provider_selection.provider else None,
+        provider_execution_transport=(
+            provider_selection.provider.execution_transport if provider_selection.provider else None
+        ),
+        runtime_root=str(runtime_root) if runtime_root else None,
+        config_path=str(config_path) if config_path else None,
+        env_refs={
+            "provider_auth_profile_id": (
+                provider_selection.provider.auth_profile_id if provider_selection.provider else None
+            ),
+            "provider_source": provider_selection.provider.source if provider_selection.provider else None,
+        },
+        facts={"model_family": provider_selection.model_family, "runtime_source": runtime_source},
+    )
     if not bool(config_manager.get_path("spark.researcher.enabled", default=True)):
+        record_event(
+            state_db,
+            event_type="dispatch_failed",
+            component="researcher_bridge",
+            summary="Researcher bridge dispatch was blocked because the bridge is disabled.",
+            run_id=run_id,
+            request_id=request_id,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="bridge_disabled",
+            severity="high",
+            facts={"mode": "disabled"},
+        )
         return ResearcherBridgeResult(
             request_id=request_id,
             reply_text="[Spark Researcher disabled] The operator has disabled the Spark Researcher bridge for this workspace.",
@@ -858,6 +1064,22 @@ def build_researcher_reply(
             active_chip_evaluate_used=active_chip_evaluate_used,
         )
     if provider_selection.error:
+        record_event(
+            state_db,
+            event_type="dispatch_failed",
+            component="researcher_bridge",
+            summary="Researcher bridge dispatch failed closed during provider resolution.",
+            run_id=run_id,
+            request_id=request_id,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="provider_resolution_failed",
+            severity="high",
+            facts={"error": provider_selection.error},
+        )
         return ResearcherBridgeResult(
             request_id=request_id,
             reply_text=f"[Spark Researcher provider auth error] {provider_selection.error}",
@@ -883,11 +1105,24 @@ def build_researcher_reply(
             active_chip_task_type=active_chip_task_type,
             active_chip_evaluate_used=active_chip_evaluate_used,
         )
-    runtime_root, runtime_source = discover_researcher_runtime_root(config_manager)
     if runtime_root is not None:
-        config_path = resolve_researcher_config_path(config_manager, runtime_root)
         if config_path.exists():
             try:
+                record_event(
+                    state_db,
+                    event_type="dispatch_started",
+                    component="researcher_bridge",
+                    summary="Researcher bridge dispatch started.",
+                    run_id=run_id,
+                    request_id=request_id,
+                    channel_id=channel_kind,
+                    session_id=session_id,
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    actor_id="researcher_bridge",
+                    reason_code="build_advisory",
+                    facts={"runtime_source": runtime_source, "model_family": provider_selection.model_family},
+                )
                 build_advisory = _import_build_advisory(runtime_root)
                 execute_with_research = _import_execute_with_research(runtime_root)
                 advisory = build_advisory(
@@ -915,6 +1150,7 @@ def build_researcher_reply(
                             attachment_context=attachment_context,
                             active_chip_evaluate=active_chip_evaluate,
                             personality_profile=personality_profile,
+                            personality_context_extra=personality_context_extra,
                         ),
                         channel_kind=channel_kind,
                     )
@@ -928,6 +1164,32 @@ def build_researcher_reply(
                         reply_text=reply_text,
                         evidence_summary=evidence_summary,
                         routing_decision="provider_fallback_chat",
+                        run_id=run_id,
+                        request_id=request_id,
+                        trace_ref=trace_ref,
+                        session_id=session_id,
+                        human_id=human_id,
+                        agent_id=agent_id,
+                    )
+                    record_event(
+                        state_db,
+                        event_type="tool_result_received",
+                        component="researcher_bridge",
+                        summary="Researcher bridge produced a provider fallback result.",
+                        run_id=run_id,
+                        request_id=request_id,
+                        trace_ref=trace_ref,
+                        channel_id=channel_kind,
+                        session_id=session_id,
+                        human_id=human_id,
+                        agent_id=agent_id,
+                        actor_id="researcher_bridge",
+                        reason_code="provider_fallback_chat",
+                        facts={
+                            "routing_decision": routing_decision,
+                            "bridge_mode": f"external_{runtime_source}",
+                            "evidence_summary": evidence_summary,
+                        },
                     )
                     return ResearcherBridgeResult(
                         request_id=request_id,
@@ -978,6 +1240,32 @@ def build_researcher_reply(
                     reply_text=reply_text,
                     evidence_summary=evidence_summary,
                     routing_decision=base_routing_decision,
+                    run_id=run_id,
+                    request_id=request_id,
+                    trace_ref=trace_ref,
+                    session_id=session_id,
+                    human_id=human_id,
+                    agent_id=agent_id,
+                )
+                record_event(
+                    state_db,
+                    event_type="tool_result_received",
+                    component="researcher_bridge",
+                    summary="Researcher bridge produced a result.",
+                    run_id=run_id,
+                    request_id=request_id,
+                    trace_ref=trace_ref,
+                    channel_id=channel_kind,
+                    session_id=session_id,
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    actor_id="researcher_bridge",
+                    reason_code=base_routing_decision,
+                    facts={
+                        "routing_decision": routing_decision,
+                        "bridge_mode": f"external_{runtime_source}",
+                        "evidence_summary": evidence_summary,
+                    },
                 )
                 return ResearcherBridgeResult(
                     request_id=request_id,
@@ -1005,6 +1293,22 @@ def build_researcher_reply(
                     active_chip_evaluate_used=active_chip_evaluate_used,
                 )
             except Exception as exc:  # pragma: no cover - external bridge safety
+                record_event(
+                    state_db,
+                    event_type="dispatch_failed",
+                    component="researcher_bridge",
+                    summary="Researcher bridge dispatch failed with an exception.",
+                    run_id=run_id,
+                    request_id=request_id,
+                    channel_id=channel_kind,
+                    session_id=session_id,
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    actor_id="researcher_bridge",
+                    reason_code="bridge_error",
+                    severity="high",
+                    facts={"error": str(exc)},
+                )
                 return ResearcherBridgeResult(
                     request_id=request_id,
                     reply_text=f"[Spark Researcher bridge error] {exc}",
@@ -1034,6 +1338,22 @@ def build_researcher_reply(
     reply_text = (
         f"[Spark Researcher stub] I received your message in {channel_kind} "
         f"for {session_id}: {user_message}"
+    )
+    record_event(
+        state_db,
+        event_type="tool_result_received",
+        component="researcher_bridge",
+        summary="Researcher bridge stub result produced.",
+        run_id=run_id,
+        request_id=request_id,
+        trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+        channel_id=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id="researcher_bridge",
+        reason_code="stub",
+        facts={"routing_decision": "stub"},
     )
     return ResearcherBridgeResult(
         request_id=request_id,

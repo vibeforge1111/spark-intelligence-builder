@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
 
+from spark_intelligence.observability.store import latest_events_by_type
 from spark_intelligence.swarm_bridge.sync import (
     SwarmSyncResult,
     _normalize_collective_payload,
@@ -155,6 +156,38 @@ class SwarmSyncTests(SparkTestCase):
         self.assertTrue(result.escalate)
         self.assertEqual(result.mode, "manual_recommended")
         self.assertIn("long_task", result.triggers)
+
+    def test_evaluate_swarm_escalation_records_typed_decision_and_attachment_provenance(self) -> None:
+        self.config_manager.set_path("spark.chips.active_keys", ["startup-yc", "quality-gate"])
+        self.config_manager.set_path("spark.specialization_paths.active_path_key", "startup-operator")
+
+        result = evaluate_swarm_escalation(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="delegate this as parallel work",
+            request_id="req-swarm-decision",
+            channel_id="telegram",
+            human_id="human:test",
+            agent_id="agent:test",
+        )
+
+        self.assertIn(result.mode, {"manual_recommended", "unavailable", "hold_local"})
+        decision_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=20)
+        decision_events = [
+            event
+            for event in decision_events
+            if str(event.get("component") or "") == "swarm_bridge"
+            and str((event.get("facts_json") or {}).get("swarm_operation") or "") == "decision"
+        ]
+        self.assertTrue(decision_events)
+        influence_events = latest_events_by_type(self.state_db, event_type="plugin_or_chip_influence_recorded", limit=20)
+        influence_events = [
+            event
+            for event in influence_events
+            if str(event.get("component") or "") == "swarm_bridge"
+        ]
+        self.assertTrue(influence_events)
+        self.assertEqual(influence_events[0]["facts_json"]["keepability"], "ephemeral_context")
 
     def test_record_swarm_failure_state_persists_http_error_response_body(self) -> None:
         _record_swarm_failure_state(

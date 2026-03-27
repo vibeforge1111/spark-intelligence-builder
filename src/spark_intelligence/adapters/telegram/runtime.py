@@ -19,6 +19,7 @@ from spark_intelligence.gateway.guardrails import (
 )
 from spark_intelligence.gateway.tracing import append_gateway_trace, append_outbound_audit
 from spark_intelligence.identity.service import consume_pairing_welcome, record_pairing_context, resolve_inbound_dm
+from spark_intelligence.observability.store import close_run, open_run, record_event
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply, record_researcher_bridge_result
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_status, sync_swarm_collective
@@ -264,6 +265,11 @@ def simulate_telegram_update(
             state_db=state_db,
             external_user_id=normalized.telegram_user_id,
             inbound_text=normalized.text,
+            run_id=None,
+            request_id=f"sim:{normalized.update_id}",
+            session_id=resolution.session_id,
+            human_id=resolution.human_id,
+            agent_id=resolution.agent_id,
         )
         if command_result is not None:
             outbound_text = command_result["reply_text"]
@@ -473,6 +479,24 @@ def poll_telegram_updates_once(
             external_user_id=normalized.telegram_user_id,
             display_name=normalized.telegram_username or f"telegram user {normalized.telegram_user_id}",
         )
+        run = open_run(
+            state_db,
+            run_kind="telegram_update",
+            origin_surface="telegram_runtime",
+            summary=f"Telegram update {normalized.update_id} opened for user {normalized.telegram_user_id}.",
+            request_id=f"telegram:{normalized.update_id}",
+            channel_id="telegram",
+            session_id=resolution.session_id,
+            human_id=resolution.human_id,
+            agent_id=resolution.agent_id,
+            actor_id="telegram_runtime",
+            reason_code="inbound_update_received",
+            facts={
+                "update_id": normalized.update_id,
+                "telegram_user_id": normalized.telegram_user_id,
+                "chat_id": normalized.chat_id,
+            },
+        )
         if resolution.decision in {"pending_pairing", "held"}:
             record_pairing_context(
                 state_db=state_db,
@@ -506,12 +530,22 @@ def poll_telegram_updates_once(
                 session_id=resolution.session_id,
                 decision=resolution.decision,
                 bridge_mode=None,
+                run_id=run.run_id,
+                request_id=run.request_id,
                 trace_ref=None,
             )
             if send_result["ok"]:
                 sent_count += 1
             else:
                 failed_send_count += 1
+            close_run(
+                state_db,
+                run_id=run.run_id,
+                status="closed",
+                close_reason="pending_pairing",
+                summary=f"Telegram update {normalized.update_id} closed with pending pairing.",
+                facts={"decision": resolution.decision, "delivery_ok": send_result["ok"]},
+            )
             append_gateway_trace(
                 config_manager,
                 {
@@ -553,6 +587,8 @@ def poll_telegram_updates_once(
                 session_id=resolution.session_id,
                 decision=resolution.decision,
                 bridge_mode=None,
+                run_id=run.run_id,
+                request_id=run.request_id,
                 trace_ref=None,
             )
             if resolution.decision == "held":
@@ -563,6 +599,14 @@ def poll_telegram_updates_once(
                 sent_count += 1
             else:
                 failed_send_count += 1
+            close_run(
+                state_db,
+                run_id=run.run_id,
+                status="closed",
+                close_reason=resolution.decision,
+                summary=f"Telegram update {normalized.update_id} closed with decision {resolution.decision}.",
+                facts={"decision": resolution.decision, "delivery_ok": send_result["ok"]},
+            )
             append_gateway_trace(
                 config_manager,
                 {
@@ -587,6 +631,21 @@ def poll_telegram_updates_once(
             inbound_text=normalized.text,
         )
         if command_result is not None:
+            record_event(
+                state_db,
+                event_type="intent_committed",
+                component="telegram_runtime",
+                summary="Telegram runtime command committed for execution.",
+                run_id=run.run_id,
+                request_id=run.request_id,
+                channel_id="telegram",
+                session_id=resolution.session_id,
+                human_id=resolution.human_id,
+                agent_id=resolution.agent_id,
+                actor_id="telegram_runtime",
+                reason_code="runtime_command",
+                facts={"command": command_result["command"], "update_id": normalized.update_id},
+            )
             outbound_text = _apply_think_visibility(
                 state_db=state_db,
                 external_user_id=normalized.telegram_user_id,
@@ -604,6 +663,8 @@ def poll_telegram_updates_once(
                 session_id=resolution.session_id,
                 decision=resolution.decision,
                 bridge_mode="runtime_command",
+                run_id=run.run_id,
+                request_id=run.request_id,
                 trace_ref=None,
             )
             processed_count += 1
@@ -611,6 +672,14 @@ def poll_telegram_updates_once(
                 sent_count += 1
             else:
                 failed_send_count += 1
+            close_run(
+                state_db,
+                run_id=run.run_id,
+                status="closed",
+                close_reason="runtime_command",
+                summary=f"Telegram runtime command {command_result['command']} closed.",
+                facts={"command": command_result["command"], "delivery_ok": send_result["ok"]},
+            )
             append_gateway_trace(
                 config_manager,
                 {
@@ -629,6 +698,21 @@ def poll_telegram_updates_once(
             )
             continue
 
+        record_event(
+            state_db,
+            event_type="intent_committed",
+            component="telegram_runtime",
+            summary="Telegram message committed to researcher bridge execution.",
+            run_id=run.run_id,
+            request_id=run.request_id,
+            channel_id="telegram",
+            session_id=resolution.session_id,
+            human_id=resolution.human_id,
+            agent_id=resolution.agent_id,
+            actor_id="telegram_runtime",
+            reason_code="user_message_allowed",
+            facts={"update_id": normalized.update_id, "message_length": len(normalized.text)},
+        )
         bridge_result = build_researcher_reply(
             config_manager=config_manager,
             state_db=state_db,
@@ -638,6 +722,7 @@ def poll_telegram_updates_once(
             session_id=resolution.session_id,
             channel_kind="telegram",
             user_message=normalized.text,
+            run_id=run.run_id,
         )
         record_researcher_bridge_result(state_db=state_db, result=bridge_result)
         outbound_text = _apply_post_approval_welcome(
@@ -660,6 +745,8 @@ def poll_telegram_updates_once(
             routing_decision=bridge_result.routing_decision,
             active_chip_key=bridge_result.active_chip_key,
             active_chip_task_type=bridge_result.active_chip_task_type,
+            run_id=run.run_id,
+            request_id=run.request_id,
             trace_ref=bridge_result.trace_ref,
         )
         processed_count += 1
@@ -667,6 +754,18 @@ def poll_telegram_updates_once(
             sent_count += 1
         else:
             failed_send_count += 1
+        close_run(
+            state_db,
+            run_id=run.run_id,
+            status="closed",
+            close_reason="telegram_update_processed",
+            summary=f"Telegram update {normalized.update_id} closed after researcher bridge processing.",
+            facts={
+                "bridge_mode": bridge_result.mode,
+                "routing_decision": bridge_result.routing_decision,
+                "delivery_ok": send_result["ok"],
+            },
+        )
         trace_refs.append(bridge_result.trace_ref)
         append_gateway_trace(
             config_manager,
@@ -751,6 +850,8 @@ def _send_telegram_reply(
     routing_decision: str | None = None,
     active_chip_key: str | None = None,
     active_chip_task_type: str | None = None,
+    run_id: str | None = None,
+    request_id: str | None = None,
     trace_ref: str | None,
 ) -> dict[str, Any]:
     policy = _telegram_security_policy(config_manager)
@@ -760,15 +861,44 @@ def _send_telegram_reply(
         text=text,
     )
     guarded = prepare_outbound_text(
+        config_manager=config_manager,
+        state_db=state_db,
         text=visible_text,
         bridge_mode=bridge_mode,
         max_reply_chars=policy["max_reply_chars"],
         redact_secret_like_replies=policy["redact_secret_like_replies"],
+        run_id=run_id,
+        request_id=request_id,
+        trace_ref=trace_ref,
+        channel_id="telegram",
+        session_id=session_id,
+        actor_id="telegram_runtime",
     )
     if visible_text != text:
         guarded["actions"] = ["strip_think_blocks", *list(guarded["actions"])]
     error: str | None = None
     ok = True
+    record_event(
+        state_db,
+        event_type="delivery_attempted",
+        component="telegram_runtime",
+        summary=f"Telegram delivery attempted for event {event}.",
+        run_id=run_id,
+        request_id=request_id,
+        trace_ref=trace_ref,
+        channel_id="telegram",
+        session_id=session_id,
+        actor_id="telegram_runtime",
+        reason_code=event,
+        truth_kind="delivery",
+        facts={
+            "event": event,
+            "update_id": update_id,
+            "telegram_user_id": telegram_user_id,
+            "guardrail_actions": guarded["actions"],
+            "response_length": len(guarded["text"]),
+        },
+    )
     try:
         client.send_message(chat_id=chat_id, text=guarded["text"])
     except RuntimeError as exc:
@@ -780,6 +910,33 @@ def _send_telegram_reply(
     except URLError as exc:
         ok = False
         error = str(exc.reason)
+    record_event(
+        state_db,
+        event_type="delivery_succeeded" if ok else "delivery_failed",
+        component="telegram_runtime",
+        summary=(
+            f"Telegram delivery succeeded for event {event}."
+            if ok
+            else f"Telegram delivery failed for event {event}."
+        ),
+        run_id=run_id,
+        request_id=request_id,
+        trace_ref=trace_ref,
+        channel_id="telegram",
+        session_id=session_id,
+        actor_id="telegram_runtime",
+        reason_code=event,
+        truth_kind="delivery",
+        severity="high" if not ok else "medium",
+        status="ok" if ok else "failed",
+        facts={
+            "event": event,
+            "update_id": update_id,
+            "telegram_user_id": telegram_user_id,
+            "delivery_error": error,
+            "guardrail_actions": guarded["actions"],
+        },
+    )
     append_outbound_audit(
         config_manager,
         {
@@ -818,6 +975,11 @@ def _handle_runtime_command(
     state_db: StateDB,
     external_user_id: str,
     inbound_text: str,
+    run_id: str | None = None,
+    request_id: str | None = None,
+    session_id: str | None = None,
+    human_id: str | None = None,
+    agent_id: str | None = None,
 ) -> dict[str, str] | None:
     normalized = " ".join(str(inbound_text or "").strip().split())
     lowered = normalized.lower()
@@ -864,7 +1026,18 @@ def _handle_runtime_command(
             ),
         }
     if lowered == "/swarm sync":
-        result = sync_swarm_collective(config_manager=config_manager, state_db=state_db, dry_run=False)
+        result = sync_swarm_collective(
+            config_manager=config_manager,
+            state_db=state_db,
+            dry_run=False,
+            run_id=run_id,
+            request_id=request_id,
+            channel_id="telegram",
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="telegram_runtime",
+        )
         return {
             "command": "/swarm sync",
             "reply_text": (
@@ -885,6 +1058,13 @@ def _handle_runtime_command(
             config_manager=config_manager,
             state_db=state_db,
             task=task,
+            run_id=run_id,
+            request_id=request_id,
+            channel_id="telegram",
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="telegram_runtime",
         )
         triggers = ", ".join(result.triggers) if result.triggers else "none"
         return {

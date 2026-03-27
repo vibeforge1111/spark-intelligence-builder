@@ -13,6 +13,7 @@ from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.gateway.tracing import read_gateway_traces, read_outbound_audit
 from spark_intelligence.identity.service import LOCAL_OPERATOR_HUMAN_ID
 from spark_intelligence.identity.service import review_pairings
+from spark_intelligence.observability.checks import evaluate_stop_ship_issues
 from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import swarm_status
@@ -79,6 +80,7 @@ class OperatorInboxReport:
             f"channel_alerts={counts['channel_alerts']} "
             f"bridge_alerts={counts['bridge_alerts']} "
             f"auth_alerts={counts['auth_alerts']} "
+            f"stop_ship_alerts={counts['stop_ship_alerts']} "
             f"webhook_alerts={counts['webhook_alerts']} "
             f"webhook_snoozes={counts['webhook_snoozes']} "
             f"active_suppressed_webhook_snoozes={counts['active_suppressed_webhook_snoozes']}"
@@ -111,6 +113,7 @@ class OperatorSecurityReport:
             f"bridge_alerts={counts['bridge_alerts']} "
             f"channel_alerts={counts['channel_alerts']} "
             f"auth_alerts={counts['auth_alerts']} "
+            f"stop_ship_alerts={counts['stop_ship_alerts']} "
             f"webhook_alerts={counts['webhook_alerts']} "
             f"webhook_snoozes={counts['webhook_snoozes']} "
             f"active_suppressed_webhook_snoozes={counts['active_suppressed_webhook_snoozes']} "
@@ -319,6 +322,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
     channel_alerts = _load_channel_alerts(config_manager=config_manager, state_db=state_db)
     bridge_alerts = _build_bridge_alerts(config_manager=config_manager, state_db=state_db)
     auth_alerts = _build_auth_alerts(config_manager=config_manager, state_db=state_db)
+    stop_ship_alerts = [issue for issue in evaluate_stop_ship_issues(config_manager=config_manager, state_db=state_db) if not issue.ok]
     traces = read_gateway_traces(config_manager, limit=100)
     webhook_alerts = _build_webhook_alerts(traces=traces, state_db=state_db)
     webhook_snoozes = list_webhook_alert_snoozes(state_db=state_db, traces=traces).rows
@@ -328,6 +332,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
         channel_alerts=channel_alerts,
         bridge_alerts=bridge_alerts,
         auth_alerts=auth_alerts,
+        stop_ship_alerts=stop_ship_alerts,
         webhook_alerts=webhook_alerts,
         webhook_snoozes=webhook_snoozes,
     )
@@ -339,6 +344,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
             "channel_alerts": len(channel_alerts),
             "bridge_alerts": len(bridge_alerts),
             "auth_alerts": len(auth_alerts),
+            "stop_ship_alerts": len(stop_ship_alerts),
             "webhook_alerts": len(webhook_alerts),
             "webhook_snoozes": len(webhook_snoozes),
             "active_suppressed_webhook_snoozes": _active_suppressed_webhook_snooze_count(webhook_snoozes),
@@ -348,6 +354,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
                 + len(channel_alerts)
                 + len(bridge_alerts)
                 + len(auth_alerts)
+                + len(stop_ship_alerts)
                 + len(webhook_alerts)
                 + len(webhook_snoozes)
             ),
@@ -359,6 +366,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
         "channels": channel_alerts,
         "bridges": bridge_alerts,
         "auth": auth_alerts,
+        "stop_ship": [issue.__dict__ for issue in stop_ship_alerts],
         "webhooks": webhook_alerts,
         "webhook_snoozes": webhook_snoozes,
         "items": items,
@@ -375,6 +383,7 @@ def build_operator_security_report(
     channel_alerts = _load_channel_alerts(config_manager=config_manager, state_db=state_db)
     bridge_alerts = _build_bridge_alerts(config_manager=config_manager, state_db=state_db)
     auth_alerts = _build_auth_alerts(config_manager=config_manager, state_db=state_db)
+    stop_ship_alerts = [issue for issue in evaluate_stop_ship_issues(config_manager=config_manager, state_db=state_db) if not issue.ok]
     traces = read_gateway_traces(config_manager, limit=limit)
     outbound = read_outbound_audit(config_manager, limit=limit)
     webhook_alerts = _build_webhook_alerts(traces=traces, state_db=state_db)
@@ -395,6 +404,7 @@ def build_operator_security_report(
         bridge_alerts=bridge_alerts,
         channel_alerts=channel_alerts,
         auth_alerts=auth_alerts,
+        stop_ship_alerts=stop_ship_alerts,
         webhook_alerts=webhook_alerts,
         webhook_snoozes=webhook_snoozes,
         duplicate_updates=duplicate_updates,
@@ -408,6 +418,7 @@ def build_operator_security_report(
             "bridge_alerts": len(bridge_alerts),
             "channel_alerts": len(channel_alerts),
             "auth_alerts": len(auth_alerts),
+            "stop_ship_alerts": len(stop_ship_alerts),
             "webhook_alerts": len(webhook_alerts),
             "webhook_snoozes": len(webhook_snoozes),
             "active_suppressed_webhook_snoozes": _active_suppressed_webhook_snooze_count(webhook_snoozes),
@@ -421,6 +432,7 @@ def build_operator_security_report(
         "bridge_alerts": bridge_alerts,
         "channel_alerts": channel_alerts,
         "auth_alerts": auth_alerts,
+        "stop_ship_alerts": [issue.__dict__ for issue in stop_ship_alerts],
         "webhook_alerts": webhook_alerts,
         "webhook_snoozes": webhook_snoozes,
         "recent": {
@@ -639,6 +651,7 @@ def _build_inbox_items(
     channel_alerts: list[dict[str, Any]],
     bridge_alerts: list[dict[str, Any]],
     auth_alerts: list[dict[str, Any]],
+    stop_ship_alerts: list[Any],
     webhook_alerts: list[dict[str, Any]],
     webhook_snoozes: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -729,6 +742,19 @@ def _build_inbox_items(
             }
         )
 
+    for issue in stop_ship_alerts:
+        items.append(
+            {
+                "kind": "stop_ship",
+                "status": issue.name,
+                "priority": "high" if issue.severity == "critical" else "medium",
+                "sort_order": 12 if issue.severity == "critical" else 24,
+                "item_ref": issue.name,
+                "summary": issue.detail,
+                "recommended_command": "spark-intelligence doctor",
+            }
+        )
+
     webhook_priority = {"critical": "high", "warning": "medium", "info": "info"}
     webhook_sort_order = {"critical": 22, "warning": 32, "info": 44}
     for row in webhook_alerts:
@@ -801,6 +827,7 @@ def _build_security_items(
     bridge_alerts: list[dict[str, Any]],
     channel_alerts: list[dict[str, Any]],
     auth_alerts: list[dict[str, Any]],
+    stop_ship_alerts: list[Any],
     webhook_alerts: list[dict[str, Any]],
     webhook_snoozes: list[dict[str, Any]],
     duplicate_updates: list[dict[str, Any]],
@@ -856,6 +883,16 @@ def _build_security_items(
                 "sort_order": severity_order.get("high" if severity == "critical" else ("medium" if severity == "warning" else "info"), 60),
                 "summary": str(row["summary"]),
                 "recommended_command": str(row["recommended_command"]),
+            }
+        )
+
+    for issue in stop_ship_alerts:
+        items.append(
+            {
+                "priority": "high" if issue.severity == "critical" else "medium",
+                "sort_order": severity_order["high"] if issue.severity == "critical" else severity_order["medium"],
+                "summary": issue.detail,
+                "recommended_command": "spark-intelligence doctor",
             }
         )
 

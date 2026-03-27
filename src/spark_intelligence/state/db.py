@@ -203,6 +203,110 @@ SCHEMA_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS builder_runs (
+        run_id TEXT PRIMARY KEY,
+        run_kind TEXT NOT NULL,
+        origin_surface TEXT NOT NULL,
+        parent_run_id TEXT,
+        request_id TEXT,
+        trace_ref TEXT,
+        channel_id TEXT,
+        session_id TEXT,
+        human_id TEXT,
+        agent_id TEXT,
+        actor_id TEXT,
+        status TEXT NOT NULL,
+        close_reason TEXT,
+        summary_json TEXT,
+        opened_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        closed_at TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS builder_events (
+        event_id TEXT PRIMARY KEY,
+        event_type TEXT NOT NULL,
+        truth_kind TEXT NOT NULL,
+        target_surface TEXT NOT NULL,
+        component TEXT NOT NULL,
+        run_id TEXT,
+        parent_event_id TEXT,
+        correlation_id TEXT,
+        request_id TEXT,
+        trace_ref TEXT,
+        channel_id TEXT,
+        session_id TEXT,
+        human_id TEXT,
+        agent_id TEXT,
+        actor_id TEXT,
+        evidence_lane TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        status TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        reason_code TEXT,
+        provenance_json TEXT,
+        facts_json TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS config_mutation_audit (
+        mutation_id TEXT PRIMARY KEY,
+        target_document TEXT NOT NULL,
+        target_path TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        actor_type TEXT NOT NULL,
+        reason_code TEXT NOT NULL,
+        request_source TEXT NOT NULL,
+        status TEXT NOT NULL,
+        rollback_ref TEXT NOT NULL,
+        before_hash TEXT,
+        after_hash TEXT,
+        before_summary_json TEXT,
+        after_summary_json TEXT,
+        rollback_payload_json TEXT,
+        error_message TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS runtime_environment_snapshots (
+        snapshot_id TEXT PRIMARY KEY,
+        surface TEXT NOT NULL,
+        run_id TEXT,
+        request_id TEXT,
+        summary TEXT NOT NULL,
+        provider_id TEXT,
+        provider_model TEXT,
+        provider_base_url TEXT,
+        provider_execution_transport TEXT,
+        runtime_root TEXT,
+        config_path TEXT,
+        python_executable TEXT,
+        config_hash TEXT,
+        env_refs_json TEXT,
+        facts_json TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS quarantine_records (
+        quarantine_id TEXT PRIMARY KEY,
+        event_id TEXT,
+        run_id TEXT,
+        request_id TEXT,
+        source_kind TEXT NOT NULL,
+        source_ref TEXT,
+        policy_domain TEXT NOT NULL,
+        reason_code TEXT NOT NULL,
+        status TEXT NOT NULL,
+        payload_hash TEXT,
+        payload_preview TEXT,
+        provenance_json TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS job_records (
         job_id TEXT PRIMARY KEY,
         job_kind TEXT NOT NULL,
@@ -226,6 +330,12 @@ SCHEMA_STATEMENTS = [
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
+    "CREATE INDEX IF NOT EXISTS idx_builder_events_run_id ON builder_events(run_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_builder_events_type ON builder_events(event_type, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_builder_runs_status ON builder_runs(status, opened_at)",
+    "CREATE INDEX IF NOT EXISTS idx_config_mutation_audit_created_at ON config_mutation_audit(created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_runtime_environment_snapshots_surface ON runtime_environment_snapshots(surface, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_quarantine_records_created_at ON quarantine_records(created_at)",
 ]
 
 

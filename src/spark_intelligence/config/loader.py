@@ -10,6 +10,9 @@ from typing import Any
 
 import yaml
 
+from spark_intelligence.observability.store import payload_hash, record_config_mutation
+from spark_intelligence.state.db import StateDB
+
 
 @dataclass(frozen=True)
 class SparkPaths:
@@ -48,10 +51,24 @@ class ConfigManager:
         self.paths.migrations_dir.mkdir(exist_ok=True)
 
         if not self.paths.config_yaml.exists():
-            self.save(self.default_config())
+            self.save(
+                self.default_config(),
+                actor_id="system:bootstrap",
+                actor_type="system",
+                reason_code="bootstrap_default_config",
+                target_path="*",
+                request_source="config.bootstrap",
+            )
             created = True
         if not self.paths.env_file.exists():
-            self._write_env_file("# Spark Intelligence secrets\n")
+            self._write_env_file(
+                "# Spark Intelligence secrets\n",
+                actor_id="system:bootstrap",
+                actor_type="system",
+                reason_code="bootstrap_default_env",
+                target_key="env:*",
+                request_source="config.bootstrap",
+            )
             created = True
         else:
             self.harden_env_file_permissions()
@@ -120,8 +137,47 @@ class ConfigManager:
         data = yaml.safe_load(self.paths.config_yaml.read_text(encoding="utf-8")) or {}
         return data
 
-    def save(self, data: dict[str, Any]) -> None:
+    def save(
+        self,
+        data: dict[str, Any],
+        *,
+        actor_id: str = "local-operator",
+        actor_type: str = "operator",
+        reason_code: str = "config_document_save",
+        target_path: str = "*",
+        request_source: str = "config_manager.save",
+    ) -> None:
+        before_data = self.load() if self.paths.config_yaml.exists() else {}
+        if before_data == data:
+            self._record_config_mutation(
+                target_document="config_yaml",
+                target_path=target_path,
+                actor_id=actor_id,
+                actor_type=actor_type,
+                reason_code=reason_code,
+                request_source=request_source,
+                before_payload=before_data,
+                after_payload=data,
+                status="rejected",
+                rollback_payload=before_data,
+                error_message="semantic_noop",
+                summary=f"Config mutation rejected as semantic no-op for {target_path}.",
+            )
+            return
         self.paths.config_yaml.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        self._record_config_mutation(
+            target_document="config_yaml",
+            target_path=target_path,
+            actor_id=actor_id,
+            actor_type=actor_type,
+            reason_code=reason_code,
+            request_source=request_source,
+            before_payload=before_data,
+            after_payload=data,
+            status="applied",
+            rollback_payload=before_data,
+            summary=f"Config mutation applied for {target_path}.",
+        )
 
     def get_path(self, dotted_path: str, *, default: Any = None) -> Any:
         current: Any = self.load()
@@ -131,7 +187,16 @@ class ConfigManager:
             current = current[part]
         return current
 
-    def set_path(self, dotted_path: str, value: Any) -> dict[str, Any]:
+    def set_path(
+        self,
+        dotted_path: str,
+        value: Any,
+        *,
+        actor_id: str = "local-operator",
+        actor_type: str = "operator",
+        reason_code: str = "config_set_path",
+        request_source: str = "config_manager.set_path",
+    ) -> dict[str, Any]:
         data = self.load()
         current: dict[str, Any] = data
         parts = self._split_path(dotted_path)
@@ -142,10 +207,25 @@ class ConfigManager:
                 current[part] = child
             current = child
         current[parts[-1]] = value
-        self.save(data)
+        self.save(
+            data,
+            actor_id=actor_id,
+            actor_type=actor_type,
+            reason_code=reason_code,
+            target_path=dotted_path,
+            request_source=request_source,
+        )
         return data
 
-    def unset_path(self, dotted_path: str) -> bool:
+    def unset_path(
+        self,
+        dotted_path: str,
+        *,
+        actor_id: str = "local-operator",
+        actor_type: str = "operator",
+        reason_code: str = "config_unset_path",
+        request_source: str = "config_manager.unset_path",
+    ) -> bool:
         data = self.load()
         current: Any = data
         parts = self._split_path(dotted_path)
@@ -156,14 +236,40 @@ class ConfigManager:
         if not isinstance(current, dict) or parts[-1] not in current:
             return False
         del current[parts[-1]]
-        self.save(data)
+        self.save(
+            data,
+            actor_id=actor_id,
+            actor_type=actor_type,
+            reason_code=reason_code,
+            target_path=dotted_path,
+            request_source=request_source,
+        )
         return True
 
-    def upsert_env_secret(self, key: str, value: str) -> None:
+    def upsert_env_secret(
+        self,
+        key: str,
+        value: str,
+        *,
+        actor_id: str = "local-operator",
+        actor_type: str = "operator",
+        reason_code: str = "env_secret_upsert",
+        request_source: str = "config_manager.upsert_env_secret",
+    ) -> None:
         env_map = self.read_env_map()
+        previous = env_map.get(key)
         env_map[key] = value
         content = "# Spark Intelligence secrets\n" + "".join(f"{name}={env_map[name]}\n" for name in sorted(env_map))
-        self._write_env_file(content)
+        self._write_env_file(
+            content,
+            actor_id=actor_id,
+            actor_type=actor_type,
+            reason_code=reason_code,
+            target_key=key,
+            request_source=request_source,
+            previous_value=previous,
+            new_value=value,
+        )
 
     def read_env_map(self) -> dict[str, str]:
         if not self.paths.env_file.exists():
@@ -194,9 +300,35 @@ class ConfigManager:
             raise ValueError("Config path must not be empty.")
         return parts
 
-    def _write_env_file(self, content: str) -> None:
+    def _write_env_file(
+        self,
+        content: str,
+        *,
+        actor_id: str,
+        actor_type: str,
+        reason_code: str,
+        target_key: str,
+        request_source: str,
+        previous_value: str | None = None,
+        new_value: str | None = None,
+    ) -> None:
         self.paths.env_file.write_text(content, encoding="utf-8")
         self.harden_env_file_permissions()
+        before_summary = self._secret_summary(target_key, previous_value)
+        after_summary = self._secret_summary(target_key, new_value)
+        self._record_config_mutation(
+            target_document="env_file",
+            target_path=target_key,
+            actor_id=actor_id,
+            actor_type=actor_type,
+            reason_code=reason_code,
+            request_source=request_source,
+            before_payload=before_summary,
+            after_payload=after_summary,
+            status="applied",
+            rollback_payload={"key": target_key, "manual_restore_required": previous_value is not None},
+            summary=f"Env secret mutation applied for {target_key}.",
+        )
 
     def harden_env_file_permissions(self) -> None:
         if not self.paths.env_file.exists():
@@ -266,3 +398,49 @@ class ConfigManager:
         domain = os.environ.get("USERDOMAIN", "")
         username = os.environ.get("USERNAME") or getuser()
         return f"{domain}\\{username}" if domain else username
+
+    def _record_config_mutation(
+        self,
+        *,
+        target_document: str,
+        target_path: str,
+        actor_id: str,
+        actor_type: str,
+        reason_code: str,
+        request_source: str,
+        before_payload: Any,
+        after_payload: Any,
+        status: str,
+        rollback_payload: Any,
+        summary: str,
+        error_message: str | None = None,
+    ) -> None:
+        try:
+            state_db = StateDB(self.paths.state_db)
+            state_db.initialize()
+            record_config_mutation(
+                state_db,
+                target_document=target_document,
+                target_path=target_path,
+                actor_id=actor_id,
+                actor_type=actor_type,
+                reason_code=reason_code,
+                request_source=request_source,
+                before_payload=before_payload,
+                after_payload=after_payload,
+                status=status,
+                rollback_payload=rollback_payload,
+                error_message=error_message,
+                summary=summary,
+            )
+        except Exception:
+            return
+
+    @staticmethod
+    def _secret_summary(key: str, value: str | None) -> dict[str, Any]:
+        return {
+            "key": key,
+            "present": value is not None and value != "",
+            "value_length": len(value) if value else 0,
+            "value_hash": payload_hash({"key": key, "value": value}) if value else None,
+        }

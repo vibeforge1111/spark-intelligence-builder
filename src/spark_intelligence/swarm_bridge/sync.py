@@ -16,6 +16,7 @@ from typing import Any
 
 from spark_intelligence.attachments import build_attachment_context
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.observability.store import latest_events_by_type, record_environment_snapshot, record_event
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
 from spark_intelligence.state.db import StateDB
 
@@ -221,6 +222,7 @@ def swarm_status(config_manager: ConfigManager, state_db: StateDB | None = None)
     session = _resolve_swarm_session(config_manager, state_db=state_db)
     attachment_context = build_attachment_context(config_manager)
     runtime_state = _read_swarm_runtime_state(state_db) if state_db is not None else {}
+    typed_status = _read_typed_swarm_status(state_db) if state_db is not None else {}
     researcher_ready = enabled and bool(researcher_root and researcher_config_path and researcher_config_path.exists())
     payload_ready = researcher_ready and _researcher_has_ledger(researcher_config_path)
     api_ready = enabled and bool(api_url and workspace_id and session.access_token)
@@ -242,12 +244,12 @@ def swarm_status(config_manager: ConfigManager, state_db: StateDB | None = None)
         auth_client_key_env=session.auth_client_key_env,
         access_token_expires_at=session.access_token_expires_at,
         attachment_context=attachment_context,
-        last_sync=_loads_json_object(runtime_state.get("swarm:last_sync")),
-        last_decision=_loads_json_object(runtime_state.get("swarm:last_decision")),
-        failure_count=_parse_int(runtime_state.get("swarm:failure_count")),
-        last_failure=_loads_json_object(runtime_state.get("swarm:last_failure")),
-        last_refresh_at=runtime_state.get("swarm:last_auth_refresh_at") or None,
-        last_refresh_error=runtime_state.get("swarm:last_auth_refresh_error") or None,
+        last_sync=typed_status.get("last_sync") or _loads_json_object(runtime_state.get("swarm:last_sync")),
+        last_decision=typed_status.get("last_decision") or _loads_json_object(runtime_state.get("swarm:last_decision")),
+        failure_count=typed_status.get("failure_count") or _parse_int(runtime_state.get("swarm:failure_count")),
+        last_failure=typed_status.get("last_failure") or _loads_json_object(runtime_state.get("swarm:last_failure")),
+        last_refresh_at=typed_status.get("last_refresh_at") or runtime_state.get("swarm:last_auth_refresh_at") or None,
+        last_refresh_error=typed_status.get("last_refresh_error") or runtime_state.get("swarm:last_auth_refresh_error") or None,
     )
 
 
@@ -256,8 +258,37 @@ def sync_swarm_collective(
     config_manager: ConfigManager,
     state_db: StateDB,
     dry_run: bool = False,
+    run_id: str | None = None,
+    request_id: str | None = None,
+    trace_ref: str | None = None,
+    channel_id: str | None = None,
+    session_id: str | None = None,
+    human_id: str | None = None,
+    agent_id: str | None = None,
+    actor_id: str = "swarm_bridge",
 ) -> SwarmSyncResult:
     status = swarm_status(config_manager, state_db)
+    record_environment_snapshot(
+        state_db,
+        surface="swarm_bridge",
+        run_id=run_id,
+        request_id=request_id,
+        summary="Swarm bridge environment snapshot recorded.",
+        runtime_root=status.runtime_root,
+        config_path=status.researcher_config_path,
+        env_refs={
+            "access_token_env": status.access_token_env,
+            "refresh_token_env": status.refresh_token_env,
+            "auth_client_key_env": status.auth_client_key_env,
+        },
+        facts={
+            "api_url": status.api_url,
+            "workspace_id": status.workspace_id,
+            "auth_state": status.auth_state,
+            "payload_ready": status.payload_ready,
+            "api_ready": status.api_ready,
+        },
+    )
     if not status.enabled:
         result = SwarmSyncResult(
             ok=False,
@@ -269,7 +300,19 @@ def sync_swarm_collective(
             accepted=None,
             response_body=None,
         )
-        _record_swarm_failure_state(state_db, kind="sync", result=result)
+        _record_swarm_failure_state(
+            state_db,
+            kind="sync",
+            result=result,
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_id,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id=actor_id,
+        )
         return result
     if not status.researcher_ready or not status.researcher_config_path or not status.researcher_runtime_root:
         result = SwarmSyncResult(
@@ -282,7 +325,19 @@ def sync_swarm_collective(
             accepted=None,
             response_body=None,
         )
-        _record_swarm_failure_state(state_db, kind="sync", result=result)
+        _record_swarm_failure_state(
+            state_db,
+            kind="sync",
+            result=result,
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_id,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id=actor_id,
+        )
         return result
 
     researcher_root = Path(status.researcher_runtime_root)
@@ -299,7 +354,19 @@ def sync_swarm_collective(
             accepted=None,
             response_body=None,
         )
-        _record_swarm_failure_state(state_db, kind="sync", result=result)
+        _record_swarm_failure_state(
+            state_db,
+            kind="sync",
+            result=result,
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_id,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id=actor_id,
+        )
         return result
 
     payload, payload_path = _build_collective_payload(
@@ -315,9 +382,43 @@ def sync_swarm_collective(
         api_url=status.api_url,
         workspace_id=workspace_id,
         accepted=None,
+        run_id=run_id,
+        request_id=request_id,
+        trace_ref=trace_ref,
+        channel_id=channel_id,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id=actor_id,
     )
 
     if dry_run:
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="swarm_bridge",
+            summary="Swarm sync dry-run produced a payload without external dispatch.",
+            reason_code="swarm_sync_dry_run",
+            facts={
+                "swarm_operation": "sync",
+                "mode": "dry_run",
+                "payload_path": str(payload_path),
+                "api_url": status.api_url,
+                "workspace_id": workspace_id,
+                "accepted": None,
+                "payload_keys": sorted(payload.keys()),
+            },
+            **_swarm_event_context(
+                run_id=run_id,
+                request_id=request_id,
+                trace_ref=trace_ref,
+                channel_id=channel_id,
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
+                actor_id=actor_id,
+            ),
+        )
         return SwarmSyncResult(
             ok=True,
             mode="dry_run",
@@ -342,7 +443,19 @@ def sync_swarm_collective(
             accepted=None,
             response_body=None,
         )
-        _record_swarm_failure_state(state_db, kind="sync", result=result)
+        _record_swarm_failure_state(
+            state_db,
+            kind="sync",
+            result=result,
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_id,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id=actor_id,
+        )
         return result
 
     if session.auth_state == "expired":
@@ -356,7 +469,19 @@ def sync_swarm_collective(
             accepted=False,
             response_body={"error": "access_token_expired"},
         )
-        _record_swarm_failure_state(state_db, kind="sync", result=result)
+        _record_swarm_failure_state(
+            state_db,
+            kind="sync",
+            result=result,
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_id,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id=actor_id,
+        )
         return result
 
     if session.auth_state == "refreshable":
@@ -373,9 +498,44 @@ def sync_swarm_collective(
                 accepted=False,
                 response_body={"error": "refresh_failed"},
             )
-            _record_swarm_failure_state(state_db, kind="sync", result=result)
+            _record_swarm_failure_state(
+                state_db,
+                kind="sync",
+                result=result,
+                run_id=run_id,
+                request_id=request_id,
+                trace_ref=trace_ref,
+                channel_id=channel_id,
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
+                actor_id=actor_id,
+            )
             return result
 
+    record_event(
+        state_db,
+        event_type="dispatch_started",
+        component="swarm_bridge",
+        summary="Swarm sync dispatch started.",
+        reason_code="swarm_sync_upload",
+        facts={
+            "swarm_operation": "sync",
+            "payload_path": str(payload_path),
+            "api_url": api_url,
+            "workspace_id": workspace_id,
+        },
+        **_swarm_event_context(
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_id,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id=actor_id,
+        ),
+    )
     try:
         response_body = _post_collective_payload(
             api_url=api_url,
@@ -411,7 +571,19 @@ def sync_swarm_collective(
                     accepted=False,
                     response_body=body,
                 )
-                _record_swarm_failure_state(state_db, kind="sync", result=result)
+                _record_swarm_failure_state(
+                    state_db,
+                    kind="sync",
+                    result=result,
+                    run_id=run_id,
+                    request_id=request_id,
+                    trace_ref=trace_ref,
+                    channel_id=channel_id,
+                    session_id=session_id,
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    actor_id=actor_id,
+                )
                 return result
             except urllib.error.HTTPError as retry_exc:
                 retry_body = _read_http_error_body(retry_exc)
@@ -422,6 +594,14 @@ def sync_swarm_collective(
                     api_url=api_url,
                     workspace_id=workspace_id,
                     accepted=False,
+                    run_id=run_id,
+                    request_id=request_id,
+                    trace_ref=trace_ref,
+                    channel_id=channel_id,
+                    session_id=session_id,
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    actor_id=actor_id,
                 )
                 result = SwarmSyncResult(
                     ok=False,
@@ -433,7 +613,19 @@ def sync_swarm_collective(
                     accepted=False,
                     response_body=retry_body,
                 )
-                _record_swarm_failure_state(state_db, kind="sync", result=result)
+                _record_swarm_failure_state(
+                    state_db,
+                    kind="sync",
+                    result=result,
+                    run_id=run_id,
+                    request_id=request_id,
+                    trace_ref=trace_ref,
+                    channel_id=channel_id,
+                    session_id=session_id,
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    actor_id=actor_id,
+                )
                 return result
             except urllib.error.URLError as retry_exc:
                 _record_swarm_sync_state(
@@ -443,6 +635,14 @@ def sync_swarm_collective(
                     api_url=api_url,
                     workspace_id=workspace_id,
                     accepted=False,
+                    run_id=run_id,
+                    request_id=request_id,
+                    trace_ref=trace_ref,
+                    channel_id=channel_id,
+                    session_id=session_id,
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    actor_id=actor_id,
                 )
                 result = SwarmSyncResult(
                     ok=False,
@@ -454,7 +654,19 @@ def sync_swarm_collective(
                     accepted=False,
                     response_body=None,
                 )
-                _record_swarm_failure_state(state_db, kind="sync", result=result)
+                _record_swarm_failure_state(
+                    state_db,
+                    kind="sync",
+                    result=result,
+                    run_id=run_id,
+                    request_id=request_id,
+                    trace_ref=trace_ref,
+                    channel_id=channel_id,
+                    session_id=session_id,
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    actor_id=actor_id,
+                )
                 return result
             else:
                 accepted = bool(response_body.get("accepted"))
@@ -465,6 +677,14 @@ def sync_swarm_collective(
                     api_url=api_url,
                     workspace_id=workspace_id,
                     accepted=accepted,
+                    run_id=run_id,
+                    request_id=request_id,
+                    trace_ref=trace_ref,
+                    channel_id=channel_id,
+                    session_id=session_id,
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    actor_id=actor_id,
                 )
                 result = SwarmSyncResult(
                     ok=accepted,
@@ -477,7 +697,19 @@ def sync_swarm_collective(
                     response_body=response_body,
                 )
                 if not accepted:
-                    _record_swarm_failure_state(state_db, kind="sync", result=result)
+                    _record_swarm_failure_state(
+                        state_db,
+                        kind="sync",
+                        result=result,
+                        run_id=run_id,
+                        request_id=request_id,
+                        trace_ref=trace_ref,
+                        channel_id=channel_id,
+                        session_id=session_id,
+                        human_id=human_id,
+                        agent_id=agent_id,
+                        actor_id=actor_id,
+                    )
                 return result
         _record_swarm_sync_state(
             state_db,
@@ -486,6 +718,14 @@ def sync_swarm_collective(
             api_url=api_url,
             workspace_id=workspace_id,
             accepted=False,
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_id,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id=actor_id,
         )
         result = SwarmSyncResult(
             ok=False,
@@ -497,7 +737,19 @@ def sync_swarm_collective(
             accepted=False,
             response_body=body,
         )
-        _record_swarm_failure_state(state_db, kind="sync", result=result)
+        _record_swarm_failure_state(
+            state_db,
+            kind="sync",
+            result=result,
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_id,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id=actor_id,
+        )
         return result
     except urllib.error.URLError as exc:
         _record_swarm_sync_state(
@@ -507,6 +759,14 @@ def sync_swarm_collective(
             api_url=api_url,
             workspace_id=workspace_id,
             accepted=False,
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_id,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id=actor_id,
         )
         result = SwarmSyncResult(
             ok=False,
@@ -518,7 +778,19 @@ def sync_swarm_collective(
             accepted=False,
             response_body=None,
         )
-        _record_swarm_failure_state(state_db, kind="sync", result=result)
+        _record_swarm_failure_state(
+            state_db,
+            kind="sync",
+            result=result,
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_id,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id=actor_id,
+        )
         return result
 
     accepted = bool(response_body.get("accepted"))
@@ -529,6 +801,14 @@ def sync_swarm_collective(
         api_url=api_url,
         workspace_id=workspace_id,
         accepted=accepted,
+        run_id=run_id,
+        request_id=request_id,
+        trace_ref=trace_ref,
+        channel_id=channel_id,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id=actor_id,
     )
     result = SwarmSyncResult(
         ok=accepted,
@@ -541,7 +821,19 @@ def sync_swarm_collective(
         response_body=response_body,
     )
     if not accepted:
-        _record_swarm_failure_state(state_db, kind="sync", result=result)
+        _record_swarm_failure_state(
+            state_db,
+            kind="sync",
+            result=result,
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_id,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id=actor_id,
+        )
     return result
 
 
@@ -550,8 +842,36 @@ def evaluate_swarm_escalation(
     config_manager: ConfigManager,
     state_db: StateDB,
     task: str,
+    run_id: str | None = None,
+    request_id: str | None = None,
+    trace_ref: str | None = None,
+    channel_id: str | None = None,
+    session_id: str | None = None,
+    human_id: str | None = None,
+    agent_id: str | None = None,
+    actor_id: str = "swarm_bridge",
 ) -> SwarmDecisionResult:
     status = swarm_status(config_manager, state_db)
+    record_environment_snapshot(
+        state_db,
+        surface="swarm_bridge",
+        run_id=run_id,
+        request_id=request_id,
+        summary="Swarm escalation environment snapshot recorded.",
+        runtime_root=status.runtime_root,
+        config_path=status.researcher_config_path,
+        env_refs={
+            "access_token_env": status.access_token_env,
+            "refresh_token_env": status.refresh_token_env,
+            "auth_client_key_env": status.auth_client_key_env,
+        },
+        facts={
+            "api_url": status.api_url,
+            "workspace_id": status.workspace_id,
+            "task_length": len(task.split()),
+            "auth_state": status.auth_state,
+        },
+    )
     if not status.enabled:
         result = SwarmDecisionResult(
             ok=False,
@@ -564,8 +884,31 @@ def evaluate_swarm_escalation(
             swarm_available=False,
             api_ready=False,
         )
-        _record_swarm_decision_state(state_db, result=result)
-        _record_swarm_failure_state(state_db, kind="decision", result=result)
+        _record_swarm_decision_state(
+            state_db,
+            result=result,
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_id,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id=actor_id,
+        )
+        _record_swarm_failure_state(
+            state_db,
+            kind="decision",
+            result=result,
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_id,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id=actor_id,
+        )
         return result
     lowered = task.lower()
     triggers: list[str] = []
@@ -601,7 +944,19 @@ def evaluate_swarm_escalation(
             swarm_available=False,
             api_ready=status.api_ready,
         )
-        _record_swarm_failure_state(state_db, kind="decision", result=result)
+        _record_swarm_failure_state(
+            state_db,
+            kind="decision",
+            result=result,
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_id,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id=actor_id,
+        )
     elif triggers and auto_recommend_enabled:
         result = SwarmDecisionResult(
             ok=True,
@@ -627,7 +982,48 @@ def evaluate_swarm_escalation(
             api_ready=status.api_ready,
         )
 
-    _record_swarm_decision_state(state_db, result=result)
+    _record_swarm_decision_state(
+        state_db,
+        result=result,
+        run_id=run_id,
+        request_id=request_id,
+        trace_ref=trace_ref,
+        channel_id=channel_id,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id=actor_id,
+    )
+    if status.attachment_context.get("active_chip_keys") or status.attachment_context.get("active_path_key"):
+        record_event(
+            state_db,
+            event_type="plugin_or_chip_influence_recorded",
+            component="swarm_bridge",
+            summary="Swarm escalation considered active chip or path context.",
+            reason_code="swarm_attachment_context",
+            facts={
+                "swarm_operation": "decision",
+                "active_chip_keys": status.attachment_context.get("active_chip_keys") or [],
+                "pinned_chip_keys": status.attachment_context.get("pinned_chip_keys") or [],
+                "active_path_key": status.attachment_context.get("active_path_key"),
+                "decision_mode": result.mode,
+                "keepability": "ephemeral_context",
+            },
+            provenance={
+                "source_kind": "attachment_snapshot",
+                "source_ref": "swarm_status_attachment_context",
+            },
+            **_swarm_event_context(
+                run_id=run_id,
+                request_id=request_id,
+                trace_ref=trace_ref,
+                channel_id=channel_id,
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
+                actor_id=actor_id,
+            ),
+        )
     return result
 
 
@@ -888,44 +1284,100 @@ def _record_swarm_sync_state(
     api_url: str | None,
     workspace_id: str | None,
     accepted: bool | None,
+    run_id: str | None = None,
+    request_id: str | None = None,
+    trace_ref: str | None = None,
+    channel_id: str | None = None,
+    session_id: str | None = None,
+    human_id: str | None = None,
+    agent_id: str | None = None,
+    actor_id: str = "swarm_bridge",
 ) -> None:
+    facts = {
+        "swarm_operation": "sync",
+        "mode": mode,
+        "payload_path": payload_path,
+        "api_url": api_url,
+        "workspace_id": workspace_id,
+        "accepted": accepted,
+    }
     with state_db.connect() as conn:
         _set_runtime_state(
             conn,
             "swarm:last_sync",
-            json.dumps(
-                {
-                    "mode": mode,
-                    "payload_path": payload_path,
-                    "api_url": api_url,
-                    "workspace_id": workspace_id,
-                    "accepted": accepted,
-                },
-                sort_keys=True,
-            ),
+            json.dumps(facts, sort_keys=True),
         )
         if accepted:
             conn.execute("DELETE FROM runtime_state WHERE state_key = ?", ("swarm:last_failure",))
         conn.commit()
+    record_event(
+        state_db,
+        event_type="tool_result_received",
+        component="swarm_bridge",
+        summary=f"Swarm sync state recorded as {mode}.",
+        reason_code=f"swarm_sync_{mode}",
+        facts=facts,
+        **_swarm_event_context(
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_id,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id=actor_id,
+        ),
+    )
 
 
-def _record_swarm_decision_state(state_db: StateDB, *, result: SwarmDecisionResult) -> None:
+def _record_swarm_decision_state(
+    state_db: StateDB,
+    *,
+    result: SwarmDecisionResult,
+    run_id: str | None = None,
+    request_id: str | None = None,
+    trace_ref: str | None = None,
+    channel_id: str | None = None,
+    session_id: str | None = None,
+    human_id: str | None = None,
+    agent_id: str | None = None,
+    actor_id: str = "swarm_bridge",
+) -> None:
+    facts = {
+        "swarm_operation": "decision",
+        "mode": result.mode,
+        "escalate": result.escalate,
+        "reason": result.reason,
+        "triggers": result.triggers,
+        "task": result.task,
+        "swarm_available": result.swarm_available,
+        "api_ready": result.api_ready,
+    }
     with state_db.connect() as conn:
         _set_runtime_state(
             conn,
             "swarm:last_decision",
-            json.dumps(
-                {
-                    "mode": result.mode,
-                    "escalate": result.escalate,
-                    "reason": result.reason,
-                    "triggers": result.triggers,
-                    "task": result.task,
-                },
-                sort_keys=True,
-            ),
+            json.dumps(facts, sort_keys=True),
         )
         conn.commit()
+    record_event(
+        state_db,
+        event_type="tool_result_received",
+        component="swarm_bridge",
+        summary=f"Swarm escalation decision recorded as {result.mode}.",
+        reason_code=f"swarm_decision_{result.mode}",
+        facts=facts,
+        **_swarm_event_context(
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_id,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id=actor_id,
+        ),
+    )
 
 
 def _record_swarm_failure_state(
@@ -933,6 +1385,14 @@ def _record_swarm_failure_state(
     *,
     kind: str,
     result: SwarmSyncResult | SwarmDecisionResult,
+    run_id: str | None = None,
+    request_id: str | None = None,
+    trace_ref: str | None = None,
+    channel_id: str | None = None,
+    session_id: str | None = None,
+    human_id: str | None = None,
+    agent_id: str | None = None,
+    actor_id: str = "swarm_bridge",
 ) -> None:
     with state_db.connect() as conn:
         failure_count = _read_failure_count(conn, "swarm:failure_count")
@@ -960,6 +1420,29 @@ def _record_swarm_failure_state(
             }
         _set_runtime_state(conn, "swarm:last_failure", json.dumps(payload, sort_keys=True))
         conn.commit()
+    record_event(
+        state_db,
+        event_type="dispatch_failed",
+        component="swarm_bridge",
+        summary=f"Swarm {kind} failed in mode {payload.get('mode') or 'unknown'}.",
+        reason_code=f"swarm_{kind}_{payload.get('mode') or 'failed'}",
+        severity="high",
+        facts={
+            "swarm_operation": kind,
+            "failure_count": failure_count + 1,
+            **payload,
+        },
+        **_swarm_event_context(
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_id,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id=actor_id,
+        ),
+    )
 
 
 def _read_swarm_runtime_state(state_db: StateDB) -> dict[str, str]:
@@ -1012,6 +1495,89 @@ def _set_runtime_state(conn: Any, state_key: str, value: str) -> None:
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _swarm_event_context(
+    *,
+    run_id: str | None,
+    request_id: str | None,
+    trace_ref: str | None,
+    channel_id: str | None,
+    session_id: str | None,
+    human_id: str | None,
+    agent_id: str | None,
+    actor_id: str,
+) -> dict[str, Any]:
+    return {
+        "run_id": run_id,
+        "request_id": request_id,
+        "trace_ref": trace_ref,
+        "channel_id": channel_id,
+        "session_id": session_id,
+        "human_id": human_id,
+        "agent_id": agent_id,
+        "actor_id": actor_id,
+    }
+
+
+def _read_typed_swarm_status(state_db: StateDB) -> dict[str, Any]:
+    sync_event = _latest_swarm_event_payload(state_db, operation="sync")
+    decision_event = _latest_swarm_event_payload(state_db, operation="decision")
+    refresh_event = _latest_swarm_event_payload(state_db, operation="auth_refresh")
+    return {
+        "last_sync": sync_event.get("facts") if sync_event else None,
+        "last_decision": decision_event.get("facts") if decision_event else None,
+        "last_failure": _latest_swarm_failure_payload(state_db),
+        "failure_count": _count_swarm_failures(state_db),
+        "last_refresh_at": ((refresh_event or {}).get("facts") or {}).get("refreshed_at"),
+        "last_refresh_error": ((refresh_event or {}).get("facts") or {}).get("error"),
+    }
+
+
+def _latest_swarm_event_payload(state_db: StateDB, *, operation: str) -> dict[str, Any] | None:
+    candidates: list[dict[str, Any]] = []
+    for event_type in ("tool_result_received", "dispatch_failed"):
+        for event in latest_events_by_type(state_db, event_type=event_type, limit=200):
+            if str(event.get("component") or "") != "swarm_bridge":
+                continue
+            facts = event.get("facts_json") or {}
+            if not isinstance(facts, dict):
+                continue
+            if str(facts.get("swarm_operation") or "") != operation:
+                continue
+            candidates.append(event)
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (str(item.get("created_at") or ""), str(item.get("event_id") or "")), reverse=True)
+    selected = candidates[0]
+    return {
+        "event_id": selected.get("event_id"),
+        "event_type": selected.get("event_type"),
+        "created_at": selected.get("created_at"),
+        "facts": selected.get("facts_json") if isinstance(selected.get("facts_json"), dict) else {},
+    }
+
+
+def _latest_swarm_failure_payload(state_db: StateDB) -> dict[str, Any] | None:
+    failures = [
+        event
+        for event in latest_events_by_type(state_db, event_type="dispatch_failed", limit=200)
+        if str(event.get("component") or "") == "swarm_bridge"
+    ]
+    if not failures:
+        return None
+    failures.sort(key=lambda item: (str(item.get("created_at") or ""), str(item.get("event_id") or "")), reverse=True)
+    facts = failures[0].get("facts_json") or {}
+    return facts if isinstance(facts, dict) else None
+
+
+def _count_swarm_failures(state_db: StateDB) -> int:
+    failures = [
+        event
+        for event in latest_events_by_type(state_db, event_type="dispatch_failed", limit=500)
+        if str(event.get("component") or "") == "swarm_bridge"
+    ]
+    return len(failures)
 
 
 def _import_researcher_symbol(runtime_root: Path, module_name: str, symbol: str):
@@ -1070,22 +1636,103 @@ def _refresh_swarm_access_token(
 
     access_env = session.access_token_env or "SPARK_SWARM_ACCESS_TOKEN"
     refresh_env = session.refresh_token_env or "SPARK_SWARM_REFRESH_TOKEN"
-    config_manager.upsert_env_secret(access_env, access_token)
-    config_manager.set_path("spark.swarm.access_token_env", access_env)
-    config_manager.upsert_env_secret(refresh_env, refresh_token)
-    config_manager.set_path("spark.swarm.refresh_token_env", refresh_env)
+    config_manager.upsert_env_secret(
+        access_env,
+        access_token,
+        actor_id="swarm_bridge",
+        actor_type="service",
+        reason_code="swarm_auth_refresh",
+        request_source="swarm_bridge.refresh",
+    )
+    config_manager.set_path(
+        "spark.swarm.access_token_env",
+        access_env,
+        actor_id="swarm_bridge",
+        actor_type="service",
+        reason_code="swarm_auth_refresh",
+        request_source="swarm_bridge.refresh",
+    )
+    config_manager.upsert_env_secret(
+        refresh_env,
+        refresh_token,
+        actor_id="swarm_bridge",
+        actor_type="service",
+        reason_code="swarm_auth_refresh",
+        request_source="swarm_bridge.refresh",
+    )
+    config_manager.set_path(
+        "spark.swarm.refresh_token_env",
+        refresh_env,
+        actor_id="swarm_bridge",
+        actor_type="service",
+        reason_code="swarm_auth_refresh",
+        request_source="swarm_bridge.refresh",
+    )
     _record_swarm_refresh_state(state_db, refreshed=True)
     return _resolve_swarm_session(config_manager, state_db=state_db)
 
 
-def _record_swarm_refresh_state(state_db: StateDB, *, refreshed: bool = False, error: str | None = None) -> None:
+def _record_swarm_refresh_state(
+    state_db: StateDB,
+    *,
+    refreshed: bool = False,
+    error: str | None = None,
+    run_id: str | None = None,
+    request_id: str | None = None,
+    trace_ref: str | None = None,
+    channel_id: str | None = None,
+    session_id: str | None = None,
+    human_id: str | None = None,
+    agent_id: str | None = None,
+    actor_id: str = "swarm_bridge",
+) -> None:
+    refreshed_at = _utc_now_iso() if refreshed else None
     with state_db.connect() as conn:
         if refreshed:
-            _set_runtime_state(conn, "swarm:last_auth_refresh_at", _utc_now_iso())
+            _set_runtime_state(conn, "swarm:last_auth_refresh_at", refreshed_at or _utc_now_iso())
             _set_runtime_state(conn, "swarm:last_auth_refresh_error", "")
         if error is not None:
             _set_runtime_state(conn, "swarm:last_auth_refresh_error", error)
         conn.commit()
+    if refreshed:
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="swarm_bridge",
+            summary="Swarm auth refresh succeeded.",
+            reason_code="swarm_auth_refresh_succeeded",
+            facts={"swarm_operation": "auth_refresh", "refreshed": True, "refreshed_at": refreshed_at},
+            **_swarm_event_context(
+                run_id=run_id,
+                request_id=request_id,
+                trace_ref=trace_ref,
+                channel_id=channel_id,
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
+                actor_id=actor_id,
+            ),
+        )
+    if error is not None:
+        record_event(
+            state_db,
+            event_type="dispatch_failed",
+            component="swarm_bridge",
+            summary="Swarm auth refresh failed.",
+            reason_code="swarm_auth_refresh_failed",
+            severity="high",
+            facts={"swarm_operation": "auth_refresh", "error": error},
+            **_swarm_event_context(
+                run_id=run_id,
+                request_id=request_id,
+                trace_ref=trace_ref,
+                channel_id=channel_id,
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
+                actor_id=actor_id,
+            ),
+        )
 
 
 def _read_local_swarm_env_map(config_manager: ConfigManager) -> dict[str, str]:

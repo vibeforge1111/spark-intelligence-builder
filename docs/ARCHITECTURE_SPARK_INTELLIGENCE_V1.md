@@ -801,6 +801,11 @@ We should likely use a structured event/request model internally for:
 - swarm escalations
 - operator events
 - adapter health
+- config mutation audit
+- execution lineage from intent through delivery
+- provenance-bearing chip, path, personality, and swarm influence records
+- runtime environment snapshots
+- quarantine and trust-boundary events
 
 This is a pattern worth borrowing directly from modern gateway systems.
 

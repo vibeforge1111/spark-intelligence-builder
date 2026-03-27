@@ -12,6 +12,8 @@ from spark_intelligence.auth.providers import get_provider_spec
 from spark_intelligence.auth.runtime import build_auth_status_report, runtime_provider_health
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.jobs.service import oauth_maintenance_health
+from spark_intelligence.observability.checks import evaluate_stop_ship_issues
+from spark_intelligence.observability.store import record_environment_snapshot
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, researcher_bridge_status, resolve_researcher_config_path
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import swarm_status
@@ -64,6 +66,16 @@ class DoctorReport:
 def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport:
     checks: list[DoctorCheck] = []
     paths = config_manager.paths
+    record_environment_snapshot(
+        state_db,
+        surface="doctor_cli",
+        summary="Doctor CLI environment snapshot recorded.",
+        provider_id=str(config_manager.get_path("providers.default_provider")) if config_manager.get_path("providers.default_provider") else None,
+        runtime_root=str(config_manager.get_path("spark.researcher.runtime_root")) if config_manager.get_path("spark.researcher.runtime_root") else None,
+        config_path=str(config_manager.get_path("spark.researcher.config_path")) if config_manager.get_path("spark.researcher.config_path") else None,
+        env_refs={"home": str(paths.home)},
+        facts={"surface": "doctor_cli"},
+    )
 
     checks.append(DoctorCheck("home", paths.home.exists(), str(paths.home)))
     checks.append(DoctorCheck("config.yaml", paths.config_yaml.exists(), str(paths.config_yaml)))
@@ -228,6 +240,8 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
     checks.append(_telegram_runtime_check(config_manager=config_manager, state_db=state_db))
     checks.append(_discord_runtime_check(config_manager=config_manager, state_db=state_db))
     checks.append(_whatsapp_runtime_check(config_manager=config_manager, state_db=state_db))
+    for issue in evaluate_stop_ship_issues(config_manager=config_manager, state_db=state_db, emit_contradictions=True):
+        checks.append(DoctorCheck(issue.name, issue.ok, issue.detail))
 
     return DoctorReport(checks=checks)
 

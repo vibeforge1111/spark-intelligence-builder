@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from spark_intelligence.auth.service import run_oauth_refresh_maintenance
 from spark_intelligence.auth.runtime import AuthStatusReport, build_auth_status_report
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.observability.store import close_run, open_run, record_environment_snapshot
 from spark_intelligence.state.db import StateDB
 
 
@@ -24,6 +25,16 @@ class JobRecord:
 
 
 def jobs_tick(config_manager: ConfigManager, state_db: StateDB) -> str:
+    record_environment_snapshot(
+        state_db,
+        surface="jobs_tick",
+        summary="Jobs tick environment snapshot recorded.",
+        provider_id=str(config_manager.get_path("providers.default_provider")) if config_manager.get_path("providers.default_provider") else None,
+        runtime_root=str(config_manager.get_path("spark.researcher.runtime_root")) if config_manager.get_path("spark.researcher.runtime_root") else None,
+        config_path=str(config_manager.get_path("spark.researcher.config_path")) if config_manager.get_path("spark.researcher.config_path") else None,
+        env_refs={"jobs_scheduler_enabled": bool(config_manager.get_path("jobs.scheduler.enabled", default=True))},
+        facts={"origin_surface": "jobs_tick"},
+    )
     with state_db.connect() as conn:
         jobs = conn.execute(
             "SELECT job_id, job_kind, status FROM job_records WHERE status = 'scheduled' ORDER BY job_id"
@@ -129,18 +140,55 @@ def _run_job(
     job_id: str,
     job_kind: str,
 ) -> str:
-    if job_kind == "oauth_refresh_maintenance":
-        payload = run_oauth_refresh_maintenance(config_manager=config_manager, state_db=state_db)
-        result = (
-            f"scanned={payload['scanned']} due={payload['due']} "
-            f"refreshed={len(payload['refreshed'])} failed={len(payload['failed'])} "
-            f"skipped={len(payload['skipped'])}"
-        )
+    run = open_run(
+        state_db,
+        run_kind=f"job:{job_kind}",
+        origin_surface="jobs_tick",
+        summary=f"Job run opened for {job_id}.",
+        request_id=job_id,
+        actor_id="jobs_tick",
+        reason_code="scheduled_job_execution",
+        facts={"job_id": job_id, "job_kind": job_kind},
+    )
+    try:
+        if job_kind == "oauth_refresh_maintenance":
+            payload = run_oauth_refresh_maintenance(config_manager=config_manager, state_db=state_db)
+            result = (
+                f"scanned={payload['scanned']} due={payload['due']} "
+                f"refreshed={len(payload['refreshed'])} failed={len(payload['failed'])} "
+                f"skipped={len(payload['skipped'])}"
+            )
+            _record_job_result(state_db=state_db, job_id=job_id, result=result)
+            close_run(
+                state_db,
+                run_id=run.run_id,
+                status="closed",
+                close_reason="job_completed",
+                summary=f"Job {job_id} completed.",
+                facts={"job_id": job_id, "job_kind": job_kind, "result": result},
+            )
+            return result
+        result = "unsupported_job_kind"
         _record_job_result(state_db=state_db, job_id=job_id, result=result)
+        close_run(
+            state_db,
+            run_id=run.run_id,
+            status="stalled",
+            close_reason="unsupported_job_kind",
+            summary=f"Job {job_id} could not be executed.",
+            facts={"job_id": job_id, "job_kind": job_kind, "result": result},
+        )
         return result
-    result = "unsupported_job_kind"
-    _record_job_result(state_db=state_db, job_id=job_id, result=result)
-    return result
+    except Exception as exc:
+        close_run(
+            state_db,
+            run_id=run.run_id,
+            status="stalled",
+            close_reason="job_exception",
+            summary=f"Job {job_id} raised an exception.",
+            facts={"job_id": job_id, "job_kind": job_kind, "error": str(exc)},
+        )
+        raise
 
 
 def _record_job_result(*, state_db: StateDB, job_id: str, result: str) -> None:

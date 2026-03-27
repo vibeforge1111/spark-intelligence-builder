@@ -38,6 +38,10 @@ It should own:
 - jobs
 - adapter health metadata
 - migration records
+- config mutation audit
+- execution-lineage events and runs
+- runtime environment snapshots
+- quarantine records for policy-blocked material
 
 ### 2.3 Secrets Are Not General Config
 
@@ -170,6 +174,11 @@ Recommended core tables:
 - `adapter_health_events`
 - `doctor_runs`
 - `migration_runs`
+- `config_mutation_audit`
+- `builder_runs`
+- `builder_events`
+- `runtime_environment_snapshots`
+- `quarantine_records`
 
 ## 6. Clear Ownership Rules
 
@@ -187,6 +196,9 @@ Recommended core tables:
 - health metadata
 - audit history
 - pairing approvals
+- execution proof and delivery proof
+- provenance for chip, plugin, personality, and swarm influence
+- quarantine outcomes for blocked material
 
 ### 6.3 What Does Not Belong In Either
 
@@ -194,6 +206,7 @@ Recommended core tables:
 - adapter-owned shadow allowlists
 - fuzzy cached identity guesses
 - undocumented JSON blobs with shifting meaning
+- critical product truth that exists only as generic `runtime_state` keys
 
 ## 7. Repair And Inspection Rules
 

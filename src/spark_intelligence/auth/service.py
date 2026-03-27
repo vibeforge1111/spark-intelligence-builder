@@ -175,7 +175,14 @@ def connect_provider(
     }
     if not config["providers"].get("default_provider"):
         config["providers"]["default_provider"] = provider
-    config_manager.save(config)
+    config_manager.save(
+        config,
+        actor_id="local-operator",
+        actor_type="operator",
+        reason_code="provider_connect",
+        target_path=f"providers.records.{provider}",
+        request_source="auth.service.connect_provider",
+    )
 
     env_map = config_manager.read_env_map()
     profile_status = "active" if env_map.get(env_key) else "pending_secret"
@@ -424,7 +431,14 @@ def logout_provider(
     record = config.setdefault("providers", {}).setdefault("records", {}).get(provider)
     if isinstance(record, dict):
         record["status"] = "revoked"
-        config_manager.save(config)
+        config_manager.save(
+            config,
+            actor_id="local-operator",
+            actor_type="operator",
+            reason_code="provider_logout",
+            target_path=f"providers.records.{provider}",
+            request_source="auth.service.logout_provider",
+        )
 
     _log_provider_runtime_event(
         state_db=state_db,
@@ -694,7 +708,14 @@ def _upsert_oauth_provider_record(
     }
     if not config["providers"].get("default_provider"):
         config["providers"]["default_provider"] = spec.id
-    config_manager.save(config)
+    config_manager.save(
+        config,
+        actor_id="local-operator",
+        actor_type="operator",
+        reason_code="oauth_provider_upsert",
+        target_path=f"providers.records.{spec.id}",
+        request_source="auth.service._upsert_oauth_provider_record",
+    )
 
     with state_db.connect() as conn:
         conn.execute(

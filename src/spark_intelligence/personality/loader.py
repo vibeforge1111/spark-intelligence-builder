@@ -1,4 +1,4 @@
-"""Personality profile loading and per-user preference management.
+"""Personality profile loading, per-user preference management, and self-evolution.
 
 Reads personality chip state from the filesystem (written by spark-personality-chip-labs
 hooks) and manages per-user trait deltas via the runtime_state table.
@@ -9,12 +9,18 @@ Trait names follow PersonalityEvolver's 5-trait system:
 Each trait is a float in [0.0, 1.0]. Deltas shift baseline traits and are
 persisted per human_id in runtime_state with key pattern:
   personality:{human_id}:trait_deltas
+
+Self-evolution: After each interaction, the system records what traits were
+active and infers the user's emotional state from their message. Periodically,
+accumulated observations are analyzed and small trait adjustments are applied
+automatically (bounded to +-0.05 per evolution cycle).
 """
 
 from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -378,3 +384,409 @@ def _label_for_trait(trait: str, value: float) -> str:
         if low <= value < high:
             return label
     return "balanced"
+
+
+# ── Personality queries (status, reset) ──
+
+_QUERY_STATUS_PATTERNS = [
+    re.compile(r"\b(?:what(?:'s| is) my (?:personality|style|config))", re.I),
+    re.compile(r"\b(?:how am i|how are you) configured\b", re.I),
+    re.compile(r"\bshow (?:my |your )?personality\b", re.I),
+    re.compile(r"\bcurrent (?:personality|style)\b", re.I),
+    re.compile(r"\bmy (?:style|personality) (?:settings|preferences)\b", re.I),
+]
+
+_QUERY_RESET_PATTERNS = [
+    re.compile(r"\breset (?:my )?(?:personality|style|preferences)\b", re.I),
+    re.compile(r"\bgo back to (?:default|normal|original)\b", re.I),
+    re.compile(r"\bclear (?:my )?(?:personality|style) (?:settings|preferences|changes)\b", re.I),
+    re.compile(r"\bundo (?:personality|style) changes\b", re.I),
+    re.compile(r"\bremove (?:my )?(?:personality|style) (?:preferences|customization)\b", re.I),
+]
+
+
+@dataclass
+class PersonalityQueryResult:
+    """Result of a personality query detection."""
+    kind: str  # "status", "reset", "preference_ack", or "none"
+    context_injection: str  # text to inject into contextual task for the LLM
+    deltas_applied: dict[str, float] | None = None
+
+
+def detect_personality_query(
+    *,
+    user_message: str,
+    human_id: str,
+    state_db: StateDB,
+    profile: dict[str, Any] | None = None,
+) -> PersonalityQueryResult:
+    """Detect if the user is asking about or managing their personality settings.
+
+    Returns a PersonalityQueryResult with context to inject into the LLM prompt.
+    """
+    text = user_message.strip()
+    if not text:
+        return PersonalityQueryResult(kind="none", context_injection="")
+
+    # Check for reset
+    for pattern in _QUERY_RESET_PATTERNS:
+        if pattern.search(text):
+            _clear_user_trait_deltas(human_id=human_id, state_db=state_db)
+            return PersonalityQueryResult(
+                kind="reset",
+                context_injection=(
+                    "[Personality action: RESET]\n"
+                    "The user has asked to reset their personality preferences. "
+                    "All custom style adjustments have been cleared. "
+                    "Confirm to the user that their personality preferences have been "
+                    "reset to default and you'll respond with the base personality style going forward."
+                ),
+            )
+
+    # Check for status query
+    for pattern in _QUERY_STATUS_PATTERNS:
+        if pattern.search(text):
+            status_text = _format_profile_status(profile, human_id=human_id, state_db=state_db)
+            return PersonalityQueryResult(
+                kind="status",
+                context_injection=(
+                    f"[Personality action: STATUS]\n"
+                    f"The user wants to know their current personality/style settings. "
+                    f"Share this information naturally:\n{status_text}\n"
+                    f"Explain that they can adjust these by telling you things like "
+                    f"'be more direct', 'slow down', 'stop hedging', etc. "
+                    f"They can also say 'reset personality' to go back to defaults."
+                ),
+            )
+
+    return PersonalityQueryResult(kind="none", context_injection="")
+
+
+def build_preference_acknowledgment(deltas: dict[str, float]) -> str:
+    """Build context injection that tells the LLM to acknowledge a preference change.
+
+    Called when NL preference detection fires, so the LLM can confirm the change
+    naturally in its reply.
+    """
+    if not deltas:
+        return ""
+
+    descriptions = []
+    for trait, delta in sorted(deltas.items()):
+        direction = "more" if delta > 0 else "less"
+        descriptions.append(f"{direction} {trait.replace('_', ' ')}")
+
+    changes = ", ".join(descriptions)
+    return (
+        f"[Personality action: PREFERENCE_UPDATED]\n"
+        f"The user just expressed a style preference. You adjusted: {changes}. "
+        f"Briefly acknowledge this change in your reply (one short sentence like "
+        f"\"Got it, I'll be more direct.\" or \"Noted, I'll slow down.\"). "
+        f"Then continue responding to whatever else they said. "
+        f"Do not over-explain the personality system."
+    )
+
+
+def _format_profile_status(
+    profile: dict[str, Any] | None,
+    *,
+    human_id: str,
+    state_db: StateDB,
+) -> str:
+    """Format current personality status for the user."""
+    if not profile:
+        return "Personality is not active. Using default balanced style."
+
+    lines = []
+    name = profile.get("personality_name")
+    if name:
+        lines.append(f"Base personality: {name}")
+    else:
+        lines.append("Base personality: default (balanced)")
+
+    lines.append(f"Source: {profile.get('source', 'defaults')}")
+    lines.append("Current style:")
+    labels = profile.get("style_labels") or {}
+    traits = profile.get("traits") or {}
+    for trait in ("warmth", "directness", "playfulness", "pacing", "assertiveness"):
+        label = labels.get(trait, "balanced")
+        val = traits.get(trait, 0.5)
+        lines.append(f"  {trait}: {label} ({val:.2f})")
+
+    user_deltas = _load_user_trait_deltas(human_id=human_id, state_db=state_db)
+    if user_deltas:
+        lines.append("User adjustments applied:")
+        for trait, delta in sorted(user_deltas.items()):
+            sign = "+" if delta >= 0 else ""
+            lines.append(f"  {trait}: {sign}{delta:.2f}")
+    else:
+        lines.append("No user adjustments applied.")
+
+    return "\n".join(lines)
+
+
+def _clear_user_trait_deltas(*, human_id: str, state_db: StateDB) -> None:
+    """Clear all per-user trait deltas (reset to base personality)."""
+    with state_db.connect() as conn:
+        conn.execute(
+            "DELETE FROM runtime_state WHERE state_key = ?",
+            (_state_key(human_id),),
+        )
+        conn.commit()
+
+
+# ── Self-observation ──
+
+_OBSERVATION_WINDOW = 50  # keep last N observations per user
+
+# Lightweight emotional state inference from user text (subset of room reader patterns)
+_USER_STATE_PATTERNS: list[tuple[re.Pattern[str], str, float]] = [
+    (re.compile(r"\b(?:thanks?|thank you|perfect|great|awesome|nice|love it)\b", re.I), "satisfied", 0.7),
+    (re.compile(r"\b(?:exactly|yes|that's? (?:it|right)|spot on|nailed it)\b", re.I), "satisfied", 0.6),
+    (re.compile(r"\b(?:broken|failing|error|bug|crash|doesn't work|not working)\b", re.I), "frustrated", 0.5),
+    (re.compile(r"\b(?:still|again|keeps?|always|never works)\b", re.I), "frustrated", 0.4),
+    (re.compile(r"\b(?:confused|lost|don't understand|makes? no sense|what\?)\b", re.I), "confused", 0.6),
+    (re.compile(r"\b(?:how does|what is|can you explain|help me understand)\b", re.I), "curious", 0.4),
+    (re.compile(r"\b(?:amazing|incredible|wow|brilliant|this is great)\b", re.I), "excited", 0.7),
+    (re.compile(r"\b(?:urgent|asap|hurry|quickly|right now|ship it)\b", re.I), "rushed", 0.6),
+    (re.compile(r"\b(?:whatever|fine|ok|sure|i guess)\b", re.I), "disengaged", 0.3),
+    (re.compile(r"\b(?:too (?:much|long|slow|fast|verbose|brief))\b", re.I), "style_friction", 0.6),
+]
+
+
+def _infer_user_state(text: str) -> tuple[str, float]:
+    """Infer the user's emotional state from their message.
+
+    Returns (state_name, confidence). Falls back to ("neutral", 0.0).
+    """
+    if not text:
+        return ("neutral", 0.0)
+
+    best_state = "neutral"
+    best_score = 0.0
+
+    for pattern, state, weight in _USER_STATE_PATTERNS:
+        if pattern.search(text):
+            if weight > best_score:
+                best_state = state
+                best_score = weight
+
+    return (best_state, best_score)
+
+
+def record_observation(
+    *,
+    human_id: str,
+    user_message: str,
+    traits_active: dict[str, float],
+    state_db: StateDB,
+) -> dict[str, Any]:
+    """Record a personality observation after an interaction.
+
+    Stores what traits were active and what the user's inferred state was.
+    Used later by self-evolution to identify what's working.
+    """
+    user_state, confidence = _infer_user_state(user_message)
+
+    observation = {
+        "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "user_state": user_state,
+        "confidence": round(confidence, 2),
+        "traits": {k: round(v, 3) for k, v in traits_active.items()},
+    }
+
+    # Load existing observations
+    obs_key = f"personality:{human_id}:observations"
+    existing: list[dict[str, Any]] = []
+    try:
+        with state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+                (obs_key,),
+            ).fetchone()
+        if row and row["value"]:
+            data = json.loads(row["value"])
+            existing = data.get("observations", []) if isinstance(data, dict) else []
+    except Exception:
+        pass
+
+    # Append and trim to window
+    existing.append(observation)
+    if len(existing) > _OBSERVATION_WINDOW:
+        existing = existing[-_OBSERVATION_WINDOW:]
+
+    # Save
+    payload = json.dumps({"observations": existing}, sort_keys=True)
+    with state_db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO runtime_state(state_key, value)
+            VALUES (?, ?)
+            ON CONFLICT(state_key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
+            """,
+            (obs_key, payload),
+        )
+        conn.commit()
+
+    return observation
+
+
+# ── Self-evolution ──
+
+# How much a single evolution cycle can shift a trait
+_EVOLUTION_STEP = 0.05
+# Minimum observations before evolution triggers
+_EVOLUTION_MIN_OBSERVATIONS = 10
+
+# State → trait signal mapping: if users are in this state, these traits
+# should be nudged in this direction to improve the interaction
+_STATE_TRAIT_SIGNALS: dict[str, dict[str, float]] = {
+    "frustrated": {"warmth": 0.5, "pacing": -0.3, "assertiveness": -0.2},
+    "confused": {"directness": -0.5, "pacing": -0.5},
+    "satisfied": {},  # positive signal — reinforce current traits
+    "excited": {},  # positive signal
+    "rushed": {"directness": 0.3, "pacing": 0.5},
+    "disengaged": {"playfulness": 0.3, "warmth": 0.3},
+    "style_friction": {},  # detected by NL preferences, not auto-adjusted
+    "curious": {"pacing": -0.2},  # slow down to explain
+}
+
+
+def maybe_evolve_traits(
+    *,
+    human_id: str,
+    state_db: StateDB,
+) -> dict[str, float] | None:
+    """Analyze accumulated observations and apply small trait adjustments.
+
+    Returns the evolution deltas applied, or None if no evolution occurred.
+    Only runs when enough observations have accumulated.
+    Evolution deltas are bounded to +-_EVOLUTION_STEP per trait per cycle.
+    """
+    obs_key = f"personality:{human_id}:observations"
+    try:
+        with state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+                (obs_key,),
+            ).fetchone()
+        if not row or not row["value"]:
+            return None
+        data = json.loads(row["value"])
+        observations = data.get("observations", []) if isinstance(data, dict) else []
+    except Exception:
+        return None
+
+    if len(observations) < _EVOLUTION_MIN_OBSERVATIONS:
+        return None
+
+    # Count state occurrences weighted by confidence
+    state_weights: dict[str, float] = {}
+    total_weight = 0.0
+    for obs in observations:
+        state = obs.get("user_state", "neutral")
+        conf = obs.get("confidence", 0.0)
+        if state != "neutral" and conf > 0.3:
+            state_weights[state] = state_weights.get(state, 0.0) + conf
+            total_weight += conf
+
+    if total_weight < 2.0:
+        # Not enough signal to evolve
+        return None
+
+    # Compute trait adjustment signals
+    trait_signals: dict[str, float] = {}
+    for state, weight in state_weights.items():
+        signals = _STATE_TRAIT_SIGNALS.get(state, {})
+        normalized_weight = weight / total_weight
+        for trait, direction in signals.items():
+            trait_signals[trait] = trait_signals.get(trait, 0.0) + direction * normalized_weight
+
+    if not trait_signals:
+        return None
+
+    # Clamp each signal to evolution step size
+    evolution_deltas: dict[str, float] = {}
+    for trait, signal in trait_signals.items():
+        if abs(signal) < 0.1:
+            continue  # below noise threshold
+        clamped = max(-_EVOLUTION_STEP, min(_EVOLUTION_STEP, signal * _EVOLUTION_STEP))
+        evolution_deltas[trait] = round(clamped, 4)
+
+    if not evolution_deltas:
+        return None
+
+    # Apply evolution deltas to existing user deltas
+    existing = _load_user_trait_deltas(human_id=human_id, state_db=state_db)
+    merged = dict(existing)
+    for trait, delta in evolution_deltas.items():
+        merged[trait] = max(-0.5, min(0.5, merged.get(trait, 0.0) + delta))
+
+    _save_user_trait_deltas(human_id=human_id, deltas=merged, state_db=state_db)
+
+    # Log the evolution event
+    _record_evolution_event(
+        human_id=human_id,
+        state_db=state_db,
+        evolution_deltas=evolution_deltas,
+        state_weights=state_weights,
+        observation_count=len(observations),
+    )
+
+    # Clear observations after evolution (start fresh)
+    with state_db.connect() as conn:
+        conn.execute(
+            "DELETE FROM runtime_state WHERE state_key = ?",
+            (obs_key,),
+        )
+        conn.commit()
+
+    return evolution_deltas
+
+
+def _record_evolution_event(
+    *,
+    human_id: str,
+    state_db: StateDB,
+    evolution_deltas: dict[str, float],
+    state_weights: dict[str, float],
+    observation_count: int,
+) -> None:
+    """Record an evolution event for auditability."""
+    log_key = f"personality:{human_id}:evolution_log"
+    event = {
+        "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "deltas": evolution_deltas,
+        "state_weights": {k: round(v, 2) for k, v in state_weights.items()},
+        "observation_count": observation_count,
+    }
+
+    existing_log: list[dict[str, Any]] = []
+    try:
+        with state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+                (log_key,),
+            ).fetchone()
+        if row and row["value"]:
+            data = json.loads(row["value"])
+            existing_log = data.get("events", []) if isinstance(data, dict) else []
+    except Exception:
+        pass
+
+    existing_log.append(event)
+    # Keep last 20 evolution events
+    if len(existing_log) > 20:
+        existing_log = existing_log[-20:]
+
+    payload = json.dumps({"events": existing_log}, sort_keys=True)
+    with state_db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO runtime_state(state_key, value)
+            VALUES (?, ?)
+            ON CONFLICT(state_key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
+            """,
+            (log_key, payload),
+        )
+        conn.commit()

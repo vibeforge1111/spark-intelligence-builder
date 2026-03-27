@@ -173,7 +173,14 @@ def add_channel(
     if metadata:
         record.update(metadata)
     config["channels"]["records"][channel_id] = record
-    config_manager.save(config)
+    config_manager.save(
+        config,
+        actor_id="local-operator",
+        actor_type="operator",
+        reason_code="channel_add_or_update",
+        target_path=f"channels.records.{channel_id}",
+        request_source="channel.service.add_channel",
+    )
 
     with state_db.connect() as conn:
         conn.execute(
@@ -216,7 +223,14 @@ def set_channel_status(
     if not isinstance(record, dict):
         raise ValueError(f"Unknown channel '{channel_id}'.")
     record["status"] = status
-    config_manager.save(config)
+    config_manager.save(
+        config,
+        actor_id="local-operator",
+        actor_type="operator",
+        reason_code="channel_status_update",
+        target_path=f"channels.records.{channel_id}.status",
+        request_source="channel.service.set_channel_status",
+    )
 
     with state_db.connect() as conn:
         row = conn.execute(

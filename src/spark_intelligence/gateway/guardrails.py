@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
-import re
 import time
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.observability.policy import looks_secret_like
+from spark_intelligence.observability.store import record_event, record_quarantine
 from spark_intelligence.state.db import StateDB
 
 
@@ -84,10 +85,18 @@ def apply_inbound_rate_limit(
 
 def prepare_outbound_text(
     *,
+    config_manager: ConfigManager | None = None,
+    state_db: StateDB | None = None,
     text: str,
     bridge_mode: str | None,
     max_reply_chars: int,
     redact_secret_like_replies: bool,
+    run_id: str | None = None,
+    request_id: str | None = None,
+    trace_ref: str | None = None,
+    channel_id: str | None = None,
+    session_id: str | None = None,
+    actor_id: str | None = None,
 ) -> dict[str, Any]:
     actions: list[str] = []
     cleaned = "".join(character for character in text if character == "\n" or character == "\t" or ord(character) >= 32)
@@ -98,6 +107,36 @@ def prepare_outbound_text(
         cleaned = "Spark Intelligence hit an internal bridge error. The operator can inspect local gateway traces."
         actions.append("replace_bridge_error")
     if redact_secret_like_replies and looks_secret_like(cleaned):
+        if state_db is not None:
+            event_id = record_event(
+                state_db,
+                event_type="secret_boundary_violation",
+                component="outbound_guardrails",
+                summary="Secret-like material was blocked before outbound delivery.",
+                run_id=run_id,
+                request_id=request_id,
+                trace_ref=trace_ref,
+                channel_id=channel_id,
+                session_id=session_id,
+                actor_id=actor_id,
+                reason_code="outbound_secret_like_reply",
+                severity="high",
+                facts={"channel_id": channel_id, "blocked_stage": "delivery"},
+                provenance={"source_kind": "outbound_text"},
+            )
+            record_quarantine(
+                state_db,
+                event_id=event_id,
+                run_id=run_id,
+                request_id=request_id,
+                source_kind="outbound_text",
+                source_ref=channel_id,
+                policy_domain="outbound_guardrails",
+                reason_code="outbound_secret_like_reply",
+                summary="Outbound delivery content was quarantined after secret-like detection.",
+                payload_preview=cleaned[:160],
+                provenance={"trace_ref": trace_ref, "session_id": session_id, "channel_id": channel_id},
+            )
         cleaned = "Spark Intelligence withheld this reply because it appeared to contain sensitive credential material. The operator can inspect local traces."
         actions.append("block_secret_like_reply")
     if len(cleaned) > max(max_reply_chars, 32):
@@ -107,19 +146,6 @@ def prepare_outbound_text(
         cleaned = "Spark Intelligence produced an empty reply."
         actions.append("replace_empty_reply")
     return {"text": cleaned, "actions": actions}
-
-
-def looks_secret_like(text: str) -> bool:
-    patterns = [
-        r"(?i)bearer\s+[A-Za-z0-9._-]{20,}",
-        r"(?m)^[A-Z0-9_]{3,}=(?:ghp_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,}|[0-9]{7,}:[A-Za-z0-9_-]{20,})$",
-        r"ghp_[A-Za-z0-9]{20,}",
-        r"sk-[A-Za-z0-9]{20,}",
-        r"\b[0-9]{7,}:[A-Za-z0-9_-]{20,}\b",
-    ]
-    return any(re.search(pattern, text) for pattern in patterns)
-
-
 def set_runtime_state_value(*, state_db: StateDB, state_key: str, value: str) -> None:
     with state_db.connect() as conn:
         conn.execute(
