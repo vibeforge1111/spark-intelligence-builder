@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -62,9 +63,11 @@ def evaluate_stop_ship_issues(
         _plugin_provenance_issue(config_manager=config_manager, state_db=state_db),
         _secret_boundary_issue(state_db),
         _keepability_issue(state_db),
+        _bridge_residue_persistence_issue(state_db),
         _environment_parity_issue(state_db),
         _daemon_reentry_issue(config_manager=config_manager),
         _external_execution_governance_issue(),
+        _bridge_output_governance_issue(),
     ]
     if emit_contradictions:
         for issue in issues:
@@ -440,6 +443,70 @@ def _environment_parity_issue(state_db: StateDB) -> StopShipIssue:
     )
 
 
+def _bridge_residue_persistence_issue(state_db: StateDB) -> StopShipIssue:
+    with state_db.connect() as conn:
+        suspicious_rows = conn.execute(
+            """
+            SELECT state_key
+            FROM runtime_state
+            WHERE state_key LIKE 'researcher:%reply%'
+               OR state_key LIKE 'researcher:%response%'
+            ORDER BY state_key
+            """
+        ).fetchall()
+        failure_row = conn.execute(
+            "SELECT value FROM runtime_state WHERE state_key = 'researcher:last_failure' LIMIT 1"
+        ).fetchone()
+    if suspicious_rows:
+        return StopShipIssue(
+            name="stop_ship_bridge_residue_persistence",
+            ok=False,
+            detail=(
+                "Researcher bridge runtime_state contains reply-like persistence keys: "
+                + ", ".join(str(row["state_key"]) for row in suspicious_rows[:4])
+            ),
+            severity="high",
+        )
+    if not failure_row or not failure_row["value"]:
+        return StopShipIssue(
+            name="stop_ship_bridge_residue_persistence",
+            ok=True,
+            detail="No durable bridge failure payload is present yet.",
+            severity="high",
+        )
+    try:
+        payload = json.loads(str(failure_row["value"]))
+    except json.JSONDecodeError:
+        return StopShipIssue(
+            name="stop_ship_bridge_residue_persistence",
+            ok=False,
+            detail="Researcher bridge failure payload is not valid JSON.",
+            severity="high",
+        )
+    message = str(payload.get("message") or "")
+    suspicious_tokens = (
+        "[spark researcher",
+        "trace:",
+        "packet_refs",
+        "memory_refs",
+        "selected_packet_ids",
+        "quarantine_id",
+    )
+    if any(token in message.lower() for token in suspicious_tokens):
+        return StopShipIssue(
+            name="stop_ship_bridge_residue_persistence",
+            ok=False,
+            detail="Researcher bridge failure payload persists raw reply/debug residue.",
+            severity="high",
+        )
+    return StopShipIssue(
+        name="stop_ship_bridge_residue_persistence",
+        ok=True,
+        detail="Bridge failure persistence is sanitized for operator-status use only.",
+        severity="high",
+    )
+
+
 def _daemon_reentry_issue(*, config_manager: ConfigManager) -> StopShipIssue:
     enabled = bool(config_manager.get_path("runtime.autostart.enabled", default=False))
     platform = config_manager.get_path("runtime.autostart.platform", default=None)
@@ -499,6 +566,34 @@ def _external_execution_governance_issue() -> StopShipIssue:
     )
 
 
+def _bridge_output_governance_issue() -> StopShipIssue:
+    allowed_reply_paths = {
+        "src/spark_intelligence/researcher_bridge/advisory.py",
+        "src/spark_intelligence/adapters/telegram/runtime.py",
+        "src/spark_intelligence/gateway/simulated_dm.py",
+    }
+    unexpected_reply_consumers = _find_source_pattern_paths(
+        "reply_text_attribute",
+        allowed_paths=allowed_reply_paths,
+    )
+    if unexpected_reply_consumers:
+        return StopShipIssue(
+            name="stop_ship_bridge_output_governance",
+            ok=False,
+            detail=(
+                "Raw researcher bridge reply consumption appears outside immediate delivery surfaces: "
+                + ", ".join(unexpected_reply_consumers[:4])
+            ),
+            severity="high",
+        )
+    return StopShipIssue(
+        name="stop_ship_bridge_output_governance",
+        ok=True,
+        detail="Raw bridge replies are limited to immediate delivery surfaces.",
+        severity="high",
+    )
+
+
 def _find_source_pattern_paths(pattern: str, *, allowed_paths: set[str]) -> list[str]:
     repo_root = Path(__file__).resolve().parents[3]
     src_root = repo_root / "src"
@@ -530,6 +625,11 @@ def _source_contains_governed_pattern(text: str, pattern: str) -> bool:
     if pattern == "execute_direct_provider_prompt(":
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "execute_direct_provider_prompt":
+                return True
+        return False
+    if pattern == "reply_text_attribute":
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr == "reply_text":
                 return True
         return False
     return pattern in text

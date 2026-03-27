@@ -36,6 +36,8 @@ def resolve_simulated_dm(
     trace_ref = None
     bridge_mode = None
     attachment_context = None
+    output_keepability = None
+    promotion_disposition = None
     if resolution.allowed and resolution.agent_id and resolution.human_id and resolution.session_id:
         bridge_result = build_researcher_reply(
             config_manager=config_manager,
@@ -52,6 +54,8 @@ def resolve_simulated_dm(
         trace_ref = bridge_result.trace_ref
         bridge_mode = bridge_result.mode
         attachment_context = bridge_result.attachment_context
+        output_keepability = bridge_result.output_keepability
+        promotion_disposition = bridge_result.promotion_disposition
     return SimulatedDmBridgeResult(
         ok=resolution.allowed,
         decision=resolution.decision,
@@ -64,5 +68,7 @@ def resolve_simulated_dm(
             "trace_ref": trace_ref,
             "bridge_mode": bridge_mode,
             "attachment_context": attachment_context,
+            "output_keepability": output_keepability,
+            "promotion_disposition": promotion_disposition,
         },
     )

@@ -89,6 +89,8 @@ Structural now:
 - outbound secret-like replies now emit typed violation and quarantine records instead of only trace-side evidence
 - researcher replies and active-chip guidance now strip explicit operational residue such as trace refs, packet refs, memory refs, and quarantine ids; stripped residue is quarantined when it appeared in a reply
 - researcher bridge outputs and Telegram bridge deliveries now carry explicit keepability class plus promotion disposition, and stop-ship fails if ephemeral or operator-debug material is marked promotion-eligible
+- durable researcher failure status now stores sanitized operator-status summaries instead of raw bridge reply text, and stop-ship fails if raw bridge reply residue is persisted locally
+- raw researcher bridge reply consumption is now constrained to immediate delivery surfaces, with source-scan stop-ship checks for new local promotion-style consumers
 - doctor and operator security now expose explicit stop-ship failures
 
 Still compensating:
@@ -103,6 +105,7 @@ Still unsafe or incomplete before launch:
 
 - pre-model trust-boundary policy is still narrower than the doctrine wants; the repo now screens chip guidance, but not every future tool-result or attachment pathway
 - keepability discipline is now explicit on bridge outputs, but end-to-end memory promotion still depends on downstream memory surfaces honoring the same non-promotable classes
+- this repo now blocks obvious local pseudo-memory regressions, but it still does not prove the separate memory chip honors the same keepability classes end to end
 - JSONL traces are still kept for ops visibility, so operators can still confuse raw evidence with canonical lineage if docs and surfaces drift
 - no part of this change authorizes broad auto-repair; repair remains bounded and operator-mediated
 

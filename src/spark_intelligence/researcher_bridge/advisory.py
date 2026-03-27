@@ -849,6 +849,15 @@ def _bridge_output_classification(*, mode: str, routing_decision: str | None) ->
     return ("ephemeral_context", "not_promotable")
 
 
+def _runtime_safe_bridge_failure_message(result: ResearcherBridgeResult) -> str:
+    failure_kind = str(result.routing_decision or result.mode or "bridge_failure")
+    if result.output_keepability == "operator_debug_only":
+        return (
+            f"{failure_kind} recorded. Inspect trace and event history for operator-only details."
+        )
+    return str(result.reply_text or "").strip()
+
+
 def researcher_bridge_status(*, config_manager: ConfigManager, state_db: StateDB) -> ResearcherBridgeStatus:
     attachment_context = build_attachment_context(config_manager)
     runtime_root, runtime_source = discover_researcher_runtime_root(config_manager)
@@ -930,9 +939,13 @@ def record_researcher_bridge_result(*, state_db: StateDB, result: ResearcherBrid
                     {
                         "mode": result.mode,
                         "request_id": result.request_id,
+                        "trace_ref": result.trace_ref,
+                        "routing_decision": result.routing_decision,
                         "runtime_root": result.runtime_root,
                         "config_path": result.config_path,
-                        "message": result.reply_text,
+                        "message": _runtime_safe_bridge_failure_message(result),
+                        "output_keepability": result.output_keepability,
+                        "promotion_disposition": result.promotion_disposition,
                         "recorded_at": _utc_now_iso(),
                     },
                     sort_keys=True,

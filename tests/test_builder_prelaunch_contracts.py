@@ -19,7 +19,11 @@ from spark_intelligence.personality.loader import (
     maybe_evolve_traits,
     record_observation,
 )
-from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
+from spark_intelligence.researcher_bridge.advisory import (
+    ResearcherBridgeResult,
+    build_researcher_reply,
+    record_researcher_bridge_result,
+)
 
 from tests.test_support import SparkTestCase
 
@@ -342,6 +346,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
             side_effect=[
                 ["src/spark_intelligence/future_tooling/raw_exec.py"],
                 [],
+                [],
             ],
         ):
             issues = {
@@ -372,6 +377,72 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
         self.assertFalse(issues["stop_ship_keepability_rules"].ok)
         self.assertIn("promotion-eligible", issues["stop_ship_keepability_rules"].detail)
+
+    def test_record_researcher_bridge_result_sanitizes_failure_runtime_message(self) -> None:
+        record_researcher_bridge_result(
+            state_db=self.state_db,
+            result=ResearcherBridgeResult(
+                request_id="req-failure-runtime",
+                reply_text="[Spark Researcher bridge error] trace:internal memory_refs: mem-1",
+                evidence_summary="External bridge failed closed.",
+                escalation_hint="bridge_error",
+                trace_ref="trace:internal",
+                mode="bridge_error",
+                runtime_root="C:/researcher",
+                config_path="C:/researcher/config.json",
+                attachment_context={},
+                routing_decision="bridge_error",
+                output_keepability="operator_debug_only",
+                promotion_disposition="not_promotable",
+            ),
+        )
+
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = 'researcher:last_failure' LIMIT 1"
+            ).fetchone()
+        self.assertIsNotNone(row)
+        payload = json.loads(row["value"])
+        self.assertEqual(payload["output_keepability"], "operator_debug_only")
+        self.assertEqual(payload["promotion_disposition"], "not_promotable")
+        self.assertNotIn("[Spark Researcher", payload["message"])
+        self.assertNotIn("trace:", payload["message"])
+        self.assertIn("Inspect trace and event history", payload["message"])
+
+    def test_stop_ship_flags_raw_bridge_residue_persistence(self) -> None:
+        with self.state_db.connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO runtime_state(state_key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                (
+                    "researcher:last_failure",
+                    json.dumps({"message": "[Spark Researcher bridge error] trace:internal memory_refs: mem-1"}),
+                ),
+            )
+            conn.commit()
+
+        issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
+        self.assertFalse(issues["stop_ship_bridge_residue_persistence"].ok)
+        self.assertIn("raw reply/debug residue", issues["stop_ship_bridge_residue_persistence"].detail)
+
+    def test_stop_ship_flags_new_bridge_reply_consumers_outside_delivery_surfaces(self) -> None:
+        with patch(
+            "spark_intelligence.observability.checks._find_source_pattern_paths",
+            side_effect=[
+                [],
+                [],
+                ["src/spark_intelligence/future_memory/promoter.py"],
+            ],
+        ):
+            issues = {
+                issue.name: issue
+                for issue in evaluate_stop_ship_issues(
+                    config_manager=self.config_manager,
+                    state_db=self.state_db,
+                )
+            }
+
+        self.assertFalse(issues["stop_ship_bridge_output_governance"].ok)
+        self.assertIn("future_memory/promoter.py", issues["stop_ship_bridge_output_governance"].detail)
 
     def test_build_researcher_reply_blocks_secret_like_model_visible_context(self) -> None:
         result = build_researcher_reply(
