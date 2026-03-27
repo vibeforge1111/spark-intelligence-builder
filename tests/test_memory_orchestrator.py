@@ -838,9 +838,7 @@ class MemoryOrchestratorTests(SparkTestCase):
 
         self.assertEqual(len(current_state_probes), 0)
         self.assertEqual(len(evidence_probes), 2)
-        self.assertEqual(len(historical_probes), 1)
-        self.assertEqual(historical_probes[0]["expected_value"], "Nova")
-        self.assertEqual(historical_probes[0]["as_of"], "2026-03-27T10:00:01Z")
+        self.assertEqual(len(historical_probes), 0)
 
     def test_shadow_replay_event_memory_omits_observation_probes(self) -> None:
         with self.state_db.connect() as conn:

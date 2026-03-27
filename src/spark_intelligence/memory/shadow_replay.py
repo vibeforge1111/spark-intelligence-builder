@@ -660,17 +660,7 @@ def _historical_probe_for_observation(
     subject = str(observation.get("subject") or "")
     predicate = str(observation.get("predicate") or "")
     if operation == "delete":
-        previous_value = _previous_non_delete_observation(observation=observation, history=history)
-        if previous_value is None:
-            return None
-        return {
-            "probe_id": f"{session_id}:historical:{index}",
-            "probe_type": "historical_state",
-            "subject": subject,
-            "predicate": predicate,
-            "as_of": previous_value.get("timestamp"),
-            "expected_value": previous_value.get("value"),
-        }
+        return None
     if distinct_value_count < 2:
         return None
     return {
@@ -715,7 +705,6 @@ def _has_later_delete(
         if str(item.get("operation") or "").strip().lower() == "delete":
             return True
     return False
-
 
 def _conversation_id(row: dict[str, Any]) -> str:
     session_id = str(row.get("session_id") or "").strip()
