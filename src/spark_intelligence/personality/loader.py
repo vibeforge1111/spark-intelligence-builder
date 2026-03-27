@@ -29,6 +29,11 @@ from typing import Any
 from uuid import uuid4
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.memory.orchestrator import (
+    delete_personality_preferences_from_memory,
+    read_personality_preferences_from_memory,
+    write_personality_preferences_to_memory,
+)
 from spark_intelligence.state.db import StateDB
 
 
@@ -303,6 +308,10 @@ def detect_and_persist_nl_preferences(
     human_id: str,
     user_message: str,
     state_db: StateDB,
+    config_manager: ConfigManager | None = None,
+    session_id: str | None = None,
+    turn_id: str | None = None,
+    channel_kind: str | None = None,
 ) -> dict[str, float] | None:
     """Detect NL personality preferences in a user message and persist them.
 
@@ -325,6 +334,20 @@ def detect_and_persist_nl_preferences(
 
     # Persist
     _save_user_trait_deltas(human_id=human_id, deltas=merged, state_db=state_db)
+    if config_manager is not None:
+        try:
+            write_personality_preferences_to_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                human_id=human_id,
+                detected_deltas=deltas,
+                merged_deltas=merged,
+                session_id=session_id,
+                turn_id=turn_id,
+                channel_kind=channel_kind,
+            )
+        except Exception:
+            pass
 
     return deltas
 
@@ -450,6 +473,9 @@ def detect_personality_query(
     human_id: str,
     state_db: StateDB,
     profile: dict[str, Any] | None = None,
+    config_manager: ConfigManager | None = None,
+    session_id: str | None = None,
+    turn_id: str | None = None,
 ) -> PersonalityQueryResult:
     """Detect if the user is asking about or managing their personality settings.
 
@@ -462,7 +488,21 @@ def detect_personality_query(
     # Check for reset
     for pattern in _QUERY_RESET_PATTERNS:
         if pattern.search(text):
+            existing_deltas = _load_user_trait_deltas(human_id=human_id, state_db=state_db)
             _clear_user_trait_deltas(human_id=human_id, state_db=state_db)
+            if config_manager is not None:
+                try:
+                    delete_personality_preferences_from_memory(
+                        config_manager=config_manager,
+                        state_db=state_db,
+                        human_id=human_id,
+                        existing_deltas=existing_deltas,
+                        session_id=session_id,
+                        turn_id=turn_id,
+                        channel_kind=None,
+                    )
+                except Exception:
+                    pass
             return PersonalityQueryResult(
                 kind="reset",
                 context_injection=(
@@ -477,7 +517,14 @@ def detect_personality_query(
     # Check for status query
     for pattern in _QUERY_STATUS_PATTERNS:
         if pattern.search(text):
-            status_text = _format_profile_status(profile, human_id=human_id, state_db=state_db)
+            status_text = _format_profile_status(
+                profile,
+                human_id=human_id,
+                state_db=state_db,
+                config_manager=config_manager,
+                session_id=session_id,
+                turn_id=turn_id,
+            )
             return PersonalityQueryResult(
                 kind="status",
                 context_injection=(
@@ -523,6 +570,9 @@ def _format_profile_status(
     *,
     human_id: str,
     state_db: StateDB,
+    config_manager: ConfigManager | None = None,
+    session_id: str | None = None,
+    turn_id: str | None = None,
 ) -> str:
     """Format current personality status for the user."""
     if not profile:
@@ -552,6 +602,26 @@ def _format_profile_status(
             lines.append(f"  {trait}: {sign}{delta:.2f}")
     else:
         lines.append("No user adjustments applied.")
+
+    if config_manager is not None:
+        try:
+            memory_state = read_personality_preferences_from_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                human_id=human_id,
+                session_id=session_id,
+                turn_id=turn_id,
+            )
+            if not memory_state.abstained and not memory_state.shadow_only and memory_state.records:
+                lines.append("Memory-backed current-state facts:")
+                for record in memory_state.records:
+                    predicate = str(record.get("predicate") or "")
+                    value = record.get("value")
+                    trait = predicate.rsplit(".", 1)[-1] if "." in predicate else predicate
+                    if trait:
+                        lines.append(f"  {trait}: {value}")
+        except Exception:
+            pass
 
     return "\n".join(lines)
 

@@ -117,6 +117,13 @@ class ConfigManager:
                     "evolver_state_path": None,
                     "nl_preference_detection": True,
                 },
+                "memory": {
+                    "enabled": False,
+                    "shadow_mode": True,
+                    "sdk_module": "spark_memory_sdk",
+                    "write_personality_preferences": True,
+                    "read_personality_preferences": True,
+                },
             },
             "security": {
                 "dangerous_approval_mode": "operator_only",

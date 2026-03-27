@@ -1041,6 +1041,9 @@ def build_researcher_reply(
             human_id=human_id,
             state_db=state_db,
             profile=personality_profile,
+            config_manager=config_manager,
+            session_id=session_id,
+            turn_id=request_id,
         )
         if query_result.kind != "none":
             personality_query_kind = query_result.kind
@@ -1064,6 +1067,10 @@ def build_researcher_reply(
                 human_id=human_id,
                 user_message=user_message,
                 state_db=state_db,
+                config_manager=config_manager,
+                session_id=session_id,
+                turn_id=request_id,
+                channel_kind=channel_kind,
             )
             if detected_deltas:
                 # Build acknowledgment context for the LLM
