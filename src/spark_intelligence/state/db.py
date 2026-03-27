@@ -475,6 +475,27 @@ SCHEMA_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS memory_lane_records (
+        lane_record_id TEXT PRIMARY KEY,
+        recorded_at TEXT NOT NULL,
+        event_id TEXT NOT NULL UNIQUE,
+        component TEXT NOT NULL,
+        artifact_kind TEXT NOT NULL,
+        source_kind TEXT NOT NULL,
+        source_ref TEXT,
+        run_id TEXT,
+        request_id TEXT,
+        trace_ref TEXT,
+        artifact_lane TEXT NOT NULL,
+        promotion_target_lane TEXT,
+        keepability TEXT,
+        promotion_disposition TEXT,
+        status TEXT NOT NULL,
+        reason_code TEXT,
+        evidence_json TEXT
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS job_records (
         job_id TEXT PRIMARY KEY,
         job_kind TEXT NOT NULL,
@@ -521,6 +542,8 @@ SCHEMA_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_contradiction_records_reason_code ON contradiction_records(reason_code, last_seen_at)",
     "CREATE INDEX IF NOT EXISTS idx_policy_gate_records_recorded_at ON policy_gate_records(recorded_at)",
     "CREATE INDEX IF NOT EXISTS idx_policy_gate_records_gate_name ON policy_gate_records(gate_name, recorded_at)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_lane_records_recorded_at ON memory_lane_records(recorded_at)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_lane_records_artifact_lane ON memory_lane_records(artifact_lane, recorded_at)",
 ]
 
 

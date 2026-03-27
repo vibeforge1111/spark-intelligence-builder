@@ -14,6 +14,7 @@ from spark_intelligence.observability.store import (
     latest_snapshots_by_surface,
     open_runs,
     recent_delivery_records,
+    recent_memory_lane_records,
     recent_config_mutations,
     recent_contradictions,
     recent_provenance_mutations,
@@ -43,6 +44,14 @@ NON_PROMOTABLE_DISPOSITIONS = {
     "quarantined",
     "quarantined_blocked",
 }
+
+
+def _expected_artifact_lane(keepability: str) -> str:
+    if keepability == "operator_debug_only":
+        return "ops_transcripts"
+    if keepability == "user_preference_ephemeral":
+        return "user_history"
+    return "execution_evidence"
 
 
 @dataclass(frozen=True)
@@ -490,6 +499,26 @@ def _keepability_issue(state_db: StateDB) -> StopShipIssue:
         promotion_disposition = str(facts.get("promotion_disposition") or "")
         if keepability in NON_PROMOTABLE_KEEPABILITY and promotion_disposition not in NON_PROMOTABLE_DISPOSITIONS:
             invalid_promotions.append(event)
+    lane_records = recent_memory_lane_records(state_db, limit=400)
+    lane_records_by_event = {
+        str(record.get("event_id")): record
+        for record in lane_records
+        if str(record.get("event_id") or "")
+    }
+    missing_lane_records = [
+        event for event in classified_events if str(event.get("event_id") or "") not in lane_records_by_event
+    ]
+    invalid_lane_records = []
+    for event in classified_events:
+        event_id = str(event.get("event_id") or "")
+        lane_record = lane_records_by_event.get(event_id)
+        if not lane_record:
+            continue
+        facts = event.get("facts_json") or {}
+        keepability = str(facts.get("keepability") or "")
+        artifact_lane = str(lane_record.get("artifact_lane") or "")
+        if artifact_lane != _expected_artifact_lane(keepability):
+            invalid_lane_records.append(lane_record)
     if missing:
         return StopShipIssue(
             name="stop_ship_keepability_rules",
@@ -510,10 +539,32 @@ def _keepability_issue(state_db: StateDB) -> StopShipIssue:
             ),
             severity="high",
         )
+    if missing_lane_records:
+        return StopShipIssue(
+            name="stop_ship_keepability_rules",
+            ok=False,
+            detail=(
+                f"{len(missing_lane_records)} classified influence or bridge output event(s) "
+                "lack typed memory-lane records."
+            ),
+            severity="high",
+        )
+    if invalid_lane_records:
+        return StopShipIssue(
+            name="stop_ship_keepability_rules",
+            ok=False,
+            detail=(
+                f"{len(invalid_lane_records)} classified artifact(s) were stored in the wrong memory lane."
+            ),
+            severity="high",
+        )
     return StopShipIssue(
         name="stop_ship_keepability_rules",
         ok=True,
-        detail="Operational influence and bridge outputs include non-promotable keepability classification.",
+        detail=(
+            "Operational influence and bridge outputs include non-promotable keepability "
+            "classification and typed memory-lane labels."
+        ),
         severity="high",
     )
 

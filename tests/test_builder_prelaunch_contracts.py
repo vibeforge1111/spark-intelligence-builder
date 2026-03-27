@@ -16,6 +16,7 @@ from spark_intelligence.observability.store import (
     latest_events_by_type,
     open_run,
     recent_contradictions,
+    recent_memory_lane_records,
     recent_policy_gate_records,
     record_environment_snapshot,
     record_event,
@@ -411,6 +412,67 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(snapshot["top_level_state"], "parity_broken")
         self.assertEqual(snapshot["contradictions"]["counts"]["open"], 0)
         self.assertEqual(snapshot["panels"]["provenance_and_quarantine"]["counts"]["policy_gate_blocks"], 0)
+        self.assertEqual(snapshot["panels"]["memory_lane_hygiene"]["counts"]["promotion_attempts"], 0)
+
+    def test_classified_bridge_output_creates_typed_memory_lane_record(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="typed bridge result",
+            request_id="req-memory-lane",
+            trace_ref="trace:req-memory-lane",
+            actor_id="researcher_bridge",
+            facts={
+                "bridge_mode": "external_typed",
+                "routing_decision": "researcher_advisory",
+                "keepability": "ephemeral_context",
+                "promotion_disposition": "not_promotable",
+            },
+        )
+
+        lane_records = recent_memory_lane_records(self.state_db, limit=10)
+
+        self.assertEqual(len(lane_records), 1)
+        self.assertEqual(lane_records[0]["artifact_kind"], "bridge_output")
+        self.assertEqual(lane_records[0]["artifact_lane"], "execution_evidence")
+        self.assertEqual(lane_records[0]["promotion_target_lane"], "durable_intelligence_memory")
+        self.assertEqual(lane_records[0]["status"], "blocked")
+
+    def test_watchtower_memory_lane_panel_uses_typed_lane_records(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="plugin_or_chip_influence_recorded",
+            component="researcher_bridge",
+            summary="operator debug influence",
+            request_id="req-memory-watchtower",
+            actor_id="researcher_bridge",
+            facts={"keepability": "operator_debug_only"},
+            provenance={"source_kind": "chip_hook", "source_ref": "chip:test"},
+        )
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="bridge result",
+            request_id="req-memory-watchtower",
+            trace_ref="trace:req-memory-watchtower",
+            actor_id="researcher_bridge",
+            facts={
+                "keepability": "ephemeral_context",
+                "promotion_disposition": "not_promotable",
+            },
+        )
+
+        snapshot = build_watchtower_snapshot(self.state_db)
+        panel = snapshot["panels"]["memory_lane_hygiene"]
+
+        self.assertEqual(panel["counts"]["promotion_attempts"], 2)
+        self.assertEqual(panel["counts"]["blocked_promotions"], 2)
+        self.assertEqual(panel["counts"]["ops_residue_volume"], 1)
+        self.assertTrue(panel["lane_labels_present"]["execution_evidence"])
+        self.assertTrue(panel["lane_labels_present"]["ops_transcripts"])
+        self.assertFalse(panel["lane_labels_present"]["durable_intelligence_memory"])
 
     def test_build_researcher_reply_records_chip_influence_provenance(self) -> None:
         self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
@@ -638,6 +700,52 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
         self.assertFalse(issues["stop_ship_keepability_rules"].ok)
         self.assertIn("promotion-eligible", issues["stop_ship_keepability_rules"].detail)
+
+    def test_stop_ship_flags_missing_typed_memory_lane_record(self) -> None:
+        with self.state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id,
+                    event_type,
+                    truth_kind,
+                    target_surface,
+                    component,
+                    actor_id,
+                    evidence_lane,
+                    severity,
+                    status,
+                    summary,
+                    facts_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-manual-memory-gap",
+                    "tool_result_received",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "researcher_bridge",
+                    "test",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "manually inserted classified event",
+                    json.dumps(
+                        {
+                            "routing_decision": "researcher_advisory",
+                            "keepability": "ephemeral_context",
+                            "promotion_disposition": "not_promotable",
+                        },
+                        sort_keys=True,
+                    ),
+                ),
+            )
+            conn.commit()
+
+        issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
+        self.assertFalse(issues["stop_ship_keepability_rules"].ok)
+        self.assertIn("lack typed memory-lane records", issues["stop_ship_keepability_rules"].detail)
 
     def test_stop_ship_flags_bridge_backed_webhook_delivery_without_keepability(self) -> None:
         record_event(

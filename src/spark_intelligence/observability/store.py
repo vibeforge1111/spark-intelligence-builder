@@ -416,6 +416,19 @@ def record_event(
             facts=normalized_facts,
             provenance=normalized_provenance,
         )
+        _mirror_memory_lane_event(
+            conn,
+            event_id=event_id,
+            event_type=event_type,
+            recorded_at=recorded_at,
+            component=component,
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            reason_code=reason_code,
+            facts=normalized_facts,
+            provenance=normalized_provenance,
+        )
         conn.commit()
     _record_follow_on_policy_block_if_needed(
         state_db,
@@ -979,6 +992,27 @@ def recent_policy_gate_records(
         query += " WHERE gate_name = ?"
         params.append(gate_name)
     query += " ORDER BY recorded_at DESC, policy_gate_id DESC LIMIT ?"
+    params.append(limit)
+    with state_db.connect() as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+    return [_row_to_dict(row) for row in rows]
+
+
+def recent_memory_lane_records(
+    state_db: StateDB,
+    *,
+    limit: int = 50,
+    artifact_lane: str | None = None,
+) -> list[dict[str, Any]]:
+    query = """
+        SELECT *
+        FROM memory_lane_records
+    """
+    params: list[Any] = []
+    if artifact_lane:
+        query += " WHERE artifact_lane = ?"
+        params.append(artifact_lane)
+    query += " ORDER BY recorded_at DESC, lane_record_id DESC LIMIT ?"
     params.append(limit)
     with state_db.connect() as conn:
         rows = conn.execute(query, tuple(params)).fetchall()
@@ -1647,6 +1681,88 @@ def _mirror_policy_gate_event(
     )
 
 
+def _mirror_memory_lane_event(
+    conn: Any,
+    *,
+    event_id: str,
+    event_type: str,
+    recorded_at: str,
+    component: str,
+    run_id: str | None,
+    request_id: str | None,
+    trace_ref: str | None,
+    reason_code: str | None,
+    facts: dict[str, Any],
+    provenance: dict[str, Any],
+) -> None:
+    keepability = str(facts.get("keepability") or "")
+    promotion_disposition = _normalized_promotion_disposition(
+        facts.get("promotion_disposition"),
+        keepability,
+    )
+    if not keepability and not promotion_disposition:
+        return
+    artifact_lane = _artifact_lane_from_keepability(keepability)
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO memory_lane_records(
+            lane_record_id,
+            recorded_at,
+            event_id,
+            component,
+            artifact_kind,
+            source_kind,
+            source_ref,
+            run_id,
+            request_id,
+            trace_ref,
+            artifact_lane,
+            promotion_target_lane,
+            keepability,
+            promotion_disposition,
+            status,
+            reason_code,
+            evidence_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            f"mln:{event_id}",
+            recorded_at,
+            event_id,
+            component,
+            _artifact_kind_for_memory_lane(component=component, event_type=event_type),
+            str(provenance.get("source_kind") or component or "classified_artifact"),
+            str(
+                provenance.get("source_ref")
+                or facts.get("source_ref")
+                or request_id
+                or trace_ref
+                or run_id
+                or ""
+            )
+            or None,
+            run_id,
+            request_id,
+            trace_ref,
+            artifact_lane,
+            _promotion_target_lane(promotion_disposition),
+            keepability or None,
+            promotion_disposition or None,
+            _promotion_record_status(promotion_disposition),
+            reason_code,
+            _json_or_none(
+                {
+                    "component": component,
+                    "event_type": event_type,
+                    "keepability": keepability or None,
+                    "promotion_disposition": promotion_disposition or None,
+                }
+            ),
+        ),
+    )
+
+
 def _record_follow_on_policy_block_if_needed(
     state_db: StateDB,
     *,
@@ -1713,6 +1829,50 @@ def _delivery_failure_family(error_value: Any) -> str | None:
     if "network" in message or "connection" in message:
         return "network_error"
     return "runtime_error"
+
+
+def _normalized_promotion_disposition(value: Any, keepability: str) -> str:
+    disposition = str(value or "").strip()
+    if disposition:
+        return disposition
+    if keepability in NON_PROMOTABLE_KEEPABILITY:
+        return "not_promotable"
+    return ""
+
+
+def _artifact_lane_from_keepability(value: str) -> str:
+    keepability = str(value or "")
+    if keepability == "operator_debug_only":
+        return "ops_transcripts"
+    if keepability == "user_preference_ephemeral":
+        return "user_history"
+    if keepability == "durable_intelligence_memory":
+        return "durable_intelligence_memory"
+    return "execution_evidence"
+
+
+def _promotion_target_lane(disposition: str) -> str | None:
+    if not disposition:
+        return None
+    return "durable_intelligence_memory"
+
+
+def _promotion_record_status(disposition: str) -> str:
+    if disposition in NON_PROMOTABLE_DISPOSITIONS:
+        return "blocked"
+    if disposition:
+        return "candidate"
+    return "observed"
+
+
+def _artifact_kind_for_memory_lane(*, component: str, event_type: str) -> str:
+    if event_type == "plugin_or_chip_influence_recorded":
+        return "operational_influence"
+    if component == "researcher_bridge" and event_type in {"tool_result_received", "dispatch_failed"}:
+        return "bridge_output"
+    if event_type in {"delivery_attempted", "delivery_succeeded", "delivery_failed"}:
+        return "delivery_output"
+    return "classified_artifact"
 
 
 def _trust_level_from_keepability(value: Any) -> str:
@@ -2054,25 +2214,13 @@ def _build_contradiction_panel(state_db: StateDB) -> dict[str, Any]:
 
 
 def _build_memory_lane_hygiene_panel(state_db: StateDB) -> dict[str, Any]:
-    bridge_outputs = _typed_component_events(
-        state_db,
-        event_types=("tool_result_received", "dispatch_failed"),
-        component="researcher_bridge",
-        limit=300,
+    lane_records = recent_memory_lane_records(state_db, limit=300)
+    promotion_attempts = len(lane_records)
+    blocked_promotions = sum(1 for record in lane_records if str(record.get("status") or "") == "blocked")
+    ops_residue_volume = sum(
+        1 for record in lane_records if str(record.get("artifact_lane") or "") == "ops_transcripts"
     )
-    promotion_attempts = 0
-    blocked_promotions = 0
-    ops_residue_volume = 0
-    for event in bridge_outputs:
-        facts = event.get("facts_json") or {}
-        if not isinstance(facts, dict):
-            continue
-        if facts.get("promotion_disposition"):
-            promotion_attempts += 1
-        if str(facts.get("promotion_disposition") or "") in NON_PROMOTABLE_DISPOSITIONS:
-            blocked_promotions += 1
-        if str(facts.get("keepability") or "") == "operator_debug_only":
-            ops_residue_volume += 1
+    lanes = {str(record.get("artifact_lane") or "") for record in lane_records}
     contradiction_rows = recent_contradictions(state_db, limit=100, status="open")
     resume_integrity_incidents = [
         row
@@ -2088,11 +2236,12 @@ def _build_memory_lane_hygiene_panel(state_db: StateDB) -> dict[str, Any]:
             "reset_or_resume_integrity_incidents": len(resume_integrity_incidents),
         },
         "lane_labels_present": {
-            "execution_evidence": bool(bridge_outputs),
-            "durable_intelligence_memory": False,
-            "ops_transcripts": False,
-            "user_history": False,
+            "execution_evidence": "execution_evidence" in lanes,
+            "durable_intelligence_memory": "durable_intelligence_memory" in lanes,
+            "ops_transcripts": "ops_transcripts" in lanes,
+            "user_history": "user_history" in lanes,
         },
+        "recent_promotions": lane_records[:10],
         "recent_integrity_incidents": resume_integrity_incidents[:10],
     }
 
