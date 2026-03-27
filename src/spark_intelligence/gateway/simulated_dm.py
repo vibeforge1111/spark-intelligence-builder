@@ -58,6 +58,7 @@ def resolve_simulated_dm(
             facts={
                 "external_user_id": external_user_id,
                 "message_length": len(user_message),
+                "message_text": user_message,
             },
         )
         bridge_result = build_researcher_reply(

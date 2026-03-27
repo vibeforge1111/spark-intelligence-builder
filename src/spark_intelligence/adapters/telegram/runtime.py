@@ -644,7 +644,11 @@ def poll_telegram_updates_once(
                 agent_id=resolution.agent_id,
                 actor_id="telegram_runtime",
                 reason_code="runtime_command",
-                facts={"command": command_result["command"], "update_id": normalized.update_id},
+                facts={
+                    "command": command_result["command"],
+                    "update_id": normalized.update_id,
+                    "message_text": normalized.text,
+                },
             )
             outbound_text = _apply_think_visibility(
                 state_db=state_db,
@@ -711,7 +715,11 @@ def poll_telegram_updates_once(
             agent_id=resolution.agent_id,
             actor_id="telegram_runtime",
             reason_code="user_message_allowed",
-            facts={"update_id": normalized.update_id, "message_length": len(normalized.text)},
+            facts={
+                "update_id": normalized.update_id,
+                "message_length": len(normalized.text),
+                "message_text": normalized.text,
+            },
         )
         bridge_result = build_researcher_reply(
             config_manager=config_manager,
@@ -903,6 +911,7 @@ def _send_telegram_reply(
             "message_ref": f"telegram:{update_id}",
             "guardrail_actions": guarded["actions"],
             "response_length": len(guarded["text"]),
+            "delivered_text": guarded["text"],
             "keepability": output_keepability,
             "promotion_disposition": promotion_disposition,
         },
@@ -952,6 +961,7 @@ def _send_telegram_reply(
             ),
             "retryable": bool(error),
             "guardrail_actions": guarded["actions"],
+            "delivered_text": guarded["text"] if ok else None,
             "keepability": output_keepability,
             "promotion_disposition": promotion_disposition,
         },

@@ -432,6 +432,16 @@ def _record_memory_write_requested(
     turn_id: str | None,
     actor_id: str,
 ) -> None:
+    observations = [
+        {
+            "subject": f"human:{human_id}",
+            "predicate": f"{PREFERENCE_PREDICATE_PREFIX}{trait}",
+            "value": trait_values[trait],
+            "operation": operation,
+            "memory_role": "current_state",
+        }
+        for trait in sorted(trait_values)
+    ]
     record_event(
         state_db,
         event_type="memory_write_requested",
@@ -448,6 +458,7 @@ def _record_memory_write_requested(
             "subject": f"human:{human_id}",
             "predicate_count": len(trait_values),
             "predicates": [f"{PREFERENCE_PREDICATE_PREFIX}{trait}" for trait in sorted(trait_values)],
+            "observations": observations,
         },
         provenance={"memory_role": "current_state"},
     )

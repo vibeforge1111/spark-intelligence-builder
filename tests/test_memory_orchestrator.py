@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
 from spark_intelligence.doctor.checks import run_doctor
+from spark_intelligence.memory import build_shadow_replay_payload
 from spark_intelligence.observability.store import build_watchtower_snapshot, latest_events_by_type
 from spark_intelligence.personality.loader import (
     detect_and_persist_nl_preferences,
@@ -238,3 +240,228 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertIn("watchtower-memory-shadow", checks)
         self.assertFalse(checks["watchtower-memory-shadow"].ok)
         self.assertIn("memory_abstaining", checks["watchtower-memory-shadow"].detail)
+
+    def test_shadow_replay_payload_uses_real_turns_and_memory_observation_probes(self) -> None:
+        with self.state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, run_id, request_id, channel_id,
+                    session_id, human_id, agent_id, actor_id, evidence_lane, severity, status, summary, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-user-1",
+                    "intent_committed",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "telegram_runtime",
+                    "run-1",
+                    "turn-1",
+                    "telegram",
+                    "session-1",
+                    "human:test",
+                    "agent:test",
+                    "telegram_runtime",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Turn committed.",
+                    json.dumps({"message_text": "Please be more direct with me."}),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, run_id, request_id, channel_id,
+                    session_id, human_id, agent_id, actor_id, evidence_lane, severity, status, summary, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-assistant-1",
+                    "delivery_succeeded",
+                    "delivery",
+                    "spark_intelligence_builder",
+                    "telegram_runtime",
+                    "run-1",
+                    "turn-1",
+                    "telegram",
+                    "session-1",
+                    "human:test",
+                    "agent:test",
+                    "telegram_runtime",
+                    "realworld_validated",
+                    "medium",
+                    "ok",
+                    "Delivery succeeded.",
+                    json.dumps({"delivered_text": "Noted. I will be more direct.", "ack_ref": "telegram:1"}),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-mem-req-1",
+                    "memory_write_requested",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "turn-1",
+                    "session-1",
+                    "human:test",
+                    "personality_loader",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Memory write requested.",
+                    json.dumps(
+                        {
+                            "observations": [
+                                {
+                                    "subject": "human:human:test",
+                                    "predicate": "personality.preference.directness",
+                                    "value": 0.35,
+                                    "operation": "update",
+                                    "memory_role": "current_state",
+                                }
+                            ]
+                        }
+                    ),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-mem-ok-1",
+                    "memory_write_succeeded",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "turn-1",
+                    "session-1",
+                    "human:test",
+                    "personality_loader",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Memory write succeeded.",
+                    json.dumps({"accepted_count": 1, "rejected_count": 0, "skipped_count": 0}),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, run_id, request_id, channel_id,
+                    session_id, human_id, agent_id, actor_id, evidence_lane, severity, status, summary, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-user-2",
+                    "intent_committed",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "telegram_runtime",
+                    "run-2",
+                    "turn-2",
+                    "telegram",
+                    "session-1",
+                    "human:test",
+                    "agent:test",
+                    "telegram_runtime",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Turn committed.",
+                    json.dumps({"message_text": "Actually, be much more blunt."}),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-mem-req-2",
+                    "memory_write_requested",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "turn-2",
+                    "session-1",
+                    "human:test",
+                    "personality_loader",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Memory write requested.",
+                    json.dumps(
+                        {
+                            "observations": [
+                                {
+                                    "subject": "human:human:test",
+                                    "predicate": "personality.preference.directness",
+                                    "value": 0.75,
+                                    "operation": "update",
+                                    "memory_role": "current_state",
+                                }
+                            ]
+                        }
+                    ),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-mem-ok-2",
+                    "memory_write_succeeded",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "turn-2",
+                    "session-1",
+                    "human:test",
+                    "personality_loader",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Memory write succeeded.",
+                    json.dumps({"accepted_count": 1, "rejected_count": 0, "skipped_count": 0}),
+                ),
+            )
+            conn.commit()
+
+        payload = build_shadow_replay_payload(
+            state_db=self.state_db,
+            conversation_limit=10,
+            event_limit=100,
+        )
+
+        self.assertEqual(payload["writable_roles"], ["user"])
+        self.assertEqual(len(payload["conversations"]), 1)
+        conversation = payload["conversations"][0]
+        self.assertEqual(conversation["conversation_id"], "session-1")
+        self.assertEqual(len(conversation["turns"]), 3)
+        self.assertEqual(conversation["turns"][0]["role"], "user")
+        self.assertEqual(conversation["turns"][0]["content"], "Please be more direct with me.")
+        self.assertEqual(conversation["turns"][1]["role"], "assistant")
+        self.assertEqual(conversation["turns"][1]["content"], "Noted. I will be more direct.")
+        probe_types = {probe["probe_type"] for probe in conversation["probes"]}
+        self.assertIn("current_state", probe_types)
+        self.assertIn("evidence", probe_types)
+        self.assertIn("historical_state", probe_types)

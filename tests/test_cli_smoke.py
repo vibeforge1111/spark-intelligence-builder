@@ -18,6 +18,146 @@ from tests.test_support import SparkTestCase
 
 
 class CliSmokeTests(SparkTestCase):
+    def test_memory_export_shadow_replay_writes_contract_shaped_json(self) -> None:
+        with self.state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, run_id, request_id, channel_id,
+                    session_id, human_id, agent_id, actor_id, evidence_lane, severity, status, summary, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-user-cli",
+                    "intent_committed",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "telegram_runtime",
+                    "run-cli",
+                    "turn-cli",
+                    "telegram",
+                    "session-cli",
+                    "human:test",
+                    "agent:test",
+                    "telegram_runtime",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Turn committed.",
+                    json.dumps({"message_text": "I moved to Dubai."}),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, run_id, request_id, channel_id,
+                    session_id, human_id, agent_id, actor_id, evidence_lane, severity, status, summary, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-assistant-cli",
+                    "delivery_succeeded",
+                    "delivery",
+                    "spark_intelligence_builder",
+                    "telegram_runtime",
+                    "run-cli",
+                    "turn-cli",
+                    "telegram",
+                    "session-cli",
+                    "human:test",
+                    "agent:test",
+                    "telegram_runtime",
+                    "realworld_validated",
+                    "medium",
+                    "ok",
+                    "Delivery succeeded.",
+                    json.dumps({"delivered_text": "Noted.", "ack_ref": "telegram:cli"}),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-mem-req-cli",
+                    "memory_write_requested",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "turn-cli",
+                    "session-cli",
+                    "human:test",
+                    "personality_loader",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Memory write requested.",
+                    json.dumps(
+                        {
+                            "observations": [
+                                {
+                                    "subject": "human:human:test",
+                                    "predicate": "user.location",
+                                    "value": "Dubai",
+                                    "operation": "update",
+                                    "memory_role": "current_state",
+                                }
+                            ]
+                        }
+                    ),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-mem-ok-cli",
+                    "memory_write_succeeded",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "turn-cli",
+                    "session-cli",
+                    "human:test",
+                    "personality_loader",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Memory write succeeded.",
+                    json.dumps({"accepted_count": 1}),
+                ),
+            )
+            conn.commit()
+
+        output_path = self.home / "artifacts" / "shadow-replay.json"
+        exit_code, stdout, stderr = self.run_cli(
+            "memory",
+            "export-shadow-replay",
+            "--home",
+            str(self.home),
+            "--write",
+            str(output_path),
+            "--skip-validate",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["conversation_count"], 1)
+        self.assertEqual(payload["turn_count"], 2)
+        self.assertEqual(payload["probe_count"], 2)
+        exported = json.loads(output_path.read_text(encoding="utf-8"))
+        self.assertEqual(exported["writable_roles"], ["user"])
+        self.assertEqual(exported["conversations"][0]["conversation_id"], "session-cli")
+        self.assertEqual(exported["conversations"][0]["turns"][0]["content"], "I moved to Dubai.")
+
     def test_setup_creates_bootstrap_and_doctor_and_status_report_clean_temp_home(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             home = Path(tempdir)

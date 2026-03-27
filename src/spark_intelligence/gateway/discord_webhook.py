@@ -161,7 +161,7 @@ def handle_discord_webhook(
         bridge_mode=str(result.detail.get("bridge_mode") or "") or None,
         keepability=str(result.detail.get("output_keepability") or "") or None,
         promotion_disposition=str(result.detail.get("promotion_disposition") or "") or None,
-        response_text=result.to_json(),
+        delivered_text=str(result.detail.get("response_text") or ""),
     )
     close_run(
         state_db,
@@ -366,7 +366,7 @@ def _handle_discord_interaction_payload(
         bridge_mode=str(bridge.detail.get("bridge_mode") or "") or None,
         keepability=str(bridge.detail.get("output_keepability") or "") or None,
         promotion_disposition=str(bridge.detail.get("promotion_disposition") or "") or None,
-        response_text=response.body,
+        delivered_text=str(bridge.detail.get("response_text") or ""),
     )
     close_run(
         state_db,
@@ -471,7 +471,7 @@ def _record_discord_delivery(
     bridge_mode: str | None,
     keepability: str | None,
     promotion_disposition: str | None,
-    response_text: str,
+    delivered_text: str,
 ) -> None:
     facts = {
         "discord_user_id": discord_user_id,
@@ -482,7 +482,8 @@ def _record_discord_delivery(
         "ack_ref": request_id,
         "keepability": keepability,
         "promotion_disposition": promotion_disposition,
-        "response_length": len(response_text),
+        "response_length": len(delivered_text),
+        "delivered_text": delivered_text,
     }
     record_event(
         state_db,

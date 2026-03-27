@@ -65,6 +65,7 @@ from spark_intelligence.identity.service import (
     revoke_session,
 )
 from spark_intelligence.jobs.service import jobs_list, jobs_tick
+from spark_intelligence.memory import export_shadow_replay
 from spark_intelligence.observability.policy import screen_model_visible_text
 from spark_intelligence.observability.store import build_watchtower_snapshot, close_run, open_run, record_event
 from spark_intelligence.ops import (
@@ -1118,6 +1119,20 @@ def build_parser() -> argparse.ArgumentParser:
     researcher_status_parser = researcher_subparsers.add_parser("status", help="Show Spark Researcher bridge readiness")
     researcher_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     researcher_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+
+    memory_parser = subparsers.add_parser("memory", help="Export or inspect Spark memory shadow artifacts")
+    memory_subparsers = memory_parser.add_subparsers(dest="memory_command", required=True)
+    memory_export_parser = memory_subparsers.add_parser(
+        "export-shadow-replay",
+        help="Export a Spark shadow replay JSON batch for domain-chip-memory validation",
+    )
+    memory_export_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_export_parser.add_argument("--write", help="Replay JSON output path")
+    memory_export_parser.add_argument("--conversation-limit", type=int, default=20, help="Maximum conversations to export")
+    memory_export_parser.add_argument("--event-limit", type=int, default=2000, help="Maximum Builder events to scan")
+    memory_export_parser.add_argument("--validator-root", help="domain-chip-memory repo root used for validation")
+    memory_export_parser.add_argument("--skip-validate", action="store_true", help="Write the replay without calling validate-spark-shadow-replay")
+    memory_export_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     config_parser = subparsers.add_parser("config", help="Inspect and update config values")
     config_subparsers = config_parser.add_subparsers(dest="config_command", required=True)
@@ -2692,6 +2707,28 @@ def handle_researcher_status(args: argparse.Namespace) -> int:
     return 0 if status.available else 1
 
 
+def handle_memory_export_shadow_replay(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = export_shadow_replay(
+        config_manager=config_manager,
+        state_db=state_db,
+        write_path=args.write,
+        conversation_limit=args.conversation_limit,
+        event_limit=args.event_limit,
+        validate=not args.skip_validate,
+        validator_root=args.validator_root,
+    )
+    print(result.to_json() if args.json else result.to_text())
+    if result.conversation_count == 0:
+        return 1
+    if result.validation is None:
+        return 0
+    return 0 if bool(result.validation.get("valid")) and not (result.validation.get("errors") or []) else 1
+
+
 def handle_config_show(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
@@ -3107,6 +3144,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_auth_status(args)
     if args.command == "researcher" and args.researcher_command == "status":
         return handle_researcher_status(args)
+    if args.command == "memory" and args.memory_command == "export-shadow-replay":
+        return handle_memory_export_shadow_replay(args)
     if args.command == "config" and args.config_command == "show":
         return handle_config_show(args)
     if args.command == "config" and args.config_command == "set":
