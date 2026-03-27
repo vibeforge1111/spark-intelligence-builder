@@ -107,6 +107,13 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(observations[0]["predicate"], "profile.city")
         self.assertEqual(observations[0]["value"], "Dubai")
 
+    def test_profile_timezone_detection_normalizes_structured_fact(self) -> None:
+        detected = detect_profile_fact_observation("My timezone is Asia/Dubai.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.timezone")
+        self.assertEqual(detected.value, "Asia/Dubai")
+
     def test_memory_sdk_smoke_test_runs_real_domain_chip_roundtrip(self) -> None:
         result = run_memory_sdk_smoke_test(
             config_manager=self.config_manager,
