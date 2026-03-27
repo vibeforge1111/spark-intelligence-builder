@@ -107,6 +107,10 @@ spark-intelligence gateway start
 # /think
 # /think on
 # /think off
+# /swarm
+# /swarm status
+# /swarm sync
+# /swarm evaluate <task>
 ```
 
 The first supported phase-E bootstrap profile is now:

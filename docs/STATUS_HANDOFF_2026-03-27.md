@@ -98,6 +98,7 @@ The following is no longer theoretical:
 - real provider-backed replies work live
 - small-talk fallback no longer dead-ends at the old researcher placeholder
 - `/think`, `/think on`, `/think off` work in Telegram
+- `/swarm`, `/swarm status`, `/swarm sync`, and `/swarm evaluate <task>` now work as Telegram runtime commands
 - provider failure and recovery paths were tested earlier and recover correctly
 - the supported bootstrap path works on a clean home in tests
 - the supported Windows always-on wrapper path works locally through the Startup-folder fallback

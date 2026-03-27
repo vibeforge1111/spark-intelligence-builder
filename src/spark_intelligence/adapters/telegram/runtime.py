@@ -21,6 +21,7 @@ from spark_intelligence.gateway.tracing import append_gateway_trace, append_outb
 from spark_intelligence.identity.service import consume_pairing_welcome, record_pairing_context, resolve_inbound_dm
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply, record_researcher_bridge_result
 from spark_intelligence.state.db import StateDB
+from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_status, sync_swarm_collective
 
 
 @dataclass
@@ -259,6 +260,7 @@ def simulate_telegram_update(
     )
     if resolution.allowed and resolution.agent_id and resolution.human_id and resolution.session_id:
         command_result = _handle_runtime_command(
+            config_manager=config_manager,
             state_db=state_db,
             external_user_id=normalized.telegram_user_id,
             inbound_text=normalized.text,
@@ -579,6 +581,7 @@ def poll_telegram_updates_once(
             continue
 
         command_result = _handle_runtime_command(
+            config_manager=config_manager,
             state_db=state_db,
             external_user_id=normalized.telegram_user_id,
             inbound_text=normalized.text,
@@ -811,38 +814,89 @@ def _preview_text(text: str, *, limit: int = 160) -> str:
 
 def _handle_runtime_command(
     *,
+    config_manager: ConfigManager,
     state_db: StateDB,
     external_user_id: str,
     inbound_text: str,
 ) -> dict[str, str] | None:
     normalized = " ".join(str(inbound_text or "").strip().split())
     lowered = normalized.lower()
-    if lowered not in {"/think", "/think on", "/think off"}:
-        return None
-    if lowered == "/think":
-        enabled = _think_enabled_for_user(state_db=state_db, external_user_id=external_user_id)
-        state_text = "on" if enabled else "off"
+    if lowered in {"/think", "/think on", "/think off"}:
+        if lowered == "/think":
+            enabled = _think_enabled_for_user(state_db=state_db, external_user_id=external_user_id)
+            state_text = "on" if enabled else "off"
+            return {
+                "command": "/think",
+                "reply_text": (
+                    f"Thinking visibility is currently {state_text} for this Telegram DM. "
+                    "Use `/think on` to show `<think>` blocks or `/think off` to hide them."
+                ),
+            }
+        enabled = lowered == "/think on"
+        _set_think_enabled_for_user(
+            state_db=state_db,
+            external_user_id=external_user_id,
+            enabled=enabled,
+        )
+        state_text = "enabled" if enabled else "disabled"
         return {
-            "command": "/think",
+            "command": lowered,
             "reply_text": (
-                f"Thinking visibility is currently {state_text} for this Telegram DM. "
-                "Use `/think on` to show `<think>` blocks or `/think off` to hide them."
+                f"Thinking visibility {state_text} for this Telegram DM. "
+                "This only affects `<think>` blocks in future replies."
             ),
         }
-    enabled = lowered == "/think on"
-    _set_think_enabled_for_user(
-        state_db=state_db,
-        external_user_id=external_user_id,
-        enabled=enabled,
-    )
-    state_text = "enabled" if enabled else "disabled"
-    return {
-        "command": lowered,
-        "reply_text": (
-            f"Thinking visibility {state_text} for this Telegram DM. "
-            "This only affects `<think>` blocks in future replies."
-        ),
-    }
+
+    if lowered == "/swarm":
+        return {
+            "command": "/swarm",
+            "reply_text": "Swarm commands: `/swarm status`, `/swarm sync`, and `/swarm evaluate <task>`.",
+        }
+    if lowered == "/swarm status":
+        status = swarm_status(config_manager, state_db)
+        return {
+            "command": "/swarm status",
+            "reply_text": (
+                f"Swarm is {'ready' if status.api_ready else 'not ready'}.\n"
+                f"Auth: {status.auth_state}.\n"
+                f"Last sync: {(status.last_sync or {}).get('mode', 'none')}.\n"
+                f"Last decision: {(status.last_decision or {}).get('mode', 'none')}."
+            ),
+        }
+    if lowered == "/swarm sync":
+        result = sync_swarm_collective(config_manager=config_manager, state_db=state_db, dry_run=False)
+        return {
+            "command": "/swarm sync",
+            "reply_text": (
+                f"Swarm sync {'ok' if result.ok else 'failed'}.\n"
+                f"Mode: {result.mode}.\n"
+                f"Accepted: {'yes' if result.accepted else 'no'}.\n"
+                f"{result.message}"
+            ),
+        }
+    if lowered.startswith("/swarm evaluate"):
+        task = normalized[len("/swarm evaluate") :].strip()
+        if not task:
+            return {
+                "command": "/swarm evaluate",
+                "reply_text": "Usage: `/swarm evaluate <task>`.",
+            }
+        result = evaluate_swarm_escalation(
+            config_manager=config_manager,
+            state_db=state_db,
+            task=task,
+        )
+        triggers = ", ".join(result.triggers) if result.triggers else "none"
+        return {
+            "command": "/swarm evaluate",
+            "reply_text": (
+                f"Swarm decision: {result.mode}.\n"
+                f"Escalate: {'yes' if result.escalate else 'no'}.\n"
+                f"Triggers: {triggers}.\n"
+                f"{result.reason}"
+            ),
+        }
+    return None
 
 
 def _think_state_key(*, external_user_id: str) -> str:

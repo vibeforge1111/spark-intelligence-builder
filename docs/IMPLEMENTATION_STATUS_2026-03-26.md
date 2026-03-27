@@ -179,6 +179,8 @@ That Builder-side session work is now proven on the canonical home rather than r
 
 The Swarm status surface is also a little more honest now that this path is green: a successful `swarm sync` clears stale `swarm:last_failure` state, so `swarm status` no longer keeps showing an old HTTP 500 after the latest hosted upload has already succeeded.
 
+The Telegram runtime now also has an explicit operator-facing Swarm command surface in DMs: `/swarm`, `/swarm status`, `/swarm sync`, and `/swarm evaluate <task>`. That gives the canonical Telegram path one intentional Swarm-originating control plane instead of leaving Swarm as a CLI-only surface.
+
 That means the current state has shifted slightly:
 
 - phase A remains ready

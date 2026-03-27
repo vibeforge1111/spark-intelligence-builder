@@ -61,6 +61,10 @@ Once a Telegram DM is paired and active, the user can control think-block visibi
 /think
 /think on
 /think off
+/swarm
+/swarm status
+/swarm sync
+/swarm evaluate <task>
 ```
 
 Expected behavior:
@@ -69,6 +73,10 @@ Expected behavior:
 - `/think` shows the current visibility state for that Telegram DM
 - `/think on` allows `<think>` blocks through for that Telegram DM
 - `/think off` hides them again
+- `/swarm` shows the available Swarm control commands
+- `/swarm status` returns the current Builder-side Swarm readiness summary for that DM
+- `/swarm sync` triggers a live Swarm sync from the Telegram runtime path
+- `/swarm evaluate <task>` runs the Swarm escalation evaluator against the provided task text
 
 This is a per-DM runtime control, not a global provider setting.
 
