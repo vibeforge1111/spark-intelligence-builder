@@ -274,6 +274,19 @@ class WhatsAppWebhookIngressTests(SparkTestCase):
         self.assertEqual(len(traces), 1)
         self.assertEqual(traces[0]["update_id"], "wamid-1")
         self.assertEqual(traces[0]["external_user_id"], "wa-user-1")
+        with self.state_db.connect() as conn:
+            run_row = conn.execute(
+                """
+                SELECT status, close_reason
+                FROM builder_runs
+                WHERE run_kind = 'webhook:whatsapp_message'
+                ORDER BY opened_at DESC, run_id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        self.assertIsNotNone(run_row)
+        self.assertEqual(run_row["status"], "closed")
+        self.assertEqual(run_row["close_reason"], "whatsapp_webhook_processed")
 
     def test_records_typed_delivery_for_bridge_backed_whatsapp_response(self) -> None:
         self._add_whatsapp_channel()
@@ -334,6 +347,7 @@ class WhatsAppWebhookIngressTests(SparkTestCase):
         self.assertEqual(facts["bridge_mode"], "external_autodiscovered")
         self.assertEqual(facts["keepability"], "ephemeral_context")
         self.assertEqual(facts["promotion_disposition"], "not_promotable")
+        self.assertTrue(whatsapp_events[0]["run_id"])
 
     def test_ignores_status_event_payload(self) -> None:
         self._add_whatsapp_channel()

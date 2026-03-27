@@ -14,7 +14,7 @@ from spark_intelligence.gateway.guardrails import prepare_outbound_text
 from spark_intelligence.gateway import resolve_simulated_dm
 from spark_intelligence.gateway.routes import GatewayRouteRegistration, GatewayRouteRegistry
 from spark_intelligence.gateway.tracing import append_gateway_trace
-from spark_intelligence.observability.store import record_event
+from spark_intelligence.observability.store import close_run, open_run, record_event
 from spark_intelligence.state.db import StateDB
 
 
@@ -104,13 +104,36 @@ def handle_discord_webhook(
             payload=payload,
         )
 
+    request_id = f"discord:{payload.get('id') or ((payload.get('author') or {}).get('id') if isinstance(payload.get('author'), dict) else 'missing')}"
+    run = open_run(
+        state_db,
+        run_kind="webhook:discord_message",
+        origin_surface="discord_webhook",
+        summary="Discord webhook run opened.",
+        request_id=request_id,
+        channel_id="discord",
+        actor_id="discord_webhook",
+        facts={
+            "message_id": payload.get("id"),
+            "external_user_id": ((payload.get("author") or {}).get("id") if isinstance(payload.get("author"), dict) else None),
+        },
+    )
     try:
         result = simulate_discord_message(
             config_manager=config_manager,
             state_db=state_db,
             payload=payload,
+            run_id=run.run_id,
         )
     except ValueError as exc:
+        close_run(
+            state_db,
+            run_id=run.run_id,
+            status="closed",
+            close_reason="invalid_payload",
+            summary="Discord webhook run closed with invalid payload.",
+            facts={"error": str(exc)},
+        )
         return _json_error_response(400, str(exc))
     append_gateway_trace(
         config_manager,
@@ -127,9 +150,9 @@ def handle_discord_webhook(
             "promotion_disposition": result.detail.get("promotion_disposition"),
         },
     )
-    request_id = f"discord:{payload.get('id') or ((payload.get('author') or {}).get('id') if isinstance(payload.get('author'), dict) else 'missing')}"
     _record_discord_delivery(
         state_db=state_db,
+        run_id=run.run_id,
         request_id=request_id,
         trace_ref=str(result.detail.get("trace_ref") or "") or None,
         reason_code="discord_webhook_response",
@@ -139,6 +162,18 @@ def handle_discord_webhook(
         keepability=str(result.detail.get("output_keepability") or "") or None,
         promotion_disposition=str(result.detail.get("promotion_disposition") or "") or None,
         response_text=result.to_json(),
+    )
+    close_run(
+        state_db,
+        run_id=run.run_id,
+        status="closed",
+        close_reason="discord_webhook_processed",
+        summary="Discord webhook run closed after delivery.",
+        facts={
+            "decision": result.decision,
+            "bridge_mode": result.detail.get("bridge_mode"),
+            "delivery_ok": True,
+        },
     )
     return GatewayWebhookResponse(
         status_code=200,
@@ -275,14 +310,30 @@ def _handle_discord_interaction_payload(
         return _discord_interaction_message(error_message, ephemeral=True)
 
     channel_id = str(payload.get("channel_id") or f"discord-interaction:{user['id']}")
+    request_id = f"discord-interaction:{payload.get('id') or user['id']}"
+    run = open_run(
+        state_db,
+        run_kind="webhook:discord_interaction",
+        origin_surface="discord_webhook",
+        summary="Discord interaction webhook run opened.",
+        request_id=request_id,
+        channel_id="discord",
+        actor_id="discord_webhook",
+        facts={
+            "interaction_id": payload.get("id"),
+            "external_user_id": str(user.get("id") or ""),
+        },
+    )
     bridge = resolve_simulated_dm(
         config_manager=config_manager,
         state_db=state_db,
         channel_id="discord",
-        request_id=f"discord-interaction:{payload.get('id') or user['id']}",
+        request_id=request_id,
         external_user_id=str(user["id"]),
         display_name=str(user.get("username") or f"discord user {user['id']}"),
         user_message=prompt,
+        run_id=run.run_id,
+        origin_surface="discord_webhook",
     )
     response = _discord_interaction_message(
         str(bridge.detail.get("response_text") or "Spark did not generate a reply."),
@@ -306,7 +357,8 @@ def _handle_discord_interaction_payload(
     )
     _record_discord_delivery(
         state_db=state_db,
-        request_id=f"discord-interaction:{payload.get('id') or user['id']}",
+        run_id=run.run_id,
+        request_id=request_id,
         trace_ref=str(bridge.detail.get("trace_ref") or "") or None,
         reason_code="discord_interaction_response",
         discord_user_id=str(user.get("id") or ""),
@@ -315,6 +367,18 @@ def _handle_discord_interaction_payload(
         keepability=str(bridge.detail.get("output_keepability") or "") or None,
         promotion_disposition=str(bridge.detail.get("promotion_disposition") or "") or None,
         response_text=response.body,
+    )
+    close_run(
+        state_db,
+        run_id=run.run_id,
+        status="closed",
+        close_reason="discord_interaction_processed",
+        summary="Discord interaction webhook run closed after delivery.",
+        facts={
+            "decision": bridge.decision,
+            "bridge_mode": bridge.detail.get("bridge_mode"),
+            "delivery_ok": True,
+        },
     )
     return response
 
@@ -398,6 +462,7 @@ def _discord_interaction_message(
 def _record_discord_delivery(
     *,
     state_db: StateDB,
+    run_id: str | None,
     request_id: str,
     trace_ref: str | None,
     reason_code: str,
@@ -421,6 +486,7 @@ def _record_discord_delivery(
         event_type="delivery_attempted",
         component="discord_webhook",
         summary="Discord webhook delivery attempted.",
+        run_id=run_id,
         request_id=request_id,
         trace_ref=trace_ref,
         channel_id="discord",
@@ -434,6 +500,7 @@ def _record_discord_delivery(
         event_type="delivery_succeeded",
         component="discord_webhook",
         summary="Discord webhook delivery succeeded.",
+        run_id=run_id,
         request_id=request_id,
         trace_ref=trace_ref,
         channel_id="discord",

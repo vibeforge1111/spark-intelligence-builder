@@ -92,6 +92,7 @@ Structural now:
 - durable researcher failure status now stores sanitized operator-status summaries instead of raw bridge reply text, and stop-ship fails if raw bridge reply residue is persisted locally
 - raw researcher bridge reply consumption is now constrained to immediate delivery surfaces, with source-scan stop-ship checks for new local promotion-style consumers
 - Discord and WhatsApp webhook replies now emit typed delivery events with bridge keepability metadata instead of existing only as webhook JSON bodies and gateway trace lines
+- Discord and WhatsApp webhook requests now open and close typed runs, and their shared simulated bridge path now threads the same run identity into intent, dispatch, and result events
 - doctor and operator security now expose explicit stop-ship failures
 
 Still compensating:

@@ -8,7 +8,7 @@ from typing import Any
 
 from spark_intelligence.adapters.whatsapp.runtime import simulate_whatsapp_message
 from spark_intelligence.config.loader import ConfigManager
-from spark_intelligence.observability.store import record_event
+from spark_intelligence.observability.store import close_run, open_run, record_event
 from spark_intelligence.gateway.routes import GatewayRouteRegistration, GatewayRouteRegistry
 from spark_intelligence.gateway.tracing import append_gateway_trace
 from spark_intelligence.state.db import StateDB
@@ -188,13 +188,36 @@ def _handle_whatsapp_event_post(
             ),
         )
 
+    request_id = f"whatsapp:{normalized_payload.get('id') or normalized_payload.get('from') or 'missing'}"
+    run = open_run(
+        state_db,
+        run_kind="webhook:whatsapp_message",
+        origin_surface="whatsapp_webhook",
+        summary="WhatsApp webhook run opened.",
+        request_id=request_id,
+        channel_id="whatsapp",
+        actor_id="whatsapp_webhook",
+        facts={
+            "message_id": normalized_payload.get("id"),
+            "external_user_id": normalized_payload.get("from"),
+        },
+    )
     try:
         result = simulate_whatsapp_message(
             config_manager=config_manager,
             state_db=state_db,
             payload=normalized_payload,
+            run_id=run.run_id,
         )
     except ValueError as exc:
+        close_run(
+            state_db,
+            run_id=run.run_id,
+            status="closed",
+            close_reason="invalid_payload",
+            summary="WhatsApp webhook run closed with invalid payload.",
+            facts={"error": str(exc)},
+        )
         return _json_error_response(400, str(exc))
 
     append_gateway_trace(
@@ -214,7 +237,8 @@ def _handle_whatsapp_event_post(
     )
     _record_whatsapp_delivery(
         state_db=state_db,
-        request_id=f"whatsapp:{normalized_payload.get('id') or normalized_payload.get('from') or 'missing'}",
+        run_id=run.run_id,
+        request_id=request_id,
         trace_ref=str(result.detail.get("trace_ref") or "") or None,
         reason_code="whatsapp_webhook_response",
         whatsapp_user_id=str(result.detail.get("whatsapp_user_id") or ""),
@@ -223,6 +247,18 @@ def _handle_whatsapp_event_post(
         keepability=str(result.detail.get("output_keepability") or "") or None,
         promotion_disposition=str(result.detail.get("promotion_disposition") or "") or None,
         response_text=result.to_json(),
+    )
+    close_run(
+        state_db,
+        run_id=run.run_id,
+        status="closed",
+        close_reason="whatsapp_webhook_processed",
+        summary="WhatsApp webhook run closed after delivery.",
+        facts={
+            "decision": result.decision,
+            "bridge_mode": result.detail.get("bridge_mode"),
+            "delivery_ok": True,
+        },
     )
     return WhatsAppWebhookResponse(
         status_code=200,
@@ -370,6 +406,7 @@ def _header_value(headers: dict[str, str] | None, name: str) -> str | None:
 def _record_whatsapp_delivery(
     *,
     state_db: StateDB,
+    run_id: str | None,
     request_id: str,
     trace_ref: str | None,
     reason_code: str,
@@ -393,6 +430,7 @@ def _record_whatsapp_delivery(
         event_type="delivery_attempted",
         component="whatsapp_webhook",
         summary="WhatsApp webhook delivery attempted.",
+        run_id=run_id,
         request_id=request_id,
         trace_ref=trace_ref,
         channel_id="whatsapp",
@@ -406,6 +444,7 @@ def _record_whatsapp_delivery(
         event_type="delivery_succeeded",
         component="whatsapp_webhook",
         summary="WhatsApp webhook delivery succeeded.",
+        run_id=run_id,
         request_id=request_id,
         trace_ref=trace_ref,
         channel_id="whatsapp",

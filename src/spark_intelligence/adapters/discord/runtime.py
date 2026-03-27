@@ -105,6 +105,7 @@ def simulate_discord_message(
     config_manager: ConfigManager,
     state_db: StateDB,
     payload: dict[str, Any],
+    run_id: str | None = None,
 ) -> DiscordSimulationResult:
     normalized = normalize_discord_message(payload)
     if not normalized.is_dm:
@@ -126,6 +127,8 @@ def simulate_discord_message(
         external_user_id=normalized.discord_user_id,
         display_name=normalized.discord_username or f"discord user {normalized.discord_user_id}",
         user_message=normalized.content,
+        run_id=run_id,
+        origin_surface="discord_webhook",
     )
     return DiscordSimulationResult(
         ok=bridge.ok,

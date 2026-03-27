@@ -104,6 +104,7 @@ def simulate_whatsapp_message(
     config_manager: ConfigManager,
     state_db: StateDB,
     payload: dict[str, Any],
+    run_id: str | None = None,
 ) -> WhatsAppSimulationResult:
     normalized = normalize_whatsapp_message(payload)
     if not normalized.is_dm:
@@ -125,6 +126,8 @@ def simulate_whatsapp_message(
         external_user_id=normalized.whatsapp_user_id,
         display_name=normalized.whatsapp_profile_name or f"whatsapp user {normalized.whatsapp_user_id}",
         user_message=normalized.text,
+        run_id=run_id,
+        origin_surface="whatsapp_webhook",
     )
     return WhatsAppSimulationResult(
         ok=bridge.ok,

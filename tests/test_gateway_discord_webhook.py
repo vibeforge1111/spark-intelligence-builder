@@ -547,6 +547,19 @@ class DiscordWebhookIngressTests(SparkTestCase):
         self.assertEqual(payload["data"]["flags"], 64)
         self.assertLessEqual(len(payload["data"]["content"]), 2000)
         self.assertTrue(payload["data"]["content"].endswith("[truncated for delivery]"))
+        with self.state_db.connect() as conn:
+            run_row = conn.execute(
+                """
+                SELECT status, close_reason
+                FROM builder_runs
+                WHERE run_kind = 'webhook:discord_interaction'
+                ORDER BY opened_at DESC, run_id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        self.assertIsNotNone(run_row)
+        self.assertEqual(run_row["status"], "closed")
+        self.assertEqual(run_row["close_reason"], "discord_interaction_processed")
         events = latest_events_by_type(self.state_db, event_type="delivery_succeeded", limit=10)
         discord_events = [event for event in events if event.get("component") == "discord_webhook"]
         self.assertTrue(discord_events)
@@ -579,3 +592,16 @@ class DiscordWebhookIngressTests(SparkTestCase):
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["decision"], "pending_pairing")
         self.assertEqual(payload["detail"]["discord_user_id"], "user-1")
+        with self.state_db.connect() as conn:
+            run_row = conn.execute(
+                """
+                SELECT status, close_reason
+                FROM builder_runs
+                WHERE run_kind = 'webhook:discord_message'
+                ORDER BY opened_at DESC, run_id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        self.assertIsNotNone(run_row)
+        self.assertEqual(run_row["status"], "closed")
+        self.assertEqual(run_row["close_reason"], "discord_webhook_processed")
