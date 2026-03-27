@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+from spark_intelligence.observability.store import latest_events_by_type
 from spark_intelligence.researcher_bridge.advisory import (
     _build_contextual_task,
     _clean_messaging_reply,
@@ -25,6 +26,8 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 "Undocumented silent outcomes create operator doubt.\n\n"
                 "- Confidence: 0.45\n"
                 "- Evidence gap: No verification operators lack this layer.\n\n"
+                "trace_ref: trace:internal-cleanup\n"
+                "packet_refs: packet-1\n\n"
                 "## Next Step\n"
                 "Survey 2-3 operator workflows."
             ),
@@ -122,6 +125,8 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                         "Build operator-facing guidance for no actionable diff outputs.\n\n"
                         "- Confidence: 0.45\n"
                         "- Evidence gap: No verification operators lack this layer.\n\n"
+                        "trace_ref: trace:execution-internal\n"
+                        "memory_refs: memory-1\n\n"
                         "## Next Step\n"
                         "Survey operator workflows."
                     )
@@ -164,6 +169,15 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertNotIn("Confidence:", result.reply_text)
         self.assertNotIn("Evidence gap:", result.reply_text)
         self.assertNotIn("Primary Focus", result.reply_text)
+        self.assertNotIn("trace:", result.reply_text)
+        self.assertNotIn("memory_refs", result.reply_text)
+        events = latest_events_by_type(self.state_db, event_type="quarantine_recorded", limit=10)
+        self.assertTrue(
+            any(
+                (event.get("facts_json") or {}).get("source_kind") == "reply_residue"
+                for event in events
+            )
+        )
 
     def test_build_researcher_reply_uses_direct_provider_chat_fallback_for_under_supported_conversation(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)

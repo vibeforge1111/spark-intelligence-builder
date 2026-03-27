@@ -87,6 +87,7 @@ Structural now:
 - operator-triggered `attachments run-hook` executions now open and close typed runs instead of existing only as CLI residue
 - chip-hook provenance and screening now live in shared hook-layer helpers instead of only in caller-specific glue
 - outbound secret-like replies now emit typed violation and quarantine records instead of only trace-side evidence
+- researcher replies and active-chip guidance now strip explicit operational residue such as trace refs, packet refs, memory refs, and quarantine ids; stripped residue is quarantined when it appeared in a reply
 - doctor and operator security now expose explicit stop-ship failures
 
 Still compensating:

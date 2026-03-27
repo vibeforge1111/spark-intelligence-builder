@@ -25,7 +25,7 @@ from spark_intelligence.llm.direct_provider import (
     DirectProviderRequest,
     execute_direct_provider_prompt,
 )
-from spark_intelligence.observability.store import record_environment_snapshot, record_event
+from spark_intelligence.observability.store import record_environment_snapshot, record_event, record_quarantine
 from spark_intelligence.personality import (
     build_personality_context,
     build_preference_acknowledgment,
@@ -526,6 +526,8 @@ def _summarize_active_chip_guidance(analysis: str, *, max_lines: int = 4, max_ch
             continue
         if lowered.startswith(("confidence:", "evidence gap:", "note:")):
             continue
+        if _is_operational_residue_line(line):
+            continue
         if lowered.startswith("recommendation:") or lowered.startswith("revised:"):
             _, _, remainder = line.partition(":")
             line = remainder.strip()
@@ -541,8 +543,13 @@ def _summarize_active_chip_guidance(analysis: str, *, max_lines: int = 4, max_ch
 
 
 def _clean_messaging_reply(text: str, *, channel_kind: str) -> str:
+    cleaned, _ = _clean_messaging_reply_with_metadata(text, channel_kind=channel_kind)
+    return cleaned
+
+
+def _clean_messaging_reply_with_metadata(text: str, *, channel_kind: str) -> tuple[str, list[str]]:
     if channel_kind != "telegram":
-        return text.strip()
+        return _strip_operational_residue_lines(text.strip())
     rewritten = _rewrite_structured_telegram_reply(text)
     if rewritten:
         text = rewritten
@@ -570,7 +577,47 @@ def _clean_messaging_reply(text: str, *, channel_kind: str) -> str:
     reply = "\n".join(cleaned_lines)
     reply = re.sub(r"\n{3,}", "\n\n", reply).strip()
     reply = _strip_internal_reply_prefixes(reply)
-    return reply or text.strip()
+    sanitized, removed_lines = _strip_operational_residue_lines(reply or text.strip())
+    return sanitized or text.strip(), removed_lines
+
+
+def _strip_operational_residue_lines(text: str) -> tuple[str, list[str]]:
+    kept_lines: list[str] = []
+    removed_lines: list[str] = []
+    for raw_line in text.replace("\r\n", "\n").split("\n"):
+        line = raw_line.strip()
+        if line and _is_operational_residue_line(line):
+            removed_lines.append(line)
+            continue
+        kept_lines.append(raw_line)
+    cleaned = "\n".join(kept_lines)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned, removed_lines
+
+
+def _is_operational_residue_line(line: str) -> bool:
+    lowered = re.sub(r"^[-*]\s*", "", line.strip()).lower()
+    explicit_prefixes = (
+        "trace_ref:",
+        "trace_path:",
+        "trace_id:",
+        "selected_packet_ids",
+        "packet_refs:",
+        "memory_refs:",
+        "followup_actions:",
+        "quarantine_id:",
+        "runtime_root:",
+        "config_path:",
+        "recorded_at:",
+        "epistemic_status:",
+    )
+    if lowered.startswith(explicit_prefixes):
+        return True
+    if "trace:" in lowered and any(token in lowered for token in ("trace", "research_trace_path", "trace_ref", "trace_path")):
+        return True
+    if any(token in lowered for token in ("packet_refs", "memory_refs", "selected_packet_ids", "followup_actions", "quarantine_id")):
+        return True
+    return False
 
 
 def _rewrite_structured_telegram_reply(text: str) -> str | None:
@@ -1256,7 +1303,7 @@ def build_researcher_reply(
                         fallback_max_chars=int(routing_policy["conversational_fallback_max_chars"]),
                     )
                 ):
-                    reply_text = _clean_messaging_reply(
+                    cleaned_reply, removed_residue = _clean_messaging_reply_with_metadata(
                         _render_direct_provider_chat_fallback(
                             state_db=state_db,
                             provider=provider_selection.provider,
@@ -1272,6 +1319,20 @@ def build_researcher_reply(
                         ),
                         channel_kind=channel_kind,
                     )
+                    if removed_residue:
+                        record_quarantine(
+                            state_db,
+                            run_id=run_id,
+                            request_id=request_id,
+                            source_kind="reply_residue",
+                            source_ref=request_id,
+                            policy_domain="researcher_bridge_residue",
+                            reason_code="operational_residue_removed",
+                            summary="Operational residue was stripped from a direct-provider fallback reply before delivery.",
+                            payload_preview="\n".join(removed_residue)[:160],
+                            provenance={"channel_kind": channel_kind, "trace_ref": f"trace:{agent_id}:{human_id}:{request_id}"},
+                        )
+                    reply_text = cleaned_reply
                     trace_ref = str(advisory.get("trace_path") or advisory.get("trace_id") or "trace:missing")
                     evidence_summary = "status=under_supported provider_fallback=direct_http_chat"
                     reply_text, evidence_summary, escalation_hint, routing_decision = _maybe_apply_swarm_recommendation(
@@ -1350,7 +1411,20 @@ def build_researcher_reply(
                     reply_text, evidence_summary, trace_ref = _render_reply_from_execution(execution, advisory)
                 else:
                     reply_text, evidence_summary, trace_ref = _render_reply_from_advisory(advisory)
-                reply_text = _clean_messaging_reply(reply_text, channel_kind=channel_kind)
+                reply_text, removed_residue = _clean_messaging_reply_with_metadata(reply_text, channel_kind=channel_kind)
+                if removed_residue:
+                    record_quarantine(
+                        state_db,
+                        run_id=run_id,
+                        request_id=request_id,
+                        source_kind="reply_residue",
+                        source_ref=request_id,
+                        policy_domain="researcher_bridge_residue",
+                        reason_code="operational_residue_removed",
+                        summary="Operational residue was stripped from a researcher reply before delivery.",
+                        payload_preview="\n".join(removed_residue)[:160],
+                        provenance={"channel_kind": channel_kind, "trace_ref": trace_ref},
+                    )
                 base_routing_decision = (
                     "provider_execution"
                     if provider_selection.provider and _supports_direct_or_cli_execution(provider_selection)
