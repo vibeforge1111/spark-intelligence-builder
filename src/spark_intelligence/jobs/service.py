@@ -183,7 +183,7 @@ def _run_job(
         close_run(
             state_db,
             run_id=run.run_id,
-            status="stalled",
+            status="failed",
             close_reason="job_exception",
             summary=f"Job {job_id} raised an exception.",
             facts={"job_id": job_id, "job_kind": job_kind, "error": str(exc)},

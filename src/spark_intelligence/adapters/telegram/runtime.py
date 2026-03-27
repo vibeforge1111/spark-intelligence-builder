@@ -899,6 +899,8 @@ def _send_telegram_reply(
             "event": event,
             "update_id": update_id,
             "telegram_user_id": telegram_user_id,
+            "delivery_target": chat_id,
+            "message_ref": f"telegram:{update_id}",
             "guardrail_actions": guarded["actions"],
             "response_length": len(guarded["text"]),
             "keepability": output_keepability,
@@ -939,7 +941,16 @@ def _send_telegram_reply(
             "event": event,
             "update_id": update_id,
             "telegram_user_id": telegram_user_id,
+            "delivery_target": chat_id,
+            "message_ref": f"telegram:{update_id}",
+            "ack_ref": f"telegram:{update_id}" if ok else None,
             "delivery_error": error,
+            "failure_family": (
+                "http_error"
+                if error and str(error).startswith("HTTP ")
+                else ("network_error" if error and "connection" in str(error).lower() else None)
+            ),
+            "retryable": bool(error),
             "guardrail_actions": guarded["actions"],
             "keepability": output_keepability,
             "promotion_disposition": promotion_disposition,

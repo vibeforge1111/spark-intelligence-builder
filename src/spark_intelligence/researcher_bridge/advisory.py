@@ -26,6 +26,7 @@ from spark_intelligence.llm.direct_provider import (
     execute_direct_provider_prompt,
 )
 from spark_intelligence.observability.store import record_environment_snapshot, record_event, record_quarantine
+from spark_intelligence.observability.store import latest_events_by_type, latest_snapshots_by_surface
 from spark_intelligence.personality import (
     build_personality_context,
     build_preference_acknowledgment,
@@ -849,6 +850,51 @@ def _bridge_output_classification(*, mode: str, routing_decision: str | None) ->
     return ("ephemeral_context", "not_promotable")
 
 
+def _bridge_event_facts(
+    *,
+    routing_decision: str | None,
+    bridge_mode: str | None,
+    evidence_summary: str | None = None,
+    runtime_root: str | None = None,
+    config_path: str | None = None,
+    provider_id: str | None = None,
+    provider_auth_method: str | None = None,
+    provider_model: str | None = None,
+    provider_model_family: str | None = None,
+    provider_execution_transport: str | None = None,
+    provider_base_url: str | None = None,
+    provider_source: str | None = None,
+    active_chip_key: str | None = None,
+    active_chip_task_type: str | None = None,
+    active_chip_evaluate_used: bool | None = None,
+    keepability: str | None = None,
+    promotion_disposition: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    facts: dict[str, Any] = {
+        "routing_decision": routing_decision,
+        "bridge_mode": bridge_mode,
+        "evidence_summary": evidence_summary,
+        "runtime_root": runtime_root,
+        "config_path": config_path,
+        "provider_id": provider_id,
+        "provider_auth_method": provider_auth_method,
+        "provider_model": provider_model,
+        "provider_model_family": provider_model_family,
+        "provider_execution_transport": provider_execution_transport,
+        "provider_base_url": provider_base_url,
+        "provider_source": provider_source,
+        "active_chip_key": active_chip_key,
+        "active_chip_task_type": active_chip_task_type,
+        "active_chip_evaluate_used": active_chip_evaluate_used,
+        "keepability": keepability,
+        "promotion_disposition": promotion_disposition,
+    }
+    if extra:
+        facts.update(extra)
+    return facts
+
+
 def _runtime_safe_bridge_failure_message(result: ResearcherBridgeResult) -> str:
     failure_kind = str(result.routing_decision or result.mode or "bridge_failure")
     if result.output_keepability == "operator_debug_only":
@@ -865,6 +911,7 @@ def researcher_bridge_status(*, config_manager: ConfigManager, state_db: StateDB
     enabled = bool(config_manager.get_path("spark.researcher.enabled", default=True))
     available = enabled and bool(runtime_root and config_path and config_path.exists())
     mode = "disabled" if not enabled else (f"external_{runtime_source}" if available else "stub")
+    typed_state = _read_typed_researcher_bridge_state(state_db)
     runtime_state = _read_runtime_state(state_db)
     return ResearcherBridgeStatus(
         enabled=enabled,
@@ -874,26 +921,30 @@ def researcher_bridge_status(*, config_manager: ConfigManager, state_db: StateDB
         runtime_root=str(runtime_root) if runtime_root else None,
         config_path=str(config_path) if config_path else None,
         attachment_context=attachment_context,
-        last_mode=runtime_state.get("researcher:last_mode"),
-        last_trace_ref=runtime_state.get("researcher:last_trace_ref"),
-        last_request_id=runtime_state.get("researcher:last_request_id"),
-        last_runtime_root=runtime_state.get("researcher:last_runtime_root"),
-        last_config_path=runtime_state.get("researcher:last_config_path"),
-        last_evidence_summary=runtime_state.get("researcher:last_evidence_summary"),
-        last_attachment_context=_loads_json(runtime_state.get("researcher:last_attachment_context")),
-        last_provider_id=runtime_state.get("researcher:last_provider_id"),
-        last_provider_model=runtime_state.get("researcher:last_provider_model"),
-        last_provider_model_family=runtime_state.get("researcher:last_provider_model_family"),
-        last_provider_auth_method=runtime_state.get("researcher:last_provider_auth_method"),
-        last_provider_execution_transport=runtime_state.get("researcher:last_provider_execution_transport"),
-        last_routing_decision=runtime_state.get("researcher:last_routing_decision"),
-        last_active_chip_key=runtime_state.get("researcher:last_active_chip_key"),
-        last_active_chip_task_type=runtime_state.get("researcher:last_active_chip_task_type"),
-        last_active_chip_evaluate_used=_parse_bool(runtime_state.get("researcher:last_active_chip_evaluate_used")),
-        last_output_keepability=runtime_state.get("researcher:last_output_keepability"),
-        last_promotion_disposition=runtime_state.get("researcher:last_promotion_disposition"),
-        failure_count=_parse_int(runtime_state.get("researcher:failure_count")),
-        last_failure=_loads_json(runtime_state.get("researcher:last_failure")),
+        last_mode=str(typed_state.get("last_mode") or runtime_state.get("researcher:last_mode") or "") or None,
+        last_trace_ref=str(typed_state.get("last_trace_ref") or runtime_state.get("researcher:last_trace_ref") or "") or None,
+        last_request_id=str(typed_state.get("last_request_id") or runtime_state.get("researcher:last_request_id") or "") or None,
+        last_runtime_root=str(typed_state.get("last_runtime_root") or runtime_state.get("researcher:last_runtime_root") or "") or None,
+        last_config_path=str(typed_state.get("last_config_path") or runtime_state.get("researcher:last_config_path") or "") or None,
+        last_evidence_summary=str(typed_state.get("last_evidence_summary") or runtime_state.get("researcher:last_evidence_summary") or "") or None,
+        last_attachment_context=typed_state.get("last_attachment_context") or _loads_json(runtime_state.get("researcher:last_attachment_context")),
+        last_provider_id=str(typed_state.get("last_provider_id") or runtime_state.get("researcher:last_provider_id") or "") or None,
+        last_provider_model=str(typed_state.get("last_provider_model") or runtime_state.get("researcher:last_provider_model") or "") or None,
+        last_provider_model_family=str(typed_state.get("last_provider_model_family") or runtime_state.get("researcher:last_provider_model_family") or "") or None,
+        last_provider_auth_method=str(typed_state.get("last_provider_auth_method") or runtime_state.get("researcher:last_provider_auth_method") or "") or None,
+        last_provider_execution_transport=str(typed_state.get("last_provider_execution_transport") or runtime_state.get("researcher:last_provider_execution_transport") or "") or None,
+        last_routing_decision=str(typed_state.get("last_routing_decision") or runtime_state.get("researcher:last_routing_decision") or "") or None,
+        last_active_chip_key=str(typed_state.get("last_active_chip_key") or runtime_state.get("researcher:last_active_chip_key") or "") or None,
+        last_active_chip_task_type=str(typed_state.get("last_active_chip_task_type") or runtime_state.get("researcher:last_active_chip_task_type") or "") or None,
+        last_active_chip_evaluate_used=bool(
+            typed_state.get("last_active_chip_evaluate_used")
+            if typed_state.get("last_active_chip_evaluate_used") is not None
+            else _parse_bool(runtime_state.get("researcher:last_active_chip_evaluate_used"))
+        ),
+        last_output_keepability=str(typed_state.get("last_output_keepability") or runtime_state.get("researcher:last_output_keepability") or "") or None,
+        last_promotion_disposition=str(typed_state.get("last_promotion_disposition") or runtime_state.get("researcher:last_promotion_disposition") or "") or None,
+        failure_count=int(typed_state.get("failure_count") or _parse_int(runtime_state.get("researcher:failure_count"))),
+        last_failure=typed_state.get("last_failure") or _loads_json(runtime_state.get("researcher:last_failure")),
     )
 
 
@@ -1178,12 +1229,19 @@ def build_researcher_reply(
             actor_id="researcher_bridge",
             reason_code="secret_boundary_blocked",
             severity="high",
-            facts={
-                "quarantine_id": screened_context["quarantine_id"],
-                "blocked_stage": "contextual_task",
-                "keepability": output_keepability,
-                "promotion_disposition": promotion_disposition,
-            },
+            facts=_bridge_event_facts(
+                routing_decision="secret_boundary_blocked",
+                bridge_mode="blocked",
+                active_chip_key=active_chip_key,
+                active_chip_task_type=active_chip_task_type,
+                active_chip_evaluate_used=active_chip_evaluate_used,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "quarantine_id": screened_context["quarantine_id"],
+                    "blocked_stage": "contextual_task",
+                },
+            ),
         )
         return ResearcherBridgeResult(
             request_id=request_id,
@@ -1250,11 +1308,24 @@ def build_researcher_reply(
             actor_id="researcher_bridge",
             reason_code="bridge_disabled",
             severity="high",
-            facts={
-                "mode": "disabled",
-                "keepability": output_keepability,
-                "promotion_disposition": promotion_disposition,
-            },
+            facts=_bridge_event_facts(
+                routing_decision="bridge_disabled",
+                bridge_mode="disabled",
+                provider_id=provider_selection.provider.provider_id if provider_selection.provider else None,
+                provider_auth_method=provider_selection.provider.auth_method if provider_selection.provider else None,
+                provider_model=provider_selection.provider.default_model if provider_selection.provider else None,
+                provider_model_family=provider_selection.model_family,
+                provider_execution_transport=(
+                    provider_selection.provider.execution_transport if provider_selection.provider else None
+                ),
+                provider_base_url=provider_selection.provider.base_url if provider_selection.provider else None,
+                provider_source=provider_selection.provider.source if provider_selection.provider else None,
+                active_chip_key=active_chip_key,
+                active_chip_task_type=active_chip_task_type,
+                active_chip_evaluate_used=active_chip_evaluate_used,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+            ),
         )
         return ResearcherBridgeResult(
             request_id=request_id,
@@ -1302,11 +1373,25 @@ def build_researcher_reply(
             actor_id="researcher_bridge",
             reason_code="provider_resolution_failed",
             severity="high",
-            facts={
-                "error": provider_selection.error,
-                "keepability": output_keepability,
-                "promotion_disposition": promotion_disposition,
-            },
+            facts=_bridge_event_facts(
+                routing_decision="provider_resolution_failed",
+                bridge_mode="bridge_error",
+                provider_id=provider_selection.provider.provider_id if provider_selection.provider else None,
+                provider_auth_method=provider_selection.provider.auth_method if provider_selection.provider else None,
+                provider_model=provider_selection.provider.default_model if provider_selection.provider else None,
+                provider_model_family=provider_selection.model_family,
+                provider_execution_transport=(
+                    provider_selection.provider.execution_transport if provider_selection.provider else None
+                ),
+                provider_base_url=provider_selection.provider.base_url if provider_selection.provider else None,
+                provider_source=provider_selection.provider.source if provider_selection.provider else None,
+                active_chip_key=active_chip_key,
+                active_chip_task_type=active_chip_task_type,
+                active_chip_evaluate_used=active_chip_evaluate_used,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={"error": provider_selection.error},
+            ),
         )
         return ResearcherBridgeResult(
             request_id=request_id,
@@ -1351,7 +1436,25 @@ def build_researcher_reply(
                     agent_id=agent_id,
                     actor_id="researcher_bridge",
                     reason_code="build_advisory",
-                    facts={"runtime_source": runtime_source, "model_family": provider_selection.model_family},
+                    facts=_bridge_event_facts(
+                        routing_decision="build_advisory",
+                        bridge_mode=f"external_{runtime_source}",
+                        runtime_root=str(runtime_root),
+                        config_path=str(config_path),
+                        provider_id=provider_selection.provider.provider_id if provider_selection.provider else None,
+                        provider_auth_method=provider_selection.provider.auth_method if provider_selection.provider else None,
+                        provider_model=provider_selection.provider.default_model if provider_selection.provider else None,
+                        provider_model_family=provider_selection.model_family,
+                        provider_execution_transport=(
+                            provider_selection.provider.execution_transport if provider_selection.provider else None
+                        ),
+                        provider_base_url=provider_selection.provider.base_url if provider_selection.provider else None,
+                        provider_source=provider_selection.provider.source if provider_selection.provider else None,
+                        active_chip_key=active_chip_key,
+                        active_chip_task_type=active_chip_task_type,
+                        active_chip_evaluate_used=active_chip_evaluate_used,
+                        extra={"runtime_source": runtime_source},
+                    ),
                 )
                 build_advisory = _import_build_advisory(runtime_root)
                 execute_with_research = _import_execute_with_research(runtime_root)
@@ -1437,13 +1540,25 @@ def build_researcher_reply(
                         agent_id=agent_id,
                         actor_id="researcher_bridge",
                         reason_code="provider_fallback_chat",
-                        facts={
-                            "routing_decision": routing_decision,
-                            "bridge_mode": f"external_{runtime_source}",
-                            "evidence_summary": evidence_summary,
-                            "keepability": output_keepability,
-                            "promotion_disposition": promotion_disposition,
-                        },
+                        facts=_bridge_event_facts(
+                            routing_decision=routing_decision,
+                            bridge_mode=f"external_{runtime_source}",
+                            evidence_summary=evidence_summary,
+                            runtime_root=str(runtime_root),
+                            config_path=str(config_path),
+                            provider_id=provider_selection.provider.provider_id,
+                            provider_auth_method=provider_selection.provider.auth_method,
+                            provider_model=provider_selection.provider.default_model,
+                            provider_model_family=provider_selection.model_family,
+                            provider_execution_transport=provider_selection.provider.execution_transport,
+                            provider_base_url=provider_selection.provider.base_url,
+                            provider_source=provider_selection.provider.source,
+                            active_chip_key=active_chip_key,
+                            active_chip_task_type=active_chip_task_type,
+                            active_chip_evaluate_used=active_chip_evaluate_used,
+                            keepability=output_keepability,
+                            promotion_disposition=promotion_disposition,
+                        ),
                     )
                     return ResearcherBridgeResult(
                         request_id=request_id,
@@ -1540,13 +1655,27 @@ def build_researcher_reply(
                     agent_id=agent_id,
                     actor_id="researcher_bridge",
                     reason_code=base_routing_decision,
-                    facts={
-                        "routing_decision": routing_decision,
-                        "bridge_mode": f"external_{runtime_source}",
-                        "evidence_summary": evidence_summary,
-                        "keepability": output_keepability,
-                        "promotion_disposition": promotion_disposition,
-                    },
+                    facts=_bridge_event_facts(
+                        routing_decision=routing_decision,
+                        bridge_mode=f"external_{runtime_source}",
+                        evidence_summary=evidence_summary,
+                        runtime_root=str(runtime_root),
+                        config_path=str(config_path),
+                        provider_id=provider_selection.provider.provider_id if provider_selection.provider else None,
+                        provider_auth_method=provider_selection.provider.auth_method if provider_selection.provider else None,
+                        provider_model=provider_selection.provider.default_model if provider_selection.provider else None,
+                        provider_model_family=provider_selection.model_family,
+                        provider_execution_transport=(
+                            provider_selection.provider.execution_transport if provider_selection.provider else None
+                        ),
+                        provider_base_url=provider_selection.provider.base_url if provider_selection.provider else None,
+                        provider_source=provider_selection.provider.source if provider_selection.provider else None,
+                        active_chip_key=active_chip_key,
+                        active_chip_task_type=active_chip_task_type,
+                        active_chip_evaluate_used=active_chip_evaluate_used,
+                        keepability=output_keepability,
+                        promotion_disposition=promotion_disposition,
+                    ),
                 )
                 return ResearcherBridgeResult(
                     request_id=request_id,
@@ -1594,11 +1723,27 @@ def build_researcher_reply(
                     actor_id="researcher_bridge",
                     reason_code="bridge_error",
                     severity="high",
-                    facts={
-                        "error": str(exc),
-                        "keepability": output_keepability,
-                        "promotion_disposition": promotion_disposition,
-                    },
+                    facts=_bridge_event_facts(
+                        routing_decision="bridge_error",
+                        bridge_mode="bridge_error",
+                        runtime_root=str(runtime_root),
+                        config_path=str(config_path),
+                        provider_id=provider_selection.provider.provider_id if provider_selection.provider else None,
+                        provider_auth_method=provider_selection.provider.auth_method if provider_selection.provider else None,
+                        provider_model=provider_selection.provider.default_model if provider_selection.provider else None,
+                        provider_model_family=provider_selection.model_family,
+                        provider_execution_transport=(
+                            provider_selection.provider.execution_transport if provider_selection.provider else None
+                        ),
+                        provider_base_url=provider_selection.provider.base_url if provider_selection.provider else None,
+                        provider_source=provider_selection.provider.source if provider_selection.provider else None,
+                        active_chip_key=active_chip_key,
+                        active_chip_task_type=active_chip_task_type,
+                        active_chip_evaluate_used=active_chip_evaluate_used,
+                        keepability=output_keepability,
+                        promotion_disposition=promotion_disposition,
+                        extra={"error": str(exc)},
+                    ),
                 )
                 return ResearcherBridgeResult(
                     request_id=request_id,
@@ -1650,11 +1795,20 @@ def build_researcher_reply(
         agent_id=agent_id,
         actor_id="researcher_bridge",
         reason_code="stub",
-        facts={
-            "routing_decision": "stub",
-            "keepability": output_keepability,
-            "promotion_disposition": promotion_disposition,
-        },
+        facts=_bridge_event_facts(
+            routing_decision="stub",
+            bridge_mode="stub",
+            evidence_summary=(
+                "No external Spark Researcher runtime was configured or discovered. "
+                f"active_chips={len(attachment_context.get('active_chip_keys') or [])} "
+                f"active_path={attachment_context.get('active_path_key') or 'none'}"
+            ),
+            active_chip_key=active_chip_key,
+            active_chip_task_type=active_chip_task_type,
+            active_chip_evaluate_used=active_chip_evaluate_used,
+            keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        ),
     )
     return ResearcherBridgeResult(
         request_id=request_id,
@@ -1797,6 +1951,122 @@ def _read_runtime_state(state_db: StateDB) -> dict[str, str]:
             "SELECT state_key, value FROM runtime_state WHERE state_key LIKE 'researcher:%'"
         ).fetchall()
     return {str(row["state_key"]): str(row["value"] or "") for row in rows}
+
+
+def _read_typed_researcher_bridge_state(state_db: StateDB) -> dict[str, Any]:
+    last_result = _latest_researcher_bridge_event(
+        state_db,
+        event_types=("tool_result_received", "dispatch_failed"),
+    )
+    last_failure = _latest_researcher_bridge_event(
+        state_db,
+        event_types=("dispatch_failed",),
+    )
+    last_influence = _latest_researcher_bridge_event(
+        state_db,
+        event_types=("plugin_or_chip_influence_recorded",),
+    )
+    snapshot = latest_snapshots_by_surface(state_db).get("researcher_bridge") or {}
+    failure_count = 0
+    with state_db.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM builder_events
+            WHERE component = 'researcher_bridge'
+              AND event_type = 'dispatch_failed'
+            """
+        ).fetchone()
+        if row:
+            failure_count = int(row["count"])
+    facts = last_result.get("facts_json") or {}
+    failure_facts = last_failure.get("facts_json") or {}
+    influence_facts = last_influence.get("facts_json") or {}
+    typed_failure = None
+    if last_failure:
+        typed_failure = {
+            "mode": str(failure_facts.get("bridge_mode") or failure_facts.get("mode") or "bridge_error"),
+            "request_id": last_failure.get("request_id"),
+            "trace_ref": last_failure.get("trace_ref"),
+            "routing_decision": failure_facts.get("routing_decision"),
+            "runtime_root": failure_facts.get("runtime_root") or snapshot.get("runtime_root"),
+            "config_path": failure_facts.get("config_path") or snapshot.get("config_path"),
+            "message": (
+                str(failure_facts.get("error") or "")
+                or str(last_failure.get("summary") or "")
+            ),
+            "output_keepability": failure_facts.get("keepability"),
+            "promotion_disposition": failure_facts.get("promotion_disposition"),
+            "recorded_at": last_failure.get("created_at"),
+        }
+    return {
+        "last_mode": facts.get("bridge_mode") or failure_facts.get("bridge_mode") or failure_facts.get("mode"),
+        "last_trace_ref": last_result.get("trace_ref"),
+        "last_request_id": last_result.get("request_id"),
+        "last_runtime_root": snapshot.get("runtime_root"),
+        "last_config_path": snapshot.get("config_path"),
+        "last_evidence_summary": facts.get("evidence_summary"),
+        "last_attachment_context": {
+            "active_chip_keys": influence_facts.get("active_chip_keys") or [],
+            "pinned_chip_keys": influence_facts.get("pinned_chip_keys") or [],
+            "active_path_key": influence_facts.get("active_path_key"),
+        }
+        if last_influence and (
+            influence_facts.get("active_chip_keys")
+            or influence_facts.get("pinned_chip_keys")
+            or influence_facts.get("active_path_key")
+        )
+        else None,
+        "last_provider_id": facts.get("provider_id") or snapshot.get("provider_id"),
+        "last_provider_model": facts.get("provider_model") or snapshot.get("provider_model"),
+        "last_provider_model_family": facts.get("provider_model_family") or snapshot.get("model_family"),
+        "last_provider_auth_method": facts.get("provider_auth_method"),
+        "last_provider_execution_transport": (
+            facts.get("provider_execution_transport") or snapshot.get("provider_execution_transport")
+        ),
+        "last_routing_decision": facts.get("routing_decision") or failure_facts.get("routing_decision"),
+        "last_active_chip_key": facts.get("active_chip_key") or influence_facts.get("active_chip_key"),
+        "last_active_chip_task_type": (
+            facts.get("active_chip_task_type") or influence_facts.get("active_chip_task_type")
+        ),
+        "last_active_chip_evaluate_used": (
+            facts.get("active_chip_evaluate_used")
+            if facts.get("active_chip_evaluate_used") is not None
+            else influence_facts.get("active_chip_evaluate_used")
+        ),
+        "last_output_keepability": facts.get("keepability") or failure_facts.get("keepability"),
+        "last_promotion_disposition": (
+            facts.get("promotion_disposition") or failure_facts.get("promotion_disposition")
+        ),
+        "failure_count": failure_count,
+        "last_failure": typed_failure,
+    }
+
+
+def _latest_researcher_bridge_event(
+    state_db: StateDB,
+    *,
+    event_types: tuple[str, ...],
+) -> dict[str, Any]:
+    events: list[dict[str, Any]] = []
+    for event_type in event_types:
+        events.extend(
+            [
+                event
+                for event in latest_events_by_type(state_db, event_type=event_type, limit=200)
+                if str(event.get("component") or "") == "researcher_bridge"
+            ]
+        )
+    if not events:
+        return {}
+    events.sort(
+        key=lambda event: (
+            str(event.get("created_at") or ""),
+            str(event.get("event_id") or ""),
+        ),
+        reverse=True,
+    )
+    return events[0]
 
 
 def _loads_json(value: str | None) -> dict[str, Any] | None:

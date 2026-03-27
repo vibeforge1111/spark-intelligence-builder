@@ -14,6 +14,7 @@ from spark_intelligence.gateway.tracing import read_gateway_traces, read_outboun
 from spark_intelligence.identity.service import LOCAL_OPERATOR_HUMAN_ID
 from spark_intelligence.identity.service import review_pairings
 from spark_intelligence.observability.checks import evaluate_stop_ship_issues
+from spark_intelligence.observability.store import recent_delivery_records, recent_provenance_mutations, recent_runs
 from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import swarm_status
@@ -81,6 +82,9 @@ class OperatorInboxReport:
             f"bridge_alerts={counts['bridge_alerts']} "
             f"auth_alerts={counts['auth_alerts']} "
             f"stop_ship_alerts={counts['stop_ship_alerts']} "
+            f"stalled_runs={counts['stalled_runs']} "
+            f"delivery_ambiguity={counts['delivery_ambiguity']} "
+            f"provenance_incidents={counts['provenance_incidents']} "
             f"webhook_alerts={counts['webhook_alerts']} "
             f"webhook_snoozes={counts['webhook_snoozes']} "
             f"active_suppressed_webhook_snoozes={counts['active_suppressed_webhook_snoozes']}"
@@ -120,6 +124,9 @@ class OperatorSecurityReport:
             f"duplicates={counts['duplicate_updates']} "
             f"rate_limited={counts['rate_limited_updates']} "
             f"delivery_failures={counts['delivery_failures']} "
+            f"delivery_ambiguity={counts['delivery_ambiguity']} "
+            f"stalled_runs={counts['stalled_runs']} "
+            f"provenance_incidents={counts['provenance_incidents']} "
             f"guardrail_hits={counts['guardrail_hits']}"
         )
         items = self.payload.get("items") or []
@@ -324,6 +331,14 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
     auth_alerts = _build_auth_alerts(config_manager=config_manager, state_db=state_db)
     stop_ship_alerts = [issue for issue in evaluate_stop_ship_issues(config_manager=config_manager, state_db=state_db) if not issue.ok]
     traces = read_gateway_traces(config_manager, limit=100)
+    stalled_runs = [row for row in recent_runs(state_db, limit=100, status="stalled")]
+    delivery_ambiguity = [row for row in recent_delivery_records(state_db, limit=100, status="attempted")]
+    provenance_mutations = recent_provenance_mutations(state_db, limit=100)
+    provenance_incidents = [
+        row
+        for row in provenance_mutations
+        if bool(row.get("quarantined")) or str(row.get("source_kind") or "") == "unknown"
+    ]
     webhook_alerts = _build_webhook_alerts(traces=traces, state_db=state_db)
     webhook_snoozes = list_webhook_alert_snoozes(state_db=state_db, traces=traces).rows
     items = _build_inbox_items(
@@ -333,6 +348,9 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
         bridge_alerts=bridge_alerts,
         auth_alerts=auth_alerts,
         stop_ship_alerts=stop_ship_alerts,
+        stalled_runs=stalled_runs,
+        delivery_ambiguity=delivery_ambiguity,
+        provenance_incidents=provenance_incidents,
         webhook_alerts=webhook_alerts,
         webhook_snoozes=webhook_snoozes,
     )
@@ -345,6 +363,9 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
             "bridge_alerts": len(bridge_alerts),
             "auth_alerts": len(auth_alerts),
             "stop_ship_alerts": len(stop_ship_alerts),
+            "stalled_runs": len(stalled_runs),
+            "delivery_ambiguity": len(delivery_ambiguity),
+            "provenance_incidents": len(provenance_incidents),
             "webhook_alerts": len(webhook_alerts),
             "webhook_snoozes": len(webhook_snoozes),
             "active_suppressed_webhook_snoozes": _active_suppressed_webhook_snooze_count(webhook_snoozes),
@@ -355,6 +376,9 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
                 + len(bridge_alerts)
                 + len(auth_alerts)
                 + len(stop_ship_alerts)
+                + len(stalled_runs)
+                + len(delivery_ambiguity)
+                + len(provenance_incidents)
                 + len(webhook_alerts)
                 + len(webhook_snoozes)
             ),
@@ -367,6 +391,9 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
         "bridges": bridge_alerts,
         "auth": auth_alerts,
         "stop_ship": [issue.__dict__ for issue in stop_ship_alerts],
+        "stalled_runs": stalled_runs,
+        "delivery_ambiguity": delivery_ambiguity,
+        "provenance_incidents": provenance_incidents,
         "webhooks": webhook_alerts,
         "webhook_snoozes": webhook_snoozes,
         "items": items,
@@ -386,12 +413,20 @@ def build_operator_security_report(
     stop_ship_alerts = [issue for issue in evaluate_stop_ship_issues(config_manager=config_manager, state_db=state_db) if not issue.ok]
     traces = read_gateway_traces(config_manager, limit=limit)
     outbound = read_outbound_audit(config_manager, limit=limit)
+    delivery_failures = recent_delivery_records(state_db, limit=limit, status="failed")
+    delivery_ambiguity = recent_delivery_records(state_db, limit=limit, status="attempted")
+    stalled_runs = [row for row in recent_runs(state_db, limit=limit, status="stalled")]
+    provenance_mutations = recent_provenance_mutations(state_db, limit=limit)
+    provenance_incidents = [
+        row
+        for row in provenance_mutations
+        if bool(row.get("quarantined")) or str(row.get("source_kind") or "") == "unknown"
+    ]
     webhook_alerts = _build_webhook_alerts(traces=traces, state_db=state_db)
     webhook_snoozes = list_webhook_alert_snoozes(state_db=state_db, traces=traces).rows
 
     duplicate_updates = [trace for trace in traces if trace.get("event") == "telegram_update_duplicate"]
     rate_limited_updates = [trace for trace in traces if trace.get("event") == "telegram_rate_limited"]
-    delivery_failures = [record for record in outbound if record.get("delivery_ok") is False]
     guardrail_hits = [record for record in outbound if record.get("guardrail_actions")]
     secret_reply_blocks = [
         record for record in outbound if "block_secret_like_reply" in (record.get("guardrail_actions") or [])
@@ -407,6 +442,9 @@ def build_operator_security_report(
         stop_ship_alerts=stop_ship_alerts,
         webhook_alerts=webhook_alerts,
         webhook_snoozes=webhook_snoozes,
+        stalled_runs=stalled_runs,
+        delivery_ambiguity=delivery_ambiguity,
+        provenance_incidents=provenance_incidents,
         duplicate_updates=duplicate_updates,
         rate_limited_updates=rate_limited_updates,
         delivery_failures=delivery_failures,
@@ -425,6 +463,9 @@ def build_operator_security_report(
             "duplicate_updates": len(duplicate_updates),
             "rate_limited_updates": len(rate_limited_updates),
             "delivery_failures": len(delivery_failures),
+            "delivery_ambiguity": len(delivery_ambiguity),
+            "stalled_runs": len(stalled_runs),
+            "provenance_incidents": len(provenance_incidents),
             "guardrail_hits": len(guardrail_hits),
             "secret_reply_blocks": len(secret_reply_blocks),
             "truncated_replies": len(truncated_replies),
@@ -439,6 +480,9 @@ def build_operator_security_report(
             "duplicates": duplicate_updates,
             "rate_limited": rate_limited_updates,
             "delivery_failures": delivery_failures,
+            "delivery_ambiguity": delivery_ambiguity,
+            "stalled_runs": stalled_runs,
+            "provenance_incidents": provenance_incidents,
             "guardrail_hits": guardrail_hits,
             "webhook_rejections": webhook_alerts,
         },
@@ -652,6 +696,9 @@ def _build_inbox_items(
     bridge_alerts: list[dict[str, Any]],
     auth_alerts: list[dict[str, Any]],
     stop_ship_alerts: list[Any],
+    stalled_runs: list[dict[str, Any]],
+    delivery_ambiguity: list[dict[str, Any]],
+    provenance_incidents: list[dict[str, Any]],
     webhook_alerts: list[dict[str, Any]],
     webhook_snoozes: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -755,6 +802,45 @@ def _build_inbox_items(
             }
         )
 
+    if stalled_runs:
+        items.append(
+            {
+                "kind": "run_registry",
+                "status": "stalled",
+                "priority": "high",
+                "sort_order": 22,
+                "item_ref": str(stalled_runs[0].get("run_id") or "stalled-run"),
+                "summary": f"{len(stalled_runs)} run(s) are marked stalled in the typed run registry.",
+                "recommended_command": "spark-intelligence operator security",
+            }
+        )
+
+    if delivery_ambiguity:
+        items.append(
+            {
+                "kind": "delivery_registry",
+                "status": "attempted",
+                "priority": "medium",
+                "sort_order": 24,
+                "item_ref": str(delivery_ambiguity[0].get("delivery_id") or "pending-delivery"),
+                "summary": f"{len(delivery_ambiguity)} delivery attempt(s) remain unacknowledged in the typed delivery registry.",
+                "recommended_command": "spark-intelligence operator security",
+            }
+        )
+
+    if provenance_incidents:
+        items.append(
+            {
+                "kind": "provenance",
+                "status": "incident",
+                "priority": "medium",
+                "sort_order": 26,
+                "item_ref": str(provenance_incidents[0].get("mutation_id") or "provenance-incident"),
+                "summary": f"{len(provenance_incidents)} provenance mutation incident(s) need operator review.",
+                "recommended_command": "spark-intelligence operator security",
+            }
+        )
+
     webhook_priority = {"critical": "high", "warning": "medium", "info": "info"}
     webhook_sort_order = {"critical": 22, "warning": 32, "info": 44}
     for row in webhook_alerts:
@@ -830,6 +916,9 @@ def _build_security_items(
     stop_ship_alerts: list[Any],
     webhook_alerts: list[dict[str, Any]],
     webhook_snoozes: list[dict[str, Any]],
+    stalled_runs: list[dict[str, Any]],
+    delivery_ambiguity: list[dict[str, Any]],
+    provenance_incidents: list[dict[str, Any]],
     duplicate_updates: list[dict[str, Any]],
     rate_limited_updates: list[dict[str, Any]],
     delivery_failures: list[dict[str, Any]],
@@ -952,14 +1041,43 @@ def _build_security_items(
             }
         )
 
-    if delivery_failures:
-        latest = delivery_failures[-1]
+    if stalled_runs:
         items.append(
             {
                 "priority": "high",
                 "sort_order": severity_order["high"],
-                "summary": f"{len(delivery_failures)} outbound delivery attempt(s) failed in recent logs.",
-                "recommended_command": "spark-intelligence gateway outbound --limit 20",
+                "summary": f"{len(stalled_runs)} run(s) are marked stalled in typed run registry.",
+                "recommended_command": "spark-intelligence operator security",
+            }
+        )
+
+    if delivery_failures:
+        items.append(
+            {
+                "priority": "high",
+                "sort_order": severity_order["high"],
+                "summary": f"{len(delivery_failures)} delivery attempt(s) failed in the typed delivery ledger.",
+                "recommended_command": "spark-intelligence operator security",
+            }
+        )
+
+    if delivery_ambiguity:
+        items.append(
+            {
+                "priority": "medium",
+                "sort_order": severity_order["medium"],
+                "summary": f"{len(delivery_ambiguity)} delivery attempt(s) remain unacknowledged in the typed delivery ledger.",
+                "recommended_command": "spark-intelligence operator security",
+            }
+        )
+
+    if provenance_incidents:
+        items.append(
+            {
+                "priority": "medium",
+                "sort_order": severity_order["medium"],
+                "summary": f"{len(provenance_incidents)} provenance mutation incident(s) were recorded in typed storage.",
+                "recommended_command": "spark-intelligence operator security",
             }
         )
 

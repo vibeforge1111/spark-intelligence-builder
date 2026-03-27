@@ -7,8 +7,10 @@ from spark_intelligence.attachments.snapshot import sync_attachment_snapshot
 from spark_intelligence.gateway.guardrails import prepare_outbound_text
 from spark_intelligence.observability.policy import looks_secret_like
 from spark_intelligence.jobs.service import jobs_tick
+from spark_intelligence.ops.service import build_operator_security_report
 from spark_intelligence.observability.checks import evaluate_stop_ship_issues
 from spark_intelligence.observability.store import (
+    close_run,
     latest_events_by_type,
     open_run,
     record_environment_snapshot,
@@ -23,12 +25,86 @@ from spark_intelligence.researcher_bridge.advisory import (
     ResearcherBridgeResult,
     build_researcher_reply,
     record_researcher_bridge_result,
+    researcher_bridge_status,
 )
 
 from tests.test_support import SparkTestCase
 
 
 class BuilderPrelaunchContractTests(SparkTestCase):
+    def test_tranche1_typed_ledger_tables_are_populated(self) -> None:
+        run = open_run(
+            self.state_db,
+            run_kind="telegram_update",
+            origin_surface="telegram_runtime",
+            summary="run opened",
+            request_id="req-ledger",
+            session_id="session:test",
+            channel_id="telegram",
+            actor_id="telegram_runtime",
+        )
+        record_event(
+            self.state_db,
+            event_type="delivery_attempted",
+            component="telegram_runtime",
+            summary="delivery attempted",
+            run_id=run.run_id,
+            request_id="req-ledger",
+            session_id="session:test",
+            channel_id="telegram",
+            actor_id="telegram_runtime",
+            truth_kind="delivery",
+            facts={"update_id": 123, "telegram_user_id": "user-1"},
+        )
+        record_event(
+            self.state_db,
+            event_type="delivery_succeeded",
+            component="telegram_runtime",
+            summary="delivery succeeded",
+            run_id=run.run_id,
+            request_id="req-ledger",
+            session_id="session:test",
+            channel_id="telegram",
+            actor_id="telegram_runtime",
+            truth_kind="delivery",
+            facts={"update_id": 123, "telegram_user_id": "user-1"},
+        )
+        record_event(
+            self.state_db,
+            event_type="plugin_or_chip_influence_recorded",
+            component="researcher_bridge",
+            summary="chip influence",
+            run_id=run.run_id,
+            request_id="req-ledger",
+            channel_id="telegram",
+            actor_id="researcher_bridge",
+            facts={"keepability": "ephemeral_context"},
+            provenance={"source_kind": "chip_hook", "source_ref": "chip:test"},
+        )
+        close_run(
+            self.state_db,
+            run_id=run.run_id,
+            status="closed",
+            close_reason="test_complete",
+            summary="run closed",
+        )
+        self.config_manager.set_path("runtime.install.profile", "telegram-agent")
+
+        with self.state_db.connect() as conn:
+            counts = {
+                "event_log": int(conn.execute("SELECT COUNT(*) AS c FROM event_log").fetchone()["c"]),
+                "run_registry": int(conn.execute("SELECT COUNT(*) AS c FROM run_registry").fetchone()["c"]),
+                "delivery_registry": int(conn.execute("SELECT COUNT(*) AS c FROM delivery_registry").fetchone()["c"]),
+                "config_mutation_log": int(conn.execute("SELECT COUNT(*) AS c FROM config_mutation_log").fetchone()["c"]),
+                "provenance_mutation_log": int(conn.execute("SELECT COUNT(*) AS c FROM provenance_mutation_log").fetchone()["c"]),
+            }
+
+        self.assertGreaterEqual(counts["event_log"], 4)
+        self.assertEqual(counts["run_registry"], 1)
+        self.assertEqual(counts["delivery_registry"], 1)
+        self.assertGreaterEqual(counts["config_mutation_log"], 1)
+        self.assertEqual(counts["provenance_mutation_log"], 1)
+
     def test_secret_policy_detects_common_secret_families(self) -> None:
         self.assertTrue(looks_secret_like("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl"))
         self.assertTrue(looks_secret_like("TELEGRAM_BOT_TOKEN=1234567890:abcdefghijklmnopqrstuvwxyzABCDE"))
@@ -60,6 +136,28 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(row["status"], "applied")
         self.assertTrue(row["rollback_ref"])
         self.assertTrue(latest_events_by_type(self.state_db, event_type="config_mutation_applied", limit=10))
+
+    def test_env_secret_noop_upsert_is_rejected_without_rewrite(self) -> None:
+        self.config_manager.upsert_env_secret("TEST_SECRET", "abc123")
+        before_content = self.config_manager.paths.env_file.read_text(encoding="utf-8")
+
+        self.config_manager.upsert_env_secret("TEST_SECRET", "abc123")
+        after_content = self.config_manager.paths.env_file.read_text(encoding="utf-8")
+
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT status
+                FROM config_mutation_log
+                WHERE target_path = 'TEST_SECRET'
+                ORDER BY recorded_at DESC, mutation_id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+
+        self.assertEqual(before_content, after_content)
+        self.assertIsNotNone(row)
+        self.assertEqual(row["status"], "rejected")
 
     def test_outbound_secret_block_records_violation_and_quarantine(self) -> None:
         guarded = prepare_outbound_text(
@@ -123,6 +221,28 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIsNotNone(row)
         self.assertEqual(row["status"], "closed")
         self.assertEqual(row["close_reason"], "job_completed")
+
+    def test_jobs_tick_records_failed_run_on_exception(self) -> None:
+        with patch("spark_intelligence.jobs.service.run_oauth_refresh_maintenance", side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                jobs_tick(self.config_manager, self.state_db)
+
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT status, close_reason
+                FROM builder_runs
+                WHERE run_kind = 'job:oauth_refresh_maintenance'
+                ORDER BY opened_at DESC, run_id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+
+        self.assertIsNotNone(row)
+        self.assertEqual(row["status"], "failed")
+        self.assertEqual(row["close_reason"], "job_exception")
+        events = latest_events_by_type(self.state_db, event_type="run_failed", limit=10)
+        self.assertTrue(events)
 
     def test_environment_parity_check_fails_on_conflicting_snapshots(self) -> None:
         record_environment_snapshot(
@@ -425,6 +545,169 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertNotIn("[Spark Researcher", payload["message"])
         self.assertNotIn("trace:", payload["message"])
         self.assertIn("Inspect trace and event history", payload["message"])
+
+    def test_researcher_bridge_status_prefers_typed_truth_surfaces(self) -> None:
+        record_environment_snapshot(
+            self.state_db,
+            surface="researcher_bridge",
+            summary="typed snapshot",
+            provider_id="custom",
+            provider_model="MiniMax-M2.7",
+            provider_base_url="https://api.minimax.io/v1",
+            provider_execution_transport="direct_http",
+            runtime_root="C:/typed-runtime",
+            config_path="C:/typed-runtime/config.json",
+            facts={"model_family": "MiniMax-M2.7"},
+        )
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="typed bridge result",
+            request_id="req-typed",
+            trace_ref="trace:typed",
+            actor_id="researcher_bridge",
+            facts={
+                "bridge_mode": "external_typed",
+                "routing_decision": "researcher_advisory",
+                "evidence_summary": "typed evidence",
+                "provider_id": "custom",
+                "provider_model": "MiniMax-M2.7",
+                "provider_model_family": "MiniMax-M2.7",
+                "provider_auth_method": "api_key",
+                "provider_execution_transport": "direct_http",
+                "active_chip_key": "chip:typed",
+                "active_chip_task_type": "advice",
+                "active_chip_evaluate_used": True,
+                "keepability": "ephemeral_context",
+                "promotion_disposition": "not_promotable",
+            },
+        )
+        with self.state_db.connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO runtime_state(state_key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                ("researcher:last_mode", "runtime_state_only"),
+            )
+            conn.commit()
+
+        status = researcher_bridge_status(config_manager=self.config_manager, state_db=self.state_db)
+        self.assertEqual(status.last_mode, "external_typed")
+        self.assertEqual(status.last_trace_ref, "trace:typed")
+        self.assertEqual(status.last_runtime_root, "C:/typed-runtime")
+        self.assertEqual(status.last_provider_id, "custom")
+        self.assertEqual(status.last_active_chip_key, "chip:typed")
+
+    def test_operator_security_report_reads_typed_delivery_run_and_provenance_truth(self) -> None:
+        run = open_run(
+            self.state_db,
+            run_kind="job:test",
+            origin_surface="jobs_tick",
+            summary="stalled run",
+            request_id="req-ops",
+            session_id="session:ops",
+            actor_id="jobs_tick",
+        )
+        close_run(
+            self.state_db,
+            run_id=run.run_id,
+            status="stalled",
+            close_reason="stalled_for_test",
+            summary="stalled run closed",
+        )
+        record_event(
+            self.state_db,
+            event_type="delivery_attempted",
+            component="telegram_runtime",
+            summary="delivery attempted",
+            run_id=run.run_id,
+            request_id="req-ops",
+            session_id="session:ops",
+            channel_id="telegram",
+            actor_id="telegram_runtime",
+            truth_kind="delivery",
+            facts={"update_id": 999, "telegram_user_id": "user-ops"},
+        )
+        record_event(
+            self.state_db,
+            event_type="delivery_failed",
+            component="telegram_runtime",
+            summary="delivery failed",
+            run_id=run.run_id,
+            request_id="req-ops",
+            session_id="session:ops",
+            channel_id="telegram",
+            actor_id="telegram_runtime",
+            truth_kind="delivery",
+            facts={"update_id": 999, "telegram_user_id": "user-ops", "delivery_error": "HTTP 500"},
+        )
+        record_event(
+            self.state_db,
+            event_type="plugin_or_chip_influence_recorded",
+            component="researcher_bridge",
+            summary="unlabeled provenance incident",
+            run_id=run.run_id,
+            request_id="req-ops",
+            actor_id="researcher_bridge",
+            facts={"keepability": "ephemeral_context"},
+            provenance={},
+        )
+
+        report = build_operator_security_report(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            limit=20,
+        )
+
+        self.assertEqual(report.payload["counts"]["delivery_failures"], 1)
+        self.assertEqual(report.payload["counts"]["stalled_runs"], 1)
+        self.assertEqual(report.payload["counts"]["provenance_incidents"], 1)
+        self.assertTrue(any("typed delivery ledger" in item["summary"] for item in report.payload["items"]))
+
+    def test_unlabeled_provenance_is_quarantined(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="plugin_or_chip_influence_recorded",
+            component="researcher_bridge",
+            summary="unlabeled provenance mutation",
+            request_id="req-unlabeled-prov",
+            actor_id="researcher_bridge",
+            facts={"keepability": "ephemeral_context"},
+            provenance={},
+        )
+
+        with self.state_db.connect() as conn:
+            mutation = conn.execute(
+                """
+                SELECT source_kind, source_id, quarantined
+                FROM provenance_mutation_log
+                ORDER BY recorded_at DESC, mutation_id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            quarantine = conn.execute(
+                """
+                SELECT policy_domain, reason_code
+                FROM quarantine_records
+                WHERE source_kind = 'provenance_mutation'
+                ORDER BY created_at DESC, quarantine_id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+
+        self.assertIsNotNone(mutation)
+        self.assertEqual(mutation["source_kind"], "unknown")
+        self.assertEqual(int(mutation["quarantined"]), 1)
+        self.assertIsNotNone(quarantine)
+        self.assertEqual(quarantine["policy_domain"], "provenance_mutation")
+
+        issues = {
+            issue.name: issue
+            for issue in evaluate_stop_ship_issues(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+            )
+        }
+        self.assertTrue(issues["stop_ship_unlabeled_provenance_quarantine"].ok)
 
     def test_stop_ship_flags_raw_bridge_residue_persistence(self) -> None:
         with self.state_db.connect() as conn:

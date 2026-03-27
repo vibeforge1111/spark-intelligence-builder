@@ -250,6 +250,54 @@ SCHEMA_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS event_log (
+        event_id TEXT PRIMARY KEY,
+        event_type TEXT NOT NULL,
+        recorded_at TEXT NOT NULL,
+        workspace_id TEXT,
+        trace_ref TEXT,
+        request_id TEXT,
+        run_id TEXT,
+        session_id TEXT,
+        surface_kind TEXT,
+        channel_kind TEXT,
+        actor_kind TEXT,
+        actor_id TEXT,
+        status TEXT,
+        severity TEXT,
+        payload_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS run_registry (
+        run_id TEXT PRIMARY KEY,
+        run_kind TEXT NOT NULL,
+        parent_run_id TEXT,
+        session_id TEXT,
+        surface_kind TEXT,
+        status TEXT NOT NULL,
+        opened_at TEXT NOT NULL,
+        closed_at TEXT,
+        freshness_deadline TEXT,
+        closure_reason TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS delivery_registry (
+        delivery_id TEXT PRIMARY KEY,
+        trace_ref TEXT,
+        run_id TEXT,
+        session_id TEXT,
+        channel_kind TEXT,
+        target_ref TEXT,
+        message_ref TEXT,
+        attempted_at TEXT NOT NULL,
+        acked_at TEXT,
+        status TEXT NOT NULL,
+        failure_family TEXT
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS config_mutation_audit (
         mutation_id TEXT PRIMARY KEY,
         target_document TEXT NOT NULL,
@@ -267,6 +315,38 @@ SCHEMA_STATEMENTS = [
         rollback_payload_json TEXT,
         error_message TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS config_mutation_log (
+        mutation_id TEXT PRIMARY KEY,
+        recorded_at TEXT NOT NULL,
+        actor_kind TEXT,
+        actor_id TEXT,
+        source_surface TEXT,
+        target_path TEXT NOT NULL,
+        before_hash TEXT,
+        after_hash TEXT,
+        semantic_diff_json TEXT,
+        validation_verdict TEXT,
+        rollback_ref TEXT,
+        status TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS provenance_mutation_log (
+        mutation_id TEXT PRIMARY KEY,
+        recorded_at TEXT NOT NULL,
+        surface TEXT NOT NULL,
+        mutation_type TEXT NOT NULL,
+        source_kind TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        trace_ref TEXT,
+        input_ref TEXT,
+        output_ref TEXT,
+        trust_level TEXT NOT NULL,
+        quarantined INTEGER NOT NULL DEFAULT 0,
+        reason_code TEXT
     )
     """,
     """
@@ -380,7 +460,17 @@ SCHEMA_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_builder_events_run_id ON builder_events(run_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_builder_events_type ON builder_events(event_type, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_builder_runs_status ON builder_runs(status, opened_at)",
+    "CREATE INDEX IF NOT EXISTS idx_event_log_type_recorded_at ON event_log(event_type, recorded_at)",
+    "CREATE INDEX IF NOT EXISTS idx_event_log_trace_ref ON event_log(trace_ref, recorded_at)",
+    "CREATE INDEX IF NOT EXISTS idx_event_log_run_id ON event_log(run_id, recorded_at)",
+    "CREATE INDEX IF NOT EXISTS idx_event_log_session_id ON event_log(session_id, recorded_at)",
+    "CREATE INDEX IF NOT EXISTS idx_run_registry_status ON run_registry(status, opened_at)",
+    "CREATE INDEX IF NOT EXISTS idx_delivery_registry_status_attempted_at ON delivery_registry(status, attempted_at)",
+    "CREATE INDEX IF NOT EXISTS idx_delivery_registry_run_id ON delivery_registry(run_id, attempted_at)",
     "CREATE INDEX IF NOT EXISTS idx_config_mutation_audit_created_at ON config_mutation_audit(created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_config_mutation_log_recorded_at ON config_mutation_log(recorded_at)",
+    "CREATE INDEX IF NOT EXISTS idx_provenance_mutation_log_recorded_at ON provenance_mutation_log(recorded_at)",
+    "CREATE INDEX IF NOT EXISTS idx_provenance_mutation_log_surface ON provenance_mutation_log(surface, recorded_at)",
     "CREATE INDEX IF NOT EXISTS idx_runtime_environment_snapshots_surface ON runtime_environment_snapshots(surface, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_attachment_state_snapshots_generated_at ON attachment_state_snapshots(generated_at, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_personality_observations_human_id ON personality_observations(human_id, observed_at, created_at)",

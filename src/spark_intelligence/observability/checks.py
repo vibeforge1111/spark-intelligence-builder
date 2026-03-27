@@ -13,7 +13,9 @@ from spark_intelligence.observability.store import (
     latest_events_by_type,
     latest_snapshots_by_surface,
     open_runs,
+    recent_delivery_records,
     recent_config_mutations,
+    recent_provenance_mutations,
     recent_quarantine_records,
     record_event,
 )
@@ -58,9 +60,12 @@ def evaluate_stop_ship_issues(
     issues = [
         _config_audit_issue(state_db),
         _intent_execution_issue(state_db),
+        _delivery_truth_issue(state_db),
         _background_closure_issue(state_db),
         _runtime_state_authority_issue(state_db),
         _plugin_provenance_issue(config_manager=config_manager, state_db=state_db),
+        _provenance_ledger_issue(state_db),
+        _unlabeled_provenance_quarantine_issue(state_db),
         _secret_boundary_issue(state_db),
         _keepability_issue(state_db),
         _bridge_residue_persistence_issue(state_db),
@@ -155,6 +160,42 @@ def _background_closure_issue(state_db: StateDB) -> StopShipIssue:
     )
 
 
+def _delivery_truth_issue(state_db: StateDB) -> StopShipIssue:
+    attempts = latest_events_by_type(state_db, event_type="delivery_attempted", limit=200)
+    successes = latest_events_by_type(state_db, event_type="delivery_succeeded", limit=200)
+    failures = latest_events_by_type(state_db, event_type="delivery_failed", limit=200)
+    if not attempts and not successes and not failures:
+        return StopShipIssue(
+            name="stop_ship_delivery_truth",
+            ok=True,
+            detail="No delivery lineage has executed yet.",
+            severity="high",
+        )
+    registry_rows = recent_delivery_records(state_db, limit=400)
+    if not registry_rows:
+        return StopShipIssue(
+            name="stop_ship_delivery_truth",
+            ok=False,
+            detail="Delivery events exist without typed delivery registry rows.",
+            severity="high",
+        )
+    terminal_registry = [row for row in registry_rows if str(row.get("status") or "") in {"succeeded", "failed"}]
+    terminal_events = len(successes) + len(failures)
+    if terminal_events > len(terminal_registry):
+        return StopShipIssue(
+            name="stop_ship_delivery_truth",
+            ok=False,
+            detail="Terminal delivery events exceed typed delivery registry rows.",
+            severity="high",
+        )
+    return StopShipIssue(
+        name="stop_ship_delivery_truth",
+        ok=True,
+        detail="Delivery attempts and acknowledgments are mirrored into typed delivery registry rows.",
+        severity="high",
+    )
+
+
 def _plugin_provenance_issue(*, config_manager: ConfigManager, state_db: StateDB) -> StopShipIssue:
     active_chip_keys = config_manager.get_path("spark.chips.active_keys", default=[]) or []
     active_path_key = config_manager.get_path("spark.specialization_paths.active_path_key", default=None)
@@ -204,6 +245,61 @@ def _plugin_provenance_issue(*, config_manager: ConfigManager, state_db: StateDB
         ok=True,
         detail="Chip, path, and personality influence is recorded with provenance.",
         severity="critical",
+    )
+
+
+def _provenance_ledger_issue(state_db: StateDB) -> StopShipIssue:
+    provenance_events = latest_events_by_type(state_db, event_type="plugin_or_chip_influence_recorded", limit=200)
+    if not provenance_events:
+        return StopShipIssue(
+            name="stop_ship_provenance_ledger",
+            ok=True,
+            detail="No provenance-bearing influence events have executed yet.",
+            severity="high",
+        )
+    mutations = recent_provenance_mutations(state_db, limit=200)
+    if not mutations:
+        return StopShipIssue(
+            name="stop_ship_provenance_ledger",
+            ok=False,
+            detail="Provenance-bearing influence events exist without typed provenance mutation rows.",
+            severity="high",
+        )
+    return StopShipIssue(
+        name="stop_ship_provenance_ledger",
+        ok=True,
+        detail="Provenance-bearing influence events are mirrored into typed provenance mutation rows.",
+        severity="high",
+    )
+
+
+def _unlabeled_provenance_quarantine_issue(state_db: StateDB) -> StopShipIssue:
+    mutations = recent_provenance_mutations(state_db, limit=200)
+    unlabeled = [
+        row
+        for row in mutations
+        if str(row.get("source_kind") or "") == "unknown" or str(row.get("source_id") or "") == "unknown"
+    ]
+    if not unlabeled:
+        return StopShipIssue(
+            name="stop_ship_unlabeled_provenance_quarantine",
+            ok=True,
+            detail="No unlabeled provenance mutations were recorded.",
+            severity="high",
+        )
+    missing_quarantine = [row for row in unlabeled if not bool(row.get("quarantined"))]
+    if missing_quarantine:
+        return StopShipIssue(
+            name="stop_ship_unlabeled_provenance_quarantine",
+            ok=False,
+            detail="Unlabeled provenance mutations were recorded without quarantine.",
+            severity="high",
+        )
+    return StopShipIssue(
+        name="stop_ship_unlabeled_provenance_quarantine",
+        ok=True,
+        detail="Unlabeled provenance mutations are quarantined automatically.",
+        severity="high",
     )
 
 

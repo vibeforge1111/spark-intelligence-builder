@@ -258,6 +258,23 @@ class ConfigManager:
     ) -> None:
         env_map = self.read_env_map()
         previous = env_map.get(key)
+        if previous == value:
+            summary = self._secret_summary(key, value)
+            self._record_config_mutation(
+                target_document="env_file",
+                target_path=key,
+                actor_id=actor_id,
+                actor_type=actor_type,
+                reason_code=reason_code,
+                request_source=request_source,
+                before_payload=summary,
+                after_payload=summary,
+                status="rejected",
+                rollback_payload={"key": key, "manual_restore_required": previous is not None},
+                error_message="semantic_noop",
+                summary=f"Env secret mutation rejected as semantic no-op for {key}.",
+            )
+            return
         env_map[key] = value
         content = "# Spark Intelligence secrets\n" + "".join(f"{name}={env_map[name]}\n" for name in sorted(env_map))
         self._write_env_file(
