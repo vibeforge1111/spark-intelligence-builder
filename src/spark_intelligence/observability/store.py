@@ -16,6 +16,17 @@ DEFAULT_EVIDENCE_LANE = "realworld_validated"
 DEFAULT_SEVERITY = "medium"
 DEFAULT_STATUS = "recorded"
 BUILDER_TARGET_SURFACE = "spark_intelligence_builder"
+WATCHTOWER_BACKGROUND_STALE_SECONDS = 900
+NON_PROMOTABLE_KEEPABILITY = {
+    "ephemeral_context",
+    "user_preference_ephemeral",
+    "operator_debug_only",
+}
+NON_PROMOTABLE_DISPOSITIONS = {
+    "not_promotable",
+    "quarantined",
+    "quarantined_blocked",
+}
 
 
 @dataclass(frozen=True)
@@ -851,6 +862,46 @@ def recent_runs(
     return [_row_to_dict(row) for row in rows]
 
 
+def build_watchtower_snapshot(
+    state_db: StateDB,
+    *,
+    background_stale_seconds: int = WATCHTOWER_BACKGROUND_STALE_SECONDS,
+) -> dict[str, Any]:
+    health_facts = _compute_health_facts(state_db)
+    execution_panel = _build_execution_lineage_panel(state_db)
+    delivery_panel = _build_delivery_truth_panel(state_db, health_facts=health_facts)
+    background_panel = _build_background_freshness_panel(
+        state_db,
+        health_facts=health_facts,
+        background_stale_seconds=background_stale_seconds,
+    )
+    environment_panel = _build_environment_parity_panel(state_db)
+    dimensions = {
+        "ingress_health": _build_ingress_health_dimension(health_facts=health_facts),
+        "execution_health": _build_execution_health_dimension(execution_panel=execution_panel),
+        "delivery_health": _build_delivery_health_dimension(
+            delivery_panel=delivery_panel,
+            health_facts=health_facts,
+        ),
+        "scheduler_freshness": _build_scheduler_freshness_dimension(background_panel=background_panel),
+        "environment_parity": _build_environment_parity_dimension(environment_panel=environment_panel),
+    }
+    return {
+        "health_facts": health_facts,
+        "health_dimensions": dimensions,
+        "top_level_state": _derive_watchtower_top_level_state(dimensions),
+        "panels": {
+            "config_authority": _build_config_authority_panel(state_db),
+            "execution_lineage": execution_panel,
+            "delivery_truth": delivery_panel,
+            "background_freshness": background_panel,
+            "environment_parity": environment_panel,
+            "provenance_and_quarantine": _build_provenance_and_quarantine_panel(state_db),
+            "memory_lane_hygiene": _build_memory_lane_hygiene_panel(state_db),
+        },
+    }
+
+
 def summarize_payload(payload: Any) -> dict[str, Any]:
     if isinstance(payload, dict):
         return {
@@ -1228,3 +1279,551 @@ def _trust_level_from_keepability(value: Any) -> str:
     if keepability in {"ephemeral_context", "operator_debug_only"}:
         return "ephemeral_context"
     return "context_only"
+
+
+def _compute_health_facts(state_db: StateDB) -> dict[str, Any]:
+    return {
+        "last_ingress_at": _latest_event_created_at(
+            state_db,
+            event_types=("intent_committed",),
+            components=("telegram_runtime", "discord_webhook", "whatsapp_webhook", "simulated_dm"),
+        ),
+        "last_dispatch_started_at": _latest_event_created_at(
+            state_db,
+            event_types=("dispatch_started",),
+        ),
+        "last_tool_result_at": _latest_event_created_at(
+            state_db,
+            event_types=("tool_result_received",),
+        ),
+        "last_delivery_attempt_at": _latest_event_created_at(
+            state_db,
+            event_types=("delivery_attempted",),
+        ),
+        "last_delivery_acked_at": _latest_event_created_at(
+            state_db,
+            event_types=("delivery_succeeded",),
+        ),
+        "last_background_run_opened_at": _latest_background_event_created_at(
+            state_db,
+            event_types=("run_opened",),
+        ),
+        "last_background_run_closed_at": _latest_background_event_created_at(
+            state_db,
+            event_types=("run_closed", "run_failed", "run_stalled", "run_overlap_skipped"),
+        ),
+        "last_environment_snapshot_at": _latest_snapshot_created_at(state_db),
+        "current_stalled_run_count": _count_rows(
+            state_db,
+            "SELECT COUNT(*) AS c FROM run_registry WHERE status = 'stalled'",
+        ),
+        "current_unacked_delivery_count": _count_rows(
+            state_db,
+            "SELECT COUNT(*) AS c FROM delivery_registry WHERE status = 'attempted'",
+        ),
+    }
+
+
+def _build_config_authority_panel(state_db: StateDB) -> dict[str, Any]:
+    with state_db.connect() as conn:
+        totals = conn.execute(
+            """
+            SELECT
+                COUNT(*) AS total_mutations,
+                SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejected_mutations,
+                SUM(CASE WHEN error_message = 'semantic_noop' THEN 1 ELSE 0 END) AS suppressed_noops,
+                SUM(
+                    CASE
+                        WHEN actor_type NOT IN ('operator', 'user')
+                        THEN 1
+                        ELSE 0
+                    END
+                ) AS runtime_mutation_attempts
+            FROM config_mutation_audit
+            """
+        ).fetchone()
+        repeated_internal_writes = conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM (
+                SELECT target_path
+                FROM config_mutation_audit
+                WHERE actor_type NOT IN ('operator', 'user')
+                GROUP BY target_path
+                HAVING COUNT(*) > 1
+            )
+            """
+        ).fetchone()
+        failed_validation = conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM config_mutation_audit
+            WHERE status = 'rejected' AND COALESCE(error_message, '') <> 'semantic_noop'
+            """
+        ).fetchone()
+    return {
+        "latest_mutation_attempts": recent_config_mutations(state_db, limit=10),
+        "counts": {
+            "total_mutations": int((totals["total_mutations"] if totals else 0) or 0),
+            "runtime_mutation_attempts": int((totals["runtime_mutation_attempts"] if totals else 0) or 0),
+            "rejected_mutations": int((totals["rejected_mutations"] if totals else 0) or 0),
+            "suppressed_noop_writes": int((totals["suppressed_noops"] if totals else 0) or 0),
+            "repeated_internal_writes": int((repeated_internal_writes["c"] if repeated_internal_writes else 0) or 0),
+            "failed_validation_after_mutation": int((failed_validation["c"] if failed_validation else 0) or 0),
+        },
+    }
+
+
+def _build_execution_lineage_panel(state_db: StateDB) -> dict[str, Any]:
+    with state_db.connect() as conn:
+        counts = conn.execute(
+            """
+            SELECT
+                SUM(CASE WHEN event_type = 'intent_committed' THEN 1 ELSE 0 END) AS intent_count,
+                SUM(CASE WHEN event_type = 'dispatch_started' THEN 1 ELSE 0 END) AS dispatch_started_count,
+                SUM(CASE WHEN event_type = 'tool_result_received' THEN 1 ELSE 0 END) AS tool_result_count,
+                SUM(CASE WHEN event_type = 'dispatch_failed' THEN 1 ELSE 0 END) AS dispatch_failed_count
+            FROM builder_events
+            WHERE event_type IN ('intent_committed', 'dispatch_started', 'tool_result_received', 'dispatch_failed')
+            """
+        ).fetchone()
+    intent_without_dispatch = 0
+    dispatch_without_result = 0
+    intents = latest_events_by_type(state_db, event_type="intent_committed", limit=300)
+    dispatches = latest_events_by_type(state_db, event_type="dispatch_started", limit=300)
+    for intent in intents:
+        run_id = str(intent.get("run_id") or "")
+        if not run_id:
+            intent_without_dispatch += 1
+            continue
+        run_events = {event.get("event_type") for event in events_for_run(state_db, run_id=run_id)}
+        if "dispatch_started" not in run_events and "dispatch_failed" not in run_events and "tool_result_received" not in run_events:
+            intent_without_dispatch += 1
+    for dispatch in dispatches:
+        run_id = str(dispatch.get("run_id") or "")
+        if not run_id:
+            dispatch_without_result += 1
+            continue
+        run_events = {event.get("event_type") for event in events_for_run(state_db, run_id=run_id)}
+        if "tool_result_received" not in run_events and "dispatch_failed" not in run_events:
+            dispatch_without_result += 1
+    return {
+        "counts": {
+            "intents_committed": int((counts["intent_count"] if counts else 0) or 0),
+            "dispatches_started": int((counts["dispatch_started_count"] if counts else 0) or 0),
+            "tool_results_received": int((counts["tool_result_count"] if counts else 0) or 0),
+            "dispatch_failures": int((counts["dispatch_failed_count"] if counts else 0) or 0),
+            "intent_without_dispatch": intent_without_dispatch,
+            "dispatch_without_result_closure": dispatch_without_result,
+        }
+    }
+
+
+def _build_delivery_truth_panel(state_db: StateDB, *, health_facts: dict[str, Any]) -> dict[str, Any]:
+    with state_db.connect() as conn:
+        bridge_generated = conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM builder_events
+            WHERE event_type = 'tool_result_received'
+              AND component = 'researcher_bridge'
+            """
+        ).fetchone()
+        delivery_counts = conn.execute(
+            """
+            SELECT
+                SUM(CASE WHEN status = 'attempted' THEN 1 ELSE 0 END) AS attempted_count,
+                SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS acked_count,
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_count
+            FROM delivery_registry
+            """
+        ).fetchone()
+        failure_rows = conn.execute(
+            """
+            SELECT failure_family, COUNT(*) AS failure_count
+            FROM delivery_registry
+            WHERE status = 'failed' AND failure_family IS NOT NULL
+            GROUP BY failure_family
+            HAVING COUNT(*) > 1
+            ORDER BY failure_count DESC, failure_family ASC
+            """
+        ).fetchall()
+    return {
+        "counts": {
+            "generated_replies": int((bridge_generated["c"] if bridge_generated else 0) or 0),
+            "attempted_deliveries": int((delivery_counts["attempted_count"] if delivery_counts else 0) or 0),
+            "acked_deliveries": int((delivery_counts["acked_count"] if delivery_counts else 0) or 0),
+            "failed_deliveries": int((delivery_counts["failed_count"] if delivery_counts else 0) or 0),
+            "current_unacked_delivery_count": int(health_facts.get("current_unacked_delivery_count") or 0),
+        },
+        "repeated_failure_families": [
+            {"failure_family": str(row["failure_family"]), "count": int(row["failure_count"])}
+            for row in failure_rows
+        ],
+    }
+
+
+def _build_background_freshness_panel(
+    state_db: StateDB,
+    *,
+    health_facts: dict[str, Any],
+    background_stale_seconds: int,
+) -> dict[str, Any]:
+    with state_db.connect() as conn:
+        overlap_row = conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM builder_events
+            WHERE event_type = 'run_overlap_skipped'
+            """
+        ).fetchone()
+        open_background = conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM builder_runs
+            WHERE status = 'open' AND (run_kind LIKE 'job:%' OR origin_surface = 'jobs_tick')
+            """
+        ).fetchone()
+    lag_seconds = _freshness_lag_seconds(
+        health_facts.get("last_background_run_opened_at"),
+        health_facts.get("last_background_run_closed_at"),
+    )
+    return {
+        "last_run_opened_at": health_facts.get("last_background_run_opened_at"),
+        "last_run_closed_at": health_facts.get("last_background_run_closed_at"),
+        "current_stalled_run_count": int(health_facts.get("current_stalled_run_count") or 0),
+        "current_open_background_runs": int((open_background["c"] if open_background else 0) or 0),
+        "overlap_skips": int((overlap_row["c"] if overlap_row else 0) or 0),
+        "freshness_lag_seconds": lag_seconds,
+        "freshness_threshold_seconds": background_stale_seconds,
+    }
+
+
+def _build_environment_parity_panel(state_db: StateDB) -> dict[str, Any]:
+    snapshots = latest_snapshots_by_surface(state_db)
+    comparable_fields = (
+        "provider_id",
+        "provider_model",
+        "provider_base_url",
+        "provider_execution_transport",
+        "runtime_root",
+        "config_path",
+        "python_executable",
+    )
+    snapshot_hashes = {
+        surface: str(snapshot.get("config_hash") or "")
+        for surface, snapshot in snapshots.items()
+    }
+    mismatch_fields: list[str] = []
+    rows = list(snapshots.items())
+    if rows:
+        baseline_surface, baseline = rows[0]
+        for surface, snapshot in rows[1:]:
+            for field in comparable_fields:
+                left = baseline.get(field)
+                right = snapshot.get(field)
+                if left and right and left != right:
+                    mismatch_fields.append(
+                        f"{baseline_surface}:{field}={left} != {surface}:{field}={right}"
+                    )
+    return {
+        "snapshot_hashes": snapshot_hashes,
+        "latest_surfaces": snapshots,
+        "mismatch_fields": mismatch_fields,
+        "current_mismatch_count": len(mismatch_fields),
+    }
+
+
+def _build_provenance_and_quarantine_panel(state_db: StateDB) -> dict[str, Any]:
+    with state_db.connect() as conn:
+        counts = conn.execute(
+            """
+            SELECT
+                COUNT(*) AS mutation_count,
+                SUM(
+                    CASE
+                        WHEN source_kind = 'unknown' OR source_id = 'unknown'
+                        THEN 1
+                        ELSE 0
+                    END
+                ) AS unlabeled_count
+            FROM provenance_mutation_log
+            """
+        ).fetchone()
+        quarantine_count = conn.execute(
+            "SELECT COUNT(*) AS c FROM quarantine_records"
+        ).fetchone()
+        extension_count = conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM provenance_mutation_log
+            WHERE source_kind IN ('chip_hook', 'attachment_snapshot')
+               OR source_kind LIKE 'personality_%'
+            """
+        ).fetchone()
+    return {
+        "counts": {
+            "plugin_or_chip_mutations": int((counts["mutation_count"] if counts else 0) or 0),
+            "quarantined_outputs": int((quarantine_count["c"] if quarantine_count else 0) or 0),
+            "unlabeled_mutation_incidents": int((counts["unlabeled_count"] if counts else 0) or 0),
+            "extension_influence_events": int((extension_count["c"] if extension_count else 0) or 0),
+        },
+        "recent_incidents": recent_provenance_mutations(state_db, limit=10),
+        "recent_quarantines": recent_quarantine_records(state_db, limit=10),
+    }
+
+
+def _build_memory_lane_hygiene_panel(state_db: StateDB) -> dict[str, Any]:
+    bridge_outputs = _typed_component_events(
+        state_db,
+        event_types=("tool_result_received", "dispatch_failed"),
+        component="researcher_bridge",
+        limit=300,
+    )
+    promotion_attempts = 0
+    blocked_promotions = 0
+    ops_residue_volume = 0
+    for event in bridge_outputs:
+        facts = event.get("facts_json") or {}
+        if not isinstance(facts, dict):
+            continue
+        if facts.get("promotion_disposition"):
+            promotion_attempts += 1
+        if str(facts.get("promotion_disposition") or "") in NON_PROMOTABLE_DISPOSITIONS:
+            blocked_promotions += 1
+        if str(facts.get("keepability") or "") == "operator_debug_only":
+            ops_residue_volume += 1
+    contradiction_rows = latest_events_by_type(state_db, event_type="contradiction_recorded", limit=100)
+    resume_integrity_incidents = [
+        row
+        for row in contradiction_rows
+        if str(row.get("reason_code") or "")
+        in {"stop_ship_runtime_state_authority", "stop_ship_bridge_output_governance"}
+    ]
+    return {
+        "counts": {
+            "promotion_attempts": promotion_attempts,
+            "blocked_promotions": blocked_promotions,
+            "ops_residue_volume": ops_residue_volume,
+            "reset_or_resume_integrity_incidents": len(resume_integrity_incidents),
+        },
+        "lane_labels_present": {
+            "execution_evidence": bool(bridge_outputs),
+            "durable_intelligence_memory": False,
+            "ops_transcripts": False,
+            "user_history": False,
+        },
+        "recent_integrity_incidents": resume_integrity_incidents[:10],
+    }
+
+
+def _build_ingress_health_dimension(*, health_facts: dict[str, Any]) -> dict[str, Any]:
+    last_ingress = health_facts.get("last_ingress_at")
+    if not last_ingress:
+        return {"state": "unknown", "detail": "No ingress intent has been recorded yet."}
+    return {"state": "healthy", "detail": f"Last ingress at {last_ingress}."}
+
+
+def _build_execution_health_dimension(*, execution_panel: dict[str, Any]) -> dict[str, Any]:
+    counts = execution_panel.get("counts") or {}
+    if int(counts.get("intent_without_dispatch") or 0) > 0:
+        return {
+            "state": "execution_impaired",
+            "detail": f"{counts['intent_without_dispatch']} intent(s) lack dispatch proof.",
+        }
+    if int(counts.get("dispatch_without_result_closure") or 0) > 0:
+        return {
+            "state": "execution_impaired",
+            "detail": f"{counts['dispatch_without_result_closure']} dispatch(es) lack result closure.",
+        }
+    if int(counts.get("dispatches_started") or 0) == 0 and int(counts.get("tool_results_received") or 0) == 0:
+        return {"state": "unknown", "detail": "No execution lineage has been recorded yet."}
+    return {"state": "healthy", "detail": "Intent, dispatch, and result closure are aligned."}
+
+
+def _build_delivery_health_dimension(
+    *,
+    delivery_panel: dict[str, Any],
+    health_facts: dict[str, Any],
+) -> dict[str, Any]:
+    counts = delivery_panel.get("counts") or {}
+    unacked = int(health_facts.get("current_unacked_delivery_count") or 0)
+    failed = int(counts.get("failed_deliveries") or 0)
+    generated = int(counts.get("generated_replies") or 0)
+    acked = int(counts.get("acked_deliveries") or 0)
+    attempted = int(counts.get("attempted_deliveries") or 0)
+    if unacked > 0:
+        return {
+            "state": "delivery_impaired",
+            "detail": f"{unacked} delivery attempt(s) remain unacked.",
+        }
+    if failed > 0 and acked == 0:
+        return {
+            "state": "delivery_impaired",
+            "detail": f"{failed} delivery failure(s) were recorded without successful acknowledgments.",
+        }
+    if generated == 0 and attempted == 0:
+        return {"state": "unknown", "detail": "No delivery lineage has been recorded yet."}
+    return {"state": "healthy", "detail": "Generated, attempted, and acked delivery truth is aligned."}
+
+
+def _build_scheduler_freshness_dimension(*, background_panel: dict[str, Any]) -> dict[str, Any]:
+    stalled = int(background_panel.get("current_stalled_run_count") or 0)
+    open_runs = int(background_panel.get("current_open_background_runs") or 0)
+    lag_seconds = background_panel.get("freshness_lag_seconds")
+    threshold = int(background_panel.get("freshness_threshold_seconds") or WATCHTOWER_BACKGROUND_STALE_SECONDS)
+    if stalled > 0:
+        return {"state": "stalled", "detail": f"{stalled} background run(s) are marked stalled."}
+    if open_runs > 0:
+        return {"state": "stalled", "detail": f"{open_runs} background run(s) remain open."}
+    if isinstance(lag_seconds, int) and lag_seconds > threshold:
+        return {
+            "state": "degraded",
+            "detail": f"Background freshness lag is {lag_seconds}s, above the {threshold}s threshold.",
+        }
+    if background_panel.get("last_run_opened_at") or background_panel.get("last_run_closed_at"):
+        return {"state": "healthy", "detail": "Background freshness is within the current operator-driven window."}
+    return {"state": "unknown", "detail": "No background run activity has been recorded yet."}
+
+
+def _build_environment_parity_dimension(*, environment_panel: dict[str, Any]) -> dict[str, Any]:
+    mismatches = environment_panel.get("mismatch_fields") or []
+    if mismatches:
+        return {"state": "parity_broken", "detail": mismatches[0]}
+    latest_surfaces = environment_panel.get("latest_surfaces") or {}
+    if len(latest_surfaces) < 2:
+        return {"state": "unknown", "detail": "Not enough runtime surfaces have emitted snapshots yet."}
+    return {"state": "healthy", "detail": "Runtime surfaces agree on critical environment fields."}
+
+
+def _derive_watchtower_top_level_state(dimensions: dict[str, dict[str, Any]]) -> str:
+    states = {str(value.get("state") or "unknown") for value in dimensions.values()}
+    if "parity_broken" in states:
+        return "parity_broken"
+    if "stalled" in states:
+        return "stalled"
+    if "execution_impaired" in states:
+        return "execution_impaired"
+    if "delivery_impaired" in states:
+        return "delivery_impaired"
+    if "degraded" in states:
+        return "degraded"
+    return "healthy" if "healthy" in states else "unknown"
+
+
+def _typed_component_events(
+    state_db: StateDB,
+    *,
+    event_types: tuple[str, ...],
+    component: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for event_type in event_types:
+        events.extend(
+            [
+                event
+                for event in latest_events_by_type(state_db, event_type=event_type, limit=limit)
+                if str(event.get("component") or "") == component
+            ]
+        )
+    return events
+
+
+def _latest_event_created_at(
+    state_db: StateDB,
+    *,
+    event_types: tuple[str, ...],
+    components: tuple[str, ...] | None = None,
+) -> str | None:
+    placeholders = ", ".join("?" for _ in event_types)
+    query = f"""
+        SELECT created_at
+        FROM builder_events
+        WHERE event_type IN ({placeholders})
+    """
+    params: list[Any] = list(event_types)
+    if components:
+        component_placeholders = ", ".join("?" for _ in components)
+        query += f" AND component IN ({component_placeholders})"
+        params.extend(components)
+    query += " ORDER BY created_at DESC, event_id DESC LIMIT 1"
+    with state_db.connect() as conn:
+        row = conn.execute(query, tuple(params)).fetchone()
+    return str(row["created_at"]) if row and row["created_at"] else None
+
+
+def _latest_background_event_created_at(
+    state_db: StateDB,
+    *,
+    event_types: tuple[str, ...],
+) -> str | None:
+    placeholders = ", ".join("?" for _ in event_types)
+    with state_db.connect() as conn:
+        row = conn.execute(
+            f"""
+            SELECT created_at
+            FROM builder_events
+            WHERE event_type IN ({placeholders})
+              AND (
+                    component = 'jobs_tick'
+                    OR json_extract(facts_json, '$.run_kind') LIKE 'job:%'
+                  )
+            ORDER BY created_at DESC, event_id DESC
+            LIMIT 1
+            """,
+            tuple(event_types),
+        ).fetchone()
+    return str(row["created_at"]) if row and row["created_at"] else None
+
+
+def _latest_snapshot_created_at(state_db: StateDB) -> str | None:
+    with state_db.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT created_at
+            FROM runtime_environment_snapshots
+            ORDER BY created_at DESC, snapshot_id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    return str(row["created_at"]) if row and row["created_at"] else None
+
+
+def _count_rows(state_db: StateDB, query: str, params: tuple[Any, ...] = ()) -> int:
+    with state_db.connect() as conn:
+        row = conn.execute(query, params).fetchone()
+    return int((row["c"] if row else 0) or 0)
+
+
+def _freshness_lag_seconds(last_opened_at: Any, last_closed_at: Any) -> int | None:
+    latest = _latest_iso_timestamp(last_opened_at, last_closed_at)
+    if latest is None:
+        return None
+    return max(0, int((datetime.now(timezone.utc) - latest).total_seconds()))
+
+
+def _latest_iso_timestamp(*values: Any) -> datetime | None:
+    parsed: list[datetime] = []
+    for value in values:
+        timestamp = _parse_iso_datetime(value)
+        if timestamp is not None:
+            parsed.append(timestamp)
+    if not parsed:
+        return None
+    return max(parsed)
+
+
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)

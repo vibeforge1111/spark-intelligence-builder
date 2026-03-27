@@ -14,7 +14,12 @@ from spark_intelligence.gateway.tracing import read_gateway_traces, read_outboun
 from spark_intelligence.identity.service import LOCAL_OPERATOR_HUMAN_ID
 from spark_intelligence.identity.service import review_pairings
 from spark_intelligence.observability.checks import evaluate_stop_ship_issues
-from spark_intelligence.observability.store import recent_delivery_records, recent_provenance_mutations, recent_runs
+from spark_intelligence.observability.store import (
+    build_watchtower_snapshot,
+    recent_delivery_records,
+    recent_provenance_mutations,
+    recent_runs,
+)
 from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import swarm_status
@@ -73,6 +78,15 @@ class OperatorInboxReport:
             return "Operator inbox is clear."
 
         lines = ["Operator inbox:"]
+        watchtower = self.payload.get("watchtower") or {}
+        if watchtower:
+            lines.append(
+                f"- watchtower: {watchtower.get('top_level_state') or 'unknown'} "
+                f"delivery={((watchtower.get('health_dimensions') or {}).get('delivery_health') or {}).get('state', 'unknown')} "
+                f"execution={((watchtower.get('health_dimensions') or {}).get('execution_health') or {}).get('state', 'unknown')} "
+                f"freshness={((watchtower.get('health_dimensions') or {}).get('scheduler_freshness') or {}).get('state', 'unknown')} "
+                f"parity={((watchtower.get('health_dimensions') or {}).get('environment_parity') or {}).get('state', 'unknown')}"
+            )
         lines.append(
             "- counts: "
             f"total={counts['total']} "
@@ -112,6 +126,15 @@ class OperatorSecurityReport:
     def to_text(self) -> str:
         counts = self.payload["counts"]
         lines = ["Operator security summary:"]
+        watchtower = self.payload.get("watchtower") or {}
+        if watchtower:
+            lines.append(
+                f"- watchtower: {watchtower.get('top_level_state') or 'unknown'} "
+                f"delivery={((watchtower.get('health_dimensions') or {}).get('delivery_health') or {}).get('state', 'unknown')} "
+                f"execution={((watchtower.get('health_dimensions') or {}).get('execution_health') or {}).get('state', 'unknown')} "
+                f"freshness={((watchtower.get('health_dimensions') or {}).get('scheduler_freshness') or {}).get('state', 'unknown')} "
+                f"parity={((watchtower.get('health_dimensions') or {}).get('environment_parity') or {}).get('state', 'unknown')}"
+            )
         lines.append(
             "- counts: "
             f"bridge_alerts={counts['bridge_alerts']} "
@@ -323,6 +346,7 @@ def list_webhook_alert_snoozes(
 
 
 def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) -> OperatorInboxReport:
+    watchtower = build_watchtower_snapshot(state_db)
     pairing_rows = review_pairings(state_db).rows
     pending_pairings = [row for row in pairing_rows if row.get("status") == "pending"]
     held_pairings = [row for row in pairing_rows if row.get("status") == "held"]
@@ -396,6 +420,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
         "provenance_incidents": provenance_incidents,
         "webhooks": webhook_alerts,
         "webhook_snoozes": webhook_snoozes,
+        "watchtower": watchtower,
         "items": items,
     }
     return OperatorInboxReport(payload=payload)
@@ -407,6 +432,7 @@ def build_operator_security_report(
     state_db: StateDB,
     limit: int = 100,
 ) -> OperatorSecurityReport:
+    watchtower = build_watchtower_snapshot(state_db)
     channel_alerts = _load_channel_alerts(config_manager=config_manager, state_db=state_db)
     bridge_alerts = _build_bridge_alerts(config_manager=config_manager, state_db=state_db)
     auth_alerts = _build_auth_alerts(config_manager=config_manager, state_db=state_db)
@@ -486,6 +512,7 @@ def build_operator_security_report(
             "guardrail_hits": guardrail_hits,
             "webhook_rejections": webhook_alerts,
         },
+        "watchtower": watchtower,
         "items": items,
         "log_limit": limit,
     }

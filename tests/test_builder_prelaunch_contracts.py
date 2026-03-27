@@ -7,9 +7,11 @@ from spark_intelligence.attachments.snapshot import sync_attachment_snapshot
 from spark_intelligence.gateway.guardrails import prepare_outbound_text
 from spark_intelligence.observability.policy import looks_secret_like
 from spark_intelligence.jobs.service import jobs_tick
+from spark_intelligence.doctor.checks import run_doctor
 from spark_intelligence.ops.service import build_operator_security_report
 from spark_intelligence.observability.checks import evaluate_stop_ship_issues
 from spark_intelligence.observability.store import (
+    build_watchtower_snapshot,
     close_run,
     latest_events_by_type,
     open_run,
@@ -270,6 +272,79 @@ class BuilderPrelaunchContractTests(SparkTestCase):
 
         issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
         self.assertFalse(issues["stop_ship_environment_parity"].ok)
+
+    def test_watchtower_snapshot_computes_health_dimensions_from_typed_truth(self) -> None:
+        run = open_run(
+            self.state_db,
+            run_kind="telegram_update",
+            origin_surface="telegram_runtime",
+            summary="opened",
+            request_id="req-watchtower",
+            session_id="session:watchtower",
+            channel_id="telegram",
+            actor_id="telegram_runtime",
+        )
+        record_event(
+            self.state_db,
+            event_type="intent_committed",
+            component="telegram_runtime",
+            summary="intent committed",
+            run_id=run.run_id,
+            request_id="req-watchtower",
+            session_id="session:watchtower",
+            channel_id="telegram",
+            actor_id="telegram_runtime",
+        )
+        record_event(
+            self.state_db,
+            event_type="delivery_attempted",
+            component="telegram_runtime",
+            summary="delivery attempted",
+            run_id=run.run_id,
+            request_id="req-watchtower",
+            session_id="session:watchtower",
+            channel_id="telegram",
+            actor_id="telegram_runtime",
+            facts={"update_id": 501, "telegram_user_id": "user-watchtower"},
+        )
+        close_run(
+            self.state_db,
+            run_id=run.run_id,
+            status="stalled",
+            close_reason="watchtower_test_stall",
+            summary="stalled for watchtower test",
+        )
+        record_environment_snapshot(
+            self.state_db,
+            surface="doctor_cli",
+            summary="cli",
+            provider_id="custom",
+            provider_model="model-a",
+            provider_base_url="https://api.one.example/v1",
+            provider_execution_transport="direct_http",
+            runtime_root="C:/researcher",
+            config_path="C:/researcher/config.json",
+        )
+        record_environment_snapshot(
+            self.state_db,
+            surface="gateway_runtime",
+            summary="gateway",
+            provider_id="custom",
+            provider_model="model-a",
+            provider_base_url="https://api.two.example/v1",
+            provider_execution_transport="direct_http",
+            runtime_root="C:/researcher",
+            config_path="C:/researcher/config.json",
+        )
+
+        snapshot = build_watchtower_snapshot(self.state_db)
+
+        self.assertEqual(snapshot["health_dimensions"]["ingress_health"]["state"], "healthy")
+        self.assertEqual(snapshot["health_dimensions"]["execution_health"]["state"], "execution_impaired")
+        self.assertEqual(snapshot["health_dimensions"]["delivery_health"]["state"], "delivery_impaired")
+        self.assertEqual(snapshot["health_dimensions"]["scheduler_freshness"]["state"], "stalled")
+        self.assertEqual(snapshot["health_dimensions"]["environment_parity"]["state"], "parity_broken")
+        self.assertEqual(snapshot["top_level_state"], "parity_broken")
 
     def test_build_researcher_reply_records_chip_influence_provenance(self) -> None:
         self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
@@ -661,7 +736,37 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(report.payload["counts"]["delivery_failures"], 1)
         self.assertEqual(report.payload["counts"]["stalled_runs"], 1)
         self.assertEqual(report.payload["counts"]["provenance_incidents"], 1)
+        self.assertIn("watchtower", report.payload)
+        self.assertEqual(report.payload["watchtower"]["health_dimensions"]["scheduler_freshness"]["state"], "stalled")
         self.assertTrue(any("typed delivery ledger" in item["summary"] for item in report.payload["items"]))
+
+    def test_doctor_report_includes_watchtower_health_checks(self) -> None:
+        run = open_run(
+            self.state_db,
+            run_kind="telegram_update",
+            origin_surface="telegram_runtime",
+            summary="opened",
+            request_id="req-doctor-watchtower",
+            channel_id="telegram",
+            actor_id="telegram_runtime",
+        )
+        record_event(
+            self.state_db,
+            event_type="intent_committed",
+            component="telegram_runtime",
+            summary="intent only",
+            run_id=run.run_id,
+            request_id="req-doctor-watchtower",
+            channel_id="telegram",
+            actor_id="telegram_runtime",
+        )
+
+        report = run_doctor(self.config_manager, self.state_db)
+        checks = {check.name: check for check in report.checks}
+
+        self.assertIn("watchtower-execution", checks)
+        self.assertFalse(checks["watchtower-execution"].ok)
+        self.assertIn("execution_impaired", checks["watchtower-execution"].detail)
 
     def test_unlabeled_provenance_is_quarantined(self) -> None:
         record_event(

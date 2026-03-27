@@ -66,7 +66,7 @@ from spark_intelligence.identity.service import (
 )
 from spark_intelligence.jobs.service import jobs_list, jobs_tick
 from spark_intelligence.observability.policy import screen_model_visible_text
-from spark_intelligence.observability.store import close_run, open_run, record_event
+from spark_intelligence.observability.store import build_watchtower_snapshot, close_run, open_run, record_event
 from spark_intelligence.ops import (
     build_operator_inbox,
     build_operator_security_report,
@@ -115,6 +115,12 @@ class SystemStatus:
         lines.append(
             f"- channels: {', '.join(self.payload['gateway']['configured_channels']) if self.payload['gateway']['configured_channels'] else 'none'}"
         )
+        watchtower = self.payload.get("watchtower") or {}
+        if watchtower:
+            lines.append(f"- watchtower: {watchtower.get('top_level_state') or 'unknown'}")
+            for key in ("ingress_health", "execution_health", "delivery_health", "scheduler_freshness", "environment_parity"):
+                dimension = (watchtower.get("health_dimensions") or {}).get(key) or {}
+                lines.append(f"- {key}: {dimension.get('state') or 'unknown'}")
         runtime_payload = self.payload.get("runtime") or {}
         autostart_payload = runtime_payload.get("autostart") or {}
         lines.append(f"- install profile: {runtime_payload.get('install_profile') or 'none'}")
@@ -1807,6 +1813,7 @@ def handle_status(args: argparse.Namespace) -> int:
     researcher = researcher_bridge_status(config_manager=config_manager, state_db=state_db)
     swarm = swarm_status(config_manager, state_db)
     attachments = attachment_status(config_manager)
+    watchtower = build_watchtower_snapshot(state_db)
     active_chip_keys = config_manager.get_path("spark.chips.active_keys", default=[]) or []
     active_path_key = config_manager.get_path("spark.specialization_paths.active_path_key")
     autostart_payload = {
@@ -1836,6 +1843,7 @@ def handle_status(args: argparse.Namespace) -> int:
             "active_path_key": active_path_key,
             "snapshot_path": str(config_manager.paths.home / "attachments.snapshot.json"),
         },
+        "watchtower": watchtower,
     }
     status = SystemStatus(
         doctor_ok=doctor_report.ok,

@@ -13,7 +13,7 @@ from spark_intelligence.auth.runtime import build_auth_status_report, runtime_pr
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.jobs.service import oauth_maintenance_health
 from spark_intelligence.observability.checks import evaluate_stop_ship_issues
-from spark_intelligence.observability.store import record_environment_snapshot
+from spark_intelligence.observability.store import build_watchtower_snapshot, record_environment_snapshot
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, researcher_bridge_status, resolve_researcher_config_path
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import swarm_status
@@ -240,6 +240,7 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
     checks.append(_telegram_runtime_check(config_manager=config_manager, state_db=state_db))
     checks.append(_discord_runtime_check(config_manager=config_manager, state_db=state_db))
     checks.append(_whatsapp_runtime_check(config_manager=config_manager, state_db=state_db))
+    checks.extend(_watchtower_health_checks(state_db))
     for issue in evaluate_stop_ship_issues(config_manager=config_manager, state_db=state_db, emit_contradictions=True):
         checks.append(DoctorCheck(issue.name, issue.ok, issue.detail))
 
@@ -363,3 +364,29 @@ def provider_execution_health(
     if blocked:
         return False, ", ".join(blocked)
     return True, ", ".join(ready) if ready else "no provider execution transports active"
+
+
+def _watchtower_health_checks(state_db: StateDB) -> list[DoctorCheck]:
+    snapshot = build_watchtower_snapshot(state_db)
+    dimensions = snapshot.get("health_dimensions") or {}
+    mapping = (
+        ("watchtower-ingress", "ingress_health"),
+        ("watchtower-execution", "execution_health"),
+        ("watchtower-delivery", "delivery_health"),
+        ("watchtower-freshness", "scheduler_freshness"),
+        ("watchtower-parity", "environment_parity"),
+    )
+    checks: list[DoctorCheck] = []
+    failing_states = {"execution_impaired", "delivery_impaired", "stalled", "parity_broken", "degraded"}
+    for check_name, dimension_key in mapping:
+        dimension = dimensions.get(dimension_key) or {}
+        state = str(dimension.get("state") or "unknown")
+        detail = str(dimension.get("detail") or "No detail recorded.")
+        checks.append(
+            DoctorCheck(
+                check_name,
+                state not in failing_states,
+                f"state={state} {detail}",
+            )
+        )
+    return checks
