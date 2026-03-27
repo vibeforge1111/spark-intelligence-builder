@@ -69,10 +69,11 @@ from spark_intelligence.memory import (
     export_sdk_maintenance_replay,
     export_shadow_replay,
     export_shadow_replay_batch,
+    inspect_memory_sdk_runtime,
     run_memory_sdk_smoke_test,
 )
 from spark_intelligence.observability.policy import screen_model_visible_text
-from spark_intelligence.observability.store import build_watchtower_snapshot, close_run, open_run, record_event
+from spark_intelligence.observability.store import build_watchtower_snapshot, close_run, latest_events_by_type, open_run, record_event
 from spark_intelligence.ops import (
     build_operator_inbox,
     build_operator_security_report,
@@ -336,6 +337,71 @@ class BootstrapTelegramAgentStatus:
         lines.append(f"- run_command: {self.run_command}")
         lines.append("- verify_commands:")
         lines.extend(f"  - {command}" for command in self.verify_commands)
+        return "\n".join(lines)
+
+
+@dataclass
+class MemoryStatus:
+    payload: dict[str, object]
+
+    def to_json(self) -> str:
+        return json.dumps(self.payload, indent=2)
+
+    def to_text(self) -> str:
+        runtime = self.payload.get("runtime") or {}
+        counts = self.payload.get("counts") or {}
+        lines = ["Spark memory status"]
+        lines.append(
+            f"- configured module: {runtime.get('configured_module') or 'unknown'} "
+            f"ready={'yes' if runtime.get('ready') else 'no'}"
+        )
+        lines.append(
+            f"- config: enabled={'yes' if runtime.get('memory_enabled') else 'no'} "
+            f"shadow_mode={'yes' if runtime.get('shadow_mode') else 'no'}"
+        )
+        if runtime.get("client_kind"):
+            lines.append(f"- client kind: {runtime.get('client_kind')}")
+        if runtime.get("reason"):
+            lines.append(f"- sdk detail: {runtime.get('reason')}")
+        lines.append(
+            f"- writes: requests={counts.get('write_requests', 0)} results={counts.get('write_results', 0)} "
+            f"accepted={counts.get('accepted_observations', 0)} rejected={counts.get('rejected_observations', 0)} "
+            f"skipped={counts.get('skipped_observations', 0)}"
+        )
+        lines.append(
+            f"- reads: requests={counts.get('read_requests', 0)} results={counts.get('read_results', 0)} "
+            f"hits={counts.get('read_hits', 0)} shadow_only={counts.get('shadow_only_reads', 0)}"
+        )
+        role_mix = self.payload.get("memory_role_mix") or []
+        if role_mix:
+            lines.append(
+                "- memory roles: "
+                + ", ".join(f"{item['memory_role']}={item['count']}" for item in role_mix if isinstance(item, dict))
+            )
+        abstentions = self.payload.get("abstention_reasons") or []
+        if abstentions:
+            lines.append(
+                "- abstentions: "
+                + ", ".join(f"{item['reason']}={item['count']}" for item in abstentions if isinstance(item, dict))
+            )
+        last_smoke = self.payload.get("last_smoke") or {}
+        if last_smoke:
+            lines.append(
+                f"- last smoke: {last_smoke.get('event_type') or 'unknown'} "
+                f"{last_smoke.get('created_at') or 'unknown'} "
+                f"{last_smoke.get('subject') or ''} {last_smoke.get('predicate') or ''}".rstrip()
+            )
+        failures = self.payload.get("recent_failures") or []
+        if failures:
+            lines.append("- recent failures:")
+            for failure in failures:
+                if not isinstance(failure, dict):
+                    continue
+                lines.append(
+                    f"  - {failure.get('event_type') or 'unknown'} "
+                    f"{failure.get('created_at') or 'unknown'} "
+                    f"reason={failure.get('reason') or 'n/a'}"
+                )
         return "\n".join(lines)
 
 
@@ -1127,6 +1193,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     memory_parser = subparsers.add_parser("memory", help="Export or inspect Spark memory shadow artifacts")
     memory_subparsers = memory_parser.add_subparsers(dest="memory_command", required=True)
+    memory_status_parser = memory_subparsers.add_parser(
+        "status",
+        help="Show Spark memory runtime readiness, recent outcomes, and watchtower memory counts",
+    )
+    memory_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_export_parser = memory_subparsers.add_parser(
         "export-shadow-replay",
         help="Export a Spark shadow replay JSON file for domain-chip-memory validation",
@@ -2750,6 +2822,33 @@ def handle_researcher_status(args: argparse.Namespace) -> int:
     return 0 if status.available else 1
 
 
+def handle_memory_status(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    runtime = inspect_memory_sdk_runtime(config_manager=config_manager)
+    watchtower = build_watchtower_snapshot(state_db)
+    memory_shadow = (watchtower.get("panels") or {}).get("memory_shadow") or {}
+    smoke_events = _latest_memory_status_events(
+        state_db,
+        event_types=("memory_smoke_succeeded", "memory_smoke_failed"),
+        limit=10,
+    )
+    status = MemoryStatus(
+        payload={
+            "runtime": runtime,
+            "counts": dict(memory_shadow.get("counts") or {}),
+            "memory_role_mix": list(memory_shadow.get("memory_role_mix") or []),
+            "abstention_reasons": list(memory_shadow.get("abstention_reasons") or []),
+            "last_smoke": _memory_status_event_payload(smoke_events[0]) if smoke_events else None,
+            "recent_failures": _build_recent_memory_failures(state_db),
+        }
+    )
+    print(status.to_json() if args.json else status.to_text())
+    return 0
+
+
 def handle_memory_export_shadow_replay(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -2857,6 +2956,44 @@ def _memory_report_failed(report: dict[str, object] | None) -> bool:
         return True
     valid = report.get("valid") if isinstance(report, dict) else None
     return valid is False
+
+
+def _latest_memory_status_events(
+    state_db: StateDB,
+    *,
+    event_types: tuple[str, ...],
+    limit: int,
+) -> list[dict[str, object]]:
+    events: list[dict[str, object]] = []
+    for event_type in event_types:
+        events.extend(latest_events_by_type(state_db, event_type=event_type, limit=limit))
+    return sorted(
+        events,
+        key=lambda item: (str(item.get("created_at") or ""), str(item.get("event_id") or "")),
+        reverse=True,
+    )[:limit]
+
+
+def _memory_status_event_payload(event: dict[str, object]) -> dict[str, object]:
+    facts = event.get("facts_json")
+    facts_dict = facts if isinstance(facts, dict) else {}
+    return {
+        "event_type": event.get("event_type"),
+        "created_at": event.get("created_at"),
+        "reason": facts_dict.get("reason"),
+        "subject": facts_dict.get("subject"),
+        "predicate": facts_dict.get("predicate"),
+        "sdk_module": facts_dict.get("sdk_module"),
+    }
+
+
+def _build_recent_memory_failures(state_db: StateDB) -> list[dict[str, object]]:
+    events = _latest_memory_status_events(
+        state_db,
+        event_types=("memory_write_abstained", "memory_read_abstained", "memory_smoke_failed"),
+        limit=10,
+    )
+    return [_memory_status_event_payload(event) for event in events]
 
 
 def handle_config_show(args: argparse.Namespace) -> int:
@@ -3274,6 +3411,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_auth_status(args)
     if args.command == "researcher" and args.researcher_command == "status":
         return handle_researcher_status(args)
+    if args.command == "memory" and args.memory_command == "status":
+        return handle_memory_status(args)
     if args.command == "memory" and args.memory_command == "export-shadow-replay":
         return handle_memory_export_shadow_replay(args)
     if args.command == "memory" and args.memory_command == "export-shadow-replay-batch":

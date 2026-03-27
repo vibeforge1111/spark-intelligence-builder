@@ -83,6 +83,11 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(result.read_result.records[0]["value"], "ok")
         self.assertIsNotNone(result.cleanup_result)
         self.assertGreaterEqual(result.cleanup_result.accepted_count, 1)
+        smoke_events = latest_events_by_type(self.state_db, event_type="memory_smoke_succeeded", limit=5)
+        self.assertTrue(smoke_events)
+        smoke_facts = smoke_events[0]["facts_json"] or {}
+        self.assertEqual(smoke_facts.get("sdk_module"), "domain_chip_memory")
+        self.assertEqual(smoke_facts.get("predicate"), "system.memory.smoke")
 
     def test_domain_chip_memory_sdk_module_supports_live_preference_write_then_read(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

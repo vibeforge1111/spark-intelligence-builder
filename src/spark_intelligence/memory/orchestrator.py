@@ -293,7 +293,7 @@ def run_memory_sdk_smoke_test(
         )
         read_result = _disabled_read_result(reason="sdk_unavailable")
         cleanup_result = _disabled_write_result(operation="delete", reason="sdk_unavailable") if cleanup else None
-        return MemorySdkSmokeResult(
+        result = MemorySdkSmokeResult(
             sdk_module=module_name,
             subject=subject,
             predicate=predicate,
@@ -302,6 +302,8 @@ def run_memory_sdk_smoke_test(
             read_result=read_result,
             cleanup_result=cleanup_result,
         )
+        _record_memory_smoke_event(state_db=state_db, result=result, actor_id=actor_id)
+        return result
     session_id = f"memory-smoke:{actor_id}"
     write_turn_id = f"{actor_id}:write"
     read_turn_id = f"{actor_id}:read"
@@ -353,7 +355,7 @@ def run_memory_sdk_smoke_test(
             },
         )
         cleanup_result = _normalize_write_result(raw=raw_cleanup, operation="delete")
-    return MemorySdkSmokeResult(
+    result = MemorySdkSmokeResult(
         sdk_module=module_name,
         subject=subject,
         predicate=predicate,
@@ -362,6 +364,46 @@ def run_memory_sdk_smoke_test(
         read_result=read_result,
         cleanup_result=cleanup_result,
     )
+    _record_memory_smoke_event(state_db=state_db, result=result, actor_id=actor_id)
+    return result
+
+
+def inspect_memory_sdk_runtime(
+    *,
+    config_manager: ConfigManager,
+    sdk_module: str | None = None,
+) -> dict[str, Any]:
+    module_name = str(sdk_module or config_manager.get_path("spark.memory.sdk_module", default=DEFAULT_SDK_MODULE) or DEFAULT_SDK_MODULE)
+    payload: dict[str, Any] = {
+        "configured_module": module_name,
+        "memory_enabled": _memory_enabled(config_manager),
+        "shadow_mode": _memory_shadow_mode(config_manager),
+        "ready": False,
+        "resolved_module": None,
+        "client_kind": None,
+        "reason": None,
+    }
+    try:
+        module = importlib.import_module(module_name)
+    except Exception as exc:
+        payload["reason"] = f"import_failed:{type(exc).__name__}"
+        return payload
+    payload["resolved_module"] = module.__name__
+    if hasattr(module, "SparkMemorySDK"):
+        sdk_factory = getattr(module, "SparkMemorySDK")
+        try:
+            client = sdk_factory()
+        except Exception as exc:
+            payload["reason"] = f"sdk_init_failed:{type(exc).__name__}"
+            return payload
+        if _supports_domain_chip_memory_adapter(module):
+            payload["client_kind"] = _DomainChipMemoryClientAdapter.__name__
+        else:
+            payload["client_kind"] = type(client).__name__
+        payload["ready"] = True
+        return payload
+    payload["reason"] = "sdk_factory_missing"
+    return payload
 
 
 def write_personality_preferences_to_memory(
@@ -1024,6 +1066,44 @@ def _record_memory_read_event(
             "answer_explanation": result.answer_explanation,
         },
         provenance={"memory_role": result.memory_role, "sdk_provenance": result.provenance},
+    )
+
+
+def _record_memory_smoke_event(
+    *,
+    state_db: StateDB,
+    result: MemorySdkSmokeResult,
+    actor_id: str,
+) -> None:
+    succeeded = (
+        result.write_result.accepted_count > 0
+        and not result.read_result.abstained
+        and bool(result.read_result.records)
+        and (result.cleanup_result is None or result.cleanup_result.accepted_count > 0)
+    )
+    record_event(
+        state_db,
+        event_type="memory_smoke_succeeded" if succeeded else "memory_smoke_failed",
+        component="memory_orchestrator",
+        summary="Spark direct memory smoke completed." if succeeded else "Spark direct memory smoke failed.",
+        actor_id=actor_id,
+        status="recorded" if succeeded else "abstained",
+        severity="medium" if succeeded else "high",
+        facts={
+            "sdk_module": result.sdk_module,
+            "subject": result.subject,
+            "predicate": result.predicate,
+            "value": result.value,
+            "shadow_only_eval": result.shadow_only_eval,
+            "write_result": MemorySdkSmokeResult._write_payload(result.write_result),
+            "read_result": MemorySdkSmokeResult._read_payload(result.read_result),
+            "cleanup_result": (
+                MemorySdkSmokeResult._write_payload(result.cleanup_result)
+                if result.cleanup_result is not None
+                else None
+            ),
+        },
+        provenance={"memory_role": "current_state"},
     )
 
 

@@ -37,6 +37,142 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["read_result"]["records"][0]["value"], "ok")
         self.assertGreaterEqual(payload["cleanup_result"]["accepted_count"], 1)
 
+    def test_memory_status_reports_runtime_counts_and_last_smoke(self) -> None:
+        with self.state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-mem-status-write",
+                    "memory_write_succeeded",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "turn-status-write",
+                    "session-status",
+                    "human:test",
+                    "memory_cli",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Memory write completed.",
+                    "2026-03-28T09:00:00Z",
+                    json.dumps(
+                        {
+                            "accepted_count": 2,
+                            "rejected_count": 0,
+                            "skipped_count": 0,
+                            "memory_role": "current_state",
+                        }
+                    ),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-mem-status-read",
+                    "memory_read_succeeded",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "turn-status-read",
+                    "session-status",
+                    "human:test",
+                    "memory_cli",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Memory read completed.",
+                    "2026-03-28T09:01:00Z",
+                    json.dumps(
+                        {
+                            "record_count": 1,
+                            "shadow_only": 0,
+                            "memory_role": "current_state",
+                        }
+                    ),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, actor_id, evidence_lane, severity,
+                    status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-mem-status-smoke",
+                    "memory_smoke_succeeded",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "memory_cli",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Spark direct memory smoke completed.",
+                    "2026-03-28T09:02:00Z",
+                    json.dumps(
+                        {
+                            "sdk_module": "domain_chip_memory",
+                            "subject": "human:smoke:test",
+                            "predicate": "system.memory.smoke",
+                        }
+                    ),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, actor_id, evidence_lane, severity,
+                    status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-mem-status-fail",
+                    "memory_read_abstained",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "memory_cli",
+                    "realworld_validated",
+                    "high",
+                    "abstained",
+                    "Spark memory read abstained.",
+                    "2026-03-28T09:03:00Z",
+                    json.dumps({"reason": "sdk_unavailable"}),
+                ),
+            )
+            conn.commit()
+
+        exit_code, stdout, stderr = self.run_cli(
+            "memory",
+            "status",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["runtime"]["configured_module"], "domain_chip_memory")
+        self.assertTrue(payload["runtime"]["ready"])
+        self.assertEqual(payload["counts"]["accepted_observations"], 2)
+        self.assertEqual(payload["counts"]["read_hits"], 1)
+        self.assertEqual(payload["last_smoke"]["event_type"], "memory_smoke_succeeded")
+        self.assertEqual(payload["last_smoke"]["predicate"], "system.memory.smoke")
+        self.assertEqual(payload["recent_failures"][0]["event_type"], "memory_read_abstained")
+        self.assertEqual(payload["recent_failures"][0]["reason"], "sdk_unavailable")
+
     def test_memory_export_shadow_replay_writes_contract_shaped_json(self) -> None:
         with self.state_db.connect() as conn:
             conn.execute(
