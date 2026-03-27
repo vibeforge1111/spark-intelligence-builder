@@ -18,6 +18,7 @@ from spark_intelligence.observability.store import (
     build_watchtower_snapshot,
     recent_contradictions,
     recent_delivery_records,
+    recent_policy_gate_records,
     recent_provenance_mutations,
     recent_runs,
 )
@@ -101,6 +102,7 @@ class OperatorInboxReport:
             f"delivery_ambiguity={counts['delivery_ambiguity']} "
             f"provenance_incidents={counts['provenance_incidents']} "
             f"contradiction_incidents={counts['contradiction_incidents']} "
+            f"policy_block_incidents={counts['policy_block_incidents']} "
             f"webhook_alerts={counts['webhook_alerts']} "
             f"webhook_snoozes={counts['webhook_snoozes']} "
             f"active_suppressed_webhook_snoozes={counts['active_suppressed_webhook_snoozes']}"
@@ -153,6 +155,7 @@ class OperatorSecurityReport:
             f"stalled_runs={counts['stalled_runs']} "
             f"provenance_incidents={counts['provenance_incidents']} "
             f"contradiction_incidents={counts['contradiction_incidents']} "
+            f"policy_block_incidents={counts['policy_block_incidents']} "
             f"guardrail_hits={counts['guardrail_hits']}"
         )
         items = self.payload.get("items") or []
@@ -362,6 +365,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
     delivery_ambiguity = [row for row in recent_delivery_records(state_db, limit=100, status="attempted")]
     provenance_mutations = recent_provenance_mutations(state_db, limit=100)
     contradictions = recent_contradictions(state_db, limit=100, status="open")
+    policy_blocks = recent_policy_gate_records(state_db, limit=100)
     provenance_incidents = [
         row
         for row in provenance_mutations
@@ -380,6 +384,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
         delivery_ambiguity=delivery_ambiguity,
         provenance_incidents=provenance_incidents,
         contradictions=contradictions,
+        policy_blocks=policy_blocks,
         webhook_alerts=webhook_alerts,
         webhook_snoozes=webhook_snoozes,
     )
@@ -396,6 +401,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
             "delivery_ambiguity": len(delivery_ambiguity),
             "provenance_incidents": len(provenance_incidents),
             "contradiction_incidents": len(contradictions),
+            "policy_block_incidents": len(policy_blocks),
             "webhook_alerts": len(webhook_alerts),
             "webhook_snoozes": len(webhook_snoozes),
             "active_suppressed_webhook_snoozes": _active_suppressed_webhook_snooze_count(webhook_snoozes),
@@ -410,6 +416,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
                 + len(delivery_ambiguity)
                 + len(provenance_incidents)
                 + len(contradictions)
+                + len(policy_blocks)
                 + len(webhook_alerts)
                 + len(webhook_snoozes)
             ),
@@ -426,6 +433,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
         "delivery_ambiguity": delivery_ambiguity,
         "provenance_incidents": provenance_incidents,
         "contradictions": contradictions,
+        "policy_blocks": policy_blocks,
         "webhooks": webhook_alerts,
         "webhook_snoozes": webhook_snoozes,
         "watchtower": watchtower,
@@ -452,6 +460,7 @@ def build_operator_security_report(
     stalled_runs = [row for row in recent_runs(state_db, limit=limit, status="stalled")]
     provenance_mutations = recent_provenance_mutations(state_db, limit=limit)
     contradictions = recent_contradictions(state_db, limit=limit, status="open")
+    policy_blocks = recent_policy_gate_records(state_db, limit=limit)
     provenance_incidents = [
         row
         for row in provenance_mutations
@@ -481,6 +490,7 @@ def build_operator_security_report(
         delivery_ambiguity=delivery_ambiguity,
         provenance_incidents=provenance_incidents,
         contradictions=contradictions,
+        policy_blocks=policy_blocks,
         duplicate_updates=duplicate_updates,
         rate_limited_updates=rate_limited_updates,
         delivery_failures=delivery_failures,
@@ -503,6 +513,7 @@ def build_operator_security_report(
             "stalled_runs": len(stalled_runs),
             "provenance_incidents": len(provenance_incidents),
             "contradiction_incidents": len(contradictions),
+            "policy_block_incidents": len(policy_blocks),
             "guardrail_hits": len(guardrail_hits),
             "secret_reply_blocks": len(secret_reply_blocks),
             "truncated_replies": len(truncated_replies),
@@ -521,6 +532,7 @@ def build_operator_security_report(
             "stalled_runs": stalled_runs,
             "provenance_incidents": provenance_incidents,
             "contradictions": contradictions,
+            "policy_blocks": policy_blocks,
             "guardrail_hits": guardrail_hits,
             "webhook_rejections": webhook_alerts,
         },
@@ -739,6 +751,7 @@ def _build_inbox_items(
     delivery_ambiguity: list[dict[str, Any]],
     provenance_incidents: list[dict[str, Any]],
     contradictions: list[dict[str, Any]],
+    policy_blocks: list[dict[str, Any]],
     webhook_alerts: list[dict[str, Any]],
     webhook_snoozes: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -894,6 +907,19 @@ def _build_inbox_items(
             }
         )
 
+    if policy_blocks:
+        items.append(
+            {
+                "kind": "policy_block",
+                "status": "blocked",
+                "priority": "medium",
+                "sort_order": 27,
+                "item_ref": str(policy_blocks[0].get("policy_gate_id") or "policy-block"),
+                "summary": f"{len(policy_blocks)} policy gate block(s) were recorded in typed storage.",
+                "recommended_command": "spark-intelligence operator security",
+            }
+        )
+
     webhook_priority = {"critical": "high", "warning": "medium", "info": "info"}
     webhook_sort_order = {"critical": 22, "warning": 32, "info": 44}
     for row in webhook_alerts:
@@ -973,6 +999,7 @@ def _build_security_items(
     delivery_ambiguity: list[dict[str, Any]],
     provenance_incidents: list[dict[str, Any]],
     contradictions: list[dict[str, Any]],
+    policy_blocks: list[dict[str, Any]],
     duplicate_updates: list[dict[str, Any]],
     rate_limited_updates: list[dict[str, Any]],
     delivery_failures: list[dict[str, Any]],
@@ -1142,6 +1169,16 @@ def _build_security_items(
                 "sort_order": severity_order["high"],
                 "summary": f"{len(contradictions)} open contradiction record(s) are active in typed storage.",
                 "recommended_command": "spark-intelligence doctor",
+            }
+        )
+
+    if policy_blocks:
+        items.append(
+            {
+                "priority": "medium",
+                "sort_order": severity_order["medium"],
+                "summary": f"{len(policy_blocks)} policy gate block(s) are recorded in typed storage.",
+                "recommended_command": "spark-intelligence operator security",
             }
         )
 

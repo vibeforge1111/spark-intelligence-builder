@@ -16,6 +16,7 @@ from spark_intelligence.observability.store import (
     latest_events_by_type,
     open_run,
     recent_contradictions,
+    recent_policy_gate_records,
     record_environment_snapshot,
     record_event,
 )
@@ -179,6 +180,9 @@ class BuilderPrelaunchContractTests(SparkTestCase):
 
         self.assertIn("block_secret_like_reply", guarded["actions"])
         self.assertTrue(latest_events_by_type(self.state_db, event_type="secret_boundary_violation", limit=10))
+        policy_blocks = recent_policy_gate_records(self.state_db, limit=10)
+        self.assertTrue(policy_blocks)
+        self.assertEqual(policy_blocks[0]["gate_name"], "secret_boundary")
         with self.state_db.connect() as conn:
             row = conn.execute("SELECT COUNT(*) AS c FROM quarantine_records").fetchone()
         self.assertEqual(int(row["c"]), 1)
@@ -406,6 +410,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(snapshot["health_dimensions"]["environment_parity"]["state"], "parity_broken")
         self.assertEqual(snapshot["top_level_state"], "parity_broken")
         self.assertEqual(snapshot["contradictions"]["counts"]["open"], 0)
+        self.assertEqual(snapshot["panels"]["provenance_and_quarantine"]["counts"]["policy_gate_blocks"], 0)
 
     def test_build_researcher_reply_records_chip_influence_provenance(self) -> None:
         self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
@@ -798,6 +803,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(report.payload["counts"]["stalled_runs"], 1)
         self.assertEqual(report.payload["counts"]["provenance_incidents"], 1)
         self.assertEqual(report.payload["counts"]["contradiction_incidents"], 0)
+        self.assertEqual(report.payload["counts"]["policy_block_incidents"], 1)
         self.assertIn("watchtower", report.payload)
         self.assertEqual(report.payload["watchtower"]["health_dimensions"]["scheduler_freshness"]["state"], "stalled")
         self.assertTrue(any("typed delivery ledger" in item["summary"] for item in report.payload["items"]))
@@ -904,6 +910,9 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(int(mutation["quarantined"]), 1)
         self.assertIsNotNone(quarantine)
         self.assertEqual(quarantine["policy_domain"], "provenance_mutation")
+        policy_blocks = recent_policy_gate_records(self.state_db, limit=10)
+        self.assertTrue(policy_blocks)
+        self.assertEqual(policy_blocks[0]["gate_name"], "provenance_missing")
 
         issues = {
             issue.name: issue

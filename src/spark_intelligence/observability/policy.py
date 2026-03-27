@@ -5,7 +5,7 @@ import re
 from typing import Any
 from urllib.parse import urlsplit
 
-from spark_intelligence.observability.store import record_event, record_quarantine
+from spark_intelligence.observability.store import record_event, record_policy_gate_block, record_quarantine
 from spark_intelligence.state.db import StateDB
 
 
@@ -255,5 +255,25 @@ def screen_model_visible_text(
         summary=summary,
         payload_preview=text[:160],
         provenance=provenance,
+    )
+    record_policy_gate_block(
+        state_db,
+        component=policy_domain,
+        policy_domain=policy_domain,
+        gate_name="secret_boundary",
+        source_kind=source_kind,
+        source_ref=source_ref,
+        summary=summary,
+        action="quarantine_blocked",
+        reason_code=reason_code,
+        blocked_stage=blocked_stage,
+        input_ref=str(source_ref or request_id or trace_ref or ""),
+        output_ref=quarantine_id,
+        severity="high",
+        run_id=run_id,
+        request_id=request_id,
+        trace_ref=trace_ref,
+        provenance=provenance,
+        facts={"secret_event_id": event_id},
     )
     return {"allowed": False, "text": "", "quarantine_id": quarantine_id}

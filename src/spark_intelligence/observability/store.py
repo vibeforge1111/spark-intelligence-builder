@@ -405,7 +405,88 @@ def record_event(
             provenance=normalized_provenance,
             facts=normalized_facts,
         )
+        _mirror_policy_gate_event(
+            conn,
+            event_id=event_id,
+            event_type=event_type,
+            recorded_at=recorded_at,
+            component=component,
+            reason_code=reason_code,
+            severity=severity,
+            facts=normalized_facts,
+            provenance=normalized_provenance,
+        )
         conn.commit()
+    _record_follow_on_policy_block_if_needed(
+        state_db,
+        event_id=event_id,
+        event_type=event_type,
+        component=component,
+        request_id=request_id,
+        trace_ref=trace_ref,
+        run_id=run_id,
+        channel_id=channel_id,
+        session_id=session_id,
+        actor_id=actor_id,
+        reason_code=reason_code,
+        severity=severity,
+        provenance=normalized_provenance,
+        facts=normalized_facts,
+    )
+    return event_id
+
+
+def record_policy_gate_block(
+    state_db: StateDB,
+    *,
+    component: str,
+    policy_domain: str,
+    gate_name: str,
+    source_kind: str,
+    source_ref: str | None,
+    summary: str,
+    action: str,
+    reason_code: str,
+    blocked_stage: str | None = None,
+    input_ref: str | None = None,
+    output_ref: str | None = None,
+    severity: str = "high",
+    run_id: str | None = None,
+    request_id: str | None = None,
+    trace_ref: str | None = None,
+    channel_id: str | None = None,
+    session_id: str | None = None,
+    actor_id: str | None = None,
+    provenance: dict[str, Any] | None = None,
+    facts: dict[str, Any] | None = None,
+) -> str:
+    event_id = record_event(
+        state_db,
+        event_type="policy_gate_blocked",
+        component=component,
+        summary=summary,
+        run_id=run_id,
+        request_id=request_id,
+        trace_ref=trace_ref,
+        channel_id=channel_id,
+        session_id=session_id,
+        actor_id=actor_id,
+        reason_code=reason_code,
+        severity=severity,
+        status="blocked",
+        facts={
+            "policy_domain": policy_domain,
+            "gate_name": gate_name,
+            "source_kind": source_kind,
+            "source_ref": source_ref,
+            "blocked_stage": blocked_stage,
+            "input_ref": input_ref,
+            "output_ref": output_ref,
+            "action": action,
+            **(facts or {}),
+        },
+        provenance=provenance,
+    )
     return event_id
 
 
@@ -877,6 +958,27 @@ def recent_contradictions(
         query += " WHERE status = ?"
         params.append(status)
     query += " ORDER BY last_seen_at DESC, contradiction_id DESC LIMIT ?"
+    params.append(limit)
+    with state_db.connect() as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+    return [_row_to_dict(row) for row in rows]
+
+
+def recent_policy_gate_records(
+    state_db: StateDB,
+    *,
+    limit: int = 50,
+    gate_name: str | None = None,
+) -> list[dict[str, Any]]:
+    query = """
+        SELECT *
+        FROM policy_gate_records
+    """
+    params: list[Any] = []
+    if gate_name:
+        query += " WHERE gate_name = ?"
+        params.append(gate_name)
+    query += " ORDER BY recorded_at DESC, policy_gate_id DESC LIMIT ?"
     params.append(limit)
     with state_db.connect() as conn:
         rows = conn.execute(query, tuple(params)).fetchall()
@@ -1489,6 +1591,115 @@ def _mirror_provenance_event(
     )
 
 
+def _mirror_policy_gate_event(
+    conn: Any,
+    *,
+    event_id: str,
+    event_type: str,
+    recorded_at: str,
+    component: str,
+    reason_code: str | None,
+    severity: str,
+    facts: dict[str, Any],
+    provenance: dict[str, Any],
+) -> None:
+    if event_type != "policy_gate_blocked":
+        return
+    policy_gate_id = f"pol-{event_id}"
+    conn.execute(
+        """
+        INSERT INTO policy_gate_records(
+            policy_gate_id,
+            recorded_at,
+            event_id,
+            component,
+            policy_domain,
+            gate_name,
+            blocked_stage,
+            source_kind,
+            source_ref,
+            input_ref,
+            output_ref,
+            action,
+            reason_code,
+            severity,
+            evidence_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            policy_gate_id,
+            recorded_at,
+            event_id,
+            component,
+            str(facts.get("policy_domain") or component),
+            str(facts.get("gate_name") or reason_code or "policy_gate"),
+            str(facts.get("blocked_stage") or "") or None,
+            str(facts.get("source_kind") or "unknown"),
+            str(facts.get("source_ref")) if facts.get("source_ref") is not None else None,
+            str(facts.get("input_ref")) if facts.get("input_ref") is not None else None,
+            str(facts.get("output_ref")) if facts.get("output_ref") is not None else None,
+            str(facts.get("action") or "blocked"),
+            reason_code,
+            severity,
+            _json_or_none({"provenance": provenance, "facts": facts}),
+        ),
+    )
+
+
+def _record_follow_on_policy_block_if_needed(
+    state_db: StateDB,
+    *,
+    event_id: str,
+    event_type: str,
+    component: str,
+    request_id: str | None,
+    trace_ref: str | None,
+    run_id: str | None,
+    channel_id: str | None,
+    session_id: str | None,
+    actor_id: str | None,
+    reason_code: str | None,
+    severity: str,
+    provenance: dict[str, Any],
+    facts: dict[str, Any],
+) -> None:
+    if event_type != "plugin_or_chip_influence_recorded":
+        return
+    source_kind = str(provenance.get("source_kind") or "unknown")
+    source_ref = str(provenance.get("source_ref") or actor_id or "unknown")
+    if source_kind != "unknown" and source_ref != "unknown":
+        return
+    quarantine_id = f"q-prv-{event_id}"
+    record_policy_gate_block(
+        state_db,
+        component="provenance_mutation",
+        policy_domain="provenance_mutation",
+        gate_name="provenance_missing",
+        source_kind="provenance_mutation",
+        source_ref=source_ref,
+        summary="Unlabeled provenance mutation was quarantined by policy.",
+        action="quarantine_blocked",
+        reason_code=reason_code or "unlabeled_provenance",
+        blocked_stage="provenance_ingest",
+        input_ref=str(facts.get("input_ref") or request_id) if (facts.get("input_ref") or request_id) is not None else None,
+        output_ref=quarantine_id,
+        severity="high" if severity == "critical" else severity,
+        run_id=run_id,
+        request_id=request_id,
+        trace_ref=trace_ref,
+        channel_id=channel_id,
+        session_id=session_id,
+        actor_id=actor_id,
+        provenance={
+            "source_kind": source_kind,
+            "source_ref": source_ref,
+            "origin_component": component,
+        },
+        facts={"source_event_id": event_id},
+    )
+
+
 def _delivery_failure_family(error_value: Any) -> str | None:
     if error_value in {None, ""}:
         return None
@@ -1785,6 +1996,17 @@ def _build_provenance_and_quarantine_panel(state_db: StateDB) -> dict[str, Any]:
         quarantine_count = conn.execute(
             "SELECT COUNT(*) AS c FROM quarantine_records"
         ).fetchone()
+        policy_gate_count = conn.execute(
+            "SELECT COUNT(*) AS c FROM policy_gate_records"
+        ).fetchone()
+        policy_families = conn.execute(
+            """
+            SELECT gate_name, COUNT(*) AS gate_count
+            FROM policy_gate_records
+            GROUP BY gate_name
+            ORDER BY gate_count DESC, gate_name ASC
+            """
+        ).fetchall()
         extension_count = conn.execute(
             """
             SELECT COUNT(*) AS c
@@ -1797,9 +2019,15 @@ def _build_provenance_and_quarantine_panel(state_db: StateDB) -> dict[str, Any]:
         "counts": {
             "plugin_or_chip_mutations": int((counts["mutation_count"] if counts else 0) or 0),
             "quarantined_outputs": int((quarantine_count["c"] if quarantine_count else 0) or 0),
+            "policy_gate_blocks": int((policy_gate_count["c"] if policy_gate_count else 0) or 0),
             "unlabeled_mutation_incidents": int((counts["unlabeled_count"] if counts else 0) or 0),
             "extension_influence_events": int((extension_count["c"] if extension_count else 0) or 0),
         },
+        "policy_gate_families": [
+            {"gate_name": str(row["gate_name"]), "count": int(row["gate_count"])}
+            for row in policy_families
+        ],
+        "recent_policy_blocks": recent_policy_gate_records(state_db, limit=10),
         "recent_incidents": recent_provenance_mutations(state_db, limit=10),
         "recent_quarantines": recent_quarantine_records(state_db, limit=10),
     }

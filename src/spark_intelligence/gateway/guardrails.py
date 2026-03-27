@@ -6,7 +6,7 @@ from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.observability.policy import looks_secret_like
-from spark_intelligence.observability.store import record_event, record_quarantine
+from spark_intelligence.observability.store import record_event, record_policy_gate_block, record_quarantine
 from spark_intelligence.state.db import StateDB
 
 
@@ -124,7 +124,7 @@ def prepare_outbound_text(
                 facts={"channel_id": channel_id, "blocked_stage": "delivery"},
                 provenance={"source_kind": "outbound_text"},
             )
-            record_quarantine(
+            quarantine_id = record_quarantine(
                 state_db,
                 event_id=event_id,
                 run_id=run_id,
@@ -136,6 +136,29 @@ def prepare_outbound_text(
                 summary="Outbound delivery content was quarantined after secret-like detection.",
                 payload_preview=cleaned[:160],
                 provenance={"trace_ref": trace_ref, "session_id": session_id, "channel_id": channel_id},
+            )
+            record_policy_gate_block(
+                state_db,
+                component="outbound_guardrails",
+                policy_domain="outbound_guardrails",
+                gate_name="secret_boundary",
+                source_kind="outbound_text",
+                source_ref=channel_id,
+                summary="Outbound delivery content was blocked by the secret boundary.",
+                action="quarantine_blocked",
+                reason_code="outbound_secret_like_reply",
+                blocked_stage="delivery",
+                input_ref=str(request_id or trace_ref or channel_id or ""),
+                output_ref=quarantine_id,
+                severity="high",
+                run_id=run_id,
+                request_id=request_id,
+                trace_ref=trace_ref,
+                channel_id=channel_id,
+                session_id=session_id,
+                actor_id=actor_id,
+                provenance={"source_kind": "outbound_text"},
+                facts={"secret_event_id": event_id},
             )
         cleaned = "Spark Intelligence withheld this reply because it appeared to contain sensitive credential material. The operator can inspect local traces."
         actions.append("block_secret_like_reply")

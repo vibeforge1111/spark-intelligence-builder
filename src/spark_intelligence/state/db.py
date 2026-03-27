@@ -456,6 +456,25 @@ SCHEMA_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS policy_gate_records (
+        policy_gate_id TEXT PRIMARY KEY,
+        recorded_at TEXT NOT NULL,
+        event_id TEXT,
+        component TEXT NOT NULL,
+        policy_domain TEXT NOT NULL,
+        gate_name TEXT NOT NULL,
+        blocked_stage TEXT,
+        source_kind TEXT NOT NULL,
+        source_ref TEXT,
+        input_ref TEXT,
+        output_ref TEXT,
+        action TEXT NOT NULL,
+        reason_code TEXT,
+        severity TEXT NOT NULL,
+        evidence_json TEXT
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS job_records (
         job_id TEXT PRIMARY KEY,
         job_kind TEXT NOT NULL,
@@ -500,6 +519,8 @@ SCHEMA_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_quarantine_records_created_at ON quarantine_records(created_at)",
     "CREATE INDEX IF NOT EXISTS idx_contradiction_records_status ON contradiction_records(status, last_seen_at)",
     "CREATE INDEX IF NOT EXISTS idx_contradiction_records_reason_code ON contradiction_records(reason_code, last_seen_at)",
+    "CREATE INDEX IF NOT EXISTS idx_policy_gate_records_recorded_at ON policy_gate_records(recorded_at)",
+    "CREATE INDEX IF NOT EXISTS idx_policy_gate_records_gate_name ON policy_gate_records(gate_name, recorded_at)",
 ]
 
 
