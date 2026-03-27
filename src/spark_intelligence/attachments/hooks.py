@@ -12,6 +12,9 @@ from typing import Any
 from spark_intelligence.attachments.registry import AttachmentRecord, attachment_status
 from spark_intelligence.attachments.snapshot import build_attachment_snapshot
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.observability.policy import screen_model_visible_text
+from spark_intelligence.observability.store import record_event
+from spark_intelligence.state.db import StateDB
 
 
 @dataclass
@@ -159,6 +162,113 @@ def execute_chip_hook_record(
         stderr=completed.stderr,
         payload=payload,
         output=output,
+    )
+
+
+def record_chip_hook_execution(
+    state_db: StateDB,
+    *,
+    execution: ChipHookExecution,
+    component: str,
+    actor_id: str,
+    summary: str,
+    reason_code: str,
+    keepability: str,
+    run_id: str | None = None,
+    request_id: str | None = None,
+    trace_ref: str | None = None,
+    channel_id: str | None = None,
+    session_id: str | None = None,
+    human_id: str | None = None,
+    agent_id: str | None = None,
+) -> None:
+    hook = str(getattr(execution, "hook", "") or "unknown")
+    repo_root = str(getattr(execution, "repo_root", "") or "")
+    exit_code = int(getattr(execution, "exit_code", 0) or 0)
+    stderr = str(getattr(execution, "stderr", "") or "")
+    provenance = {
+        "source_kind": "chip_hook",
+        "source_ref": execution.chip_key,
+        "hook": hook,
+        "repo_root": repo_root,
+    }
+    facts = {
+        "chip_key": execution.chip_key,
+        "hook": hook,
+        "ok": execution.ok,
+        "exit_code": exit_code,
+        "keepability": keepability,
+    }
+    record_event(
+        state_db,
+        event_type="plugin_or_chip_influence_recorded",
+        component=component,
+        summary=summary,
+        run_id=run_id,
+        request_id=request_id,
+        trace_ref=trace_ref,
+        channel_id=channel_id,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id=actor_id,
+        reason_code=reason_code,
+        facts=facts,
+        provenance=provenance,
+    )
+    record_event(
+        state_db,
+        event_type="tool_result_received" if execution.ok else "dispatch_failed",
+        component=component,
+        summary=f"Chip hook {execution.chip_key}.{hook} {'produced a result' if execution.ok else 'failed'}.",
+        run_id=run_id,
+        request_id=request_id,
+        trace_ref=trace_ref,
+        channel_id=channel_id,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id=actor_id,
+        reason_code=reason_code,
+        severity="high" if not execution.ok else "medium",
+        facts={**facts, "stderr": stderr[:200] if stderr else ""},
+        provenance=provenance,
+    )
+
+
+def screen_chip_hook_text(
+    *,
+    state_db: StateDB,
+    execution: ChipHookExecution,
+    text: str,
+    summary: str,
+    reason_code: str,
+    policy_domain: str,
+    blocked_stage: str,
+    run_id: str | None = None,
+    request_id: str | None = None,
+    trace_ref: str | None = None,
+) -> dict[str, Any]:
+    hook = str(getattr(execution, "hook", "") or "unknown")
+    repo_root = str(getattr(execution, "repo_root", "") or "")
+    return screen_model_visible_text(
+        state_db=state_db,
+        source_kind="chip_hook_output",
+        source_ref=f"{execution.chip_key}:{hook}",
+        text=text,
+        summary=summary,
+        reason_code=reason_code,
+        policy_domain=policy_domain,
+        run_id=run_id,
+        request_id=request_id,
+        trace_ref=trace_ref,
+        blocked_stage=blocked_stage,
+        provenance={
+            "source_kind": "chip_hook",
+            "source_ref": execution.chip_key,
+            "hook": hook,
+            "repo_root": repo_root,
+        },
     )
 
 

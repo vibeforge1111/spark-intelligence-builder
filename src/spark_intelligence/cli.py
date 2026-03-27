@@ -18,8 +18,10 @@ from spark_intelligence.attachments import (
     deactivate_chip,
     list_attachments,
     pin_chip,
+    record_chip_hook_execution,
     run_chip_hook,
     run_first_active_chip_hook,
+    screen_chip_hook_text,
     set_active_path,
     sync_attachment_snapshot,
     unpin_chip,
@@ -2424,36 +2426,27 @@ def handle_attachments_run_hook(args: argparse.Namespace) -> int:
         return 2
 
     output_text = execution.to_json() if args.json else execution.to_text()
-    record_event(
+    record_chip_hook_execution(
         state_db,
-        event_type="plugin_or_chip_influence_recorded",
+        execution=execution,
         component="attachments_cli",
+        actor_id="local-operator",
         summary="Operator executed a chip hook via the attachments CLI.",
+        reason_code="attachments_run_hook",
+        keepability="operator_debug_only",
         run_id=run.run_id,
         request_id=run.request_id,
-        actor_id="local-operator",
-        reason_code="attachments_run_hook",
-        facts={
-            "chip_key": execution.chip_key,
-            "hook": execution.hook,
-            "ok": execution.ok,
-            "exit_code": execution.exit_code,
-            "keepability": "operator_debug_only",
-        },
-        provenance={"source_kind": "chip_hook_cli", "source_ref": execution.chip_key},
     )
-    screened_output = screen_model_visible_text(
+    screened_output = screen_chip_hook_text(
         state_db=state_db,
-        source_kind="chip_hook_output",
-        source_ref=f"{execution.chip_key}:{execution.hook}",
+        execution=execution,
         text=output_text,
         summary="Attachments CLI blocked secret-like chip hook output before operator display.",
         reason_code="attachments_run_hook_secret_like",
         policy_domain="attachments_cli",
+        blocked_stage="operator_output",
         run_id=run.run_id,
         request_id=run.request_id,
-        blocked_stage="operator_output",
-        provenance={"chip_key": execution.chip_key, "hook": execution.hook},
     )
     if not screened_output["allowed"]:
         record_event(
@@ -2490,23 +2483,6 @@ def handle_attachments_run_hook(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-
-    record_event(
-        state_db,
-        event_type="tool_result_received",
-        component="attachments_cli",
-        summary="Attachments CLI produced a chip hook result.",
-        run_id=run.run_id,
-        request_id=run.request_id,
-        actor_id="local-operator",
-        reason_code="attachments_run_hook",
-        facts={
-            "chip_key": execution.chip_key,
-            "hook": execution.hook,
-            "ok": execution.ok,
-            "exit_code": execution.exit_code,
-        },
-    )
     close_run(
         state_db,
         run_id=run.run_id,

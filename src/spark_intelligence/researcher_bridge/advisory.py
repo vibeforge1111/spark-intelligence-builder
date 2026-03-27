@@ -11,7 +11,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from spark_intelligence.attachments import build_attachment_context, run_first_active_chip_hook
+from spark_intelligence.attachments import (
+    build_attachment_context,
+    record_chip_hook_execution,
+    run_first_active_chip_hook,
+    screen_chip_hook_text,
+)
 from spark_intelligence.auth.runtime import RuntimeProviderResolution, resolve_runtime_provider
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.observability.policy import screen_model_visible_text
@@ -661,6 +666,7 @@ def _strip_terminal_punctuation(text: str) -> str:
 def _run_active_chip_evaluate(
     *,
     config_manager: ConfigManager,
+    state_db: StateDB,
     request_id: str,
     channel_kind: str,
     agent_id: str,
@@ -668,6 +674,7 @@ def _run_active_chip_evaluate(
     session_id: str,
     user_message: str,
     attachment_context: dict[str, object],
+    run_id: str | None = None,
 ) -> dict[str, Any] | None:
     payload = {
         "situation": user_message,
@@ -685,12 +692,52 @@ def _run_active_chip_evaluate(
         return None
     if not execution or not execution.ok:
         return None
+    record_chip_hook_execution(
+        state_db,
+        execution=execution,
+        component="researcher_bridge",
+        actor_id="researcher_bridge",
+        summary="Researcher bridge executed an active chip hook before bridge execution.",
+        reason_code="active_chip_evaluate",
+        keepability="ephemeral_context",
+        run_id=run_id,
+        request_id=request_id,
+        channel_id=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+    )
     result = execution.output.get("result")
     if not isinstance(result, dict):
         return None
     analysis = str(result.get("analysis") or "").strip()
     if not analysis:
         return None
+    screened = screen_chip_hook_text(
+        state_db=state_db,
+        execution=execution,
+        text=analysis,
+        summary="Chip guidance was quarantined before model-visible prompt assembly.",
+        reason_code="chip_guidance_secret_like",
+        policy_domain="researcher_bridge",
+        blocked_stage="pre_model",
+        run_id=run_id,
+        request_id=request_id,
+        trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+    )
+    if not screened["allowed"]:
+        return {
+            "chip_key": execution.chip_key,
+            "analysis": "",
+            "task_type": result.get("task_type"),
+            "stage": result.get("stage"),
+            "context_packet_ids": result.get("context_packet_ids") or [],
+            "activations": result.get("activations") or [],
+            "detected_state_updates": result.get("detected_state_updates") or [],
+            "stage_transition_suggested": result.get("stage_transition_suggested"),
+            "quarantined": True,
+            "quarantine_id": screened["quarantine_id"],
+        }
     return {
         "chip_key": execution.chip_key,
         "analysis": analysis,
@@ -930,6 +977,7 @@ def build_researcher_reply(
 
     active_chip_evaluate = _run_active_chip_evaluate(
         config_manager=config_manager,
+        state_db=state_db,
         request_id=request_id,
         channel_kind=channel_kind,
         agent_id=agent_id,
@@ -937,6 +985,7 @@ def build_researcher_reply(
         session_id=session_id,
         user_message=user_message,
         attachment_context=attachment_context,
+        run_id=run_id,
     )
     if attachment_context.get("active_chip_keys") or attachment_context.get("active_path_key") or active_chip_evaluate:
         record_event(
@@ -965,26 +1014,6 @@ def build_researcher_reply(
                 "source_ref": active_chip_evaluate.get("chip_key") if active_chip_evaluate else "attachments",
             },
         )
-    if active_chip_evaluate:
-        screened = screen_model_visible_text(
-            state_db=state_db,
-            source_kind="chip_hook_output",
-            source_ref=str(active_chip_evaluate.get("chip_key") or "unknown"),
-            text=str(active_chip_evaluate.get("analysis") or ""),
-            summary="Chip guidance was quarantined before model-visible prompt assembly.",
-            reason_code="chip_guidance_secret_like",
-            policy_domain="researcher_bridge",
-            run_id=run_id,
-            request_id=request_id,
-            provenance={"task_type": active_chip_evaluate.get("task_type"), "stage": active_chip_evaluate.get("stage")},
-        )
-        if not screened["allowed"]:
-            active_chip_evaluate = {
-                **active_chip_evaluate,
-                "analysis": "",
-                "quarantined": True,
-                "quarantine_id": screened["quarantine_id"],
-            }
     contextual_task = _build_contextual_task(
         user_message=user_message,
         attachment_context=attachment_context,

@@ -118,7 +118,7 @@ class AttachmentHookTests(SparkTestCase):
         self.assertTrue(
             any(
                 str(event.get("component") or "") == "attachments_cli"
-                and str((event.get("provenance_json") or {}).get("source_kind") or "") == "chip_hook_cli"
+                and str((event.get("provenance_json") or {}).get("source_kind") or "") == "chip_hook"
                 for event in events
             )
         )

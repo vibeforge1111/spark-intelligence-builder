@@ -75,6 +75,7 @@ Structural now:
 - the final assembled bridge prompt is now screened before any Researcher or direct-provider execution
 - operator-triggered `attachments run-hook` executions now emit typed provenance and block secret-like hook output before terminal display
 - operator-triggered `attachments run-hook` executions now open and close typed runs instead of existing only as CLI residue
+- chip-hook provenance and screening now live in shared hook-layer helpers instead of only in caller-specific glue
 - outbound secret-like replies now emit typed violation and quarantine records instead of only trace-side evidence
 - doctor and operator security now expose explicit stop-ship failures
 
