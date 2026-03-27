@@ -14,6 +14,10 @@ This repo has been hardened against the main prelaunch doctrine gaps without cha
 
 Recently landed commits on `main`:
 
+- `5b5e985` `Add tranche 2 memory lane promotion records`
+- `130e7c9` `Add tranche 2 policy gate block surfaces`
+- `f872d83` `Add tranche 2 contradiction registry surfaces`
+- `ffa415c` `Add tranche 2 watchtower health surfaces`
 - `f04376e` `Classify bridge outputs for keepability governance`
 - `94f23b7` `Harden local bridge persistence boundaries`
 - `d01ddf0` `Record governed webhook delivery lineage`
@@ -43,6 +47,8 @@ Earlier prelaunch hardening in this stream also landed:
   - hidden critical truth in generic `runtime_state`
   - missing provenance or keepability
   - promotable ephemeral/debug bridge outputs
+  - classified artifacts missing typed memory-lane records
+  - classified artifacts stored in the wrong memory lane
   - raw bridge residue persisted locally
   - unguided external execution call sites
   - raw bridge reply consumption outside immediate delivery surfaces
@@ -62,10 +68,16 @@ Earlier prelaunch hardening in this stream also landed:
 
 If continuing inside this repo, the next highest-value items are:
 
-1. Add explicit stop-ship checks for webhook run closure parity across all ingress handlers, not only the current active ones.
-2. Tighten route-level contracts so new webhook/ingress handlers must opt into typed run + delivery + keepability helpers by default.
-3. Reduce reliance on free-form `detail` payloads in simulation/runtime return objects by introducing more explicit typed result shapes for non-Telegram surfaces.
+1. Add a reset-sensitive state registry so Builder can prove reset actually clears the right session-scoped state.
+2. Add a resume richness guard so sparse or degraded state cannot overwrite richer preserved history.
+3. Expand promotion-gate coverage beyond the currently classified bridge and influence surfaces.
 4. If a downstream memory surface is added later, require an explicit Builder-facing contract that rejects `ephemeral_context` and `operator_debug_only` material by default.
+
+## Tranche Framing
+
+- Tranche 1: shipped core truth surfaces and ledgers
+- Tranche 2: partially shipped provenance, policy, Watchtower, contradiction, and memory-lane work
+- De facto Tranche 3: still deferred self-observer packet layer over normalized Builder facts
 
 ## Working Tree Note
 

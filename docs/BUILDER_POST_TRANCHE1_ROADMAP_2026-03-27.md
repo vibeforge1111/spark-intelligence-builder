@@ -33,6 +33,29 @@ Explicit `Second tranche` items:
 - provenance and policy events
 - quarantine and contradiction events
 
+## Tranche 2 Progress
+
+Already shipped in Builder core:
+
+- `ffa415c` `Add tranche 2 watchtower health surfaces`
+- `f872d83` `Add tranche 2 contradiction registry surfaces`
+- `130e7c9` `Add tranche 2 policy gate block surfaces`
+- `5b5e985` `Add tranche 2 memory lane promotion records`
+
+What those commits cover:
+
+- typed Watchtower health dimensions and panel snapshots
+- typed contradiction accumulation and resolution
+- typed `policy_gate_blocked` storage and operator or Watchtower surfacing
+- typed memory-lane records for classified bridge and influence artifacts
+
+What is still tranche 2 and intentionally left for later:
+
+- reset-sensitive state registry
+- resume richness guard
+- broader promotion-gate enforcement on more persistence surfaces
+- observer contamination detection beyond current lane and residue checks
+
 ## Provenance And Policy Expansion
 
 Source anchor:
@@ -47,6 +70,17 @@ Carry forward:
 - observer classification on repeated provenance incidents
 - fail closed when provenance is missing on high-risk mutation
 - preserve raw and mutated refs separately when safe
+
+Shipped so far:
+
+- typed policy gate records for secret-boundary and missing-provenance blocks
+- Watchtower/operator counts for policy blocks
+- contradiction tracking for repeated stop-ship failures
+
+Still open:
+
+- broader policy-gate coverage beyond the current secret-boundary and provenance-missing paths
+- clearer raw-vs-mutated references on more high-risk mutation paths
 
 ## Memory-Lane Enforcement
 
@@ -66,6 +100,19 @@ Carry forward:
 - reset-sensitive state registry
 - resume richness guard
 - observer contamination detection
+
+Shipped so far:
+
+- typed memory-lane records for classified bridge outputs and operational influence
+- stop-ship failure when classified artifacts lack typed lane records
+- stop-ship failure when classified artifacts land in the wrong lane
+
+Still open:
+
+- reset-sensitive state registry
+- resume richness guard
+- observer contamination detection
+- broader lane labeling outside the currently classified bridge and influence surfaces
 
 Core rule to preserve:
 
@@ -96,7 +143,16 @@ Carry forward:
 - parity comparison surfaces
 - observer incident classification
 
-## Self-Observer Packet Layer
+Shipped so far:
+
+- typed Watchtower health dimensions for ingress, execution, delivery, scheduler freshness, and environment parity
+- typed Watchtower contradiction and policy-block visibility
+
+Still open:
+
+- richer observer incident classification beyond the current Builder-core fact panels
+
+## De Facto Tranche 3: Self-Observer Packet Layer
 
 Source anchor:
 
@@ -115,6 +171,11 @@ Carry forward:
   - contradiction objects
 - Swarm and Researcher consume normalized packets, not raw reflections
 - contradiction lineage stays first-class
+
+Status:
+
+- not started in Builder core
+- still intentionally deferred until the remaining tranche-2 Builder fact surfaces are finished
 
 ## Stop-Ship Items Still Relevant After Tranche 1
 
