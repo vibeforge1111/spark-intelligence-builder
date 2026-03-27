@@ -29,8 +29,12 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertTrue(looks_secret_like("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl"))
         self.assertTrue(looks_secret_like("TELEGRAM_BOT_TOKEN=1234567890:abcdefghijklmnopqrstuvwxyzABCDE"))
         self.assertTrue(looks_secret_like("api_key: sk-proj-abcdefghijklmnopqrstuvwxyz123456"))
+        self.assertTrue(looks_secret_like("Authorization: Basic dXNlcjpzdXBlci1zZWNyZXQtcGFzc3dvcmQtMTIz"))
+        self.assertTrue(looks_secret_like('{"client_secret":"ZXlKaGJHY2lPaUpJVXpJMU5pSjkuZXlKemRXSWlPaUl4TWpNME5UWTNPRGt3SW4wLnNpZw=="}'))
+        self.assertTrue(looks_secret_like("database_url=https://operator:Sup3rSecretPassw0rd@example.com/app"))
         self.assertTrue(looks_secret_like("-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----"))
         self.assertFalse(looks_secret_like("This is a normal operational note with no credentials in it."))
+        self.assertFalse(looks_secret_like("tokenization_status=phase-b-specialization"))
 
     def test_config_set_path_records_typed_mutation_audit(self) -> None:
         self.config_manager.set_path("runtime.install.profile", "telegram-agent")
