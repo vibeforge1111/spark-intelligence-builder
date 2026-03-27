@@ -378,6 +378,23 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertFalse(issues["stop_ship_keepability_rules"].ok)
         self.assertIn("promotion-eligible", issues["stop_ship_keepability_rules"].detail)
 
+    def test_stop_ship_flags_bridge_backed_webhook_delivery_without_keepability(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="delivery_succeeded",
+            component="discord_webhook",
+            summary="discord webhook reply delivered",
+            actor_id="test",
+            facts={
+                "bridge_mode": "external_autodiscovered",
+                "response_length": 42,
+            },
+        )
+
+        issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
+        self.assertFalse(issues["stop_ship_keepability_rules"].ok)
+        self.assertIn("keepability or promotion classification", issues["stop_ship_keepability_rules"].detail)
+
     def test_record_researcher_bridge_result_sanitizes_failure_runtime_message(self) -> None:
         record_researcher_bridge_result(
             state_db=self.state_db,

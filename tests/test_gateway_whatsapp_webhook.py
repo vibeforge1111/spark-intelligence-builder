@@ -3,10 +3,12 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+from unittest.mock import patch
 
 from spark_intelligence.channel.service import add_channel
 from spark_intelligence.gateway.runtime import gateway_trace_view
 from spark_intelligence.gateway.whatsapp_webhook import WHATSAPP_WEBHOOK_PATH, handle_whatsapp_webhook
+from spark_intelligence.observability.store import latest_events_by_type
 
 from tests.test_support import SparkTestCase
 
@@ -272,6 +274,66 @@ class WhatsAppWebhookIngressTests(SparkTestCase):
         self.assertEqual(len(traces), 1)
         self.assertEqual(traces[0]["update_id"], "wamid-1")
         self.assertEqual(traces[0]["external_user_id"], "wa-user-1")
+
+    def test_records_typed_delivery_for_bridge_backed_whatsapp_response(self) -> None:
+        self._add_whatsapp_channel()
+        body = json.dumps(
+            {
+                "object": "whatsapp_business_account",
+                "entry": [
+                    {
+                        "changes": [
+                            {
+                                "field": "messages",
+                                "value": {
+                                    "metadata": {"phone_number_id": "phone-1"},
+                                    "contacts": [
+                                        {"wa_id": "wa-user-1", "profile": {"name": "alice"}}
+                                    ],
+                                    "messages": [
+                                        {
+                                            "from": "wa-user-1",
+                                            "id": "wamid-typed-1",
+                                            "type": "text",
+                                            "text": {"body": "hello from whatsapp webhook"},
+                                        }
+                                    ],
+                                },
+                            }
+                        ]
+                    }
+                ],
+            }
+        ).encode("utf-8")
+        with patch("spark_intelligence.gateway.whatsapp_webhook.simulate_whatsapp_message") as simulate_whatsapp_message:
+            simulate_whatsapp_message.return_value.ok = True
+            simulate_whatsapp_message.return_value.decision = "allowed"
+            simulate_whatsapp_message.return_value.detail = {
+                "whatsapp_user_id": "wa-user-1",
+                "response_text": "Hello from Spark.",
+                "trace_ref": "trace:whatsapp-1",
+                "bridge_mode": "external_autodiscovered",
+                "output_keepability": "ephemeral_context",
+                "promotion_disposition": "not_promotable",
+            }
+            response = handle_whatsapp_webhook(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                path=WHATSAPP_WEBHOOK_PATH,
+                method="POST",
+                content_type="application/json",
+                headers=self._signature_headers("whatsapp-app-secret", body),
+                body=body,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        events = latest_events_by_type(self.state_db, event_type="delivery_succeeded", limit=10)
+        whatsapp_events = [event for event in events if event.get("component") == "whatsapp_webhook"]
+        self.assertTrue(whatsapp_events)
+        facts = whatsapp_events[0]["facts_json"]
+        self.assertEqual(facts["bridge_mode"], "external_autodiscovered")
+        self.assertEqual(facts["keepability"], "ephemeral_context")
+        self.assertEqual(facts["promotion_disposition"], "not_promotable")
 
     def test_ignores_status_event_payload(self) -> None:
         self._add_whatsapp_channel()

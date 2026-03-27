@@ -8,6 +8,7 @@ from nacl.signing import SigningKey
 from spark_intelligence.channel.service import add_channel
 from spark_intelligence.gateway.runtime import gateway_trace_view
 from spark_intelligence.gateway.discord_webhook import DISCORD_WEBHOOK_PATH, handle_discord_webhook
+from spark_intelligence.observability.store import latest_events_by_type
 
 from tests.test_support import SparkTestCase
 
@@ -526,6 +527,9 @@ class DiscordWebhookIngressTests(SparkTestCase):
             resolve_simulated_dm.return_value.detail = {
                 "response_text": "x" * 2600,
                 "bridge_mode": "external_autodiscovered",
+                "trace_ref": "trace:discord-interaction",
+                "output_keepability": "ephemeral_context",
+                "promotion_disposition": "not_promotable",
             }
             response = handle_discord_webhook(
                 config_manager=self.config_manager,
@@ -543,6 +547,13 @@ class DiscordWebhookIngressTests(SparkTestCase):
         self.assertEqual(payload["data"]["flags"], 64)
         self.assertLessEqual(len(payload["data"]["content"]), 2000)
         self.assertTrue(payload["data"]["content"].endswith("[truncated for delivery]"))
+        events = latest_events_by_type(self.state_db, event_type="delivery_succeeded", limit=10)
+        discord_events = [event for event in events if event.get("component") == "discord_webhook"]
+        self.assertTrue(discord_events)
+        facts = discord_events[0]["facts_json"]
+        self.assertEqual(facts["bridge_mode"], "external_autodiscovered")
+        self.assertEqual(facts["keepability"], "ephemeral_context")
+        self.assertEqual(facts["promotion_disposition"], "not_promotable")
 
     def test_handles_valid_dm_payload(self) -> None:
         self._add_discord_channel(allow_legacy_message_webhook=True)

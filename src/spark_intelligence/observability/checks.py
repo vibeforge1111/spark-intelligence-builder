@@ -343,7 +343,21 @@ def _keepability_issue(state_db: StateDB) -> StopShipIssue:
         )
         if str((event.get("facts_json") or {}).get("event") or "") == "telegram_bridge_outbound"
     ]
-    classified_events = bridge_output_events + bridge_delivery_events
+    webhook_delivery_events: list[dict[str, Any]] = []
+    for component in ("discord_webhook", "whatsapp_webhook"):
+        webhook_delivery_events.extend(
+            [
+                event
+                for event in _typed_events(
+                    state_db,
+                    event_types=("delivery_attempted", "delivery_succeeded", "delivery_failed"),
+                    component=component,
+                    limit=200,
+                )
+                if str((event.get("facts_json") or {}).get("bridge_mode") or "")
+            ]
+        )
+    classified_events = bridge_output_events + bridge_delivery_events + webhook_delivery_events
     for event in classified_events:
         facts = event.get("facts_json") or {}
         if not facts.get("keepability") or not facts.get("promotion_disposition"):

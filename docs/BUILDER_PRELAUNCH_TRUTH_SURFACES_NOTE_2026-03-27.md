@@ -91,6 +91,7 @@ Structural now:
 - researcher bridge outputs and Telegram bridge deliveries now carry explicit keepability class plus promotion disposition, and stop-ship fails if ephemeral or operator-debug material is marked promotion-eligible
 - durable researcher failure status now stores sanitized operator-status summaries instead of raw bridge reply text, and stop-ship fails if raw bridge reply residue is persisted locally
 - raw researcher bridge reply consumption is now constrained to immediate delivery surfaces, with source-scan stop-ship checks for new local promotion-style consumers
+- Discord and WhatsApp webhook replies now emit typed delivery events with bridge keepability metadata instead of existing only as webhook JSON bodies and gateway trace lines
 - doctor and operator security now expose explicit stop-ship failures
 
 Still compensating:

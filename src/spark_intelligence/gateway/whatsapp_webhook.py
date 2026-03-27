@@ -8,6 +8,7 @@ from typing import Any
 
 from spark_intelligence.adapters.whatsapp.runtime import simulate_whatsapp_message
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.observability.store import record_event
 from spark_intelligence.gateway.routes import GatewayRouteRegistration, GatewayRouteRegistry
 from spark_intelligence.gateway.tracing import append_gateway_trace
 from spark_intelligence.state.db import StateDB
@@ -207,9 +208,22 @@ def _handle_whatsapp_event_post(
             "decision": result.decision,
             "bridge_mode": result.detail.get("bridge_mode"),
             "trace_ref": result.detail.get("trace_ref"),
+            "output_keepability": result.detail.get("output_keepability"),
+            "promotion_disposition": result.detail.get("promotion_disposition"),
         },
     )
-
+    _record_whatsapp_delivery(
+        state_db=state_db,
+        request_id=f"whatsapp:{normalized_payload.get('id') or normalized_payload.get('from') or 'missing'}",
+        trace_ref=str(result.detail.get("trace_ref") or "") or None,
+        reason_code="whatsapp_webhook_response",
+        whatsapp_user_id=str(result.detail.get("whatsapp_user_id") or ""),
+        decision=result.decision,
+        bridge_mode=str(result.detail.get("bridge_mode") or "") or None,
+        keepability=str(result.detail.get("output_keepability") or "") or None,
+        promotion_disposition=str(result.detail.get("promotion_disposition") or "") or None,
+        response_text=result.to_json(),
+    )
     return WhatsAppWebhookResponse(
         status_code=200,
         body=result.to_json(),
@@ -351,6 +365,56 @@ def _header_value(headers: dict[str, str] | None, name: str) -> str | None:
         if key.lower() == name.lower():
             return value
     return None
+
+
+def _record_whatsapp_delivery(
+    *,
+    state_db: StateDB,
+    request_id: str,
+    trace_ref: str | None,
+    reason_code: str,
+    whatsapp_user_id: str,
+    decision: str,
+    bridge_mode: str | None,
+    keepability: str | None,
+    promotion_disposition: str | None,
+    response_text: str,
+) -> None:
+    facts = {
+        "whatsapp_user_id": whatsapp_user_id,
+        "decision": decision,
+        "bridge_mode": bridge_mode,
+        "keepability": keepability,
+        "promotion_disposition": promotion_disposition,
+        "response_length": len(response_text),
+    }
+    record_event(
+        state_db,
+        event_type="delivery_attempted",
+        component="whatsapp_webhook",
+        summary="WhatsApp webhook delivery attempted.",
+        request_id=request_id,
+        trace_ref=trace_ref,
+        channel_id="whatsapp",
+        actor_id="whatsapp_webhook",
+        reason_code=reason_code,
+        truth_kind="delivery",
+        facts=facts,
+    )
+    record_event(
+        state_db,
+        event_type="delivery_succeeded",
+        component="whatsapp_webhook",
+        summary="WhatsApp webhook delivery succeeded.",
+        request_id=request_id,
+        trace_ref=trace_ref,
+        channel_id="whatsapp",
+        actor_id="whatsapp_webhook",
+        reason_code=reason_code,
+        truth_kind="delivery",
+        status="ok",
+        facts=facts,
+    )
 
 
 def _query_value(query_params: dict[str, str | list[str]], name: str) -> str | None:

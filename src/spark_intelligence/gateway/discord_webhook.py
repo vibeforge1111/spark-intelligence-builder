@@ -14,6 +14,7 @@ from spark_intelligence.gateway.guardrails import prepare_outbound_text
 from spark_intelligence.gateway import resolve_simulated_dm
 from spark_intelligence.gateway.routes import GatewayRouteRegistration, GatewayRouteRegistry
 from spark_intelligence.gateway.tracing import append_gateway_trace
+from spark_intelligence.observability.store import record_event
 from spark_intelligence.state.db import StateDB
 
 
@@ -111,7 +112,34 @@ def handle_discord_webhook(
         )
     except ValueError as exc:
         return _json_error_response(400, str(exc))
-
+    append_gateway_trace(
+        config_manager,
+        {
+            "event": "discord_webhook_processed",
+            "channel_id": "discord",
+            "update_id": payload.get("id"),
+            "external_user_id": ((payload.get("author") or {}).get("id") if isinstance(payload.get("author"), dict) else None),
+            "channel_ref": payload.get("channel_id"),
+            "decision": result.decision,
+            "bridge_mode": result.detail.get("bridge_mode"),
+            "trace_ref": result.detail.get("trace_ref"),
+            "output_keepability": result.detail.get("output_keepability"),
+            "promotion_disposition": result.detail.get("promotion_disposition"),
+        },
+    )
+    request_id = f"discord:{payload.get('id') or ((payload.get('author') or {}).get('id') if isinstance(payload.get('author'), dict) else 'missing')}"
+    _record_discord_delivery(
+        state_db=state_db,
+        request_id=request_id,
+        trace_ref=str(result.detail.get("trace_ref") or "") or None,
+        reason_code="discord_webhook_response",
+        discord_user_id=str(result.detail.get("discord_user_id") or ""),
+        decision=result.decision,
+        bridge_mode=str(result.detail.get("bridge_mode") or "") or None,
+        keepability=str(result.detail.get("output_keepability") or "") or None,
+        promotion_disposition=str(result.detail.get("promotion_disposition") or "") or None,
+        response_text=result.to_json(),
+    )
     return GatewayWebhookResponse(
         status_code=200,
         body=result.to_json(),
@@ -256,11 +284,39 @@ def _handle_discord_interaction_payload(
         display_name=str(user.get("username") or f"discord user {user['id']}"),
         user_message=prompt,
     )
-    return _discord_interaction_message(
+    response = _discord_interaction_message(
         str(bridge.detail.get("response_text") or "Spark did not generate a reply."),
         bridge_mode=str(bridge.detail.get("bridge_mode") or ""),
         ephemeral=True,
     )
+    append_gateway_trace(
+        config_manager,
+        {
+            "event": "discord_interaction_processed",
+            "channel_id": "discord",
+            "update_id": payload.get("id"),
+            "external_user_id": str(user.get("id") or ""),
+            "channel_ref": channel_id,
+            "decision": bridge.decision,
+            "bridge_mode": bridge.detail.get("bridge_mode"),
+            "trace_ref": bridge.detail.get("trace_ref"),
+            "output_keepability": bridge.detail.get("output_keepability"),
+            "promotion_disposition": bridge.detail.get("promotion_disposition"),
+        },
+    )
+    _record_discord_delivery(
+        state_db=state_db,
+        request_id=f"discord-interaction:{payload.get('id') or user['id']}",
+        trace_ref=str(bridge.detail.get("trace_ref") or "") or None,
+        reason_code="discord_interaction_response",
+        discord_user_id=str(user.get("id") or ""),
+        decision=bridge.decision,
+        bridge_mode=str(bridge.detail.get("bridge_mode") or "") or None,
+        keepability=str(bridge.detail.get("output_keepability") or "") or None,
+        promotion_disposition=str(bridge.detail.get("promotion_disposition") or "") or None,
+        response_text=response.body,
+    )
+    return response
 
 
 def _extract_discord_interaction_prompt(data: Any) -> tuple[str | None, str | None] | None:
@@ -336,4 +392,54 @@ def _discord_interaction_message(
     return GatewayWebhookResponse(
         status_code=200,
         body=json.dumps({"type": 4, "data": data}, indent=2),
+    )
+
+
+def _record_discord_delivery(
+    *,
+    state_db: StateDB,
+    request_id: str,
+    trace_ref: str | None,
+    reason_code: str,
+    discord_user_id: str,
+    decision: str,
+    bridge_mode: str | None,
+    keepability: str | None,
+    promotion_disposition: str | None,
+    response_text: str,
+) -> None:
+    facts = {
+        "discord_user_id": discord_user_id,
+        "decision": decision,
+        "bridge_mode": bridge_mode,
+        "keepability": keepability,
+        "promotion_disposition": promotion_disposition,
+        "response_length": len(response_text),
+    }
+    record_event(
+        state_db,
+        event_type="delivery_attempted",
+        component="discord_webhook",
+        summary="Discord webhook delivery attempted.",
+        request_id=request_id,
+        trace_ref=trace_ref,
+        channel_id="discord",
+        actor_id="discord_webhook",
+        reason_code=reason_code,
+        truth_kind="delivery",
+        facts=facts,
+    )
+    record_event(
+        state_db,
+        event_type="delivery_succeeded",
+        component="discord_webhook",
+        summary="Discord webhook delivery succeeded.",
+        request_id=request_id,
+        trace_ref=trace_ref,
+        channel_id="discord",
+        actor_id="discord_webhook",
+        reason_code=reason_code,
+        truth_kind="delivery",
+        status="ok",
+        facts=facts,
     )
