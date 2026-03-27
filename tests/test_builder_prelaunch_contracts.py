@@ -15,6 +15,7 @@ from spark_intelligence.observability.store import (
     close_run,
     latest_events_by_type,
     open_run,
+    recent_contradictions,
     record_environment_snapshot,
     record_event,
 )
@@ -206,6 +207,65 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
         self.assertFalse(issues["stop_ship_intent_without_proof"].ok)
 
+    def test_stop_ship_contradictions_accumulate_and_resolve(self) -> None:
+        run = open_run(
+            self.state_db,
+            run_kind="telegram_update",
+            origin_surface="telegram_runtime",
+            summary="opened",
+            request_id="req-contradiction",
+            channel_id="telegram",
+            actor_id="telegram_runtime",
+        )
+        record_event(
+            self.state_db,
+            event_type="intent_committed",
+            component="telegram_runtime",
+            summary="intent only",
+            run_id=run.run_id,
+            request_id="req-contradiction",
+            channel_id="telegram",
+            actor_id="telegram_runtime",
+        )
+
+        evaluate_stop_ship_issues(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            emit_contradictions=True,
+        )
+        evaluate_stop_ship_issues(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            emit_contradictions=True,
+        )
+
+        open_rows = recent_contradictions(self.state_db, status="open", limit=10)
+        self.assertEqual(len(open_rows), 1)
+        self.assertEqual(open_rows[0]["contradiction_key"], "stop_ship:stop_ship_intent_without_proof")
+        self.assertEqual(int(open_rows[0]["occurrence_count"]), 2)
+
+        record_event(
+            self.state_db,
+            event_type="dispatch_failed",
+            component="telegram_runtime",
+            summary="dispatch failed closes contradiction",
+            run_id=run.run_id,
+            request_id="req-contradiction",
+            channel_id="telegram",
+            actor_id="telegram_runtime",
+            facts={"failure_family": "test"},
+        )
+
+        evaluate_stop_ship_issues(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            emit_contradictions=True,
+        )
+
+        resolved_rows = recent_contradictions(self.state_db, status="resolved", limit=10)
+        self.assertTrue(resolved_rows)
+        self.assertEqual(resolved_rows[0]["contradiction_key"], "stop_ship:stop_ship_intent_without_proof")
+
     def test_jobs_tick_records_closed_background_run(self) -> None:
         jobs_tick(self.config_manager, self.state_db)
 
@@ -345,6 +405,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(snapshot["health_dimensions"]["scheduler_freshness"]["state"], "stalled")
         self.assertEqual(snapshot["health_dimensions"]["environment_parity"]["state"], "parity_broken")
         self.assertEqual(snapshot["top_level_state"], "parity_broken")
+        self.assertEqual(snapshot["contradictions"]["counts"]["open"], 0)
 
     def test_build_researcher_reply_records_chip_influence_provenance(self) -> None:
         self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
@@ -736,9 +797,46 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(report.payload["counts"]["delivery_failures"], 1)
         self.assertEqual(report.payload["counts"]["stalled_runs"], 1)
         self.assertEqual(report.payload["counts"]["provenance_incidents"], 1)
+        self.assertEqual(report.payload["counts"]["contradiction_incidents"], 0)
         self.assertIn("watchtower", report.payload)
         self.assertEqual(report.payload["watchtower"]["health_dimensions"]["scheduler_freshness"]["state"], "stalled")
         self.assertTrue(any("typed delivery ledger" in item["summary"] for item in report.payload["items"]))
+
+    def test_operator_security_report_surfaces_open_contradictions(self) -> None:
+        run = open_run(
+            self.state_db,
+            run_kind="telegram_update",
+            origin_surface="telegram_runtime",
+            summary="opened",
+            request_id="req-operator-contradiction",
+            channel_id="telegram",
+            actor_id="telegram_runtime",
+        )
+        record_event(
+            self.state_db,
+            event_type="intent_committed",
+            component="telegram_runtime",
+            summary="intent only",
+            run_id=run.run_id,
+            request_id="req-operator-contradiction",
+            channel_id="telegram",
+            actor_id="telegram_runtime",
+        )
+        evaluate_stop_ship_issues(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            emit_contradictions=True,
+        )
+
+        report = build_operator_security_report(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            limit=20,
+        )
+
+        self.assertEqual(report.payload["counts"]["contradiction_incidents"], 1)
+        self.assertEqual(report.payload["watchtower"]["contradictions"]["counts"]["open"], 1)
+        self.assertTrue(any("contradiction" in item["summary"].lower() for item in report.payload["items"]))
 
     def test_doctor_report_includes_watchtower_health_checks(self) -> None:
         run = open_run(
@@ -767,6 +865,8 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("watchtower-execution", checks)
         self.assertFalse(checks["watchtower-execution"].ok)
         self.assertIn("execution_impaired", checks["watchtower-execution"].detail)
+        self.assertIn("watchtower-contradictions", checks)
+        self.assertFalse(checks["watchtower-contradictions"].ok)
 
     def test_unlabeled_provenance_is_quarantined(self) -> None:
         record_event(

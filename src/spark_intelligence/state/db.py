@@ -434,6 +434,28 @@ SCHEMA_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS contradiction_records (
+        contradiction_id TEXT PRIMARY KEY,
+        contradiction_key TEXT NOT NULL UNIQUE,
+        component TEXT NOT NULL,
+        reason_code TEXT NOT NULL,
+        status TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        detail TEXT,
+        first_event_id TEXT,
+        last_event_id TEXT,
+        first_seen_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        resolved_at TEXT,
+        occurrence_count INTEGER NOT NULL DEFAULT 1,
+        evidence_json TEXT,
+        facts_json TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS job_records (
         job_id TEXT PRIMARY KEY,
         job_kind TEXT NOT NULL,
@@ -476,6 +498,8 @@ SCHEMA_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_personality_observations_human_id ON personality_observations(human_id, observed_at, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_personality_evolution_events_human_id ON personality_evolution_events(human_id, evolved_at, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_quarantine_records_created_at ON quarantine_records(created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_contradiction_records_status ON contradiction_records(status, last_seen_at)",
+    "CREATE INDEX IF NOT EXISTS idx_contradiction_records_reason_code ON contradiction_records(reason_code, last_seen_at)",
 ]
 
 

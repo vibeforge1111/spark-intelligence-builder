@@ -862,6 +862,27 @@ def recent_runs(
     return [_row_to_dict(row) for row in rows]
 
 
+def recent_contradictions(
+    state_db: StateDB,
+    *,
+    limit: int = 50,
+    status: str | None = None,
+) -> list[dict[str, Any]]:
+    query = """
+        SELECT *
+        FROM contradiction_records
+    """
+    params: list[Any] = []
+    if status:
+        query += " WHERE status = ?"
+        params.append(status)
+    query += " ORDER BY last_seen_at DESC, contradiction_id DESC LIMIT ?"
+    params.append(limit)
+    with state_db.connect() as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+    return [_row_to_dict(row) for row in rows]
+
+
 def build_watchtower_snapshot(
     state_db: StateDB,
     *,
@@ -890,6 +911,7 @@ def build_watchtower_snapshot(
         "health_facts": health_facts,
         "health_dimensions": dimensions,
         "top_level_state": _derive_watchtower_top_level_state(dimensions),
+        "contradictions": _build_contradiction_panel(state_db),
         "panels": {
             "config_authority": _build_config_authority_panel(state_db),
             "execution_lineage": execution_panel,
@@ -939,6 +961,215 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
+def record_contradiction(
+    state_db: StateDB,
+    *,
+    contradiction_key: str,
+    component: str,
+    reason_code: str,
+    summary: str,
+    detail: str | None,
+    severity: str,
+    facts: dict[str, Any] | None = None,
+    provenance: dict[str, Any] | None = None,
+) -> str:
+    now = utc_now_iso()
+    contradiction_id: str
+    occurrence_count = 1
+    with state_db.connect() as conn:
+        existing = conn.execute(
+            """
+            SELECT contradiction_id, occurrence_count
+            FROM contradiction_records
+            WHERE contradiction_key = ?
+            LIMIT 1
+            """,
+            (contradiction_key,),
+        ).fetchone()
+        if existing:
+            contradiction_id = str(existing["contradiction_id"])
+            occurrence_count = int(existing["occurrence_count"] or 0) + 1
+            conn.execute(
+                """
+                UPDATE contradiction_records
+                SET
+                    component = ?,
+                    reason_code = ?,
+                    status = 'open',
+                    severity = ?,
+                    summary = ?,
+                    detail = ?,
+                    last_seen_at = ?,
+                    resolved_at = NULL,
+                    occurrence_count = ?,
+                    evidence_json = ?,
+                    facts_json = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE contradiction_key = ?
+                """,
+                (
+                    component,
+                    reason_code,
+                    severity,
+                    summary,
+                    detail,
+                    now,
+                    occurrence_count,
+                    _json_or_none(provenance),
+                    _json_or_none(facts),
+                    contradiction_key,
+                ),
+            )
+        else:
+            contradiction_id = _prefixed_id("ctr")
+            conn.execute(
+                """
+                INSERT INTO contradiction_records(
+                    contradiction_id,
+                    contradiction_key,
+                    component,
+                    reason_code,
+                    status,
+                    severity,
+                    summary,
+                    detail,
+                    first_seen_at,
+                    last_seen_at,
+                    occurrence_count,
+                    evidence_json,
+                    facts_json
+                )
+                VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    contradiction_id,
+                    contradiction_key,
+                    component,
+                    reason_code,
+                    severity,
+                    summary,
+                    detail,
+                    now,
+                    now,
+                    occurrence_count,
+                    _json_or_none(provenance),
+                    _json_or_none(facts),
+                ),
+            )
+        conn.commit()
+    event_id = record_event(
+        state_db,
+        event_type="contradiction_recorded",
+        component=component,
+        summary=summary,
+        reason_code=reason_code,
+        severity=severity,
+        status="open",
+        facts={
+            "contradiction_id": contradiction_id,
+            "contradiction_key": contradiction_key,
+            "detail": detail,
+            "occurrence_count": occurrence_count,
+            **(facts or {}),
+        },
+        provenance=provenance,
+    )
+    with state_db.connect() as conn:
+        conn.execute(
+            """
+            UPDATE contradiction_records
+            SET
+                first_event_id = COALESCE(first_event_id, ?),
+                last_event_id = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE contradiction_key = ?
+            """,
+            (event_id, event_id, contradiction_key),
+        )
+        conn.commit()
+    return contradiction_id
+
+
+def resolve_contradiction(
+    state_db: StateDB,
+    *,
+    contradiction_key: str,
+    component: str,
+    reason_code: str,
+    summary: str,
+    detail: str | None = None,
+    facts: dict[str, Any] | None = None,
+    provenance: dict[str, Any] | None = None,
+) -> bool:
+    now = utc_now_iso()
+    contradiction_id: str | None = None
+    with state_db.connect() as conn:
+        existing = conn.execute(
+            """
+            SELECT contradiction_id
+            FROM contradiction_records
+            WHERE contradiction_key = ? AND status = 'open'
+            LIMIT 1
+            """,
+            (contradiction_key,),
+        ).fetchone()
+        if not existing:
+            return False
+        contradiction_id = str(existing["contradiction_id"])
+        conn.execute(
+            """
+            UPDATE contradiction_records
+            SET
+                status = 'resolved',
+                summary = ?,
+                detail = COALESCE(?, detail),
+                last_seen_at = ?,
+                resolved_at = ?,
+                evidence_json = COALESCE(?, evidence_json),
+                facts_json = COALESCE(?, facts_json),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE contradiction_key = ?
+            """,
+            (
+                summary,
+                detail,
+                now,
+                now,
+                _json_or_none(provenance),
+                _json_or_none(facts),
+                contradiction_key,
+            ),
+        )
+        conn.commit()
+    event_id = record_event(
+        state_db,
+        event_type="contradiction_recorded",
+        component=component,
+        summary=summary,
+        reason_code=reason_code,
+        severity="low",
+        status="resolved",
+        facts={
+            "contradiction_id": contradiction_id,
+            "contradiction_key": contradiction_key,
+            "detail": detail,
+            **(facts or {}),
+        },
+        provenance=provenance,
+    )
+    with state_db.connect() as conn:
+        conn.execute(
+            """
+            UPDATE contradiction_records
+            SET last_event_id = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE contradiction_key = ?
+            """,
+            (event_id, contradiction_key),
+        )
+        conn.commit()
+    return True
+
+
 def _json_or_none(payload: Any) -> str | None:
     if payload is None:
         return None
@@ -953,6 +1184,7 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
     payload = dict(row)
     for key in (
         "provenance_json",
+        "evidence_json",
         "facts_json",
         "env_refs_json",
         "details_json",
@@ -1573,6 +1805,26 @@ def _build_provenance_and_quarantine_panel(state_db: StateDB) -> dict[str, Any]:
     }
 
 
+def _build_contradiction_panel(state_db: StateDB) -> dict[str, Any]:
+    with state_db.connect() as conn:
+        counts = conn.execute(
+            """
+            SELECT
+                SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open_count,
+                SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) AS resolved_count
+            FROM contradiction_records
+            """
+        ).fetchone()
+    return {
+        "counts": {
+            "open": int((counts["open_count"] if counts else 0) or 0),
+            "resolved": int((counts["resolved_count"] if counts else 0) or 0),
+        },
+        "recent_open": recent_contradictions(state_db, limit=10, status="open"),
+        "recent_resolved": recent_contradictions(state_db, limit=10, status="resolved"),
+    }
+
+
 def _build_memory_lane_hygiene_panel(state_db: StateDB) -> dict[str, Any]:
     bridge_outputs = _typed_component_events(
         state_db,
@@ -1593,7 +1845,7 @@ def _build_memory_lane_hygiene_panel(state_db: StateDB) -> dict[str, Any]:
             blocked_promotions += 1
         if str(facts.get("keepability") or "") == "operator_debug_only":
             ops_residue_volume += 1
-    contradiction_rows = latest_events_by_type(state_db, event_type="contradiction_recorded", limit=100)
+    contradiction_rows = recent_contradictions(state_db, limit=100, status="open")
     resume_integrity_incidents = [
         row
         for row in contradiction_rows

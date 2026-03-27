@@ -15,9 +15,11 @@ from spark_intelligence.observability.store import (
     open_runs,
     recent_delivery_records,
     recent_config_mutations,
+    recent_contradictions,
     recent_provenance_mutations,
     recent_quarantine_records,
-    record_event,
+    record_contradiction,
+    resolve_contradiction,
 )
 from spark_intelligence.state.db import StateDB
 
@@ -75,19 +77,42 @@ def evaluate_stop_ship_issues(
         _bridge_output_governance_issue(),
     ]
     if emit_contradictions:
-        for issue in issues:
-            if issue.ok:
-                continue
-            record_event(
-                state_db,
-                event_type="contradiction_recorded",
-                component="stop_ship_checks",
-                summary=f"Stop-ship contradiction: {issue.name}.",
-                reason_code=issue.name,
-                severity=issue.severity,
-                facts={"detail": issue.detail},
-            )
+        _reconcile_stop_ship_contradictions(state_db=state_db, issues=issues)
     return issues
+
+
+def _reconcile_stop_ship_contradictions(*, state_db: StateDB, issues: list[StopShipIssue]) -> None:
+    open_keys = {
+        str(row.get("contradiction_key") or "")
+        for row in recent_contradictions(state_db, limit=500, status="open")
+        if str(row.get("contradiction_key") or "").startswith("stop_ship:")
+    }
+    for issue in issues:
+        contradiction_key = f"stop_ship:{issue.name}"
+        if issue.ok:
+            if contradiction_key in open_keys:
+                resolve_contradiction(
+                    state_db,
+                    contradiction_key=contradiction_key,
+                    component="stop_ship_checks",
+                    reason_code=issue.name,
+                    summary=f"Stop-ship contradiction resolved: {issue.name}.",
+                    detail=issue.detail,
+                    facts={"detail": issue.detail, "issue_name": issue.name},
+                    provenance={"source_kind": "stop_ship_registry"},
+                )
+            continue
+        record_contradiction(
+            state_db,
+            contradiction_key=contradiction_key,
+            component="stop_ship_checks",
+            reason_code=issue.name,
+            summary=f"Stop-ship contradiction: {issue.name}.",
+            detail=issue.detail,
+            severity=issue.severity,
+            facts={"detail": issue.detail, "issue_name": issue.name},
+            provenance={"source_kind": "stop_ship_registry"},
+        )
 
 
 def _config_audit_issue(state_db: StateDB) -> StopShipIssue:

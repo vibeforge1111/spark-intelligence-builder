@@ -121,6 +121,11 @@ class SystemStatus:
             for key in ("ingress_health", "execution_health", "delivery_health", "scheduler_freshness", "environment_parity"):
                 dimension = (watchtower.get("health_dimensions") or {}).get(key) or {}
                 lines.append(f"- {key}: {dimension.get('state') or 'unknown'}")
+            contradiction_counts = (watchtower.get("contradictions") or {}).get("counts") or {}
+            lines.append(
+                f"- contradictions: open={int(contradiction_counts.get('open') or 0)} "
+                f"resolved={int(contradiction_counts.get('resolved') or 0)}"
+            )
         runtime_payload = self.payload.get("runtime") or {}
         autostart_payload = runtime_payload.get("autostart") or {}
         lines.append(f"- install profile: {runtime_payload.get('install_profile') or 'none'}")

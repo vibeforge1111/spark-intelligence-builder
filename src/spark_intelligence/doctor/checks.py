@@ -240,8 +240,9 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
     checks.append(_telegram_runtime_check(config_manager=config_manager, state_db=state_db))
     checks.append(_discord_runtime_check(config_manager=config_manager, state_db=state_db))
     checks.append(_whatsapp_runtime_check(config_manager=config_manager, state_db=state_db))
+    stop_ship_issues = evaluate_stop_ship_issues(config_manager=config_manager, state_db=state_db, emit_contradictions=True)
     checks.extend(_watchtower_health_checks(state_db))
-    for issue in evaluate_stop_ship_issues(config_manager=config_manager, state_db=state_db, emit_contradictions=True):
+    for issue in stop_ship_issues:
         checks.append(DoctorCheck(issue.name, issue.ok, issue.detail))
 
     return DoctorReport(checks=checks)
@@ -389,4 +390,13 @@ def _watchtower_health_checks(state_db: StateDB) -> list[DoctorCheck]:
                 f"state={state} {detail}",
             )
         )
+    contradictions = snapshot.get("contradictions") or {}
+    open_count = int(((contradictions.get("counts") or {}).get("open")) or 0)
+    checks.append(
+        DoctorCheck(
+            "watchtower-contradictions",
+            open_count == 0,
+            f"open={open_count} resolved={int(((contradictions.get('counts') or {}).get('resolved')) or 0)}",
+        )
+    )
     return checks
