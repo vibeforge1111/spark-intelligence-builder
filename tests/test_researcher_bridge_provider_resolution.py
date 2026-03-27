@@ -166,6 +166,8 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 "Next: Survey operator workflows."
             ),
         )
+        self.assertEqual(result.output_keepability, "ephemeral_context")
+        self.assertEqual(result.promotion_disposition, "not_promotable")
         self.assertNotIn("Confidence:", result.reply_text)
         self.assertNotIn("Evidence gap:", result.reply_text)
         self.assertNotIn("Primary Focus", result.reply_text)
@@ -258,6 +260,8 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("1:1 messaging conversation", str(captured["system_prompt"]))
         self.assertIn("[fallback_mode=conversational_under_supported]", str(captured["user_prompt"]))
         self.assertIsNotNone(captured["governance"])
+        self.assertEqual(result.output_keepability, "ephemeral_context")
+        self.assertEqual(result.promotion_disposition, "not_promotable")
         self.assertEqual(result.reply_text, "Hey there. How can I help?")
         self.assertEqual(result.trace_ref, "trace:under-supported")
         self.assertEqual(result.provider_id, "custom")

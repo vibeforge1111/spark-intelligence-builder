@@ -28,6 +28,17 @@ ALLOWED_AUTOSTART_PLATFORMS = {
     "launchagent",
 }
 
+NON_PROMOTABLE_KEEPABILITY = {
+    "ephemeral_context",
+    "user_preference_ephemeral",
+    "operator_debug_only",
+}
+NON_PROMOTABLE_DISPOSITIONS = {
+    "not_promotable",
+    "quarantined",
+    "quarantined_blocked",
+}
+
 
 @dataclass(frozen=True)
 class StopShipIssue:
@@ -313,17 +324,58 @@ def _keepability_issue(state_db: StateDB) -> StopShipIssue:
         facts = event.get("facts_json") or {}
         if not isinstance(facts, dict) or not facts.get("keepability"):
             missing.append(event)
+    bridge_output_events = _typed_events(
+        state_db,
+        event_types=("tool_result_received", "dispatch_failed"),
+        component="researcher_bridge",
+        limit=200,
+    )
+    bridge_delivery_events = [
+        event
+        for event in _typed_events(
+            state_db,
+            event_types=("delivery_attempted", "delivery_succeeded", "delivery_failed"),
+            component="telegram_runtime",
+            limit=200,
+        )
+        if str((event.get("facts_json") or {}).get("event") or "") == "telegram_bridge_outbound"
+    ]
+    classified_events = bridge_output_events + bridge_delivery_events
+    for event in classified_events:
+        facts = event.get("facts_json") or {}
+        if not facts.get("keepability") or not facts.get("promotion_disposition"):
+            missing.append(event)
+    invalid_promotions = []
+    for event in classified_events:
+        facts = event.get("facts_json") or {}
+        keepability = str(facts.get("keepability") or "")
+        promotion_disposition = str(facts.get("promotion_disposition") or "")
+        if keepability in NON_PROMOTABLE_KEEPABILITY and promotion_disposition not in NON_PROMOTABLE_DISPOSITIONS:
+            invalid_promotions.append(event)
     if missing:
         return StopShipIssue(
             name="stop_ship_keepability_rules",
             ok=False,
-            detail=f"{len(missing)} influence event(s) are missing keepability classification.",
+            detail=(
+                f"{len(missing)} influence or bridge output event(s) are missing "
+                "keepability or promotion classification."
+            ),
+            severity="high",
+        )
+    if invalid_promotions:
+        return StopShipIssue(
+            name="stop_ship_keepability_rules",
+            ok=False,
+            detail=(
+                f"{len(invalid_promotions)} bridge output event(s) mark ephemeral or debug material "
+                "as promotion-eligible."
+            ),
             severity="high",
         )
     return StopShipIssue(
         name="stop_ship_keepability_rules",
         ok=True,
-        detail="Operational influence records include keepability classification.",
+        detail="Operational influence and bridge outputs include non-promotable keepability classification.",
         severity="high",
     )
 

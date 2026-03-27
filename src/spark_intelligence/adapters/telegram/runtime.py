@@ -748,6 +748,8 @@ def poll_telegram_updates_once(
             run_id=run.run_id,
             request_id=run.request_id,
             trace_ref=bridge_result.trace_ref,
+            output_keepability=bridge_result.output_keepability,
+            promotion_disposition=bridge_result.promotion_disposition,
         )
         processed_count += 1
         if send_result["ok"]:
@@ -853,6 +855,8 @@ def _send_telegram_reply(
     run_id: str | None = None,
     request_id: str | None = None,
     trace_ref: str | None,
+    output_keepability: str | None = None,
+    promotion_disposition: str | None = None,
 ) -> dict[str, Any]:
     policy = _telegram_security_policy(config_manager)
     visible_text = _apply_think_visibility(
@@ -897,6 +901,8 @@ def _send_telegram_reply(
             "telegram_user_id": telegram_user_id,
             "guardrail_actions": guarded["actions"],
             "response_length": len(guarded["text"]),
+            "keepability": output_keepability,
+            "promotion_disposition": promotion_disposition,
         },
     )
     try:
@@ -935,6 +941,8 @@ def _send_telegram_reply(
             "telegram_user_id": telegram_user_id,
             "delivery_error": error,
             "guardrail_actions": guarded["actions"],
+            "keepability": output_keepability,
+            "promotion_disposition": promotion_disposition,
         },
     )
     append_outbound_audit(
@@ -952,6 +960,8 @@ def _send_telegram_reply(
             "active_chip_key": active_chip_key,
             "active_chip_task_type": active_chip_task_type,
             "trace_ref": trace_ref,
+            "output_keepability": output_keepability,
+            "promotion_disposition": promotion_disposition,
             "delivery_ok": ok,
             "delivery_error": error,
             "guardrail_actions": guarded["actions"],

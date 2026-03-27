@@ -168,6 +168,33 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         facts = events[0]["facts_json"]
         self.assertEqual(facts["keepability"], "ephemeral_context")
 
+    def test_build_researcher_reply_records_output_keepability_for_stub_results(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
+            return_value=(None, "missing"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-output-keepability",
+                agent_id="agent:test",
+                human_id="human:test",
+                session_id="session:test",
+                channel_kind="telegram",
+                user_message="hello",
+            )
+
+        self.assertEqual(result.routing_decision, "stub")
+        self.assertEqual(result.output_keepability, "operator_debug_only")
+        self.assertEqual(result.promotion_disposition, "not_promotable")
+        events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(events)
+        facts = events[0]["facts_json"]
+        self.assertEqual(facts["keepability"], "operator_debug_only")
+        self.assertEqual(facts["promotion_disposition"], "not_promotable")
+
     def test_build_researcher_reply_records_personality_influence_provenance(self) -> None:
         result = build_researcher_reply(
             config_manager=self.config_manager,
@@ -327,6 +354,24 @@ class BuilderPrelaunchContractTests(SparkTestCase):
 
         self.assertFalse(issues["stop_ship_external_execution_governance"].ok)
         self.assertIn("future_tooling/raw_exec.py", issues["stop_ship_external_execution_governance"].detail)
+
+    def test_stop_ship_flags_promotable_ephemeral_bridge_output(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="bridge output incorrectly marked promotable",
+            actor_id="test",
+            facts={
+                "routing_decision": "researcher_advisory",
+                "keepability": "ephemeral_context",
+                "promotion_disposition": "durable_candidate",
+            },
+        )
+
+        issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
+        self.assertFalse(issues["stop_ship_keepability_rules"].ok)
+        self.assertIn("promotion-eligible", issues["stop_ship_keepability_rules"].detail)
 
     def test_build_researcher_reply_blocks_secret_like_model_visible_context(self) -> None:
         result = build_researcher_reply(

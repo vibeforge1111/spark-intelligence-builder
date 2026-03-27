@@ -62,6 +62,8 @@ class ResearcherBridgeResult:
     active_chip_key: str | None = None
     active_chip_task_type: str | None = None
     active_chip_evaluate_used: bool = False
+    output_keepability: str = "ephemeral_context"
+    promotion_disposition: str = "not_promotable"
 
 
 @dataclass
@@ -89,6 +91,8 @@ class ResearcherBridgeStatus:
     last_active_chip_key: str | None
     last_active_chip_task_type: str | None
     last_active_chip_evaluate_used: bool
+    last_output_keepability: str | None
+    last_promotion_disposition: str | None
     failure_count: int
     last_failure: dict[str, Any] | None
 
@@ -118,6 +122,8 @@ class ResearcherBridgeStatus:
                 "last_active_chip_key": self.last_active_chip_key,
                 "last_active_chip_task_type": self.last_active_chip_task_type,
                 "last_active_chip_evaluate_used": self.last_active_chip_evaluate_used,
+                "last_output_keepability": self.last_output_keepability,
+                "last_promotion_disposition": self.last_promotion_disposition,
                 "failure_count": self.failure_count,
                 "last_failure": self.last_failure,
             },
@@ -162,6 +168,10 @@ class ResearcherBridgeStatus:
         if self.last_active_chip_task_type:
             lines.append(f"- last_active_chip_task_type: {self.last_active_chip_task_type}")
         lines.append(f"- last_active_chip_evaluate_used: {'yes' if self.last_active_chip_evaluate_used else 'no'}")
+        if self.last_output_keepability:
+            lines.append(f"- last_output_keepability: {self.last_output_keepability}")
+        if self.last_promotion_disposition:
+            lines.append(f"- last_promotion_disposition: {self.last_promotion_disposition}")
         lines.append(f"- failure_count: {self.failure_count}")
         if self.last_failure:
             lines.append(
@@ -825,6 +835,20 @@ def _run_active_chip_evaluate(
     }
 
 
+def _bridge_output_classification(*, mode: str, routing_decision: str | None) -> tuple[str, str]:
+    operator_debug_modes = {"blocked", "disabled", "bridge_error", "stub"}
+    operator_debug_decisions = {
+        "bridge_disabled",
+        "provider_resolution_failed",
+        "bridge_error",
+        "secret_boundary_blocked",
+        "stub",
+    }
+    if mode in operator_debug_modes or routing_decision in operator_debug_decisions:
+        return ("operator_debug_only", "not_promotable")
+    return ("ephemeral_context", "not_promotable")
+
+
 def researcher_bridge_status(*, config_manager: ConfigManager, state_db: StateDB) -> ResearcherBridgeStatus:
     attachment_context = build_attachment_context(config_manager)
     runtime_root, runtime_source = discover_researcher_runtime_root(config_manager)
@@ -857,6 +881,8 @@ def researcher_bridge_status(*, config_manager: ConfigManager, state_db: StateDB
         last_active_chip_key=runtime_state.get("researcher:last_active_chip_key"),
         last_active_chip_task_type=runtime_state.get("researcher:last_active_chip_task_type"),
         last_active_chip_evaluate_used=_parse_bool(runtime_state.get("researcher:last_active_chip_evaluate_used")),
+        last_output_keepability=runtime_state.get("researcher:last_output_keepability"),
+        last_promotion_disposition=runtime_state.get("researcher:last_promotion_disposition"),
         failure_count=_parse_int(runtime_state.get("researcher:failure_count")),
         last_failure=_loads_json(runtime_state.get("researcher:last_failure")),
     )
@@ -887,6 +913,8 @@ def record_researcher_bridge_result(*, state_db: StateDB, result: ResearcherBrid
             "researcher:last_active_chip_evaluate_used",
             "1" if result.active_chip_evaluate_used else "0",
         )
+        _set_runtime_state(conn, "researcher:last_output_keepability", result.output_keepability)
+        _set_runtime_state(conn, "researcher:last_promotion_disposition", result.promotion_disposition)
         _set_runtime_state(
             conn,
             "researcher:last_attachment_context",
@@ -1118,6 +1146,10 @@ def build_researcher_reply(
         },
     )
     if not screened_context["allowed"]:
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="blocked",
+            routing_decision="secret_boundary_blocked",
+        )
         record_event(
             state_db,
             event_type="dispatch_failed",
@@ -1136,6 +1168,8 @@ def build_researcher_reply(
             facts={
                 "quarantine_id": screened_context["quarantine_id"],
                 "blocked_stage": "contextual_task",
+                "keepability": output_keepability,
+                "promotion_disposition": promotion_disposition,
             },
         )
         return ResearcherBridgeResult(
@@ -1155,6 +1189,8 @@ def build_researcher_reply(
             active_chip_key=active_chip_key,
             active_chip_task_type=active_chip_task_type,
             active_chip_evaluate_used=active_chip_evaluate_used,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
         )
     provider_selection = _resolve_bridge_provider(config_manager=config_manager, state_db=state_db)
     routing_policy = _researcher_routing_policy(config_manager)
@@ -1183,6 +1219,10 @@ def build_researcher_reply(
         facts={"model_family": provider_selection.model_family, "runtime_source": runtime_source},
     )
     if not bool(config_manager.get_path("spark.researcher.enabled", default=True)):
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="disabled",
+            routing_decision="bridge_disabled",
+        )
         record_event(
             state_db,
             event_type="dispatch_failed",
@@ -1197,7 +1237,11 @@ def build_researcher_reply(
             actor_id="researcher_bridge",
             reason_code="bridge_disabled",
             severity="high",
-            facts={"mode": "disabled"},
+            facts={
+                "mode": "disabled",
+                "keepability": output_keepability,
+                "promotion_disposition": promotion_disposition,
+            },
         )
         return ResearcherBridgeResult(
             request_id=request_id,
@@ -1223,8 +1267,14 @@ def build_researcher_reply(
             active_chip_key=active_chip_key,
             active_chip_task_type=active_chip_task_type,
             active_chip_evaluate_used=active_chip_evaluate_used,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
         )
     if provider_selection.error:
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="bridge_error",
+            routing_decision="provider_resolution_failed",
+        )
         record_event(
             state_db,
             event_type="dispatch_failed",
@@ -1239,7 +1289,11 @@ def build_researcher_reply(
             actor_id="researcher_bridge",
             reason_code="provider_resolution_failed",
             severity="high",
-            facts={"error": provider_selection.error},
+            facts={
+                "error": provider_selection.error,
+                "keepability": output_keepability,
+                "promotion_disposition": promotion_disposition,
+            },
         )
         return ResearcherBridgeResult(
             request_id=request_id,
@@ -1265,6 +1319,8 @@ def build_researcher_reply(
             active_chip_key=active_chip_key,
             active_chip_task_type=active_chip_task_type,
             active_chip_evaluate_used=active_chip_evaluate_used,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
         )
     if runtime_root is not None:
         if config_path.exists():
@@ -1350,6 +1406,10 @@ def build_researcher_reply(
                         human_id=human_id,
                         agent_id=agent_id,
                     )
+                    output_keepability, promotion_disposition = _bridge_output_classification(
+                        mode=f"external_{runtime_source}",
+                        routing_decision=routing_decision,
+                    )
                     record_event(
                         state_db,
                         event_type="tool_result_received",
@@ -1368,6 +1428,8 @@ def build_researcher_reply(
                             "routing_decision": routing_decision,
                             "bridge_mode": f"external_{runtime_source}",
                             "evidence_summary": evidence_summary,
+                            "keepability": output_keepability,
+                            "promotion_disposition": promotion_disposition,
                         },
                     )
                     return ResearcherBridgeResult(
@@ -1392,6 +1454,8 @@ def build_researcher_reply(
                         active_chip_key=active_chip_key,
                         active_chip_task_type=active_chip_task_type,
                         active_chip_evaluate_used=active_chip_evaluate_used,
+                        output_keepability=output_keepability,
+                        promotion_disposition=promotion_disposition,
                     )
                 if provider_selection.provider and _supports_direct_or_cli_execution(provider_selection):
                     with _temporary_provider_env(
@@ -1445,6 +1509,10 @@ def build_researcher_reply(
                     human_id=human_id,
                     agent_id=agent_id,
                 )
+                output_keepability, promotion_disposition = _bridge_output_classification(
+                    mode=f"external_{runtime_source}",
+                    routing_decision=routing_decision,
+                )
                 record_event(
                     state_db,
                     event_type="tool_result_received",
@@ -1463,6 +1531,8 @@ def build_researcher_reply(
                         "routing_decision": routing_decision,
                         "bridge_mode": f"external_{runtime_source}",
                         "evidence_summary": evidence_summary,
+                        "keepability": output_keepability,
+                        "promotion_disposition": promotion_disposition,
                     },
                 )
                 return ResearcherBridgeResult(
@@ -1489,8 +1559,14 @@ def build_researcher_reply(
                     active_chip_key=active_chip_key,
                     active_chip_task_type=active_chip_task_type,
                     active_chip_evaluate_used=active_chip_evaluate_used,
+                    output_keepability=output_keepability,
+                    promotion_disposition=promotion_disposition,
                 )
             except Exception as exc:  # pragma: no cover - external bridge safety
+                output_keepability, promotion_disposition = _bridge_output_classification(
+                    mode="bridge_error",
+                    routing_decision="bridge_error",
+                )
                 record_event(
                     state_db,
                     event_type="dispatch_failed",
@@ -1505,7 +1581,11 @@ def build_researcher_reply(
                     actor_id="researcher_bridge",
                     reason_code="bridge_error",
                     severity="high",
-                    facts={"error": str(exc)},
+                    facts={
+                        "error": str(exc),
+                        "keepability": output_keepability,
+                        "promotion_disposition": promotion_disposition,
+                    },
                 )
                 return ResearcherBridgeResult(
                     request_id=request_id,
@@ -1531,11 +1611,17 @@ def build_researcher_reply(
                     active_chip_key=active_chip_key,
                     active_chip_task_type=active_chip_task_type,
                     active_chip_evaluate_used=active_chip_evaluate_used,
+                    output_keepability=output_keepability,
+                    promotion_disposition=promotion_disposition,
                 )
 
     reply_text = (
         f"[Spark Researcher stub] I received your message in {channel_kind} "
         f"for {session_id}: {user_message}"
+    )
+    output_keepability, promotion_disposition = _bridge_output_classification(
+        mode="stub",
+        routing_decision="stub",
     )
     record_event(
         state_db,
@@ -1551,7 +1637,11 @@ def build_researcher_reply(
         agent_id=agent_id,
         actor_id="researcher_bridge",
         reason_code="stub",
-        facts={"routing_decision": "stub"},
+        facts={
+            "routing_decision": "stub",
+            "keepability": output_keepability,
+            "promotion_disposition": promotion_disposition,
+        },
     )
     return ResearcherBridgeResult(
         request_id=request_id,
@@ -1581,6 +1671,8 @@ def build_researcher_reply(
         active_chip_key=active_chip_key,
         active_chip_task_type=active_chip_task_type,
         active_chip_evaluate_used=active_chip_evaluate_used,
+        output_keepability=output_keepability,
+        promotion_disposition=promotion_disposition,
     )
 
 
