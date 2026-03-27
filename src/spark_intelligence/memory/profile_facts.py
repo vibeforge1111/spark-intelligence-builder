@@ -9,6 +9,10 @@ _CITY_PATTERNS = [
     re.compile(r"\bi\s+live\s+in\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
     re.compile(r"\bi(?:'m| am)\s+in\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
 ]
+_COUNTRY_PATTERNS = [
+    re.compile(r"\bmy\s+country\s+is\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
+    re.compile(r"\bi(?:'m| am)\s+from\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
+]
 _TIMEZONE_PATTERNS = [
     re.compile(r"\bmy\s+timezone\s+is\s+([A-Za-z_]+/[A-Za-z_]+(?:/[A-Za-z_]+)?)", re.I),
     re.compile(r"\bi(?:'m| am)\s+in\s+timezone\s+([A-Za-z_]+/[A-Za-z_]+(?:/[A-Za-z_]+)?)", re.I),
@@ -39,6 +43,15 @@ def detect_profile_fact_observation(user_message: str) -> ProfileFactObservation
     text = str(user_message or "").strip()
     if not text:
         return None
+    country = _extract_country(text)
+    if country:
+        return ProfileFactObservation(
+            predicate="profile.home_country",
+            value=country,
+            operation="update",
+            evidence_text=text,
+            fact_name="profile_home_country",
+        )
     timezone = _extract_timezone(text)
     if timezone:
         return ProfileFactObservation(
@@ -64,6 +77,17 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
     text = str(user_message or "").strip().lower()
     if not text:
         return None
+    if any(
+        phrase in text
+        for phrase in (
+            "what country do you have for me",
+            "what country do you have saved for me",
+            "which country do you have for me",
+            "what's my country",
+            "what is my country",
+        )
+    ):
+        return ProfileFactQuery(predicate="profile.home_country", fact_name="profile_home_country", label="country")
     if any(
         phrase in text
         for phrase in (
@@ -116,6 +140,17 @@ def _extract_city(text: str) -> str | None:
     return None
 
 
+def _extract_country(text: str) -> str | None:
+    for pattern in _COUNTRY_PATTERNS:
+        match = pattern.search(text)
+        if not match:
+            continue
+        candidate = _normalize_place(match.group(1))
+        if candidate:
+            return candidate
+    return None
+
+
 def _extract_timezone(text: str) -> str | None:
     for pattern in _TIMEZONE_PATTERNS:
         match = pattern.search(text)
@@ -128,6 +163,10 @@ def _extract_timezone(text: str) -> str | None:
 
 
 def _normalize_city(raw: str) -> str | None:
+    return _normalize_place(raw)
+
+
+def _normalize_place(raw: str) -> str | None:
     candidate = re.split(r"[.!?,;:\n]", str(raw or ""), maxsplit=1)[0].strip(" '\"`")
     if not candidate:
         return None
@@ -149,6 +188,8 @@ def _normalize_city(raw: str) -> str | None:
         lowered = token.lower()
         if index > 0 and lowered in _LOWERCASE_JOINERS:
             normalized.append(lowered)
+        elif token.isupper() and len(token) <= 4:
+            normalized.append(token)
         else:
             normalized.append(lowered[0].upper() + lowered[1:])
     return " ".join(normalized)
