@@ -9,6 +9,7 @@ from spark_intelligence.memory import (
     build_sdk_maintenance_payload,
     build_shadow_replay_payload,
     export_shadow_replay_batch,
+    run_memory_sdk_smoke_test,
 )
 from spark_intelligence.observability.store import build_watchtower_snapshot, latest_events_by_type
 from spark_intelligence.personality.loader import (
@@ -64,6 +65,25 @@ class _AbstainingMemoryClient(_FakeMemoryClient):
 
 
 class MemoryOrchestratorTests(SparkTestCase):
+    def test_memory_sdk_smoke_test_runs_real_domain_chip_roundtrip(self) -> None:
+        result = run_memory_sdk_smoke_test(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            sdk_module="domain_chip_memory",
+            subject="human:smoke:test",
+            predicate="system.memory.smoke",
+            value="ok",
+        )
+
+        self.assertEqual(result.sdk_module, "domain_chip_memory")
+        self.assertGreaterEqual(result.write_result.accepted_count, 1)
+        self.assertFalse(result.read_result.abstained)
+        self.assertTrue(result.read_result.records)
+        self.assertEqual(result.read_result.records[0]["predicate"], "system.memory.smoke")
+        self.assertEqual(result.read_result.records[0]["value"], "ok")
+        self.assertIsNotNone(result.cleanup_result)
+        self.assertGreaterEqual(result.cleanup_result.accepted_count, 1)
+
     def test_domain_chip_memory_sdk_module_supports_live_preference_write_then_read(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

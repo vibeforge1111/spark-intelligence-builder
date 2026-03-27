@@ -69,6 +69,7 @@ from spark_intelligence.memory import (
     export_sdk_maintenance_replay,
     export_shadow_replay,
     export_shadow_replay_batch,
+    run_memory_sdk_smoke_test,
 )
 from spark_intelligence.observability.policy import screen_model_visible_text
 from spark_intelligence.observability.store import build_watchtower_snapshot, close_run, open_run, record_event
@@ -1164,6 +1165,17 @@ def build_parser() -> argparse.ArgumentParser:
     memory_maintenance_parser.add_argument("--run-report", action="store_true", help="Run run-sdk-maintenance-report after export")
     memory_maintenance_parser.add_argument("--report-write", help="Optional output path for the generated SDK maintenance report JSON")
     memory_maintenance_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_direct_smoke_parser = memory_subparsers.add_parser(
+        "direct-smoke",
+        help="Run an in-process Spark -> Domain Chip Memory write/read smoke test without changing persisted config",
+    )
+    memory_direct_smoke_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_direct_smoke_parser.add_argument("--sdk-module", help="Override the SDK module for this smoke run")
+    memory_direct_smoke_parser.add_argument("--subject", default="human:smoke:test", help="Structured memory subject to write and read")
+    memory_direct_smoke_parser.add_argument("--predicate", default="system.memory.smoke", help="Structured memory predicate to write and read")
+    memory_direct_smoke_parser.add_argument("--value", default="ok", help="Structured memory value to write and read")
+    memory_direct_smoke_parser.add_argument("--no-cleanup", action="store_true", help="Leave the smoke key in memory instead of deleting it after the read")
+    memory_direct_smoke_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     config_parser = subparsers.add_parser("config", help="Inspect and update config values")
     config_subparsers = config_parser.add_subparsers(dest="config_command", required=True)
@@ -2813,6 +2825,30 @@ def handle_memory_export_sdk_maintenance_replay(args: argparse.Namespace) -> int
     return 0
 
 
+def handle_memory_direct_smoke(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = run_memory_sdk_smoke_test(
+        config_manager=config_manager,
+        state_db=state_db,
+        sdk_module=args.sdk_module,
+        subject=args.subject,
+        predicate=args.predicate,
+        value=args.value,
+        cleanup=not bool(args.no_cleanup),
+    )
+    print(result.to_json() if args.json else result.to_text())
+    if result.write_result.accepted_count <= 0:
+        return 1
+    if result.read_result.abstained or not result.read_result.records:
+        return 1
+    if result.cleanup_result is not None and result.cleanup_result.accepted_count <= 0:
+        return 1
+    return 0
+
+
 def _memory_report_failed(report: dict[str, object] | None) -> bool:
     if report is None:
         return True
@@ -3244,6 +3280,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_memory_export_shadow_replay_batch(args)
     if args.command == "memory" and args.memory_command == "export-sdk-maintenance-replay":
         return handle_memory_export_sdk_maintenance_replay(args)
+    if args.command == "memory" and args.memory_command == "direct-smoke":
+        return handle_memory_direct_smoke(args)
     if args.command == "config" and args.config_command == "show":
         return handle_config_show(args)
     if args.command == "config" and args.config_command == "set":

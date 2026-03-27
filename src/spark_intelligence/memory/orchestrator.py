@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import ModuleType
@@ -43,6 +44,86 @@ class MemoryReadResult:
     abstained: bool
     reason: str | None = None
     shadow_only: bool = False
+
+
+@dataclass(frozen=True)
+class MemorySdkSmokeResult:
+    sdk_module: str
+    subject: str
+    predicate: str
+    value: str
+    write_result: MemoryWriteResult
+    read_result: MemoryReadResult
+    cleanup_result: MemoryWriteResult | None
+    shadow_only_eval: bool = True
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "sdk_module": self.sdk_module,
+                "subject": self.subject,
+                "predicate": self.predicate,
+                "value": self.value,
+                "shadow_only_eval": self.shadow_only_eval,
+                "write_result": self._write_payload(self.write_result),
+                "read_result": self._read_payload(self.read_result),
+                "cleanup_result": self._write_payload(self.cleanup_result) if self.cleanup_result is not None else None,
+            },
+            indent=2,
+        )
+
+    def to_text(self) -> str:
+        lines = ["Spark memory direct smoke"]
+        lines.append(f"- sdk_module: {self.sdk_module}")
+        lines.append(f"- subject: {self.subject}")
+        lines.append(f"- predicate: {self.predicate}")
+        lines.append(f"- value: {self.value}")
+        lines.append(f"- shadow_only_eval: {'yes' if self.shadow_only_eval else 'no'}")
+        lines.append(
+            f"- write: status={self.write_result.status} accepted={self.write_result.accepted_count} "
+            f"rejected={self.write_result.rejected_count}"
+        )
+        lines.append(
+            f"- read: status={self.read_result.status} records={len(self.read_result.records)} "
+            f"abstained={'yes' if self.read_result.abstained else 'no'}"
+        )
+        if self.cleanup_result is not None:
+            lines.append(
+                f"- cleanup: status={self.cleanup_result.status} accepted={self.cleanup_result.accepted_count} "
+                f"rejected={self.cleanup_result.rejected_count}"
+            )
+        return "\n".join(lines)
+
+    @staticmethod
+    def _write_payload(result: MemoryWriteResult) -> dict[str, Any]:
+        return {
+            "status": result.status,
+            "operation": result.operation,
+            "method": result.method,
+            "memory_role": result.memory_role,
+            "accepted_count": result.accepted_count,
+            "rejected_count": result.rejected_count,
+            "skipped_count": result.skipped_count,
+            "abstained": result.abstained,
+            "reason": result.reason,
+            "retrieval_trace": result.retrieval_trace,
+            "provenance": result.provenance,
+        }
+
+    @staticmethod
+    def _read_payload(result: MemoryReadResult) -> dict[str, Any]:
+        return {
+            "status": result.status,
+            "method": result.method,
+            "memory_role": result.memory_role,
+            "records": result.records,
+            "provenance": result.provenance,
+            "retrieval_trace": result.retrieval_trace,
+            "answer_explanation": result.answer_explanation,
+            "abstained": result.abstained,
+            "reason": result.reason,
+            "shadow_only": result.shadow_only,
+        }
 
 
 class _DomainChipMemoryClientAdapter:
@@ -190,6 +271,97 @@ class _DomainChipMemoryClientAdapter:
             return module
         nested_name = f"{module.__name__}.sdk"
         return importlib.import_module(nested_name)
+
+
+def run_memory_sdk_smoke_test(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    sdk_module: str | None = None,
+    subject: str = "human:smoke:test",
+    predicate: str = "system.memory.smoke",
+    value: str = "ok",
+    cleanup: bool = True,
+    actor_id: str = "memory_cli",
+) -> MemorySdkSmokeResult:
+    module_name = str(sdk_module or config_manager.get_path("spark.memory.sdk_module", default=DEFAULT_SDK_MODULE) or DEFAULT_SDK_MODULE)
+    client = _load_sdk_client_for_module(module_name=module_name, home_path=config_manager.paths.home)
+    if client is None:
+        write_result = _normalize_write_result(
+            raw={"status": "abstained", "reason": "sdk_unavailable"},
+            operation="update",
+        )
+        read_result = _disabled_read_result(reason="sdk_unavailable")
+        cleanup_result = _disabled_write_result(operation="delete", reason="sdk_unavailable") if cleanup else None
+        return MemorySdkSmokeResult(
+            sdk_module=module_name,
+            subject=subject,
+            predicate=predicate,
+            value=value,
+            write_result=write_result,
+            read_result=read_result,
+            cleanup_result=cleanup_result,
+        )
+    session_id = f"memory-smoke:{actor_id}"
+    write_turn_id = f"{actor_id}:write"
+    read_turn_id = f"{actor_id}:read"
+    cleanup_turn_id = f"{actor_id}:cleanup"
+    payload = {
+        "operation": "update",
+        "subject": subject,
+        "predicate": predicate,
+        "value": value,
+        "memory_role": "current_state",
+        "session_id": session_id,
+        "turn_id": write_turn_id,
+        "timestamp": _now_iso(),
+        "metadata": {
+            "source_surface": "memory_cli_smoke",
+            "smoke_test": True,
+            "value": value,
+        },
+    }
+    raw_write = _call_sdk_method(client, "write_observation", payload)
+    write_result = _normalize_write_result(raw=raw_write, operation="update")
+    raw_read = _call_sdk_method(
+        client,
+        "get_current_state",
+        {
+            "subject": subject,
+            "predicate": predicate,
+            "session_id": session_id,
+            "turn_id": read_turn_id,
+            "timestamp": _now_iso(),
+            "metadata": {"source_surface": "memory_cli_smoke", "smoke_test": True},
+        },
+    )
+    read_result = _normalize_read_result(raw=raw_read, method="get_current_state", shadow_only=False)
+    cleanup_result: MemoryWriteResult | None = None
+    if cleanup:
+        raw_cleanup = _call_sdk_method(
+            client,
+            "write_observation",
+            {
+                "operation": "delete",
+                "subject": subject,
+                "predicate": predicate,
+                "memory_role": "current_state",
+                "session_id": session_id,
+                "turn_id": cleanup_turn_id,
+                "timestamp": _now_iso(),
+                "metadata": {"source_surface": "memory_cli_smoke", "smoke_test": True},
+            },
+        )
+        cleanup_result = _normalize_write_result(raw=raw_cleanup, operation="delete")
+    return MemorySdkSmokeResult(
+        sdk_module=module_name,
+        subject=subject,
+        predicate=predicate,
+        value=value,
+        write_result=write_result,
+        read_result=read_result,
+        cleanup_result=cleanup_result,
+    )
 
 
 def write_personality_preferences_to_memory(
@@ -460,7 +632,11 @@ def _write_personality_observations(
 
 def _load_sdk_client(config_manager: ConfigManager) -> Any | None:
     module_name = str(config_manager.get_path("spark.memory.sdk_module", default=DEFAULT_SDK_MODULE) or DEFAULT_SDK_MODULE)
-    cache_key = (module_name, str(config_manager.paths.home))
+    return _load_sdk_client_for_module(module_name=module_name, home_path=config_manager.paths.home)
+
+
+def _load_sdk_client_for_module(*, module_name: str, home_path: Any) -> Any | None:
+    cache_key = (module_name, str(home_path))
     if cache_key in _SDK_CLIENT_CACHE:
         return _SDK_CLIENT_CACHE[cache_key]
     try:
@@ -629,6 +805,36 @@ def _normalize_read_result(
         abstained=abstained,
         reason=str(raw.get("reason") or "") or None,
         shadow_only=shadow_only,
+    )
+
+
+def _normalize_write_result(
+    *,
+    raw: dict[str, Any],
+    operation: str,
+    method: str = "write_observation",
+    default_role: str = "current_state",
+) -> MemoryWriteResult:
+    status = str(raw.get("status") or "").lower()
+    accepted_count = int(raw.get("accepted_count") or 0)
+    rejected_count = int(raw.get("rejected_count") or 0)
+    skipped_count = int(raw.get("skipped_count") or 0)
+    if status in {"accepted", "written", "created", "updated", "deleted"} and accepted_count <= 0:
+        accepted_count = 1
+    abstained = status in {"abstained", "invalid_request", "unsupported", "not_found", "", "disabled"} or accepted_count == 0
+    normalized_status = "succeeded" if accepted_count > 0 and rejected_count == 0 else ("partial" if accepted_count > 0 else (status or "abstained"))
+    return MemoryWriteResult(
+        status=normalized_status,
+        operation=operation,
+        method=method,
+        memory_role=str(raw.get("memory_role") or default_role),
+        accepted_count=accepted_count,
+        rejected_count=rejected_count,
+        skipped_count=skipped_count,
+        abstained=abstained,
+        retrieval_trace=dict(raw["retrieval_trace"]) if isinstance(raw.get("retrieval_trace"), dict) else None,
+        provenance=_normalize_provenance(raw),
+        reason=str(raw.get("reason") or "") or None,
     )
 
 

@@ -18,6 +18,25 @@ from tests.test_support import SparkTestCase
 
 
 class CliSmokeTests(SparkTestCase):
+    def test_memory_direct_smoke_runs_in_process_domain_chip_bridge(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "memory",
+            "direct-smoke",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["sdk_module"], "domain_chip_memory")
+        self.assertTrue(payload["shadow_only_eval"])
+        self.assertGreaterEqual(payload["write_result"]["accepted_count"], 1)
+        self.assertTrue(payload["read_result"]["records"])
+        self.assertEqual(payload["read_result"]["records"][0]["predicate"], "system.memory.smoke")
+        self.assertEqual(payload["read_result"]["records"][0]["value"], "ok")
+        self.assertGreaterEqual(payload["cleanup_result"]["accepted_count"], 1)
+
     def test_memory_export_shadow_replay_writes_contract_shaped_json(self) -> None:
         with self.state_db.connect() as conn:
             conn.execute(
