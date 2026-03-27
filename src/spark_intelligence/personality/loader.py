@@ -1,13 +1,15 @@
 """Personality profile loading, per-user preference management, and self-evolution.
 
 Reads personality chip state from the filesystem (written by spark-personality-chip-labs
-hooks) and manages per-user trait deltas via the runtime_state table.
+hooks) and manages per-user trait deltas via typed state tables with runtime_state
+mirrors kept only for compatibility.
 
 Trait names follow PersonalityEvolver's 5-trait system:
   warmth, directness, playfulness, pacing, assertiveness
 
 Each trait is a float in [0.0, 1.0]. Deltas shift baseline traits and are
-persisted per human_id in runtime_state with key pattern:
+persisted per human_id in personality_trait_profiles with a compatibility mirror
+in runtime_state using the key pattern:
   personality:{human_id}:trait_deltas
 
 Self-evolution: After each interaction, the system records what traits were
@@ -24,6 +26,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.state.db import StateDB
@@ -334,7 +337,23 @@ def _state_key(human_id: str) -> str:
 
 
 def _load_user_trait_deltas(*, human_id: str, state_db: StateDB) -> dict[str, float]:
-    """Load persisted per-user trait deltas from runtime_state."""
+    """Load persisted per-user trait deltas from typed storage or compatibility state."""
+    try:
+        with state_db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT deltas_json
+                FROM personality_trait_profiles
+                WHERE human_id = ?
+                LIMIT 1
+                """,
+                (human_id,),
+            ).fetchone()
+        if row and row["deltas_json"]:
+            data = json.loads(row["deltas_json"])
+            return {k: float(v) for k, v in data.items() if k in _DEFAULT_TRAITS}
+    except Exception:
+        pass
     try:
         with state_db.connect() as conn:
             row = conn.execute(
@@ -357,15 +376,27 @@ def _save_user_trait_deltas(
     deltas: dict[str, float],
     state_db: StateDB,
 ) -> None:
-    """Persist per-user trait deltas to runtime_state."""
+    """Persist per-user trait deltas to typed storage and a compatibility mirror."""
+    updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    normalized = {k: round(v, 3) for k, v in deltas.items() if k in _DEFAULT_TRAITS}
     payload = json.dumps(
         {
-            "deltas": {k: round(v, 3) for k, v in deltas.items()},
-            "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "deltas": normalized,
+            "updated_at": updated_at,
         },
         sort_keys=True,
     )
     with state_db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO personality_trait_profiles(human_id, deltas_json, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(human_id) DO UPDATE SET
+                deltas_json=excluded.deltas_json,
+                updated_at=excluded.updated_at
+            """,
+            (human_id, json.dumps(normalized, sort_keys=True), updated_at),
+        )
         conn.execute(
             """
             INSERT INTO runtime_state(state_key, value)
@@ -529,6 +560,10 @@ def _clear_user_trait_deltas(*, human_id: str, state_db: StateDB) -> None:
     """Clear all per-user trait deltas (reset to base personality)."""
     with state_db.connect() as conn:
         conn.execute(
+            "DELETE FROM personality_trait_profiles WHERE human_id = ?",
+            (human_id,),
+        )
+        conn.execute(
             "DELETE FROM runtime_state WHERE state_key = ?",
             (_state_key(human_id),),
         )
@@ -536,6 +571,133 @@ def _clear_user_trait_deltas(*, human_id: str, state_db: StateDB) -> None:
 
 
 # ── Self-observation ──
+
+def _observation_state_key(human_id: str) -> str:
+    return f"personality:{human_id}:observations"
+
+
+def _evolution_log_state_key(human_id: str) -> str:
+    return f"personality:{human_id}:evolution_log"
+
+
+def _load_recent_observations(*, human_id: str, state_db: StateDB) -> list[dict[str, Any]]:
+    try:
+        with state_db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT observed_at, user_state, confidence, traits_json
+                FROM personality_observations
+                WHERE human_id = ?
+                ORDER BY observed_at ASC, created_at ASC
+                """,
+                (human_id,),
+            ).fetchall()
+        if rows:
+            return [
+                {
+                    "ts": row["observed_at"],
+                    "user_state": row["user_state"],
+                    "confidence": float(row["confidence"]),
+                    "traits": json.loads(row["traits_json"] or "{}"),
+                }
+                for row in rows
+            ]
+    except Exception:
+        pass
+    try:
+        with state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+                (_observation_state_key(human_id),),
+            ).fetchone()
+        if row and row["value"]:
+            data = json.loads(row["value"])
+            return data.get("observations", []) if isinstance(data, dict) else []
+    except Exception:
+        pass
+    return []
+
+
+def _store_observation_runtime_mirror(
+    *,
+    human_id: str,
+    observations: list[dict[str, Any]],
+    state_db: StateDB,
+    conn: Any | None = None,
+) -> None:
+    payload = json.dumps({"observations": observations}, sort_keys=True)
+    if conn is not None:
+        _set_runtime_state(conn, _observation_state_key(human_id), payload)
+        return
+    with state_db.connect() as mirror_conn:
+        _set_runtime_state(mirror_conn, _observation_state_key(human_id), payload)
+        mirror_conn.commit()
+
+
+def _load_evolution_events(*, human_id: str, state_db: StateDB) -> list[dict[str, Any]]:
+    try:
+        with state_db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT evolved_at, deltas_json, state_weights_json, observation_count
+                FROM personality_evolution_events
+                WHERE human_id = ?
+                ORDER BY evolved_at ASC, created_at ASC
+                """,
+                (human_id,),
+            ).fetchall()
+        if rows:
+            return [
+                {
+                    "ts": row["evolved_at"],
+                    "deltas": json.loads(row["deltas_json"] or "{}"),
+                    "state_weights": json.loads(row["state_weights_json"] or "{}"),
+                    "observation_count": int(row["observation_count"] or 0),
+                }
+                for row in rows
+            ]
+    except Exception:
+        pass
+    try:
+        with state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+                (_evolution_log_state_key(human_id),),
+            ).fetchone()
+        if row and row["value"]:
+            data = json.loads(row["value"])
+            return data.get("events", []) if isinstance(data, dict) else []
+    except Exception:
+        pass
+    return []
+
+
+def _store_evolution_runtime_mirror(
+    *,
+    human_id: str,
+    events: list[dict[str, Any]],
+    state_db: StateDB,
+    conn: Any | None = None,
+) -> None:
+    payload = json.dumps({"events": events[-20:]}, sort_keys=True)
+    if conn is not None:
+        _set_runtime_state(conn, _evolution_log_state_key(human_id), payload)
+        return
+    with state_db.connect() as mirror_conn:
+        _set_runtime_state(mirror_conn, _evolution_log_state_key(human_id), payload)
+        mirror_conn.commit()
+
+
+def _set_runtime_state(conn: Any, state_key: str, value: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO runtime_state(state_key, value)
+        VALUES (?, ?)
+        ON CONFLICT(state_key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
+        """,
+        (state_key, value),
+    )
+
 
 _OBSERVATION_WINDOW = 50  # keep last N observations per user
 
@@ -594,37 +756,60 @@ def record_observation(
         "confidence": round(confidence, 2),
         "traits": {k: round(v, 3) for k, v in traits_active.items()},
     }
-
-    # Load existing observations
-    obs_key = f"personality:{human_id}:observations"
-    existing: list[dict[str, Any]] = []
-    try:
-        with state_db.connect() as conn:
-            row = conn.execute(
-                "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
-                (obs_key,),
-            ).fetchone()
-        if row and row["value"]:
-            data = json.loads(row["value"])
-            existing = data.get("observations", []) if isinstance(data, dict) else []
-    except Exception:
-        pass
-
-    # Append and trim to window
+    existing = _load_recent_observations(human_id=human_id, state_db=state_db)
     existing.append(observation)
     if len(existing) > _OBSERVATION_WINDOW:
         existing = existing[-_OBSERVATION_WINDOW:]
-
-    # Save
-    payload = json.dumps({"observations": existing}, sort_keys=True)
     with state_db.connect() as conn:
         conn.execute(
             """
-            INSERT INTO runtime_state(state_key, value)
-            VALUES (?, ?)
-            ON CONFLICT(state_key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
+            INSERT INTO personality_observations(
+                observation_id,
+                human_id,
+                observed_at,
+                user_state,
+                confidence,
+                traits_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (obs_key, payload),
+            (
+                f"personality-observation-{uuid4().hex}",
+                human_id,
+                observation["ts"],
+                user_state,
+                float(observation["confidence"]),
+                json.dumps(observation["traits"], sort_keys=True),
+            ),
+        )
+        total_rows = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM personality_observations
+            WHERE human_id = ?
+            """,
+            (human_id,),
+        ).fetchone()
+        delete_count = max(0, int(total_rows["count"]) - _OBSERVATION_WINDOW)
+        if delete_count > 0:
+            conn.execute(
+                """
+                DELETE FROM personality_observations
+                WHERE observation_id IN (
+                    SELECT observation_id
+                    FROM personality_observations
+                    WHERE human_id = ?
+                    ORDER BY observed_at ASC, created_at ASC
+                    LIMIT ?
+                )
+                """,
+                (human_id, delete_count),
+            )
+        _store_observation_runtime_mirror(
+            human_id=human_id,
+            observations=existing,
+            state_db=state_db,
+            conn=conn,
         )
         conn.commit()
 
@@ -663,18 +848,8 @@ def maybe_evolve_traits(
     Only runs when enough observations have accumulated.
     Evolution deltas are bounded to +-_EVOLUTION_STEP per trait per cycle.
     """
-    obs_key = f"personality:{human_id}:observations"
-    try:
-        with state_db.connect() as conn:
-            row = conn.execute(
-                "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
-                (obs_key,),
-            ).fetchone()
-        if not row or not row["value"]:
-            return None
-        data = json.loads(row["value"])
-        observations = data.get("observations", []) if isinstance(data, dict) else []
-    except Exception:
+    observations = _load_recent_observations(human_id=human_id, state_db=state_db)
+    if not observations:
         return None
 
     if len(observations) < _EVOLUTION_MIN_OBSERVATIONS:
@@ -736,8 +911,12 @@ def maybe_evolve_traits(
     # Clear observations after evolution (start fresh)
     with state_db.connect() as conn:
         conn.execute(
+            "DELETE FROM personality_observations WHERE human_id = ?",
+            (human_id,),
+        )
+        conn.execute(
             "DELETE FROM runtime_state WHERE state_key = ?",
-            (obs_key,),
+            (_observation_state_key(human_id),),
         )
         conn.commit()
 
@@ -753,40 +932,41 @@ def _record_evolution_event(
     observation_count: int,
 ) -> None:
     """Record an evolution event for auditability."""
-    log_key = f"personality:{human_id}:evolution_log"
+    existing_log = _load_evolution_events(human_id=human_id, state_db=state_db)
     event = {
         "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "deltas": evolution_deltas,
         "state_weights": {k: round(v, 2) for k, v in state_weights.items()},
         "observation_count": observation_count,
     }
-
-    existing_log: list[dict[str, Any]] = []
-    try:
-        with state_db.connect() as conn:
-            row = conn.execute(
-                "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
-                (log_key,),
-            ).fetchone()
-        if row and row["value"]:
-            data = json.loads(row["value"])
-            existing_log = data.get("events", []) if isinstance(data, dict) else []
-    except Exception:
-        pass
-
     existing_log.append(event)
-    # Keep last 20 evolution events
-    if len(existing_log) > 20:
-        existing_log = existing_log[-20:]
-
-    payload = json.dumps({"events": existing_log}, sort_keys=True)
+    existing_log = existing_log[-20:]
     with state_db.connect() as conn:
         conn.execute(
             """
-            INSERT INTO runtime_state(state_key, value)
-            VALUES (?, ?)
-            ON CONFLICT(state_key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
+            INSERT INTO personality_evolution_events(
+                evolution_id,
+                human_id,
+                evolved_at,
+                deltas_json,
+                state_weights_json,
+                observation_count
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (log_key, payload),
+            (
+                f"personality-evolution-{uuid4().hex}",
+                human_id,
+                event["ts"],
+                json.dumps(event["deltas"], sort_keys=True),
+                json.dumps(event["state_weights"], sort_keys=True),
+                observation_count,
+            ),
+        )
+        _store_evolution_runtime_mirror(
+            human_id=human_id,
+            events=existing_log,
+            state_db=state_db,
+            conn=conn,
         )
         conn.commit()

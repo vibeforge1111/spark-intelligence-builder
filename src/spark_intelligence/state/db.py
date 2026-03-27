@@ -290,6 +290,53 @@ SCHEMA_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS attachment_state_snapshots (
+        snapshot_id TEXT PRIMARY KEY,
+        workspace_id TEXT,
+        snapshot_path TEXT NOT NULL,
+        chip_source TEXT,
+        path_source TEXT,
+        active_chip_keys_json TEXT NOT NULL,
+        pinned_chip_keys_json TEXT NOT NULL,
+        active_path_key TEXT,
+        warning_count INTEGER NOT NULL DEFAULT 0,
+        record_count INTEGER NOT NULL DEFAULT 0,
+        generated_at TEXT NOT NULL,
+        summary_json TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS personality_trait_profiles (
+        human_id TEXT PRIMARY KEY,
+        deltas_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS personality_observations (
+        observation_id TEXT PRIMARY KEY,
+        human_id TEXT NOT NULL,
+        observed_at TEXT NOT NULL,
+        user_state TEXT NOT NULL,
+        confidence REAL NOT NULL DEFAULT 0,
+        traits_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS personality_evolution_events (
+        evolution_id TEXT PRIMARY KEY,
+        human_id TEXT NOT NULL,
+        evolved_at TEXT NOT NULL,
+        deltas_json TEXT NOT NULL,
+        state_weights_json TEXT NOT NULL,
+        observation_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS quarantine_records (
         quarantine_id TEXT PRIMARY KEY,
         event_id TEXT,
@@ -335,6 +382,9 @@ SCHEMA_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_builder_runs_status ON builder_runs(status, opened_at)",
     "CREATE INDEX IF NOT EXISTS idx_config_mutation_audit_created_at ON config_mutation_audit(created_at)",
     "CREATE INDEX IF NOT EXISTS idx_runtime_environment_snapshots_surface ON runtime_environment_snapshots(surface, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_attachment_state_snapshots_generated_at ON attachment_state_snapshots(generated_at, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_personality_observations_human_id ON personality_observations(human_id, observed_at, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_personality_evolution_events_human_id ON personality_evolution_events(human_id, evolved_at, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_quarantine_records_created_at ON quarantine_records(created_at)",
 ]
 

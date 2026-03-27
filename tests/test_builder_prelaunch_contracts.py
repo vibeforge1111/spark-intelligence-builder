@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+
+from spark_intelligence.attachments.snapshot import sync_attachment_snapshot
 from spark_intelligence.gateway.guardrails import prepare_outbound_text
 from spark_intelligence.observability.policy import looks_secret_like
 from spark_intelligence.jobs.service import jobs_tick
@@ -9,6 +12,11 @@ from spark_intelligence.observability.store import (
     open_run,
     record_environment_snapshot,
     record_event,
+)
+from spark_intelligence.personality.loader import (
+    detect_and_persist_nl_preferences,
+    maybe_evolve_traits,
+    record_observation,
 )
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
 
@@ -179,6 +187,90 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(facts["keepability"], "user_preference_ephemeral")
         self.assertTrue(facts["detected_deltas"])
 
+    def test_sync_attachment_snapshot_writes_typed_snapshot_storage(self) -> None:
+        snapshot = sync_attachment_snapshot(config_manager=self.config_manager, state_db=self.state_db)
+
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT workspace_id, snapshot_path, warning_count, record_count, summary_json
+                FROM attachment_state_snapshots
+                ORDER BY generated_at DESC, created_at DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            runtime_row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = 'attachments:last_snapshot_path'"
+            ).fetchone()
+
+        self.assertIsNotNone(row)
+        self.assertEqual(row["snapshot_path"], snapshot.snapshot_path)
+        self.assertEqual(row["workspace_id"], snapshot.workspace_id)
+        self.assertEqual(int(row["warning_count"]), len(snapshot.warnings))
+        self.assertEqual(int(row["record_count"]), len(snapshot.records))
+        self.assertEqual(json.loads(row["summary_json"])["workspace_id"], snapshot.workspace_id)
+        self.assertEqual(runtime_row["value"], snapshot.snapshot_path)
+
+    def test_personality_state_uses_typed_tables_with_runtime_state_mirrors(self) -> None:
+        deltas = detect_and_persist_nl_preferences(
+            human_id="human:test",
+            user_message="be more direct and stop hedging",
+            state_db=self.state_db,
+        )
+        self.assertIsNotNone(deltas)
+
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT deltas_json FROM personality_trait_profiles WHERE human_id = ?",
+                ("human:test",),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        stored_deltas = json.loads(row["deltas_json"])
+        self.assertIn("directness", stored_deltas)
+
+        for _ in range(10):
+            record_observation(
+                human_id="human:test",
+                user_message="I'm confused and this makes no sense",
+                traits_active={
+                    "warmth": 0.5,
+                    "directness": 0.5,
+                    "playfulness": 0.5,
+                    "pacing": 0.5,
+                    "assertiveness": 0.5,
+                },
+                state_db=self.state_db,
+            )
+
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS count FROM personality_observations WHERE human_id = ?",
+                ("human:test",),
+            ).fetchone()
+        self.assertEqual(int(row["count"]), 10)
+
+        evolved = maybe_evolve_traits(human_id="human:test", state_db=self.state_db)
+        self.assertIsNotNone(evolved)
+        self.assertIn("directness", evolved)
+
+        with self.state_db.connect() as conn:
+            observation_row = conn.execute(
+                "SELECT COUNT(*) AS count FROM personality_observations WHERE human_id = ?",
+                ("human:test",),
+            ).fetchone()
+            evolution_row = conn.execute(
+                "SELECT COUNT(*) AS count FROM personality_evolution_events WHERE human_id = ?",
+                ("human:test",),
+            ).fetchone()
+            runtime_profile = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ?",
+                ("personality:human:test:trait_deltas",),
+            ).fetchone()
+
+        self.assertEqual(int(observation_row["count"]), 0)
+        self.assertEqual(int(evolution_row["count"]), 1)
+        self.assertIsNotNone(runtime_profile)
+
     def test_stop_ship_requires_domain_specific_runtime_state_mirrors(self) -> None:
         with self.state_db.connect() as conn:
             conn.execute(
@@ -199,6 +291,18 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
         self.assertFalse(issues["stop_ship_runtime_state_authority"].ok)
         self.assertIn("swarm", issues["stop_ship_runtime_state_authority"].detail)
+
+    def test_stop_ship_flags_attachment_runtime_state_without_typed_snapshot(self) -> None:
+        with self.state_db.connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO runtime_state(state_key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                ("attachments:last_snapshot_path", "C:/tmp/attachments.snapshot.json"),
+            )
+            conn.commit()
+
+        issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
+        self.assertFalse(issues["stop_ship_runtime_state_authority"].ok)
+        self.assertIn("attachments", issues["stop_ship_runtime_state_authority"].detail)
 
     def test_build_researcher_reply_blocks_secret_like_model_visible_context(self) -> None:
         result = build_researcher_reply(

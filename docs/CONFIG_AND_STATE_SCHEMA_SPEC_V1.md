@@ -41,6 +41,8 @@ It should own:
 - config mutation audit
 - execution-lineage events and runs
 - runtime environment snapshots
+- typed attachment snapshot state
+- typed personality preference, observation, and evolution state
 - quarantine records for policy-blocked material
 
 ### 2.3 Secrets Are Not General Config
@@ -178,6 +180,10 @@ Recommended core tables:
 - `builder_runs`
 - `builder_events`
 - `runtime_environment_snapshots`
+- `attachment_state_snapshots`
+- `personality_trait_profiles`
+- `personality_observations`
+- `personality_evolution_events`
 - `quarantine_records`
 
 ## 6. Clear Ownership Rules
@@ -198,6 +204,8 @@ Recommended core tables:
 - pairing approvals
 - execution proof and delivery proof
 - provenance for chip, plugin, personality, and swarm influence
+- attachment snapshot truth and active attachment selection state
+- personality preference deltas, interaction observations, and evolution history
 - quarantine outcomes for blocked material
 
 ### 6.3 What Does Not Belong In Either

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from spark_intelligence.attachments.registry import AttachmentRecord, attachment_status
 from spark_intelligence.config.loader import ConfigManager
@@ -116,7 +117,47 @@ def sync_attachment_snapshot(*, config_manager: ConfigManager, state_db: StateDB
     snapshot = build_attachment_snapshot(config_manager)
     snapshot_path = Path(snapshot.snapshot_path)
     snapshot_path.write_text(snapshot.to_json(), encoding="utf-8")
+    summary = {
+        "workspace_id": snapshot.workspace_id,
+        "record_count": len(snapshot.records),
+        "warning_count": len(snapshot.warnings),
+        "chip_source": snapshot.chip_source,
+        "path_source": snapshot.path_source,
+    }
     with state_db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO attachment_state_snapshots(
+                snapshot_id,
+                workspace_id,
+                snapshot_path,
+                chip_source,
+                path_source,
+                active_chip_keys_json,
+                pinned_chip_keys_json,
+                active_path_key,
+                warning_count,
+                record_count,
+                generated_at,
+                summary_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                f"attachment-snapshot-{uuid4().hex}",
+                snapshot.workspace_id,
+                snapshot.snapshot_path,
+                snapshot.chip_source,
+                snapshot.path_source,
+                json.dumps(snapshot.active_chip_keys, sort_keys=True),
+                json.dumps(snapshot.pinned_chip_keys, sort_keys=True),
+                snapshot.active_path_key,
+                len(snapshot.warnings),
+                len(snapshot.records),
+                snapshot.generated_at,
+                json.dumps(summary, sort_keys=True),
+            ),
+        )
         _set_runtime_state(conn, "attachments:last_snapshot_path", snapshot.snapshot_path)
         _set_runtime_state(conn, "attachments:last_snapshot_generated_at", snapshot.generated_at)
         _set_runtime_state(conn, "attachments:active_chip_keys", json.dumps(snapshot.active_chip_keys))
@@ -125,16 +166,7 @@ def sync_attachment_snapshot(*, config_manager: ConfigManager, state_db: StateDB
         _set_runtime_state(
             conn,
             "attachments:last_snapshot_summary",
-            json.dumps(
-                {
-                    "workspace_id": snapshot.workspace_id,
-                    "record_count": len(snapshot.records),
-                    "warning_count": len(snapshot.warnings),
-                    "chip_source": snapshot.chip_source,
-                    "path_source": snapshot.path_source,
-                },
-                sort_keys=True,
-            ),
+            json.dumps(summary, sort_keys=True),
         )
         conn.commit()
     return snapshot

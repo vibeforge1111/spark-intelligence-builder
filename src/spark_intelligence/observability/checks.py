@@ -199,6 +199,7 @@ def _runtime_state_authority_issue(state_db: StateDB) -> StopShipIssue:
             WHERE
                 state_key LIKE 'researcher:%'
                 OR state_key LIKE 'swarm:%'
+                OR state_key LIKE 'attachments:%'
                 OR state_key LIKE 'personality:%'
                 OR state_key IN ('telegram:auth_state', 'telegram:poll_state')
             ORDER BY state_key
@@ -233,18 +234,29 @@ def _runtime_state_authority_issue(state_db: StateDB) -> StopShipIssue:
     ]
     if any(key.startswith("swarm:") for key in state_keys) and not swarm_events:
         missing_domains.append("swarm")
-    personality_events = [
-        event
-        for event in _typed_events(
-            state_db,
-            event_types=("plugin_or_chip_influence_recorded",),
-            component="researcher_bridge",
-            limit=200,
-        )
-        if str((event.get("provenance_json") or {}).get("source_kind") or "").startswith("personality_")
-    ]
-    if any(key.startswith("personality:") for key in state_keys) and not personality_events:
-        missing_domains.append("personality")
+    if any(key.startswith("attachments:") for key in state_keys):
+        with state_db.connect() as conn:
+            attachment_row = conn.execute(
+                "SELECT snapshot_id FROM attachment_state_snapshots ORDER BY generated_at DESC, created_at DESC LIMIT 1"
+            ).fetchone()
+        if not attachment_row:
+            missing_domains.append("attachments")
+    if any(key.startswith("personality:") for key in state_keys):
+        with state_db.connect() as conn:
+            personality_row = conn.execute(
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM personality_trait_profiles) AS trait_profile_count,
+                    (SELECT COUNT(*) FROM personality_observations) AS observation_count,
+                    (SELECT COUNT(*) FROM personality_evolution_events) AS evolution_count
+                """
+            ).fetchone()
+        if not personality_row or (
+            int(personality_row["trait_profile_count"]) == 0
+            and int(personality_row["observation_count"]) == 0
+            and int(personality_row["evolution_count"]) == 0
+        ):
+            missing_domains.append("personality")
     telegram_events = _typed_events(
         state_db,
         event_types=("intent_committed", "delivery_attempted", "delivery_succeeded", "delivery_failed"),

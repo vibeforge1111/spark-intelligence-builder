@@ -59,6 +59,10 @@ The new typed storage is:
 - `builder_events`
 - `config_mutation_audit`
 - `runtime_environment_snapshots`
+- `attachment_state_snapshots`
+- `personality_trait_profiles`
+- `personality_observations`
+- `personality_evolution_events`
 - `quarantine_records`
 
 ## Structural Versus Compensating
@@ -71,6 +75,8 @@ Structural now:
 - chip and attachment influence now emits provenance-bearing events with keepability classification
 - personality-driven reply shaping now emits provenance-bearing influence events instead of mutating tone silently
 - Swarm sync, decision, and auth-refresh outcomes now emit typed event mirrors instead of depending only on `runtime_state`
+- attachment snapshot truth now lands in `attachment_state_snapshots`; `runtime_state` is only a compatibility mirror for snapshot hints
+- personality preference, observation, and evolution truth now lands in dedicated personality tables instead of generic `runtime_state` keys
 - secret-like chip/output material can be quarantined before model-visible prompt assembly
 - the final assembled bridge prompt is now screened before any Researcher or direct-provider execution
 - operator-triggered `attachments run-hook` executions now emit typed provenance and block secret-like hook output before terminal display
@@ -82,7 +88,7 @@ Structural now:
 Still compensating:
 
 - raw JSONL traces remain useful investigative evidence, but they are no longer the only lineage surface
-- some legacy `runtime_state` keys still exist as cache or compatibility state
+- some legacy `runtime_state` keys still exist as cache or compatibility state, including attachment and personality mirrors kept for older callers
 - outbound secret blocking still relies partly on pattern detection; it is stronger than before, but not a full content-security proof system
 
 ## What Remains Blocked Before Launch
