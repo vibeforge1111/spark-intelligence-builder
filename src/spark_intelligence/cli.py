@@ -70,6 +70,7 @@ from spark_intelligence.memory import (
     export_shadow_replay,
     export_shadow_replay_batch,
     inspect_memory_sdk_runtime,
+    lookup_current_state_in_memory,
     run_memory_sdk_smoke_test,
 )
 from spark_intelligence.observability.policy import screen_model_visible_text
@@ -1199,6 +1200,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     memory_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     memory_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_lookup_parser = memory_subparsers.add_parser(
+        "lookup-current-state",
+        help="Read one structured current-state fact directly through the Domain Chip Memory bridge",
+    )
+    memory_lookup_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_lookup_parser.add_argument("--sdk-module", help="Override the SDK module for this lookup")
+    memory_lookup_parser.add_argument("--subject", required=True, help="Structured memory subject to read")
+    memory_lookup_parser.add_argument("--predicate", required=True, help="Structured memory predicate to read")
+    memory_lookup_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_export_parser = memory_subparsers.add_parser(
         "export-shadow-replay",
         help="Export a Spark shadow replay JSON file for domain-chip-memory validation",
@@ -2849,6 +2859,22 @@ def handle_memory_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_memory_lookup_current_state(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = lookup_current_state_in_memory(
+        config_manager=config_manager,
+        state_db=state_db,
+        subject=args.subject,
+        predicate=args.predicate,
+        sdk_module=args.sdk_module,
+    )
+    print(result.to_json() if args.json else result.to_text())
+    return 0 if not result.read_result.abstained and bool(result.read_result.records) else 1
+
+
 def handle_memory_export_shadow_replay(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -3413,6 +3439,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_researcher_status(args)
     if args.command == "memory" and args.memory_command == "status":
         return handle_memory_status(args)
+    if args.command == "memory" and args.memory_command == "lookup-current-state":
+        return handle_memory_lookup_current_state(args)
     if args.command == "memory" and args.memory_command == "export-shadow-replay":
         return handle_memory_export_shadow_replay(args)
     if args.command == "memory" and args.memory_command == "export-shadow-replay-batch":

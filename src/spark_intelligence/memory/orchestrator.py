@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import importlib
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from types import ModuleType
 from typing import Any
 
@@ -126,11 +127,51 @@ class MemorySdkSmokeResult:
         }
 
 
+@dataclass(frozen=True)
+class MemoryCurrentStateLookupResult:
+    sdk_module: str
+    subject: str
+    predicate: str
+    runtime: dict[str, Any]
+    read_result: MemoryReadResult
+    shadow_only_eval: bool = True
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "sdk_module": self.sdk_module,
+                "subject": self.subject,
+                "predicate": self.predicate,
+                "runtime": self.runtime,
+                "shadow_only_eval": self.shadow_only_eval,
+                "read_result": MemorySdkSmokeResult._read_payload(self.read_result),
+            },
+            indent=2,
+        )
+
+    def to_text(self) -> str:
+        lines = ["Spark memory current-state lookup"]
+        lines.append(f"- sdk_module: {self.sdk_module}")
+        lines.append(f"- subject: {self.subject}")
+        lines.append(f"- predicate: {self.predicate}")
+        lines.append(f"- ready: {'yes' if self.runtime.get('ready') else 'no'}")
+        lines.append(
+            f"- read: status={self.read_result.status} records={len(self.read_result.records)} "
+            f"abstained={'yes' if self.read_result.abstained else 'no'}"
+        )
+        if self.read_result.records:
+            lines.append(f"- value: {self.read_result.records[0].get('value')}")
+        if self.read_result.reason:
+            lines.append(f"- reason: {self.read_result.reason}")
+        return "\n".join(lines)
+
+
 class _DomainChipMemoryClientAdapter:
-    def __init__(self, sdk: Any, module: ModuleType) -> None:
+    def __init__(self, sdk: Any, module: ModuleType, *, persistence_path: Path | None = None) -> None:
         self._sdk = sdk
         self._module = module
         self._sdk_module = self._resolve_sdk_module(module)
+        self._persistence_path = persistence_path
 
     def write_observation(self, **payload: Any) -> dict[str, Any]:
         request = self._module.MemoryWriteRequest(
@@ -146,6 +187,7 @@ class _DomainChipMemoryClientAdapter:
             metadata=dict(payload.get("metadata") or {}),
         )
         result = self._sdk.write_observation(request)
+        self._persist_manual_state()
         return _normalize_domain_write_result(result=result, default_role=str(payload.get("memory_role") or "current_state"))
 
     def write_event(self, **payload: Any) -> dict[str, Any]:
@@ -162,6 +204,7 @@ class _DomainChipMemoryClientAdapter:
             metadata=dict(payload.get("metadata") or {}),
         )
         result = self._sdk.write_event(request)
+        self._persist_manual_state()
         return _normalize_domain_write_result(result=result, default_role="event")
 
     def get_current_state(self, **payload: Any) -> dict[str, Any]:
@@ -271,6 +314,19 @@ class _DomainChipMemoryClientAdapter:
             return module
         nested_name = f"{module.__name__}.sdk"
         return importlib.import_module(nested_name)
+
+    def _persist_manual_state(self) -> None:
+        if self._persistence_path is None:
+            return
+        payload = {
+            "manual_observations": [asdict(entry) for entry in list(getattr(self._sdk, "_manual_observations", []) or [])],
+            "manual_events": [asdict(entry) for entry in list(getattr(self._sdk, "_manual_events", []) or [])],
+            "manual_current_state_snapshot": [
+                asdict(entry) for entry in list(getattr(self._sdk, "_manual_current_state_snapshot", []) or [])
+            ],
+        }
+        self._persistence_path.parent.mkdir(parents=True, exist_ok=True)
+        self._persistence_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 def run_memory_sdk_smoke_test(
@@ -404,6 +460,85 @@ def inspect_memory_sdk_runtime(
         return payload
     payload["reason"] = "sdk_factory_missing"
     return payload
+
+
+def lookup_current_state_in_memory(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    subject: str,
+    predicate: str,
+    sdk_module: str | None = None,
+    actor_id: str = "memory_cli",
+) -> MemoryCurrentStateLookupResult:
+    module_name = str(sdk_module or config_manager.get_path("spark.memory.sdk_module", default=DEFAULT_SDK_MODULE) or DEFAULT_SDK_MODULE)
+    runtime = inspect_memory_sdk_runtime(config_manager=config_manager, sdk_module=module_name)
+    client = _load_sdk_client_for_module(module_name=module_name, home_path=config_manager.paths.home)
+    if client is None:
+        read_result = MemoryReadResult(
+            status="abstained",
+            method="get_current_state",
+            memory_role="current_state",
+            records=[],
+            provenance=[],
+            retrieval_trace=None,
+            answer_explanation=None,
+            abstained=True,
+            reason="sdk_unavailable",
+            shadow_only=False,
+        )
+        _record_memory_read_event(
+            state_db=state_db,
+            result=read_result,
+            human_id=_human_id_from_subject(subject),
+            session_id=f"memory-lookup:{actor_id}",
+            turn_id=f"{actor_id}:lookup",
+            actor_id=actor_id,
+        )
+        return MemoryCurrentStateLookupResult(
+            sdk_module=module_name,
+            subject=subject,
+            predicate=predicate,
+            runtime=runtime,
+            read_result=read_result,
+        )
+    _record_memory_read_requested_subject(
+        state_db=state_db,
+        method="get_current_state",
+        subject=subject,
+        predicate=predicate,
+        session_id=f"memory-lookup:{actor_id}",
+        turn_id=f"{actor_id}:lookup",
+        actor_id=actor_id,
+    )
+    raw = _call_sdk_method(
+        client,
+        "get_current_state",
+        {
+            "subject": subject,
+            "predicate": predicate,
+            "session_id": f"memory-lookup:{actor_id}",
+            "turn_id": f"{actor_id}:lookup",
+            "timestamp": _now_iso(),
+            "metadata": {"source_surface": "memory_cli_lookup"},
+        },
+    )
+    read_result = _normalize_read_result(raw=raw, method="get_current_state", shadow_only=False)
+    _record_memory_read_event(
+        state_db=state_db,
+        result=read_result,
+        human_id=_human_id_from_subject(subject),
+        session_id=f"memory-lookup:{actor_id}",
+        turn_id=f"{actor_id}:lookup",
+        actor_id=actor_id,
+    )
+    return MemoryCurrentStateLookupResult(
+        sdk_module=module_name,
+        subject=subject,
+        predicate=predicate,
+        runtime=runtime,
+        read_result=read_result,
+    )
 
 
 def write_personality_preferences_to_memory(
@@ -801,7 +936,9 @@ def _load_sdk_client_for_module(*, module_name: str, home_path: Any) -> Any | No
         except Exception:
             return None
         if _supports_domain_chip_memory_adapter(module):
-            adapted = _DomainChipMemoryClientAdapter(client, module)
+            persistence_path = _domain_chip_memory_persistence_path(home_path)
+            _hydrate_domain_chip_memory_sdk(client=client, module=module, persistence_path=persistence_path)
+            adapted = _DomainChipMemoryClientAdapter(client, module, persistence_path=persistence_path)
             _SDK_CLIENT_CACHE[cache_key] = adapted
             return adapted
         _SDK_CLIENT_CACHE[cache_key] = client
@@ -840,6 +977,46 @@ def _supports_domain_chip_memory_adapter(module: ModuleType) -> bool:
     )
 
 
+def _domain_chip_memory_persistence_path(home_path: Any) -> Path:
+    return Path(str(home_path)) / "artifacts" / "domain_chip_memory_sdk_state.json"
+
+
+def _hydrate_domain_chip_memory_sdk(*, client: Any, module: ModuleType, persistence_path: Path) -> None:
+    if not persistence_path.exists():
+        return
+    try:
+        payload = json.loads(persistence_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    if not isinstance(payload, dict):
+        return
+    sdk_module = module if hasattr(module, "ObservationEntry") else importlib.import_module(f"{module.__name__}.sdk")
+    observation_cls = getattr(sdk_module, "ObservationEntry", None)
+    event_cls = getattr(sdk_module, "EventCalendarEntry", None)
+    if observation_cls is None or event_cls is None:
+        return
+    client._manual_observations = _hydrate_domain_entries(payload.get("manual_observations"), observation_cls)
+    client._manual_events = _hydrate_domain_entries(payload.get("manual_events"), event_cls)
+    client._manual_current_state_snapshot = _hydrate_domain_entries(
+        payload.get("manual_current_state_snapshot"),
+        observation_cls,
+    )
+
+
+def _hydrate_domain_entries(raw_entries: Any, entry_cls: Any) -> list[Any]:
+    if not isinstance(raw_entries, list):
+        return []
+    hydrated: list[Any] = []
+    for raw in raw_entries:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            hydrated.append(entry_cls(**raw))
+        except Exception:
+            continue
+    return hydrated
+
+
 def _memory_write_text(payload: dict[str, Any]) -> str:
     explicit = _optional_string(payload.get("text"))
     if explicit:
@@ -856,6 +1033,15 @@ def _memory_write_text(payload: dict[str, Any]) -> str:
 def _optional_string(value: Any) -> str | None:
     text = str(value or "").strip()
     return text or None
+
+
+def _human_id_from_subject(subject: str) -> str | None:
+    text = _optional_string(subject)
+    if not text:
+        return None
+    if text.startswith("human:"):
+        return text.split(":", 1)[1] or None
+    return text
 
 
 def _normalize_domain_write_result(*, result: Any, default_role: str) -> dict[str, Any]:
@@ -1174,6 +1360,30 @@ def _record_memory_read_requested(
         human_id=human_id,
         actor_id=actor_id,
         facts={"method": method, "memory_role": "current_state", "subject": f"human:{human_id}"},
+        provenance={"memory_role": "current_state"},
+    )
+
+
+def _record_memory_read_requested_subject(
+    *,
+    state_db: StateDB,
+    method: str,
+    subject: str,
+    predicate: str,
+    session_id: str | None,
+    turn_id: str | None,
+    actor_id: str,
+) -> None:
+    record_event(
+        state_db,
+        event_type="memory_read_requested",
+        component="memory_orchestrator",
+        summary="Spark memory current-state lookup requested.",
+        request_id=turn_id,
+        session_id=session_id,
+        human_id=_human_id_from_subject(subject),
+        actor_id=actor_id,
+        facts={"method": method, "memory_role": "current_state", "subject": subject, "predicate": predicate},
         provenance={"memory_role": "current_state"},
     )
 

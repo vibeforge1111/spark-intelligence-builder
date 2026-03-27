@@ -5,10 +5,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from spark_intelligence.doctor.checks import run_doctor
+from spark_intelligence.memory import orchestrator as memory_orchestrator
 from spark_intelligence.memory import (
     build_sdk_maintenance_payload,
     build_shadow_replay_payload,
     export_shadow_replay_batch,
+    lookup_current_state_in_memory,
     run_memory_sdk_smoke_test,
     write_profile_fact_to_memory,
 )
@@ -127,6 +129,55 @@ class MemoryOrchestratorTests(SparkTestCase):
         smoke_facts = smoke_events[0]["facts_json"] or {}
         self.assertEqual(smoke_facts.get("sdk_module"), "domain_chip_memory")
         self.assertEqual(smoke_facts.get("predicate"), "system.memory.smoke")
+
+    def test_lookup_current_state_in_memory_reads_back_structured_fact(self) -> None:
+        run_memory_sdk_smoke_test(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            sdk_module="domain_chip_memory",
+            subject="human:lookup:test",
+            predicate="system.memory.lookup",
+            value="ok",
+            cleanup=False,
+        )
+
+        result = lookup_current_state_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject="human:lookup:test",
+            predicate="system.memory.lookup",
+            sdk_module="domain_chip_memory",
+        )
+
+        self.assertFalse(result.read_result.abstained)
+        self.assertTrue(result.read_result.records)
+        self.assertEqual(result.read_result.records[0]["predicate"], "system.memory.lookup")
+        self.assertEqual(result.read_result.records[0]["value"], "ok")
+
+    def test_lookup_current_state_in_memory_rehydrates_domain_chip_state_after_cache_clear(self) -> None:
+        run_memory_sdk_smoke_test(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            sdk_module="domain_chip_memory",
+            subject="human:lookup:persisted",
+            predicate="system.memory.persisted",
+            value="ok",
+            cleanup=False,
+        )
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+
+        result = lookup_current_state_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject="human:lookup:persisted",
+            predicate="system.memory.persisted",
+            sdk_module="domain_chip_memory",
+        )
+
+        self.assertFalse(result.read_result.abstained)
+        self.assertTrue(result.read_result.records)
+        self.assertEqual(result.read_result.records[0]["predicate"], "system.memory.persisted")
+        self.assertEqual(result.read_result.records[0]["value"], "ok")
 
     def test_domain_chip_memory_sdk_module_supports_live_preference_write_then_read(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

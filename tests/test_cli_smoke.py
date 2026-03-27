@@ -173,6 +173,42 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["recent_failures"][0]["event_type"], "memory_read_abstained")
         self.assertEqual(payload["recent_failures"][0]["reason"], "sdk_unavailable")
 
+    def test_memory_lookup_current_state_reads_written_fact(self) -> None:
+        smoke_exit, _, smoke_stderr = self.run_cli(
+            "memory",
+            "direct-smoke",
+            "--home",
+            str(self.home),
+            "--subject",
+            "human:lookup:test",
+            "--predicate",
+            "system.memory.lookup",
+            "--value",
+            "ok",
+            "--no-cleanup",
+            "--json",
+        )
+        self.assertEqual(smoke_exit, 0, smoke_stderr)
+
+        exit_code, stdout, stderr = self.run_cli(
+            "memory",
+            "lookup-current-state",
+            "--home",
+            str(self.home),
+            "--subject",
+            "human:lookup:test",
+            "--predicate",
+            "system.memory.lookup",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["sdk_module"], "domain_chip_memory")
+        self.assertTrue(payload["runtime"]["ready"])
+        self.assertEqual(payload["read_result"]["records"][0]["predicate"], "system.memory.lookup")
+        self.assertEqual(payload["read_result"]["records"][0]["value"], "ok")
+
     def test_memory_export_shadow_replay_writes_contract_shaped_json(self) -> None:
         with self.state_db.connect() as conn:
             conn.execute(
