@@ -153,12 +153,11 @@ def load_personality_profile(
     personality_name = None
     source = "defaults"
 
-    evolver_path = Path(
-        config_manager.get_path(
-            "spark.personality.evolver_state_path",
-            default=str(_PERSONALITY_EVOLUTION_FILE),
-        )
+    configured_path = config_manager.get_path(
+        "spark.personality.evolver_state_path",
+        default=None,
     )
+    evolver_path = Path(configured_path) if configured_path else _PERSONALITY_EVOLUTION_FILE
 
     if evolver_path.exists():
         try:
@@ -339,7 +338,9 @@ def _load_user_trait_deltas(*, human_id: str, state_db: StateDB) -> dict[str, fl
         if not row or not row["value"]:
             return {}
         data = json.loads(row["value"])
-        return {k: float(v) for k, v in data.items() if k in _DEFAULT_TRAITS}
+        # Deltas are nested under "deltas" key
+        deltas_dict = data.get("deltas", data) if isinstance(data, dict) else {}
+        return {k: float(v) for k, v in deltas_dict.items() if k in _DEFAULT_TRAITS}
     except Exception:
         return {}
 
