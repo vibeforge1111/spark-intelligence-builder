@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+from spark_intelligence.memory import write_profile_fact_to_memory
 from spark_intelligence.observability.store import latest_events_by_type
 from spark_intelligence.researcher_bridge.advisory import (
     _build_contextual_task,
@@ -348,6 +349,170 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         detected = (influence_events[0]["facts_json"] or {}).get("detected_profile_fact") or {}
         self.assertEqual(detected.get("predicate"), "profile.city")
         self.assertEqual(detected.get("value"), "Dubai")
+
+    def test_build_researcher_reply_injects_memory_backed_city_fact_for_city_query(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        connect_exit, _, connect_stderr = self.run_cli(
+            "auth",
+            "connect",
+            "custom",
+            "--home",
+            str(self.home),
+            "--api-key",
+            "minimax-secret",
+            "--model",
+            "MiniMax-M2.7",
+            "--base-url",
+            "https://api.minimax.io/v1",
+        )
+        self.assertEqual(connect_exit, 0, connect_stderr)
+
+        write_profile_fact_to_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human-1",
+            predicate="profile.city",
+            value="Dubai",
+            evidence_text="I moved to Dubai.",
+            fact_name="profile_city",
+            session_id="session-city-query",
+            turn_id="turn-city-query-write",
+            channel_kind="telegram",
+        )
+
+        runtime_root = self.home / "fake-researcher"
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        config_path = runtime_root / "spark-researcher.project.json"
+        config_path.write_text("{}", encoding="utf-8")
+        captured: dict[str, object] = {}
+
+        def fake_build_advisory(path: Path, task: str, *, model: str = "generic", limit: int = 4, domain: str | None = None):
+            return {
+                "guidance": [],
+                "epistemic_status": {
+                    "status": "under_supported",
+                    "packet_stability": {"status": "no_belief_packets"},
+                },
+                "selected_packet_ids": [],
+                "trace_path": "trace:city-query",
+            }
+
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
+            captured["user_prompt"] = user_prompt
+            return {"raw_response": "You're in Dubai."}
+
+        def fail_execute_with_research(*args, **kwargs):
+            raise AssertionError("execute_with_research should not run for direct conversational fallback")
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
+            return_value=(runtime_root, "configured"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
+            return_value=config_path,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_build_advisory",
+            return_value=fake_build_advisory,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_execute_with_research",
+            return_value=fail_execute_with_research,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=fake_direct_provider_prompt,
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-city-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-city-query",
+                channel_kind="telegram",
+                user_message="What city do you have for me?",
+            )
+
+        self.assertEqual(result.reply_text, "You're in Dubai.")
+        self.assertIn("[Memory action: PROFILE_FACT_STATUS]", str(captured["user_prompt"]))
+        self.assertIn("city: Dubai", str(captured["user_prompt"]))
+        read_events = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=10)
+        self.assertTrue(read_events)
+        self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate"), "profile.city")
+
+    def test_build_researcher_reply_preserves_uncertainty_for_missing_city_query_fact(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        connect_exit, _, connect_stderr = self.run_cli(
+            "auth",
+            "connect",
+            "custom",
+            "--home",
+            str(self.home),
+            "--api-key",
+            "minimax-secret",
+            "--model",
+            "MiniMax-M2.7",
+            "--base-url",
+            "https://api.minimax.io/v1",
+        )
+        self.assertEqual(connect_exit, 0, connect_stderr)
+
+        runtime_root = self.home / "fake-researcher"
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        config_path = runtime_root / "spark-researcher.project.json"
+        config_path.write_text("{}", encoding="utf-8")
+        captured: dict[str, object] = {}
+
+        def fake_build_advisory(path: Path, task: str, *, model: str = "generic", limit: int = 4, domain: str | None = None):
+            return {
+                "guidance": [],
+                "epistemic_status": {
+                    "status": "under_supported",
+                    "packet_stability": {"status": "no_belief_packets"},
+                },
+                "selected_packet_ids": [],
+                "trace_path": "trace:city-query-missing",
+            }
+
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
+            captured["user_prompt"] = user_prompt
+            return {"raw_response": "I don't currently have a saved city for you."}
+
+        def fail_execute_with_research(*args, **kwargs):
+            raise AssertionError("execute_with_research should not run for direct conversational fallback")
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
+            return_value=(runtime_root, "configured"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
+            return_value=config_path,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_build_advisory",
+            return_value=fake_build_advisory,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_execute_with_research",
+            return_value=fail_execute_with_research,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=fake_direct_provider_prompt,
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-city-query-missing",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-city-query-missing",
+                channel_kind="telegram",
+                user_message="What city do you have saved for me?",
+            )
+
+        self.assertEqual(result.reply_text, "I don't currently have a saved city for you.")
+        self.assertIn("[Memory action: PROFILE_FACT_STATUS_MISSING]", str(captured["user_prompt"]))
+        self.assertIn("Do not pretend you know.", str(captured["user_prompt"]))
 
     def test_build_researcher_reply_appends_swarm_recommendation_for_explicit_delegation(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)

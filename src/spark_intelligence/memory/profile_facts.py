@@ -22,6 +22,13 @@ class ProfileFactObservation:
     fact_name: str
 
 
+@dataclass(frozen=True)
+class ProfileFactQuery:
+    predicate: str
+    fact_name: str
+    label: str
+
+
 def detect_profile_fact_observation(user_message: str) -> ProfileFactObservation | None:
     text = str(user_message or "").strip()
     if not text:
@@ -35,6 +42,40 @@ def detect_profile_fact_observation(user_message: str) -> ProfileFactObservation
         operation="update",
         evidence_text=text,
         fact_name="profile_city",
+    )
+
+
+def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
+    text = str(user_message or "").strip().lower()
+    if not text:
+        return None
+    if any(
+        phrase in text
+        for phrase in (
+            "where do i live",
+            "what city do i live in",
+            "what city am i in",
+            "what city do you have for me",
+            "what city do you have saved for me",
+            "which city do you have for me",
+        )
+    ):
+        return ProfileFactQuery(predicate="profile.city", fact_name="profile_city", label="city")
+    return None
+
+
+def build_profile_fact_query_context(*, query: ProfileFactQuery, value: str | None) -> str:
+    if value:
+        return (
+            "[Memory action: PROFILE_FACT_STATUS]\n"
+            f"The user is asking about their saved {query.label}. "
+            f"Memory-backed current-state fact: {query.label}: {value}.\n"
+            "Answer naturally and briefly using that fact."
+        )
+    return (
+        "[Memory action: PROFILE_FACT_STATUS_MISSING]\n"
+        f"The user is asking about their saved {query.label}, but no memory-backed current-state fact is available.\n"
+        "Do not pretend you know. Say you do not currently have that saved and invite the user to tell you if they want."
     )
 
 

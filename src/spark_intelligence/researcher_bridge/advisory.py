@@ -19,8 +19,12 @@ from spark_intelligence.attachments import (
 )
 from spark_intelligence.auth.runtime import RuntimeProviderResolution, resolve_runtime_provider
 from spark_intelligence.config.loader import ConfigManager
-from spark_intelligence.memory import write_profile_fact_to_memory
-from spark_intelligence.memory.profile_facts import detect_profile_fact_observation
+from spark_intelligence.memory import lookup_current_state_in_memory, write_profile_fact_to_memory
+from spark_intelligence.memory.profile_facts import (
+    build_profile_fact_query_context,
+    detect_profile_fact_observation,
+    detect_profile_fact_query,
+)
 from spark_intelligence.observability.policy import screen_model_visible_text
 from spark_intelligence.llm.direct_provider import (
     DirectProviderGovernance,
@@ -1028,6 +1032,7 @@ def build_researcher_reply(
     evolved_deltas = None
     observation_record = None
     detected_profile_fact = None
+    detected_profile_fact_query = None
     try:
         personality_profile = load_personality_profile(
             human_id=human_id,
@@ -1060,6 +1065,27 @@ def build_researcher_reply(
                 )
     except Exception:
         pass
+
+    if not personality_context_extra and config_manager.get_path("spark.memory.enabled", default=False):
+        try:
+            detected_profile_fact_query = detect_profile_fact_query(user_message)
+            if detected_profile_fact_query is not None:
+                profile_fact_lookup = lookup_current_state_in_memory(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    subject=f"human:{human_id}",
+                    predicate=detected_profile_fact_query.predicate,
+                    actor_id="researcher_bridge",
+                )
+                fact_value = None
+                if not profile_fact_lookup.read_result.abstained and profile_fact_lookup.read_result.records:
+                    fact_value = str(profile_fact_lookup.read_result.records[0].get("value") or "").strip() or None
+                personality_context_extra = build_profile_fact_query_context(
+                    query=detected_profile_fact_query,
+                    value=fact_value,
+                )
+        except Exception:
+            pass
 
     # Detect NL personality preferences and persist per-user deltas
     nl_pref_enabled = config_manager.get_path("spark.personality.nl_preference_detection", default=True)
@@ -1124,12 +1150,22 @@ def build_researcher_reply(
     except Exception:
         pass
 
-    if personality_profile or personality_context_extra or detected_deltas or evolved_deltas or observation_record or detected_profile_fact:
+    if (
+        personality_profile
+        or personality_context_extra
+        or detected_deltas
+        or evolved_deltas
+        or observation_record
+        or detected_profile_fact
+        or detected_profile_fact_query
+    ):
         source_kind = "personality_profile"
         if detected_deltas:
             source_kind = "personality_preference_update"
         elif detected_profile_fact is not None:
             source_kind = "profile_fact_update"
+        elif detected_profile_fact_query is not None:
+            source_kind = "profile_fact_query"
         elif personality_query_kind != "none":
             source_kind = f"personality_query_{personality_query_kind}"
         elif evolved_deltas:
@@ -1162,6 +1198,15 @@ def build_researcher_reply(
                         "fact_name": detected_profile_fact.fact_name,
                     }
                     if detected_profile_fact is not None
+                    else None
+                ),
+                "detected_profile_fact_query": (
+                    {
+                        "predicate": detected_profile_fact_query.predicate,
+                        "fact_name": detected_profile_fact_query.fact_name,
+                        "label": detected_profile_fact_query.label,
+                    }
+                    if detected_profile_fact_query is not None
                     else None
                 ),
                 "evolved_deltas": evolved_deltas or {},
