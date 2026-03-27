@@ -95,6 +95,11 @@ class ConfigManager:
                 },
                 "chips": {"roots": [], "active_keys": [], "pinned_keys": []},
                 "specialization_paths": {"roots": [], "active_path_key": None},
+                "personality": {
+                    "enabled": True,
+                    "evolver_state_path": None,
+                    "nl_preference_detection": True,
+                },
             },
             "security": {
                 "dangerous_approval_mode": "operator_only",

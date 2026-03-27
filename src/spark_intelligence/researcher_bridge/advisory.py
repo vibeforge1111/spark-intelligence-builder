@@ -15,6 +15,12 @@ from spark_intelligence.attachments import build_attachment_context, run_first_a
 from spark_intelligence.auth.runtime import RuntimeProviderResolution, resolve_runtime_provider
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.llm.direct_provider import DirectProviderRequest, execute_direct_provider_prompt
+from spark_intelligence.personality import (
+    build_personality_context,
+    detect_and_persist_nl_preferences,
+    load_personality_profile,
+)
+from spark_intelligence.personality.loader import build_personality_system_directive
 from spark_intelligence.state.db import StateDB
 
 
@@ -307,7 +313,23 @@ def _render_direct_provider_chat_fallback(
     channel_kind: str,
     attachment_context: dict[str, object],
     active_chip_evaluate: dict[str, Any] | None = None,
+    personality_profile: dict[str, Any] | None = None,
 ) -> str:
+    base_system_prompt = (
+        "You are Spark AGI in a 1:1 messaging conversation. "
+        "Reply naturally, briefly, and helpfully. "
+        "For casual greetings or small talk, respond like a normal assistant. "
+        "When domain chip guidance is attached, treat it as hidden background context rather than an output template. "
+        "Do not echo internal headings, confidence scores, packet ids, doctrine labels, or evidence-gap sections unless the user explicitly asks for them. "
+        "For Telegram-style DMs, prefer a short paragraph or a short flat list over memo formatting. "
+        "If the user asks for factual, legal, medical, financial, or time-sensitive guidance "
+        "and you are not confident, say you need more context or verification before giving a hard answer. "
+        "Do not mention internal advisory or verification systems."
+    )
+    if personality_profile:
+        personality_directive = build_personality_system_directive(personality_profile)
+        if personality_directive:
+            base_system_prompt = f"{base_system_prompt} {personality_directive}"
     payload = execute_direct_provider_prompt(
         provider=DirectProviderRequest(
             provider_id=provider.provider_id,
@@ -318,17 +340,7 @@ def _render_direct_provider_chat_fallback(
             model=provider.default_model,
             secret_value=provider.secret_value,
         ),
-        system_prompt=(
-            "You are Spark AGI in a 1:1 messaging conversation. "
-            "Reply naturally, briefly, and helpfully. "
-            "For casual greetings or small talk, respond like a normal assistant. "
-            "When domain chip guidance is attached, treat it as hidden background context rather than an output template. "
-            "Do not echo internal headings, confidence scores, packet ids, doctrine labels, or evidence-gap sections unless the user explicitly asks for them. "
-            "For Telegram-style DMs, prefer a short paragraph or a short flat list over memo formatting. "
-            "If the user asks for factual, legal, medical, financial, or time-sensitive guidance "
-            "and you are not confident, say you need more context or verification before giving a hard answer. "
-            "Do not mention internal advisory or verification systems."
-        ),
+        system_prompt=base_system_prompt,
         user_prompt=_build_contextual_task(
             user_message=(
                 f"[channel_kind={channel_kind}]\n"
@@ -337,6 +349,7 @@ def _render_direct_provider_chat_fallback(
             ),
             attachment_context=attachment_context,
             active_chip_evaluate=active_chip_evaluate,
+            personality_profile=personality_profile,
         ),
     )
     raw_response = str(payload.get("raw_response") or "").strip()
@@ -350,6 +363,7 @@ def _build_contextual_task(
     user_message: str,
     attachment_context: dict[str, object],
     active_chip_evaluate: dict[str, Any] | None = None,
+    personality_profile: dict[str, Any] | None = None,
 ) -> str:
     active_chip_keys = attachment_context.get("active_chip_keys") or []
     pinned_chip_keys = attachment_context.get("pinned_chip_keys") or []
@@ -361,6 +375,10 @@ def _build_contextual_task(
         f"active_path_key={active_path_key or 'none'}",
         "",
     ]
+    if personality_profile:
+        personality_ctx = build_personality_context(personality_profile)
+        if personality_ctx:
+            lines.extend([personality_ctx, ""])
     if active_chip_evaluate:
         chip_guidance = _summarize_active_chip_guidance(str(active_chip_evaluate.get("analysis") or ""))
         lines.extend(
@@ -721,6 +739,37 @@ def build_researcher_reply(
     user_message: str,
 ) -> ResearcherBridgeResult:
     attachment_context = build_attachment_context(config_manager)
+
+    # ── Personality integration ──
+    personality_profile = None
+    try:
+        personality_profile = load_personality_profile(
+            human_id=human_id,
+            state_db=state_db,
+            config_manager=config_manager,
+        )
+    except Exception:
+        pass
+
+    # Detect NL personality preferences and persist per-user deltas
+    nl_pref_enabled = config_manager.get_path("spark.personality.nl_preference_detection", default=True)
+    if nl_pref_enabled:
+        try:
+            detected_deltas = detect_and_persist_nl_preferences(
+                human_id=human_id,
+                user_message=user_message,
+                state_db=state_db,
+            )
+            if detected_deltas and personality_profile:
+                # Reload profile with updated deltas applied
+                personality_profile = load_personality_profile(
+                    human_id=human_id,
+                    state_db=state_db,
+                    config_manager=config_manager,
+                )
+        except Exception:
+            pass
+
     active_chip_evaluate = _run_active_chip_evaluate(
         config_manager=config_manager,
         request_id=request_id,
@@ -735,6 +784,7 @@ def build_researcher_reply(
         user_message=user_message,
         attachment_context=attachment_context,
         active_chip_evaluate=active_chip_evaluate,
+        personality_profile=personality_profile,
     )
     provider_selection = _resolve_bridge_provider(config_manager=config_manager, state_db=state_db)
     routing_policy = _researcher_routing_policy(config_manager)
@@ -824,6 +874,7 @@ def build_researcher_reply(
                             channel_kind=channel_kind,
                             attachment_context=attachment_context,
                             active_chip_evaluate=active_chip_evaluate,
+                            personality_profile=personality_profile,
                         ),
                         channel_kind=channel_kind,
                     )
