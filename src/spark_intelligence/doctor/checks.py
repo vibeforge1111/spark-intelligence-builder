@@ -399,4 +399,36 @@ def _watchtower_health_checks(state_db: StateDB) -> list[DoctorCheck]:
             f"open={open_count} resolved={int(((contradictions.get('counts') or {}).get('resolved')) or 0)}",
         )
     )
+    memory_shadow = (snapshot.get("panels") or {}).get("memory_shadow") or {}
+    memory_counts = memory_shadow.get("counts") or {}
+    read_requests = int(memory_counts.get("read_requests") or 0)
+    read_hits = int(memory_counts.get("read_hits") or 0)
+    shadow_only_reads = int(memory_counts.get("shadow_only_reads") or 0)
+    if read_requests == 0:
+        checks.append(
+            DoctorCheck(
+                "watchtower-memory-shadow",
+                True,
+                "no memory-shadow traffic recorded yet",
+            )
+        )
+    elif read_hits == 0 and shadow_only_reads == 0:
+        checks.append(
+            DoctorCheck(
+                "watchtower-memory-shadow",
+                False,
+                f"state=memory_abstaining read_requests={read_requests} read_hits=0 shadow_only_reads=0",
+            )
+        )
+    else:
+        checks.append(
+            DoctorCheck(
+                "watchtower-memory-shadow",
+                True,
+                (
+                    f"read_requests={read_requests} read_hits={read_hits} "
+                    f"shadow_only_reads={shadow_only_reads}"
+                ),
+            )
+        )
     return checks

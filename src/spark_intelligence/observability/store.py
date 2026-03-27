@@ -1056,6 +1056,7 @@ def build_watchtower_snapshot(
             "environment_parity": environment_panel,
             "provenance_and_quarantine": _build_provenance_and_quarantine_panel(state_db),
             "memory_lane_hygiene": _build_memory_lane_hygiene_panel(state_db),
+            "memory_shadow": _build_memory_shadow_panel(state_db),
         },
     }
 
@@ -2243,6 +2244,83 @@ def _build_memory_lane_hygiene_panel(state_db: StateDB) -> dict[str, Any]:
         },
         "recent_promotions": lane_records[:10],
         "recent_integrity_incidents": resume_integrity_incidents[:10],
+    }
+
+
+def _build_memory_shadow_panel(state_db: StateDB) -> dict[str, Any]:
+    write_requested = _typed_component_events(
+        state_db,
+        event_types=("memory_write_requested",),
+        component="memory_orchestrator",
+        limit=200,
+    )
+    write_results = _typed_component_events(
+        state_db,
+        event_types=("memory_write_succeeded", "memory_write_abstained"),
+        component="memory_orchestrator",
+        limit=200,
+    )
+    read_requested = _typed_component_events(
+        state_db,
+        event_types=("memory_read_requested",),
+        component="memory_orchestrator",
+        limit=200,
+    )
+    read_results = _typed_component_events(
+        state_db,
+        event_types=("memory_read_succeeded", "memory_read_abstained"),
+        component="memory_orchestrator",
+        limit=200,
+    )
+
+    accepted = 0
+    rejected = 0
+    skipped = 0
+    shadow_only_reads = 0
+    read_hits = 0
+    abstention_reasons: dict[str, int] = {}
+    memory_roles: dict[str, int] = {}
+
+    for event in write_results + read_results:
+        facts = event.get("facts_json") or {}
+        if not isinstance(facts, dict):
+            continue
+        accepted += int(facts.get("accepted_count") or 0)
+        rejected += int(facts.get("rejected_count") or 0)
+        skipped += int(facts.get("skipped_count") or 0)
+        if int(facts.get("record_count") or 0) > 0:
+            read_hits += 1
+        if bool(facts.get("shadow_only")):
+            shadow_only_reads += 1
+        reason = str(facts.get("reason") or "")
+        if reason:
+            abstention_reasons[reason] = abstention_reasons.get(reason, 0) + 1
+        role = str(facts.get("memory_role") or "")
+        if role:
+            memory_roles[role] = memory_roles.get(role, 0) + 1
+
+    return {
+        "counts": {
+            "write_requests": len(write_requested),
+            "write_results": len(write_results),
+            "accepted_observations": accepted,
+            "rejected_observations": rejected,
+            "skipped_observations": skipped,
+            "read_requests": len(read_requested),
+            "read_results": len(read_results),
+            "read_hits": read_hits,
+            "shadow_only_reads": shadow_only_reads,
+        },
+        "memory_role_mix": [
+            {"memory_role": role, "count": count}
+            for role, count in sorted(memory_roles.items())
+        ],
+        "abstention_reasons": [
+            {"reason": reason, "count": count}
+            for reason, count in sorted(abstention_reasons.items())
+        ],
+        "recent_writes": write_results[:10],
+        "recent_reads": read_results[:10],
     }
 
 

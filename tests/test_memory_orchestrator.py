@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from spark_intelligence.observability.store import latest_events_by_type
+from spark_intelligence.doctor.checks import run_doctor
+from spark_intelligence.observability.store import build_watchtower_snapshot, latest_events_by_type
 from spark_intelligence.personality.loader import (
     detect_and_persist_nl_preferences,
     detect_personality_query,
@@ -172,3 +173,68 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertTrue(events)
         facts = events[0]["facts_json"] or {}
         self.assertTrue(facts.get("shadow_only"))
+
+    def test_watchtower_memory_shadow_panel_counts_sdk_outcomes(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        fake_client = _FakeMemoryClient()
+
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            detect_and_persist_nl_preferences(
+                human_id="human:test",
+                user_message="be more direct",
+                state_db=self.state_db,
+                config_manager=self.config_manager,
+                session_id="session:memory",
+                turn_id="turn:memory-write",
+                channel_kind="telegram",
+            )
+            detect_personality_query(
+                user_message="show my personality",
+                human_id="human:test",
+                state_db=self.state_db,
+                profile=load_personality_profile(
+                    human_id="human:test",
+                    state_db=self.state_db,
+                    config_manager=self.config_manager,
+                ),
+                config_manager=self.config_manager,
+                session_id="session:memory",
+                turn_id="turn:memory-read",
+            )
+
+        snapshot = build_watchtower_snapshot(self.state_db)
+        panel = snapshot["panels"]["memory_shadow"]
+
+        self.assertEqual(panel["counts"]["write_requests"], 1)
+        self.assertEqual(panel["counts"]["accepted_observations"], 1)
+        self.assertEqual(panel["counts"]["read_requests"], 1)
+        self.assertEqual(panel["counts"]["read_hits"], 1)
+        self.assertEqual(panel["counts"]["shadow_only_reads"], 0)
+
+    def test_doctor_flags_live_memory_when_all_reads_abstain(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        fake_client = _AbstainingMemoryClient()
+
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            detect_personality_query(
+                user_message="what's my personality",
+                human_id="human:test",
+                state_db=self.state_db,
+                profile=load_personality_profile(
+                    human_id="human:test",
+                    state_db=self.state_db,
+                    config_manager=self.config_manager,
+                ),
+                config_manager=self.config_manager,
+                session_id="session:memory",
+                turn_id="turn:memory-read",
+            )
+
+        report = run_doctor(self.config_manager, self.state_db)
+        checks = {check.name: check for check in report.checks}
+
+        self.assertIn("watchtower-memory-shadow", checks)
+        self.assertFalse(checks["watchtower-memory-shadow"].ok)
+        self.assertIn("memory_abstaining", checks["watchtower-memory-shadow"].detail)
