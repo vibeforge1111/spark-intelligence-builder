@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -12,7 +11,12 @@ from typing import Any
 from spark_intelligence.attachments.registry import AttachmentRecord, attachment_status
 from spark_intelligence.attachments.snapshot import build_attachment_snapshot
 from spark_intelligence.config.loader import ConfigManager
-from spark_intelligence.observability.policy import screen_model_visible_text
+from spark_intelligence.execution.governed import (
+    GovernedCommandExecution,
+    record_governed_tool_result,
+    run_governed_command,
+    screen_governed_tool_text,
+)
 from spark_intelligence.observability.store import record_event
 from spark_intelligence.state.db import StateDB
 
@@ -144,20 +148,19 @@ def execute_chip_hook_record(
         input_path = temp_root / "input.json"
         output_path = temp_root / "output.json"
         input_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        completed = subprocess.run(
-            [*final_command, "--input", str(input_path), "--output", str(output_path)],
+        command = [*final_command, "--input", str(input_path), "--output", str(output_path)]
+        completed = run_governed_command(
+            command=command,
             cwd=repo_root,
             env=env,
-            capture_output=True,
-            text=True,
         )
         output = _load_json_file(output_path)
     return ChipHookExecution(
         chip_key=record.key,
         hook=hook,
         repo_root=str(repo_root),
-        command=[*final_command, "--input", str(input_path), "--output", str(output_path)],
-        exit_code=completed.returncode,
+        command=completed.command,
+        exit_code=completed.exit_code,
         stdout=completed.stdout,
         stderr=completed.stderr,
         payload=payload,
@@ -216,11 +219,23 @@ def record_chip_hook_execution(
         facts=facts,
         provenance=provenance,
     )
-    record_event(
+    record_governed_tool_result(
         state_db,
-        event_type="tool_result_received" if execution.ok else "dispatch_failed",
+        execution=GovernedCommandExecution(
+            command=list(getattr(execution, "command", []) or []),
+            cwd=repo_root,
+            exit_code=exit_code,
+            stdout=str(getattr(execution, "stdout", "") or ""),
+            stderr=stderr,
+        ),
         component=component,
+        actor_id=actor_id,
         summary=f"Chip hook {execution.chip_key}.{hook} {'produced a result' if execution.ok else 'failed'}.",
+        reason_code=reason_code,
+        source_kind="chip_hook",
+        source_ref=execution.chip_key,
+        facts=facts,
+        provenance=provenance,
         run_id=run_id,
         request_id=request_id,
         trace_ref=trace_ref,
@@ -228,11 +243,6 @@ def record_chip_hook_execution(
         session_id=session_id,
         human_id=human_id,
         agent_id=agent_id,
-        actor_id=actor_id,
-        reason_code=reason_code,
-        severity="high" if not execution.ok else "medium",
-        facts={**facts, "stderr": stderr[:200] if stderr else ""},
-        provenance=provenance,
     )
 
 
@@ -251,17 +261,21 @@ def screen_chip_hook_text(
 ) -> dict[str, Any]:
     hook = str(getattr(execution, "hook", "") or "unknown")
     repo_root = str(getattr(execution, "repo_root", "") or "")
-    return screen_model_visible_text(
+    return screen_governed_tool_text(
         state_db=state_db,
+        execution=GovernedCommandExecution(
+            command=list(getattr(execution, "command", []) or []),
+            cwd=repo_root,
+            exit_code=int(getattr(execution, "exit_code", 0) or 0),
+            stdout=str(getattr(execution, "stdout", "") or ""),
+            stderr=str(getattr(execution, "stderr", "") or ""),
+        ),
+        text=text,
         source_kind="chip_hook_output",
         source_ref=f"{execution.chip_key}:{hook}",
-        text=text,
         summary=summary,
         reason_code=reason_code,
         policy_domain=policy_domain,
-        run_id=run_id,
-        request_id=request_id,
-        trace_ref=trace_ref,
         blocked_stage=blocked_stage,
         provenance={
             "source_kind": "chip_hook",
@@ -269,6 +283,9 @@ def screen_chip_hook_text(
             "hook": hook,
             "repo_root": repo_root,
         },
+        run_id=run_id,
+        request_id=request_id,
+        trace_ref=trace_ref,
     )
 
 
