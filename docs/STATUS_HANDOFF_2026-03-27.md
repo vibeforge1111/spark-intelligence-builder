@@ -85,6 +85,10 @@ Shipped today:
   - Builder now distinguishes `configured`, `expired`, `refreshable`, and `auth_rejected` Swarm session states instead of collapsing all token-shaped values into one state
   - `swarm sync` can now refresh an expired session once and retry the hosted upload when a refresh token and auth client key are configured
   - `swarm configure` now accepts `--refresh-token`, `--refresh-token-env`, `--auth-client-key`, `--auth-client-key-env`, and `--supabase-url`
+- Swarm live sync recovery
+  - the canonical home now carries a refreshable Builder-side Swarm session with access token, refresh token, and auth client key material present
+  - Builder now normalizes missing contradiction `status` values to `open` before upload so live Researcher payloads conform to the hosted Swarm contract
+  - successful Swarm uploads now clear stale `last_failure` state so `swarm status` reflects the current live outcome instead of the last historical 500
 
 ## 4. What Is Proven
 
@@ -97,6 +101,7 @@ The following is no longer theoretical:
 - provider failure and recovery paths were tested earlier and recover correctly
 - the supported bootstrap path works on a clean home in tests
 - the supported Windows always-on wrapper path works locally through the Startup-folder fallback
+- live hosted Spark Swarm sync now works from the canonical Builder home
 
 Current live autostart wrapper:
 
@@ -108,7 +113,7 @@ Connection phases right now:
 
 - phase A: ready
 - phase B: ready
-- phase C: locally configured but currently blocked on hosted auth acceptance
+- phase C: ready
 - phase D: locally hardened again
 - phase E: materially real
 
@@ -116,52 +121,33 @@ Interpretation:
 
 - phase A is real because Telegram + provider + Researcher are working together on the canonical home
 - phase B is real because specialization is active in live runtime state
-- phase C is not complete because the canonical home currently holds an expired Swarm access token and no Builder-side refresh token even though local payload/config wiring is present
+- phase C is real because the canonical home can now authenticate to hosted Swarm and complete a real collective sync upload
 - phase D is more mature now because routing visibility, route tuning, and Telegram delivery cleanup are all in place, but escalation behavior still needs refinement
 - phase E is materially real because there is now one supported bootstrap path and one supported always-on wrapper path
 
 ## 6. Main Remaining Blockers
 
-### 6.1 Upstream Swarm Sync / Auth Acceptance
+### 6.1 Runtime Quality
 
-The main non-local blocker is still the hosted Spark Swarm side.
+The next important work is now behavior quality, not connection repair.
 
 Current live state on the canonical home:
 
-- local Swarm payload/config wiring is present
-- local Swarm readiness is good
+- hosted Swarm sync succeeds from the canonical home
 - `swarm status` now reports:
-  - `auth_state: expired`
-  - `access_token_expires_at: 2026-03-26T22:46:08+00:00`
-  - `refresh_token_env: missing`
-  - `auth_client_key_env: local:SUPABASE_SERVICE_ROLE_KEY`
-- live `connect status` now correctly keeps phase C as the current blocker instead of marking it ready
-- phase C now points at the real missing repair surface:
-  - `spark-intelligence swarm configure --access-token <fresh-token> --refresh-token <refresh-token> --auth-client-key-env <env>`
+  - `auth_state: configured`
+  - `last_sync_mode: uploaded`
+  - no active `last_failure`
+- `connect status` now marks phase C as `ready`
 
-Interpretation:
-
-- the builder now has a real Swarm session model instead of assuming a pasted short-lived JWT is enough
-- the remaining live fix is to establish a fresh Swarm session with both access and refresh token material available to the Builder home
-- once that is configured, Builder can refresh and retry hosted sync automatically instead of immediately falling back to manual token replacement
-
-### 6.2 Runtime Quality
-
-The Telegram path is working, but the next important quality step is not infrastructure. It is behavior quality:
+Current behavior focus:
 
 - when to stay researcher-first
 - when to use direct conversational fallback
-- when to recommend Swarm
+- when to recommend or escalate into Swarm
 - how specialized replies should feel for operator/startup use instead of sounding like internal memos
 
-One useful local cleanup already landed at end of day:
-
-- active-chip memo scaffolding is no longer passed through as raw template text to Telegram replies
-- common internal memo labels are now stripped before Telegram delivery
-- memo-style structured advice is now rewritten into a cleaner Telegram reply shape instead of preserving report formatting
-- common internal research-note prefixes are now stripped before delivery
-
-### 6.3 Reproducibility Polish
+### 6.2 Reproducibility Polish
 
 The first supported product path now exists, but there is still polish left for "another operator can install this with no tribal knowledge":
 
@@ -169,16 +155,23 @@ The first supported product path now exists, but there is still polish left for 
 - cleaner first-run docs
 - possibly one more validation pass from a truly fresh second home
 
+### 6.3 Hosted Swarm Follow-Through
+
+The Builder-side Swarm blocker is gone, but there is still one important follow-through task on the actual product behavior:
+
+- `swarm status` now reports:
+- prove one intentional Telegram-originated Swarm escalation path instead of only direct `swarm sync`
+- decide which route-policy defaults should become the recommended production defaults now that hosted Swarm is actually reachable
+
 ## 7. Exact Remaining Work
 
 What is still left from here, grouped by practical priority:
 
 ### 7.1 Must-Finish Core Work
 
-- configure one fresh Builder-side Swarm session with both access and refresh token material so `swarm sync` stops failing at `auth_state: expired`
-- prove one real successful hosted `swarm sync`
 - prove one intentional Telegram-originated Swarm escalation path instead of only local payload readiness
 - tighten live Telegram response quality further so specialized replies feel operator-useful and not just technically correct
+- decide the recommended production route-policy defaults now that hosted Swarm sync is live
 
 ### 7.2 Runtime Quality Work
 
@@ -210,12 +203,12 @@ There are two strong next options.
 
 ### Option A: Swarm Session Recovery
 
-Use tomorrow to establish a fresh Swarm session for the canonical Builder home and then retry hosted sync.
+Use tomorrow to turn the now-working hosted Swarm connection into a real runtime behavior.
 
 Best if the goal is to unblock:
 
-- real Spark Swarm upload
-- real collective sync
+- intentional Swarm recommendation/escalation from Telegram
+- route-policy finalization
 - later real delegation loops
 
 ### Option B: Telegram Runtime Quality
@@ -243,8 +236,8 @@ Recommended order:
    - Telegram runtime-quality day
 3. If Swarm:
    - start from `spark-intelligence swarm status --home .tmp-home-live-telegram-real`
-   - confirm `refresh_token_env` and `auth_client_key_env`
-   - rerun `spark-intelligence swarm sync`
+   - confirm `last_sync_mode: uploaded`
+   - trigger one intentional Swarm recommendation or escalation path
 4. If Telegram quality:
    - inspect live traces
    - tighten route policy defaults

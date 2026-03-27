@@ -10,7 +10,9 @@ from urllib.error import HTTPError
 
 from spark_intelligence.swarm_bridge.sync import (
     SwarmSyncResult,
+    _normalize_collective_payload,
     _normalize_runtime_source,
+    _record_swarm_sync_state,
     _record_swarm_failure_state,
     evaluate_swarm_escalation,
     swarm_status,
@@ -71,6 +73,60 @@ class SwarmSyncTests(SparkTestCase):
         self.assertEqual(payload["runtimeSource"]["sourceInstanceId"], "agent:custom")
         self.assertEqual(payload["runtimeSource"]["sourceRunId"], "spark-researcher:custom-run")
 
+    def test_normalize_collective_payload_defaults_missing_contradiction_status(self) -> None:
+        payload = {
+            "agentId": "agent:spark-researcher",
+            "emittedAt": "2026-03-27T10:00:00+00:00",
+            "runtimeSource": {
+                "kind": "spark_researcher",
+            },
+            "contradictions": [
+                {
+                    "id": "contradiction:1",
+                    "targetType": "upgrade",
+                    "targetId": "upgrade:1",
+                    "severity": "warn",
+                    "summary": "regressed",
+                    "sourceRef": "train.log",
+                    "createdAt": "2026-03-27T10:00:00+00:00",
+                }
+            ],
+        }
+
+        changed = _normalize_collective_payload(payload)
+
+        self.assertTrue(changed)
+        self.assertEqual(payload["contradictions"][0]["status"], "open")
+        self.assertEqual(payload["runtimeSource"]["sourceInstanceId"], "agent:spark-researcher")
+
+    def test_normalize_collective_payload_preserves_existing_contradiction_status(self) -> None:
+        payload = {
+            "agentId": "agent:spark-researcher",
+            "emittedAt": "2026-03-27T10:00:00+00:00",
+            "runtimeSource": {
+                "kind": "spark_researcher",
+                "sourceInstanceId": "agent:spark-researcher",
+                "sourceRunId": "spark-researcher:2026-03-27T10:00:00+00:00",
+            },
+            "contradictions": [
+                {
+                    "id": "contradiction:1",
+                    "targetType": "upgrade",
+                    "targetId": "upgrade:1",
+                    "severity": "warn",
+                    "status": "resolved",
+                    "summary": "regressed",
+                    "sourceRef": "train.log",
+                    "createdAt": "2026-03-27T10:00:00+00:00",
+                }
+            ],
+        }
+
+        changed = _normalize_collective_payload(payload)
+
+        self.assertFalse(changed)
+        self.assertEqual(payload["contradictions"][0]["status"], "resolved")
+
     def test_evaluate_swarm_escalation_respects_disabled_auto_recommend_policy(self) -> None:
         self.config_manager.set_path("spark.swarm.routing.auto_recommend_enabled", False)
 
@@ -125,6 +181,38 @@ class SwarmSyncTests(SparkTestCase):
         payload = json.loads(str(row["value"]))
         self.assertEqual(payload["mode"], "http_error")
         self.assertEqual(payload["response_body"]["error"], "authentication_required")
+
+    def test_record_swarm_sync_state_clears_last_failure_on_success(self) -> None:
+        _record_swarm_failure_state(
+            self.state_db,
+            kind="sync",
+            result=SwarmSyncResult(
+                ok=False,
+                mode="http_error",
+                message="Swarm API rejected the sync with HTTP 500.",
+                payload_path="payload.json",
+                api_url="https://sparkswarm.ai",
+                workspace_id="ws_123",
+                accepted=False,
+                response_body={"error": "collective_sync_failed"},
+            ),
+        )
+
+        _record_swarm_sync_state(
+            self.state_db,
+            mode="uploaded",
+            payload_path="payload.json",
+            api_url="https://sparkswarm.ai",
+            workspace_id="ws_123",
+            accepted=True,
+        )
+
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = 'swarm:last_failure' LIMIT 1"
+            ).fetchone()
+
+        self.assertIsNone(row)
 
     def test_swarm_status_marks_expired_token_refreshable_when_refresh_path_exists(self) -> None:
         self.config_manager.set_path("spark.swarm.api_url", "https://api-production-6ea6.up.railway.app")

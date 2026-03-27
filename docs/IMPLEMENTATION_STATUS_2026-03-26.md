@@ -175,11 +175,15 @@ One more Telegram runtime-quality pass is now also in place: when a provider or 
 
 The next Swarm hardening pass is now also in place on the Builder side. Swarm session state is no longer treated as a binary "token exists or does not exist" shape: `swarm status`, `connect status`, and `connect route-policy` now distinguish `configured`, `expired`, `refreshable`, and `auth_rejected`. `swarm sync` can now attempt one local session refresh and retry the hosted upload when the Builder home has a refresh token plus auth client key configured, and `swarm configure` now accepts `--refresh-token`, `--refresh-token-env`, `--auth-client-key`, `--auth-client-key-env`, and `--supabase-url` so the Builder home can carry a durable session model instead of relying on a pasted short-lived JWT alone.
 
+That Builder-side session work is now proven on the canonical home rather than remaining potential only. The canonical Builder home now carries access token, refresh token, and auth client key material for hosted Swarm; `swarm status` reports `auth_state: configured`; and real hosted `swarm sync` uploads now succeed against `ws_63c783d6-7511-4e5a-b613-b7c3a645d911`. One more payload-shape repair also landed with that fix: Builder now normalizes missing contradiction `status` values to `open` before upload so live Researcher payloads conform to the hosted Swarm contradiction contract instead of failing with `null value in column "status"`.
+
+The Swarm status surface is also a little more honest now that this path is green: a successful `swarm sync` clears stale `swarm:last_failure` state, so `swarm status` no longer keeps showing an old HTTP 500 after the latest hosted upload has already succeeded.
+
 That means the current state has shifted slightly:
 
 - phase A remains ready
 - phase B remains ready
-- phase C is locally wired but still blocked on Swarm session freshness on the canonical home
+- phase C is now ready with real hosted Swarm sync working from the canonical home
 - phase D is locally stronger again because the Telegram runtime quality and route/operator visibility both improved
 - phase E remains materially real on the canonical Telegram path
 

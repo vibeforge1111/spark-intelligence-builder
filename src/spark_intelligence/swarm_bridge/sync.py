@@ -806,7 +806,7 @@ def _build_collective_payload(
         export_info = write_payload(researcher_root, runtime_root, config)
     payload_path = Path(str(export_info["payload_path"]))
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
-    if _normalize_runtime_source(payload):
+    if _normalize_collective_payload(payload):
         payload_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return payload, payload_path
 
@@ -833,6 +833,15 @@ def _post_collective_payload(
     return json.loads(raw) if raw.strip() else {}
 
 
+def _normalize_collective_payload(payload: dict[str, Any]) -> bool:
+    changed = False
+    if _normalize_runtime_source(payload):
+        changed = True
+    if _normalize_contradictions(payload):
+        changed = True
+    return changed
+
+
 def _normalize_runtime_source(payload: dict[str, Any]) -> bool:
     runtime_source = payload.get("runtimeSource")
     if not isinstance(runtime_source, dict):
@@ -852,6 +861,22 @@ def _normalize_runtime_source(payload: dict[str, Any]) -> bool:
         runtime_source["sourceRunId"] = f"{run_prefix}:{emitted_at}"
         changed = True
 
+    return changed
+
+
+def _normalize_contradictions(payload: dict[str, Any]) -> bool:
+    contradictions = payload.get("contradictions")
+    if not isinstance(contradictions, list):
+        return False
+
+    changed = False
+    for contradiction in contradictions:
+        if not isinstance(contradiction, dict):
+            continue
+        status = str(contradiction.get("status") or "").strip().lower()
+        if not status:
+            contradiction["status"] = "open"
+            changed = True
     return changed
 
 
@@ -879,6 +904,8 @@ def _record_swarm_sync_state(
                 sort_keys=True,
             ),
         )
+        if accepted:
+            conn.execute("DELETE FROM runtime_state WHERE state_key = ?", ("swarm:last_failure",))
         conn.commit()
 
 
