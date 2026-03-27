@@ -428,6 +428,9 @@ def _summarize_active_chip_guidance(analysis: str, *, max_lines: int = 4, max_ch
 def _clean_messaging_reply(text: str, *, channel_kind: str) -> str:
     if channel_kind != "telegram":
         return text.strip()
+    rewritten = _rewrite_structured_telegram_reply(text)
+    if rewritten:
+        text = rewritten
     cleaned_lines: list[str] = []
     for raw_line in text.replace("\r\n", "\n").split("\n"):
         line = raw_line.strip()
@@ -451,7 +454,126 @@ def _clean_messaging_reply(text: str, *, channel_kind: str) -> str:
         cleaned_lines.append(normalized)
     reply = "\n".join(cleaned_lines)
     reply = re.sub(r"\n{3,}", "\n\n", reply).strip()
+    reply = _strip_internal_reply_prefixes(reply)
     return reply or text.strip()
+
+
+def _rewrite_structured_telegram_reply(text: str) -> str | None:
+    sections: dict[str, list[str]] = {
+        "recommendation": [],
+        "primary": [],
+        "why": [],
+        "changes": [],
+        "next": [],
+        "body": [],
+    }
+    current_section = "body"
+    saw_structured_markers = False
+
+    for raw_line in text.replace("\r\n", "\n").split("\n"):
+        line = raw_line.strip()
+        if not line or line == "---":
+            continue
+        normalized = re.sub(r"^#+\s*", "", line)
+        normalized = re.sub(r"^\*\*(.*?)\*\*\s*:\s*", r"\1: ", normalized)
+        normalized = re.sub(r"^\*\*(.*?)\*\*$", r"\1", normalized)
+        normalized_for_meta = re.sub(r"^[-*]\s*", "", normalized).strip()
+        lowered = normalized_for_meta.lower().rstrip(":")
+
+        if lowered in {"primary focus", "why this works", "what changes this", "next step"}:
+            saw_structured_markers = True
+            current_section = {
+                "primary focus": "primary",
+                "why this works": "why",
+                "what changes this": "changes",
+                "next step": "next",
+            }[lowered]
+            continue
+        if lowered.startswith(("confidence:", "evidence gap:", "note:")):
+            saw_structured_markers = True
+            continue
+        if lowered.startswith("revised:"):
+            saw_structured_markers = True
+            continue
+        if lowered.startswith("recommendation:"):
+            saw_structured_markers = True
+            _, _, remainder = normalized_for_meta.partition(":")
+            candidate = remainder.strip()
+            if candidate:
+                sections["recommendation"].append(candidate)
+            continue
+        sections[current_section].append(normalized_for_meta)
+
+    if not saw_structured_markers:
+        return None
+
+    lead = _first_distinct_line(
+        sections["recommendation"] + sections["primary"] + sections["body"] + sections["why"] + sections["changes"]
+    )
+    if not lead:
+        return None
+
+    parts = [_ensure_terminal_punctuation(lead)]
+    support_lines = _distinct_lines(
+        sections["primary"] + sections["why"] + sections["changes"] + sections["body"],
+        exclude={lead},
+    )
+    if support_lines:
+        parts.append(" ".join(_ensure_terminal_punctuation(item) for item in support_lines[:2]))
+    next_step = _first_distinct_line(sections["next"])
+    if next_step:
+        parts.append(f"Next: {_strip_terminal_punctuation(next_step)}.")
+    return "\n\n".join(part for part in parts if part).strip() or None
+
+
+def _strip_internal_reply_prefixes(text: str) -> str:
+    patterns = (
+        r"^based on (?:the )?(?:research|researcher) notes(?: provided)?[,:\-]\s*",
+        r"^according to (?:the )?(?:research|researcher) notes[,:\-]\s*",
+        r"^from (?:the )?(?:research|researcher) notes[,:\-]\s*",
+        r"^the (?:research|researcher) notes (?:show|suggest|indicate) that\s*",
+    )
+    cleaned = text.strip()
+    for pattern in patterns:
+        cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE).strip()
+    return cleaned
+
+
+def _first_distinct_line(lines: list[str]) -> str | None:
+    for line in lines:
+        candidate = line.strip()
+        if candidate:
+            return candidate
+    return None
+
+
+def _distinct_lines(lines: list[str], *, exclude: set[str] | None = None) -> list[str]:
+    excluded = {item.strip().lower() for item in (exclude or set()) if item.strip()}
+    seen: set[str] = set()
+    output: list[str] = []
+    for line in lines:
+        candidate = line.strip()
+        if not candidate:
+            continue
+        normalized = candidate.lower()
+        if normalized in seen or normalized in excluded:
+            continue
+        seen.add(normalized)
+        output.append(candidate)
+    return output
+
+
+def _ensure_terminal_punctuation(text: str) -> str:
+    value = text.strip()
+    if not value:
+        return value
+    if value[-1] in ".!?":
+        return value
+    return f"{value}."
+
+
+def _strip_terminal_punctuation(text: str) -> str:
+    return text.strip().rstrip(".!?")
 
 
 def _run_active_chip_evaluate(

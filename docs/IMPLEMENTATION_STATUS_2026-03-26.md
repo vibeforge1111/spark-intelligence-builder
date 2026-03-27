@@ -171,6 +171,8 @@ The supported MiniMax path is now also aligned on `MiniMax-M2.7` instead of `Min
 
 The end-of-day local finish pass tightened two more pieces without widening scope again. First, the Telegram runtime no longer feeds raw active-chip memo scaffolding straight through to live DM replies: active-chip doctrine is now summarized as hidden background guidance for provider chat, and Telegram reply cleanup strips common internal memo labels such as `Primary Focus`, `Confidence`, and `Evidence gap` before delivery. Second, the Swarm operator surfaces now distinguish "token exists" from "hosted auth/session is actually accepted": `connect status`, `connect route-policy`, and `swarm status` now surface hosted auth rejection directly, so phase C no longer looks deceptively green when the hosted Swarm side is returning `authentication_required`.
 
+One more Telegram runtime-quality pass is now also in place: when a provider or chip returns a memo-shaped response, Spark Intelligence rewrites that structure into a cleaner Telegram reply instead of leaking report formatting directly to the DM surface. The cleanup now also strips common internal prefixes such as "Based on the research notes provided, ..." before delivery, which keeps the specialized Telegram path feeling more like a direct operator assistant and less like a pasted research artifact.
+
 That means the current state has shifted slightly:
 
 - phase A remains ready

@@ -76,6 +76,8 @@ Shipped today:
 - Telegram runtime-quality hardening
   - active-chip doctrine is now passed to provider chat as hidden background guidance instead of raw memo scaffolding
   - Telegram reply cleanup now strips common internal memo headings plus `Confidence` / `Evidence gap` residue before delivery
+  - memo-shaped chip output is now rewritten into cleaner Telegram-style replies with the recommendation or primary answer first and a short `Next:` line when useful
+  - common internal prefixes like `Based on the research notes provided, ...` are now stripped before Telegram delivery
 - Swarm phase/operator surfacing hardening
   - `connect status` now treats hosted Swarm auth rejection as a real phase C blocker instead of counting any token-shaped value as effectively ready
   - `connect route-policy` and `swarm status` now surface the latest auth rejection/failure mode directly
@@ -151,6 +153,8 @@ One useful local cleanup already landed at end of day:
 
 - active-chip memo scaffolding is no longer passed through as raw template text to Telegram replies
 - common internal memo labels are now stripped before Telegram delivery
+- memo-style structured advice is now rewritten into a cleaner Telegram reply shape instead of preserving report formatting
+- common internal research-note prefixes are now stripped before delivery
 
 ### 6.3 Reproducibility Polish
 
@@ -247,7 +251,7 @@ Latest pushed commit:
 
 Current test status at handoff:
 
-- full suite is green: `166` tests passing
+- full suite is green: `169` tests passing
 
 Verification command:
 

@@ -4,12 +4,51 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-from spark_intelligence.researcher_bridge.advisory import _build_contextual_task, build_researcher_reply
+from spark_intelligence.researcher_bridge.advisory import (
+    _build_contextual_task,
+    _clean_messaging_reply,
+    build_researcher_reply,
+)
 
 from tests.test_support import SparkTestCase
 
 
 class ResearcherBridgeProviderResolutionTests(SparkTestCase):
+    def test_clean_messaging_reply_rewrites_structured_chip_memo_for_telegram(self) -> None:
+        cleaned = _clean_messaging_reply(
+            (
+                "# Revised: Decision Clarity Infrastructure\n\n"
+                "**Recommendation**: Prioritize interpretation scaffolding for no actionable diff outputs.\n\n"
+                "## Primary Focus\n"
+                "Build operator-facing guidance for no actionable diff outputs.\n\n"
+                "## Why This Works\n"
+                "Undocumented silent outcomes create operator doubt.\n\n"
+                "- Confidence: 0.45\n"
+                "- Evidence gap: No verification operators lack this layer.\n\n"
+                "## Next Step\n"
+                "Survey 2-3 operator workflows."
+            ),
+            channel_kind="telegram",
+        )
+
+        self.assertEqual(
+            cleaned,
+            (
+                'Prioritize interpretation scaffolding for no actionable diff outputs.\n\n'
+                'Build operator-facing guidance for no actionable diff outputs. '
+                'Undocumented silent outcomes create operator doubt.\n\n'
+                'Next: Survey 2-3 operator workflows.'
+            ),
+        )
+
+    def test_clean_messaging_reply_strips_internal_research_note_prefixes(self) -> None:
+        cleaned = _clean_messaging_reply(
+            "Based on the research notes provided, the strongest next move is to tighten operator docs.",
+            channel_kind="telegram",
+        )
+
+        self.assertEqual(cleaned, "the strongest next move is to tighten operator docs.")
+
     def test_build_contextual_task_summarizes_chip_guidance_without_meta_scaffolding(self) -> None:
         prompt = _build_contextual_task(
             user_message="what next",
@@ -115,8 +154,13 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             )
 
         self.assertEqual(result.routing_decision, "provider_execution")
-        self.assertIn("Build operator-facing guidance", result.reply_text)
-        self.assertIn("Survey operator workflows.", result.reply_text)
+        self.assertEqual(
+            result.reply_text,
+            (
+                "Build operator-facing guidance for no actionable diff outputs.\n\n"
+                "Next: Survey operator workflows."
+            ),
+        )
         self.assertNotIn("Confidence:", result.reply_text)
         self.assertNotIn("Evidence gap:", result.reply_text)
         self.assertNotIn("Primary Focus", result.reply_text)
