@@ -72,6 +72,7 @@ Structural now:
 - personality-driven reply shaping now emits provenance-bearing influence events instead of mutating tone silently
 - Swarm sync, decision, and auth-refresh outcomes now emit typed event mirrors instead of depending only on `runtime_state`
 - secret-like chip/output material can be quarantined before model-visible prompt assembly
+- the final assembled bridge prompt is now screened before any Researcher or direct-provider execution
 - outbound secret-like replies now emit typed violation and quarantine records instead of only trace-side evidence
 - doctor and operator security now expose explicit stop-ship failures
 

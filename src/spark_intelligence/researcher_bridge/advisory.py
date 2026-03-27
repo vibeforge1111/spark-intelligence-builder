@@ -992,11 +992,68 @@ def build_researcher_reply(
         personality_profile=personality_profile,
         personality_context_extra=personality_context_extra,
     )
-    provider_selection = _resolve_bridge_provider(config_manager=config_manager, state_db=state_db)
-    routing_policy = _researcher_routing_policy(config_manager)
     active_chip_key = str(active_chip_evaluate.get("chip_key")) if active_chip_evaluate else None
     active_chip_task_type = str(active_chip_evaluate.get("task_type")) if active_chip_evaluate and active_chip_evaluate.get("task_type") else None
     active_chip_evaluate_used = active_chip_evaluate is not None
+    screened_context = screen_model_visible_text(
+        state_db=state_db,
+        source_kind="contextual_task",
+        source_ref=request_id,
+        text=contextual_task,
+        summary="Builder blocked model-visible context before bridge execution.",
+        reason_code="contextual_task_secret_like",
+        policy_domain="researcher_bridge",
+        run_id=run_id,
+        request_id=request_id,
+        trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+        provenance={
+            "channel_kind": channel_kind,
+            "active_chip_key": active_chip_evaluate.get("chip_key") if active_chip_evaluate else None,
+            "active_path_key": attachment_context.get("active_path_key"),
+            "personality_name": personality_profile.get("personality_name") if personality_profile else None,
+        },
+    )
+    if not screened_context["allowed"]:
+        record_event(
+            state_db,
+            event_type="dispatch_failed",
+            component="researcher_bridge",
+            summary="Researcher bridge dispatch was blocked by the pre-model secret boundary.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="secret_boundary_blocked",
+            severity="high",
+            facts={
+                "quarantine_id": screened_context["quarantine_id"],
+                "blocked_stage": "contextual_task",
+            },
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=(
+                "[Spark Researcher blocked] Sensitive material was detected in model-visible context. "
+                "I did not send it to the bridge or provider."
+            ),
+            evidence_summary="Pre-model secret boundary blocked bridge execution.",
+            escalation_hint="secret_boundary_violation",
+            trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+            mode="blocked",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="secret_boundary_blocked",
+            active_chip_key=active_chip_key,
+            active_chip_task_type=active_chip_task_type,
+            active_chip_evaluate_used=active_chip_evaluate_used,
+        )
+    provider_selection = _resolve_bridge_provider(config_manager=config_manager, state_db=state_db)
+    routing_policy = _researcher_routing_policy(config_manager)
     runtime_root, runtime_source = discover_researcher_runtime_root(config_manager)
     config_path = resolve_researcher_config_path(config_manager, runtime_root) if runtime_root is not None else None
     record_environment_snapshot(

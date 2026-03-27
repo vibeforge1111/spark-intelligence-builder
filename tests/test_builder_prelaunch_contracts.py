@@ -191,3 +191,23 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
         self.assertFalse(issues["stop_ship_runtime_state_authority"].ok)
         self.assertIn("swarm", issues["stop_ship_runtime_state_authority"].detail)
+
+    def test_build_researcher_reply_blocks_secret_like_model_visible_context(self) -> None:
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-secret-block",
+            agent_id="agent:test",
+            human_id="human:test",
+            session_id="session:test",
+            channel_kind="telegram",
+            user_message="here is my token sk-abcdefghijklmnopqrstuvwxyz123456",
+        )
+
+        self.assertEqual(result.routing_decision, "secret_boundary_blocked")
+        self.assertEqual(result.mode, "blocked")
+        self.assertEqual(result.escalation_hint, "secret_boundary_violation")
+        self.assertTrue(latest_events_by_type(self.state_db, event_type="secret_boundary_violation", limit=10))
+        with self.state_db.connect() as conn:
+            row = conn.execute("SELECT COUNT(*) AS c FROM quarantine_records").fetchone()
+        self.assertGreaterEqual(int(row["c"]), 1)
