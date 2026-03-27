@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,8 @@ class ShadowReplayExportResult:
     turn_count: int
     probe_count: int
     validation: dict[str, Any] | None
+    report: dict[str, Any] | None = None
+    report_path: Path | None = None
 
     def to_json(self) -> str:
         return json.dumps(
@@ -33,6 +36,8 @@ class ShadowReplayExportResult:
                 "turn_count": self.turn_count,
                 "probe_count": self.probe_count,
                 "validation": self.validation,
+                "report_path": str(self.report_path) if self.report_path else None,
+                "report": self.report,
             },
             indent=2,
         )
@@ -49,6 +54,70 @@ class ShadowReplayExportResult:
             lines.append(f"- validation: {'valid' if self.validation.get('valid') else 'invalid'}")
             lines.append(f"- validator errors: {len(self.validation.get('errors') or [])}")
             lines.append(f"- validator warnings: {len(self.validation.get('warnings') or [])}")
+        if self.report is None:
+            lines.append("- report: skipped")
+        else:
+            lines.append(f"- report_path: {self.report_path}")
+            summary = (self.report.get("report") or {}).get("summary") or {}
+            lines.append(f"- report accepted_writes: {summary.get('accepted_writes', 0)}")
+            lines.append(f"- report rejected_writes: {summary.get('rejected_writes', 0)}")
+            lines.append(f"- report skipped_turns: {summary.get('skipped_turns', 0)}")
+        return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class ShadowReplayBatchExportResult:
+    output_dir: Path
+    files: list[ShadowReplayExportResult]
+    validation: dict[str, Any] | None
+    report: dict[str, Any] | None = None
+    report_path: Path | None = None
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "output_dir": str(self.output_dir),
+                "file_count": len(self.files),
+                "conversation_count": sum(file.conversation_count for file in self.files),
+                "turn_count": sum(file.turn_count for file in self.files),
+                "probe_count": sum(file.probe_count for file in self.files),
+                "validation": self.validation,
+                "report_path": str(self.report_path) if self.report_path else None,
+                "report": self.report,
+                "files": [
+                    {
+                        "path": str(file.path),
+                        "conversation_count": file.conversation_count,
+                        "turn_count": file.turn_count,
+                        "probe_count": file.probe_count,
+                    }
+                    for file in self.files
+                ],
+            },
+            indent=2,
+        )
+
+    def to_text(self) -> str:
+        lines = ["Spark memory shadow replay batch export"]
+        lines.append(f"- output_dir: {self.output_dir}")
+        lines.append(f"- files: {len(self.files)}")
+        lines.append(f"- conversations: {sum(file.conversation_count for file in self.files)}")
+        lines.append(f"- turns: {sum(file.turn_count for file in self.files)}")
+        lines.append(f"- probes: {sum(file.probe_count for file in self.files)}")
+        if self.validation is None:
+            lines.append("- validation: skipped")
+        else:
+            lines.append(f"- validation: {'valid' if self.validation.get('valid') else 'invalid'}")
+            lines.append(f"- validator errors: {len(self.validation.get('errors') or [])}")
+            lines.append(f"- validator warnings: {len(self.validation.get('warnings') or [])}")
+        if self.report is None:
+            lines.append("- report: skipped")
+        else:
+            lines.append(f"- report_path: {self.report_path}")
+            summary = (self.report.get("report") or {}).get("summary") or {}
+            lines.append(f"- report accepted_writes: {summary.get('accepted_writes', 0)}")
+            lines.append(f"- report rejected_writes: {summary.get('rejected_writes', 0)}")
+            lines.append(f"- report skipped_turns: {summary.get('skipped_turns', 0)}")
         return "\n".join(lines)
 
 
@@ -62,6 +131,8 @@ def export_shadow_replay(
     writable_roles: list[str] | None = None,
     validate: bool = True,
     validator_root: str | Path | None = None,
+    run_report: bool = False,
+    report_write_path: str | Path | None = None,
 ) -> ShadowReplayExportResult:
     payload = build_shadow_replay_payload(
         state_db=state_db,
@@ -78,6 +149,14 @@ def export_shadow_replay(
             replay_path=output_path,
             validator_root=validator_root,
         )
+    report = None
+    resolved_report_path = Path(report_write_path) if report_write_path else None
+    if run_report and (not validate or _validation_ok(validation)):
+        report = run_shadow_report(
+            replay_path=output_path,
+            validator_root=validator_root,
+            write_path=resolved_report_path,
+        )
     return ShadowReplayExportResult(
         path=output_path,
         payload=payload,
@@ -85,6 +164,73 @@ def export_shadow_replay(
         turn_count=sum(len(conversation.get("turns") or []) for conversation in payload.get("conversations") or []),
         probe_count=sum(len(conversation.get("probes") or []) for conversation in payload.get("conversations") or []),
         validation=validation,
+        report=report,
+        report_path=resolved_report_path,
+    )
+
+
+def export_shadow_replay_batch(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    output_dir: str | Path | None = None,
+    conversation_limit: int = 20,
+    event_limit: int = DEFAULT_EVENT_LIMIT,
+    conversations_per_file: int = 10,
+    writable_roles: list[str] | None = None,
+    validate: bool = True,
+    validator_root: str | Path | None = None,
+    run_report: bool = False,
+    report_write_path: str | Path | None = None,
+) -> ShadowReplayBatchExportResult:
+    payload = build_shadow_replay_payload(
+        state_db=state_db,
+        conversation_limit=conversation_limit,
+        event_limit=event_limit,
+        writable_roles=writable_roles or list(DEFAULT_WRITABLE_ROLES),
+    )
+    export_dir = Path(output_dir) if output_dir else (config_manager.paths.home / "artifacts" / "spark-shadow-replay-batch")
+    export_dir.mkdir(parents=True, exist_ok=True)
+    files: list[ShadowReplayExportResult] = []
+    conversations = payload.get("conversations") or []
+    chunk_size = max(int(conversations_per_file), 1)
+    for index, chunk in enumerate(_chunked(conversations, chunk_size), start=1):
+        file_path = export_dir / f"spark-shadow-{index:03d}.json"
+        file_payload = {
+            "writable_roles": payload.get("writable_roles") or list(DEFAULT_WRITABLE_ROLES),
+            "conversations": chunk,
+        }
+        file_path.write_text(json.dumps(file_payload, indent=2, ensure_ascii=True), encoding="utf-8")
+        files.append(
+            ShadowReplayExportResult(
+                path=file_path,
+                payload=file_payload,
+                conversation_count=len(chunk),
+                turn_count=sum(len(conversation.get("turns") or []) for conversation in chunk),
+                probe_count=sum(len(conversation.get("probes") or []) for conversation in chunk),
+                validation=None,
+            )
+        )
+    validation = None
+    if validate:
+        validation = validate_shadow_replay_batch(
+            replay_dir=export_dir,
+            validator_root=validator_root,
+        )
+    report = None
+    resolved_report_path = Path(report_write_path) if report_write_path else None
+    if run_report and (not validate or _validation_ok(validation)):
+        report = run_shadow_report_batch(
+            replay_dir=export_dir,
+            validator_root=validator_root,
+            write_path=resolved_report_path,
+        )
+    return ShadowReplayBatchExportResult(
+        output_dir=export_dir,
+        files=files,
+        validation=validation,
+        report=report,
+        report_path=resolved_report_path,
     )
 
 
@@ -165,6 +311,64 @@ def validate_shadow_replay(
     replay_path: str | Path,
     validator_root: str | Path | None = None,
 ) -> dict[str, Any]:
+    return _run_domain_chip_memory_cli(
+        "validate-spark-shadow-replay",
+        str(Path(replay_path)),
+        validator_root=validator_root,
+    )
+
+
+def validate_shadow_replay_batch(
+    *,
+    replay_dir: str | Path,
+    validator_root: str | Path | None = None,
+) -> dict[str, Any]:
+    return _run_domain_chip_memory_cli(
+        "validate-spark-shadow-replay-batch",
+        str(Path(replay_dir)),
+        validator_root=validator_root,
+    )
+
+
+def run_shadow_report(
+    *,
+    replay_path: str | Path,
+    validator_root: str | Path | None = None,
+    write_path: str | Path | None = None,
+) -> dict[str, Any]:
+    extra_args: list[str] = []
+    if write_path:
+        extra_args.extend(["--write", str(Path(write_path))])
+    return _run_domain_chip_memory_cli(
+        "run-spark-shadow-report",
+        str(Path(replay_path)),
+        *extra_args,
+        validator_root=validator_root,
+    )
+
+
+def run_shadow_report_batch(
+    *,
+    replay_dir: str | Path,
+    validator_root: str | Path | None = None,
+    write_path: str | Path | None = None,
+) -> dict[str, Any]:
+    extra_args: list[str] = []
+    if write_path:
+        extra_args.extend(["--write", str(Path(write_path))])
+    return _run_domain_chip_memory_cli(
+        "run-spark-shadow-report-batch",
+        str(Path(replay_dir)),
+        *extra_args,
+        validator_root=validator_root,
+    )
+
+
+def _run_domain_chip_memory_cli(
+    command_name: str,
+    *command_args: str,
+    validator_root: str | Path | None = None,
+) -> dict[str, Any]:
     root = Path(validator_root) if validator_root else DEFAULT_VALIDATOR_ROOT
     if not root.exists():
         return {
@@ -177,8 +381,8 @@ def validate_shadow_replay(
             sys.executable,
             "-m",
             "domain_chip_memory.cli",
-            "validate-spark-shadow-replay",
-            str(Path(replay_path)),
+            command_name,
+            *command_args,
         ],
         cwd=str(root),
     )
@@ -334,7 +538,7 @@ def _build_turn(
         "message_id": _message_id(row),
         "role": role,
         "content": _turn_content(row),
-        "timestamp": row.get("created_at"),
+        "timestamp": _normalized_timestamp(row.get("created_at")),
     }
     metadata = {
         "channel_kind": row.get("channel_id"),
@@ -358,6 +562,7 @@ def _build_turn(
         ]
         if observation_hints:
             metadata["memory_kind"] = "current_state"
+            metadata["entity_hints"] = sorted({str(item.get("subject") or "") for item in observation_hints if item.get("subject")})
             metadata["predicate_hints"] = [str(item.get("predicate") or "") for item in observation_hints if item.get("predicate")]
             metadata["source_tags"] = ["spark_memory_sdk_shadow_candidate"]
     metadata = {key: value for key, value in metadata.items() if value not in (None, [], {}, "")}
@@ -514,3 +719,30 @@ def _loads_json_value(value: Any) -> dict[str, Any]:
 def _json_field(value: Any, field: str, default: Any = None) -> Any:
     payload = _loads_json_value(value)
     return payload.get(field, default)
+
+
+def _validation_ok(validation: dict[str, Any] | None) -> bool:
+    if validation is None:
+        return True
+    return bool(validation.get("valid")) and not (validation.get("errors") or [])
+
+
+def _chunked(items: list[dict[str, Any]], chunk_size: int) -> list[list[dict[str, Any]]]:
+    return [items[index : index + chunk_size] for index in range(0, len(items), chunk_size)]
+
+
+def _normalized_timestamp(value: Any) -> str | None:
+    if value in {None, ""}:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return text
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    else:
+        parsed = parsed.astimezone(timezone.utc)
+    return parsed.isoformat(timespec="seconds").replace("+00:00", "Z")

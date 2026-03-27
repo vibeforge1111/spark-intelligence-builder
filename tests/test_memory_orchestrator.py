@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from spark_intelligence.doctor.checks import run_doctor
-from spark_intelligence.memory import build_shadow_replay_payload
+from spark_intelligence.memory import build_shadow_replay_payload, export_shadow_replay_batch
 from spark_intelligence.observability.store import build_watchtower_snapshot, latest_events_by_type
 from spark_intelligence.personality.loader import (
     detect_and_persist_nl_preferences,
@@ -465,3 +466,61 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertIn("current_state", probe_types)
         self.assertIn("evidence", probe_types)
         self.assertIn("historical_state", probe_types)
+
+    def test_shadow_replay_batch_export_runs_validation_and_batch_report(self) -> None:
+        with self.state_db.connect() as conn:
+            for index in range(1, 4):
+                conn.execute(
+                    """
+                    INSERT INTO builder_events(
+                        event_id, event_type, truth_kind, target_surface, component, run_id, request_id, channel_id,
+                        session_id, human_id, agent_id, actor_id, evidence_lane, severity, status, summary, facts_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        f"evt-user-{index}",
+                        "intent_committed",
+                        "fact",
+                        "spark_intelligence_builder",
+                        "telegram_runtime",
+                        f"run-{index}",
+                        f"turn-{index}",
+                        "telegram",
+                        f"session-{index}",
+                        "human:test",
+                        "agent:test",
+                        "telegram_runtime",
+                        "realworld_validated",
+                        "medium",
+                        "recorded",
+                        "Turn committed.",
+                        json.dumps({"message_text": f"Turn {index}"}),
+                    ),
+                )
+            conn.commit()
+
+        with patch(
+            "spark_intelligence.memory.shadow_replay.run_governed_command",
+            side_effect=[
+                SimpleNamespace(exit_code=0, stdout=json.dumps({"valid": True, "errors": [], "warnings": []}), stderr=""),
+                SimpleNamespace(
+                    exit_code=0,
+                    stdout=json.dumps({"report": {"run_count": 3, "summary": {"accepted_writes": 0, "rejected_writes": 0, "skipped_turns": 3}}}),
+                    stderr="",
+                ),
+            ],
+        ) as governed:
+            result = export_shadow_replay_batch(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                conversation_limit=3,
+                conversations_per_file=2,
+                validate=True,
+                run_report=True,
+                report_write_path=self.home / "artifacts" / "spark-shadow-batch-report.json",
+            )
+
+        self.assertEqual(len(result.files), 2)
+        self.assertTrue(result.validation["valid"])
+        self.assertEqual(result.report["report"]["run_count"], 3)
+        self.assertEqual(governed.call_count, 2)

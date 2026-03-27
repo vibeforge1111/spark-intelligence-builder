@@ -158,6 +158,63 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(exported["conversations"][0]["conversation_id"], "session-cli")
         self.assertEqual(exported["conversations"][0]["turns"][0]["content"], "I moved to Dubai.")
 
+    def test_memory_export_shadow_replay_batch_writes_contract_shaped_directory(self) -> None:
+        with self.state_db.connect() as conn:
+            for index in range(1, 3):
+                conn.execute(
+                    """
+                    INSERT INTO builder_events(
+                        event_id, event_type, truth_kind, target_surface, component, run_id, request_id, channel_id,
+                        session_id, human_id, agent_id, actor_id, evidence_lane, severity, status, summary, facts_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        f"evt-user-batch-{index}",
+                        "intent_committed",
+                        "fact",
+                        "spark_intelligence_builder",
+                        "telegram_runtime",
+                        f"run-batch-{index}",
+                        f"turn-batch-{index}",
+                        "telegram",
+                        f"session-batch-{index}",
+                        "human:test",
+                        "agent:test",
+                        "telegram_runtime",
+                        "realworld_validated",
+                        "medium",
+                        "recorded",
+                        "Turn committed.",
+                        json.dumps({"message_text": f"Batch turn {index}"}),
+                    ),
+                )
+            conn.commit()
+
+        output_dir = self.home / "artifacts" / "shadow-replay-batch"
+        exit_code, stdout, stderr = self.run_cli(
+            "memory",
+            "export-shadow-replay-batch",
+            "--home",
+            str(self.home),
+            "--output-dir",
+            str(output_dir),
+            "--conversations-per-file",
+            "1",
+            "--skip-validate",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["file_count"], 2)
+        self.assertEqual(payload["conversation_count"], 2)
+        self.assertEqual(payload["turn_count"], 2)
+        files = sorted(output_dir.glob("*.json"))
+        self.assertEqual(len(files), 2)
+        first_export = json.loads(files[0].read_text(encoding="utf-8"))
+        self.assertEqual(first_export["writable_roles"], ["user"])
+        self.assertEqual(len(first_export["conversations"]), 1)
+
     def test_setup_creates_bootstrap_and_doctor_and_status_report_clean_temp_home(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             home = Path(tempdir)

@@ -65,7 +65,7 @@ from spark_intelligence.identity.service import (
     revoke_session,
 )
 from spark_intelligence.jobs.service import jobs_list, jobs_tick
-from spark_intelligence.memory import export_shadow_replay
+from spark_intelligence.memory import export_shadow_replay, export_shadow_replay_batch
 from spark_intelligence.observability.policy import screen_model_visible_text
 from spark_intelligence.observability.store import build_watchtower_snapshot, close_run, open_run, record_event
 from spark_intelligence.ops import (
@@ -1124,7 +1124,7 @@ def build_parser() -> argparse.ArgumentParser:
     memory_subparsers = memory_parser.add_subparsers(dest="memory_command", required=True)
     memory_export_parser = memory_subparsers.add_parser(
         "export-shadow-replay",
-        help="Export a Spark shadow replay JSON batch for domain-chip-memory validation",
+        help="Export a Spark shadow replay JSON file for domain-chip-memory validation",
     )
     memory_export_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     memory_export_parser.add_argument("--write", help="Replay JSON output path")
@@ -1132,7 +1132,23 @@ def build_parser() -> argparse.ArgumentParser:
     memory_export_parser.add_argument("--event-limit", type=int, default=2000, help="Maximum Builder events to scan")
     memory_export_parser.add_argument("--validator-root", help="domain-chip-memory repo root used for validation")
     memory_export_parser.add_argument("--skip-validate", action="store_true", help="Write the replay without calling validate-spark-shadow-replay")
+    memory_export_parser.add_argument("--run-report", action="store_true", help="Run run-spark-shadow-report after export")
+    memory_export_parser.add_argument("--report-write", help="Optional output path for the generated shadow report JSON")
     memory_export_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_export_batch_parser = memory_subparsers.add_parser(
+        "export-shadow-replay-batch",
+        help="Export a directory of Spark shadow replay JSON files for domain-chip-memory batch validation",
+    )
+    memory_export_batch_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_export_batch_parser.add_argument("--output-dir", help="Replay batch output directory")
+    memory_export_batch_parser.add_argument("--conversation-limit", type=int, default=20, help="Maximum conversations to export")
+    memory_export_batch_parser.add_argument("--event-limit", type=int, default=2000, help="Maximum Builder events to scan")
+    memory_export_batch_parser.add_argument("--conversations-per-file", type=int, default=10, help="Maximum conversations per replay file")
+    memory_export_batch_parser.add_argument("--validator-root", help="domain-chip-memory repo root used for validation")
+    memory_export_batch_parser.add_argument("--skip-validate", action="store_true", help="Write the replay directory without calling validate-spark-shadow-replay-batch")
+    memory_export_batch_parser.add_argument("--run-report", action="store_true", help="Run run-spark-shadow-report-batch after export")
+    memory_export_batch_parser.add_argument("--report-write", help="Optional output path for the generated batch shadow report JSON")
+    memory_export_batch_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     config_parser = subparsers.add_parser("config", help="Inspect and update config values")
     config_subparsers = config_parser.add_subparsers(dest="config_command", required=True)
@@ -2720,13 +2736,54 @@ def handle_memory_export_shadow_replay(args: argparse.Namespace) -> int:
         event_limit=args.event_limit,
         validate=not args.skip_validate,
         validator_root=args.validator_root,
+        run_report=bool(args.run_report),
+        report_write_path=args.report_write,
     )
     print(result.to_json() if args.json else result.to_text())
     if result.conversation_count == 0:
         return 1
+    if args.run_report and _memory_report_failed(result.report):
+        return 1
     if result.validation is None:
         return 0
     return 0 if bool(result.validation.get("valid")) and not (result.validation.get("errors") or []) else 1
+
+
+def handle_memory_export_shadow_replay_batch(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = export_shadow_replay_batch(
+        config_manager=config_manager,
+        state_db=state_db,
+        output_dir=args.output_dir,
+        conversation_limit=args.conversation_limit,
+        event_limit=args.event_limit,
+        conversations_per_file=args.conversations_per_file,
+        validate=not args.skip_validate,
+        validator_root=args.validator_root,
+        run_report=bool(args.run_report),
+        report_write_path=args.report_write,
+    )
+    print(result.to_json() if args.json else result.to_text())
+    if not result.files:
+        return 1
+    if args.run_report and _memory_report_failed(result.report):
+        return 1
+    if result.validation is None:
+        return 0
+    return 0 if bool(result.validation.get("valid")) and not (result.validation.get("errors") or []) else 1
+
+
+def _memory_report_failed(report: dict[str, object] | None) -> bool:
+    if report is None:
+        return True
+    errors = report.get("errors") if isinstance(report, dict) else None
+    if errors:
+        return True
+    valid = report.get("valid") if isinstance(report, dict) else None
+    return valid is False
 
 
 def handle_config_show(args: argparse.Namespace) -> int:
@@ -3146,6 +3203,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_researcher_status(args)
     if args.command == "memory" and args.memory_command == "export-shadow-replay":
         return handle_memory_export_shadow_replay(args)
+    if args.command == "memory" and args.memory_command == "export-shadow-replay-batch":
+        return handle_memory_export_shadow_replay_batch(args)
     if args.command == "config" and args.config_command == "show":
         return handle_config_show(args)
     if args.command == "config" and args.config_command == "set":
