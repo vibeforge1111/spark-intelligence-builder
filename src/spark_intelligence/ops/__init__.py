@@ -1,4 +1,6 @@
 from spark_intelligence.ops.service import (
+    ObserverPacketExportReport,
+    ObserverPacketReport,
     OperatorEventReport,
     OperatorInboxReport,
     OperatorSecurityReport,
@@ -6,6 +8,8 @@ from spark_intelligence.ops.service import (
     build_operator_inbox,
     build_operator_security_report,
     clear_webhook_alert_snooze,
+    export_operator_observer_packets,
+    list_observer_packets,
     list_webhook_alert_events,
     list_operator_events,
     list_webhook_alert_snoozes,
@@ -14,6 +18,8 @@ from spark_intelligence.ops.service import (
 )
 
 __all__ = [
+    "ObserverPacketExportReport",
+    "ObserverPacketReport",
     "OperatorEventReport",
     "OperatorInboxReport",
     "OperatorSecurityReport",
@@ -21,6 +27,8 @@ __all__ = [
     "build_operator_inbox",
     "build_operator_security_report",
     "clear_webhook_alert_snooze",
+    "export_operator_observer_packets",
+    "list_observer_packets",
     "list_webhook_alert_events",
     "list_operator_events",
     "list_webhook_alert_snoozes",

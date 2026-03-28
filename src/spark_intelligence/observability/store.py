@@ -5,6 +5,7 @@ import json
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -1078,6 +1079,36 @@ def recent_resume_richness_guard_records(
     return [_row_to_dict(row) for row in rows]
 
 
+def recent_observer_packet_records(
+    state_db: StateDB,
+    *,
+    limit: int = 50,
+    packet_kind: str | None = None,
+    active_only: bool = True,
+) -> list[dict[str, Any]]:
+    query = """
+        SELECT *
+        FROM observer_packet_records
+    """
+    clauses: list[str] = []
+    params: list[Any] = []
+    if active_only:
+        clauses.append("active = 1")
+    if packet_kind:
+        clauses.append("packet_kind = ?")
+        params.append(packet_kind)
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+    query += " ORDER BY last_seen_at DESC, created_at DESC, packet_id DESC LIMIT ?"
+    params.append(limit)
+    with state_db.connect() as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+    payload = [_row_to_dict(row) for row in rows]
+    for row in payload:
+        row["active"] = bool(row.get("active"))
+    return payload
+
+
 def build_watchtower_snapshot(
     state_db: StateDB,
     *,
@@ -1409,6 +1440,10 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
         "provenance_json",
         "evidence_json",
         "facts_json",
+        "related_event_ids_json",
+        "related_packet_ids_json",
+        "contradiction_ids_json",
+        "content_json",
         "env_refs_json",
         "details_json",
         "before_summary_json",
@@ -2683,6 +2718,47 @@ def _recent_memory_contract_events(state_db: StateDB) -> list[dict[str, Any]]:
 
 
 def build_observer_packets(state_db: StateDB) -> list[dict[str, Any]]:
+    packets = _derive_observer_packets(state_db)
+    _sync_observer_packet_records(state_db, packets=packets)
+    return packets
+
+
+def export_observer_packet_bundle(
+    state_db: StateDB,
+    *,
+    write_path: str | Path | None = None,
+    packet_kind: str | None = None,
+    active_only: bool = True,
+    limit: int = 200,
+) -> dict[str, Any]:
+    build_observer_packets(state_db)
+    packets = recent_observer_packet_records(
+        state_db,
+        limit=max(limit, 1),
+        packet_kind=packet_kind,
+        active_only=active_only,
+    )
+    counts_by_kind: dict[str, int] = {}
+    for packet in packets:
+        kind = str(packet.get("packet_kind") or "unknown")
+        counts_by_kind[kind] = counts_by_kind.get(kind, 0) + 1
+    payload = {
+        "generated_at": utc_now_iso(),
+        "active_only": active_only,
+        "packet_kind_filter": packet_kind,
+        "packet_count": len(packets),
+        "counts_by_kind": counts_by_kind,
+        "packets": packets,
+    }
+    if write_path is not None:
+        destination = Path(write_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+        payload["write_path"] = str(destination)
+    return payload
+
+
+def _derive_observer_packets(state_db: StateDB) -> list[dict[str, Any]]:
     packets: list[dict[str, Any]] = []
     digest_inputs: list[dict[str, Any]] = []
     for incident in _collect_observer_incidents(state_db):
@@ -2726,6 +2802,128 @@ def build_observer_packets(state_db: StateDB) -> list[dict[str, Any]]:
 
 def build_self_observation_packets(state_db: StateDB) -> list[dict[str, Any]]:
     return [packet for packet in build_observer_packets(state_db) if str(packet.get("packet_kind") or "") == "self_observation"]
+
+
+def _sync_observer_packet_records(
+    state_db: StateDB,
+    *,
+    packets: list[dict[str, Any]],
+) -> None:
+    seen_packet_ids = [str(packet.get("packet_id") or "") for packet in packets if str(packet.get("packet_id") or "")]
+    sync_time = utc_now_iso()
+    with state_db.connect() as conn:
+        for packet in packets:
+            packet_id = str(packet.get("packet_id") or "")
+            if not packet_id:
+                continue
+            source_incident_class = None
+            source_item_ref = None
+            source_ref = None
+            content = packet.get("content") or {}
+            if isinstance(content, dict):
+                observed_facts = content.get("observed_facts") or {}
+                if isinstance(observed_facts, dict):
+                    source_incident_class = str(observed_facts.get("incident_class") or "") or None
+                    source_item_ref = str(observed_facts.get("item_ref") or "") or None
+                    source_ref = str(observed_facts.get("source_ref") or "") or None
+            conn.execute(
+                """
+                INSERT INTO observer_packet_records(
+                    packet_id,
+                    packet_kind,
+                    target_surface,
+                    created_at,
+                    created_by,
+                    evidence_lane,
+                    severity,
+                    confidence,
+                    status,
+                    summary,
+                    owner_target,
+                    source_incident_class,
+                    source_item_ref,
+                    source_ref,
+                    active,
+                    first_recorded_at,
+                    last_seen_at,
+                    archived_at,
+                    evidence_json,
+                    related_event_ids_json,
+                    related_packet_ids_json,
+                    contradiction_ids_json,
+                    content_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL, ?, ?, ?, ?, ?)
+                ON CONFLICT(packet_id) DO UPDATE SET
+                    packet_kind = excluded.packet_kind,
+                    target_surface = excluded.target_surface,
+                    created_at = excluded.created_at,
+                    created_by = excluded.created_by,
+                    evidence_lane = excluded.evidence_lane,
+                    severity = excluded.severity,
+                    confidence = excluded.confidence,
+                    status = excluded.status,
+                    summary = excluded.summary,
+                    owner_target = excluded.owner_target,
+                    source_incident_class = excluded.source_incident_class,
+                    source_item_ref = excluded.source_item_ref,
+                    source_ref = excluded.source_ref,
+                    active = 1,
+                    last_seen_at = excluded.last_seen_at,
+                    archived_at = NULL,
+                    evidence_json = excluded.evidence_json,
+                    related_event_ids_json = excluded.related_event_ids_json,
+                    related_packet_ids_json = excluded.related_packet_ids_json,
+                    contradiction_ids_json = excluded.contradiction_ids_json,
+                    content_json = excluded.content_json
+                """,
+                (
+                    packet_id,
+                    str(packet.get("packet_kind") or "unknown"),
+                    str(packet.get("target_surface") or "spark_intelligence_builder"),
+                    str(packet.get("created_at") or sync_time),
+                    str(packet.get("created_by") or "builder_core"),
+                    str(packet.get("evidence_lane") or "realworld_validated"),
+                    str(packet.get("severity") or "medium"),
+                    str(packet.get("confidence") or "medium"),
+                    str(packet.get("status") or "open"),
+                    str(packet.get("summary") or "observer packet"),
+                    str(packet.get("owner_target") or "operator"),
+                    source_incident_class,
+                    source_item_ref,
+                    source_ref,
+                    sync_time,
+                    sync_time,
+                    json.dumps(list(packet.get("evidence_refs") or []), ensure_ascii=True),
+                    json.dumps(list(packet.get("related_event_ids") or []), ensure_ascii=True),
+                    json.dumps(list(packet.get("related_packet_ids") or []), ensure_ascii=True),
+                    json.dumps(list(packet.get("contradiction_ids") or []), ensure_ascii=True),
+                    json.dumps(dict(packet.get("content") or {}), ensure_ascii=True, sort_keys=True),
+                ),
+            )
+        if seen_packet_ids:
+            placeholders = ",".join("?" for _ in seen_packet_ids)
+            conn.execute(
+                f"""
+                UPDATE observer_packet_records
+                SET active = 0,
+                    archived_at = ?,
+                    last_seen_at = CASE WHEN active = 1 THEN ? ELSE last_seen_at END
+                WHERE active = 1
+                  AND packet_id NOT IN ({placeholders})
+                """,
+                (sync_time, sync_time, *seen_packet_ids),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE observer_packet_records
+                SET active = 0,
+                    archived_at = ?,
+                    last_seen_at = CASE WHEN active = 1 THEN ? ELSE last_seen_at END
+                WHERE active = 1
+                """,
+                (sync_time, sync_time),
+            )
 
 
 def _build_self_observation_packet(incident: dict[str, Any]) -> dict[str, Any]:

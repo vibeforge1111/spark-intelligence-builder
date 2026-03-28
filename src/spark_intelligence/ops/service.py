@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from spark_intelligence.adapters.discord.runtime import build_discord_runtime_summary
@@ -16,8 +17,10 @@ from spark_intelligence.identity.service import review_pairings
 from spark_intelligence.observability.checks import evaluate_stop_ship_issues
 from spark_intelligence.observability.store import (
     build_watchtower_snapshot,
+    export_observer_packet_bundle,
     recent_contradictions,
     recent_delivery_records,
+    recent_observer_packet_records,
     recent_policy_gate_records,
     recent_provenance_mutations,
     recent_runs,
@@ -200,6 +203,63 @@ class OperatorWebhookSnoozeReport:
             lines.append(
                 f"- event={row['event']} snoozed_at={row['snoozed_at']} until={row['snooze_until']} "
                 f"remaining_minutes={row['remaining_minutes']}{reason}{suppressed}{commands}"
+            )
+        return "\n".join(lines)
+
+
+@dataclass
+class ObserverPacketReport:
+    rows: list[dict[str, Any]]
+    active_only: bool
+    packet_kind: str | None = None
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "rows": self.rows,
+                "active_only": self.active_only,
+                "packet_kind": self.packet_kind,
+            },
+            indent=2,
+        )
+
+    def to_text(self) -> str:
+        if not self.rows:
+            return "No observer packets recorded."
+        lines = ["Observer packets:"]
+        lines.append(
+            f"- filters: active_only={'yes' if self.active_only else 'no'} packet_kind={self.packet_kind or 'all'}"
+        )
+        for row in self.rows:
+            lines.append(
+                f"- {row['last_seen_at']} kind={row['packet_kind']} severity={row['severity']} "
+                f"status={row['status']} active={'yes' if row.get('active') else 'no'} "
+                f"id={row['packet_id']} summary={row['summary']}"
+            )
+        return "\n".join(lines)
+
+
+@dataclass
+class ObserverPacketExportReport:
+    payload: dict[str, Any]
+
+    def to_json(self) -> str:
+        return json.dumps(self.payload, indent=2)
+
+    def to_text(self) -> str:
+        lines = ["Observer packet export:"]
+        lines.append(
+            f"- packet_count: {int(self.payload.get('packet_count') or 0)} "
+            f"active_only={'yes' if self.payload.get('active_only') else 'no'} "
+            f"packet_kind={self.payload.get('packet_kind_filter') or 'all'}"
+        )
+        if self.payload.get("write_path"):
+            lines.append(f"- write_path: {self.payload['write_path']}")
+        counts_by_kind = self.payload.get("counts_by_kind") or {}
+        if counts_by_kind:
+            lines.append(
+                "- counts_by_kind: "
+                + " ".join(f"{kind}={count}" for kind, count in sorted(counts_by_kind.items()))
             )
         return "\n".join(lines)
 
@@ -563,6 +623,46 @@ def build_operator_security_report(
         "log_limit": limit,
     }
     return OperatorSecurityReport(payload=payload)
+
+
+def list_observer_packets(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    limit: int = 50,
+    packet_kind: str | None = None,
+    active_only: bool = True,
+) -> ObserverPacketReport:
+    build_watchtower_snapshot(state_db)
+    rows = recent_observer_packet_records(
+        state_db,
+        limit=limit,
+        packet_kind=packet_kind,
+        active_only=active_only,
+    )
+    return ObserverPacketReport(rows=rows, active_only=active_only, packet_kind=packet_kind)
+
+
+def export_operator_observer_packets(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    write_path: str | Path | None = None,
+    limit: int = 200,
+    packet_kind: str | None = None,
+    active_only: bool = True,
+) -> ObserverPacketExportReport:
+    resolved_write_path = str(write_path) if write_path is not None else str(
+        config_manager.paths.home / "artifacts" / "observer-packets.json"
+    )
+    payload = export_observer_packet_bundle(
+        state_db,
+        write_path=resolved_write_path,
+        packet_kind=packet_kind,
+        active_only=active_only,
+        limit=limit,
+    )
+    return ObserverPacketExportReport(payload=payload)
 
 
 def _load_channel_alerts(*, config_manager: ConfigManager, state_db: StateDB) -> list[dict[str, Any]]:

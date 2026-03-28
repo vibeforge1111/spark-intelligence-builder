@@ -13,6 +13,7 @@ from spark_intelligence.channel.service import TelegramBotProfile
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.gateway.discord_webhook import DISCORD_WEBHOOK_PATH, handle_discord_webhook
 from spark_intelligence.gateway.whatsapp_webhook import WHATSAPP_WEBHOOK_PATH, handle_whatsapp_webhook
+from spark_intelligence.observability.store import record_event
 
 from tests.test_support import SparkTestCase
 
@@ -1127,6 +1128,72 @@ class CliSmokeTests(SparkTestCase):
             payload["webhook_alerts"][0]["recommended_command"],
             "spark-intelligence gateway traces --event discord_webhook_auth_failed --limit 20",
         )
+
+    def test_operator_can_list_and_export_observer_packets(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="plugin_or_chip_influence_recorded",
+            component="researcher_bridge",
+            summary="unlabeled provenance mutation",
+            request_id="req-cli-observer-packets",
+            actor_id="researcher_bridge",
+            facts={"keepability": "ephemeral_context"},
+            provenance={},
+        )
+
+        list_exit, list_stdout, list_stderr = self.run_cli(
+            "operator",
+            "observer-packets",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+
+        self.assertEqual(list_exit, 0, list_stderr)
+        list_payload = json.loads(list_stdout)
+        self.assertTrue(list_payload["active_only"])
+        self.assertIsNone(list_payload["packet_kind"])
+        self.assertGreaterEqual(len(list_payload["rows"]), 1)
+        self.assertTrue(all(row["active"] for row in list_payload["rows"]))
+        self.assertIn("self_observation", {row["packet_kind"] for row in list_payload["rows"]})
+
+        export_path = self.home / "artifacts" / "observer-packets-export.json"
+        export_exit, export_stdout, export_stderr = self.run_cli(
+            "operator",
+            "export-observer-packets",
+            "--home",
+            str(self.home),
+            "--write",
+            str(export_path),
+            "--reason",
+            "external observer handoff",
+            "--json",
+        )
+
+        self.assertEqual(export_exit, 0, export_stderr)
+        export_payload = json.loads(export_stdout)
+        self.assertEqual(export_payload["write_path"], str(export_path))
+        self.assertGreaterEqual(export_payload["packet_count"], 1)
+        self.assertTrue(export_path.exists())
+        written_payload = json.loads(export_path.read_text(encoding="utf-8"))
+        self.assertEqual(written_payload["packet_count"], export_payload["packet_count"])
+        self.assertEqual(written_payload["counts_by_kind"], export_payload["counts_by_kind"])
+        self.assertEqual(written_payload["packets"], export_payload["packets"])
+
+        history_exit, history_stdout, history_stderr = self.run_cli(
+            "operator",
+            "history",
+            "--home",
+            str(self.home),
+            "--action",
+            "export_observer_packets",
+            "--json",
+        )
+
+        self.assertEqual(history_exit, 0, history_stderr)
+        history_payload = json.loads(history_stdout)
+        self.assertEqual(history_payload["rows"][0]["target_ref"], str(export_path))
+        self.assertEqual(history_payload["rows"][0]["reason"], "external observer handoff")
 
     def test_operator_security_surfaces_discord_ingress_missing(self) -> None:
         setup_exit, _, setup_stderr = self.run_cli(

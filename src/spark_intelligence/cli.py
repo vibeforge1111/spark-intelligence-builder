@@ -78,8 +78,10 @@ from spark_intelligence.observability.policy import screen_model_visible_text
 from spark_intelligence.observability.store import build_watchtower_snapshot, close_run, latest_events_by_type, open_run, record_event
 from spark_intelligence.ops import (
     build_operator_inbox,
+    export_operator_observer_packets,
     build_operator_security_report,
     clear_webhook_alert_snooze,
+    list_observer_packets,
     list_operator_events,
     list_webhook_alert_events,
     list_webhook_alert_snoozes,
@@ -989,6 +991,26 @@ def build_parser() -> argparse.ArgumentParser:
     operator_security_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     operator_security_parser.add_argument("--limit", type=int, default=100, help="Number of recent trace/audit events to scan")
     operator_security_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    operator_observer_packets_parser = operator_subparsers.add_parser(
+        "observer-packets",
+        help="Show persisted observer packet records",
+    )
+    operator_observer_packets_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    operator_observer_packets_parser.add_argument("--limit", type=int, default=50, help="Number of packet rows to show")
+    operator_observer_packets_parser.add_argument("--kind", help="Filter to one packet kind")
+    operator_observer_packets_parser.add_argument("--include-archived", action="store_true", help="Include archived packet rows")
+    operator_observer_packets_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    operator_export_observer_packets_parser = operator_subparsers.add_parser(
+        "export-observer-packets",
+        help="Write an observer packet handoff bundle for external consumption",
+    )
+    operator_export_observer_packets_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    operator_export_observer_packets_parser.add_argument("--limit", type=int, default=200, help="Maximum packets to export")
+    operator_export_observer_packets_parser.add_argument("--kind", help="Filter export to one packet kind")
+    operator_export_observer_packets_parser.add_argument("--include-archived", action="store_true", help="Include archived packet rows")
+    operator_export_observer_packets_parser.add_argument("--write", help="Explicit path for the exported JSON bundle")
+    operator_export_observer_packets_parser.add_argument("--reason", help="Short audit reason for this export")
+    operator_export_observer_packets_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     operator_snooze_webhook_parser = operator_subparsers.add_parser(
         "snooze-webhook-alert",
         help="Temporarily suppress one webhook alert family from operator surfaces",
@@ -1937,6 +1959,51 @@ def handle_operator_security(args: argparse.Namespace) -> int:
     config_manager.bootstrap()
     state_db.initialize()
     report = build_operator_security_report(config_manager=config_manager, state_db=state_db, limit=args.limit)
+    print(report.to_json() if args.json else report.to_text())
+    return 0
+
+
+def handle_operator_observer_packets(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    report = list_observer_packets(
+        config_manager=config_manager,
+        state_db=state_db,
+        limit=args.limit,
+        packet_kind=args.kind,
+        active_only=not args.include_archived,
+    )
+    print(report.to_json() if args.json else report.to_text())
+    return 0
+
+
+def handle_operator_export_observer_packets(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    report = export_operator_observer_packets(
+        config_manager=config_manager,
+        state_db=state_db,
+        write_path=args.write,
+        limit=args.limit,
+        packet_kind=args.kind,
+        active_only=not args.include_archived,
+    )
+    log_operator_event(
+        state_db=state_db,
+        action="export_observer_packets",
+        target_kind="observer_packet_bundle",
+        target_ref=str(report.payload.get("write_path") or "observer-packets"),
+        reason=args.reason,
+        details={
+            "packet_kind": args.kind,
+            "active_only": not args.include_archived,
+            "packet_count": report.payload.get("packet_count"),
+        },
+    )
     print(report.to_json() if args.json else report.to_text())
     return 0
 
@@ -3504,6 +3571,10 @@ def main(argv: list[str] | None = None) -> int:
         return handle_operator_inbox(args)
     if args.command == "operator" and args.operator_command == "security":
         return handle_operator_security(args)
+    if args.command == "operator" and args.operator_command == "observer-packets":
+        return handle_operator_observer_packets(args)
+    if args.command == "operator" and args.operator_command == "export-observer-packets":
+        return handle_operator_export_observer_packets(args)
     if args.command == "operator" and args.operator_command == "snooze-webhook-alert":
         return handle_operator_snooze_webhook_alert(args)
     if args.command == "operator" and args.operator_command == "webhook-alert-snoozes":

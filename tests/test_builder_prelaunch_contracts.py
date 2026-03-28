@@ -18,6 +18,7 @@ from spark_intelligence.observability.store import (
     open_run,
     recent_contradictions,
     recent_memory_lane_records,
+    recent_observer_packet_records,
     recent_policy_gate_records,
     record_environment_snapshot,
     record_event,
@@ -608,6 +609,54 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("reflection_digest", packet_panel["counts_by_kind"])
         self.assertIn("security_advisory", packet_panel["counts_by_kind"])
         self.assertTrue(any(packet.get("evidence_refs") for packet in packet_panel["recent_packets"]))
+
+    def test_watchtower_persists_observer_packet_records(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="plugin_or_chip_influence_recorded",
+            component="researcher_bridge",
+            summary="unlabeled provenance mutation",
+            request_id="req-persisted-observer-packets",
+            actor_id="researcher_bridge",
+            facts={"keepability": "ephemeral_context"},
+            provenance={},
+        )
+        record_pairing_context(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            context={
+                "telegram_username": "alice",
+                "chat_id": "chat-1",
+                "last_message_text": "richer state",
+                "last_seen_at": "2026-03-28T00:00:00+00:00",
+            },
+        )
+        record_pairing_context(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            context={"last_seen_at": "2026-03-28T00:05:00+00:00"},
+        )
+
+        snapshot = build_watchtower_snapshot(self.state_db)
+        rows = recent_observer_packet_records(self.state_db, limit=20)
+
+        self.assertGreaterEqual(snapshot["panels"]["observer_packets"]["counts"]["total"], 4)
+        self.assertTrue(rows)
+        self.assertTrue(all(isinstance(row["active"], bool) for row in rows))
+        self.assertTrue(all(row["active"] for row in rows))
+        packet_kinds = {str(row["packet_kind"]) for row in rows}
+        self.assertIn("self_observation", packet_kinds)
+        self.assertIn("reflection_digest", packet_kinds)
+        provenance_rows = [
+            row for row in rows if str(row.get("source_incident_class") or "") == "provenance_contamination"
+        ]
+        self.assertTrue(provenance_rows)
+        self.assertTrue(any(str(row.get("source_item_ref") or "") for row in provenance_rows))
+        self.assertTrue(any(str(row.get("source_ref") or "") for row in provenance_rows))
+        self.assertTrue(all(isinstance(row.get("first_recorded_at"), str) for row in rows))
+        self.assertTrue(all(isinstance(row.get("last_seen_at"), str) for row in rows))
 
     def test_stop_ship_flags_invalid_memory_contract_events(self) -> None:
         record_event(
