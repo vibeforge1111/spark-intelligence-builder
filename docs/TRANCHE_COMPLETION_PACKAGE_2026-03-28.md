@@ -81,7 +81,7 @@ These classifications are also surfaced through operator security and doctor out
 
 High-risk bridge and delivery rewrites now also preserve raw-vs-mutated text refs when Builder changes output before delivery. Stop-ship now fails if a mutated classified event omits those refs.
 
-Builder core now also emits bounded `self_observation` packets from typed observer incidents. These packets stay on the core side of the hybrid boundary: fact-only, evidence-backed, and consumable by Watchtower, operator summaries, or a later observer chip without inventing diagnosis in core.
+Builder core now also emits a bounded observer packet layer from typed observer incidents. The packet family stays on the core side of the hybrid boundary, remains evidence-backed and proposal-oriented, and is consumable by Watchtower, operator summaries, or a later observer chip without treating free-form diagnosis as settled truth.
 
 ### Observer packet family completion
 
