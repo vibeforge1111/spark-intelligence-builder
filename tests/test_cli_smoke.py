@@ -1198,6 +1198,9 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(history_payload["rows"][0]["reason"], "external observer handoff")
 
     def test_operator_personality_reports_overview_and_human_state(self) -> None:
+        chip_root = create_fake_hook_chip(self.home, chip_key="spark-personality")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+        self.config_manager.set_path("spark.chips.active_keys", ["spark-personality"])
         deltas = detect_and_persist_nl_preferences(
             human_id="human:test",
             user_message="be more direct and stop hedging",
@@ -1230,6 +1233,8 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(overview_payload["overview"]["counts"]["trait_profiles"], 1)
         self.assertEqual(overview_payload["overview"]["counts"]["active_profiles"], 1)
         self.assertEqual(overview_payload["overview"]["counts"]["mirror_drift"], 0)
+        self.assertTrue(overview_payload["overview"]["personality_import"]["ready"])
+        self.assertEqual(overview_payload["overview"]["personality_import"]["active_chip_keys"], ["spark-personality"])
 
         detail_exit, detail_stdout, detail_stderr = self.run_cli(
             "operator",
@@ -1250,6 +1255,7 @@ class CliSmokeTests(SparkTestCase):
         self.assertIn("directness", detail_payload["user_deltas"])
         self.assertEqual(detail_payload["observations"][0]["user_state"], "frustrated")
         self.assertEqual(detail_payload["observation_states"]["frustrated"], 1)
+        self.assertTrue(detail_payload["overview"]["personality_import"]["ready"])
 
     def test_operator_security_surfaces_discord_ingress_missing(self) -> None:
         setup_exit, _, setup_stderr = self.run_cli(

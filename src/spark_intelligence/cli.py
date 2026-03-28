@@ -2068,6 +2068,7 @@ def handle_operator_personality(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
+    sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
     report = build_personality_report(
         config_manager=config_manager,
         state_db=state_db,

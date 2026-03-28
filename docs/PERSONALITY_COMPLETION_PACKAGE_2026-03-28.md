@@ -29,6 +29,7 @@ Builder now also surfaces personality-hook import readiness in attachment snapsh
 - Added an operator CLI surface:
   - `spark-intelligence operator personality`
   - `spark-intelligence operator personality --human-id <human_id>`
+  - operator personality now refreshes the attachment snapshot before reporting import readiness
   - overview now includes personality import readiness and recent import attempts
   - per-human view now includes recent import attempts for that canonical agent
   - per-human text view now includes saved persona summary, behavioral rules, and import provenance
