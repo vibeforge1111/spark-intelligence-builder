@@ -31,7 +31,12 @@ from spark_intelligence.llm.direct_provider import (
     DirectProviderRequest,
     execute_direct_provider_prompt,
 )
-from spark_intelligence.observability.store import record_environment_snapshot, record_event, record_quarantine
+from spark_intelligence.observability.store import (
+    build_text_mutation_facts,
+    record_environment_snapshot,
+    record_event,
+    record_quarantine,
+)
 from spark_intelligence.observability.store import latest_events_by_type, latest_snapshots_by_surface
 from spark_intelligence.personality import (
     build_personality_context,
@@ -902,6 +907,19 @@ def _bridge_event_facts(
     return facts
 
 
+def _bridge_reply_mutation_facts(
+    *,
+    raw_text: str,
+    mutated_text: str,
+    mutation_actions: list[str] | None = None,
+) -> dict[str, Any]:
+    return build_text_mutation_facts(
+        raw_text=raw_text,
+        mutated_text=mutated_text,
+        mutation_actions=mutation_actions,
+    )
+
+
 def _runtime_safe_bridge_failure_message(result: ResearcherBridgeResult) -> str:
     failure_kind = str(result.routing_decision or result.mode or "bridge_failure")
     if result.output_keepability == "operator_debug_only":
@@ -1564,23 +1582,26 @@ def build_researcher_reply(
                         fallback_max_chars=int(routing_policy["conversational_fallback_max_chars"]),
                     )
                 ):
+                    raw_reply_text = _render_direct_provider_chat_fallback(
+                        state_db=state_db,
+                        provider=provider_selection.provider,
+                        user_message=user_message,
+                        channel_kind=channel_kind,
+                        attachment_context=attachment_context,
+                        active_chip_evaluate=active_chip_evaluate,
+                        personality_profile=personality_profile,
+                        personality_context_extra=personality_context_extra,
+                        run_id=run_id,
+                        request_id=request_id,
+                        trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+                    )
                     cleaned_reply, removed_residue = _clean_messaging_reply_with_metadata(
-                        _render_direct_provider_chat_fallback(
-                            state_db=state_db,
-                            provider=provider_selection.provider,
-                            user_message=user_message,
-                            channel_kind=channel_kind,
-                            attachment_context=attachment_context,
-                            active_chip_evaluate=active_chip_evaluate,
-                            personality_profile=personality_profile,
-                            personality_context_extra=personality_context_extra,
-                            run_id=run_id,
-                            request_id=request_id,
-                            trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
-                        ),
+                        raw_reply_text,
                         channel_kind=channel_kind,
                     )
+                    reply_mutation_actions: list[str] = []
                     if removed_residue:
+                        reply_mutation_actions.append("strip_operational_residue")
                         record_quarantine(
                             state_db,
                             run_id=run_id,
@@ -1593,6 +1614,8 @@ def build_researcher_reply(
                             payload_preview="\n".join(removed_residue)[:160],
                             provenance={"channel_kind": channel_kind, "trace_ref": f"trace:{agent_id}:{human_id}:{request_id}"},
                         )
+                    if cleaned_reply != raw_reply_text and not reply_mutation_actions:
+                        reply_mutation_actions.append("rewrite_reply")
                     reply_text = cleaned_reply
                     trace_ref = str(advisory.get("trace_path") or advisory.get("trace_id") or "trace:missing")
                     evidence_summary = "status=under_supported provider_fallback=direct_http_chat"
@@ -1611,6 +1634,8 @@ def build_researcher_reply(
                         human_id=human_id,
                         agent_id=agent_id,
                     )
+                    if reply_text != cleaned_reply:
+                        reply_mutation_actions.append("apply_swarm_recommendation")
                     output_keepability, promotion_disposition = _bridge_output_classification(
                         mode=f"external_{runtime_source}",
                         routing_decision=routing_decision,
@@ -1647,6 +1672,11 @@ def build_researcher_reply(
                             active_chip_evaluate_used=active_chip_evaluate_used,
                             keepability=output_keepability,
                             promotion_disposition=promotion_disposition,
+                            extra=_bridge_reply_mutation_facts(
+                                raw_text=raw_reply_text,
+                                mutated_text=reply_text,
+                                mutation_actions=reply_mutation_actions,
+                            ),
                         ),
                     )
                     return ResearcherBridgeResult(
@@ -1692,8 +1722,11 @@ def build_researcher_reply(
                     reply_text, evidence_summary, trace_ref = _render_reply_from_execution(execution, advisory)
                 else:
                     reply_text, evidence_summary, trace_ref = _render_reply_from_advisory(advisory)
+                raw_reply_text = reply_text
                 reply_text, removed_residue = _clean_messaging_reply_with_metadata(reply_text, channel_kind=channel_kind)
+                reply_mutation_actions: list[str] = []
                 if removed_residue:
+                    reply_mutation_actions.append("strip_operational_residue")
                     record_quarantine(
                         state_db,
                         run_id=run_id,
@@ -1706,11 +1739,14 @@ def build_researcher_reply(
                         payload_preview="\n".join(removed_residue)[:160],
                         provenance={"channel_kind": channel_kind, "trace_ref": trace_ref},
                     )
+                if reply_text != raw_reply_text and not reply_mutation_actions:
+                    reply_mutation_actions.append("rewrite_reply")
                 base_routing_decision = (
                     "provider_execution"
                     if provider_selection.provider and _supports_direct_or_cli_execution(provider_selection)
                     else "researcher_advisory"
                 )
+                swarm_input_reply = reply_text
                 reply_text, evidence_summary, escalation_hint, routing_decision = _maybe_apply_swarm_recommendation(
                     config_manager=config_manager,
                     state_db=state_db,
@@ -1726,6 +1762,8 @@ def build_researcher_reply(
                     human_id=human_id,
                     agent_id=agent_id,
                 )
+                if reply_text != swarm_input_reply:
+                    reply_mutation_actions.append("apply_swarm_recommendation")
                 output_keepability, promotion_disposition = _bridge_output_classification(
                     mode=f"external_{runtime_source}",
                     routing_decision=routing_decision,
@@ -1764,6 +1802,11 @@ def build_researcher_reply(
                         active_chip_evaluate_used=active_chip_evaluate_used,
                         keepability=output_keepability,
                         promotion_disposition=promotion_disposition,
+                        extra=_bridge_reply_mutation_facts(
+                            raw_text=raw_reply_text,
+                            mutated_text=reply_text,
+                            mutation_actions=reply_mutation_actions,
+                        ),
                     ),
                 )
                 return ResearcherBridgeResult(

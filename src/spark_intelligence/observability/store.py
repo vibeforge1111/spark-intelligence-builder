@@ -1150,6 +1150,30 @@ def payload_hash(payload: Any) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+def build_text_mutation_facts(
+    *,
+    raw_text: str | None,
+    mutated_text: str | None,
+    mutation_actions: list[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any]:
+    actions = [str(item) for item in list(mutation_actions or []) if str(item)]
+    text_mutated = bool(actions) or (
+        raw_text is not None and mutated_text is not None and str(raw_text) != str(mutated_text)
+    )
+    facts: dict[str, Any] = {
+        "text_mutated": text_mutated,
+    }
+    if raw_text is not None:
+        facts["raw_text_ref"] = f"text:sha256:{payload_hash(str(raw_text))}"
+        facts["raw_text_length"] = len(str(raw_text))
+    if mutated_text is not None:
+        facts["mutated_text_ref"] = f"text:sha256:{payload_hash(str(mutated_text))}"
+        facts["mutated_text_length"] = len(str(mutated_text))
+    if actions:
+        facts["mutation_actions"] = actions
+    return facts
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 

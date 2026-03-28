@@ -567,6 +567,9 @@ class DiscordWebhookIngressTests(SparkTestCase):
         self.assertEqual(facts["bridge_mode"], "external_autodiscovered")
         self.assertEqual(facts["keepability"], "ephemeral_context")
         self.assertEqual(facts["promotion_disposition"], "not_promotable")
+        self.assertTrue(facts["text_mutated"])
+        self.assertIn("truncate_reply", facts["mutation_actions"])
+        self.assertNotEqual(facts["raw_text_ref"], facts["mutated_text_ref"])
 
     def test_handles_valid_dm_payload(self) -> None:
         self._add_discord_channel(allow_legacy_message_webhook=True)

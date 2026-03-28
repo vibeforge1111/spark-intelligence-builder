@@ -14,7 +14,7 @@ from spark_intelligence.gateway.guardrails import prepare_outbound_text
 from spark_intelligence.gateway import resolve_simulated_dm
 from spark_intelligence.gateway.routes import GatewayRouteRegistration, GatewayRouteRegistry
 from spark_intelligence.gateway.tracing import append_gateway_trace
-from spark_intelligence.observability.store import close_run, open_run, record_event
+from spark_intelligence.observability.store import build_text_mutation_facts, close_run, open_run, record_event
 from spark_intelligence.state.db import StateDB
 
 
@@ -161,6 +161,7 @@ def handle_discord_webhook(
         bridge_mode=str(result.detail.get("bridge_mode") or "") or None,
         keepability=str(result.detail.get("output_keepability") or "") or None,
         promotion_disposition=str(result.detail.get("promotion_disposition") or "") or None,
+        raw_text=str(result.detail.get("response_text") or ""),
         delivered_text=str(result.detail.get("response_text") or ""),
     )
     close_run(
@@ -335,10 +336,16 @@ def _handle_discord_interaction_payload(
         run_id=run.run_id,
         origin_surface="discord_webhook",
     )
-    response = _discord_interaction_message(
-        str(bridge.detail.get("response_text") or "Spark did not generate a reply."),
+    prepared = prepare_outbound_text(
+        text=str(bridge.detail.get("response_text") or "Spark did not generate a reply."),
         bridge_mode=str(bridge.detail.get("bridge_mode") or ""),
-        ephemeral=True,
+        max_reply_chars=DISCORD_MAX_INTERACTION_RESPONSE_CHARS,
+        redact_secret_like_replies=True,
+    )
+    response = GatewayWebhookResponse(
+        status_code=200,
+        body=json.dumps({"type": 4, "data": {"content": prepared["text"], "flags": 64}}),
+        content_type="application/json",
     )
     append_gateway_trace(
         config_manager,
@@ -366,7 +373,9 @@ def _handle_discord_interaction_payload(
         bridge_mode=str(bridge.detail.get("bridge_mode") or "") or None,
         keepability=str(bridge.detail.get("output_keepability") or "") or None,
         promotion_disposition=str(bridge.detail.get("promotion_disposition") or "") or None,
-        delivered_text=str(bridge.detail.get("response_text") or ""),
+        raw_text=str(bridge.detail.get("response_text") or ""),
+        delivered_text=str(prepared["text"] or ""),
+        mutation_actions=list(prepared["actions"]),
     )
     close_run(
         state_db,
@@ -471,7 +480,9 @@ def _record_discord_delivery(
     bridge_mode: str | None,
     keepability: str | None,
     promotion_disposition: str | None,
+    raw_text: str,
     delivered_text: str,
+    mutation_actions: list[str] | None = None,
 ) -> None:
     facts = {
         "discord_user_id": discord_user_id,
@@ -484,6 +495,11 @@ def _record_discord_delivery(
         "promotion_disposition": promotion_disposition,
         "response_length": len(delivered_text),
         "delivered_text": delivered_text,
+        **build_text_mutation_facts(
+            raw_text=raw_text,
+            mutated_text=delivered_text,
+            mutation_actions=mutation_actions,
+        ),
     }
     record_event(
         state_db,

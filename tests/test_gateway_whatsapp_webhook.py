@@ -347,6 +347,9 @@ class WhatsAppWebhookIngressTests(SparkTestCase):
         self.assertEqual(facts["bridge_mode"], "external_autodiscovered")
         self.assertEqual(facts["keepability"], "ephemeral_context")
         self.assertEqual(facts["promotion_disposition"], "not_promotable")
+        self.assertFalse(facts["text_mutated"])
+        self.assertTrue(str(facts["raw_text_ref"]).startswith("text:sha256:"))
+        self.assertEqual(facts["raw_text_ref"], facts["mutated_text_ref"])
         self.assertTrue(whatsapp_events[0]["run_id"])
 
     def test_ignores_status_event_payload(self) -> None:

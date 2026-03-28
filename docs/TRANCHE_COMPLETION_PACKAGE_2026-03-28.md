@@ -57,6 +57,7 @@ Added explicit Builder-core visibility for the new tranche surfaces:
 - Watchtower `session_integrity` panel
 - Watchtower `observer_incidents` panel
 - stop-ship `stop_ship_reset_integrity`
+- raw-vs-mutated text refs on guarded bridge and delivery mutation paths
 
 The panel now shows:
 
@@ -75,15 +76,17 @@ The observer panel now classifies:
 
 These classifications are also surfaced through operator security and doctor output.
 
+High-risk bridge and delivery rewrites now also preserve raw-vs-mutated text refs when Builder changes output before delivery. Stop-ship now fails if a mutated classified event omits those refs.
+
 ## Verification
 
 Validated in repo with:
 
-- `python -m pytest tests/test_memory_orchestrator.py tests/test_operator_pairing_flows.py tests/test_builder_prelaunch_contracts.py`
+- `python -m pytest tests/test_builder_prelaunch_contracts.py tests/test_memory_orchestrator.py tests/test_operator_pairing_flows.py tests/test_gateway_discord_webhook.py tests/test_gateway_whatsapp_webhook.py`
 
 Result:
 
-- `69 passed`
+- `107 passed`
 
 ## Still Deferred
 
@@ -91,7 +94,6 @@ This package does not claim to finish all remaining doctrine items.
 
 Still intentionally deferred:
 
-- broader raw-vs-mutated reference preservation on more high-risk mutation paths
 - downstream memory-domain contract enforcement outside this repo
 - self-observer packet layer / de facto tranche 3
 

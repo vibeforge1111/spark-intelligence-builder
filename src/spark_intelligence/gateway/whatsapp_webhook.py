@@ -8,7 +8,7 @@ from typing import Any
 
 from spark_intelligence.adapters.whatsapp.runtime import simulate_whatsapp_message
 from spark_intelligence.config.loader import ConfigManager
-from spark_intelligence.observability.store import close_run, open_run, record_event
+from spark_intelligence.observability.store import build_text_mutation_facts, close_run, open_run, record_event
 from spark_intelligence.gateway.routes import GatewayRouteRegistration, GatewayRouteRegistry
 from spark_intelligence.gateway.tracing import append_gateway_trace
 from spark_intelligence.state.db import StateDB
@@ -246,6 +246,7 @@ def _handle_whatsapp_event_post(
         bridge_mode=str(result.detail.get("bridge_mode") or "") or None,
         keepability=str(result.detail.get("output_keepability") or "") or None,
         promotion_disposition=str(result.detail.get("promotion_disposition") or "") or None,
+        raw_text=str(result.detail.get("response_text") or ""),
         delivered_text=str(result.detail.get("response_text") or ""),
     )
     close_run(
@@ -415,6 +416,7 @@ def _record_whatsapp_delivery(
     bridge_mode: str | None,
     keepability: str | None,
     promotion_disposition: str | None,
+    raw_text: str,
     delivered_text: str,
 ) -> None:
     facts = {
@@ -428,6 +430,10 @@ def _record_whatsapp_delivery(
         "promotion_disposition": promotion_disposition,
         "response_length": len(delivered_text),
         "delivered_text": delivered_text,
+        **build_text_mutation_facts(
+            raw_text=raw_text,
+            mutated_text=delivered_text,
+        ),
     }
     record_event(
         state_db,

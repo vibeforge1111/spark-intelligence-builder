@@ -19,7 +19,7 @@ from spark_intelligence.gateway.guardrails import (
 )
 from spark_intelligence.gateway.tracing import append_gateway_trace, append_outbound_audit
 from spark_intelligence.identity.service import consume_pairing_welcome, record_pairing_context, resolve_inbound_dm
-from spark_intelligence.observability.store import close_run, open_run, record_event
+from spark_intelligence.observability.store import build_text_mutation_facts, close_run, open_run, record_event
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply, record_researcher_bridge_result
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD
@@ -929,6 +929,11 @@ def _send_telegram_reply(
             "delivered_text": guarded["text"],
             "keepability": output_keepability,
             "promotion_disposition": promotion_disposition,
+            **build_text_mutation_facts(
+                raw_text=text,
+                mutated_text=guarded["text"],
+                mutation_actions=guarded["actions"],
+            ),
         },
     )
     try:
@@ -979,6 +984,11 @@ def _send_telegram_reply(
             "delivered_text": guarded["text"] if ok else None,
             "keepability": output_keepability,
             "promotion_disposition": promotion_disposition,
+            **build_text_mutation_facts(
+                raw_text=text,
+                mutated_text=guarded["text"] if ok else guarded["text"],
+                mutation_actions=guarded["actions"],
+            ),
         },
     )
     append_outbound_audit(

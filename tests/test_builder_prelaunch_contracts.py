@@ -890,6 +890,25 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertFalse(issues["stop_ship_keepability_rules"].ok)
         self.assertIn("keepability or promotion classification", issues["stop_ship_keepability_rules"].detail)
 
+    def test_stop_ship_flags_mutated_delivery_without_raw_and_mutated_refs(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="delivery_succeeded",
+            component="discord_webhook",
+            summary="discord webhook reply delivered with mutation",
+            actor_id="test",
+            facts={
+                "bridge_mode": "external_autodiscovered",
+                "keepability": "ephemeral_context",
+                "promotion_disposition": "not_promotable",
+                "text_mutated": True,
+            },
+        )
+
+        issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
+        self.assertFalse(issues["stop_ship_keepability_rules"].ok)
+        self.assertIn("raw-vs-mutated text refs", issues["stop_ship_keepability_rules"].detail)
+
     def test_record_researcher_bridge_result_sanitizes_failure_runtime_message(self) -> None:
         record_researcher_bridge_result(
             state_db=self.state_db,

@@ -562,6 +562,13 @@ def _keepability_issue(state_db: StateDB) -> StopShipIssue:
         artifact_lane = str(lane_record.get("artifact_lane") or "")
         if artifact_lane != _expected_artifact_lane(keepability):
             invalid_lane_records.append(lane_record)
+    missing_mutation_refs = []
+    for event in classified_events:
+        facts = event.get("facts_json") or {}
+        if not isinstance(facts, dict) or not bool(facts.get("text_mutated")):
+            continue
+        if not facts.get("raw_text_ref") or not facts.get("mutated_text_ref"):
+            missing_mutation_refs.append(event)
     if missing:
         return StopShipIssue(
             name="stop_ship_keepability_rules",
@@ -598,6 +605,16 @@ def _keepability_issue(state_db: StateDB) -> StopShipIssue:
             ok=False,
             detail=(
                 f"{len(invalid_lane_records)} classified artifact(s) were stored in the wrong memory lane."
+            ),
+            severity="high",
+        )
+    if missing_mutation_refs:
+        return StopShipIssue(
+            name="stop_ship_keepability_rules",
+            ok=False,
+            detail=(
+                f"{len(missing_mutation_refs)} high-risk mutated bridge or delivery event(s) "
+                "lack raw-vs-mutated text refs."
             ),
             severity="high",
         )
