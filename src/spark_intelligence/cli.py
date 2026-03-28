@@ -3352,19 +3352,32 @@ def _run_browser_hook(
     )
 
     hook_output = execution.output if isinstance(execution.output, dict) else {}
+    hook_status = _normalize_browser_hook_status(hook_output)
+    hook_error = hook_output.get("error") if isinstance(hook_output.get("error"), dict) else None
+    hook_failed = (not execution.ok) or bool(hook_error) or (
+        hook_status is not None and hook_status not in {"succeeded", "completed", "ok", "success"}
+    )
     display_payload = {
-        "status": "completed",
+        "status": "failed" if hook_failed else "completed",
         "chip_key": execution.chip_key,
         "hook": hook_name,
         "request_id": request_id,
         "payload_path": str(payload_path),
         "result_path": str(result_path),
+        "hook_status": hook_status or ("failed" if hook_failed else "succeeded"),
+        "approval_state": hook_output.get("approval_state") if isinstance(hook_output.get("approval_state"), str) else None,
         "result": hook_output.get("result") if isinstance(hook_output.get("result"), dict) else {},
         "artifacts": hook_output.get("artifacts") if isinstance(hook_output.get("artifacts"), list) else [],
         "provenance": hook_output.get("provenance") if isinstance(hook_output.get("provenance"), dict) else {},
+        "error": hook_error,
         "execution": result_payload,
     }
-    display_text = json.dumps(display_payload, indent=2, ensure_ascii=True) if args.json else render_result(display_payload["result"])
+    if args.json:
+        display_text = json.dumps(display_payload, indent=2, ensure_ascii=True)
+    elif hook_failed:
+        display_text = _render_browser_hook_failure(display_payload)
+    else:
+        display_text = render_result(display_payload["result"])
 
     screened_output = screen_chip_hook_text(
         state_db=state_db,
@@ -3420,13 +3433,35 @@ def _run_browser_hook(
         target_ref=target_ref,
         reason=f"Operator executed {hook_name}.",
         details={
-            "status": "completed",
+            "status": "failed" if hook_failed else "completed",
             "chip_key": execution.chip_key,
             "hook": hook_name,
             "payload_path": str(payload_path),
             "result_path": str(result_path),
+            "error_code": hook_error.get("code") if hook_error else None,
         },
     )
+    if hook_failed:
+        close_run(
+            state_db,
+            run_id=run.run_id,
+            status="stalled",
+            close_reason="browser_hook_failed",
+            summary="Browser CLI hook returned a governed failure response.",
+            facts={
+                "chip_key": execution.chip_key,
+                "hook": hook_name,
+                "payload_path": str(payload_path),
+                "result_path": str(result_path),
+                "error_code": hook_error.get("code") if hook_error else None,
+            },
+        )
+        if args.json:
+            print(display_text)
+        else:
+            print(display_text, file=sys.stderr)
+        return 1
+
     close_run(
         state_db,
         run_id=run.run_id,
@@ -3442,6 +3477,21 @@ def _run_browser_hook(
     )
     print(display_text)
     return 0
+
+
+def _normalize_browser_hook_status(hook_output: dict[str, object]) -> str | None:
+    value = hook_output.get("status")
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    return normalized or None
+
+
+def _render_browser_hook_failure(display_payload: dict[str, object]) -> str:
+    error = display_payload.get("error") if isinstance(display_payload.get("error"), dict) else {}
+    code = str(error.get("code") or "BROWSER_HOOK_FAILED")
+    message = str(error.get("message") or "The browser hook returned a governed failure response.")
+    return f"Browser hook failed: {code}: {message}"
 
 
 def handle_browser_status(args: argparse.Namespace) -> int:
