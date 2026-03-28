@@ -12,6 +12,34 @@ from tests.test_support import SparkTestCase, create_fake_hook_chip
 
 
 class AttachmentHookTests(SparkTestCase):
+    def test_attachments_run_hook_allows_browser_status_hook(self) -> None:
+        chip_root = create_fake_hook_chip(self.home, chip_key="spark-browser")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+
+        activate_exit, _, activate_stderr = self.run_cli(
+            "attachments",
+            "activate-chip",
+            "spark-browser",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(activate_exit, 0, activate_stderr)
+
+        hook_exit, hook_stdout, hook_stderr = self.run_cli(
+            "attachments",
+            "run-hook",
+            "browser.status",
+            "--home",
+            str(self.home),
+            "--json",
+            "--payload-json",
+            json.dumps({"request_id": "browser-status-test", "target": {"browser_family": "brave"}}),
+        )
+        self.assertEqual(hook_exit, 0, hook_stderr)
+        payload = json.loads(hook_stdout)
+        self.assertEqual(payload["hook"], "browser.status")
+        self.assertEqual(payload["output"]["result"]["browser"]["family"], "brave")
+
     def test_operator_handoff_observer_runs_packets_hook_and_records_handoff(self) -> None:
         chip_root = create_fake_hook_chip(self.home)
         self.config_manager.set_path("spark.chips.roots", [str(chip_root)])

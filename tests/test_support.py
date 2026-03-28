@@ -56,7 +56,19 @@ from pathlib import Path
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("hook", choices=["evaluate", "suggest", "packets", "watchtower", "identity", "personality"])
+    parser.add_argument(
+        "hook",
+        choices=[
+            "evaluate",
+            "suggest",
+            "packets",
+            "watchtower",
+            "identity",
+            "personality",
+            "browser.status",
+            "browser.page.snapshot",
+        ],
+    )
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
@@ -162,6 +174,101 @@ def main() -> int:
                 },
             },
         }
+    elif args.hook == "browser.status":
+        target = payload.get("target") or {}
+        result = {
+            "status": "succeeded",
+            "risk_class": payload.get("risk_class") or "read_only",
+            "approval_state": "not_required",
+            "result": {
+                "extension": {
+                    "installed": True,
+                    "running": True,
+                    "version": "0.1.0",
+                },
+                "browser": {
+                    "family": target.get("browser_family") or "brave",
+                    "page_scope": "active_tab_only",
+                },
+                "profile": {
+                    "key": target.get("profile_key") or "spark-default",
+                    "mode": target.get("profile_mode") or "dedicated",
+                },
+                "native_host": {
+                    "connectivity": "connected",
+                    "supported": True,
+                    "version": "0.1.0",
+                },
+            },
+            "artifacts": [],
+            "provenance": {
+                "browser_family": target.get("browser_family") or "brave",
+                "profile_key": target.get("profile_key") or "spark-default",
+                "extension_version": "0.1.0",
+                "native_host_version": "0.1.0",
+                "executed_at": "2026-03-29T12:00:00.000Z",
+                "origin": target.get("origin"),
+                "tab_id": target.get("tab_id"),
+            },
+            "policy_flags": {
+                "sensitive_domain": False,
+                "redacted_fields": [],
+                "quarantine_recommended": False,
+            },
+            "error": None,
+        }
+    elif args.hook == "browser.page.snapshot":
+        target = payload.get("target") or {}
+        policy_context = payload.get("policy_context") or {}
+        sensitive_domain = bool(policy_context.get("sensitive_domain"))
+        result = {
+            "status": "succeeded",
+            "risk_class": payload.get("risk_class") or "read_only",
+            "approval_state": "not_required",
+            "result": {
+                "title": "Spark Browser Guide",
+                "origin": target.get("origin") or "https://docs.example.com/guide",
+                "visible_text": {
+                    "summary": "[redacted]" if sensitive_domain else "Governed browser hooks keep the browsing layer bounded and auditable.",
+                    "excerpt": "[redacted]" if sensitive_domain else "Bounded page capture for Spark Builder.",
+                    "redacted": sensitive_domain,
+                },
+                "forms_summary": {
+                    "form_count": 1,
+                },
+                "important_controls": [
+                    {"kind": "link", "label": "Docs"},
+                    {"kind": "button", "label": "Continue"},
+                ],
+                "sensitive_surface_hints": {
+                    "likely_sensitive_domain": sensitive_domain,
+                },
+            },
+            "artifacts": [
+                {
+                    "type": "page_snapshot",
+                    "path": "artifacts/browser/page_snapshot.json",
+                }
+            ],
+            "provenance": {
+                "browser_family": target.get("browser_family") or "brave",
+                "profile_key": target.get("profile_key") or "spark-default",
+                "extension_version": "0.1.0",
+                "native_host_version": "0.1.0",
+                "executed_at": "2026-03-29T12:00:00.000Z",
+                "origin": target.get("origin"),
+                "tab_id": target.get("tab_id"),
+            },
+            "policy_flags": {
+                "sensitive_domain": sensitive_domain,
+                "redacted_fields": [
+                    "result.visible_text.summary",
+                    "result.visible_text.excerpt",
+                ] if sensitive_domain else [],
+                "quarantine_recommended": sensitive_domain,
+            },
+            "error": None,
+        }
     else:
         result = {"result": {}}
 
@@ -182,7 +289,7 @@ if __name__ == "__main__":
                 "chip_name": chip_key,
                 "domain": "startup-advisory",
                 "description": "Fake startup chip for hook tests.",
-                "capabilities": ["evaluate", "suggest", "packets", "watchtower", "identity", "personality"],
+                "capabilities": ["evaluate", "suggest", "packets", "watchtower", "identity", "personality", "browser.status", "browser.page.snapshot"],
                 "commands": {
                     "evaluate": ["python", "-m", "fake_startup_chip.chip_hooks", "evaluate"],
                     "suggest": ["python", "-m", "fake_startup_chip.chip_hooks", "suggest"],
@@ -190,6 +297,8 @@ if __name__ == "__main__":
                     "watchtower": ["python", "-m", "fake_startup_chip.chip_hooks", "watchtower"],
                     "identity": ["python", "-m", "fake_startup_chip.chip_hooks", "identity"],
                     "personality": ["python", "-m", "fake_startup_chip.chip_hooks", "personality"],
+                    "browser.status": ["python", "-m", "fake_startup_chip.chip_hooks", "browser.status"],
+                    "browser.page.snapshot": ["python", "-m", "fake_startup_chip.chip_hooks", "browser.page.snapshot"],
                 },
             },
             indent=2,

@@ -22,6 +22,63 @@ from tests.test_support import SparkTestCase, create_fake_hook_chip
 
 
 class CliSmokeTests(SparkTestCase):
+    def test_browser_status_command_reports_governed_runtime_posture(self) -> None:
+        chip_root = create_fake_hook_chip(self.home, chip_key="spark-browser")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+
+        activate_exit, _, activate_stderr = self.run_cli(
+            "attachments",
+            "activate-chip",
+            "spark-browser",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(activate_exit, 0, activate_stderr)
+
+        exit_code, stdout, stderr = self.run_cli(
+            "browser",
+            "status",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["hook"], "browser.status")
+        self.assertEqual(payload["result"]["browser"]["family"], "brave")
+        self.assertEqual(payload["result"]["profile"]["key"], "spark-default")
+
+    def test_browser_page_snapshot_command_reports_bounded_snapshot(self) -> None:
+        chip_root = create_fake_hook_chip(self.home, chip_key="spark-browser")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+
+        activate_exit, _, activate_stderr = self.run_cli(
+            "attachments",
+            "activate-chip",
+            "spark-browser",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(activate_exit, 0, activate_stderr)
+
+        exit_code, stdout, stderr = self.run_cli(
+            "browser",
+            "page-snapshot",
+            "--home",
+            str(self.home),
+            "--origin",
+            "https://docs.example.com/guide",
+            "--json",
+        )
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["hook"], "browser.page.snapshot")
+        self.assertEqual(payload["result"]["title"], "Spark Browser Guide")
+        self.assertEqual(payload["result"]["origin"], "https://docs.example.com/guide")
+        self.assertEqual(payload["artifacts"][0]["type"], "page_snapshot")
+
     def test_memory_direct_smoke_runs_in_process_domain_chip_bridge(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
             "memory",

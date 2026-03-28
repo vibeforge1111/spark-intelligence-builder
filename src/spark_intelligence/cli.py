@@ -30,6 +30,14 @@ from spark_intelligence.attachments import (
 from spark_intelligence.auth.providers import list_api_key_provider_ids, list_oauth_provider_ids, list_provider_specs
 from spark_intelligence.auth.runtime import build_auth_status_report
 from spark_intelligence.auth.service import complete_oauth_login, connect_provider, logout_provider, refresh_provider, start_oauth_login
+from spark_intelligence.browser import (
+    BROWSER_PAGE_SNAPSHOT_HOOK,
+    BROWSER_STATUS_HOOK,
+    build_browser_page_snapshot_payload,
+    build_browser_status_payload,
+    render_browser_page_snapshot,
+    render_browser_status,
+)
 from spark_intelligence.channel.service import (
     add_channel,
     inspect_telegram_bot_token,
@@ -1272,11 +1280,40 @@ def build_parser() -> argparse.ArgumentParser:
         "run-hook",
         help="Run a manifest-backed chip hook using the standard spark-hook-io.v1 contract",
     )
-    attachments_run_hook_parser.add_argument("hook", choices=["evaluate", "suggest", "packets", "watchtower"])
+    attachments_run_hook_parser.add_argument("hook", help="Hook name to run")
     attachments_run_hook_parser.add_argument("--chip-key", help="Chip key to run. Defaults to the first active chip that supports the hook.")
     attachments_run_hook_parser.add_argument("--payload-json", default="{}", help="JSON payload to send to the hook")
     attachments_run_hook_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     attachments_run_hook_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+
+    browser_parser = subparsers.add_parser("browser", help="Run governed browser capability hooks")
+    browser_subparsers = browser_parser.add_subparsers(dest="browser_command", required=True)
+    browser_status_parser = browser_subparsers.add_parser("status", help="Query the browser capability runtime")
+    browser_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    browser_status_parser.add_argument("--chip-key", help="Chip key to run. Defaults to the first active chip that supports the hook.")
+    browser_status_parser.add_argument("--browser-family", default="brave", help="Target browser family")
+    browser_status_parser.add_argument("--profile-key", default="spark-default", help="Target browser profile key")
+    browser_status_parser.add_argument("--profile-mode", default="dedicated", help="Target browser profile mode")
+    browser_status_parser.add_argument("--agent-id", help="Agent id to include in the hook request")
+    browser_status_parser.add_argument("--write-payload", help="Write the hook payload to this path")
+    browser_status_parser.add_argument("--write-result", help="Write the hook result to this path")
+    browser_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    browser_snapshot_parser = browser_subparsers.add_parser("page-snapshot", help="Capture a governed browser page snapshot")
+    browser_snapshot_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    browser_snapshot_parser.add_argument("--chip-key", help="Chip key to run. Defaults to the first active chip that supports the hook.")
+    browser_snapshot_parser.add_argument("--browser-family", default="brave", help="Target browser family")
+    browser_snapshot_parser.add_argument("--profile-key", default="spark-default", help="Target browser profile key")
+    browser_snapshot_parser.add_argument("--profile-mode", default="dedicated", help="Target browser profile mode")
+    browser_snapshot_parser.add_argument("--agent-id", help="Agent id to include in the hook request")
+    browser_snapshot_parser.add_argument("--origin", required=True, help="Origin or page URL to scope the snapshot")
+    browser_snapshot_parser.add_argument("--allowed-domain", action="append", default=[], help="Allowed domain for the hook request")
+    browser_snapshot_parser.add_argument("--sensitive-domain", action="store_true", help="Mark the page as sensitive for policy purposes")
+    browser_snapshot_parser.add_argument("--operator-required", action="store_true", help="Mark the request as operator-only in policy context")
+    browser_snapshot_parser.add_argument("--max-text-characters", type=int, default=500, help="Maximum visible text characters to request")
+    browser_snapshot_parser.add_argument("--max-controls", type=int, default=10, help="Maximum control count to request")
+    browser_snapshot_parser.add_argument("--write-payload", help="Write the hook payload to this path")
+    browser_snapshot_parser.add_argument("--write-result", help="Write the hook result to this path")
+    browser_snapshot_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     auth_parser = subparsers.add_parser("auth", help="Manage model providers")
     auth_subparsers = auth_parser.add_subparsers(dest="auth_command", required=True)
@@ -3234,6 +3271,225 @@ def handle_attachments_run_hook(args: argparse.Namespace) -> int:
     return 0 if execution.ok else 1
 
 
+def _run_browser_hook(
+    args: argparse.Namespace,
+    *,
+    hook_name: str,
+    payload: dict[str, object],
+    render_result,
+    action: str,
+    target_ref: str,
+) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    request_id = str(payload.get("request_id") or f"browser-hook:{uuid4().hex[:12]}")
+    payload_path = Path(args.write_payload) if getattr(args, "write_payload", None) else (
+        config_manager.paths.home / "artifacts" / "browser-hooks" / f"{request_id}.payload.json"
+    )
+    payload_path.parent.mkdir(parents=True, exist_ok=True)
+    payload_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+
+    run = open_run(
+        state_db,
+        run_kind=f"operator:browser_hook:{hook_name}",
+        origin_surface="browser_cli",
+        summary="Operator started a browser capability hook execution.",
+        request_id=request_id,
+        actor_id="local-operator",
+        reason_code=action,
+        facts={"chip_key": args.chip_key or "active", "hook": hook_name, "payload_path": str(payload_path)},
+    )
+    try:
+        if args.chip_key:
+            execution = run_chip_hook(config_manager, chip_key=args.chip_key, hook=hook_name, payload=payload)
+        else:
+            execution = run_first_active_chip_hook(config_manager, hook=hook_name, payload=payload)
+            if execution is None:
+                close_run(
+                    state_db,
+                    run_id=run.run_id,
+                    status="stalled",
+                    close_reason="no_active_chip_for_hook",
+                    summary="Browser CLI found no active chip exposing the requested browser hook.",
+                    facts={"hook": hook_name},
+                )
+                print(
+                    f"No active chip exposes hook '{hook_name}'. Activate the browser runtime first or pass --chip-key.",
+                    file=sys.stderr,
+                )
+                return 1
+    except ValueError as exc:
+        close_run(
+            state_db,
+            run_id=run.run_id,
+            status="stalled",
+            close_reason="browser_hook_invalid",
+            summary="Browser CLI failed validation before hook execution.",
+            facts={"hook": hook_name, "error": str(exc)},
+        )
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    result_path = Path(args.write_result) if getattr(args, "write_result", None) else (
+        config_manager.paths.home / "artifacts" / "browser-hooks" / f"{request_id}.result.json"
+    )
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    result_payload = execution.to_payload()
+    result_path.write_text(json.dumps(result_payload, indent=2, ensure_ascii=True), encoding="utf-8")
+
+    record_chip_hook_execution(
+        state_db,
+        execution=execution,
+        component="browser_cli",
+        actor_id="local-operator",
+        summary="Browser CLI executed a browser capability hook.",
+        reason_code=action,
+        keepability="operator_debug_only",
+        run_id=run.run_id,
+        request_id=run.request_id,
+    )
+
+    hook_output = execution.output if isinstance(execution.output, dict) else {}
+    display_payload = {
+        "status": "completed",
+        "chip_key": execution.chip_key,
+        "hook": hook_name,
+        "request_id": request_id,
+        "payload_path": str(payload_path),
+        "result_path": str(result_path),
+        "result": hook_output.get("result") if isinstance(hook_output.get("result"), dict) else {},
+        "artifacts": hook_output.get("artifacts") if isinstance(hook_output.get("artifacts"), list) else [],
+        "provenance": hook_output.get("provenance") if isinstance(hook_output.get("provenance"), dict) else {},
+        "execution": result_payload,
+    }
+    display_text = json.dumps(display_payload, indent=2, ensure_ascii=True) if args.json else render_result(display_payload["result"])
+
+    screened_output = screen_chip_hook_text(
+        state_db=state_db,
+        execution=execution,
+        text=display_text,
+        summary="Browser CLI blocked secret-like browser hook output before operator display.",
+        reason_code=f"{action}_secret_like",
+        policy_domain="browser_cli",
+        blocked_stage="operator_output",
+        run_id=run.run_id,
+        request_id=run.request_id,
+    )
+    if not screened_output["allowed"]:
+        record_event(
+            state_db,
+            event_type="dispatch_failed",
+            component="browser_cli",
+            summary="Browser CLI blocked hook output because it contained secret-like material.",
+            run_id=run.run_id,
+            request_id=run.request_id,
+            actor_id="local-operator",
+            reason_code="secret_boundary_blocked",
+            severity="high",
+            facts={
+                "chip_key": execution.chip_key,
+                "hook": execution.hook,
+                "quarantine_id": screened_output["quarantine_id"],
+            },
+        )
+        close_run(
+            state_db,
+            run_id=run.run_id,
+            status="stalled",
+            close_reason="secret_boundary_blocked",
+            summary="Browser CLI hook output was blocked by the secret boundary.",
+            facts={
+                "chip_key": execution.chip_key,
+                "hook": execution.hook,
+                "quarantine_id": screened_output["quarantine_id"],
+            },
+        )
+        print(
+            "Browser hook output was blocked because it contained secret-like material. "
+            "Review quarantine records instead of raw output.",
+            file=sys.stderr,
+        )
+        return 1
+
+    log_operator_event(
+        state_db=state_db,
+        action=action,
+        target_kind="browser_hook",
+        target_ref=target_ref,
+        reason=f"Operator executed {hook_name}.",
+        details={
+            "status": "completed",
+            "chip_key": execution.chip_key,
+            "hook": hook_name,
+            "payload_path": str(payload_path),
+            "result_path": str(result_path),
+        },
+    )
+    close_run(
+        state_db,
+        run_id=run.run_id,
+        status="closed",
+        close_reason="browser_hook_completed",
+        summary="Browser CLI hook completed successfully.",
+        facts={
+            "chip_key": execution.chip_key,
+            "hook": hook_name,
+            "payload_path": str(payload_path),
+            "result_path": str(result_path),
+        },
+    )
+    print(display_text)
+    return 0
+
+
+def handle_browser_status(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    payload = build_browser_status_payload(
+        config_manager=config_manager,
+        browser_family=args.browser_family,
+        profile_key=args.profile_key,
+        profile_mode=args.profile_mode,
+        agent_id=args.agent_id,
+    )
+    return _run_browser_hook(
+        args,
+        hook_name=BROWSER_STATUS_HOOK,
+        payload=payload,
+        render_result=render_browser_status,
+        action="browser_status",
+        target_ref=f"{args.browser_family}:{args.profile_key}",
+    )
+
+
+def handle_browser_page_snapshot(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    payload = build_browser_page_snapshot_payload(
+        config_manager=config_manager,
+        origin=args.origin,
+        browser_family=args.browser_family,
+        profile_key=args.profile_key,
+        profile_mode=args.profile_mode,
+        agent_id=args.agent_id,
+        max_text_characters=args.max_text_characters,
+        max_controls=args.max_controls,
+        allowed_domains=list(args.allowed_domain or []),
+        sensitive_domain=args.sensitive_domain,
+        operator_required=args.operator_required,
+    )
+    return _run_browser_hook(
+        args,
+        hook_name=BROWSER_PAGE_SNAPSHOT_HOOK,
+        payload=payload,
+        render_result=render_browser_page_snapshot,
+        action="browser_page_snapshot",
+        target_ref=args.origin,
+    )
+
+
 def handle_auth_connect(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -4791,6 +5047,10 @@ def main(argv: list[str] | None = None) -> int:
         return handle_attachments_clear_path(args)
     if args.command == "attachments" and args.attachments_command == "run-hook":
         return handle_attachments_run_hook(args)
+    if args.command == "browser" and args.browser_command == "status":
+        return handle_browser_status(args)
+    if args.command == "browser" and args.browser_command == "page-snapshot":
+        return handle_browser_page_snapshot(args)
     if args.command == "auth" and args.auth_command == "providers":
         return handle_auth_providers(args)
     if args.command == "auth" and args.auth_command == "connect":
