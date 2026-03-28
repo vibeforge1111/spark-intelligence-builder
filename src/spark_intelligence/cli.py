@@ -86,6 +86,7 @@ from spark_intelligence.observability.store import (
 )
 from spark_intelligence.ops import (
     build_observer_handoff_payload,
+    build_personality_report,
     build_operator_inbox,
     export_operator_observer_packets,
     build_operator_security_report,
@@ -1001,6 +1002,15 @@ def build_parser() -> argparse.ArgumentParser:
     operator_security_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     operator_security_parser.add_argument("--limit", type=int, default=100, help="Number of recent trace/audit events to scan")
     operator_security_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    operator_personality_parser = operator_subparsers.add_parser(
+        "personality",
+        help="Show personality subsystem overview or inspect one human's typed personality state",
+    )
+    operator_personality_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    operator_personality_parser.add_argument("--human-id", help="Inspect one human id instead of the global overview")
+    operator_personality_parser.add_argument("--observation-limit", type=int, default=10, help="Observation rows to include for one human")
+    operator_personality_parser.add_argument("--evolution-limit", type=int, default=10, help="Evolution rows to include for one human")
+    operator_personality_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     operator_observer_packets_parser = operator_subparsers.add_parser(
         "observer-packets",
         help="Show persisted observer packet records",
@@ -1991,6 +2001,22 @@ def handle_operator_security(args: argparse.Namespace) -> int:
     config_manager.bootstrap()
     state_db.initialize()
     report = build_operator_security_report(config_manager=config_manager, state_db=state_db, limit=args.limit)
+    print(report.to_json() if args.json else report.to_text())
+    return 0
+
+
+def handle_operator_personality(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    report = build_personality_report(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=args.human_id,
+        observation_limit=args.observation_limit,
+        evolution_limit=args.evolution_limit,
+    )
     print(report.to_json() if args.json else report.to_text())
     return 0
 
@@ -3945,6 +3971,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_operator_inbox(args)
     if args.command == "operator" and args.operator_command == "security":
         return handle_operator_security(args)
+    if args.command == "operator" and args.operator_command == "personality":
+        return handle_operator_personality(args)
     if args.command == "operator" and args.operator_command == "observer-packets":
         return handle_operator_observer_packets(args)
     if args.command == "operator" and args.operator_command == "export-observer-packets":

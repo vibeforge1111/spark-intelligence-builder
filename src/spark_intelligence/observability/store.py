@@ -1079,6 +1079,69 @@ def recent_resume_richness_guard_records(
     return [_row_to_dict(row) for row in rows]
 
 
+def recent_personality_trait_profiles(
+    state_db: StateDB,
+    *,
+    limit: int = 50,
+    human_id: str | None = None,
+) -> list[dict[str, Any]]:
+    query = """
+        SELECT *
+        FROM personality_trait_profiles
+    """
+    params: list[Any] = []
+    if human_id:
+        query += " WHERE human_id = ?"
+        params.append(human_id)
+    query += " ORDER BY updated_at DESC, created_at DESC, human_id DESC LIMIT ?"
+    params.append(limit)
+    with state_db.connect() as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+    return [_row_to_dict(row) for row in rows]
+
+
+def recent_personality_observations(
+    state_db: StateDB,
+    *,
+    limit: int = 50,
+    human_id: str | None = None,
+) -> list[dict[str, Any]]:
+    query = """
+        SELECT *
+        FROM personality_observations
+    """
+    params: list[Any] = []
+    if human_id:
+        query += " WHERE human_id = ?"
+        params.append(human_id)
+    query += " ORDER BY observed_at DESC, created_at DESC, observation_id DESC LIMIT ?"
+    params.append(limit)
+    with state_db.connect() as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+    return [_row_to_dict(row) for row in rows]
+
+
+def recent_personality_evolution_events(
+    state_db: StateDB,
+    *,
+    limit: int = 50,
+    human_id: str | None = None,
+) -> list[dict[str, Any]]:
+    query = """
+        SELECT *
+        FROM personality_evolution_events
+    """
+    params: list[Any] = []
+    if human_id:
+        query += " WHERE human_id = ?"
+        params.append(human_id)
+    query += " ORDER BY evolved_at DESC, created_at DESC, evolution_id DESC LIMIT ?"
+    params.append(limit)
+    with state_db.connect() as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+    return [_row_to_dict(row) for row in rows]
+
+
 def recent_observer_packet_records(
     state_db: StateDB,
     *,
@@ -1248,6 +1311,7 @@ def build_watchtower_snapshot(
             "environment_parity": environment_panel,
             "provenance_and_quarantine": _build_provenance_and_quarantine_panel(state_db),
             "memory_lane_hygiene": _build_memory_lane_hygiene_panel(state_db),
+            "personality": _build_personality_panel(state_db),
             "session_integrity": _build_session_integrity_panel(state_db),
             "observer_incidents": _build_observer_incident_panel(state_db),
             "observer_packets": _build_observer_packet_panel(state_db),
@@ -1540,6 +1604,9 @@ def _prefixed_id(prefix: str) -> str:
 def _row_to_dict(row: Any) -> dict[str, Any]:
     payload = dict(row)
     for key in (
+        "deltas_json",
+        "traits_json",
+        "state_weights_json",
         "provenance_json",
         "evidence_json",
         "facts_json",
@@ -2582,6 +2649,134 @@ def _build_memory_lane_hygiene_panel(state_db: StateDB) -> dict[str, Any]:
         },
         "recent_promotions": lane_records[:10],
         "recent_integrity_incidents": resume_integrity_incidents[:10],
+    }
+
+
+def _build_personality_panel(state_db: StateDB) -> dict[str, Any]:
+    profiles = recent_personality_trait_profiles(state_db, limit=50)
+    observations = recent_personality_observations(state_db, limit=100)
+    evolutions = recent_personality_evolution_events(state_db, limit=50)
+
+    with state_db.connect() as conn:
+        runtime_rows = conn.execute(
+            """
+            SELECT state_key
+            FROM runtime_state
+            WHERE state_key LIKE 'personality:%'
+            """
+        ).fetchall()
+
+    profile_mirror_humans: set[str] = set()
+    observation_mirror_humans: set[str] = set()
+    evolution_mirror_humans: set[str] = set()
+    for row in runtime_rows:
+        state_key = str(row["state_key"] or "")
+        if not state_key.startswith("personality:"):
+            continue
+        human_id, _, suffix = state_key[len("personality:"):].rpartition(":")
+        if not human_id or not suffix:
+            continue
+        if suffix == "trait_deltas":
+            profile_mirror_humans.add(human_id)
+        elif suffix == "observations":
+            observation_mirror_humans.add(human_id)
+        elif suffix == "evolution_log":
+            evolution_mirror_humans.add(human_id)
+
+    typed_profile_humans = {str(row.get("human_id") or "") for row in profiles if str(row.get("human_id") or "")}
+    typed_observation_humans = {str(row.get("human_id") or "") for row in observations if str(row.get("human_id") or "")}
+    typed_evolution_humans = {str(row.get("human_id") or "") for row in evolutions if str(row.get("human_id") or "")}
+
+    profile_drift = {
+        "missing_runtime_mirrors": sorted(typed_profile_humans - profile_mirror_humans),
+        "runtime_only_mirrors": sorted(profile_mirror_humans - typed_profile_humans),
+    }
+    observation_drift = {
+        "missing_runtime_mirrors": sorted(typed_observation_humans - observation_mirror_humans),
+        "runtime_only_mirrors": sorted(observation_mirror_humans - typed_observation_humans),
+    }
+    evolution_drift = {
+        "missing_runtime_mirrors": sorted(typed_evolution_humans - evolution_mirror_humans),
+        "runtime_only_mirrors": sorted(evolution_mirror_humans - typed_evolution_humans),
+    }
+
+    active_profiles = 0
+    recent_humans: dict[str, dict[str, Any]] = {}
+    for row in profiles:
+        human_id = str(row.get("human_id") or "")
+        if not human_id:
+            continue
+        deltas = row.get("deltas_json")
+        if isinstance(deltas, dict) and deltas:
+            active_profiles += 1
+        recent_humans.setdefault(
+            human_id,
+            {
+                "human_id": human_id,
+                "profile_updated_at": row.get("updated_at"),
+                "last_observed_at": None,
+                "last_evolved_at": None,
+            },
+        )
+    for row in observations:
+        human_id = str(row.get("human_id") or "")
+        if not human_id:
+            continue
+        recent_humans.setdefault(
+            human_id,
+            {
+                "human_id": human_id,
+                "profile_updated_at": None,
+                "last_observed_at": None,
+                "last_evolved_at": None,
+            },
+        )["last_observed_at"] = row.get("observed_at")
+    for row in evolutions:
+        human_id = str(row.get("human_id") or "")
+        if not human_id:
+            continue
+        recent_humans.setdefault(
+            human_id,
+            {
+                "human_id": human_id,
+                "profile_updated_at": None,
+                "last_observed_at": None,
+                "last_evolved_at": None,
+            },
+        )["last_evolved_at"] = row.get("evolved_at")
+
+    total_drift = sum(
+        len(payload["missing_runtime_mirrors"]) + len(payload["runtime_only_mirrors"])
+        for payload in (profile_drift, observation_drift, evolution_drift)
+    )
+
+    return {
+        "counts": {
+            "trait_profiles": len(profiles),
+            "active_profiles": active_profiles,
+            "observation_rows": len(observations),
+            "evolution_rows": len(evolutions),
+            "distinct_humans": len(recent_humans),
+            "mirror_drift": total_drift,
+        },
+        "mirror_drift": {
+            "trait_profiles": profile_drift,
+            "observations": observation_drift,
+            "evolution_events": evolution_drift,
+        },
+        "recent_profiles": profiles[:10],
+        "recent_observations": observations[:10],
+        "recent_evolutions": evolutions[:10],
+        "recent_humans": sorted(
+            recent_humans.values(),
+            key=lambda item: (
+                str(item.get("profile_updated_at") or ""),
+                str(item.get("last_observed_at") or ""),
+                str(item.get("last_evolved_at") or ""),
+                str(item.get("human_id") or ""),
+            ),
+            reverse=True,
+        )[:10],
     }
 
 

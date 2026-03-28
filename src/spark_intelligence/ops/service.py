@@ -21,12 +21,16 @@ from spark_intelligence.observability.store import (
     export_observer_packet_bundle,
     recent_contradictions,
     recent_delivery_records,
+    recent_personality_evolution_events,
+    recent_personality_observations,
+    recent_personality_trait_profiles,
     recent_observer_handoff_records,
     recent_observer_packet_records,
     recent_policy_gate_records,
     recent_provenance_mutations,
     recent_runs,
 )
+from spark_intelligence.personality.loader import load_personality_profile
 from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import swarm_status
@@ -209,6 +213,94 @@ class OperatorWebhookSnoozeReport:
             lines.append(
                 f"- event={row['event']} snoozed_at={row['snoozed_at']} until={row['snooze_until']} "
                 f"remaining_minutes={row['remaining_minutes']}{reason}{suppressed}{commands}"
+            )
+        return "\n".join(lines)
+
+
+@dataclass
+class PersonalityReport:
+    payload: dict[str, Any]
+
+    def to_json(self) -> str:
+        return json.dumps(self.payload, indent=2)
+
+    def to_text(self) -> str:
+        overview = self.payload.get("overview") or {}
+        counts = overview.get("counts") or {}
+        human_id = self.payload.get("human_id")
+        if not human_id:
+            lines = ["Personality overview:"]
+            lines.append(
+                "- counts: "
+                f"trait_profiles={int(counts.get('trait_profiles') or 0)} "
+                f"active_profiles={int(counts.get('active_profiles') or 0)} "
+                f"observation_rows={int(counts.get('observation_rows') or 0)} "
+                f"evolution_rows={int(counts.get('evolution_rows') or 0)} "
+                f"distinct_humans={int(counts.get('distinct_humans') or 0)} "
+                f"mirror_drift={int(counts.get('mirror_drift') or 0)}"
+            )
+            recent_humans = overview.get("recent_humans") or []
+            if recent_humans:
+                lines.append("- recent humans:")
+                for row in recent_humans:
+                    lines.append(
+                        f"  {row['human_id']} profile={row.get('profile_updated_at') or 'none'} "
+                        f"observed={row.get('last_observed_at') or 'none'} "
+                        f"evolved={row.get('last_evolved_at') or 'none'}"
+                    )
+            return "\n".join(lines)
+
+        profile = self.payload.get("profile") or {}
+        traits = profile.get("traits") or {}
+        user_deltas = self.payload.get("user_deltas") or {}
+        observations = self.payload.get("observations") or []
+        evolutions = self.payload.get("evolutions") or []
+        latest_observation = observations[0] if observations else {}
+        latest_evolution = evolutions[0] if evolutions else {}
+        lines = ["Personality state:"]
+        lines.append(f"- human_id: {human_id}")
+        lines.append(
+            f"- enabled: {'yes' if self.payload.get('enabled') else 'no'} "
+            f"source={profile.get('source') or 'defaults'} "
+            f"personality={profile.get('personality_name') or 'default'}"
+        )
+        if traits:
+            lines.append(
+                "- traits: "
+                + " ".join(
+                    f"{trait}={float(value):.2f}"
+                    for trait, value in (
+                        ("warmth", traits.get("warmth", 0.5)),
+                        ("directness", traits.get("directness", 0.5)),
+                        ("playfulness", traits.get("playfulness", 0.5)),
+                        ("pacing", traits.get("pacing", 0.5)),
+                        ("assertiveness", traits.get("assertiveness", 0.5)),
+                    )
+                )
+            )
+        if user_deltas:
+            lines.append(
+                "- user_deltas: "
+                + " ".join(
+                    f"{trait}={value:+.2f}"
+                    for trait, value in sorted(
+                        (str(key), float(val)) for key, val in user_deltas.items()
+                    )
+                )
+            )
+        else:
+            lines.append("- user_deltas: none")
+        lines.append(
+            f"- history: observations={len(observations)} evolutions={len(evolutions)} "
+            f"latest_state={latest_observation.get('user_state') or 'none'} "
+            f"latest_observed_at={latest_observation.get('observed_at') or 'none'} "
+            f"latest_evolved_at={latest_evolution.get('evolved_at') or 'none'}"
+        )
+        observation_states = self.payload.get("observation_states") or {}
+        if observation_states:
+            lines.append(
+                "- observation_states: "
+                + " ".join(f"{state}={count}" for state, count in sorted(observation_states.items()))
             )
         return "\n".join(lines)
 
@@ -677,6 +769,53 @@ def build_operator_security_report(
         "log_limit": limit,
     }
     return OperatorSecurityReport(payload=payload)
+
+
+def build_personality_report(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str | None = None,
+    observation_limit: int = 10,
+    evolution_limit: int = 10,
+) -> PersonalityReport:
+    watchtower = build_watchtower_snapshot(state_db)
+    overview = (watchtower.get("panels") or {}).get("personality") or {}
+    payload: dict[str, Any] = {
+        "overview": overview,
+        "human_id": human_id,
+    }
+    if not human_id:
+        return PersonalityReport(payload=payload)
+
+    profile = load_personality_profile(
+        human_id=human_id,
+        state_db=state_db,
+        config_manager=config_manager,
+    )
+    trait_rows = recent_personality_trait_profiles(state_db, human_id=human_id, limit=1)
+    observations = recent_personality_observations(state_db, human_id=human_id, limit=observation_limit)
+    evolutions = recent_personality_evolution_events(state_db, human_id=human_id, limit=evolution_limit)
+    observation_states: dict[str, int] = {}
+    for row in observations:
+        state = str(row.get("user_state") or "unknown")
+        observation_states[state] = observation_states.get(state, 0) + 1
+
+    payload.update(
+        {
+            "enabled": profile is not None,
+            "profile": profile or {},
+            "user_deltas": (
+                trait_rows[0].get("deltas_json")
+                if trait_rows and isinstance(trait_rows[0].get("deltas_json"), dict)
+                else {}
+            ),
+            "observations": observations,
+            "evolutions": evolutions,
+            "observation_states": observation_states,
+        }
+    )
+    return PersonalityReport(payload=payload)
 
 
 def list_observer_packets(

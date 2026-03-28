@@ -855,6 +855,35 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(int(observation_row["count"]), 0)
         self.assertEqual(int(evolution_row["count"]), 1)
         self.assertIsNotNone(runtime_profile)
+        snapshot = build_watchtower_snapshot(self.state_db)
+        personality_panel = snapshot["panels"]["personality"]
+        self.assertEqual(personality_panel["counts"]["trait_profiles"], 1)
+        self.assertEqual(personality_panel["counts"]["evolution_rows"], 1)
+        self.assertEqual(personality_panel["counts"]["mirror_drift"], 0)
+
+    def test_doctor_flags_personality_runtime_mirror_drift(self) -> None:
+        with self.state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO runtime_state(state_key, value, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                """,
+                (
+                    "personality:human:drift:trait_deltas",
+                    json.dumps({"deltas": {"directness": 0.4}, "updated_at": "2026-03-28T12:00:00Z"}),
+                ),
+            )
+            conn.commit()
+
+        snapshot = build_watchtower_snapshot(self.state_db)
+        personality_panel = snapshot["panels"]["personality"]
+        self.assertEqual(personality_panel["counts"]["mirror_drift"], 1)
+
+        report = run_doctor(self.config_manager, self.state_db)
+        checks = {check.name: check for check in report.checks}
+        self.assertIn("watchtower-personality-mirrors", checks)
+        self.assertFalse(checks["watchtower-personality-mirrors"].ok)
+        self.assertIn("mirror_drift=1", checks["watchtower-personality-mirrors"].detail)
 
     def test_stop_ship_requires_domain_specific_runtime_state_mirrors(self) -> None:
         with self.state_db.connect() as conn:

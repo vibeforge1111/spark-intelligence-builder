@@ -14,6 +14,7 @@ from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.gateway.discord_webhook import DISCORD_WEBHOOK_PATH, handle_discord_webhook
 from spark_intelligence.gateway.whatsapp_webhook import WHATSAPP_WEBHOOK_PATH, handle_whatsapp_webhook
 from spark_intelligence.observability.store import record_event
+from spark_intelligence.personality.loader import detect_and_persist_nl_preferences, record_observation
 
 from tests.test_support import SparkTestCase
 
@@ -1194,6 +1195,58 @@ class CliSmokeTests(SparkTestCase):
         history_payload = json.loads(history_stdout)
         self.assertEqual(history_payload["rows"][0]["target_ref"], str(export_path))
         self.assertEqual(history_payload["rows"][0]["reason"], "external observer handoff")
+
+    def test_operator_personality_reports_overview_and_human_state(self) -> None:
+        deltas = detect_and_persist_nl_preferences(
+            human_id="human:test",
+            user_message="be more direct and stop hedging",
+            state_db=self.state_db,
+        )
+        self.assertIsNotNone(deltas)
+        record_observation(
+            human_id="human:test",
+            user_message="this is broken and confusing",
+            traits_active={
+                "warmth": 0.5,
+                "directness": 0.8,
+                "playfulness": 0.5,
+                "pacing": 0.5,
+                "assertiveness": 0.7,
+            },
+            state_db=self.state_db,
+        )
+
+        overview_exit, overview_stdout, overview_stderr = self.run_cli(
+            "operator",
+            "personality",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+
+        self.assertEqual(overview_exit, 0, overview_stderr)
+        overview_payload = json.loads(overview_stdout)
+        self.assertEqual(overview_payload["overview"]["counts"]["trait_profiles"], 1)
+        self.assertEqual(overview_payload["overview"]["counts"]["active_profiles"], 1)
+        self.assertEqual(overview_payload["overview"]["counts"]["mirror_drift"], 0)
+
+        detail_exit, detail_stdout, detail_stderr = self.run_cli(
+            "operator",
+            "personality",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:test",
+            "--json",
+        )
+
+        self.assertEqual(detail_exit, 0, detail_stderr)
+        detail_payload = json.loads(detail_stdout)
+        self.assertEqual(detail_payload["human_id"], "human:test")
+        self.assertTrue(detail_payload["enabled"])
+        self.assertIn("directness", detail_payload["user_deltas"])
+        self.assertEqual(detail_payload["observations"][0]["user_state"], "frustrated")
+        self.assertEqual(detail_payload["observation_states"]["frustrated"], 1)
 
     def test_operator_security_surfaces_discord_ingress_missing(self) -> None:
         setup_exit, _, setup_stderr = self.run_cli(

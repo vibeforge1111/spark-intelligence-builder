@@ -492,4 +492,18 @@ def _watchtower_health_checks(state_db: StateDB) -> list[DoctorCheck]:
             ),
         )
     )
+    personality_panel = (snapshot.get("panels") or {}).get("personality") or {}
+    personality_counts = personality_panel.get("counts") or {}
+    checks.append(
+        DoctorCheck(
+            "watchtower-personality-mirrors",
+            int(personality_counts.get("mirror_drift") or 0) == 0,
+            (
+                f"trait_profiles={int(personality_counts.get('trait_profiles') or 0)} "
+                f"observation_rows={int(personality_counts.get('observation_rows') or 0)} "
+                f"evolution_rows={int(personality_counts.get('evolution_rows') or 0)} "
+                f"mirror_drift={int(personality_counts.get('mirror_drift') or 0)}"
+            ),
+        )
+    )
     return checks
