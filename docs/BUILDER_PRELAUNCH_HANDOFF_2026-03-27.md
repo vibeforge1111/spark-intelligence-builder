@@ -77,7 +77,9 @@ If continuing inside this repo, the next highest-value items are:
 
 - Tranche 1: shipped core truth surfaces and ledgers
 - Tranche 2: partially shipped provenance, policy, Watchtower, contradiction, and memory-lane work
-- De facto Tranche 3: still deferred self-observer packet layer over normalized Builder facts
+- De facto Tranche 3:
+  historical status on 2026-03-27 was a deferred self-observer packet layer over normalized Builder facts
+  superseded on 2026-03-28 by the shipped Builder-core packet family documented in `TRANCHE_COMPLETION_PACKAGE_2026-03-28.md`
 
 ## Working Tree Note
 

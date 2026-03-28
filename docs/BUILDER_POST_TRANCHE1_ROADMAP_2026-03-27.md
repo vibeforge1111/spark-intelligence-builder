@@ -174,8 +174,9 @@ Carry forward:
 
 Status:
 
-- not started in Builder core
-- still intentionally deferred until the remaining tranche-2 Builder fact surfaces are finished
+- historical status on 2026-03-27: not started in Builder core
+- superseded on 2026-03-28: Builder core now emits the bounded packet family over typed observer incidents
+- remaining external follow-on is a separately replaceable self-observer chip runtime, not a missing Builder-core packet surface
 
 ## Stop-Ship Items Still Relevant After Tranche 1
 
