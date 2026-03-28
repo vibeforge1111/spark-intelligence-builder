@@ -521,4 +521,18 @@ def _watchtower_health_checks(state_db: StateDB) -> list[DoctorCheck]:
             ),
         )
     )
+    identity_import = identity_panel.get("identity_import") or {}
+    builder_local_count = int(identity_counts.get("builder_local") or 0)
+    identity_import_ready = bool(identity_import.get("ready"))
+    checks.append(
+        DoctorCheck(
+            "watchtower-agent-identity-import",
+            builder_local_count == 0 or identity_import_ready,
+            (
+                f"builder_local={builder_local_count} "
+                f"identity_import_ready={'yes' if identity_import_ready else 'no'} "
+                f"active_identity_hook_chips={len(identity_import.get('active_chip_keys') or [])}"
+            ),
+        )
+    )
     return checks

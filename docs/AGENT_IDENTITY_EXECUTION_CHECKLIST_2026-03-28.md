@@ -124,6 +124,7 @@ Status:
 Tasks:
 
 - [x] doctor/watchtower identity surfaces
+- [x] doctor/watchtower identity-import readiness surfaces
 - [x] migration command or automatic migration pass
 - [x] docs closeout with shipped state
 - [x] broader regression pass

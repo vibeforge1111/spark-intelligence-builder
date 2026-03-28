@@ -129,6 +129,7 @@ Delivered:
 
 - operator repair surfaces
 - doctor and Watchtower identity visibility
+- persisted Watchtower and doctor readiness for the external `identity` hook
 - broader regression coverage
 - legacy personality migration command
 - explicit conflict-repair harness coverage

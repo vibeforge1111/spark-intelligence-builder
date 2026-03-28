@@ -8,7 +8,7 @@ from spark_intelligence.gateway.guardrails import prepare_outbound_text
 from spark_intelligence.observability.policy import looks_secret_like
 from spark_intelligence.jobs.service import jobs_tick
 from spark_intelligence.doctor.checks import run_doctor
-from spark_intelligence.identity.service import link_spark_swarm_agent, record_pairing_context
+from spark_intelligence.identity.service import approve_pairing, link_spark_swarm_agent, record_pairing_context
 from spark_intelligence.ops.service import build_operator_security_report
 from spark_intelligence.observability.checks import evaluate_stop_ship_issues
 from spark_intelligence.observability.store import (
@@ -38,7 +38,7 @@ from spark_intelligence.researcher_bridge.advisory import (
     researcher_bridge_status,
 )
 
-from tests.test_support import SparkTestCase
+from tests.test_support import SparkTestCase, create_fake_hook_chip
 
 
 class BuilderPrelaunchContractTests(SparkTestCase):
@@ -868,7 +868,59 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(int(row["warning_count"]), len(snapshot.warnings))
         self.assertEqual(int(row["record_count"]), len(snapshot.records))
         self.assertEqual(json.loads(row["summary_json"])["workspace_id"], snapshot.workspace_id)
+        self.assertFalse(json.loads(row["summary_json"])["identity_import"]["ready"])
         self.assertEqual(runtime_row["value"], snapshot.snapshot_path)
+
+    def test_watchtower_agent_identity_import_check_flags_builder_local_agents_without_identity_hook(self) -> None:
+        self.add_telegram_channel()
+        approve_pairing_result = approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+        self.assertIn("human:telegram:111", approve_pairing_result)
+        sync_attachment_snapshot(config_manager=self.config_manager, state_db=self.state_db)
+
+        snapshot = build_watchtower_snapshot(self.state_db)
+        panel = snapshot["panels"]["agent_identity"]
+
+        self.assertEqual(panel["counts"]["builder_local"], 1)
+        self.assertEqual(panel["counts"]["identity_import_ready"], 0)
+        self.assertEqual(panel["counts"]["identity_hook_active_chip_records"], 0)
+        self.assertFalse(panel["identity_import"]["ready"])
+
+        report = run_doctor(self.config_manager, self.state_db)
+        checks = {check.name: check for check in report.checks}
+        self.assertIn("watchtower-agent-identity-import", checks)
+        self.assertFalse(checks["watchtower-agent-identity-import"].ok)
+
+    def test_watchtower_agent_identity_import_check_passes_with_active_identity_hook_chip(self) -> None:
+        chip_root = create_fake_hook_chip(self.home, chip_key="spark-swarm")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+        self.config_manager.set_path("spark.chips.active_keys", ["spark-swarm"])
+        self.add_telegram_channel()
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+        sync_attachment_snapshot(config_manager=self.config_manager, state_db=self.state_db)
+
+        snapshot = build_watchtower_snapshot(self.state_db)
+        panel = snapshot["panels"]["agent_identity"]
+
+        self.assertEqual(panel["counts"]["identity_hook_chip_records"], 1)
+        self.assertEqual(panel["counts"]["identity_hook_active_chip_records"], 1)
+        self.assertEqual(panel["counts"]["identity_import_ready"], 1)
+        self.assertEqual(panel["identity_import"]["active_chip_keys"], ["spark-swarm"])
+        self.assertTrue(panel["identity_import"]["ready"])
+
+        report = run_doctor(self.config_manager, self.state_db)
+        checks = {check.name: check for check in report.checks}
+        self.assertIn("watchtower-agent-identity-import", checks)
+        self.assertTrue(checks["watchtower-agent-identity-import"].ok)
 
     def test_personality_state_uses_typed_tables_with_runtime_state_mirrors(self) -> None:
         deltas = detect_and_persist_nl_preferences(

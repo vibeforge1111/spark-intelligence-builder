@@ -402,6 +402,7 @@ Completed locally:
 - operator inspect, rename, and Swarm-link surfaces
 - hook-backed Swarm identity import surface
 - doctor and Watchtower identity visibility
+- persisted import-readiness visibility for the external `identity` hook
 - explicit conflict-repair harness coverage
 
 Remaining external dependency:

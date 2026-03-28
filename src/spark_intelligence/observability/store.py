@@ -2812,8 +2812,25 @@ def _build_agent_identity_panel(state_db: StateDB) -> dict[str, Any]:
             ORDER BY updated_at DESC, agent_id DESC
             """
         ).fetchall()
+        attachment_snapshot_row = conn.execute(
+            """
+            SELECT generated_at, summary_json
+            FROM attachment_state_snapshots
+            ORDER BY generated_at DESC, created_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
 
     profile_by_agent = {str(row["agent_id"]): dict(row) for row in profile_rows}
+    attachment_summary: dict[str, Any] = {}
+    if attachment_snapshot_row and attachment_snapshot_row["summary_json"]:
+        try:
+            parsed_summary = json.loads(str(attachment_snapshot_row["summary_json"]))
+        except json.JSONDecodeError:
+            parsed_summary = {}
+        if isinstance(parsed_summary, dict):
+            attachment_summary = parsed_summary
+    identity_import = attachment_summary.get("identity_import") if isinstance(attachment_summary.get("identity_import"), dict) else {}
     source_counts: dict[str, int] = {}
     status_counts: dict[str, int] = {}
     recent_conflicts: list[dict[str, Any]] = []
@@ -2846,8 +2863,17 @@ def _build_agent_identity_panel(state_db: StateDB) -> dict[str, Any]:
             "identity_conflicts": int(status_counts.get("identity_conflict") or 0),
             "aliases": len(alias_rows),
             "rename_events": len(rename_rows),
+            "identity_hook_chip_records": int(identity_import.get("available_chip_count") or 0),
+            "identity_hook_active_chip_records": int(identity_import.get("active_chip_count") or 0),
+            "identity_import_ready": 1 if identity_import.get("ready") else 0,
         },
         "status_counts": status_counts,
+        "identity_import": {
+            "ready": bool(identity_import.get("ready")),
+            "available_chip_keys": identity_import.get("available_chip_keys") or [],
+            "active_chip_keys": identity_import.get("active_chip_keys") or [],
+            "snapshot_generated_at": attachment_snapshot_row["generated_at"] if attachment_snapshot_row else None,
+        },
         "recent_conflicts": recent_conflicts[:10],
         "recent_aliases": [dict(row) for row in alias_rows[:10]],
         "recent_renames": [dict(row) for row in rename_rows[:10]],

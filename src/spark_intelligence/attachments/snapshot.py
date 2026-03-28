@@ -123,6 +123,7 @@ def sync_attachment_snapshot(*, config_manager: ConfigManager, state_db: StateDB
         "warning_count": len(snapshot.warnings),
         "chip_source": snapshot.chip_source,
         "path_source": snapshot.path_source,
+        "identity_import": _build_identity_import_summary(snapshot.records),
     }
     with state_db.connect() as conn:
         conn.execute(
@@ -247,6 +248,27 @@ def _snapshot_record(
         attachment_mode = "active"
     payload["attachment_mode"] = attachment_mode
     return payload
+
+
+def _build_identity_import_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
+    identity_records = [
+        record
+        for record in records
+        if str(record.get("kind") or "") == "chip" and "identity" in (record.get("commands") or {})
+    ]
+    available_chip_keys = sorted(str(record.get("key") or "") for record in identity_records if str(record.get("key") or ""))
+    active_chip_keys = sorted(
+        str(record.get("key") or "")
+        for record in identity_records
+        if str(record.get("key") or "") and str(record.get("attachment_mode") or "") in {"active", "pinned"}
+    )
+    return {
+        "available_chip_keys": available_chip_keys,
+        "available_chip_count": len(available_chip_keys),
+        "active_chip_keys": active_chip_keys,
+        "active_chip_count": len(active_chip_keys),
+        "ready": bool(active_chip_keys),
+    }
 
 
 def _require_known_key(key: str, known_keys: set[str], kind: str) -> None:
