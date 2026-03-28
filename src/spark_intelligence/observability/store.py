@@ -2666,6 +2666,14 @@ def _build_personality_panel(state_db: StateDB) -> dict[str, Any]:
             WHERE state_key LIKE 'personality:%'
             """
         ).fetchall()
+        attachment_snapshot_row = conn.execute(
+            """
+            SELECT generated_at, summary_json
+            FROM attachment_state_snapshots
+            ORDER BY generated_at DESC, created_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
 
     profile_mirror_humans: set[str] = set()
     observation_mirror_humans: set[str] = set()
@@ -2750,6 +2758,19 @@ def _build_personality_panel(state_db: StateDB) -> dict[str, Any]:
         len(payload["missing_runtime_mirrors"]) + len(payload["runtime_only_mirrors"])
         for payload in (profile_drift, observation_drift, evolution_drift)
     )
+    attachment_summary: dict[str, Any] = {}
+    if attachment_snapshot_row and attachment_snapshot_row["summary_json"]:
+        try:
+            parsed_summary = json.loads(str(attachment_snapshot_row["summary_json"]))
+        except json.JSONDecodeError:
+            parsed_summary = {}
+        if isinstance(parsed_summary, dict):
+            attachment_summary = parsed_summary
+    personality_import = (
+        attachment_summary.get("personality_import")
+        if isinstance(attachment_summary.get("personality_import"), dict)
+        else {}
+    )
 
     return {
         "counts": {
@@ -2759,11 +2780,20 @@ def _build_personality_panel(state_db: StateDB) -> dict[str, Any]:
             "evolution_rows": len(evolutions),
             "distinct_humans": len(recent_humans),
             "mirror_drift": total_drift,
+            "personality_hook_chip_records": int(personality_import.get("available_chip_count") or 0),
+            "personality_hook_active_chip_records": int(personality_import.get("active_chip_count") or 0),
+            "personality_import_ready": 1 if personality_import.get("ready") else 0,
         },
         "mirror_drift": {
             "trait_profiles": profile_drift,
             "observations": observation_drift,
             "evolution_events": evolution_drift,
+        },
+        "personality_import": {
+            "ready": bool(personality_import.get("ready")),
+            "available_chip_keys": personality_import.get("available_chip_keys") or [],
+            "active_chip_keys": personality_import.get("active_chip_keys") or [],
+            "snapshot_generated_at": attachment_snapshot_row["generated_at"] if attachment_snapshot_row else None,
         },
         "recent_profiles": profiles[:10],
         "recent_observations": observations[:10],

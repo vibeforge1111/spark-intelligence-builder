@@ -6,6 +6,8 @@ Builder-side personality integration is now completed as a first-class subsystem
 
 Builder also now exposes a hook-backed import path for the external personality runtime instead of relying only on an out-of-band file writer.
 
+Builder now also surfaces personality-hook import readiness in attachment snapshots, Watchtower, and doctor so missing external chip wiring is visible before operators try to import.
+
 ## What Shipped
 
 - Hardened `load_personality_profile()` so it can operate safely without a live `ConfigManager` or `StateDB` when used in isolated contract or smoke contexts.
@@ -19,6 +21,11 @@ Builder also now exposes a hook-backed import path for the external personality 
   - recent-human activity summary
   - typed-vs-runtime mirror drift detection
 - Added a doctor check: `watchtower-personality-mirrors`
+- Added personality import readiness surfaces:
+  - attachment snapshot summary includes `personality_import`
+  - Watchtower `personality` panel now reports available/active personality hook chips
+  - doctor now reports `watchtower-personality-import`
+  - the doctor gate only requires personality import readiness once a canonical agent exists
 - Added an operator CLI surface:
   - `spark-intelligence operator personality`
   - `spark-intelligence operator personality --human-id <human_id>`
@@ -74,3 +81,4 @@ python -m pytest tests/test_agent_identity_contracts.py tests/test_attachment_ho
 ```
 
 Result: `176 passed`
+Updated validation result after import-readiness coverage: `182 passed`

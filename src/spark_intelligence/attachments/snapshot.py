@@ -123,7 +123,8 @@ def sync_attachment_snapshot(*, config_manager: ConfigManager, state_db: StateDB
         "warning_count": len(snapshot.warnings),
         "chip_source": snapshot.chip_source,
         "path_source": snapshot.path_source,
-        "identity_import": _build_identity_import_summary(snapshot.records),
+        "identity_import": _build_hook_import_summary(snapshot.records, hook="identity"),
+        "personality_import": _build_hook_import_summary(snapshot.records, hook="personality"),
     }
     with state_db.connect() as conn:
         conn.execute(
@@ -250,11 +251,11 @@ def _snapshot_record(
     return payload
 
 
-def _build_identity_import_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
+def _build_hook_import_summary(records: list[dict[str, Any]], *, hook: str) -> dict[str, Any]:
     identity_records = [
         record
         for record in records
-        if str(record.get("kind") or "") == "chip" and "identity" in (record.get("commands") or {})
+        if str(record.get("kind") or "") == "chip" and hook in (record.get("commands") or {})
     ]
     available_chip_keys = sorted(str(record.get("key") or "") for record in identity_records if str(record.get("key") or ""))
     active_chip_keys = sorted(

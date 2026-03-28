@@ -241,7 +241,7 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
     checks.append(_discord_runtime_check(config_manager=config_manager, state_db=state_db))
     checks.append(_whatsapp_runtime_check(config_manager=config_manager, state_db=state_db))
     stop_ship_issues = evaluate_stop_ship_issues(config_manager=config_manager, state_db=state_db, emit_contradictions=True)
-    checks.extend(_watchtower_health_checks(state_db))
+    checks.extend(_watchtower_health_checks(config_manager=config_manager, state_db=state_db))
     for issue in stop_ship_issues:
         checks.append(DoctorCheck(issue.name, issue.ok, issue.detail))
 
@@ -367,7 +367,7 @@ def provider_execution_health(
     return True, ", ".join(ready) if ready else "no provider execution transports active"
 
 
-def _watchtower_health_checks(state_db: StateDB) -> list[DoctorCheck]:
+def _watchtower_health_checks(*, config_manager: ConfigManager, state_db: StateDB) -> list[DoctorCheck]:
     snapshot = build_watchtower_snapshot(state_db)
     dimensions = snapshot.get("health_dimensions") or {}
     mapping = (
@@ -506,8 +506,26 @@ def _watchtower_health_checks(state_db: StateDB) -> list[DoctorCheck]:
             ),
         )
     )
+    personality_import = personality_panel.get("personality_import") or {}
     identity_panel = (snapshot.get("panels") or {}).get("agent_identity") or {}
     identity_counts = identity_panel.get("counts") or {}
+    personality_enabled = bool(config_manager.get_path("spark.personality.enabled", default=True))
+    personality_import_ready = bool(personality_import.get("ready"))
+    canonical_agent_count = int(identity_counts.get("canonical_agents") or 0)
+    personality_import_required = personality_enabled and canonical_agent_count > 0
+    checks.append(
+        DoctorCheck(
+            "watchtower-personality-import",
+            (not personality_import_required) or personality_import_ready,
+            (
+                f"enabled={'yes' if personality_enabled else 'no'} "
+                f"required={'yes' if personality_import_required else 'no'} "
+                f"canonical_agents={canonical_agent_count} "
+                f"personality_import_ready={'yes' if personality_import_ready else 'no'} "
+                f"active_personality_hook_chips={len(personality_import.get('active_chip_keys') or [])}"
+            ),
+        )
+    )
     checks.append(
         DoctorCheck(
             "watchtower-agent-identity",
