@@ -959,6 +959,7 @@ def _build_inbox_items(
         )
 
     if observer_packets:
+        packet_kinds = sorted({str(packet.get("packet_kind") or "unknown") for packet in observer_packets})
         items.append(
             {
                 "kind": "observer_packet",
@@ -966,7 +967,10 @@ def _build_inbox_items(
                 "priority": "medium",
                 "sort_order": 29,
                 "item_ref": str(observer_packets[0].get("packet_id") or "observer-packet"),
-                "summary": f"{len(observer_packets)} self-observation packet(s) are ready for observer-chip or operator consumption.",
+                "summary": (
+                    f"{len(observer_packets)} observer packet(s) are ready for bounded operator or chip consumption; "
+                    f"kinds={', '.join(packet_kinds[:4])}."
+                ),
                 "recommended_command": "spark-intelligence operator security",
             }
         )
@@ -1250,13 +1254,15 @@ def _build_security_items(
         )
 
     if observer_packets:
+        packet_kinds = sorted({str(packet.get("packet_kind") or "unknown") for packet in observer_packets})
         items.append(
             {
                 "priority": "medium",
                 "sort_order": severity_order["medium"],
                 "summary": (
-                    f"{len(observer_packets)} self-observation packet(s) are available for bounded observer consumption; "
-                    f"top={str(observer_packets[0].get('packet_id') or 'observer-packet')}."
+                    f"{len(observer_packets)} observer packet(s) are available for bounded observer consumption; "
+                    f"top={str(observer_packets[0].get('packet_id') or 'observer-packet')} "
+                    f"kinds={', '.join(packet_kinds[:4])}."
                 ),
                 "recommended_command": "spark-intelligence operator security",
             }

@@ -2591,64 +2591,283 @@ def _collect_observer_incidents(state_db: StateDB) -> list[dict[str, Any]]:
     return incidents
 
 
-def build_self_observation_packets(state_db: StateDB) -> list[dict[str, Any]]:
+def build_observer_packets(state_db: StateDB) -> list[dict[str, Any]]:
     packets: list[dict[str, Any]] = []
+    digest_inputs: list[dict[str, Any]] = []
     for incident in _collect_observer_incidents(state_db):
-        incident_class = str(incident.get("incident_class") or "unknown")
-        item_ref = str(incident.get("item_ref") or "observer-incident")
-        severity = str(incident.get("severity") or "medium")
-        status = "watching" if severity == "info" else "open"
-        packet_key = f"self_observation:{incident_class}:{item_ref}"
-        related_event_ids = [
-            item
-            for item in (
-                str(incident.get("event_id") or "") or None,
-                *list(incident.get("related_event_ids") or []),
-            )
-            if item
-        ]
-        contradiction_ids = [
-            item for item in (str(incident.get("contradiction_id") or "") or None,) if item
-        ]
-        packets.append(
-            {
-                "packet_id": f"pkt:{payload_hash(packet_key)[:24]}",
-                "packet_kind": "self_observation",
-                "target_surface": "spark_intelligence_builder",
-                "created_at": str(incident.get("recorded_at") or utc_now_iso()),
-                "created_by": "builder_core",
-                "evidence_lane": "realworld_validated",
-                "severity": severity,
-                "confidence": "high",
-                "status": status,
-                "summary": str(incident.get("summary") or incident_class),
-                "evidence_refs": list(incident.get("evidence_refs") or [f"observer_incident:{item_ref}"]),
-                "related_event_ids": related_event_ids,
-                "related_packet_ids": [],
-                "contradiction_ids": contradiction_ids,
-                "owner_target": "builder_core" if severity == "info" else "operator",
-                "content": {
-                    "observation_type": _observer_observation_type(incident_class),
-                    "observed_facts": {
-                        "incident_class": incident_class,
-                        "item_ref": item_ref,
-                        "source_kind": str(incident.get("source_kind") or "unknown"),
-                        "source_ref": str(incident.get("source_ref") or "unknown"),
-                    },
-                    "comparison_basis": "typed observer incident classification",
-                    "hypothesis": None,
-                },
-            }
+        self_observation = _build_self_observation_packet(incident)
+        packets.append(self_observation)
+        digest_inputs.append({"incident": incident, "self_observation": self_observation})
+
+        incident_report = _build_incident_report_packet(
+            incident,
+            related_packet_ids=[self_observation["packet_id"]],
         )
+        packets.append(incident_report)
+
+        repair_plan = _build_repair_plan_packet(
+            incident,
+            related_packet_ids=[self_observation["packet_id"], incident_report["packet_id"]],
+        )
+        packets.append(repair_plan)
+
+        security_advisory = _build_security_advisory_packet(
+            incident,
+            related_packet_ids=[self_observation["packet_id"], incident_report["packet_id"]],
+        )
+        if security_advisory is not None:
+            packets.append(security_advisory)
+
+    reflection_digest = _build_reflection_digest_packet(digest_inputs=digest_inputs, packets=packets)
+    if reflection_digest is not None:
+        packets.append(reflection_digest)
+
     packets.sort(
         key=lambda item: (
-            str(item.get("severity") or ""),
+            _observer_packet_sort_order(str(item.get("severity") or "")),
             str(item.get("created_at") or ""),
             str(item.get("packet_id") or ""),
         ),
         reverse=True,
     )
     return packets
+
+
+def build_self_observation_packets(state_db: StateDB) -> list[dict[str, Any]]:
+    return [packet for packet in build_observer_packets(state_db) if str(packet.get("packet_kind") or "") == "self_observation"]
+
+
+def _build_self_observation_packet(incident: dict[str, Any]) -> dict[str, Any]:
+    incident_class = str(incident.get("incident_class") or "unknown")
+    item_ref = str(incident.get("item_ref") or "observer-incident")
+    severity = str(incident.get("severity") or "medium")
+    status = "watching" if severity == "info" else "open"
+    return _observer_packet_base(
+        incident,
+        packet_kind="self_observation",
+        created_by="builder_core",
+        confidence="high",
+        status=status,
+        owner_target="builder_core" if severity == "info" else "operator",
+        summary=str(incident.get("summary") or incident_class),
+        related_packet_ids=[],
+        content={
+            "observation_type": _observer_observation_type(incident_class),
+            "observed_facts": {
+                "incident_class": incident_class,
+                "item_ref": item_ref,
+                "source_kind": str(incident.get("source_kind") or "unknown"),
+                "source_ref": str(incident.get("source_ref") or "unknown"),
+            },
+            "comparison_basis": "typed observer incident classification",
+            "hypothesis": None,
+        },
+    )
+
+
+def _build_incident_report_packet(
+    incident: dict[str, Any],
+    *,
+    related_packet_ids: list[str],
+) -> dict[str, Any]:
+    incident_class = str(incident.get("incident_class") or "unknown")
+    contradiction_id = str(incident.get("contradiction_id") or "")
+    status = "watching" if str(incident.get("severity") or "") == "info" else "open"
+    return _observer_packet_base(
+        incident,
+        packet_kind="incident_report",
+        created_by="builder_core",
+        confidence="low" if contradiction_id else "medium",
+        status=status,
+        owner_target="operator",
+        summary=f"Incident report scaffold for {incident_class}.",
+        related_packet_ids=related_packet_ids,
+        content={
+            "issue_type": _observer_issue_type(incident_class),
+            "suspected_cause": f"Possible {incident_class.replace('_', ' ')} indicated by typed observer evidence.",
+            "suspected_cause_confidence": "low",
+            "impact": {
+                "blast_radius": _observer_blast_radius(incident_class),
+                "user_visible": _observer_user_visible(incident_class),
+            },
+            "contradiction_summary": {
+                "has_active_contradiction": bool(contradiction_id),
+                "contradiction_note": (
+                    f"Active contradiction {contradiction_id} remains open."
+                    if contradiction_id
+                    else "No active contradiction is currently attached."
+                ),
+            },
+            "next_checks": _observer_next_checks(incident_class),
+            "hypothesis_basis": "typed observer incident classification",
+        },
+    )
+
+
+def _build_repair_plan_packet(
+    incident: dict[str, Any],
+    *,
+    related_packet_ids: list[str],
+) -> dict[str, Any]:
+    incident_class = str(incident.get("incident_class") or "unknown")
+    severity = str(incident.get("severity") or "medium")
+    return _observer_packet_base(
+        incident,
+        packet_kind="repair_plan",
+        created_by="builder_core",
+        confidence="medium" if severity in {"critical", "high"} else "low",
+        status="proposed_fix" if severity != "info" else "watching",
+        owner_target="operator",
+        summary=f"Repair-plan scaffold for {incident_class}.",
+        related_packet_ids=related_packet_ids,
+        content={
+            "recommended_fix": _observer_recommended_fix(incident_class),
+            "fix_scope": _observer_fix_scope(incident_class),
+            "autonomy_class": "proposal_only",
+            "verification_step": _observer_verification_steps(incident_class),
+            "rollback_condition": _observer_rollback_conditions(incident_class),
+            "expected_outcome": _observer_expected_outcomes(incident_class),
+        },
+    )
+
+
+def _build_security_advisory_packet(
+    incident: dict[str, Any],
+    *,
+    related_packet_ids: list[str],
+) -> dict[str, Any] | None:
+    incident_class = str(incident.get("incident_class") or "unknown")
+    advisory_type = _observer_security_advisory_type(incident_class)
+    if advisory_type is None:
+        return None
+    source_kind = str(incident.get("source_kind") or "typed_observer_incident")
+    return _observer_packet_base(
+        incident,
+        packet_kind="security_advisory",
+        created_by="builder_core",
+        confidence="medium",
+        status="escalated" if str(incident.get("severity") or "") in {"critical", "high"} else "open",
+        owner_target="operator",
+        summary=f"Security advisory scaffold for {incident_class}.",
+        related_packet_ids=related_packet_ids,
+        content={
+            "advisory_type": advisory_type,
+            "claim": _observer_security_claim(incident_class),
+            "required_evidence_sources": ["typed_observer_incident", source_kind],
+            "falsifiability": _observer_security_falsifiability(incident_class),
+            "recommendation_class": _observer_security_recommendation_class(incident_class),
+        },
+    )
+
+
+def _build_reflection_digest_packet(
+    *,
+    digest_inputs: list[dict[str, Any]],
+    packets: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not digest_inputs:
+        return None
+    related_packet_ids = [str(packet.get("packet_id") or "") for packet in packets if str(packet.get("packet_id") or "")]
+    evidence_refs: list[str] = []
+    contradiction_ids: list[str] = []
+    what_broke: list[str] = []
+    what_improved: list[str] = []
+    what_is_uncertain: list[str] = []
+    next_best_action: list[str] = []
+    latest_created_at = utc_now_iso()
+    highest_severity = "low"
+    for item in digest_inputs:
+        incident = item["incident"]
+        self_observation = item["self_observation"]
+        incident_class = str(incident.get("incident_class") or "unknown")
+        summary = str(self_observation.get("summary") or incident_class)
+        severity = str(incident.get("severity") or "medium")
+        if _observer_packet_sort_order(severity) > _observer_packet_sort_order(highest_severity):
+            highest_severity = severity
+        latest_created_at = max(latest_created_at, str(self_observation.get("created_at") or latest_created_at))
+        evidence_refs.extend(list(self_observation.get("evidence_refs") or []))
+        contradiction_ids.extend(list(self_observation.get("contradiction_ids") or []))
+        next_best_action.extend(_observer_next_checks(incident_class)[:1])
+        if incident_class == "resume_risk_intercepted":
+            what_improved.append(summary)
+        else:
+            what_broke.append(summary)
+        if contradiction_ids or severity in {"high", "critical"}:
+            what_is_uncertain.append(f"Root-cause diagnosis for {incident_class} is still provisional.")
+    evidence_refs = list(dict.fromkeys(evidence_refs))
+    contradiction_ids = list(dict.fromkeys(contradiction_ids))
+    what_broke = list(dict.fromkeys(what_broke))[:3]
+    what_improved = list(dict.fromkeys(what_improved))[:3]
+    what_is_uncertain = list(dict.fromkeys(what_is_uncertain))[:3]
+    next_best_action = list(dict.fromkeys(next_best_action))[:3]
+    packet_key = f"reflection_digest:{latest_created_at}:{len(digest_inputs)}"
+    return {
+        "packet_id": f"pkt:{payload_hash(packet_key)[:24]}",
+        "packet_kind": "reflection_digest",
+        "target_surface": "spark_intelligence_builder",
+        "created_at": latest_created_at,
+        "created_by": "builder_core",
+        "evidence_lane": "realworld_validated",
+        "severity": highest_severity,
+        "confidence": "medium",
+        "status": "watching",
+        "summary": f"Reflection digest for {len(digest_inputs)} observer incident(s).",
+        "evidence_refs": evidence_refs,
+        "related_event_ids": [],
+        "related_packet_ids": related_packet_ids,
+        "contradiction_ids": contradiction_ids,
+        "owner_target": "operator",
+        "content": {
+            "what_broke": what_broke,
+            "what_improved": what_improved,
+            "what_is_uncertain": what_is_uncertain or ["No new contradiction-linked uncertainty was recorded."],
+            "next_best_action": next_best_action,
+        },
+    }
+
+
+def _observer_packet_base(
+    incident: dict[str, Any],
+    *,
+    packet_kind: str,
+    created_by: str,
+    confidence: str,
+    status: str,
+    owner_target: str,
+    summary: str,
+    related_packet_ids: list[str],
+    content: dict[str, Any],
+) -> dict[str, Any]:
+    incident_class = str(incident.get("incident_class") or "unknown")
+    item_ref = str(incident.get("item_ref") or "observer-incident")
+    packet_key = f"{packet_kind}:{incident_class}:{item_ref}"
+    related_event_ids = [
+        item
+        for item in (
+            str(incident.get("event_id") or "") or None,
+            *list(incident.get("related_event_ids") or []),
+        )
+        if item
+    ]
+    contradiction_ids = [item for item in (str(incident.get("contradiction_id") or "") or None,) if item]
+    return {
+        "packet_id": f"pkt:{payload_hash(packet_key)[:24]}",
+        "packet_kind": packet_kind,
+        "target_surface": "spark_intelligence_builder",
+        "created_at": str(incident.get("recorded_at") or utc_now_iso()),
+        "created_by": created_by,
+        "evidence_lane": "realworld_validated",
+        "severity": str(incident.get("severity") or "medium"),
+        "confidence": confidence,
+        "status": status,
+        "summary": summary,
+        "evidence_refs": list(incident.get("evidence_refs") or [f"observer_incident:{item_ref}"]),
+        "related_event_ids": related_event_ids,
+        "related_packet_ids": related_packet_ids,
+        "contradiction_ids": contradiction_ids,
+        "owner_target": owner_target,
+        "content": content,
+    }
 
 
 def _observer_observation_type(incident_class: str) -> str:
@@ -2664,20 +2883,177 @@ def _observer_observation_type(incident_class: str) -> str:
 
 
 def _build_observer_packet_panel(state_db: StateDB) -> dict[str, Any]:
-    packets = build_self_observation_packets(state_db)
+    packets = build_observer_packets(state_db)
     counts_by_status: dict[str, int] = {}
+    counts_by_kind: dict[str, int] = {}
     for packet in packets:
         status = str(packet.get("status") or "unknown")
+        packet_kind = str(packet.get("packet_kind") or "unknown")
         counts_by_status[status] = counts_by_status.get(status, 0) + 1
+        counts_by_kind[packet_kind] = counts_by_kind.get(packet_kind, 0) + 1
     return {
         "counts": {
             "total": len(packets),
             "open": counts_by_status.get("open", 0),
             "watching": counts_by_status.get("watching", 0),
+            "escalated": counts_by_status.get("escalated", 0),
+            "proposed_fix": counts_by_status.get("proposed_fix", 0),
+            "distinct_kinds": len(counts_by_kind),
         },
         "counts_by_status": counts_by_status,
+        "counts_by_kind": counts_by_kind,
         "recent_packets": packets[:10],
     }
+
+
+def _observer_issue_type(incident_class: str) -> str:
+    mapping = {
+        "provenance_contamination": "provenance_gap",
+        "promotion_contamination": "promotion_gate_drift",
+        "secret_boundary": "secret_exposure_risk",
+        "session_integrity": "session_integrity_regression",
+        "residue_contamination": "residue_persistence",
+        "resume_risk_intercepted": "resume_state_overwrite_risk",
+    }
+    return mapping.get(incident_class, "observer_incident")
+
+
+def _observer_blast_radius(incident_class: str) -> str:
+    mapping = {
+        "provenance_contamination": "builder_and_downstream_lineage",
+        "promotion_contamination": "builder_memory_promotion",
+        "secret_boundary": "operator_and_delivery_security",
+        "session_integrity": "session_state_and_resume_flow",
+        "residue_contamination": "bridge_and_delivery_surfaces",
+        "resume_risk_intercepted": "runtime_state_only",
+    }
+    return mapping.get(incident_class, "builder_core")
+
+
+def _observer_user_visible(incident_class: str) -> bool:
+    return incident_class in {"secret_boundary", "residue_contamination", "session_integrity"}
+
+
+def _observer_next_checks(incident_class: str) -> list[str]:
+    mapping = {
+        "provenance_contamination": [
+            "verify typed provenance refs on the affected mutation path",
+            "confirm high-risk delivery or bridge events preserve source lineage",
+        ],
+        "promotion_contamination": [
+            "confirm keepability and promotion disposition stayed aligned",
+            "review the typed memory-lane record for the blocked artifact",
+        ],
+        "secret_boundary": [
+            "inspect recent secret-boundary policy violations",
+            "confirm blocked output was quarantined before delivery",
+        ],
+        "session_integrity": [
+            "review reset-sensitive registry coverage for the affected state key",
+            "confirm richer resume state was preserved after the latest write",
+        ],
+        "residue_contamination": [
+            "inspect raw-vs-mutated refs for the affected bridge or delivery event",
+            "confirm residue-bearing artifacts did not cross promotion gates",
+        ],
+        "resume_risk_intercepted": [
+            "confirm the richer runtime-state fields were preserved after interception",
+            "review whether the incoming write should be narrowed or suppressed upstream",
+        ],
+    }
+    return mapping.get(incident_class, ["review the linked observer incident and verify typed evidence refs"])
+
+
+def _observer_recommended_fix(incident_class: str) -> str:
+    mapping = {
+        "provenance_contamination": "Restore explicit provenance refs on the affected mutation path and re-run the contract check.",
+        "promotion_contamination": "Tighten the promotion gate so the artifact stays blocked until classification and lane labels agree.",
+        "secret_boundary": "Keep the boundary blocked, review the source text, and harden the relevant output path before retrying.",
+        "session_integrity": "Expand reset-sensitive coverage or merge logic on the affected runtime-state path before another resume cycle.",
+        "residue_contamination": "Preserve raw-vs-mutated refs and prevent residue-bearing artifacts from being promoted.",
+        "resume_risk_intercepted": "Keep merge protection enabled and narrow the sparse overwrite path that triggered the guard.",
+    }
+    return mapping.get(incident_class, "Review the incident and prepare a bounded repair before mutating state.")
+
+
+def _observer_fix_scope(incident_class: str) -> str:
+    mapping = {
+        "provenance_contamination": "mutation_lineage",
+        "promotion_contamination": "promotion_gate_policy",
+        "secret_boundary": "delivery_and_boundary_controls",
+        "session_integrity": "runtime_state_integrity",
+        "residue_contamination": "bridge_output_governance",
+        "resume_risk_intercepted": "runtime_state_guardrails",
+    }
+    return mapping.get(incident_class, "builder_core")
+
+
+def _observer_verification_steps(incident_class: str) -> list[str]:
+    return [
+        _observer_next_checks(incident_class)[0],
+        "re-run Watchtower and confirm the packet stays resolved or downgraded.",
+    ]
+
+
+def _observer_rollback_conditions(incident_class: str) -> list[str]:
+    return [
+        f"If the {incident_class.replace('_', ' ')} signal persists after the change, revert the local fix and escalate for review."
+    ]
+
+
+def _observer_expected_outcomes(incident_class: str) -> list[str]:
+    mapping = {
+        "resume_risk_intercepted": ["Resume writes preserve richer runtime-state fields without new integrity incidents."],
+        "secret_boundary": ["Secret-like output stays blocked and quarantined before delivery."],
+    }
+    return mapping.get(incident_class, ["The linked observer incident no longer appears as an open Watchtower packet."])
+
+
+def _observer_security_advisory_type(incident_class: str) -> str | None:
+    mapping = {
+        "provenance_contamination": "hardening_gap",
+        "secret_boundary": "secret_exposure",
+        "residue_contamination": "unsafe_automation",
+    }
+    return mapping.get(incident_class)
+
+
+def _observer_security_claim(incident_class: str) -> str:
+    mapping = {
+        "provenance_contamination": "The current mutation path likely lacks sufficient provenance hardening.",
+        "secret_boundary": "Recent evidence suggests secret-like material reached a delivery boundary and required blocking.",
+        "residue_contamination": "A guarded output path likely still allows residue-bearing material to approach delivery or promotion.",
+    }
+    return mapping.get(incident_class, "Recent observer evidence indicates a security-relevant hardening gap.")
+
+
+def _observer_security_falsifiability(incident_class: str) -> str:
+    mapping = {
+        "provenance_contamination": "If all linked high-risk events already carry typed source lineage, downgrade this advisory.",
+        "secret_boundary": "If the blocked output cannot reach any delivery path, downgrade this advisory.",
+        "residue_contamination": "If raw-vs-mutated refs are present and promotion gates stay closed, downgrade this advisory.",
+    }
+    return mapping.get(incident_class, "If linked evidence does not reproduce the condition, downgrade this advisory.")
+
+
+def _observer_security_recommendation_class(incident_class: str) -> str:
+    mapping = {
+        "provenance_contamination": "hardening",
+        "secret_boundary": "block",
+        "residue_contamination": "investigate",
+    }
+    return mapping.get(incident_class, "investigate")
+
+
+def _observer_packet_sort_order(severity: str) -> int:
+    return {
+        "critical": 5,
+        "high": 4,
+        "medium": 3,
+        "warning": 3,
+        "low": 2,
+        "info": 1,
+    }.get(severity, 0)
 
 
 def _build_memory_shadow_panel(state_db: StateDB) -> dict[str, Any]:

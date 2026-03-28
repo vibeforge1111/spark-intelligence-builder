@@ -600,9 +600,14 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("promotion_contamination", panel["counts_by_class"])
         self.assertIn("resume_risk_intercepted", panel["counts_by_class"])
         packet_panel = snapshot["panels"]["observer_packets"]
-        self.assertGreaterEqual(packet_panel["counts"]["total"], 3)
-        self.assertEqual(packet_panel["recent_packets"][0]["packet_kind"], "self_observation")
-        self.assertTrue(packet_panel["recent_packets"][0]["evidence_refs"])
+        self.assertGreaterEqual(packet_panel["counts"]["total"], 8)
+        self.assertGreaterEqual(packet_panel["counts"]["distinct_kinds"], 4)
+        self.assertIn("self_observation", packet_panel["counts_by_kind"])
+        self.assertIn("incident_report", packet_panel["counts_by_kind"])
+        self.assertIn("repair_plan", packet_panel["counts_by_kind"])
+        self.assertIn("reflection_digest", packet_panel["counts_by_kind"])
+        self.assertIn("security_advisory", packet_panel["counts_by_kind"])
+        self.assertTrue(any(packet.get("evidence_refs") for packet in packet_panel["recent_packets"]))
 
     def test_stop_ship_flags_invalid_memory_contract_events(self) -> None:
         record_event(
@@ -1176,7 +1181,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertGreaterEqual(report.payload["counts"]["observer_incidents"], 2)
         self.assertGreaterEqual(report.payload["counts"]["observer_packets"], 2)
         self.assertTrue(any("observer contamination or integrity incident" in item["summary"].lower() for item in report.payload["items"]))
-        self.assertTrue(any("self-observation packet" in item["summary"].lower() for item in report.payload["items"]))
+        self.assertTrue(any("observer packet" in item["summary"].lower() for item in report.payload["items"]))
 
     def test_doctor_report_includes_watchtower_health_checks(self) -> None:
         run = open_run(
@@ -1227,6 +1232,8 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertFalse(checks["watchtower-observer-incidents"].ok)
         self.assertIn("watchtower-observer-packets", checks)
         self.assertTrue(checks["watchtower-observer-packets"].ok)
+        self.assertIn("watchtower-observer-packet-kinds", checks)
+        self.assertTrue(checks["watchtower-observer-packet-kinds"].ok)
 
     def test_unlabeled_provenance_is_quarantined(self) -> None:
         record_event(
