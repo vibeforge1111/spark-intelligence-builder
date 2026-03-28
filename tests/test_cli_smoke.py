@@ -1514,6 +1514,23 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(detail_payload["recent_imports"][0]["target_ref"], "agent:human:telegram:111")
         self.assertEqual(detail_payload["recent_imports"][0]["details"]["chip_key"], "spark-personality")
 
+        text_exit, text_stdout, text_stderr = self.run_cli(
+            "operator",
+            "personality",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:telegram:111",
+        )
+        self.assertEqual(text_exit, 0, text_stderr)
+        self.assertIn("persona_summary: Direct, calm, low-fluff, strategic.", text_stdout)
+        self.assertIn(
+            "behavioral_rules: Prefer clear decisions over open-ended brainstorming unless asked. | "
+            "Avoid emotional padding. | Push toward execution.",
+            text_stdout,
+        )
+        self.assertIn("persona_provenance: source_ref=agent import-personality chip=spark-personality", text_stdout)
+
     def test_agent_migrate_legacy_personality_command_moves_overlay_into_agent_base(self) -> None:
         approve_pairing(
             state_db=self.state_db,

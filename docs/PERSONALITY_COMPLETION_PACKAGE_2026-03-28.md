@@ -31,6 +31,7 @@ Builder now also surfaces personality-hook import readiness in attachment snapsh
   - `spark-intelligence operator personality --human-id <human_id>`
   - overview now includes personality import readiness and recent import attempts
   - per-human view now includes recent import attempts for that canonical agent
+  - per-human text view now includes saved persona summary, behavioral rules, and import provenance
 - Added a hook-backed Builder import surface:
   - `spark-intelligence agent import-personality --human-id <human_id> [--chip-key <chip-key>]`
   - writes a validated agent persona profile into Builder typed storage
@@ -59,6 +60,9 @@ The per-human report includes:
 - observation-state mix
 - current import readiness
 - recent import attempt status for that agent
+- saved persona summary
+- saved behavioral rules
+- saved persona provenance
 
 ## Builder / Chip Boundary
 

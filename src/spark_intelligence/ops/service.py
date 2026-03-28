@@ -321,6 +321,22 @@ class PersonalityReport:
                 f"- agent_persona: {agent_persona.get('persona_name') or 'saved'} "
                 f"updated_at={agent_persona.get('updated_at') or 'unknown'}"
             )
+            if agent_persona.get("persona_summary"):
+                lines.append(f"- persona_summary: {agent_persona['persona_summary']}")
+            behavioral_rules = agent_persona.get("behavioral_rules") or []
+            if behavioral_rules:
+                lines.append(
+                    "- behavioral_rules: "
+                    + " | ".join(str(rule) for rule in behavioral_rules[:5])
+                )
+            provenance = agent_persona.get("provenance") or {}
+            if provenance:
+                lines.append(
+                    "- persona_provenance: "
+                    f"source_ref={provenance.get('source_ref') or 'unknown'} "
+                    f"chip={provenance.get('chip_key') or 'none'} "
+                    f"import_id={provenance.get('import_id') or 'none'}"
+                )
         lines.append(
             "- import: "
             f"ready={'yes' if personality_import.get('ready') else 'no'} "
