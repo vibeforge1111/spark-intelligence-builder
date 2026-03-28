@@ -1,5 +1,12 @@
 # Spark Intelligence v1 Identity And Session Model Spec
 
+Superseded in part for Builder-plus-Spark-Swarm canonical agent linking by:
+
+- `docs/AGENT_IDENTITY_SYSTEM_SPEC_2026-03-28.md`
+- `docs/AGENT_IDENTITY_IMPLEMENTATION_PLAN_2026-03-28.md`
+
+This v1 document still describes the foundational workspace, human, session, and pairing model.
+
 ## 1. Purpose
 
 This document defines the v1 identity and session model for `Spark Intelligence`.
