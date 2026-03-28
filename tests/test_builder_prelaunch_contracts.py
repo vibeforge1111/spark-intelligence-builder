@@ -18,6 +18,7 @@ from spark_intelligence.observability.store import (
     open_run,
     recent_contradictions,
     recent_memory_lane_records,
+    record_observer_handoff_record,
     recent_observer_packet_records,
     recent_policy_gate_records,
     record_environment_snapshot,
@@ -1236,6 +1237,42 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertTrue(any("observer contamination or integrity incident" in item["summary"].lower() for item in report.payload["items"]))
         self.assertTrue(any("observer packet" in item["summary"].lower() for item in report.payload["items"]))
 
+    def test_watchtower_and_operator_security_surface_problematic_observer_handoffs(self) -> None:
+        record_observer_handoff_record(
+            self.state_db,
+            handoff_id="observer-handoff-failed",
+            chip_key="startup-yc",
+            hook="packets",
+            run_id="run:test",
+            request_id="req:test",
+            bundle_path=str(self.home / "artifacts" / "observer-handoffs" / "failed.bundle.json"),
+            result_path=None,
+            packet_count=4,
+            packet_kind_filter=None,
+            active_only=True,
+            status="failed",
+            summary="Observer handoff failed because the chip exited non-zero.",
+            exit_code=1,
+            error_text="chip_exit_nonzero",
+            payload={"packet_count": 4},
+            output={"stderr": "boom"},
+        )
+
+        snapshot = build_watchtower_snapshot(self.state_db)
+        handoff_panel = snapshot["panels"]["observer_handoffs"]
+        report = build_operator_security_report(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            limit=20,
+        )
+
+        self.assertEqual(handoff_panel["counts"]["total"], 1)
+        self.assertEqual(handoff_panel["counts"]["failed"], 1)
+        self.assertEqual(handoff_panel["counts"]["problematic"], 1)
+        self.assertEqual(report.payload["counts"]["observer_handoffs"], 1)
+        self.assertEqual(report.payload["counts"]["observer_handoff_failures"], 1)
+        self.assertTrue(any("observer handoff" in item["summary"].lower() for item in report.payload["items"]))
+
     def test_doctor_report_includes_watchtower_health_checks(self) -> None:
         run = open_run(
             self.state_db,
@@ -1287,6 +1324,34 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertTrue(checks["watchtower-observer-packets"].ok)
         self.assertIn("watchtower-observer-packet-kinds", checks)
         self.assertTrue(checks["watchtower-observer-packet-kinds"].ok)
+
+    def test_doctor_report_includes_observer_handoff_check(self) -> None:
+        record_observer_handoff_record(
+            self.state_db,
+            handoff_id="observer-handoff-blocked",
+            chip_key="startup-yc",
+            hook="packets",
+            run_id="run:test",
+            request_id="req:test",
+            bundle_path=str(self.home / "artifacts" / "observer-handoffs" / "blocked.bundle.json"),
+            result_path=None,
+            packet_count=3,
+            packet_kind_filter=None,
+            active_only=True,
+            status="blocked",
+            summary="Observer handoff output was blocked by the secret boundary.",
+            exit_code=0,
+            error_text="secret_boundary_blocked:q-1",
+            payload={"packet_count": 3},
+            output=None,
+        )
+
+        report = run_doctor(self.config_manager, self.state_db)
+        checks = {check.name: check for check in report.checks}
+
+        self.assertIn("watchtower-observer-handoffs", checks)
+        self.assertFalse(checks["watchtower-observer-handoffs"].ok)
+        self.assertIn("blocked=1", checks["watchtower-observer-handoffs"].detail)
 
     def test_unlabeled_provenance_is_quarantined(self) -> None:
         record_event(

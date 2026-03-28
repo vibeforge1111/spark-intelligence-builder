@@ -1251,6 +1251,7 @@ def build_watchtower_snapshot(
             "session_integrity": _build_session_integrity_panel(state_db),
             "observer_incidents": _build_observer_incident_panel(state_db),
             "observer_packets": _build_observer_packet_panel(state_db),
+            "observer_handoffs": _build_observer_handoff_panel(state_db),
             "memory_shadow": _build_memory_shadow_panel(state_db),
         },
     }
@@ -3296,6 +3297,36 @@ def _build_observer_packet_panel(state_db: StateDB) -> dict[str, Any]:
         "counts_by_status": counts_by_status,
         "counts_by_kind": counts_by_kind,
         "recent_packets": packets[:10],
+    }
+
+
+def _build_observer_handoff_panel(state_db: StateDB) -> dict[str, Any]:
+    rows = recent_observer_handoff_records(state_db, limit=20)
+    counts_by_status: dict[str, int] = {}
+    counts_by_chip: dict[str, int] = {}
+    for row in rows:
+        status = str(row.get("status") or "unknown")
+        chip_key = str(row.get("chip_key") or "unknown")
+        counts_by_status[status] = counts_by_status.get(status, 0) + 1
+        counts_by_chip[chip_key] = counts_by_chip.get(chip_key, 0) + 1
+    problematic = (
+        counts_by_status.get("failed", 0)
+        + counts_by_status.get("blocked", 0)
+        + counts_by_status.get("stalled", 0)
+    )
+    return {
+        "counts": {
+            "total": len(rows),
+            "completed": counts_by_status.get("completed", 0),
+            "failed": counts_by_status.get("failed", 0),
+            "blocked": counts_by_status.get("blocked", 0),
+            "stalled": counts_by_status.get("stalled", 0),
+            "problematic": problematic,
+            "distinct_chips": len(counts_by_chip),
+        },
+        "counts_by_status": counts_by_status,
+        "counts_by_chip": counts_by_chip,
+        "recent_handoffs": rows[:10],
     }
 
 

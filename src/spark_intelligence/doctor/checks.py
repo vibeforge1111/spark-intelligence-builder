@@ -477,4 +477,19 @@ def _watchtower_health_checks(state_db: StateDB) -> list[DoctorCheck]:
             ),
         )
     )
+    observer_handoffs = (snapshot.get("panels") or {}).get("observer_handoffs") or {}
+    handoff_counts = observer_handoffs.get("counts") or {}
+    checks.append(
+        DoctorCheck(
+            "watchtower-observer-handoffs",
+            int(handoff_counts.get("problematic") or 0) == 0,
+            (
+                f"total={int(handoff_counts.get('total') or 0)} "
+                f"completed={int(handoff_counts.get('completed') or 0)} "
+                f"failed={int(handoff_counts.get('failed') or 0)} "
+                f"blocked={int(handoff_counts.get('blocked') or 0)} "
+                f"stalled={int(handoff_counts.get('stalled') or 0)}"
+            ),
+        )
+    )
     return checks

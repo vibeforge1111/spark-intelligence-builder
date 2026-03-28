@@ -110,6 +110,8 @@ class OperatorInboxReport:
             f"policy_block_incidents={counts['policy_block_incidents']} "
             f"observer_incidents={counts['observer_incidents']} "
             f"observer_packets={counts['observer_packets']} "
+            f"observer_handoffs={counts['observer_handoffs']} "
+            f"observer_handoff_failures={counts['observer_handoff_failures']} "
             f"webhook_alerts={counts['webhook_alerts']} "
             f"webhook_snoozes={counts['webhook_snoozes']} "
             f"active_suppressed_webhook_snoozes={counts['active_suppressed_webhook_snoozes']}"
@@ -165,6 +167,8 @@ class OperatorSecurityReport:
             f"policy_block_incidents={counts['policy_block_incidents']} "
             f"observer_incidents={counts['observer_incidents']} "
             f"observer_packets={counts['observer_packets']} "
+            f"observer_handoffs={counts['observer_handoffs']} "
+            f"observer_handoff_failures={counts['observer_handoff_failures']} "
             f"guardrail_hits={counts['guardrail_hits']}"
         )
         items = self.payload.get("items") or []
@@ -452,6 +456,10 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
     watchtower = build_watchtower_snapshot(state_db)
     observer_incidents = ((watchtower.get("panels") or {}).get("observer_incidents") or {}).get("recent_incidents") or []
     observer_packets = ((watchtower.get("panels") or {}).get("observer_packets") or {}).get("recent_packets") or []
+    observer_handoffs = ((watchtower.get("panels") or {}).get("observer_handoffs") or {}).get("recent_handoffs") or []
+    problematic_observer_handoffs = [
+        row for row in observer_handoffs if str(row.get("status") or "") in {"failed", "blocked", "stalled"}
+    ]
     pairing_rows = review_pairings(state_db).rows
     pending_pairings = [row for row in pairing_rows if row.get("status") == "pending"]
     held_pairings = [row for row in pairing_rows if row.get("status") == "held"]
@@ -486,6 +494,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
         policy_blocks=policy_blocks,
         observer_incidents=observer_incidents,
         observer_packets=observer_packets,
+        observer_handoffs=observer_handoffs,
         webhook_alerts=webhook_alerts,
         webhook_snoozes=webhook_snoozes,
     )
@@ -505,6 +514,8 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
             "policy_block_incidents": len(policy_blocks),
             "observer_incidents": len(observer_incidents),
             "observer_packets": len(observer_packets),
+            "observer_handoffs": len(observer_handoffs),
+            "observer_handoff_failures": len(problematic_observer_handoffs),
             "webhook_alerts": len(webhook_alerts),
             "webhook_snoozes": len(webhook_snoozes),
             "active_suppressed_webhook_snoozes": _active_suppressed_webhook_snooze_count(webhook_snoozes),
@@ -522,6 +533,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
                 + len(policy_blocks)
                 + len(observer_incidents)
                 + len(observer_packets)
+                + len(problematic_observer_handoffs)
                 + len(webhook_alerts)
                 + len(webhook_snoozes)
             ),
@@ -541,6 +553,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
         "policy_blocks": policy_blocks,
         "observer_incidents": observer_incidents,
         "observer_packets": observer_packets,
+        "observer_handoffs": observer_handoffs,
         "webhooks": webhook_alerts,
         "webhook_snoozes": webhook_snoozes,
         "watchtower": watchtower,
@@ -558,6 +571,10 @@ def build_operator_security_report(
     watchtower = build_watchtower_snapshot(state_db)
     observer_incidents = ((watchtower.get("panels") or {}).get("observer_incidents") or {}).get("recent_incidents") or []
     observer_packets = ((watchtower.get("panels") or {}).get("observer_packets") or {}).get("recent_packets") or []
+    observer_handoffs = ((watchtower.get("panels") or {}).get("observer_handoffs") or {}).get("recent_handoffs") or []
+    problematic_observer_handoffs = [
+        row for row in observer_handoffs if str(row.get("status") or "") in {"failed", "blocked", "stalled"}
+    ]
     channel_alerts = _load_channel_alerts(config_manager=config_manager, state_db=state_db)
     bridge_alerts = _build_bridge_alerts(config_manager=config_manager, state_db=state_db)
     auth_alerts = _build_auth_alerts(config_manager=config_manager, state_db=state_db)
@@ -602,6 +619,7 @@ def build_operator_security_report(
         policy_blocks=policy_blocks,
         observer_incidents=observer_incidents,
         observer_packets=observer_packets,
+        observer_handoffs=observer_handoffs,
         duplicate_updates=duplicate_updates,
         rate_limited_updates=rate_limited_updates,
         delivery_failures=delivery_failures,
@@ -627,6 +645,8 @@ def build_operator_security_report(
             "policy_block_incidents": len(policy_blocks),
             "observer_incidents": len(observer_incidents),
             "observer_packets": len(observer_packets),
+            "observer_handoffs": len(observer_handoffs),
+            "observer_handoff_failures": len(problematic_observer_handoffs),
             "guardrail_hits": len(guardrail_hits),
             "secret_reply_blocks": len(secret_reply_blocks),
             "truncated_replies": len(truncated_replies),
@@ -648,6 +668,7 @@ def build_operator_security_report(
             "policy_blocks": policy_blocks,
             "observer_incidents": observer_incidents,
             "observer_packets": observer_packets,
+            "observer_handoffs": observer_handoffs,
             "guardrail_hits": guardrail_hits,
             "webhook_rejections": webhook_alerts,
         },
@@ -975,6 +996,7 @@ def _build_inbox_items(
     policy_blocks: list[dict[str, Any]],
     observer_incidents: list[dict[str, Any]],
     observer_packets: list[dict[str, Any]],
+    observer_handoffs: list[dict[str, Any]],
     webhook_alerts: list[dict[str, Any]],
     webhook_snoozes: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -1174,6 +1196,24 @@ def _build_inbox_items(
             }
         )
 
+    problematic_handoffs = [
+        row for row in observer_handoffs if str(row.get("status") or "") in {"failed", "blocked", "stalled"}
+    ]
+    if problematic_handoffs:
+        latest = problematic_handoffs[0]
+        items.append(
+            {
+                "priority": "medium",
+                "sort_order": severity_order["medium"],
+                "summary": (
+                    f"{len(problematic_handoffs)} observer handoff attempt(s) are not clean; "
+                    f"latest status={str(latest.get('status') or 'unknown')} "
+                    f"chip={str(latest.get('chip_key') or 'unknown')}."
+                ),
+                "recommended_command": "spark-intelligence operator observer-handoffs --json",
+            }
+        )
+
     webhook_priority = {"critical": "high", "warning": "medium", "info": "info"}
     webhook_sort_order = {"critical": 22, "warning": 32, "info": 44}
     for row in webhook_alerts:
@@ -1256,6 +1296,7 @@ def _build_security_items(
     policy_blocks: list[dict[str, Any]],
     observer_incidents: list[dict[str, Any]],
     observer_packets: list[dict[str, Any]],
+    observer_handoffs: list[dict[str, Any]],
     duplicate_updates: list[dict[str, Any]],
     rate_limited_updates: list[dict[str, Any]],
     delivery_failures: list[dict[str, Any]],
@@ -1464,6 +1505,26 @@ def _build_security_items(
                     f"kinds={', '.join(packet_kinds[:4])}."
                 ),
                 "recommended_command": "spark-intelligence operator security",
+            }
+        )
+
+    problematic_handoffs = [
+        row for row in observer_handoffs if str(row.get("status") or "") in {"failed", "blocked", "stalled"}
+    ]
+    if problematic_handoffs:
+        latest = problematic_handoffs[0]
+        status = str(latest.get("status") or "unknown")
+        priority = "high" if status in {"failed", "blocked"} else "medium"
+        items.append(
+            {
+                "priority": priority,
+                "sort_order": severity_order[priority],
+                "summary": (
+                    f"{len(problematic_handoffs)} observer handoff attempt(s) require review; "
+                    f"latest status={status} chip={str(latest.get('chip_key') or 'unknown')} "
+                    f"id={str(latest.get('handoff_id') or 'observer-handoff')}."
+                ),
+                "recommended_command": "spark-intelligence operator observer-handoffs --json",
             }
         )
 
