@@ -55,6 +55,7 @@ This widens promotion-gate enforcement beyond the prior lane-record-only posture
 Added explicit Builder-core visibility for the new tranche surfaces:
 
 - Watchtower `session_integrity` panel
+- Watchtower `observer_incidents` panel
 - stop-ship `stop_ship_reset_integrity`
 
 The panel now shows:
@@ -63,6 +64,16 @@ The panel now shows:
 - active vs cleared reset-sensitive keys
 - resume richness guard interventions
 - recent reset events
+
+The observer panel now classifies:
+
+- provenance contamination
+- promotion contamination
+- session integrity incidents
+- residue contamination
+- resume risk intercepted by guardrails
+
+These classifications are also surfaced through operator security and doctor output.
 
 ## Verification
 
@@ -81,7 +92,6 @@ This package does not claim to finish all remaining doctrine items.
 Still intentionally deferred:
 
 - broader raw-vs-mutated reference preservation on more high-risk mutation paths
-- richer observer incident classification beyond the current Builder-core panels
 - downstream memory-domain contract enforcement outside this repo
 - self-observer packet layer / de facto tranche 3
 

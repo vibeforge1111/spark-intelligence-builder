@@ -551,6 +551,55 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("keepability_check", gate_names)
         self.assertIn("residue_check", gate_names)
 
+    def test_watchtower_observer_incident_panel_classifies_contamination_families(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="plugin_or_chip_influence_recorded",
+            component="researcher_bridge",
+            summary="unlabeled provenance mutation",
+            request_id="req-observer-prov",
+            actor_id="researcher_bridge",
+            facts={"keepability": "ephemeral_context"},
+            provenance={},
+        )
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="promotion candidate",
+            request_id="req-observer-promotion",
+            actor_id="researcher_bridge",
+            facts={
+                "keepability": "ephemeral_context",
+                "promotion_disposition": "durable_candidate",
+            },
+        )
+        record_pairing_context(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            context={
+                "telegram_username": "alice",
+                "chat_id": "chat-1",
+                "last_message_text": "richer state",
+                "last_seen_at": "2026-03-28T00:00:00+00:00",
+            },
+        )
+        record_pairing_context(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            context={"last_seen_at": "2026-03-28T00:05:00+00:00"},
+        )
+
+        snapshot = build_watchtower_snapshot(self.state_db)
+        panel = snapshot["panels"]["observer_incidents"]
+
+        self.assertGreaterEqual(panel["counts"]["total"], 3)
+        self.assertIn("provenance_contamination", panel["counts_by_class"])
+        self.assertIn("promotion_contamination", panel["counts_by_class"])
+        self.assertIn("resume_risk_intercepted", panel["counts_by_class"])
+
     def test_build_researcher_reply_records_chip_influence_provenance(self) -> None:
         self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
         self.config_manager.set_path("spark.specialization_paths.active_path_key", "startup-operator")
@@ -1029,6 +1078,44 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(report.payload["watchtower"]["contradictions"]["counts"]["open"], 1)
         self.assertTrue(any("contradiction" in item["summary"].lower() for item in report.payload["items"]))
 
+    def test_operator_security_report_surfaces_observer_incident_counts(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="plugin_or_chip_influence_recorded",
+            component="researcher_bridge",
+            summary="unlabeled provenance mutation",
+            request_id="req-security-observer",
+            actor_id="researcher_bridge",
+            facts={"keepability": "ephemeral_context"},
+            provenance={},
+        )
+        record_pairing_context(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            context={
+                "telegram_username": "alice",
+                "chat_id": "chat-1",
+                "last_message_text": "richer state",
+                "last_seen_at": "2026-03-28T00:00:00+00:00",
+            },
+        )
+        record_pairing_context(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            context={"last_seen_at": "2026-03-28T00:05:00+00:00"},
+        )
+
+        report = build_operator_security_report(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            limit=20,
+        )
+
+        self.assertGreaterEqual(report.payload["counts"]["observer_incidents"], 2)
+        self.assertTrue(any("observer contamination or integrity incident" in item["summary"].lower() for item in report.payload["items"]))
+
     def test_doctor_report_includes_watchtower_health_checks(self) -> None:
         run = open_run(
             self.state_db,
@@ -1058,6 +1145,24 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("execution_impaired", checks["watchtower-execution"].detail)
         self.assertIn("watchtower-contradictions", checks)
         self.assertFalse(checks["watchtower-contradictions"].ok)
+
+    def test_doctor_report_includes_observer_incident_check(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="plugin_or_chip_influence_recorded",
+            component="researcher_bridge",
+            summary="unlabeled provenance mutation",
+            request_id="req-doctor-observer",
+            actor_id="researcher_bridge",
+            facts={"keepability": "ephemeral_context"},
+            provenance={},
+        )
+
+        report = run_doctor(self.config_manager, self.state_db)
+        checks = {check.name: check for check in report.checks}
+
+        self.assertIn("watchtower-observer-incidents", checks)
+        self.assertFalse(checks["watchtower-observer-incidents"].ok)
 
     def test_unlabeled_provenance_is_quarantined(self) -> None:
         record_event(

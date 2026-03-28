@@ -1111,6 +1111,7 @@ def build_watchtower_snapshot(
             "provenance_and_quarantine": _build_provenance_and_quarantine_panel(state_db),
             "memory_lane_hygiene": _build_memory_lane_hygiene_panel(state_db),
             "session_integrity": _build_session_integrity_panel(state_db),
+            "observer_incidents": _build_observer_incident_panel(state_db),
             "memory_shadow": _build_memory_shadow_panel(state_db),
         },
     }
@@ -2432,6 +2433,108 @@ def _build_session_integrity_panel(state_db: StateDB) -> dict[str, Any]:
         "recent_reset_sensitive_keys": active_registry[:10],
         "recent_guard_interventions": guard_rows[:10],
         "recent_reset_events": reset_events[:10],
+    }
+
+
+def _build_observer_incident_panel(state_db: StateDB) -> dict[str, Any]:
+    incidents: list[dict[str, Any]] = []
+    policy_blocks = recent_policy_gate_records(state_db, limit=100)
+    contradictions = recent_contradictions(state_db, limit=100, status="open")
+    provenance_rows = recent_provenance_mutations(state_db, limit=100)
+    guard_rows = recent_resume_richness_guard_records(state_db, limit=100)
+
+    for row in provenance_rows:
+        source_kind = str(row.get("source_kind") or "")
+        if not bool(row.get("quarantined")) and source_kind != "unknown":
+            continue
+        incidents.append(
+            {
+                "incident_class": "provenance_contamination",
+                "severity": "high" if source_kind == "unknown" else "medium",
+                "summary": "Unlabeled or quarantined provenance mutation was recorded.",
+                "item_ref": str(row.get("mutation_id") or "provenance-incident"),
+                "source_kind": source_kind or "unknown",
+                "source_ref": str(row.get("source_id") or "unknown"),
+            }
+        )
+
+    for row in policy_blocks:
+        policy_domain = str(row.get("policy_domain") or "")
+        gate_name = str(row.get("gate_name") or "")
+        if policy_domain == "memory_promotion" or gate_name in {
+            "keepability_check",
+            "residue_check",
+            "contradiction_check",
+            "provenance_check",
+        }:
+            incident_class = "promotion_contamination"
+        elif gate_name == "secret_boundary":
+            incident_class = "secret_boundary"
+        elif gate_name == "provenance_missing" or policy_domain == "provenance_mutation":
+            incident_class = "provenance_contamination"
+        else:
+            continue
+        incidents.append(
+            {
+                "incident_class": incident_class,
+                "severity": str(row.get("severity") or "medium"),
+                "summary": str(row.get("action") or "policy_blocked"),
+                "item_ref": str(row.get("policy_gate_id") or "policy-block"),
+                "source_kind": str(row.get("source_kind") or "unknown"),
+                "source_ref": str(row.get("source_ref") or "unknown"),
+            }
+        )
+
+    for row in contradictions:
+        reason_code = str(row.get("reason_code") or "")
+        if reason_code in {"stop_ship_reset_integrity", "stop_ship_runtime_state_authority"}:
+            incident_class = "session_integrity"
+        elif reason_code in {"stop_ship_bridge_residue_persistence", "stop_ship_bridge_output_governance"}:
+            incident_class = "residue_contamination"
+        else:
+            continue
+        incidents.append(
+            {
+                "incident_class": incident_class,
+                "severity": str(row.get("severity") or "high"),
+                "summary": str(row.get("summary") or reason_code),
+                "item_ref": str(row.get("contradiction_id") or "contradiction"),
+                "source_kind": "contradiction_record",
+                "source_ref": reason_code,
+            }
+        )
+
+    for row in guard_rows:
+        incidents.append(
+            {
+                "incident_class": "resume_risk_intercepted",
+                "severity": "info",
+                "summary": "Sparse runtime-state overwrite was intercepted and merged with richer state.",
+                "item_ref": str(row.get("guard_record_id") or "resume-guard"),
+                "source_kind": str(row.get("component") or "runtime_state"),
+                "source_ref": str(row.get("state_key") or "unknown"),
+            }
+        )
+
+    counts_by_class: dict[str, int] = {}
+    for item in incidents:
+        incident_class = str(item.get("incident_class") or "unknown")
+        counts_by_class[incident_class] = counts_by_class.get(incident_class, 0) + 1
+
+    incidents.sort(
+        key=lambda item: (
+            str(item.get("severity") or ""),
+            str(item.get("item_ref") or ""),
+        ),
+        reverse=True,
+    )
+    return {
+        "counts": {
+            "total": len(incidents),
+            "distinct_classes": len(counts_by_class),
+        },
+        "counts_by_class": counts_by_class,
+        "recent_incidents": incidents[:15],
     }
 
 

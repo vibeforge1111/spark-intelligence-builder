@@ -103,6 +103,7 @@ class OperatorInboxReport:
             f"provenance_incidents={counts['provenance_incidents']} "
             f"contradiction_incidents={counts['contradiction_incidents']} "
             f"policy_block_incidents={counts['policy_block_incidents']} "
+            f"observer_incidents={counts['observer_incidents']} "
             f"webhook_alerts={counts['webhook_alerts']} "
             f"webhook_snoozes={counts['webhook_snoozes']} "
             f"active_suppressed_webhook_snoozes={counts['active_suppressed_webhook_snoozes']}"
@@ -156,6 +157,7 @@ class OperatorSecurityReport:
             f"provenance_incidents={counts['provenance_incidents']} "
             f"contradiction_incidents={counts['contradiction_incidents']} "
             f"policy_block_incidents={counts['policy_block_incidents']} "
+            f"observer_incidents={counts['observer_incidents']} "
             f"guardrail_hits={counts['guardrail_hits']}"
         )
         items = self.payload.get("items") or []
@@ -353,6 +355,7 @@ def list_webhook_alert_snoozes(
 
 def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) -> OperatorInboxReport:
     watchtower = build_watchtower_snapshot(state_db)
+    observer_incidents = ((watchtower.get("panels") or {}).get("observer_incidents") or {}).get("recent_incidents") or []
     pairing_rows = review_pairings(state_db).rows
     pending_pairings = [row for row in pairing_rows if row.get("status") == "pending"]
     held_pairings = [row for row in pairing_rows if row.get("status") == "held"]
@@ -385,6 +388,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
         provenance_incidents=provenance_incidents,
         contradictions=contradictions,
         policy_blocks=policy_blocks,
+        observer_incidents=observer_incidents,
         webhook_alerts=webhook_alerts,
         webhook_snoozes=webhook_snoozes,
     )
@@ -402,6 +406,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
             "provenance_incidents": len(provenance_incidents),
             "contradiction_incidents": len(contradictions),
             "policy_block_incidents": len(policy_blocks),
+            "observer_incidents": len(observer_incidents),
             "webhook_alerts": len(webhook_alerts),
             "webhook_snoozes": len(webhook_snoozes),
             "active_suppressed_webhook_snoozes": _active_suppressed_webhook_snooze_count(webhook_snoozes),
@@ -417,6 +422,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
                 + len(provenance_incidents)
                 + len(contradictions)
                 + len(policy_blocks)
+                + len(observer_incidents)
                 + len(webhook_alerts)
                 + len(webhook_snoozes)
             ),
@@ -434,6 +440,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
         "provenance_incidents": provenance_incidents,
         "contradictions": contradictions,
         "policy_blocks": policy_blocks,
+        "observer_incidents": observer_incidents,
         "webhooks": webhook_alerts,
         "webhook_snoozes": webhook_snoozes,
         "watchtower": watchtower,
@@ -449,6 +456,7 @@ def build_operator_security_report(
     limit: int = 100,
 ) -> OperatorSecurityReport:
     watchtower = build_watchtower_snapshot(state_db)
+    observer_incidents = ((watchtower.get("panels") or {}).get("observer_incidents") or {}).get("recent_incidents") or []
     channel_alerts = _load_channel_alerts(config_manager=config_manager, state_db=state_db)
     bridge_alerts = _build_bridge_alerts(config_manager=config_manager, state_db=state_db)
     auth_alerts = _build_auth_alerts(config_manager=config_manager, state_db=state_db)
@@ -491,6 +499,7 @@ def build_operator_security_report(
         provenance_incidents=provenance_incidents,
         contradictions=contradictions,
         policy_blocks=policy_blocks,
+        observer_incidents=observer_incidents,
         duplicate_updates=duplicate_updates,
         rate_limited_updates=rate_limited_updates,
         delivery_failures=delivery_failures,
@@ -514,6 +523,7 @@ def build_operator_security_report(
             "provenance_incidents": len(provenance_incidents),
             "contradiction_incidents": len(contradictions),
             "policy_block_incidents": len(policy_blocks),
+            "observer_incidents": len(observer_incidents),
             "guardrail_hits": len(guardrail_hits),
             "secret_reply_blocks": len(secret_reply_blocks),
             "truncated_replies": len(truncated_replies),
@@ -533,6 +543,7 @@ def build_operator_security_report(
             "provenance_incidents": provenance_incidents,
             "contradictions": contradictions,
             "policy_blocks": policy_blocks,
+            "observer_incidents": observer_incidents,
             "guardrail_hits": guardrail_hits,
             "webhook_rejections": webhook_alerts,
         },
@@ -752,6 +763,7 @@ def _build_inbox_items(
     provenance_incidents: list[dict[str, Any]],
     contradictions: list[dict[str, Any]],
     policy_blocks: list[dict[str, Any]],
+    observer_incidents: list[dict[str, Any]],
     webhook_alerts: list[dict[str, Any]],
     webhook_snoozes: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -920,6 +932,20 @@ def _build_inbox_items(
             }
         )
 
+    if observer_incidents:
+        top_class = str(observer_incidents[0].get("incident_class") or "observer_incident")
+        items.append(
+            {
+                "kind": "observer_incident",
+                "status": top_class,
+                "priority": "medium",
+                "sort_order": 28,
+                "item_ref": str(observer_incidents[0].get("item_ref") or "observer-incident"),
+                "summary": f"{len(observer_incidents)} observer contamination or integrity incident(s) were classified in Watchtower.",
+                "recommended_command": "spark-intelligence operator security",
+            }
+        )
+
     webhook_priority = {"critical": "high", "warning": "medium", "info": "info"}
     webhook_sort_order = {"critical": 22, "warning": 32, "info": 44}
     for row in webhook_alerts:
@@ -1000,6 +1026,7 @@ def _build_security_items(
     provenance_incidents: list[dict[str, Any]],
     contradictions: list[dict[str, Any]],
     policy_blocks: list[dict[str, Any]],
+    observer_incidents: list[dict[str, Any]],
     duplicate_updates: list[dict[str, Any]],
     rate_limited_updates: list[dict[str, Any]],
     delivery_failures: list[dict[str, Any]],
@@ -1178,6 +1205,20 @@ def _build_security_items(
                 "priority": "medium",
                 "sort_order": severity_order["medium"],
                 "summary": f"{len(policy_blocks)} policy gate block(s) are recorded in typed storage.",
+                "recommended_command": "spark-intelligence operator security",
+            }
+        )
+
+    if observer_incidents:
+        top_class = str(observer_incidents[0].get("incident_class") or "observer_incident")
+        items.append(
+            {
+                "priority": "medium",
+                "sort_order": severity_order["medium"],
+                "summary": (
+                    f"{len(observer_incidents)} observer contamination or integrity incident(s) were classified; "
+                    f"top class={top_class}."
+                ),
                 "recommended_command": "spark-intelligence operator security",
             }
         )

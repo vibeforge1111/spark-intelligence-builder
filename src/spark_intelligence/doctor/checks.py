@@ -431,4 +431,17 @@ def _watchtower_health_checks(state_db: StateDB) -> list[DoctorCheck]:
                 ),
             )
         )
+    observer_incidents = (snapshot.get("panels") or {}).get("observer_incidents") or {}
+    observer_counts = observer_incidents.get("counts") or {}
+    observer_total = int(observer_counts.get("total") or 0)
+    checks.append(
+        DoctorCheck(
+            "watchtower-observer-incidents",
+            observer_total == 0,
+            (
+                f"total={observer_total} "
+                f"distinct_classes={int(observer_counts.get('distinct_classes') or 0)}"
+            ),
+        )
+    )
     return checks
