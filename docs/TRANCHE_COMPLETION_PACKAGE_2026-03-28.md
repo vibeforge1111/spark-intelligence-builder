@@ -57,7 +57,9 @@ Added explicit Builder-core visibility for the new tranche surfaces:
 - Watchtower `session_integrity` panel
 - Watchtower `observer_incidents` panel
 - Watchtower `observer_packets` panel
+- Watchtower `memory_shadow` contract counters
 - stop-ship `stop_ship_reset_integrity`
+- stop-ship `stop_ship_memory_contract`
 - raw-vs-mutated text refs on guarded bridge and delivery mutation paths
 
 The panel now shows:
@@ -81,6 +83,20 @@ High-risk bridge and delivery rewrites now also preserve raw-vs-mutated text ref
 
 Builder core now also emits bounded `self_observation` packets from typed observer incidents. These packets stay on the core side of the hybrid boundary: fact-only, evidence-backed, and consumable by Watchtower, operator summaries, or a later observer chip without inventing diagnosis in core.
 
+### Builder memory contract enforcement
+
+Added a Builder-local contract layer around downstream memory read and write roles.
+
+What now exists:
+
+- shared allowed-role contract helpers for `current_state` and `event`
+- fail-closed normalization for explicit invalid downstream memory roles on Builder reads and writes
+- Watchtower and doctor visibility for memory-contract violations
+- stop-ship failure when memory events violate the Builder role contract
+- shadow replay filtering that omits accepted observations carrying invalid memory-role or operation-role combinations
+
+This closes the Builder-side piece of the previously deferred memory-domain contract gap. Builder now refuses to normalize explicit downstream role drift into usable current-state or event memory.
+
 ## Verification
 
 Validated in repo with:
@@ -89,7 +105,7 @@ Validated in repo with:
 
 Result:
 
-- `107 passed`
+- `110 passed`
 
 ## Still Deferred
 
@@ -97,7 +113,6 @@ This package does not claim to finish all remaining doctrine items.
 
 Still intentionally deferred:
 
-- downstream memory-domain contract enforcement outside this repo
 - chip-side `incident_report`, `repair_plan`, `security_advisory`, and `reflection_digest` packets
 
 ## Working Rule
