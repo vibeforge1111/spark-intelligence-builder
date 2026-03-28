@@ -105,6 +105,30 @@ What the Builder-side packet layer now does:
 
 This closes the remaining repo-local tranche item around the self-observer packet family. The packet content remains bounded by Builder-core evidence rather than free-form diagnosis.
 
+### Observer packet persistence and handoff export
+
+Persisted the Builder-side observer packet family as first-class typed records and added direct operator access to the packet ledger.
+
+What now exists:
+
+- `observer_packet_records`
+- active vs archived packet tracking keyed by stable `packet_id`
+- persisted source refs for incident class, item ref, and source ref
+- `spark-intelligence operator observer-packets`
+- `spark-intelligence operator export-observer-packets`
+- JSON handoff bundles written for external self-observer consumption
+- operator audit history entries for packet exports
+
+What the Builder-side packet ledger now does:
+
+- records the current bounded packet family as stable typed rows instead of requiring packet reconstruction for every operator read
+- keeps packet content, evidence refs, related event ids, related packet ids, and contradiction ids in the typed ledger
+- archives no-longer-active packet rows instead of silently dropping packet history
+- gives operators a direct packet inspection surface outside Watchtower and summary text
+- emits a portable bundle that an external self-observer runtime can ingest without scraping Builder internals
+
+This closes the remaining repo-local follow-on work around packet persistence, direct packet inspection, and Builder-side handoff packaging for a replaceable external observer runtime.
+
 ### Builder memory contract enforcement
 
 Added a Builder-local contract layer around downstream memory read and write roles.
@@ -123,11 +147,11 @@ This closes the Builder-side piece of the previously deferred memory-domain cont
 
 Validated in repo with:
 
-- `python -m pytest tests/test_builder_prelaunch_contracts.py tests/test_memory_orchestrator.py tests/test_operator_pairing_flows.py tests/test_gateway_discord_webhook.py tests/test_gateway_whatsapp_webhook.py`
+- `python -m pytest tests/test_builder_prelaunch_contracts.py tests/test_memory_orchestrator.py tests/test_operator_pairing_flows.py tests/test_cli_smoke.py tests/test_gateway_discord_webhook.py tests/test_gateway_whatsapp_webhook.py`
 
 Result:
 
-- `110 passed`
+- `179 passed`
 
 ## Still Deferred
 
