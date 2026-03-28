@@ -78,10 +78,13 @@ _TRAIT_LABELS = {
 _NL_TRAIT_PATTERNS: list[tuple[re.Pattern[str], dict[str, float]]] = [
     (re.compile(r"\b(?:be\s+|more\s+|too\s+)direct\b", re.I), {"directness": 0.4}),
     (re.compile(r"\b(?:be\s+|more\s+|too\s+)concise\b", re.I), {"directness": 0.3, "pacing": 0.2}),
+    (re.compile(r"\bkeep\s+(?:replies|responses?)\s+short(?:er)?\b", re.I), {"directness": 0.2, "pacing": 0.3}),
+    (re.compile(r"\bavoid\s+long\s+(?:monologues|responses?|answers?)\b", re.I), {"directness": 0.2, "pacing": 0.3}),
     (re.compile(r"\bskip\b.*(?:explain|preamble|intro)", re.I), {"directness": 0.4, "pacing": 0.3}),
     (re.compile(r"\bget\s+to\s+the\s+point\b", re.I), {"directness": 0.4, "pacing": 0.3}),
     (re.compile(r"\bless\s+verbose\b", re.I), {"directness": 0.3, "pacing": 0.2}),
     (re.compile(r"\bmore\s+(?:detail|thorough|verbose)\b", re.I), {"directness": -0.3, "pacing": -0.3}),
+    (re.compile(r"\b(?:be\s+|more\s+)casual\b|\bmore\s+human\b", re.I), {"warmth": 0.2, "playfulness": 0.1}),
     (re.compile(r"\b(?:be\s+|more\s+|too\s+)warm(?:er)?\b", re.I), {"warmth": 0.4}),
     (re.compile(r"\b(?:too\s+|less\s+)formal\b", re.I), {"warmth": 0.3, "playfulness": 0.2}),
     (re.compile(r"\bloosen\s+up\b", re.I), {"warmth": 0.2, "playfulness": 0.3}),
@@ -121,6 +124,35 @@ _AGENT_PERSONA_MARKERS = (
     "lets define your personality",
 )
 
+_BEHAVIORAL_RULE_PREFIXES = (
+    "be ",
+    "keep ",
+    "sound ",
+    "avoid ",
+    "default ",
+    "push ",
+    "prefer ",
+    "ask ",
+    "start ",
+    "first ",
+    "identify ",
+    "narrow ",
+    "focus ",
+    "stay ",
+    "use ",
+    "skip ",
+    "respond ",
+    "treat ",
+    "when i ",
+    "if i ",
+    "if the topic ",
+    "for simple questions",
+    "for broad topics",
+    "don't ",
+    "dont ",
+    "do not ",
+)
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -131,6 +163,7 @@ class AgentPersonaMutationResult:
     agent_id: str
     agent_name: str | None
     trait_deltas: dict[str, float]
+    behavioral_rules: list[str]
     persona_profile: dict[str, Any]
     context_injection: str
 
@@ -220,11 +253,89 @@ def _extract_agent_name(text: str) -> str | None:
     return None
 
 
+def _split_behavioral_rule_candidates(text: str) -> list[str]:
+    normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    candidates: list[str] = []
+    for raw_line in normalized.split("\n"):
+        line = raw_line.strip()
+        if not line:
+            continue
+        line = re.sub(r"^[\-\*\u2022]+\s*", "", line)
+        for chunk in re.split(r"(?<=[.!])\s+(?=[A-Z\"'`])", line):
+            compact = " ".join(chunk.strip().split())
+            if compact:
+                candidates.append(compact)
+    return candidates
+
+
+def _normalize_behavioral_rule(rule: str) -> str:
+    compact = " ".join(str(rule or "").strip().split())
+    compact = compact.strip("\"'`")
+    compact = compact.rstrip(".! ")
+    if not compact:
+        return ""
+    return compact[0].upper() + compact[1:]
+
+
+def _extract_behavioral_rules(text: str) -> list[str]:
+    rules: list[str] = []
+    for candidate in _split_behavioral_rule_candidates(text):
+        lowered = candidate.lower().replace("’", "'")
+        if candidate.startswith("/") or candidate.endswith("?"):
+            continue
+        if len(candidate) < 12 or len(candidate) > 180:
+            continue
+        if not any(lowered.startswith(prefix) for prefix in _BEHAVIORAL_RULE_PREFIXES):
+            continue
+        normalized = _normalize_behavioral_rule(candidate)
+        if normalized and normalized.lower() not in {item.lower() for item in rules}:
+            rules.append(normalized)
+    return rules
+
+
+def _merge_behavioral_rules(existing: list[str], incoming: list[str], *, limit: int = 8) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for rule in [*existing, *incoming]:
+        normalized = _normalize_behavioral_rule(rule)
+        if not normalized:
+            continue
+        lowered = normalized.lower()
+        if lowered in seen:
+            continue
+        merged.append(normalized)
+        seen.add(lowered)
+    return merged[-limit:]
+
+
+def _behavioral_rule_summary(rules: list[str], *, limit: int = 160) -> str | None:
+    if not rules:
+        return None
+    summary = "; ".join(_normalize_behavioral_rule(rule) for rule in rules[:3] if _normalize_behavioral_rule(rule))
+    summary = " ".join(summary.split()).strip()
+    if not summary:
+        return None
+    if len(summary) <= limit:
+        return summary
+    return summary[: limit - 1].rstrip() + "…"
+
+
+def _directive_sentence(text: str) -> str:
+    normalized = _normalize_behavioral_rule(text)
+    if not normalized:
+        return ""
+    if normalized.endswith((".", "!", "?")):
+        return normalized
+    return f"{normalized}."
+
+
 def _is_agent_persona_authoring_message(text: str) -> bool:
     lowered = text.strip().lower()
     if not lowered:
         return False
     if _extract_agent_name(text):
+        return True
+    if len(_extract_behavioral_rules(text)) >= 2:
         return True
     if any(marker in lowered for marker in _AGENT_PERSONA_MARKERS) and _has_personality_signal(text):
         return True
@@ -321,6 +432,7 @@ def load_personality_profile(
         "agent_id": agent_id,
         "agent_persona_name": agent_persona.get("persona_name"),
         "agent_persona_summary": agent_persona.get("persona_summary"),
+        "agent_behavioral_rules": agent_persona.get("behavioral_rules") or [],
         "agent_persona_applied": agent_persona_applied,
         "agent_base_traits": agent_base_traits,
         "user_deltas_applied": user_deltas_applied,
@@ -470,12 +582,19 @@ def build_personality_context(profile: dict[str, Any]) -> str:
     traits = profile.get("traits") or {}
     labels = profile.get("style_labels") or {}
     name = profile.get("personality_name")
+    agent_persona_name = profile.get("agent_persona_name")
+    agent_persona_summary = str(profile.get("agent_persona_summary") or "").strip()
+    behavioral_rules = [str(rule).strip() for rule in list(profile.get("agent_behavioral_rules") or []) if str(rule).strip()]
 
     lines = ["[Personality context]"]
-    if name:
+    # When an agent persona is explicitly configured, keep the prompt centered on
+    # that agent identity instead of surfacing a global personality chip name.
+    if name and not agent_persona_name:
         lines.append(f"active_personality={name}")
-    if profile.get("agent_persona_name"):
-        lines.append(f"agent_persona={profile['agent_persona_name']}")
+    if agent_persona_name:
+        lines.append(f"agent_persona={agent_persona_name}")
+    if agent_persona_summary:
+        lines.append(f"agent_persona_summary={agent_persona_summary}")
 
     style_parts = []
     for trait in ("warmth", "directness", "playfulness", "pacing", "assertiveness"):
@@ -486,6 +605,8 @@ def build_personality_context(profile: dict[str, Any]) -> str:
     # Compact trait values for transparency
     trait_vals = " ".join(f"{t}={v:.2f}" for t, v in sorted(traits.items()))
     lines.append(f"trait_values={trait_vals}")
+    if behavioral_rules:
+        lines.append("behavioral_rules=" + " | ".join(behavioral_rules[:5]))
 
     if profile.get("user_deltas_applied"):
         lines.append("note=style adjusted by user preference")
@@ -506,12 +627,17 @@ def build_personality_system_directive(profile: dict[str, Any]) -> str:
     traits = profile.get("traits") or {}
     labels = profile.get("style_labels") or {}
     name = profile.get("personality_name")
+    agent_persona_name = profile.get("agent_persona_name")
+    agent_persona_summary = str(profile.get("agent_persona_summary") or "").strip()
+    behavioral_rules = [str(rule).strip() for rule in list(profile.get("agent_behavioral_rules") or []) if str(rule).strip()]
 
     parts = []
-    if name:
+    if name and not agent_persona_name:
         parts.append(f"Your active personality profile is '{name}'.")
-    if profile.get("agent_persona_name"):
-        parts.append(f"Your agent persona is '{profile['agent_persona_name']}'.")
+    if agent_persona_name:
+        parts.append(f"Your agent persona is '{agent_persona_name}'.")
+    if agent_persona_summary:
+        parts.append(f"Saved persona summary: {agent_persona_summary}.")
 
     # Map traits to behavioral instructions
     directives = []
@@ -548,6 +674,13 @@ def build_personality_system_directive(profile: dict[str, Any]) -> str:
 
     if directives:
         parts.append(" ".join(directives))
+    if behavioral_rules:
+        rules_text = " ".join(_directive_sentence(rule) for rule in behavioral_rules[:6] if _directive_sentence(rule))
+        if rules_text:
+            parts.append(
+                "Follow these saved agent style rules unless the user explicitly redirects this turn: "
+                f"{rules_text}"
+            )
 
     if profile.get("user_deltas_applied"):
         parts.append("These style preferences were set by the user through conversation.")
@@ -996,6 +1129,7 @@ def detect_and_persist_agent_persona_preferences(
         return None
 
     trait_deltas = _extract_trait_deltas(user_message)
+    behavioral_rules = _extract_behavioral_rules(user_message)
     current_profile = load_agent_persona_profile(agent_id=agent_id, state_db=state_db)
     existing_traits = current_profile.get("base_traits") or dict(_DEFAULT_TRAITS)
     next_traits = dict(existing_traits)
@@ -1003,6 +1137,10 @@ def detect_and_persist_agent_persona_preferences(
         next_traits[trait] = max(0.0, min(1.0, float(next_traits.get(trait, _DEFAULT_TRAITS[trait])) + delta))
 
     new_name = _extract_agent_name(user_message)
+    merged_rules = _merge_behavioral_rules(
+        list(current_profile.get("behavioral_rules") or []),
+        behavioral_rules,
+    )
     if new_name:
         rename_agent_identity(
             state_db=state_db,
@@ -1013,25 +1151,32 @@ def detect_and_persist_agent_persona_preferences(
         )
 
     persona_profile = current_profile
-    if trait_deltas:
+    if trait_deltas or behavioral_rules:
+        persona_summary = current_profile.get("persona_summary")
+        if trait_deltas:
+            persona_summary = _compact_persona_summary(next_traits)
+        if behavioral_rules:
+            persona_summary = _behavioral_rule_summary(merged_rules) or persona_summary
         persona_profile = save_agent_persona_profile(
             agent_id=agent_id,
             human_id=human_id,
             state_db=state_db,
             base_traits=next_traits,
             persona_name=current_profile.get("persona_name") or new_name,
-            persona_summary=_compact_persona_summary(next_traits),
+            persona_summary=persona_summary,
+            behavioral_rules=merged_rules,
             provenance={
                 "source_surface": source_surface,
                 "source_ref": source_ref,
                 "authoring_text": user_message,
+                "behavioral_rules": merged_rules,
             },
             mutation_kind="explicit_authoring",
             source_surface=source_surface,
             source_ref=source_ref,
         )
 
-    if not new_name and not trait_deltas:
+    if not new_name and not trait_deltas and not behavioral_rules:
         return None
 
     parts: list[str] = ["[Personality action: AGENT_PERSONA_UPDATED]"]
@@ -1048,10 +1193,18 @@ def detect_and_persist_agent_persona_preferences(
             "The user updated the agent's base persona. "
             f"Acknowledge this briefly and adopt the saved agent persona going forward: {changes}."
         )
+    if behavioral_rules:
+        parts.append(
+            "The user added saved style rules for the agent. "
+            "Acknowledge this briefly and apply them going forward: "
+            + " | ".join(merged_rules[:5])
+            + "."
+        )
     return AgentPersonaMutationResult(
         agent_id=agent_id,
         agent_name=new_name,
         trait_deltas=trait_deltas,
+        behavioral_rules=merged_rules,
         persona_profile=persona_profile if isinstance(persona_profile, dict) else {},
         context_injection="\n".join(parts),
     )

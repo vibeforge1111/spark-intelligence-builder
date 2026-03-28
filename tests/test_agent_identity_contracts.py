@@ -12,7 +12,9 @@ from spark_intelligence.identity.service import (
     resolve_inbound_dm,
 )
 from spark_intelligence.personality.loader import (
+    build_personality_system_directive,
     build_personality_import_payload,
+    detect_and_persist_agent_persona_preferences,
     detect_and_persist_nl_preferences,
     load_personality_profile,
     migrate_legacy_human_personality_to_agent_persona,
@@ -245,6 +247,83 @@ class AgentIdentityContractTests(SparkTestCase):
         self.assertAlmostEqual(profile["traits"]["warmth"], 0.55)
         self.assertAlmostEqual(profile["traits"]["directness"], 1.0)
         self.assertAlmostEqual(profile["traits"]["assertiveness"], 0.95)
+        self.assertEqual(profile["agent_behavioral_rules"], [])
+
+    def test_explicit_style_message_persists_saved_behavioral_rules(self) -> None:
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+        agent_state = read_canonical_agent_state(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+        )
+
+        mutation = detect_and_persist_agent_persona_preferences(
+            agent_id=agent_state.agent_id,
+            human_id="human:telegram:111",
+            user_message=(
+                "Be a little more casual and human.\n"
+                "Keep replies shorter unless I ask for depth.\n"
+                "Avoid long monologues on simple questions.\n"
+                "Ask one good follow-up question when it helps."
+            ),
+            state_db=self.state_db,
+            source_surface="telegram",
+            source_ref="turn-style-rules",
+        )
+
+        self.assertIsNotNone(mutation)
+        assert mutation is not None
+        self.assertGreaterEqual(len(mutation.behavioral_rules), 3)
+        self.assertIn("Keep replies shorter unless I ask for depth", mutation.behavioral_rules)
+
+        profile = load_personality_profile(
+            human_id="human:telegram:111",
+            agent_id=agent_state.agent_id,
+            state_db=self.state_db,
+            config_manager=self.config_manager,
+        )
+
+        assert profile is not None
+        self.assertIn("Keep replies shorter unless I ask for depth", profile["agent_behavioral_rules"])
+        self.assertTrue(profile["agent_persona_applied"])
+
+    def test_build_personality_system_directive_includes_saved_behavioral_rules(self) -> None:
+        profile = {
+            "traits": {
+                "warmth": 0.7,
+                "directness": 0.8,
+                "playfulness": 0.5,
+                "pacing": 0.7,
+                "assertiveness": 0.6,
+            },
+            "style_labels": {
+                "warmth": "warm",
+                "directness": "very direct",
+                "playfulness": "balanced playfulness",
+                "pacing": "brisk",
+                "assertiveness": "assertive",
+            },
+            "agent_persona_name": "Founder Operator",
+            "agent_persona_summary": "Sharp, concise, decision-oriented",
+            "agent_behavioral_rules": [
+                "Keep replies shorter unless asked for depth",
+                "Avoid generic explainers on broad ideas",
+                "Identify the key split before giving advice",
+            ],
+            "agent_persona_applied": True,
+            "user_deltas_applied": False,
+        }
+
+        directive = build_personality_system_directive(profile)
+
+        self.assertIn("Your agent persona is 'Founder Operator'.", directive)
+        self.assertIn("Saved persona summary: Sharp, concise, decision-oriented.", directive)
+        self.assertIn("Keep replies shorter unless asked for depth.", directive)
+        self.assertIn("Identify the key split before giving advice.", directive)
 
     def test_swarm_link_canonicalizes_local_agent_and_rebinds_active_session(self) -> None:
         self.add_telegram_channel()
@@ -421,6 +500,59 @@ class AgentIdentityContractTests(SparkTestCase):
         base_traits = json.loads(agent_row["base_traits_json"])
         self.assertGreater(base_traits["directness"], 0.5)
         self.assertGreater(base_traits["assertiveness"], 0.5)
+
+    def test_build_researcher_reply_persists_rich_agent_style_rules(self) -> None:
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+        agent_state = read_canonical_agent_state(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+        )
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-agent-style-rules",
+            agent_id=agent_state.agent_id,
+            human_id="human:telegram:111",
+            session_id="session:telegram:dm:111",
+            channel_kind="telegram",
+            user_message=(
+                "When I mention an idea, don't default to a generic explainer.\n"
+                "First narrow the idea and help me frame the interesting version of it.\n"
+                "Prefer crisp thinking over long lists.\n"
+                "If the topic is broad, identify the key split first."
+            ),
+        )
+
+        self.assertTrue(result.reply_text)
+
+        with self.state_db.connect() as conn:
+            agent_row = conn.execute(
+                """
+                SELECT behavioral_rules_json, provenance_json
+                FROM agent_persona_profiles
+                WHERE agent_id = ?
+                LIMIT 1
+                """,
+                (agent_state.agent_id,),
+            ).fetchone()
+            trait_row = conn.execute(
+                "SELECT COUNT(*) AS c FROM personality_trait_profiles WHERE human_id = ?",
+                ("human:telegram:111",),
+            ).fetchone()
+
+        self.assertIsNotNone(agent_row)
+        behavioral_rules = json.loads(agent_row["behavioral_rules_json"] or "[]")
+        provenance = json.loads(agent_row["provenance_json"] or "{}")
+        self.assertIn("First narrow the idea and help me frame the interesting version of it", behavioral_rules)
+        self.assertIn("If the topic is broad, identify the key split first", behavioral_rules)
+        self.assertEqual(provenance.get("source_ref"), "req-agent-style-rules")
+        self.assertEqual(int(trait_row["c"]), 0)
 
     def test_stale_swarm_name_does_not_override_newer_builder_rename(self) -> None:
         approve_pairing(

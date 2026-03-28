@@ -13,9 +13,10 @@ from spark_intelligence.channel.service import TelegramBotProfile
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.gateway.discord_webhook import DISCORD_WEBHOOK_PATH, handle_discord_webhook
 from spark_intelligence.gateway.whatsapp_webhook import WHATSAPP_WEBHOOK_PATH, handle_whatsapp_webhook
-from spark_intelligence.identity.service import approve_pairing
+from spark_intelligence.identity.service import approve_pairing, read_canonical_agent_state
 from spark_intelligence.observability.store import record_event
 from spark_intelligence.personality.loader import detect_and_persist_nl_preferences, record_observation
+from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
 
 from tests.test_support import SparkTestCase, create_fake_hook_chip
 
@@ -1566,6 +1567,47 @@ class CliSmokeTests(SparkTestCase):
         self.assertTrue(payload["cleared_overlay"])
         self.assertGreater(payload["migrated_traits"]["directness"], 0.5)
         self.assertGreater(payload["migrated_traits"]["assertiveness"], 0.5)
+
+    def test_operator_personality_reports_saved_behavioral_rules_from_chat_authoring(self) -> None:
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+        agent_state = read_canonical_agent_state(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+        )
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-style-rules-smoke",
+            agent_id=agent_state.agent_id,
+            human_id="human:telegram:111",
+            session_id="session:telegram:dm:111",
+            channel_kind="telegram",
+            user_message=(
+                "Keep replies shorter unless I ask for depth.\n"
+                "Avoid generic explainers on broad topics.\n"
+                "Identify the key split first."
+            ),
+        )
+
+        exit_code, stdout, stderr = self.run_cli(
+            "operator",
+            "personality",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:telegram:111",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertIn("behavioral_rules:", stdout)
+        self.assertIn("Keep replies shorter unless I ask for depth", stdout)
+        self.assertIn("Identify the key split first", stdout)
 
     def test_operator_security_escalates_sustained_discord_webhook_auth_rejections(self) -> None:
         setup_exit, _, setup_stderr = self.run_cli(
