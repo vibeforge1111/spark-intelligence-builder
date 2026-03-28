@@ -83,6 +83,27 @@ High-risk bridge and delivery rewrites now also preserve raw-vs-mutated text ref
 
 Builder core now also emits bounded `self_observation` packets from typed observer incidents. These packets stay on the core side of the hybrid boundary: fact-only, evidence-backed, and consumable by Watchtower, operator summaries, or a later observer chip without inventing diagnosis in core.
 
+### Observer packet family completion
+
+Expanded the observer packet layer from `self_observation` only into the broader packet family named in the tranche roadmap.
+
+What now exists:
+
+- `self_observation`
+- `incident_report`
+- `repair_plan`
+- `security_advisory`
+- `reflection_digest`
+
+What the Builder-side packet layer now does:
+
+- derives packet-family objects from typed observer incidents without depending on raw reflection text
+- keeps diagnosis and recommendation content bounded, evidence-backed, and explicitly proposal-oriented
+- surfaces packet kind mix in Watchtower and doctor output
+- exposes richer operator summaries for packet kinds beyond `self_observation`
+
+This closes the remaining repo-local tranche item around the self-observer packet family. The packet content remains bounded by Builder-core evidence rather than free-form diagnosis.
+
 ### Builder memory contract enforcement
 
 Added a Builder-local contract layer around downstream memory read and write roles.
@@ -109,11 +130,9 @@ Result:
 
 ## Still Deferred
 
-This package does not claim to finish all remaining doctrine items.
+This package does not claim to finish all possible observer doctrine work.
 
-Still intentionally deferred:
-
-- chip-side `incident_report`, `repair_plan`, `security_advisory`, and `reflection_digest` packets
+No additional tranche followup items remain open inside this repo. A separately replaceable self-observer chip runtime would still be an external follow-on, not a missing Builder-core tranche surface.
 
 ## Working Rule
 
