@@ -360,6 +360,7 @@ def simulate_telegram_update(
             external_user_id=normalized.telegram_user_id,
             text=outbound_text,
         )
+        outbound_text = _strip_internal_swarm_recommendation(outbound_text)
     else:
         trace_ref = None
         bridge_mode = None
@@ -1017,10 +1018,11 @@ def _send_telegram_reply(
         external_user_id=telegram_user_id,
         text=text,
     )
+    filtered_text = _strip_internal_swarm_recommendation(visible_text)
     guarded = prepare_outbound_text(
         config_manager=config_manager,
         state_db=state_db,
-        text=visible_text,
+        text=filtered_text,
         bridge_mode=bridge_mode,
         max_reply_chars=policy["max_reply_chars"],
         redact_secret_like_replies=policy["redact_secret_like_replies"],
@@ -1033,6 +1035,8 @@ def _send_telegram_reply(
     )
     if visible_text != text:
         guarded["actions"] = ["strip_think_blocks", *list(guarded["actions"])]
+    if filtered_text != visible_text:
+        guarded["actions"] = ["strip_swarm_routing_note", *list(guarded["actions"])]
     error: str | None = None
     ok = True
     record_event(
@@ -1298,6 +1302,17 @@ def _apply_think_visibility(
     without_think = re.sub(r"(?is)<think>.*?</think>", "", text)
     collapsed = re.sub(r"\n{3,}", "\n\n", without_think).strip()
     return collapsed or text.strip()
+
+
+def _strip_internal_swarm_recommendation(text: str) -> str:
+    lines = [line.rstrip() for line in str(text or "").splitlines()]
+    filtered_lines = [
+        line
+        for line in lines
+        if not re.match(r"^\s*Swarm:\s+recommended for this task because\b", line, flags=re.IGNORECASE)
+    ]
+    collapsed = "\n".join(filtered_lines).strip()
+    return collapsed or str(text or "").strip()
 
 
 def _apply_post_approval_welcome(

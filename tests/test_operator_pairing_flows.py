@@ -428,6 +428,50 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.detail["response_text"], "Hello there.")
 
+    def test_telegram_replies_strip_internal_swarm_routing_note(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            return_value=ResearcherBridgeResult(
+                request_id="req-swarm-routing-note",
+                reply_text=(
+                    "Hey! What's on your mind?\n\n"
+                    "Swarm: recommended for this task because it asks for delegation or multi-agent work "
+                    "(multi_chip_context)."
+                ),
+                evidence_summary="status=under_supported provider_fallback=direct_http_chat",
+                escalation_hint=None,
+                trace_ref="trace:swarm-routing-note",
+                mode="external_configured",
+                runtime_root="C:/fake-researcher",
+                config_path="C:/fake-researcher/spark-researcher.project.json",
+                attachment_context={},
+                provider_id="custom",
+                provider_auth_profile_id="custom:default",
+                provider_auth_method="api_key_env",
+                provider_model="MiniMax-M2.7",
+                provider_model_family="generic",
+                provider_execution_transport="direct_http",
+                provider_base_url="https://api.minimax.io/v1",
+                provider_source="config+env",
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=111,
+                    user_id="111",
+                    username="alice",
+                    text="delegate this if needed",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.detail["response_text"], "Hey! What's on your mind?")
+        self.assertNotIn("Swarm:", str(result.detail["response_text"]))
+
     def test_think_command_toggles_telegram_visibility(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
