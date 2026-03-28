@@ -3,8 +3,15 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from spark_intelligence.adapters.telegram.runtime import simulate_telegram_update
-from spark_intelligence.identity.service import approve_pairing, pairing_summary, record_pairing_context, review_pairings
+from spark_intelligence.identity.service import (
+    approve_pairing,
+    pairing_summary,
+    read_canonical_agent_state,
+    record_pairing_context,
+    review_pairings,
+)
 from spark_intelligence.observability.store import recent_resume_richness_guard_records
+from spark_intelligence.personality.loader import load_personality_profile
 from spark_intelligence.researcher_bridge.advisory import ResearcherBridgeResult
 
 from tests.test_support import SparkTestCase, make_telegram_update
@@ -176,6 +183,92 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(follow_up.ok)
         self.assertEqual(follow_up.decision, "allowed")
         self.assertIn("Pairing approved.", str(follow_up.detail["response_text"]))
+
+    def test_first_post_approval_dm_runs_multi_turn_agent_onboarding(self) -> None:
+        self.add_telegram_channel()
+        simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=103,
+                user_id="111",
+                username="alice",
+                text="/start",
+            ),
+        )
+
+        exit_code, _, stderr = self.run_cli(
+            "operator",
+            "approve-latest",
+            "telegram",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(exit_code, 0, stderr)
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            side_effect=AssertionError("researcher bridge should not run during onboarding"),
+        ):
+            first_turn = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=104,
+                    user_id="111",
+                    username="alice",
+                    text="hey",
+                ),
+            )
+            second_turn = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=105,
+                    user_id="111",
+                    username="alice",
+                    text="Atlas",
+                ),
+            )
+            third_turn = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=106,
+                    user_id="111",
+                    username="alice",
+                    text="calm, strategic, very direct, low-fluff",
+                ),
+            )
+
+        self.assertTrue(first_turn.ok)
+        self.assertIn("Pairing approved.", str(first_turn.detail["response_text"]))
+        self.assertIn("What should I call your agent?", str(first_turn.detail["response_text"]))
+
+        self.assertTrue(second_turn.ok)
+        self.assertIn("Your agent is now `Atlas`", str(second_turn.detail["response_text"]))
+        self.assertIn("describe the personality", str(second_turn.detail["response_text"]))
+
+        self.assertTrue(third_turn.ok)
+        self.assertIn("Locked in.", str(third_turn.detail["response_text"]))
+        self.assertIn("connect your Spark Swarm agent", str(third_turn.detail["response_text"]))
+
+        agent_state = read_canonical_agent_state(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+        )
+        self.assertEqual(agent_state.agent_name, "Atlas")
+        profile = load_personality_profile(
+            human_id="human:telegram:111",
+            agent_id=agent_state.agent_id,
+            state_db=self.state_db,
+            config_manager=self.config_manager,
+        )
+        assert profile is not None
+        self.assertTrue(profile["agent_persona_applied"])
+        self.assertGreater(profile["traits"]["directness"], 0.5)
+        self.assertEqual(profile["agent_persona_name"], "Atlas")
+        self.assertIn("calm, strategic, very direct, low-fluff", str(profile["agent_persona_summary"]))
 
     def test_revoke_latest_blocks_future_dm_with_revoked_reply(self) -> None:
         self.add_telegram_channel()

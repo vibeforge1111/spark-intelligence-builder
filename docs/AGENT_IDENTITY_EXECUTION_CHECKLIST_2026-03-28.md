@@ -61,7 +61,7 @@ Tests:
 
 Status:
 
-- partially shipped
+- shipped
 
 Tasks:
 
@@ -69,12 +69,12 @@ Tasks:
 - [x] persist agent names separately from human display names
 - [x] allow explicit conversational rename via bridge personality path
 - [x] allow explicit conversational agent persona authoring via bridge personality path
-- [ ] add multi-turn onboarding prompts for first-time Telegram users
+- [x] add multi-turn onboarding prompts for first-time Telegram users
 
 Tests:
 
 - [x] harness test for bridge-side agent persona authoring
-- [ ] Telegram onboarding conversation test
+- [x] Telegram onboarding conversation test
 
 ### Phase D. Swarm Import And Linking
 
@@ -137,7 +137,6 @@ Tests:
 
 ## Remaining Follow-Up
 
-- [ ] multi-turn onboarding prompts for first-time Telegram users
 - [ ] live Spark Swarm identity fetch/import from the external runtime path
 - [ ] live import harness against the external Swarm runtime
 - [ ] fuller conflict-resolution harness coverage
@@ -148,6 +147,7 @@ Use these while shipping this track:
 
 - `python -m pytest tests/test_agent_identity_contracts.py`
 - `python -m pytest tests/test_memory_orchestrator.py tests/test_builder_prelaunch_contracts.py tests/test_cli_smoke.py tests/test_operator_pairing_flows.py`
+- `python -m pytest tests/test_operator_pairing_flows.py tests/test_agent_identity_contracts.py tests/test_telegram_failure_paths.py`
 - `python -m pytest tests/test_agent_identity_contracts.py tests/test_cli_smoke.py`
 
 Run the broader combined pass after the current slice is stable:

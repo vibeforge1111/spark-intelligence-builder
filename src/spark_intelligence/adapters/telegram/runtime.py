@@ -18,8 +18,14 @@ from spark_intelligence.gateway.guardrails import (
     set_runtime_state_value,
 )
 from spark_intelligence.gateway.tracing import append_gateway_trace, append_outbound_audit
-from spark_intelligence.identity.service import consume_pairing_welcome, record_pairing_context, resolve_inbound_dm
+from spark_intelligence.identity.service import (
+    consume_pairing_welcome,
+    pairing_welcome_pending,
+    record_pairing_context,
+    resolve_inbound_dm,
+)
 from spark_intelligence.observability.store import build_text_mutation_facts, close_run, open_run, record_event
+from spark_intelligence.personality import maybe_handle_agent_persona_onboarding_turn
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply, record_researcher_bridge_result
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD
@@ -297,30 +303,58 @@ def simulate_telegram_update(
             active_chip_evaluate_used = False
             evidence_summary = None
         else:
-            bridge_result = build_researcher_reply(
-                config_manager=config_manager,
-                state_db=state_db,
-                request_id=f"sim:{normalized.update_id}",
-                agent_id=resolution.agent_id,
+            onboarding_result = maybe_handle_agent_persona_onboarding_turn(
                 human_id=resolution.human_id,
-                session_id=resolution.session_id,
-                channel_kind="telegram",
+                agent_id=resolution.agent_id,
                 user_message=normalized.text,
-            )
-            record_researcher_bridge_result(state_db=state_db, result=bridge_result)
-            outbound_text = _apply_post_approval_welcome(
                 state_db=state_db,
-                external_user_id=normalized.telegram_user_id,
-                reply_text=bridge_result.reply_text,
+                source_surface="telegram",
+                source_ref=f"sim:{normalized.update_id}",
+                start_if_eligible=pairing_welcome_pending(
+                    state_db=state_db,
+                    channel_id="telegram",
+                    external_user_id=normalized.telegram_user_id,
+                ),
             )
-            trace_ref = bridge_result.trace_ref
-            bridge_mode = bridge_result.mode
-            attachment_context = bridge_result.attachment_context
-            routing_decision = bridge_result.routing_decision
-            active_chip_key = bridge_result.active_chip_key
-            active_chip_task_type = bridge_result.active_chip_task_type
-            active_chip_evaluate_used = bridge_result.active_chip_evaluate_used
-            evidence_summary = bridge_result.evidence_summary
+            if onboarding_result is not None:
+                outbound_text = _apply_post_approval_welcome(
+                    state_db=state_db,
+                    external_user_id=normalized.telegram_user_id,
+                    reply_text=onboarding_result.reply_text,
+                )
+                trace_ref = None
+                bridge_mode = "agent_onboarding"
+                attachment_context = None
+                routing_decision = "agent_onboarding"
+                active_chip_key = None
+                active_chip_task_type = None
+                active_chip_evaluate_used = False
+                evidence_summary = None
+            else:
+                bridge_result = build_researcher_reply(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    request_id=f"sim:{normalized.update_id}",
+                    agent_id=resolution.agent_id,
+                    human_id=resolution.human_id,
+                    session_id=resolution.session_id,
+                    channel_kind="telegram",
+                    user_message=normalized.text,
+                )
+                record_researcher_bridge_result(state_db=state_db, result=bridge_result)
+                outbound_text = _apply_post_approval_welcome(
+                    state_db=state_db,
+                    external_user_id=normalized.telegram_user_id,
+                    reply_text=bridge_result.reply_text,
+                )
+                trace_ref = bridge_result.trace_ref
+                bridge_mode = bridge_result.mode
+                attachment_context = bridge_result.attachment_context
+                routing_decision = bridge_result.routing_decision
+                active_chip_key = bridge_result.active_chip_key
+                active_chip_task_type = bridge_result.active_chip_task_type
+                active_chip_evaluate_used = bridge_result.active_chip_evaluate_used
+                evidence_summary = bridge_result.evidence_summary
         outbound_text = _apply_think_visibility(
             state_db=state_db,
             external_user_id=normalized.telegram_user_id,
@@ -709,6 +743,102 @@ def poll_telegram_updates_once(
                     "chat_id": normalized.chat_id,
                     "session_id": resolution.session_id,
                     "command": command_result["command"],
+                    "delivery_ok": send_result["ok"],
+                    "delivery_error": send_result["error"],
+                    "guardrail_actions": send_result["guardrail_actions"],
+                    "response_preview": _preview_text(outbound_text),
+                },
+            )
+            continue
+
+        onboarding_result = maybe_handle_agent_persona_onboarding_turn(
+            human_id=resolution.human_id,
+            agent_id=resolution.agent_id,
+            user_message=normalized.text,
+            state_db=state_db,
+            source_surface="telegram",
+            source_ref=run.request_id,
+            start_if_eligible=pairing_welcome_pending(
+                state_db=state_db,
+                channel_id="telegram",
+                external_user_id=normalized.telegram_user_id,
+            ),
+        )
+        if onboarding_result is not None:
+            record_event(
+                state_db,
+                event_type="intent_committed",
+                component="telegram_runtime",
+                summary="Telegram agent onboarding turn committed for execution.",
+                run_id=run.run_id,
+                request_id=run.request_id,
+                channel_id="telegram",
+                session_id=resolution.session_id,
+                human_id=resolution.human_id,
+                agent_id=resolution.agent_id,
+                actor_id="telegram_runtime",
+                reason_code="agent_onboarding",
+                facts={
+                    "step": onboarding_result.step,
+                    "completed": onboarding_result.completed,
+                    "update_id": normalized.update_id,
+                    "message_text": normalized.text,
+                },
+            )
+            outbound_text = _apply_think_visibility(
+                state_db=state_db,
+                external_user_id=normalized.telegram_user_id,
+                text=_apply_post_approval_welcome(
+                    state_db=state_db,
+                    external_user_id=normalized.telegram_user_id,
+                    reply_text=onboarding_result.reply_text,
+                ),
+            )
+            send_result = _send_telegram_reply(
+                config_manager=config_manager,
+                state_db=state_db,
+                client=client,
+                chat_id=normalized.chat_id,
+                text=outbound_text,
+                event="telegram_agent_onboarding_outbound",
+                update_id=normalized.update_id,
+                telegram_user_id=normalized.telegram_user_id,
+                session_id=resolution.session_id,
+                decision=resolution.decision,
+                bridge_mode="agent_onboarding",
+                routing_decision="agent_onboarding",
+                run_id=run.run_id,
+                request_id=run.request_id,
+                trace_ref=None,
+            )
+            processed_count += 1
+            if send_result["ok"]:
+                sent_count += 1
+            else:
+                failed_send_count += 1
+            close_run(
+                state_db,
+                run_id=run.run_id,
+                status="closed",
+                close_reason="agent_onboarding",
+                summary=f"Telegram agent onboarding step {onboarding_result.step} closed.",
+                facts={
+                    "step": onboarding_result.step,
+                    "completed": onboarding_result.completed,
+                    "delivery_ok": send_result["ok"],
+                },
+            )
+            append_gateway_trace(
+                config_manager,
+                {
+                    "event": "telegram_agent_onboarding_processed",
+                    "channel_id": "telegram",
+                    "update_id": normalized.update_id,
+                    "telegram_user_id": normalized.telegram_user_id,
+                    "chat_id": normalized.chat_id,
+                    "session_id": resolution.session_id,
+                    "step": onboarding_result.step,
+                    "completed": onboarding_result.completed,
                     "delivery_ok": send_result["ok"],
                     "delivery_error": send_result["error"],
                     "guardrail_actions": send_result["guardrail_actions"],

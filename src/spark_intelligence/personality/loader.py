@@ -118,6 +118,10 @@ _AGENT_PERSONA_MARKERS = (
 )
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
 @dataclass
 class AgentPersonaMutationResult:
     agent_id: str
@@ -135,6 +139,17 @@ class LegacyPersonalityMigrationResult:
     migrated_traits: dict[str, float]
     cleared_overlay: bool
     persona_profile: dict[str, Any]
+
+
+@dataclass
+class AgentOnboardingTurnResult:
+    human_id: str
+    agent_id: str
+    step: str
+    reply_text: str
+    agent_name: str
+    persona_profile: dict[str, Any]
+    completed: bool
 
 
 def _extract_trait_deltas(text: str) -> dict[str, float]:
@@ -585,6 +600,191 @@ def migrate_legacy_human_personality_to_agent_persona(
     )
 
 
+def maybe_handle_agent_persona_onboarding_turn(
+    *,
+    human_id: str,
+    agent_id: str,
+    user_message: str,
+    state_db: StateDB,
+    source_surface: str,
+    source_ref: str | None = None,
+    start_if_eligible: bool = False,
+) -> AgentOnboardingTurnResult | None:
+    canonical_state = read_canonical_agent_state(state_db=state_db, human_id=human_id)
+    onboarding_state = _load_agent_onboarding_state(human_id=human_id, state_db=state_db)
+
+    if canonical_state.preferred_source != "builder_local" or canonical_state.external_system == "spark_swarm":
+        if onboarding_state:
+            _delete_agent_onboarding_state(human_id=human_id, state_db=state_db)
+        return None
+
+    existing_persona = load_agent_persona_profile(agent_id=agent_id, state_db=state_db)
+    if onboarding_state.get("status") == "completed":
+        return None
+
+    if not onboarding_state:
+        if not start_if_eligible or existing_persona:
+            return None
+        onboarding_state = {
+            "status": "active",
+            "step": "awaiting_name",
+            "agent_id": agent_id,
+            "started_at": _utc_now_iso(),
+            "updated_at": _utc_now_iso(),
+        }
+        _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
+        return AgentOnboardingTurnResult(
+            human_id=human_id,
+            agent_id=agent_id,
+            step="awaiting_name",
+            reply_text=(
+                "No Spark Swarm agent yet? We can create your agent here now and link it later.\n\n"
+                f"What should I call your agent? Right now it's `{canonical_state.agent_name}`.\n"
+                "Reply with the name you want, or say `skip` to keep the current name."
+            ),
+            agent_name=canonical_state.agent_name,
+            persona_profile=existing_persona,
+            completed=False,
+        )
+
+    step = str(onboarding_state.get("step") or "awaiting_name")
+    normalized_message = " ".join(str(user_message or "").strip().split())
+    lowered = normalized_message.lower()
+
+    if step == "awaiting_name":
+        if lowered in {"skip", "skip for now", "keep current name", "keep it", "later"}:
+            onboarding_state["step"] = "awaiting_persona"
+            onboarding_state["updated_at"] = _utc_now_iso()
+            _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
+            return AgentOnboardingTurnResult(
+                human_id=human_id,
+                agent_id=agent_id,
+                step="awaiting_persona",
+                reply_text=(
+                    f"Keeping the current name `{canonical_state.agent_name}`.\n\n"
+                    "Now describe the personality you want. "
+                    "For example: `calm, strategic, very direct, low-fluff`."
+                ),
+                agent_name=canonical_state.agent_name,
+                persona_profile=existing_persona,
+                completed=False,
+            )
+
+        candidate_name = _extract_agent_name(normalized_message) or _extract_onboarding_agent_name(normalized_message)
+        if not candidate_name:
+            return AgentOnboardingTurnResult(
+                human_id=human_id,
+                agent_id=agent_id,
+                step="awaiting_name",
+                reply_text=(
+                    "I need a short agent name first. "
+                    "Reply with something like `Atlas`, `Operator Zero`, or say `skip`."
+                ),
+                agent_name=canonical_state.agent_name,
+                persona_profile=existing_persona,
+                completed=False,
+            )
+
+        renamed_state = rename_agent_identity(
+            state_db=state_db,
+            human_id=human_id,
+            new_name=candidate_name,
+            source_surface=source_surface,
+            source_ref=source_ref,
+        )
+        onboarding_state["step"] = "awaiting_persona"
+        onboarding_state["agent_name"] = renamed_state.agent_name
+        onboarding_state["updated_at"] = _utc_now_iso()
+        _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
+        return AgentOnboardingTurnResult(
+            human_id=human_id,
+            agent_id=agent_id,
+            step="awaiting_persona",
+            reply_text=(
+                f"Saved. Your agent is now `{renamed_state.agent_name}`.\n\n"
+                "Now describe the personality you want. "
+                "You can say something like `calm, strategic, very direct, low-fluff`."
+            ),
+            agent_name=renamed_state.agent_name,
+            persona_profile=existing_persona,
+            completed=False,
+        )
+
+    if step != "awaiting_persona":
+        _delete_agent_onboarding_state(human_id=human_id, state_db=state_db)
+        return None
+
+    if lowered in {"skip", "skip for now", "later", "use default"}:
+        completed_profile = existing_persona or {}
+        _complete_agent_onboarding_state(
+            human_id=human_id,
+            state_db=state_db,
+            agent_id=agent_id,
+            agent_name=canonical_state.agent_name,
+            persona_summary=(completed_profile.get("persona_summary") if completed_profile else None),
+        )
+        return AgentOnboardingTurnResult(
+            human_id=human_id,
+            agent_id=agent_id,
+            step="completed",
+            reply_text=(
+                f"Onboarding complete. `{canonical_state.agent_name}` will keep the current balanced personality for now.\n\n"
+                "You can shape it anytime by saying things like `be more direct`, `be warmer`, or `what's my personality`.\n"
+                "Recommended later: connect your Spark Swarm agent so identity and personality stay unified."
+            ),
+            agent_name=canonical_state.agent_name,
+            persona_profile=completed_profile,
+            completed=True,
+        )
+
+    base_traits = dict(existing_persona.get("base_traits") or _DEFAULT_TRAITS)
+    trait_deltas = _extract_trait_deltas(normalized_message)
+    for trait, delta in _extract_onboarding_descriptor_deltas(normalized_message).items():
+        trait_deltas[trait] = round(trait_deltas.get(trait, 0.0) + delta, 3)
+    next_traits = dict(base_traits)
+    for trait, delta in trait_deltas.items():
+        next_traits[trait] = max(0.0, min(1.0, float(next_traits.get(trait, _DEFAULT_TRAITS[trait])) + delta))
+    persona_summary = _compact_onboarding_persona_summary(normalized_message) or _compact_persona_summary(next_traits)
+    persona_profile = save_agent_persona_profile(
+        agent_id=agent_id,
+        human_id=human_id,
+        state_db=state_db,
+        base_traits=next_traits,
+        persona_name=canonical_state.agent_name,
+        persona_summary=persona_summary,
+        provenance={
+            "source_surface": source_surface,
+            "source_ref": source_ref,
+            "onboarding": True,
+            "authoring_text": normalized_message,
+            "trait_deltas": trait_deltas,
+        },
+        mutation_kind="onboarding_authoring",
+        source_surface=source_surface,
+        source_ref=source_ref,
+    )
+    _complete_agent_onboarding_state(
+        human_id=human_id,
+        state_db=state_db,
+        agent_id=agent_id,
+        agent_name=canonical_state.agent_name,
+        persona_summary=persona_profile.get("persona_summary"),
+    )
+    return AgentOnboardingTurnResult(
+        human_id=human_id,
+        agent_id=agent_id,
+        step="completed",
+        reply_text=(
+            f"Locked in. `{canonical_state.agent_name}` is now set up as {persona_profile.get('persona_summary') or 'your saved agent persona'}.\n\n"
+            "You can keep shaping it anytime by saying things like `be more direct`, `be warmer`, or `what's my personality`.\n"
+            "Recommended later: connect your Spark Swarm agent so identity and personality stay unified."
+        ),
+        agent_name=canonical_state.agent_name,
+        persona_profile=persona_profile,
+        completed=True,
+    )
+
+
 # ── NL preference detection and persistence ──
 
 
@@ -794,6 +994,119 @@ def _save_user_trait_deltas(
 def _compact_persona_summary(traits: dict[str, float]) -> str:
     labels = [_label_for_trait(trait, float(traits.get(trait, _DEFAULT_TRAITS[trait]))) for trait in _DEFAULT_TRAITS]
     return ", ".join(labels)
+
+
+def _compact_onboarding_persona_summary(text: str, *, limit: int = 240) -> str:
+    compact = " ".join(str(text or "").strip().split())
+    if not compact:
+        return ""
+    if len(compact) <= limit:
+        return compact
+    return f"{compact[: limit - 3].rstrip()}..."
+
+
+def _extract_onboarding_descriptor_deltas(text: str) -> dict[str, float]:
+    lowered = str(text or "").lower()
+    deltas: dict[str, float] = {}
+
+    def add(trait: str, delta: float) -> None:
+        deltas[trait] = round(deltas.get(trait, 0.0) + delta, 3)
+
+    if "direct" in lowered:
+        add("directness", 0.35)
+    if "concise" in lowered or "low-fluff" in lowered or "low fluff" in lowered or "no-fluff" in lowered:
+        add("directness", 0.2)
+        add("pacing", 0.15)
+    if "warm" in lowered or "friendly" in lowered:
+        add("warmth", 0.25)
+    if "playful" in lowered:
+        add("playfulness", 0.3)
+    if "serious" in lowered:
+        add("playfulness", -0.25)
+    if "calm" in lowered:
+        add("warmth", 0.1)
+        add("assertiveness", -0.1)
+    if "assertive" in lowered or "confident" in lowered:
+        add("assertiveness", 0.3)
+    if "gentle" in lowered or "cautious" in lowered:
+        add("assertiveness", -0.2)
+    if "strategic" in lowered:
+        add("pacing", -0.1)
+        add("assertiveness", 0.1)
+
+    return deltas
+
+
+def _extract_onboarding_agent_name(text: str) -> str | None:
+    compact = " ".join(str(text or "").strip().split()).strip("\"'")
+    if not compact or compact.startswith("/"):
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _-]{1,39}", compact):
+        return None
+    return compact
+
+
+def _agent_onboarding_state_key(human_id: str) -> str:
+    return f"agent_onboarding:{human_id}"
+
+
+def _load_agent_onboarding_state(*, human_id: str, state_db: StateDB) -> dict[str, Any]:
+    with state_db.connect() as conn:
+        row = conn.execute(
+            "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+            (_agent_onboarding_state_key(human_id),),
+        ).fetchone()
+    if not row or not row["value"]:
+        return {}
+    try:
+        payload = json.loads(str(row["value"]))
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _save_agent_onboarding_state(*, human_id: str, payload: dict[str, Any], state_db: StateDB) -> None:
+    with state_db.connect() as conn:
+        upsert_runtime_state(
+            conn,
+            state_key=_agent_onboarding_state_key(human_id),
+            value=json.dumps(payload, sort_keys=True),
+            component="personality_profile",
+            reset_sensitive_scope=("human", human_id, "agent_onboarding_reset"),
+        )
+        conn.commit()
+
+
+def _delete_agent_onboarding_state(*, human_id: str, state_db: StateDB) -> None:
+    with state_db.connect() as conn:
+        conn.execute(
+            "DELETE FROM runtime_state WHERE state_key = ?",
+            (_agent_onboarding_state_key(human_id),),
+        )
+        conn.commit()
+
+
+def _complete_agent_onboarding_state(
+    *,
+    human_id: str,
+    state_db: StateDB,
+    agent_id: str,
+    agent_name: str,
+    persona_summary: str | None,
+) -> None:
+    _save_agent_onboarding_state(
+        human_id=human_id,
+        state_db=state_db,
+        payload={
+            "status": "completed",
+            "step": "completed",
+            "agent_id": agent_id,
+            "agent_name": agent_name,
+            "persona_summary": persona_summary,
+            "completed_at": _utc_now_iso(),
+            "updated_at": _utc_now_iso(),
+        },
+    )
 
 
 def _read_optional_text(value: object) -> str | None:

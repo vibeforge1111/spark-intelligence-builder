@@ -1288,6 +1288,20 @@ def consume_pairing_welcome(
     return True
 
 
+def pairing_welcome_pending(
+    *,
+    state_db: StateDB,
+    channel_id: str,
+    external_user_id: str,
+) -> bool:
+    with state_db.connect() as conn:
+        row = conn.execute(
+            "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+            (_pairing_welcome_state_key(channel_id, external_user_id),),
+        ).fetchone()
+    return bool(row and row["value"] == "1")
+
+
 def list_sessions(state_db: StateDB) -> str:
     with state_db.connect() as conn:
         rows = conn.execute(

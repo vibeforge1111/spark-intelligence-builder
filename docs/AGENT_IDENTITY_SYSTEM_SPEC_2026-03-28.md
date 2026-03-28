@@ -363,6 +363,7 @@ Current Builder-first authoring support already exists through the bridge for:
 - explicit agent rename
 - explicit agent persona updates
 - human-scoped style overlays
+- multi-turn Telegram onboarding for first-time Builder-local users
 
 ## 11. Lifecycle States
 
@@ -401,7 +402,6 @@ Completed locally:
 
 Remaining Builder-local follow-up:
 
-- richer multi-turn onboarding prompts for first-time Telegram users
 - fuller conflict-repair harness coverage
 
 Remaining external dependency:

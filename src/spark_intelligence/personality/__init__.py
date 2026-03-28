@@ -6,6 +6,7 @@ and self-evolves based on observed user interactions.
 """
 
 from spark_intelligence.personality.loader import (
+    AgentOnboardingTurnResult,
     AgentPersonaMutationResult,
     LegacyPersonalityMigrationResult,
     PersonalityQueryResult,
@@ -16,6 +17,7 @@ from spark_intelligence.personality.loader import (
     detect_personality_query,
     load_agent_persona_profile,
     load_personality_profile,
+    maybe_handle_agent_persona_onboarding_turn,
     migrate_legacy_human_personality_to_agent_persona,
     maybe_evolve_traits,
     record_observation,
@@ -23,6 +25,7 @@ from spark_intelligence.personality.loader import (
 )
 
 __all__ = [
+    "AgentOnboardingTurnResult",
     "AgentPersonaMutationResult",
     "LegacyPersonalityMigrationResult",
     "PersonalityQueryResult",
@@ -33,6 +36,7 @@ __all__ = [
     "detect_personality_query",
     "load_agent_persona_profile",
     "load_personality_profile",
+    "maybe_handle_agent_persona_onboarding_turn",
     "migrate_legacy_human_personality_to_agent_persona",
     "maybe_evolve_traits",
     "record_observation",

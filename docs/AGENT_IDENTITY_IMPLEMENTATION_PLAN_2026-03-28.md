@@ -75,18 +75,15 @@ Definition of done reached:
 
 Status:
 
-- partially shipped
+- shipped
 
 Delivered:
 
 - local canonical agent creation on first use
 - explicit conversational rename through the bridge
 - explicit conversational agent persona authoring through the bridge
+- multi-turn Telegram onboarding prompts for first-time Builder-local users
 - persisted separation between human display name and agent display name
-
-Still open:
-
-- richer multi-turn onboarding prompts for first-time Telegram users
 
 ### Phase D. Swarm Import And Linking
 
@@ -199,7 +196,6 @@ Builder now supports migration that:
 
 Builder-local follow-up:
 
-- multi-turn Telegram onboarding flow for first-time users
 - fuller conflict-resolution harness coverage
 
 External dependency:
@@ -210,8 +206,7 @@ External dependency:
 
 The next practical order is:
 
-1. finish the Telegram-first onboarding prompts
-2. add fuller conflict-repair harness coverage
-3. connect live Swarm identity import once the external path is ready
+1. add fuller conflict-repair harness coverage
+2. connect live Swarm identity import once the external path is ready
 
 That sequence keeps Builder productized locally while leaving the cross-repo dependency explicit.
