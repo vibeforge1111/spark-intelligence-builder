@@ -444,4 +444,14 @@ def _watchtower_health_checks(state_db: StateDB) -> list[DoctorCheck]:
             ),
         )
     )
+    observer_packets = (snapshot.get("panels") or {}).get("observer_packets") or {}
+    packet_counts = observer_packets.get("counts") or {}
+    packet_total = int(packet_counts.get("total") or 0)
+    checks.append(
+        DoctorCheck(
+            "watchtower-observer-packets",
+            packet_total >= observer_total,
+            f"packets={packet_total} incidents={observer_total}",
+        )
+    )
     return checks

@@ -56,6 +56,7 @@ Added explicit Builder-core visibility for the new tranche surfaces:
 
 - Watchtower `session_integrity` panel
 - Watchtower `observer_incidents` panel
+- Watchtower `observer_packets` panel
 - stop-ship `stop_ship_reset_integrity`
 - raw-vs-mutated text refs on guarded bridge and delivery mutation paths
 
@@ -78,6 +79,8 @@ These classifications are also surfaced through operator security and doctor out
 
 High-risk bridge and delivery rewrites now also preserve raw-vs-mutated text refs when Builder changes output before delivery. Stop-ship now fails if a mutated classified event omits those refs.
 
+Builder core now also emits bounded `self_observation` packets from typed observer incidents. These packets stay on the core side of the hybrid boundary: fact-only, evidence-backed, and consumable by Watchtower, operator summaries, or a later observer chip without inventing diagnosis in core.
+
 ## Verification
 
 Validated in repo with:
@@ -95,7 +98,7 @@ This package does not claim to finish all remaining doctrine items.
 Still intentionally deferred:
 
 - downstream memory-domain contract enforcement outside this repo
-- self-observer packet layer / de facto tranche 3
+- chip-side `incident_report`, `repair_plan`, `security_advisory`, and `reflection_digest` packets
 
 ## Working Rule
 

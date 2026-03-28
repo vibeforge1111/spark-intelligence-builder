@@ -599,6 +599,10 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("provenance_contamination", panel["counts_by_class"])
         self.assertIn("promotion_contamination", panel["counts_by_class"])
         self.assertIn("resume_risk_intercepted", panel["counts_by_class"])
+        packet_panel = snapshot["panels"]["observer_packets"]
+        self.assertGreaterEqual(packet_panel["counts"]["total"], 3)
+        self.assertEqual(packet_panel["recent_packets"][0]["packet_kind"], "self_observation")
+        self.assertTrue(packet_panel["recent_packets"][0]["evidence_refs"])
 
     def test_build_researcher_reply_records_chip_influence_provenance(self) -> None:
         self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
@@ -1133,7 +1137,9 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         )
 
         self.assertGreaterEqual(report.payload["counts"]["observer_incidents"], 2)
+        self.assertGreaterEqual(report.payload["counts"]["observer_packets"], 2)
         self.assertTrue(any("observer contamination or integrity incident" in item["summary"].lower() for item in report.payload["items"]))
+        self.assertTrue(any("self-observation packet" in item["summary"].lower() for item in report.payload["items"]))
 
     def test_doctor_report_includes_watchtower_health_checks(self) -> None:
         run = open_run(
@@ -1182,6 +1188,8 @@ class BuilderPrelaunchContractTests(SparkTestCase):
 
         self.assertIn("watchtower-observer-incidents", checks)
         self.assertFalse(checks["watchtower-observer-incidents"].ok)
+        self.assertIn("watchtower-observer-packets", checks)
+        self.assertTrue(checks["watchtower-observer-packets"].ok)
 
     def test_unlabeled_provenance_is_quarantined(self) -> None:
         record_event(

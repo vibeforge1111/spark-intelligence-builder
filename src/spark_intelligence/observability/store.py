@@ -1112,6 +1112,7 @@ def build_watchtower_snapshot(
             "memory_lane_hygiene": _build_memory_lane_hygiene_panel(state_db),
             "session_integrity": _build_session_integrity_panel(state_db),
             "observer_incidents": _build_observer_incident_panel(state_db),
+            "observer_packets": _build_observer_packet_panel(state_db),
             "memory_shadow": _build_memory_shadow_panel(state_db),
         },
     }
@@ -2461,6 +2462,31 @@ def _build_session_integrity_panel(state_db: StateDB) -> dict[str, Any]:
 
 
 def _build_observer_incident_panel(state_db: StateDB) -> dict[str, Any]:
+    incidents = _collect_observer_incidents(state_db)
+    counts_by_class: dict[str, int] = {}
+    for item in incidents:
+        incident_class = str(item.get("incident_class") or "unknown")
+        counts_by_class[incident_class] = counts_by_class.get(incident_class, 0) + 1
+
+    incidents.sort(
+        key=lambda item: (
+            str(item.get("severity") or ""),
+            str(item.get("recorded_at") or ""),
+            str(item.get("item_ref") or ""),
+        ),
+        reverse=True,
+    )
+    return {
+        "counts": {
+            "total": len(incidents),
+            "distinct_classes": len(counts_by_class),
+        },
+        "counts_by_class": counts_by_class,
+        "recent_incidents": incidents[:15],
+    }
+
+
+def _collect_observer_incidents(state_db: StateDB) -> list[dict[str, Any]]:
     incidents: list[dict[str, Any]] = []
     policy_blocks = recent_policy_gate_records(state_db, limit=100)
     contradictions = recent_contradictions(state_db, limit=100, status="open")
@@ -2479,6 +2505,8 @@ def _build_observer_incident_panel(state_db: StateDB) -> dict[str, Any]:
                 "item_ref": str(row.get("mutation_id") or "provenance-incident"),
                 "source_kind": source_kind or "unknown",
                 "source_ref": str(row.get("source_id") or "unknown"),
+                "recorded_at": str(row.get("recorded_at") or "") or None,
+                "evidence_refs": [f"provenance_mutation:{str(row.get('mutation_id') or 'unknown')}"],
             }
         )
 
@@ -2506,6 +2534,9 @@ def _build_observer_incident_panel(state_db: StateDB) -> dict[str, Any]:
                 "item_ref": str(row.get("policy_gate_id") or "policy-block"),
                 "source_kind": str(row.get("source_kind") or "unknown"),
                 "source_ref": str(row.get("source_ref") or "unknown"),
+                "recorded_at": str(row.get("recorded_at") or "") or None,
+                "event_id": str(row.get("event_id") or "") or None,
+                "evidence_refs": [f"policy_gate:{str(row.get('policy_gate_id') or 'unknown')}"],
             }
         )
 
@@ -2525,6 +2556,17 @@ def _build_observer_incident_panel(state_db: StateDB) -> dict[str, Any]:
                 "item_ref": str(row.get("contradiction_id") or "contradiction"),
                 "source_kind": "contradiction_record",
                 "source_ref": reason_code,
+                "recorded_at": str(row.get("last_seen_at") or row.get("first_seen_at") or "") or None,
+                "contradiction_id": str(row.get("contradiction_id") or "") or None,
+                "related_event_ids": [
+                    item
+                    for item in (
+                        str(row.get("first_event_id") or "") or None,
+                        str(row.get("last_event_id") or "") or None,
+                    )
+                    if item
+                ],
+                "evidence_refs": [f"contradiction:{str(row.get('contradiction_id') or 'unknown')}"],
             }
         )
 
@@ -2537,28 +2579,99 @@ def _build_observer_incident_panel(state_db: StateDB) -> dict[str, Any]:
                 "item_ref": str(row.get("guard_record_id") or "resume-guard"),
                 "source_kind": str(row.get("component") or "runtime_state"),
                 "source_ref": str(row.get("state_key") or "unknown"),
+                "recorded_at": str(row.get("created_at") or "") or None,
+                "evidence_refs": [f"resume_guard:{str(row.get('guard_record_id') or 'unknown')}"],
             }
         )
+    return incidents
 
-    counts_by_class: dict[str, int] = {}
-    for item in incidents:
-        incident_class = str(item.get("incident_class") or "unknown")
-        counts_by_class[incident_class] = counts_by_class.get(incident_class, 0) + 1
 
-    incidents.sort(
+def build_self_observation_packets(state_db: StateDB) -> list[dict[str, Any]]:
+    packets: list[dict[str, Any]] = []
+    for incident in _collect_observer_incidents(state_db):
+        incident_class = str(incident.get("incident_class") or "unknown")
+        item_ref = str(incident.get("item_ref") or "observer-incident")
+        severity = str(incident.get("severity") or "medium")
+        status = "watching" if severity == "info" else "open"
+        packet_key = f"self_observation:{incident_class}:{item_ref}"
+        related_event_ids = [
+            item
+            for item in (
+                str(incident.get("event_id") or "") or None,
+                *list(incident.get("related_event_ids") or []),
+            )
+            if item
+        ]
+        contradiction_ids = [
+            item for item in (str(incident.get("contradiction_id") or "") or None,) if item
+        ]
+        packets.append(
+            {
+                "packet_id": f"pkt:{payload_hash(packet_key)[:24]}",
+                "packet_kind": "self_observation",
+                "target_surface": "spark_intelligence_builder",
+                "created_at": str(incident.get("recorded_at") or utc_now_iso()),
+                "created_by": "builder_core",
+                "evidence_lane": "realworld_validated",
+                "severity": severity,
+                "confidence": "high",
+                "status": status,
+                "summary": str(incident.get("summary") or incident_class),
+                "evidence_refs": list(incident.get("evidence_refs") or [f"observer_incident:{item_ref}"]),
+                "related_event_ids": related_event_ids,
+                "related_packet_ids": [],
+                "contradiction_ids": contradiction_ids,
+                "owner_target": "builder_core" if severity == "info" else "operator",
+                "content": {
+                    "observation_type": _observer_observation_type(incident_class),
+                    "observed_facts": {
+                        "incident_class": incident_class,
+                        "item_ref": item_ref,
+                        "source_kind": str(incident.get("source_kind") or "unknown"),
+                        "source_ref": str(incident.get("source_ref") or "unknown"),
+                    },
+                    "comparison_basis": "typed observer incident classification",
+                    "hypothesis": None,
+                },
+            }
+        )
+    packets.sort(
         key=lambda item: (
             str(item.get("severity") or ""),
-            str(item.get("item_ref") or ""),
+            str(item.get("created_at") or ""),
+            str(item.get("packet_id") or ""),
         ),
         reverse=True,
     )
+    return packets
+
+
+def _observer_observation_type(incident_class: str) -> str:
+    mapping = {
+        "provenance_contamination": "security_signal",
+        "promotion_contamination": "contract_drift",
+        "secret_boundary": "security_signal",
+        "session_integrity": "regression",
+        "residue_contamination": "contract_drift",
+        "resume_risk_intercepted": "regression",
+    }
+    return mapping.get(incident_class, "regression")
+
+
+def _build_observer_packet_panel(state_db: StateDB) -> dict[str, Any]:
+    packets = build_self_observation_packets(state_db)
+    counts_by_status: dict[str, int] = {}
+    for packet in packets:
+        status = str(packet.get("status") or "unknown")
+        counts_by_status[status] = counts_by_status.get(status, 0) + 1
     return {
         "counts": {
-            "total": len(incidents),
-            "distinct_classes": len(counts_by_class),
+            "total": len(packets),
+            "open": counts_by_status.get("open", 0),
+            "watching": counts_by_status.get("watching", 0),
         },
-        "counts_by_class": counts_by_class,
-        "recent_incidents": incidents[:15],
+        "counts_by_status": counts_by_status,
+        "recent_packets": packets[:10],
     }
 
 
