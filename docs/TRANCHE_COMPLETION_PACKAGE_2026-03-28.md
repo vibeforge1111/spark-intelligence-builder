@@ -73,6 +73,7 @@ The observer panel now classifies:
 
 - provenance contamination
 - promotion contamination
+- memory contract drift
 - session integrity incidents
 - residue contamination
 - resume risk intercepted by guardrails
