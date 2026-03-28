@@ -149,6 +149,7 @@ What the Builder-side handoff runtime now does:
 - invokes the active chip or an explicit chip key through the existing `spark-hook-io.v1` `packets` hook contract
 - records completed, failed, blocked, or stalled handoff attempts in a typed ledger instead of leaving them only in generic traces
 - writes a result artifact only when the chip output passes secret-boundary screening
+- surfaces problematic handoff attempts through Watchtower, operator security/inbox counts, and doctor checks
 
 This closes the Builder-side runtime half of the self-observer handoff doctrine. The external chip implementation still lives outside this repo, but Builder now has a bounded, typed, operator-visible way to hand observer packets to it.
 
@@ -174,7 +175,7 @@ Validated in repo with:
 
 Result:
 
-- `183 passed`
+- `185 passed`
 
 ## Still Deferred
 
