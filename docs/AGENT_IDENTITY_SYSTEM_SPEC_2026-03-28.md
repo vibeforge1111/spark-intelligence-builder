@@ -399,10 +399,7 @@ Completed locally:
 - legacy human-overlay migration command
 - operator inspect, rename, and Swarm-link surfaces
 - doctor and Watchtower identity visibility
-
-Remaining Builder-local follow-up:
-
-- fuller conflict-repair harness coverage
+- explicit conflict-repair harness coverage
 
 Remaining external dependency:
 

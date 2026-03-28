@@ -201,6 +201,48 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("watchtower-agent-identity", checks)
         self.assertTrue(checks["watchtower-agent-identity"].ok)
 
+    def test_watchtower_agent_identity_panel_surfaces_identity_conflict(self) -> None:
+        with self.state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO humans(human_id, display_name, status)
+                VALUES (?, ?, 'active')
+                """,
+                ("human:test", "Alice"),
+            )
+            conn.commit()
+
+        link_spark_swarm_agent(
+            state_db=self.state_db,
+            human_id="human:test",
+            swarm_agent_id="swarm-agent:atlas",
+            agent_name="Atlas",
+            metadata={"workspace_id": "ws-test"},
+        )
+        link_spark_swarm_agent(
+            state_db=self.state_db,
+            human_id="human:test",
+            swarm_agent_id="swarm-agent:zephyr",
+            agent_name="Zephyr",
+            metadata={"workspace_id": "ws-test"},
+        )
+
+        snapshot = build_watchtower_snapshot(self.state_db)
+        panel = snapshot["panels"]["agent_identity"]
+
+        self.assertEqual(panel["counts"]["canonical_agents"], 1)
+        self.assertEqual(panel["counts"]["spark_swarm"], 1)
+        self.assertEqual(panel["counts"]["identity_conflicts"], 1)
+        self.assertEqual(len(panel["recent_conflicts"]), 1)
+        self.assertEqual(panel["recent_conflicts"][0]["canonical_agent_id"], "swarm-agent:zephyr")
+        self.assertEqual(panel["recent_conflicts"][0]["conflict_agent_id"], "swarm-agent:atlas")
+        self.assertEqual(panel["recent_conflicts"][0]["conflict_reason"], "multiple_agent_ids_for_human")
+
+        report = run_doctor(self.config_manager, self.state_db)
+        checks = {check.name: check for check in report.checks}
+        self.assertIn("watchtower-agent-identity", checks)
+        self.assertFalse(checks["watchtower-agent-identity"].ok)
+
     def test_outbound_secret_block_records_violation_and_quarantine(self) -> None:
         guarded = prepare_outbound_text(
             state_db=self.state_db,

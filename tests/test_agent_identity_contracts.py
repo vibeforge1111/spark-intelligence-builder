@@ -182,6 +182,62 @@ class AgentIdentityContractTests(SparkTestCase):
         self.assertTrue(resolution.allowed)
         self.assertEqual(resolution.agent_id, "swarm-agent:atlas")
 
+    def test_second_swarm_agent_id_marks_identity_conflict_without_rebinding_active_session(self) -> None:
+        self.add_telegram_channel()
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+
+        first_link = link_spark_swarm_agent(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+            swarm_agent_id="swarm-agent:atlas",
+            agent_name="Atlas",
+            metadata={"workspace_id": "ws-test"},
+        )
+        self.assertEqual(first_link.agent_id, "swarm-agent:atlas")
+
+        conflicted = link_spark_swarm_agent(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+            swarm_agent_id="swarm-agent:zephyr",
+            agent_name="Zephyr",
+            metadata={"workspace_id": "ws-test"},
+        )
+
+        self.assertEqual(conflicted.agent_id, "swarm-agent:zephyr")
+        self.assertEqual(conflicted.preferred_source, "spark_swarm")
+        self.assertEqual(conflicted.status, "identity_conflict")
+        self.assertEqual(conflicted.conflict_agent_id, "swarm-agent:atlas")
+        self.assertEqual(conflicted.conflict_reason, "multiple_agent_ids_for_human")
+
+        with self.state_db.connect() as conn:
+            session_row = conn.execute(
+                """
+                SELECT agent_id
+                FROM session_bindings
+                WHERE session_id = ?
+                LIMIT 1
+                """,
+                ("session:telegram:dm:111",),
+            ).fetchone()
+
+        self.assertIsNotNone(session_row)
+        self.assertEqual(session_row["agent_id"], "swarm-agent:atlas")
+
+        resolution = resolve_inbound_dm(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+
+        self.assertTrue(resolution.allowed)
+        self.assertEqual(resolution.agent_id, "swarm-agent:atlas")
+
     def test_build_researcher_reply_persists_explicit_agent_persona_authoring(self) -> None:
         approve_pairing(
             state_db=self.state_db,

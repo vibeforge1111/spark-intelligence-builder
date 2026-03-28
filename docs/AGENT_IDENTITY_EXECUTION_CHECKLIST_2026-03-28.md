@@ -113,13 +113,13 @@ Tests:
 
 - [x] contract tests for rename without id churn
 - [x] repair-path smoke tests
-- [ ] conflict-resolution harness tests
+- [x] conflict-resolution harness tests
 
 ### Phase F. Closure
 
 Status:
 
-- mostly shipped in Builder
+- shipped in Builder
 
 Tasks:
 
@@ -139,13 +139,13 @@ Tests:
 
 - [ ] live Spark Swarm identity fetch/import from the external runtime path
 - [ ] live import harness against the external Swarm runtime
-- [ ] fuller conflict-resolution harness coverage
 
 ## Current Verification Command Set
 
 Use these while shipping this track:
 
 - `python -m pytest tests/test_agent_identity_contracts.py`
+- `python -m pytest tests/test_agent_identity_contracts.py tests/test_builder_prelaunch_contracts.py tests/test_cli_smoke.py`
 - `python -m pytest tests/test_memory_orchestrator.py tests/test_builder_prelaunch_contracts.py tests/test_cli_smoke.py tests/test_operator_pairing_flows.py`
 - `python -m pytest tests/test_operator_pairing_flows.py tests/test_agent_identity_contracts.py tests/test_telegram_failure_paths.py`
 - `python -m pytest tests/test_agent_identity_contracts.py tests/test_cli_smoke.py`

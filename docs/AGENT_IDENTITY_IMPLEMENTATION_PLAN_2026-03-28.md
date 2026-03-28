@@ -122,7 +122,7 @@ Definition of done reached:
 
 Status:
 
-- mostly shipped in Builder
+- shipped in Builder
 
 Delivered:
 
@@ -130,10 +130,10 @@ Delivered:
 - doctor and Watchtower identity visibility
 - broader regression coverage
 - legacy personality migration command
+- explicit conflict-repair harness coverage
 
 Still open:
 
-- fuller conflict-repair harness coverage
 - final external Swarm import harness once the other side is ready
 
 ## 4. Runtime Resolution Rules
@@ -195,8 +195,7 @@ Builder now supports migration that:
 ## 7. Remaining Follow-Up
 
 Builder-local follow-up:
-
-- fuller conflict-resolution harness coverage
+- none
 
 External dependency:
 
@@ -206,7 +205,6 @@ External dependency:
 
 The next practical order is:
 
-1. add fuller conflict-repair harness coverage
-2. connect live Swarm identity import once the external path is ready
+1. connect live Swarm identity import once the external path is ready
 
-That sequence keeps Builder productized locally while leaving the cross-repo dependency explicit.
+That keeps Builder productized locally while leaving the cross-repo dependency explicit.

@@ -1348,6 +1348,67 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(link_payload["preferred_source"], "spark_swarm")
         self.assertIn("agent:human:telegram:111", link_payload["alias_agent_ids"])
 
+    def test_agent_link_swarm_command_surfaces_identity_conflict_without_hiding_existing_binding(self) -> None:
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+
+        first_link_exit, first_link_stdout, first_link_stderr = self.run_cli(
+            "agent",
+            "link-swarm",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:telegram:111",
+            "--swarm-agent-id",
+            "swarm-agent:atlas",
+            "--agent-name",
+            "Atlas",
+            "--json",
+        )
+        self.assertEqual(first_link_exit, 0, first_link_stderr)
+        first_link_payload = json.loads(first_link_stdout)
+        self.assertEqual(first_link_payload["status"], "active")
+
+        conflict_exit, conflict_stdout, conflict_stderr = self.run_cli(
+            "agent",
+            "link-swarm",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:telegram:111",
+            "--swarm-agent-id",
+            "swarm-agent:zephyr",
+            "--agent-name",
+            "Zephyr",
+            "--json",
+        )
+        self.assertEqual(conflict_exit, 0, conflict_stderr)
+        conflict_payload = json.loads(conflict_stdout)
+        self.assertEqual(conflict_payload["agent_id"], "swarm-agent:zephyr")
+        self.assertEqual(conflict_payload["status"], "identity_conflict")
+        self.assertEqual(conflict_payload["conflict_agent_id"], "swarm-agent:atlas")
+        self.assertEqual(conflict_payload["conflict_reason"], "multiple_agent_ids_for_human")
+
+        inspect_exit, inspect_stdout, inspect_stderr = self.run_cli(
+            "agent",
+            "inspect",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:telegram:111",
+            "--json",
+        )
+        self.assertEqual(inspect_exit, 0, inspect_stderr)
+        inspect_payload = json.loads(inspect_stdout)
+        self.assertEqual(inspect_payload["identity"]["agent_id"], "swarm-agent:zephyr")
+        self.assertEqual(inspect_payload["identity"]["status"], "identity_conflict")
+        self.assertEqual(inspect_payload["identity"]["conflict_agent_id"], "swarm-agent:atlas")
+        self.assertEqual(inspect_payload["identity"]["conflict_reason"], "multiple_agent_ids_for_human")
+
     def test_agent_migrate_legacy_personality_command_moves_overlay_into_agent_base(self) -> None:
         approve_pairing(
             state_db=self.state_db,
