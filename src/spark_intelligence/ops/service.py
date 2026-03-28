@@ -227,6 +227,8 @@ class PersonalityReport:
     def to_text(self) -> str:
         overview = self.payload.get("overview") or {}
         counts = overview.get("counts") or {}
+        personality_import = overview.get("personality_import") or {}
+        recent_imports = self.payload.get("recent_imports") or []
         human_id = self.payload.get("human_id")
         if not human_id:
             lines = ["Personality overview:"]
@@ -239,6 +241,13 @@ class PersonalityReport:
                 f"distinct_humans={int(counts.get('distinct_humans') or 0)} "
                 f"mirror_drift={int(counts.get('mirror_drift') or 0)}"
             )
+            lines.append(
+                "- import: "
+                f"ready={'yes' if personality_import.get('ready') else 'no'} "
+                f"available_hook_chips={int(counts.get('personality_hook_chip_records') or 0)} "
+                f"active_hook_chips={int(counts.get('personality_hook_active_chip_records') or 0)} "
+                f"recent_imports={len(recent_imports)}"
+            )
             recent_humans = overview.get("recent_humans") or []
             if recent_humans:
                 lines.append("- recent humans:")
@@ -247,6 +256,14 @@ class PersonalityReport:
                         f"  {row['human_id']} profile={row.get('profile_updated_at') or 'none'} "
                         f"observed={row.get('last_observed_at') or 'none'} "
                         f"evolved={row.get('last_evolved_at') or 'none'}"
+                )
+            if recent_imports:
+                lines.append("- recent imports:")
+                for row in recent_imports[:5]:
+                    details = row.get("details") or {}
+                    lines.append(
+                        f"  {row['created_at']} status={details.get('status') or 'unknown'} "
+                        f"agent={row['target_ref']} chip={details.get('chip_key') or 'unknown'}"
                     )
             return "\n".join(lines)
 
@@ -303,6 +320,20 @@ class PersonalityReport:
             lines.append(
                 f"- agent_persona: {agent_persona.get('persona_name') or 'saved'} "
                 f"updated_at={agent_persona.get('updated_at') or 'unknown'}"
+            )
+        lines.append(
+            "- import: "
+            f"ready={'yes' if personality_import.get('ready') else 'no'} "
+            f"active_hook_chips={int(counts.get('personality_hook_active_chip_records') or 0)} "
+            f"recent_imports={len(recent_imports)}"
+        )
+        if recent_imports:
+            latest_import = recent_imports[0]
+            latest_details = latest_import.get("details") or {}
+            lines.append(
+                f"- latest_import: status={latest_details.get('status') or 'unknown'} "
+                f"chip={latest_details.get('chip_key') or 'unknown'} "
+                f"at={latest_import.get('created_at') or 'unknown'}"
             )
         lines.append(
             f"- history: observations={len(observations)} evolutions={len(evolutions)} "
@@ -795,9 +826,16 @@ def build_personality_report(
 ) -> PersonalityReport:
     watchtower = build_watchtower_snapshot(state_db)
     overview = (watchtower.get("panels") or {}).get("personality") or {}
+    recent_imports = list_operator_events(
+        state_db,
+        limit=5,
+        action="import_personality",
+        target_kind="agent_persona",
+    ).rows
     payload: dict[str, Any] = {
         "overview": overview,
         "human_id": human_id,
+        "recent_imports": recent_imports,
     }
     if not human_id:
         return PersonalityReport(payload=payload)
@@ -818,6 +856,10 @@ def build_personality_report(
     for row in observations:
         state = str(row.get("user_state") or "unknown")
         observation_states[state] = observation_states.get(state, 0) + 1
+    recent_imports = [
+        row for row in recent_imports
+        if str(row.get("target_ref") or "") == agent_identity["agent_id"]
+    ]
 
     payload.update(
         {
@@ -833,6 +875,7 @@ def build_personality_report(
             "observations": observations,
             "evolutions": evolutions,
             "observation_states": observation_states,
+            "recent_imports": recent_imports,
         }
     )
     return PersonalityReport(payload=payload)

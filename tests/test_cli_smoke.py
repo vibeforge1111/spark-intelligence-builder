@@ -1484,6 +1484,36 @@ class CliSmokeTests(SparkTestCase):
         self.assertTrue(Path(payload["result_path"]).exists())
         self.assertTrue(Path(payload["evolver_state_path"]).exists())
 
+        overview_exit, overview_stdout, overview_stderr = self.run_cli(
+            "operator",
+            "personality",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(overview_exit, 0, overview_stderr)
+        overview_payload = json.loads(overview_stdout)
+        self.assertTrue(overview_payload["overview"]["personality_import"]["ready"])
+        self.assertEqual(overview_payload["overview"]["personality_import"]["active_chip_keys"], ["spark-personality"])
+        self.assertEqual(len(overview_payload["recent_imports"]), 1)
+        self.assertEqual(overview_payload["recent_imports"][0]["details"]["status"], "completed")
+
+        detail_exit, detail_stdout, detail_stderr = self.run_cli(
+            "operator",
+            "personality",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:telegram:111",
+            "--json",
+        )
+        self.assertEqual(detail_exit, 0, detail_stderr)
+        detail_payload = json.loads(detail_stdout)
+        self.assertTrue(detail_payload["overview"]["personality_import"]["ready"])
+        self.assertEqual(len(detail_payload["recent_imports"]), 1)
+        self.assertEqual(detail_payload["recent_imports"][0]["target_ref"], "agent:human:telegram:111")
+        self.assertEqual(detail_payload["recent_imports"][0]["details"]["chip_key"], "spark-personality")
+
     def test_agent_migrate_legacy_personality_command_moves_overlay_into_agent_base(self) -> None:
         approve_pairing(
             state_db=self.state_db,
