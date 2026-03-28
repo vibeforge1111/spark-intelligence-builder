@@ -706,6 +706,89 @@ def inspect_canonical_agent(
     return CanonicalAgentReport(payload=payload)
 
 
+def build_spark_swarm_identity_import_payload(
+    *,
+    state_db: StateDB,
+    human_id: str,
+    workspace_id: str | None = None,
+) -> dict[str, Any]:
+    state = read_canonical_agent_state(state_db=state_db, human_id=human_id)
+    with state_db.connect() as conn:
+        session_rows = conn.execute(
+            """
+            SELECT session_id, channel_id, external_user_id, session_mode, status, updated_at
+            FROM session_bindings
+            WHERE agent_id = ?
+            ORDER BY updated_at DESC, session_id DESC
+            """,
+            (state.agent_id,),
+        ).fetchall()
+        pairing_rows = conn.execute(
+            """
+            SELECT pairing_id, channel_id, external_user_id, status, approved_at, approved_by, updated_at
+            FROM pairing_records
+            WHERE human_id = ?
+            ORDER BY updated_at DESC, pairing_id DESC
+            """,
+            (human_id,),
+        ).fetchall()
+    return {
+        "schema_version": "spark-swarm-agent-import-request.v1",
+        "hook": "identity",
+        "requested_at": _utc_now_iso(),
+        "workspace_id": workspace_id or "default",
+        "human_id": human_id,
+        "current_identity": state.to_payload(),
+        "sessions": [dict(row) for row in session_rows],
+        "pairings": [dict(row) for row in pairing_rows],
+    }
+
+
+def normalize_spark_swarm_identity_import(
+    *,
+    human_id: str,
+    hook_output: dict[str, Any],
+) -> dict[str, Any]:
+    result = hook_output.get("result")
+    if not isinstance(result, dict):
+        raise ValueError("Spark Swarm identity hook must return a JSON object under result.")
+
+    result_human_id = str(result.get("human_id") or human_id).strip() or human_id
+    if result_human_id != human_id:
+        raise ValueError(
+            f"Spark Swarm identity hook returned human_id '{result_human_id}' but expected '{human_id}'."
+        )
+
+    external_system = str(result.get("external_system") or "spark_swarm").strip() or "spark_swarm"
+    if external_system != "spark_swarm":
+        raise ValueError(
+            f"Spark Swarm identity hook returned unsupported external_system '{external_system}'."
+        )
+
+    swarm_agent_id = str(result.get("swarm_agent_id") or result.get("agent_id") or "").strip()
+    if not swarm_agent_id:
+        raise ValueError("Spark Swarm identity hook must return a non-empty swarm_agent_id.")
+
+    agent_name = str(result.get("agent_name") or result.get("display_name") or "").strip() or "Spark Agent"
+    confirmed_at = str(result.get("confirmed_at") or "").strip() or None
+    metadata = result.get("metadata")
+    if metadata is None:
+        metadata_dict: dict[str, Any] = {}
+    elif isinstance(metadata, dict):
+        metadata_dict = dict(metadata)
+    else:
+        raise ValueError("Spark Swarm identity hook metadata must be a JSON object when provided.")
+
+    return {
+        "human_id": human_id,
+        "swarm_agent_id": swarm_agent_id,
+        "agent_name": agent_name,
+        "confirmed_at": confirmed_at,
+        "external_system": external_system,
+        "metadata": metadata_dict,
+    }
+
+
 def _activate_channel_access(
     *,
     state_db: StateDB,

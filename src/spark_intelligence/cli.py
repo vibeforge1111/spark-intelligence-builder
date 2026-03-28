@@ -54,12 +54,14 @@ from spark_intelligence.identity.service import (
     agent_inspect,
     approve_latest_pairing,
     approve_pairing,
+    build_spark_swarm_identity_import_payload,
     hold_pairing,
     hold_latest_pairing,
     inspect_canonical_agent,
     link_spark_swarm_agent,
     list_pairings,
     list_sessions,
+    normalize_spark_swarm_identity_import,
     pairing_summary,
     peek_latest_pairing_external_user_id,
     rename_agent_identity,
@@ -1465,6 +1467,17 @@ def build_parser() -> argparse.ArgumentParser:
     agent_link_swarm_parser.add_argument("--agent-name", required=True, help="Agent display name to use after link")
     agent_link_swarm_parser.add_argument("--confirmed-at", help="Confirmed timestamp for the inbound Spark Swarm name update")
     agent_link_swarm_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    agent_import_swarm_parser = agent_subparsers.add_parser(
+        "import-swarm",
+        help="Fetch and canonicalize Spark Swarm identity from an external hook-backed runtime",
+    )
+    agent_import_swarm_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    agent_import_swarm_parser.add_argument("--human-id", required=True, help="Human id whose Spark Swarm identity should be imported")
+    agent_import_swarm_parser.add_argument("--chip-key", help="Explicit chip key exposing the identity hook")
+    agent_import_swarm_parser.add_argument("--reason", default="spark swarm identity import", help="Operator reason recorded in history")
+    agent_import_swarm_parser.add_argument("--write-payload", help="Optional path to write the import request payload")
+    agent_import_swarm_parser.add_argument("--write-result", help="Optional path to write the hook execution result")
+    agent_import_swarm_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     agent_migrate_persona_parser = agent_subparsers.add_parser(
         "migrate-legacy-personality",
         help="Move legacy human-scoped personality deltas into the canonical agent persona base",
@@ -3942,6 +3955,313 @@ def handle_agent_link_swarm(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_agent_import_swarm(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    import_id = f"swarm-import:{uuid4().hex[:12]}"
+    payload = build_spark_swarm_identity_import_payload(
+        state_db=state_db,
+        human_id=args.human_id,
+        workspace_id=str(config_manager.get_path("workspace.id", default="default")),
+    )
+    payload["import_id"] = import_id
+    payload["requested_by"] = "local-operator"
+    payload["reason"] = args.reason
+
+    payload_path = Path(args.write_payload) if args.write_payload else (
+        config_manager.paths.home / "artifacts" / "agent-imports" / f"{import_id}.payload.json"
+    )
+    payload_path.parent.mkdir(parents=True, exist_ok=True)
+    payload_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+
+    run = open_run(
+        state_db,
+        run_kind="operator:agent_import_swarm",
+        origin_surface="agent_cli",
+        summary="Operator started a Spark Swarm identity import.",
+        request_id=import_id,
+        actor_id="local-operator",
+        reason_code="agent_import_swarm",
+        human_id=args.human_id,
+        facts={"chip_key": args.chip_key or "active", "payload_path": str(payload_path)},
+    )
+    try:
+        if args.chip_key:
+            execution = run_chip_hook(config_manager, chip_key=args.chip_key, hook="identity", payload=payload)
+        else:
+            execution = run_first_active_chip_hook(config_manager, hook="identity", payload=payload)
+            if execution is None:
+                close_run(
+                    state_db,
+                    run_id=run.run_id,
+                    status="stalled",
+                    close_reason="no_active_chip_for_hook",
+                    summary="Agent import found no active chip exposing the identity hook.",
+                    facts={"hook": "identity"},
+                )
+                print(
+                    "No active chip exposes hook 'identity'. Activate the Spark Swarm runtime first or pass --chip-key.",
+                    file=sys.stderr,
+                )
+                return 1
+    except ValueError as exc:
+        close_run(
+            state_db,
+            run_id=run.run_id,
+            status="stalled",
+            close_reason="agent_import_invalid",
+            summary="Agent import failed validation before Spark Swarm hook execution.",
+            facts={"hook": "identity", "error": str(exc)},
+        )
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    result_path = Path(args.write_result) if args.write_result else (
+        config_manager.paths.home / "artifacts" / "agent-imports" / f"{import_id}.result.json"
+    )
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    result_payload = execution.to_payload()
+
+    record_chip_hook_execution(
+        state_db,
+        execution=execution,
+        component="agent_cli",
+        actor_id="local-operator",
+        summary="Agent CLI executed a Spark Swarm identity hook.",
+        reason_code="agent_import_swarm",
+        keepability="operator_debug_only",
+        run_id=run.run_id,
+        request_id=run.request_id,
+        human_id=args.human_id,
+    )
+    screened_output = screen_chip_hook_text(
+        state_db=state_db,
+        execution=execution,
+        text=json.dumps(
+            {
+                "chip_key": execution.chip_key,
+                "hook": execution.hook,
+                "exit_code": execution.exit_code,
+                "stdout": execution.stdout,
+                "result": execution.output.get("result") if isinstance(execution.output, dict) else {},
+            },
+            indent=2,
+            ensure_ascii=True,
+        ),
+        summary="Agent import blocked secret-like Spark Swarm hook output before operator display.",
+        reason_code="agent_import_swarm_secret_like",
+        policy_domain="agent_cli",
+        blocked_stage="operator_output",
+        run_id=run.run_id,
+        request_id=run.request_id,
+    )
+    if not screened_output["allowed"]:
+        log_operator_event(
+            state_db=state_db,
+            action="import_swarm_identity",
+            target_kind="agent_identity",
+            target_ref=args.human_id,
+            reason=args.reason,
+            details={
+                "status": "blocked",
+                "chip_key": execution.chip_key,
+                "hook": execution.hook,
+                "payload_path": str(payload_path),
+                "result_path": str(result_path),
+                "quarantine_id": screened_output["quarantine_id"],
+            },
+        )
+        record_event(
+            state_db,
+            event_type="dispatch_failed",
+            component="agent_cli",
+            summary="Agent import blocked Spark Swarm hook output because it contained secret-like material.",
+            run_id=run.run_id,
+            request_id=run.request_id,
+            actor_id="local-operator",
+            reason_code="secret_boundary_blocked",
+            severity="high",
+            human_id=args.human_id,
+            facts={
+                "chip_key": execution.chip_key,
+                "hook": execution.hook,
+                "quarantine_id": screened_output["quarantine_id"],
+            },
+        )
+        close_run(
+            state_db,
+            run_id=run.run_id,
+            status="stalled",
+            close_reason="secret_boundary_blocked",
+            summary="Agent import was blocked by the secret boundary.",
+            facts={
+                "chip_key": execution.chip_key,
+                "hook": execution.hook,
+                "quarantine_id": screened_output["quarantine_id"],
+            },
+        )
+        print(
+            "Spark Swarm identity import output was blocked because it contained secret-like material. "
+            "Review quarantine records instead of raw output.",
+            file=sys.stderr,
+        )
+        return 1
+
+    result_path.write_text(json.dumps(result_payload, indent=2, ensure_ascii=True), encoding="utf-8")
+
+    if not execution.ok:
+        log_operator_event(
+            state_db=state_db,
+            action="import_swarm_identity",
+            target_kind="agent_identity",
+            target_ref=args.human_id,
+            reason=args.reason,
+            details={
+                "status": "failed",
+                "chip_key": execution.chip_key,
+                "hook": execution.hook,
+                "payload_path": str(payload_path),
+                "result_path": str(result_path),
+                "exit_code": execution.exit_code,
+            },
+        )
+        close_run(
+            state_db,
+            run_id=run.run_id,
+            status="failed",
+            close_reason="agent_import_hook_failed",
+            summary="Spark Swarm identity hook returned a non-zero exit code.",
+            facts={
+                "chip_key": execution.chip_key,
+                "hook": execution.hook,
+                "payload_path": str(payload_path),
+                "result_path": str(result_path),
+                "exit_code": execution.exit_code,
+            },
+        )
+        print(
+            json.dumps(
+                {
+                    "import_id": import_id,
+                    "status": "failed",
+                    "chip_key": execution.chip_key,
+                    "hook": execution.hook,
+                    "payload_path": str(payload_path),
+                    "result_path": str(result_path),
+                    "execution": result_payload,
+                },
+                indent=2,
+            )
+            if args.json
+            else (
+                "Spark Swarm identity import failed because the external hook returned a non-zero exit code. "
+                f"Result artifact: {result_path}"
+            )
+        )
+        return 1
+
+    try:
+        normalized = normalize_spark_swarm_identity_import(
+            human_id=args.human_id,
+            hook_output=execution.output,
+        )
+    except ValueError as exc:
+        log_operator_event(
+            state_db=state_db,
+            action="import_swarm_identity",
+            target_kind="agent_identity",
+            target_ref=args.human_id,
+            reason=args.reason,
+            details={
+                "status": "invalid",
+                "chip_key": execution.chip_key,
+                "hook": execution.hook,
+                "payload_path": str(payload_path),
+                "result_path": str(result_path),
+                "error": str(exc),
+            },
+        )
+        close_run(
+            state_db,
+            run_id=run.run_id,
+            status="stalled",
+            close_reason="agent_import_invalid_payload",
+            summary="Spark Swarm identity hook returned an invalid import payload.",
+            facts={
+                "chip_key": execution.chip_key,
+                "hook": execution.hook,
+                "payload_path": str(payload_path),
+                "result_path": str(result_path),
+                "error": str(exc),
+            },
+        )
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    state = link_spark_swarm_agent(
+        state_db=state_db,
+        human_id=args.human_id,
+        swarm_agent_id=normalized["swarm_agent_id"],
+        agent_name=normalized["agent_name"],
+        confirmed_at=normalized["confirmed_at"],
+        metadata={
+            **normalized["metadata"],
+            "linked_via": "agent_import_swarm",
+            "import_id": import_id,
+            "import_chip_key": execution.chip_key,
+            "import_result_path": str(result_path),
+        },
+    )
+    payload_out = {
+        "import_id": import_id,
+        "status": "completed",
+        "chip_key": execution.chip_key,
+        "hook": execution.hook,
+        "payload_path": str(payload_path),
+        "result_path": str(result_path),
+        "imported_identity": normalized,
+        "identity": state.to_payload(),
+        "execution": result_payload,
+    }
+    log_operator_event(
+        state_db=state_db,
+        action="import_swarm_identity",
+        target_kind="agent_identity",
+        target_ref=args.human_id,
+        reason=args.reason,
+        details={
+            "status": "completed",
+            "chip_key": execution.chip_key,
+            "hook": execution.hook,
+            "swarm_agent_id": normalized["swarm_agent_id"],
+            "payload_path": str(payload_path),
+            "result_path": str(result_path),
+        },
+    )
+    close_run(
+        state_db,
+        run_id=run.run_id,
+        status="closed",
+        close_reason="agent_import_completed",
+        summary="Spark Swarm identity import completed and canonicalized the agent identity.",
+        facts={
+            "chip_key": execution.chip_key,
+            "hook": execution.hook,
+            "swarm_agent_id": normalized["swarm_agent_id"],
+            "payload_path": str(payload_path),
+            "result_path": str(result_path),
+        },
+    )
+    print(
+        json.dumps(payload_out, indent=2)
+        if args.json
+        else f"Imported Spark Swarm identity for {args.human_id} onto canonical agent {state.agent_id}."
+    )
+    return 0
+
+
 def handle_agent_migrate_legacy_personality(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -4183,6 +4503,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_agent_rename(args)
     if args.command == "agent" and args.agent_command == "link-swarm":
         return handle_agent_link_swarm(args)
+    if args.command == "agent" and args.agent_command == "import-swarm":
+        return handle_agent_import_swarm(args)
     if args.command == "agent" and args.agent_command == "migrate-legacy-personality":
         return handle_agent_migrate_legacy_personality(args)
     if args.command == "pairings" and args.pairings_command == "list":

@@ -80,7 +80,7 @@ Tests:
 
 Status:
 
-- Builder-side implementation shipped
+- shipped in Builder
 
 Tasks:
 
@@ -88,13 +88,13 @@ Tasks:
 - [x] canonicalize Builder-local identity to Swarm when local identity is provisional
 - [x] preserve Builder-side history through alias mapping
 - [x] rebind active sessions to the canonical Swarm id
-- [ ] wire live Swarm identity fetch/import from the external repo path
+- [x] wire live Swarm identity fetch/import from the external repo path
 
 Tests:
 
 - [x] contract tests for Builder-first then Swarm-link
 - [x] harness test that inbound DM resolution returns the Swarm id after link
-- [ ] live import harness against external Swarm repo/runtime
+- [x] hook-backed import harness against an external-runtime contract
 
 ### Phase E. Rename And Conflict Repair
 
@@ -137,8 +137,7 @@ Tests:
 
 ## Remaining Follow-Up
 
-- [ ] live Spark Swarm identity fetch/import from the external runtime path
-- [ ] live import harness against the external Swarm runtime
+- [ ] external Spark Swarm runtime implements the `identity` hook contract
 
 ## Current Verification Command Set
 
@@ -146,6 +145,7 @@ Use these while shipping this track:
 
 - `python -m pytest tests/test_agent_identity_contracts.py`
 - `python -m pytest tests/test_agent_identity_contracts.py tests/test_builder_prelaunch_contracts.py tests/test_cli_smoke.py`
+- `python -m pytest tests/test_agent_identity_contracts.py tests/test_attachment_hooks.py tests/test_cli_smoke.py`
 - `python -m pytest tests/test_memory_orchestrator.py tests/test_builder_prelaunch_contracts.py tests/test_cli_smoke.py tests/test_operator_pairing_flows.py`
 - `python -m pytest tests/test_operator_pairing_flows.py tests/test_agent_identity_contracts.py tests/test_telegram_failure_paths.py`
 - `python -m pytest tests/test_agent_identity_contracts.py tests/test_cli_smoke.py`

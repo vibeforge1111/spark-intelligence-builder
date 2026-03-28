@@ -211,6 +211,7 @@ Current operator surfaces:
 - `spark-intelligence agent inspect`
 - `spark-intelligence agent rename --human-id <human_id> --name <name>`
 - `spark-intelligence agent link-swarm --human-id <human_id> --swarm-agent-id <id> --agent-name <name> [--confirmed-at <timestamp>]`
+- `spark-intelligence agent import-swarm --human-id <human_id> [--chip-key <chip-key>]`
 
 Current precedence behavior:
 
@@ -248,6 +249,7 @@ Builder behavior:
 - import `agent_name`
 - create or refresh the local external reference
 - attach Builder-side persona state to the imported canonical agent
+- support hook-backed live imports from an external Spark Swarm runtime through the `identity` hook contract
 
 ### 6.2 Supported Fallback: Builder First
 
@@ -398,9 +400,10 @@ Completed locally:
 - human-overlay compatibility
 - legacy human-overlay migration command
 - operator inspect, rename, and Swarm-link surfaces
+- hook-backed Swarm identity import surface
 - doctor and Watchtower identity visibility
 - explicit conflict-repair harness coverage
 
 Remaining external dependency:
 
-- live Spark Swarm identity fetch and import from the external runtime path
+- the external Spark Swarm runtime implementing the `identity` hook contract

@@ -89,7 +89,7 @@ Delivered:
 
 Status:
 
-- Builder-side implementation shipped
+- shipped in Builder
 
 Delivered:
 
@@ -97,10 +97,11 @@ Delivered:
 - alias preservation for superseded local Builder ids
 - session rebinding to the canonical Swarm id
 - Builder-side history preservation through link
+- hook-backed `agent import-swarm` flow for live external identity fetches
 
 Still open:
 
-- live identity fetch/import from the external Spark Swarm runtime path
+- the external Spark Swarm runtime exposing the `identity` hook contract
 
 ### Phase E. Rename And Sync Contract
 
@@ -165,6 +166,7 @@ Builder currently exposes:
 - `spark-intelligence agent inspect`
 - `spark-intelligence agent rename --human-id <human_id> --name <name>`
 - `spark-intelligence agent link-swarm --human-id <human_id> --swarm-agent-id <id> --agent-name <name> [--confirmed-at <timestamp>]`
+- `spark-intelligence agent import-swarm --human-id <human_id> [--chip-key <chip-key>]`
 - `spark-intelligence agent migrate-legacy-personality --human-id <human_id> [--keep-overlay] [--force]`
 
 Operators can inspect:
@@ -199,12 +201,12 @@ Builder-local follow-up:
 
 External dependency:
 
-- live Spark Swarm identity fetch/import and harness validation from the external runtime path
+- the external Spark Swarm runtime implementing the `identity` hook contract Builder now expects
 
 ## 8. Recommended Near-Term Build Order
 
 The next practical order is:
 
-1. connect live Swarm identity import once the external path is ready
+1. implement the `identity` hook in the external Spark Swarm runtime
 
 That keeps Builder productized locally while leaving the cross-repo dependency explicit.

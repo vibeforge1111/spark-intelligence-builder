@@ -40,6 +40,122 @@ def make_telegram_update(
     }
 
 
+def create_fake_hook_chip(root: Path, *, chip_key: str = "startup-yc") -> Path:
+    repo_root = root / f"domain-chip-{chip_key}"
+    package_root = repo_root / "src" / "fake_startup_chip"
+    package_root.mkdir(parents=True, exist_ok=True)
+    (package_root / "__init__.py").write_text("", encoding="utf-8")
+    (package_root / "chip_hooks.py").write_text(
+        """
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("hook", choices=["evaluate", "suggest", "packets", "watchtower", "identity"])
+    parser.add_argument("--input", required=True)
+    parser.add_argument("--output", required=True)
+    args = parser.parse_args()
+
+    payload = json.loads(Path(args.input).read_text(encoding="utf-8"))
+    if args.hook == "evaluate":
+        situation = payload.get("situation", "")
+        result = {
+            "returncode": 0,
+            "stdout": "task_type: diagnostic_questioning\\nstage: pmf_search\\ncontext_packets: 2\\nactivations: 1\\nhas_analysis: True",
+            "stderr": "",
+            "metrics": {"context_packet_count": 2, "activation_count": 1, "task_type": "diagnostic_questioning"},
+            "result": {
+                "analysis": f"Startup YC doctrine: focus on the narrowest urgent founder pain first. Situation: {situation}",
+                "task_type": "diagnostic_questioning",
+                "stage": "pmf_search",
+                "context_packet_ids": ["packet-1", "packet-2"],
+                "activations": [{"name": "focus_gap"}],
+                "detected_state_updates": [{"field": "stage", "value": "pmf_search"}],
+                "stage_transition_suggested": None,
+            },
+        }
+    elif args.hook == "packets":
+        packet_bundle = payload.get("packet_bundle", {})
+        packets = packet_bundle.get("packets", [])
+        packet_kinds = sorted({str(packet.get("packet_kind") or "unknown") for packet in packets})
+        result = {
+            "returncode": 0,
+            "stdout": f"packet_count: {len(packets)}\\npacket_kinds: {','.join(packet_kinds)}",
+            "stderr": "",
+            "metrics": {"packet_count": len(packets), "packet_kind_count": len(packet_kinds)},
+            "result": {
+                "packet_count": len(packets),
+                "packet_kinds": packet_kinds,
+                "analysis": "Observer doctrine: convert bounded packet evidence into diagnosis and repair workstreams.",
+                "recommended_actions": [
+                    "review latest incident_report packets",
+                    "prioritize repair_plan items with high-severity provenance drift",
+                ],
+            },
+        }
+    elif args.hook == "identity":
+        human_id = str(payload.get("human_id") or "human:unknown")
+        current_identity = payload.get("current_identity") or {}
+        current_name = str(current_identity.get("agent_name") or "Spark Agent").strip() or "Spark Agent"
+        suffix = human_id.split(":")[-1]
+        result = {
+            "returncode": 0,
+            "stdout": f"swarm_agent_id: swarm-agent:{suffix}\\nagent_name: {current_name}",
+            "stderr": "",
+            "metrics": {"session_count": len(payload.get("sessions") or []), "pairing_count": len(payload.get("pairings") or [])},
+            "result": {
+                "human_id": human_id,
+                "external_system": "spark_swarm",
+                "swarm_agent_id": f"swarm-agent:{suffix}",
+                "agent_name": current_name,
+                "confirmed_at": "2026-03-28T12:00:00+00:00",
+                "metadata": {
+                    "workspace_id": payload.get("workspace_id"),
+                    "source": "fake_swarm_runtime",
+                },
+            },
+        }
+    else:
+        result = {"result": {}}
+
+    Path(args.output).write_text(json.dumps(result, indent=2), encoding="utf-8")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+        """.strip(),
+        encoding="utf-8",
+    )
+    (repo_root / "spark-chip.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "spark-chip.v1",
+                "io_protocol": "spark-hook-io.v1",
+                "chip_name": chip_key,
+                "domain": "startup-advisory",
+                "description": "Fake startup chip for hook tests.",
+                "capabilities": ["evaluate", "suggest", "packets", "watchtower", "identity"],
+                "commands": {
+                    "evaluate": ["python", "-m", "fake_startup_chip.chip_hooks", "evaluate"],
+                    "suggest": ["python", "-m", "fake_startup_chip.chip_hooks", "suggest"],
+                    "packets": ["python", "-m", "fake_startup_chip.chip_hooks", "packets"],
+                    "watchtower": ["python", "-m", "fake_startup_chip.chip_hooks", "watchtower"],
+                    "identity": ["python", "-m", "fake_startup_chip.chip_hooks", "identity"],
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return repo_root
+
+
 class SparkTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self._tempdir = tempfile.TemporaryDirectory()

@@ -4,7 +4,9 @@ import json
 
 from spark_intelligence.identity.service import (
     approve_pairing,
+    build_spark_swarm_identity_import_payload,
     link_spark_swarm_agent,
+    normalize_spark_swarm_identity_import,
     read_canonical_agent_state,
     rename_agent_identity,
     resolve_inbound_dm,
@@ -39,6 +41,49 @@ class AgentIdentityContractTests(SparkTestCase):
         self.assertEqual(state.preferred_source, "builder_local")
         self.assertEqual(state.status, "active")
         self.assertEqual(state.alias_agent_ids, [])
+
+    def test_build_spark_swarm_identity_import_payload_includes_current_identity_and_pairings(self) -> None:
+        self.add_telegram_channel()
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+
+        payload = build_spark_swarm_identity_import_payload(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+            workspace_id="ws-test",
+        )
+
+        self.assertEqual(payload["schema_version"], "spark-swarm-agent-import-request.v1")
+        self.assertEqual(payload["hook"], "identity")
+        self.assertEqual(payload["workspace_id"], "ws-test")
+        self.assertEqual(payload["human_id"], "human:telegram:111")
+        self.assertEqual(payload["current_identity"]["agent_id"], "agent:human:telegram:111")
+        self.assertEqual(payload["sessions"][0]["session_id"], "session:telegram:dm:111")
+        self.assertEqual(payload["pairings"][0]["status"], "approved")
+
+    def test_normalize_spark_swarm_identity_import_validates_expected_result_shape(self) -> None:
+        normalized = normalize_spark_swarm_identity_import(
+            human_id="human:telegram:111",
+            hook_output={
+                "result": {
+                    "human_id": "human:telegram:111",
+                    "external_system": "spark_swarm",
+                    "swarm_agent_id": "swarm-agent:atlas",
+                    "agent_name": "Atlas",
+                    "confirmed_at": "2026-03-28T12:00:00+00:00",
+                    "metadata": {"workspace_id": "ws-test"},
+                }
+            },
+        )
+
+        self.assertEqual(normalized["swarm_agent_id"], "swarm-agent:atlas")
+        self.assertEqual(normalized["agent_name"], "Atlas")
+        self.assertEqual(normalized["confirmed_at"], "2026-03-28T12:00:00+00:00")
+        self.assertEqual(normalized["metadata"]["workspace_id"], "ws-test")
 
     def test_rename_agent_identity_changes_name_without_changing_agent_id(self) -> None:
         approve_pairing(

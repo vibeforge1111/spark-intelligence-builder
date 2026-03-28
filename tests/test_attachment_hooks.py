@@ -8,105 +8,12 @@ from spark_intelligence.auth.runtime import RuntimeProviderResolution
 from spark_intelligence.observability.store import latest_events_by_type, record_event
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
 
-from tests.test_support import SparkTestCase
-
-
-def _create_fake_hook_chip(root: Path, *, chip_key: str = "startup-yc") -> Path:
-    repo_root = root / f"domain-chip-{chip_key}"
-    package_root = repo_root / "src" / "fake_startup_chip"
-    package_root.mkdir(parents=True, exist_ok=True)
-    (package_root / "__init__.py").write_text("", encoding="utf-8")
-    (package_root / "chip_hooks.py").write_text(
-        """
-from __future__ import annotations
-
-import argparse
-import json
-from pathlib import Path
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("hook", choices=["evaluate", "suggest", "packets", "watchtower"])
-    parser.add_argument("--input", required=True)
-    parser.add_argument("--output", required=True)
-    args = parser.parse_args()
-
-    payload = json.loads(Path(args.input).read_text(encoding="utf-8"))
-    if args.hook == "evaluate":
-        situation = payload.get("situation", "")
-        result = {
-            "returncode": 0,
-            "stdout": "task_type: diagnostic_questioning\\nstage: pmf_search\\ncontext_packets: 2\\nactivations: 1\\nhas_analysis: True",
-            "stderr": "",
-            "metrics": {"context_packet_count": 2, "activation_count": 1, "task_type": "diagnostic_questioning"},
-            "result": {
-                "analysis": f"Startup YC doctrine: focus on the narrowest urgent founder pain first. Situation: {situation}",
-                "task_type": "diagnostic_questioning",
-                "stage": "pmf_search",
-                "context_packet_ids": ["packet-1", "packet-2"],
-                "activations": [{"name": "focus_gap"}],
-                "detected_state_updates": [{"field": "stage", "value": "pmf_search"}],
-                "stage_transition_suggested": None,
-            },
-        }
-    elif args.hook == "packets":
-        packet_bundle = payload.get("packet_bundle", {})
-        packets = packet_bundle.get("packets", [])
-        packet_kinds = sorted({str(packet.get("packet_kind") or "unknown") for packet in packets})
-        result = {
-            "returncode": 0,
-            "stdout": f"packet_count: {len(packets)}\\npacket_kinds: {','.join(packet_kinds)}",
-            "stderr": "",
-            "metrics": {"packet_count": len(packets), "packet_kind_count": len(packet_kinds)},
-            "result": {
-                "packet_count": len(packets),
-                "packet_kinds": packet_kinds,
-                "analysis": "Observer doctrine: convert bounded packet evidence into diagnosis and repair workstreams.",
-                "recommended_actions": [
-                    "review latest incident_report packets",
-                    "prioritize repair_plan items with high-severity provenance drift",
-                ],
-            },
-        }
-    else:
-        result = {"result": {}}
-
-    Path(args.output).write_text(json.dumps(result, indent=2), encoding="utf-8")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
-        """.strip(),
-        encoding="utf-8",
-    )
-    (repo_root / "spark-chip.json").write_text(
-        json.dumps(
-            {
-                "schema_version": "spark-chip.v1",
-                "io_protocol": "spark-hook-io.v1",
-                "chip_name": chip_key,
-                "domain": "startup-advisory",
-                "description": "Fake startup chip for hook tests.",
-                "capabilities": ["evaluate", "suggest", "packets", "watchtower"],
-                "commands": {
-                    "evaluate": ["python", "-m", "fake_startup_chip.chip_hooks", "evaluate"],
-                    "suggest": ["python", "-m", "fake_startup_chip.chip_hooks", "suggest"],
-                    "packets": ["python", "-m", "fake_startup_chip.chip_hooks", "packets"],
-                    "watchtower": ["python", "-m", "fake_startup_chip.chip_hooks", "watchtower"],
-                },
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-    return repo_root
+from tests.test_support import SparkTestCase, create_fake_hook_chip
 
 
 class AttachmentHookTests(SparkTestCase):
     def test_operator_handoff_observer_runs_packets_hook_and_records_handoff(self) -> None:
-        chip_root = _create_fake_hook_chip(self.home)
+        chip_root = create_fake_hook_chip(self.home)
         self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
 
         activate_exit, _, activate_stderr = self.run_cli(
@@ -186,7 +93,7 @@ class AttachmentHookTests(SparkTestCase):
         )
 
     def test_attachments_run_hook_executes_active_chip_evaluate(self) -> None:
-        chip_root = _create_fake_hook_chip(self.home)
+        chip_root = create_fake_hook_chip(self.home)
         self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
 
         activate_exit, _, activate_stderr = self.run_cli(
@@ -236,7 +143,7 @@ class AttachmentHookTests(SparkTestCase):
         self.assertEqual(row["close_reason"], "attachments_hook_completed")
 
     def test_attachments_run_hook_blocks_secret_like_output(self) -> None:
-        chip_root = _create_fake_hook_chip(self.home)
+        chip_root = create_fake_hook_chip(self.home)
         self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
 
         activate_exit, _, activate_stderr = self.run_cli(
@@ -278,6 +185,76 @@ class AttachmentHookTests(SparkTestCase):
         self.assertIsNotNone(row)
         self.assertEqual(row["status"], "stalled")
         self.assertEqual(row["close_reason"], "secret_boundary_blocked")
+
+    def test_agent_import_swarm_runs_identity_hook_and_canonicalizes_agent(self) -> None:
+        chip_root = create_fake_hook_chip(self.home, chip_key="spark-swarm")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+        self.add_telegram_channel()
+
+        approve_exit, _, approve_stderr = self.run_cli(
+            "pairings",
+            "approve",
+            "telegram",
+            "111",
+            "--home",
+            str(self.home),
+            "--display-name",
+            "Alice",
+        )
+        self.assertEqual(approve_exit, 0, approve_stderr)
+
+        activate_exit, _, activate_stderr = self.run_cli(
+            "attachments",
+            "activate-chip",
+            "spark-swarm",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(activate_exit, 0, activate_stderr)
+
+        import_exit, import_stdout, import_stderr = self.run_cli(
+            "agent",
+            "import-swarm",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:telegram:111",
+            "--json",
+        )
+        self.assertEqual(import_exit, 0, import_stderr)
+        payload = json.loads(import_stdout)
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["chip_key"], "spark-swarm")
+        self.assertEqual(payload["identity"]["agent_id"], "swarm-agent:111")
+        self.assertTrue(Path(payload["payload_path"]).exists())
+        self.assertTrue(Path(payload["result_path"]).exists())
+
+        inspect_exit, inspect_stdout, inspect_stderr = self.run_cli(
+            "agent",
+            "inspect",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:telegram:111",
+            "--json",
+        )
+        self.assertEqual(inspect_exit, 0, inspect_stderr)
+        inspect_payload = json.loads(inspect_stdout)
+        self.assertEqual(inspect_payload["identity"]["agent_id"], "swarm-agent:111")
+        self.assertEqual(inspect_payload["identity"]["preferred_source"], "spark_swarm")
+
+        history_exit, history_stdout, history_stderr = self.run_cli(
+            "operator",
+            "history",
+            "--home",
+            str(self.home),
+            "--action",
+            "import_swarm_identity",
+            "--json",
+        )
+        self.assertEqual(history_exit, 0, history_stderr)
+        history_payload = json.loads(history_stdout)
+        self.assertEqual(history_payload["rows"][0]["target_ref"], "human:telegram:111")
 
     def test_researcher_bridge_includes_active_chip_evaluate_context_in_provider_fallback(self) -> None:
         self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])

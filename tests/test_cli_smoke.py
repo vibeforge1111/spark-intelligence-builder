@@ -17,7 +17,7 @@ from spark_intelligence.identity.service import approve_pairing
 from spark_intelligence.observability.store import record_event
 from spark_intelligence.personality.loader import detect_and_persist_nl_preferences, record_observation
 
-from tests.test_support import SparkTestCase
+from tests.test_support import SparkTestCase, create_fake_hook_chip
 
 
 class CliSmokeTests(SparkTestCase):
@@ -1408,6 +1408,43 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(inspect_payload["identity"]["status"], "identity_conflict")
         self.assertEqual(inspect_payload["identity"]["conflict_agent_id"], "swarm-agent:atlas")
         self.assertEqual(inspect_payload["identity"]["conflict_reason"], "multiple_agent_ids_for_human")
+
+    def test_agent_import_swarm_command_canonicalizes_agent_from_hook_runtime(self) -> None:
+        chip_root = create_fake_hook_chip(self.home, chip_key="spark-swarm")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+
+        activate_exit, _, activate_stderr = self.run_cli(
+            "attachments",
+            "activate-chip",
+            "spark-swarm",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(activate_exit, 0, activate_stderr)
+
+        import_exit, import_stdout, import_stderr = self.run_cli(
+            "agent",
+            "import-swarm",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:telegram:111",
+            "--json",
+        )
+        self.assertEqual(import_exit, 0, import_stderr)
+        payload = json.loads(import_stdout)
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["chip_key"], "spark-swarm")
+        self.assertEqual(payload["identity"]["agent_id"], "swarm-agent:111")
+        self.assertEqual(payload["identity"]["preferred_source"], "spark_swarm")
+        self.assertTrue(Path(payload["payload_path"]).exists())
+        self.assertTrue(Path(payload["result_path"]).exists())
 
     def test_agent_migrate_legacy_personality_command_moves_overlay_into_agent_base(self) -> None:
         approve_pairing(
