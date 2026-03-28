@@ -395,6 +395,79 @@ SCHEMA_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS canonical_agent_links (
+        human_id TEXT PRIMARY KEY,
+        canonical_agent_id TEXT NOT NULL,
+        preferred_source TEXT NOT NULL,
+        status TEXT NOT NULL,
+        conflict_agent_id TEXT,
+        conflict_reason TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_profiles (
+        agent_id TEXT PRIMARY KEY,
+        human_id TEXT NOT NULL,
+        agent_name TEXT NOT NULL,
+        origin TEXT NOT NULL,
+        status TEXT NOT NULL,
+        external_system TEXT,
+        external_agent_id TEXT,
+        metadata_json TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_identity_aliases (
+        alias_agent_id TEXT PRIMARY KEY,
+        canonical_agent_id TEXT NOT NULL,
+        alias_kind TEXT NOT NULL,
+        reason_code TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_rename_history (
+        rename_id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        human_id TEXT NOT NULL,
+        old_name TEXT,
+        new_name TEXT NOT NULL,
+        source_surface TEXT NOT NULL,
+        source_ref TEXT,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_persona_profiles (
+        agent_id TEXT PRIMARY KEY,
+        persona_name TEXT,
+        persona_summary TEXT,
+        base_traits_json TEXT NOT NULL,
+        behavioral_rules_json TEXT,
+        provenance_json TEXT,
+        updated_at TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_persona_mutations (
+        mutation_id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        human_id TEXT NOT NULL,
+        mutation_kind TEXT NOT NULL,
+        delta_traits_json TEXT,
+        persona_name TEXT,
+        persona_summary TEXT,
+        source_surface TEXT NOT NULL,
+        source_ref TEXT,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS personality_observations (
         observation_id TEXT PRIMARY KEY,
         human_id TEXT NOT NULL,
@@ -613,6 +686,11 @@ SCHEMA_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_provenance_mutation_log_surface ON provenance_mutation_log(surface, recorded_at)",
     "CREATE INDEX IF NOT EXISTS idx_runtime_environment_snapshots_surface ON runtime_environment_snapshots(surface, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_attachment_state_snapshots_generated_at ON attachment_state_snapshots(generated_at, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_canonical_agent_links_status ON canonical_agent_links(status, updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_profiles_human_id ON agent_profiles(human_id, status, updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_profiles_external_ref ON agent_profiles(external_system, external_agent_id, updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_rename_history_agent_id ON agent_rename_history(agent_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_persona_mutations_agent_id ON agent_persona_mutations(agent_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_personality_observations_human_id ON personality_observations(human_id, observed_at, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_personality_evolution_events_human_id ON personality_evolution_events(human_id, evolved_at, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_quarantine_records_created_at ON quarantine_records(created_at)",

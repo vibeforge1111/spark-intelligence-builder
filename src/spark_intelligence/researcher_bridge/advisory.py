@@ -41,6 +41,7 @@ from spark_intelligence.observability.store import latest_events_by_type, latest
 from spark_intelligence.personality import (
     build_personality_context,
     build_preference_acknowledgment,
+    detect_and_persist_agent_persona_preferences,
     detect_and_persist_nl_preferences,
     detect_personality_query,
     load_personality_profile,
@@ -1057,6 +1058,7 @@ def build_researcher_reply(
     try:
         personality_profile = load_personality_profile(
             human_id=human_id,
+            agent_id=agent_id,
             state_db=state_db,
             config_manager=config_manager,
         )
@@ -1068,6 +1070,7 @@ def build_researcher_reply(
         query_result = detect_personality_query(
             user_message=user_message,
             human_id=human_id,
+            agent_id=agent_id,
             state_db=state_db,
             profile=personality_profile,
             config_manager=config_manager,
@@ -1081,11 +1084,34 @@ def build_researcher_reply(
                 # Reload profile after reset
                 personality_profile = load_personality_profile(
                     human_id=human_id,
+                    agent_id=agent_id,
                     state_db=state_db,
                     config_manager=config_manager,
                 )
     except Exception:
         pass
+
+    agent_persona_mutation = None
+    if not personality_context_extra:
+        try:
+            agent_persona_mutation = detect_and_persist_agent_persona_preferences(
+                agent_id=agent_id,
+                human_id=human_id,
+                user_message=user_message,
+                state_db=state_db,
+                source_surface=channel_kind,
+                source_ref=request_id,
+            )
+            if agent_persona_mutation is not None:
+                personality_context_extra = agent_persona_mutation.context_injection
+                personality_profile = load_personality_profile(
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    state_db=state_db,
+                    config_manager=config_manager,
+                )
+        except Exception:
+            pass
 
     if not personality_context_extra and config_manager.get_path("spark.memory.enabled", default=False):
         try:
@@ -1128,6 +1154,7 @@ def build_researcher_reply(
                 # Reload profile with updated deltas applied
                 personality_profile = load_personality_profile(
                     human_id=human_id,
+                    agent_id=agent_id,
                     state_db=state_db,
                     config_manager=config_manager,
                 )
@@ -1175,6 +1202,7 @@ def build_researcher_reply(
         personality_profile
         or personality_context_extra
         or detected_deltas
+        or agent_persona_mutation
         or evolved_deltas
         or observation_record
         or detected_profile_fact
@@ -1183,6 +1211,8 @@ def build_researcher_reply(
         source_kind = "personality_profile"
         if detected_deltas:
             source_kind = "personality_preference_update"
+        elif agent_persona_mutation is not None:
+            source_kind = "agent_persona_update"
         elif detected_profile_fact is not None:
             source_kind = "profile_fact_update"
         elif detected_profile_fact_query is not None:
@@ -1210,6 +1240,16 @@ def build_researcher_reply(
                 "personality_source": personality_profile.get("source") if personality_profile else None,
                 "user_deltas_applied": bool(personality_profile.get("user_deltas_applied")) if personality_profile else False,
                 "query_kind": personality_query_kind,
+                "agent_persona_name": personality_profile.get("agent_persona_name") if personality_profile else None,
+                "agent_base_traits": personality_profile.get("agent_base_traits") if personality_profile else {},
+                "agent_persona_mutation": (
+                    {
+                        "agent_name": agent_persona_mutation.agent_name,
+                        "trait_deltas": agent_persona_mutation.trait_deltas,
+                    }
+                    if agent_persona_mutation is not None
+                    else {}
+                ),
                 "detected_deltas": detected_deltas or {},
                 "detected_profile_fact": (
                     {

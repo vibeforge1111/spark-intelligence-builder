@@ -1,4 +1,4 @@
-"""Personality profile loading, per-user preference management, and self-evolution.
+"""Personality profile loading, agent-base authoring, and per-user preference management.
 
 Reads personality chip state from the filesystem (written by spark-personality-chip-labs
 hooks) and manages per-user trait deltas via typed state tables with runtime_state
@@ -7,8 +7,9 @@ mirrors kept only for compatibility.
 Trait names follow PersonalityEvolver's 5-trait system:
   warmth, directness, playfulness, pacing, assertiveness
 
-Each trait is a float in [0.0, 1.0]. Deltas shift baseline traits and are
-persisted per human_id in personality_trait_profiles with a compatibility mirror
+Each trait is a float in [0.0, 1.0]. Agent-base traits are persisted per agent_id
+in agent_persona_profiles. Human-specific deltas shift the active baseline traits
+and are persisted per human_id in personality_trait_profiles with a compatibility mirror
 in runtime_state using the key pattern:
   personality:{human_id}:trait_deltas
 
@@ -29,6 +30,7 @@ from typing import Any
 from uuid import uuid4
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.identity.service import rename_agent_identity
 from spark_intelligence.memory.orchestrator import (
     delete_personality_preferences_from_memory,
     read_personality_preferences_from_memory,
@@ -99,6 +101,31 @@ _NL_TRAIT_PATTERNS: list[tuple[re.Pattern[str], dict[str, float]]] = [
     (re.compile(r"\bcalm(?:er)?\b|relax\b", re.I), {"assertiveness": -0.2, "warmth": 0.1}),
 ]
 
+_AGENT_NAME_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"\byour name is (?P<name>[A-Za-z0-9][A-Za-z0-9 _-]{1,40})\.?$", re.I),
+    re.compile(r"\bi(?: want to)? call you (?P<name>[A-Za-z0-9][A-Za-z0-9 _-]{1,40})\.?$", re.I),
+    re.compile(r"\brename yourself to (?P<name>[A-Za-z0-9][A-Za-z0-9 _-]{1,40})\.?$", re.I),
+]
+
+_AGENT_PERSONA_MARKERS = (
+    "your personality",
+    "your style",
+    "as my agent",
+    "as an agent",
+    "agent persona",
+    "let's define your personality",
+    "lets define your personality",
+)
+
+
+@dataclass
+class AgentPersonaMutationResult:
+    agent_id: str
+    agent_name: str | None
+    trait_deltas: dict[str, float]
+    persona_profile: dict[str, Any]
+    context_injection: str
+
 
 def _extract_trait_deltas(text: str) -> dict[str, float]:
     """Extract personality trait deltas from natural language text.
@@ -142,12 +169,37 @@ def _has_personality_signal(text: str) -> bool:
     return False
 
 
+def _extract_agent_name(text: str) -> str | None:
+    for pattern in _AGENT_NAME_PATTERNS:
+        match = pattern.search(text.strip())
+        if not match:
+            continue
+        candidate = str(match.group("name") or "").strip().strip(".")
+        if candidate:
+            return candidate
+    return None
+
+
+def _is_agent_persona_authoring_message(text: str) -> bool:
+    lowered = text.strip().lower()
+    if not lowered:
+        return False
+    if _extract_agent_name(text):
+        return True
+    if any(marker in lowered for marker in _AGENT_PERSONA_MARKERS) and _has_personality_signal(text):
+        return True
+    if lowered.startswith("/agent persona "):
+        return True
+    return False
+
+
 # ── Profile loading ──
 
 
 def load_personality_profile(
     *,
     human_id: str,
+    agent_id: str | None = None,
     state_db: StateDB | None = None,
     config_manager: ConfigManager | None = None,
 ) -> dict[str, Any] | None:
@@ -158,6 +210,7 @@ def load_personality_profile(
       - style_labels: human-readable labels for each trait
       - personality_id: id of the active personality chip (if any)
       - personality_name: name of the active personality chip (if any)
+      - agent_persona_applied: bool, whether agent-base persona traits were merged
       - user_deltas_applied: bool, whether per-user NL deltas were merged
       - source: where the base traits came from
 
@@ -198,17 +251,26 @@ def load_personality_profile(
         except Exception:
             pass
 
-    # 2. Load per-user trait deltas from runtime_state
+    # 2. Merge optional agent-base persona traits
+    agent_persona = load_agent_persona_profile(agent_id=agent_id, state_db=state_db) if agent_id else {}
+    agent_base_traits = agent_persona.get("base_traits") or {}
+    agent_persona_applied = bool(agent_base_traits)
+    merged_base_traits = dict(base_traits)
+    for trait in _DEFAULT_TRAITS:
+        if trait in agent_base_traits:
+            merged_base_traits[trait] = max(0.0, min(1.0, float(agent_base_traits[trait])))
+
+    # 3. Load per-user trait deltas from runtime_state
     user_deltas = _load_user_trait_deltas(human_id=human_id, state_db=state_db)
     user_deltas_applied = bool(user_deltas)
 
-    # 3. Merge: base + user deltas, clamp to [0.0, 1.0]
+    # 4. Merge: base + user deltas, clamp to [0.0, 1.0]
     final_traits = {}
-    for trait, base_val in base_traits.items():
+    for trait, base_val in merged_base_traits.items():
         merged = base_val + user_deltas.get(trait, 0.0)
         final_traits[trait] = max(0.0, min(1.0, merged))
 
-    # 4. Generate style labels
+    # 5. Generate style labels
     style_labels = {trait: _label_for_trait(trait, val) for trait, val in final_traits.items()}
 
     return {
@@ -216,6 +278,11 @@ def load_personality_profile(
         "style_labels": style_labels,
         "personality_id": personality_id,
         "personality_name": personality_name,
+        "agent_id": agent_id,
+        "agent_persona_name": agent_persona.get("persona_name"),
+        "agent_persona_summary": agent_persona.get("persona_summary"),
+        "agent_persona_applied": agent_persona_applied,
+        "agent_base_traits": agent_base_traits,
         "user_deltas_applied": user_deltas_applied,
         "source": source,
     }
@@ -236,6 +303,8 @@ def build_personality_context(profile: dict[str, Any]) -> str:
     lines = ["[Personality context]"]
     if name:
         lines.append(f"active_personality={name}")
+    if profile.get("agent_persona_name"):
+        lines.append(f"agent_persona={profile['agent_persona_name']}")
 
     style_parts = []
     for trait in ("warmth", "directness", "playfulness", "pacing", "assertiveness"):
@@ -249,6 +318,8 @@ def build_personality_context(profile: dict[str, Any]) -> str:
 
     if profile.get("user_deltas_applied"):
         lines.append("note=style adjusted by user preference")
+    elif profile.get("agent_persona_applied"):
+        lines.append("note=style adjusted by agent persona")
 
     return "\n".join(lines)
 
@@ -268,6 +339,8 @@ def build_personality_system_directive(profile: dict[str, Any]) -> str:
     parts = []
     if name:
         parts.append(f"Your active personality profile is '{name}'.")
+    if profile.get("agent_persona_name"):
+        parts.append(f"Your agent persona is '{profile['agent_persona_name']}'.")
 
     # Map traits to behavioral instructions
     directives = []
@@ -307,8 +380,110 @@ def build_personality_system_directive(profile: dict[str, Any]) -> str:
 
     if profile.get("user_deltas_applied"):
         parts.append("These style preferences were set by the user through conversation.")
+    elif profile.get("agent_persona_applied"):
+        parts.append("These style settings reflect the saved agent persona.")
 
     return " ".join(parts)
+
+
+def load_agent_persona_profile(*, agent_id: str | None, state_db: StateDB | None) -> dict[str, Any]:
+    if not agent_id or state_db is None:
+        return {}
+    try:
+        with state_db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT persona_name, persona_summary, base_traits_json, behavioral_rules_json, provenance_json, updated_at
+                FROM agent_persona_profiles
+                WHERE agent_id = ?
+                LIMIT 1
+                """,
+                (agent_id,),
+            ).fetchone()
+        if not row:
+            return {}
+        base_traits = json.loads(row["base_traits_json"] or "{}")
+        behavioral_rules = json.loads(row["behavioral_rules_json"] or "[]") if row["behavioral_rules_json"] else []
+        provenance = json.loads(row["provenance_json"] or "{}") if row["provenance_json"] else {}
+        return {
+            "agent_id": agent_id,
+            "persona_name": _read_optional_text(row["persona_name"]),
+            "persona_summary": _read_optional_text(row["persona_summary"]),
+            "base_traits": {k: float(v) for k, v in base_traits.items() if k in _DEFAULT_TRAITS},
+            "behavioral_rules": behavioral_rules if isinstance(behavioral_rules, list) else [],
+            "provenance": provenance if isinstance(provenance, dict) else {},
+            "updated_at": row["updated_at"],
+        }
+    except Exception:
+        return {}
+
+
+def save_agent_persona_profile(
+    *,
+    agent_id: str,
+    human_id: str,
+    state_db: StateDB,
+    base_traits: dict[str, float],
+    persona_name: str | None = None,
+    persona_summary: str | None = None,
+    behavioral_rules: list[str] | None = None,
+    provenance: dict[str, Any] | None = None,
+    mutation_kind: str = "authoring",
+    source_surface: str = "builder",
+    source_ref: str | None = None,
+) -> dict[str, Any]:
+    updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    normalized_traits = {
+        key: round(max(0.0, min(1.0, float(value))), 3)
+        for key, value in base_traits.items()
+        if key in _DEFAULT_TRAITS
+    }
+    mutation_id = f"agent-persona-{uuid4().hex[:12]}"
+    with state_db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO agent_persona_profiles(
+                agent_id, persona_name, persona_summary, base_traits_json, behavioral_rules_json, provenance_json, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(agent_id) DO UPDATE SET
+                persona_name=COALESCE(excluded.persona_name, agent_persona_profiles.persona_name),
+                persona_summary=COALESCE(excluded.persona_summary, agent_persona_profiles.persona_summary),
+                base_traits_json=excluded.base_traits_json,
+                behavioral_rules_json=COALESCE(excluded.behavioral_rules_json, agent_persona_profiles.behavioral_rules_json),
+                provenance_json=COALESCE(excluded.provenance_json, agent_persona_profiles.provenance_json),
+                updated_at=excluded.updated_at
+            """,
+            (
+                agent_id,
+                persona_name,
+                persona_summary,
+                json.dumps(normalized_traits, sort_keys=True),
+                json.dumps(behavioral_rules or [], sort_keys=True),
+                json.dumps(provenance or {}, sort_keys=True),
+                updated_at,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO agent_persona_mutations(
+                mutation_id, agent_id, human_id, mutation_kind, delta_traits_json, persona_name, persona_summary, source_surface, source_ref, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                mutation_id,
+                agent_id,
+                human_id,
+                mutation_kind,
+                json.dumps(normalized_traits, sort_keys=True),
+                persona_name,
+                persona_summary,
+                source_surface,
+                source_ref,
+                updated_at,
+            ),
+        )
+        conn.commit()
+    return load_agent_persona_profile(agent_id=agent_id, state_db=state_db)
 
 
 # ── NL preference detection and persistence ──
@@ -361,6 +536,80 @@ def detect_and_persist_nl_preferences(
             pass
 
     return deltas
+
+
+def detect_and_persist_agent_persona_preferences(
+    *,
+    agent_id: str,
+    human_id: str,
+    user_message: str,
+    state_db: StateDB,
+    source_surface: str,
+    source_ref: str | None = None,
+) -> AgentPersonaMutationResult | None:
+    if not _is_agent_persona_authoring_message(user_message):
+        return None
+
+    trait_deltas = _extract_trait_deltas(user_message)
+    current_profile = load_agent_persona_profile(agent_id=agent_id, state_db=state_db)
+    existing_traits = current_profile.get("base_traits") or dict(_DEFAULT_TRAITS)
+    next_traits = dict(existing_traits)
+    for trait, delta in trait_deltas.items():
+        next_traits[trait] = max(0.0, min(1.0, float(next_traits.get(trait, _DEFAULT_TRAITS[trait])) + delta))
+
+    new_name = _extract_agent_name(user_message)
+    if new_name:
+        rename_agent_identity(
+            state_db=state_db,
+            human_id=human_id,
+            new_name=new_name,
+            source_surface=source_surface,
+            source_ref=source_ref,
+        )
+
+    persona_profile = current_profile
+    if trait_deltas:
+        persona_profile = save_agent_persona_profile(
+            agent_id=agent_id,
+            human_id=human_id,
+            state_db=state_db,
+            base_traits=next_traits,
+            persona_name=current_profile.get("persona_name") or new_name,
+            persona_summary=_compact_persona_summary(next_traits),
+            provenance={
+                "source_surface": source_surface,
+                "source_ref": source_ref,
+                "authoring_text": user_message,
+            },
+            mutation_kind="explicit_authoring",
+            source_surface=source_surface,
+            source_ref=source_ref,
+        )
+
+    if not new_name and not trait_deltas:
+        return None
+
+    parts: list[str] = ["[Personality action: AGENT_PERSONA_UPDATED]"]
+    if new_name:
+        parts.append(
+            f"The agent's saved name is now '{new_name}'. Acknowledge the rename briefly and continue naturally."
+        )
+    if trait_deltas:
+        changes = ", ".join(
+            f"{'more' if delta > 0 else 'less'} {trait.replace('_', ' ')}"
+            for trait, delta in sorted(trait_deltas.items())
+        )
+        parts.append(
+            "The user updated the agent's base persona. "
+            f"Acknowledge this briefly and adopt the saved agent persona going forward: {changes}."
+        )
+    return AgentPersonaMutationResult(
+        agent_id=agent_id,
+        agent_name=new_name,
+        trait_deltas=trait_deltas,
+        persona_profile=persona_profile if isinstance(persona_profile, dict) else {},
+        context_injection="\n".join(parts),
+    )
 
 
 # ── Per-user delta persistence via runtime_state ──
@@ -443,6 +692,17 @@ def _save_user_trait_deltas(
         conn.commit()
 
 
+def _compact_persona_summary(traits: dict[str, float]) -> str:
+    labels = [_label_for_trait(trait, float(traits.get(trait, _DEFAULT_TRAITS[trait]))) for trait in _DEFAULT_TRAITS]
+    return ", ".join(labels)
+
+
+def _read_optional_text(value: object) -> str | None:
+    if value in {None, ""}:
+        return None
+    return str(value)
+
+
 def _label_for_trait(trait: str, value: float) -> str:
     """Convert a trait value to a human-readable label."""
     ranges = _TRAIT_LABELS.get(trait, {})
@@ -483,6 +743,7 @@ def detect_personality_query(
     *,
     user_message: str,
     human_id: str,
+    agent_id: str | None = None,
     state_db: StateDB,
     profile: dict[str, Any] | None = None,
     config_manager: ConfigManager | None = None,
@@ -551,6 +812,7 @@ def detect_personality_query(
             status_text = _format_profile_status(
                 profile,
                 human_id=human_id,
+                agent_id=agent_id,
                 state_db=state_db,
                 config_manager=config_manager,
                 session_id=session_id,
@@ -600,6 +862,7 @@ def _format_profile_status(
     profile: dict[str, Any] | None,
     *,
     human_id: str,
+    agent_id: str | None,
     state_db: StateDB,
     config_manager: ConfigManager | None = None,
     session_id: str | None = None,
@@ -615,6 +878,10 @@ def _format_profile_status(
         lines.append(f"Base personality: {name}")
     else:
         lines.append("Base personality: default (balanced)")
+    if agent_id:
+        lines.append(f"Agent id: {agent_id}")
+    if profile.get("agent_persona_name"):
+        lines.append(f"Agent persona: {profile['agent_persona_name']}")
 
     lines.append(f"Source: {profile.get('source', 'defaults')}")
     lines.append("Current style:")
@@ -626,6 +893,11 @@ def _format_profile_status(
         lines.append(f"  {trait}: {label} ({val:.2f})")
 
     user_deltas = _load_user_trait_deltas(human_id=human_id, state_db=state_db)
+    agent_base_traits = profile.get("agent_base_traits") or {}
+    if agent_base_traits:
+        lines.append("Agent base persona:")
+        for trait, value in sorted((str(key), float(val)) for key, val in agent_base_traits.items()):
+            lines.append(f"  {trait}: {value:.2f}")
     if user_deltas:
         lines.append("User adjustments applied:")
         for trait, delta in sorted(user_deltas.items()):

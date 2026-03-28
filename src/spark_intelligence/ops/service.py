@@ -14,7 +14,7 @@ from spark_intelligence.auth.runtime import build_auth_status_report
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.gateway.tracing import read_gateway_traces, read_outbound_audit
 from spark_intelligence.identity.service import LOCAL_OPERATOR_HUMAN_ID
-from spark_intelligence.identity.service import review_pairings
+from spark_intelligence.identity.service import read_canonical_agent_state, review_pairings
 from spark_intelligence.observability.checks import evaluate_stop_ship_issues
 from spark_intelligence.observability.store import (
     build_watchtower_snapshot,
@@ -30,7 +30,7 @@ from spark_intelligence.observability.store import (
     recent_provenance_mutations,
     recent_runs,
 )
-from spark_intelligence.personality.loader import load_personality_profile
+from spark_intelligence.personality.loader import load_agent_persona_profile, load_personality_profile
 from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import swarm_status
@@ -259,6 +259,14 @@ class PersonalityReport:
         latest_evolution = evolutions[0] if evolutions else {}
         lines = ["Personality state:"]
         lines.append(f"- human_id: {human_id}")
+        agent_identity = self.payload.get("agent_identity") or {}
+        if agent_identity:
+            lines.append(
+                f"- agent: id={agent_identity.get('agent_id')} "
+                f"name={agent_identity.get('agent_name') or 'unknown'} "
+                f"source={agent_identity.get('preferred_source') or 'builder_local'} "
+                f"status={agent_identity.get('status') or 'active'}"
+            )
         lines.append(
             f"- enabled: {'yes' if self.payload.get('enabled') else 'no'} "
             f"source={profile.get('source') or 'defaults'} "
@@ -290,6 +298,12 @@ class PersonalityReport:
             )
         else:
             lines.append("- user_deltas: none")
+        agent_persona = self.payload.get("agent_persona") or {}
+        if agent_persona:
+            lines.append(
+                f"- agent_persona: {agent_persona.get('persona_name') or 'saved'} "
+                f"updated_at={agent_persona.get('updated_at') or 'unknown'}"
+            )
         lines.append(
             f"- history: observations={len(observations)} evolutions={len(evolutions)} "
             f"latest_state={latest_observation.get('user_state') or 'none'} "
@@ -788,11 +802,15 @@ def build_personality_report(
     if not human_id:
         return PersonalityReport(payload=payload)
 
+    agent_state = read_canonical_agent_state(state_db=state_db, human_id=human_id)
     profile = load_personality_profile(
         human_id=human_id,
+        agent_id=agent_state.agent_id,
         state_db=state_db,
         config_manager=config_manager,
     )
+    agent_identity = agent_state.to_payload()
+    agent_persona = load_agent_persona_profile(agent_id=agent_identity["agent_id"], state_db=state_db)
     trait_rows = recent_personality_trait_profiles(state_db, human_id=human_id, limit=1)
     observations = recent_personality_observations(state_db, human_id=human_id, limit=observation_limit)
     evolutions = recent_personality_evolution_events(state_db, human_id=human_id, limit=evolution_limit)
@@ -805,6 +823,8 @@ def build_personality_report(
         {
             "enabled": profile is not None,
             "profile": profile or {},
+            "agent_identity": agent_identity,
+            "agent_persona": agent_persona,
             "user_deltas": (
                 trait_rows[0].get("deltas_json")
                 if trait_rows and isinstance(trait_rows[0].get("deltas_json"), dict)

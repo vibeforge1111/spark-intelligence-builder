@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_runtime_state
@@ -22,6 +24,9 @@ class IdentityReport:
             f"- operators: {self.payload['operator_count']}",
             f"- humans: {self.payload['human_count']}",
             f"- agents: {self.payload['agent_count']}",
+            f"- canonical agents: {self.payload.get('canonical_agent_count', 0)}",
+            f"- swarm-linked agents: {self.payload.get('swarm_link_count', 0)}",
+            f"- identity conflicts: {self.payload.get('identity_conflict_count', 0)}",
             f"- pairings: {self.payload['pairing_count']}",
             f"- active sessions: {self.payload['active_session_count']}",
             f"- providers: {', '.join(self.payload['providers']) if self.payload['providers'] else 'none'}",
@@ -126,6 +131,36 @@ class PairingSummaryReport:
         )
 
 
+@dataclass
+class CanonicalAgentState:
+    human_id: str
+    agent_id: str
+    agent_name: str
+    origin: str
+    status: str
+    preferred_source: str
+    external_system: str | None = None
+    external_agent_id: str | None = None
+    conflict_agent_id: str | None = None
+    conflict_reason: str | None = None
+    alias_agent_ids: list[str] | None = None
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "human_id": self.human_id,
+            "agent_id": self.agent_id,
+            "agent_name": self.agent_name,
+            "origin": self.origin,
+            "status": self.status,
+            "preferred_source": self.preferred_source,
+            "external_system": self.external_system,
+            "external_agent_id": self.external_agent_id,
+            "conflict_agent_id": self.conflict_agent_id,
+            "conflict_reason": self.conflict_reason,
+            "alias_agent_ids": list(self.alias_agent_ids or []),
+        }
+
+
 def _require_operator(state_db: StateDB, human_id: str = LOCAL_OPERATOR_HUMAN_ID) -> None:
     with state_db.connect() as conn:
         row = conn.execute(
@@ -144,6 +179,10 @@ def _canonical_agent_id(human_id: str) -> str:
     return f"agent:{human_id}"
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
 def _canonical_channel_account_id(channel_id: str, external_user_id: str) -> str:
     return f"acct:{channel_id}:{external_user_id}"
 
@@ -156,6 +195,335 @@ def _canonical_session_id(channel_id: str, external_user_id: str) -> str:
     return f"session:{channel_id}:dm:{external_user_id}"
 
 
+def resolve_canonical_agent_identity(
+    *,
+    state_db: StateDB,
+    human_id: str,
+    display_name: str | None = None,
+) -> CanonicalAgentState:
+    local_agent_id = _canonical_agent_id(human_id)
+    resolved_name = (display_name or "").strip() or "Spark Agent"
+
+    with state_db.connect() as conn:
+        link_row = conn.execute(
+            """
+            SELECT canonical_agent_id, preferred_source, status, conflict_agent_id, conflict_reason
+            FROM canonical_agent_links
+            WHERE human_id = ?
+            LIMIT 1
+            """,
+            (human_id,),
+        ).fetchone()
+
+        if link_row is None:
+            conn.execute(
+                """
+                INSERT INTO canonical_agent_links(
+                    human_id, canonical_agent_id, preferred_source, status, conflict_agent_id, conflict_reason
+                ) VALUES (?, ?, 'builder_local', 'active', NULL, NULL)
+                """,
+                (human_id, local_agent_id),
+            )
+            link_row = conn.execute(
+                """
+                SELECT canonical_agent_id, preferred_source, status, conflict_agent_id, conflict_reason
+                FROM canonical_agent_links
+                WHERE human_id = ?
+                LIMIT 1
+                """,
+                (human_id,),
+            ).fetchone()
+
+        canonical_agent_id = str(link_row["canonical_agent_id"] or local_agent_id)
+        profile_row = conn.execute(
+            """
+            SELECT agent_id, human_id, agent_name, origin, status, external_system, external_agent_id
+            FROM agent_profiles
+            WHERE agent_id = ?
+            LIMIT 1
+            """,
+            (canonical_agent_id,),
+        ).fetchone()
+
+        if profile_row is None:
+            origin = "builder_local" if canonical_agent_id == local_agent_id else "spark_swarm"
+            external_system = "spark_swarm" if canonical_agent_id != local_agent_id else None
+            external_agent_id = canonical_agent_id if canonical_agent_id != local_agent_id else None
+            conn.execute(
+                """
+                INSERT INTO agent_profiles(
+                    agent_id, human_id, agent_name, origin, status, external_system, external_agent_id
+                ) VALUES (?, ?, ?, ?, 'active', ?, ?)
+                """,
+                (
+                    canonical_agent_id,
+                    human_id,
+                    resolved_name,
+                    origin,
+                    external_system,
+                    external_agent_id,
+                ),
+            )
+            profile_row = conn.execute(
+                """
+                SELECT agent_id, human_id, agent_name, origin, status, external_system, external_agent_id
+                FROM agent_profiles
+                WHERE agent_id = ?
+                LIMIT 1
+                """,
+                (canonical_agent_id,),
+            ).fetchone()
+        elif canonical_agent_id == local_agent_id and not str(profile_row["agent_name"] or "").strip() and resolved_name:
+            conn.execute(
+                """
+                UPDATE agent_profiles
+                SET agent_name = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE agent_id = ?
+                """,
+                (resolved_name, canonical_agent_id),
+            )
+            profile_row = conn.execute(
+                """
+                SELECT agent_id, human_id, agent_name, origin, status, external_system, external_agent_id
+                FROM agent_profiles
+                WHERE agent_id = ?
+                LIMIT 1
+                """,
+                (canonical_agent_id,),
+            ).fetchone()
+
+        conn.execute(
+            """
+            INSERT INTO agent_identities(agent_id, human_id, spark_profile, status)
+            VALUES (?, ?, 'default', 'active')
+            ON CONFLICT(agent_id) DO UPDATE SET
+                human_id=excluded.human_id,
+                status='active',
+                updated_at=CURRENT_TIMESTAMP
+            """,
+            (canonical_agent_id, human_id),
+        )
+        conn.commit()
+
+    return read_canonical_agent_state(state_db=state_db, human_id=human_id)
+
+
+def read_canonical_agent_state(
+    *,
+    state_db: StateDB,
+    human_id: str,
+) -> CanonicalAgentState:
+    with state_db.connect() as conn:
+        link_row = conn.execute(
+            """
+            SELECT canonical_agent_id, preferred_source, status, conflict_agent_id, conflict_reason
+            FROM canonical_agent_links
+            WHERE human_id = ?
+            LIMIT 1
+            """,
+            (human_id,),
+        ).fetchone()
+        if link_row is None:
+            return resolve_canonical_agent_identity(state_db=state_db, human_id=human_id)
+
+        canonical_agent_id = str(link_row["canonical_agent_id"])
+        profile_row = conn.execute(
+            """
+            SELECT agent_id, human_id, agent_name, origin, status, external_system, external_agent_id
+            FROM agent_profiles
+            WHERE agent_id = ?
+            LIMIT 1
+            """,
+            (canonical_agent_id,),
+        ).fetchone()
+        if profile_row is None:
+            return resolve_canonical_agent_identity(state_db=state_db, human_id=human_id)
+        alias_rows = conn.execute(
+            """
+            SELECT alias_agent_id
+            FROM agent_identity_aliases
+            WHERE canonical_agent_id = ?
+            ORDER BY alias_agent_id
+            """,
+            (canonical_agent_id,),
+        ).fetchall()
+
+    return CanonicalAgentState(
+        human_id=str(profile_row["human_id"]),
+        agent_id=str(profile_row["agent_id"]),
+        agent_name=str(profile_row["agent_name"] or "Spark Agent"),
+        origin=str(profile_row["origin"] or "builder_local"),
+        status=str(link_row["status"] or profile_row["status"] or "active"),
+        preferred_source=str(link_row["preferred_source"] or "builder_local"),
+        external_system=_read_optional_text(profile_row["external_system"]),
+        external_agent_id=_read_optional_text(profile_row["external_agent_id"]),
+        conflict_agent_id=_read_optional_text(link_row["conflict_agent_id"]),
+        conflict_reason=_read_optional_text(link_row["conflict_reason"]),
+        alias_agent_ids=[str(row["alias_agent_id"]) for row in alias_rows],
+    )
+
+
+def link_spark_swarm_agent(
+    *,
+    state_db: StateDB,
+    human_id: str,
+    swarm_agent_id: str,
+    agent_name: str,
+    metadata: dict[str, Any] | None = None,
+) -> CanonicalAgentState:
+    if not swarm_agent_id.strip():
+        raise ValueError("Spark Swarm agent_id must not be empty.")
+    local_agent_id = _canonical_agent_id(human_id)
+    resolved_name = agent_name.strip() or "Spark Agent"
+    existing = resolve_canonical_agent_identity(state_db=state_db, human_id=human_id)
+    metadata_json = json.dumps(metadata, sort_keys=True) if metadata else None
+
+    with state_db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO agent_profiles(
+                agent_id, human_id, agent_name, origin, status, external_system, external_agent_id, metadata_json
+            ) VALUES (?, ?, ?, 'spark_swarm', 'active', 'spark_swarm', ?, ?)
+            ON CONFLICT(agent_id) DO UPDATE SET
+                human_id=excluded.human_id,
+                agent_name=excluded.agent_name,
+                origin='spark_swarm',
+                status='active',
+                external_system='spark_swarm',
+                external_agent_id=excluded.external_agent_id,
+                metadata_json=COALESCE(excluded.metadata_json, agent_profiles.metadata_json),
+                updated_at=CURRENT_TIMESTAMP
+            """,
+            (swarm_agent_id, human_id, resolved_name, swarm_agent_id, metadata_json),
+        )
+        conn.execute(
+            """
+            INSERT INTO agent_identities(agent_id, human_id, spark_profile, status)
+            VALUES (?, ?, 'default', 'active')
+            ON CONFLICT(agent_id) DO UPDATE SET
+                human_id=excluded.human_id,
+                status='active',
+                updated_at=CURRENT_TIMESTAMP
+            """,
+            (swarm_agent_id, human_id),
+        )
+
+        next_status = "active"
+        conflict_agent_id = None
+        conflict_reason = None
+        if existing.agent_id not in {local_agent_id, swarm_agent_id}:
+            next_status = "identity_conflict"
+            conflict_agent_id = existing.agent_id
+            conflict_reason = "multiple_agent_ids_for_human"
+        else:
+            if existing.agent_id != swarm_agent_id:
+                conn.execute(
+                    """
+                    INSERT INTO agent_identity_aliases(alias_agent_id, canonical_agent_id, alias_kind, reason_code)
+                    VALUES (?, ?, 'superseded_local', 'spark_swarm_link')
+                    ON CONFLICT(alias_agent_id) DO UPDATE SET
+                        canonical_agent_id=excluded.canonical_agent_id,
+                        alias_kind=excluded.alias_kind,
+                        reason_code=excluded.reason_code
+                    """,
+                    (existing.agent_id, swarm_agent_id),
+                )
+                conn.execute(
+                    """
+                    UPDATE agent_profiles
+                    SET status = 'linked', updated_at = CURRENT_TIMESTAMP
+                    WHERE agent_id = ?
+                    """,
+                    (existing.agent_id,),
+                )
+                conn.execute(
+                    """
+                    UPDATE agent_identities
+                    SET status = 'linked', updated_at = CURRENT_TIMESTAMP
+                    WHERE agent_id = ?
+                    """,
+                    (existing.agent_id,),
+                )
+                conn.execute(
+                    """
+                    UPDATE session_bindings
+                    SET agent_id = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE agent_id = ?
+                    """,
+                    (swarm_agent_id, existing.agent_id),
+                )
+
+        conn.execute(
+            """
+            INSERT INTO canonical_agent_links(
+                human_id, canonical_agent_id, preferred_source, status, conflict_agent_id, conflict_reason
+            ) VALUES (?, ?, 'spark_swarm', ?, ?, ?)
+            ON CONFLICT(human_id) DO UPDATE SET
+                canonical_agent_id=excluded.canonical_agent_id,
+                preferred_source=excluded.preferred_source,
+                status=excluded.status,
+                conflict_agent_id=excluded.conflict_agent_id,
+                conflict_reason=excluded.conflict_reason,
+                updated_at=CURRENT_TIMESTAMP
+            """,
+            (
+                human_id,
+                swarm_agent_id,
+                next_status,
+                conflict_agent_id,
+                conflict_reason,
+            ),
+        )
+        conn.commit()
+    return read_canonical_agent_state(state_db=state_db, human_id=human_id)
+
+
+def rename_agent_identity(
+    *,
+    state_db: StateDB,
+    human_id: str,
+    new_name: str,
+    source_surface: str,
+    source_ref: str | None = None,
+) -> CanonicalAgentState:
+    resolved_name = new_name.strip()
+    if not resolved_name:
+        raise ValueError("Agent name must not be empty.")
+    state = resolve_canonical_agent_identity(state_db=state_db, human_id=human_id)
+    if state.agent_name == resolved_name:
+        return state
+    rename_id = f"agent-rename-{uuid4().hex[:12]}"
+    recorded_at = _utc_now_iso()
+    with state_db.connect() as conn:
+        conn.execute(
+            """
+            UPDATE agent_profiles
+            SET agent_name = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE agent_id = ?
+            """,
+            (resolved_name, state.agent_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO agent_rename_history(
+                rename_id, agent_id, human_id, old_name, new_name, source_surface, source_ref, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                rename_id,
+                state.agent_id,
+                human_id,
+                state.agent_name,
+                resolved_name,
+                source_surface,
+                source_ref,
+                recorded_at,
+            ),
+        )
+        conn.commit()
+    return read_canonical_agent_state(state_db=state_db, human_id=human_id)
+
+
 def _activate_channel_access(
     *,
     state_db: StateDB,
@@ -164,7 +532,6 @@ def _activate_channel_access(
     display_name: str,
 ) -> tuple[str, str, str]:
     human_id = _canonical_human_id(channel_id, external_user_id)
-    agent_id = _canonical_agent_id(human_id)
     account_id = _canonical_channel_account_id(channel_id, external_user_id)
     surface_id = _canonical_surface_id(channel_id, external_user_id)
     session_id = _canonical_session_id(channel_id, external_user_id)
@@ -177,14 +544,6 @@ def _activate_channel_access(
             ON CONFLICT(human_id) DO UPDATE SET display_name=excluded.display_name, status='active', updated_at=CURRENT_TIMESTAMP
             """,
             (human_id, display_name),
-        )
-        conn.execute(
-            """
-            INSERT INTO agent_identities(agent_id, human_id, spark_profile, status)
-            VALUES (?, ?, 'default', 'active')
-            ON CONFLICT(agent_id) DO UPDATE SET status='active', updated_at=CURRENT_TIMESTAMP
-            """,
-            (agent_id, human_id),
         )
         conn.execute(
             """
@@ -210,6 +569,16 @@ def _activate_channel_access(
             """,
             (surface_id, channel_id, external_user_id),
         )
+        conn.commit()
+
+    agent_state = resolve_canonical_agent_identity(
+        state_db=state_db,
+        human_id=human_id,
+        display_name=display_name,
+    )
+    agent_id = agent_state.agent_id
+
+    with state_db.connect() as conn:
         conn.execute(
             """
             INSERT INTO session_bindings(session_id, agent_id, surface_id, channel_id, external_user_id, session_mode, status)
@@ -286,7 +655,6 @@ def resolve_inbound_dm(
 ) -> InboundResolution:
     session_id = _canonical_session_id(channel_id, external_user_id)
     human_id = _canonical_human_id(channel_id, external_user_id)
-    agent_id = _canonical_agent_id(human_id)
 
     with state_db.connect() as conn:
         channel_row = conn.execute(
@@ -335,7 +703,7 @@ def resolve_inbound_dm(
 
         session_row = conn.execute(
             """
-            SELECT session_id
+            SELECT session_id, agent_id
             FROM session_bindings
             WHERE session_id = ? AND status = 'active'
             LIMIT 1
@@ -358,7 +726,7 @@ def resolve_inbound_dm(
                 allowed=True,
                 decision="allowed",
                 human_id=human_id,
-                agent_id=agent_id,
+                agent_id=str(session_row["agent_id"]),
                 session_id=session_id,
                 response_text="Authorized DM routed to canonical session.",
             )
@@ -366,14 +734,14 @@ def resolve_inbound_dm(
         if allow_row and not session_row:
             allow_role = str(allow_row["role"])
             if allow_role == "paired_user":
-                approve_pairing(
+                _, restored_agent_id, _ = _activate_channel_access(
                     state_db=state_db,
                     channel_id=channel_id,
                     external_user_id=external_user_id,
                     display_name=display_name,
                 )
             else:
-                _activate_channel_access(
+                _, restored_agent_id, _ = _activate_channel_access(
                     state_db=state_db,
                     channel_id=channel_id,
                     external_user_id=external_user_id,
@@ -383,7 +751,7 @@ def resolve_inbound_dm(
                 allowed=True,
                 decision="allowed",
                 human_id=human_id,
-                agent_id=agent_id,
+                agent_id=restored_agent_id,
                 session_id=session_id,
                 response_text="Authorized DM restored its canonical session.",
             )
@@ -779,6 +1147,15 @@ def agent_inspect(*, state_db: StateDB, workspace_owner: str) -> IdentityReport:
             (LOCAL_OPERATOR_HUMAN_ID,),
         ).fetchone()["c"]
         agent_count = conn.execute("SELECT COUNT(*) AS c FROM agent_identities").fetchone()["c"]
+        canonical_agent_count = conn.execute(
+            "SELECT COUNT(*) AS c FROM canonical_agent_links WHERE status != 'superseded'"
+        ).fetchone()["c"]
+        swarm_link_count = conn.execute(
+            "SELECT COUNT(*) AS c FROM canonical_agent_links WHERE preferred_source = 'spark_swarm'"
+        ).fetchone()["c"]
+        identity_conflict_count = conn.execute(
+            "SELECT COUNT(*) AS c FROM canonical_agent_links WHERE status = 'identity_conflict'"
+        ).fetchone()["c"]
         pairing_count = conn.execute(
             "SELECT COUNT(*) AS c FROM pairing_records WHERE status = 'approved'"
         ).fetchone()["c"]
@@ -792,6 +1169,9 @@ def agent_inspect(*, state_db: StateDB, workspace_owner: str) -> IdentityReport:
         "operator_count": operator_count,
         "human_count": human_count,
         "agent_count": agent_count,
+        "canonical_agent_count": canonical_agent_count,
+        "swarm_link_count": swarm_link_count,
+        "identity_conflict_count": identity_conflict_count,
         "pairing_count": pairing_count,
         "active_session_count": active_session_count,
         "providers": providers,

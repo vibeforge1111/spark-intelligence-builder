@@ -1244,6 +1244,8 @@ class CliSmokeTests(SparkTestCase):
         detail_payload = json.loads(detail_stdout)
         self.assertEqual(detail_payload["human_id"], "human:test")
         self.assertTrue(detail_payload["enabled"])
+        self.assertEqual(detail_payload["agent_identity"]["agent_id"], "agent:human:test")
+        self.assertEqual(detail_payload["agent_identity"]["preferred_source"], "builder_local")
         self.assertIn("directness", detail_payload["user_deltas"])
         self.assertEqual(detail_payload["observations"][0]["user_state"], "frustrated")
         self.assertEqual(detail_payload["observation_states"]["frustrated"], 1)
