@@ -604,6 +604,43 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(packet_panel["recent_packets"][0]["packet_kind"], "self_observation")
         self.assertTrue(packet_panel["recent_packets"][0]["evidence_refs"])
 
+    def test_stop_ship_flags_invalid_memory_contract_events(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="memory_write_abstained",
+            component="memory_orchestrator",
+            summary="memory contract violation",
+            request_id="req-memory-contract",
+            session_id="session:test",
+            human_id="human:test",
+            actor_id="memory_orchestrator",
+            facts={
+                "operation": "update",
+                "method": "write_observation",
+                "memory_role": "unknown",
+                "accepted_count": 0,
+                "rejected_count": 1,
+                "skipped_count": 0,
+                "reason": "invalid_memory_role",
+            },
+            provenance={"memory_role": "unknown"},
+        )
+
+        snapshot = build_watchtower_snapshot(self.state_db)
+        memory_panel = snapshot["panels"]["memory_shadow"]
+        issues = {
+            issue.name: issue
+            for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)
+        }
+        report = run_doctor(self.config_manager, self.state_db)
+        checks = {check.name: check for check in report.checks}
+
+        self.assertEqual(memory_panel["counts"]["contract_violations"], 1)
+        self.assertFalse(issues["stop_ship_memory_contract"].ok)
+        self.assertIn("violated the Builder memory role contract", issues["stop_ship_memory_contract"].detail)
+        self.assertIn("watchtower-memory-contract", checks)
+        self.assertFalse(checks["watchtower-memory-contract"].ok)
+
     def test_build_researcher_reply_records_chip_influence_provenance(self) -> None:
         self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
         self.config_manager.set_path("spark.specialization_paths.active_path_key", "startup-operator")

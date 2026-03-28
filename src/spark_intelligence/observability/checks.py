@@ -8,6 +8,11 @@ from pathlib import Path
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.memory_contracts import (
+    is_memory_contract_reason,
+    memory_contract_reason,
+    normalize_memory_role,
+)
 from spark_intelligence.observability.store import (
     events_for_run,
     latest_events_by_type,
@@ -82,6 +87,7 @@ def evaluate_stop_ship_issues(
         _secret_boundary_issue(state_db),
         _keepability_issue(state_db),
         _bridge_residue_persistence_issue(state_db),
+        _memory_contract_issue(state_db),
         _environment_parity_issue(state_db),
         _daemon_reentry_issue(config_manager=config_manager),
         _external_execution_governance_issue(),
@@ -646,6 +652,77 @@ def _typed_events(
             ]
         )
     return events
+
+
+def _memory_contract_issue(state_db: StateDB) -> StopShipIssue:
+    events = []
+    for event_type in (
+        "memory_write_requested",
+        "memory_write_succeeded",
+        "memory_write_abstained",
+        "memory_read_succeeded",
+        "memory_read_abstained",
+    ):
+        events.extend(
+            [
+                event
+                for event in latest_events_by_type(state_db, event_type=event_type, limit=200)
+                if str(event.get("component") or "") == "memory_orchestrator"
+            ]
+        )
+    invalid_events: list[dict[str, Any]] = []
+    for event in events:
+        facts = event.get("facts_json") or {}
+        if not isinstance(facts, dict):
+            continue
+        event_type = str(event.get("event_type") or "")
+        if event_type == "memory_write_requested":
+            observations = facts.get("observations")
+            if not isinstance(observations, list):
+                continue
+            for observation in observations:
+                if not isinstance(observation, dict):
+                    continue
+                role = normalize_memory_role(observation.get("memory_role"), allow_unknown=False)
+                if memory_contract_reason(
+                    memory_role=role,
+                    operation=str(observation.get("operation") or ""),
+                    allow_unknown=False,
+                ):
+                    invalid_events.append(event)
+                    break
+            continue
+        reason = str(facts.get("reason") or "")
+        if is_memory_contract_reason(reason):
+            invalid_events.append(event)
+            continue
+        raw_role = facts.get("memory_role")
+        if "method" in facts and memory_contract_reason(
+            memory_role=raw_role,
+            method=str(facts.get("method") or ""),
+            allow_unknown=int(facts.get("record_count") or 0) == 0,
+        ):
+            invalid_events.append(event)
+            continue
+        if "operation" in facts and memory_contract_reason(
+            memory_role=raw_role,
+            operation=str(facts.get("operation") or ""),
+            allow_unknown=int(facts.get("accepted_count") or 0) == 0,
+        ):
+            invalid_events.append(event)
+    if invalid_events:
+        return StopShipIssue(
+            name="stop_ship_memory_contract",
+            ok=False,
+            detail=f"{len(invalid_events)} memory event(s) violated the Builder memory role contract.",
+            severity="high",
+        )
+    return StopShipIssue(
+        name="stop_ship_memory_contract",
+        ok=True,
+        detail="Builder memory reads and writes respect allowed memory roles and operation contracts.",
+        severity="high",
+    )
 
 
 def _environment_parity_issue(state_db: StateDB) -> StopShipIssue:

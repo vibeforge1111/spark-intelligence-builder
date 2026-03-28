@@ -9,6 +9,11 @@ from types import ModuleType
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.memory_contracts import (
+    annotate_contract_trace,
+    memory_contract_reason,
+    normalize_memory_role,
+)
 from spark_intelligence.observability.store import record_event
 from spark_intelligence.state.db import StateDB
 
@@ -275,7 +280,7 @@ class _DomainChipMemoryClientAdapter:
             limit=int(payload.get("limit") or 5),
         )
         result = self._sdk.retrieve_evidence(request)
-        return _normalize_domain_retrieval_result(result=result)
+        return _normalize_domain_retrieval_result(result=result, method="retrieve_evidence")
 
     def retrieve_events(self, **payload: Any) -> dict[str, Any]:
         request = self._module.EventRetrievalRequest(
@@ -285,7 +290,7 @@ class _DomainChipMemoryClientAdapter:
             limit=int(payload.get("limit") or 5),
         )
         result = self._sdk.retrieve_events(request)
-        return _normalize_domain_retrieval_result(result=result)
+        return _normalize_domain_retrieval_result(result=result, method="retrieve_events")
 
     def explain_answer(self, **payload: Any) -> dict[str, Any]:
         subject = _optional_string(payload.get("subject"))
@@ -302,12 +307,36 @@ class _DomainChipMemoryClientAdapter:
             event_limit=int(payload.get("event_limit") or 3),
         )
         result = self._sdk.explain_answer(request)
+        raw_memory_role = result.memory_role
+        memory_role = normalize_memory_role(raw_memory_role, allow_unknown=not bool(result.answer))
+        retrieval_trace = dict(result.trace or {})
+        contract_reason = memory_contract_reason(
+            memory_role=raw_memory_role,
+            method="get_current_state",
+            allow_unknown=not bool(result.answer),
+        )
+        if contract_reason:
+            return {
+                "status": "abstained",
+                "memory_role": "unknown",
+                "records": [],
+                "provenance": [_domain_record_to_dict(item) for item in result.provenance],
+                "retrieval_trace": annotate_contract_trace(
+                    retrieval_trace,
+                    scope="domain_answer_explanation",
+                    reason=contract_reason,
+                    observed_role=memory_role,
+                    method="get_current_state",
+                ),
+                "answer_explanation": None,
+                "reason": contract_reason,
+            }
         return {
             "status": "supported" if bool(result.found) else "not_found",
-            "memory_role": str(result.memory_role or "unknown"),
+            "memory_role": memory_role,
             "records": [{"answer": result.answer}] if result.answer else [],
             "provenance": [_domain_record_to_dict(item) for item in result.provenance],
-            "retrieval_trace": dict(result.trace or {}),
+            "retrieval_trace": retrieval_trace,
             "answer_explanation": {
                 "answer": result.answer,
                 "explanation": result.explanation,
@@ -979,6 +1008,7 @@ def _write_personality_observations(
     skipped = 0
     provenance: list[dict[str, Any]] = []
     retrieval_trace: dict[str, Any] | None = None
+    first_reason: str | None = None
     for trait, value in trait_values.items():
         payload = {
             "operation": "update" if operation != "delete" else "delete",
@@ -999,16 +1029,15 @@ def _write_personality_observations(
             },
         }
         raw = _call_sdk_method(client, "write_observation", payload)
-        status = str(raw.get("status") or "").lower()
-        if status in {"accepted", "written", "created", "updated", "deleted"}:
-            accepted += 1
-        elif status in {"rejected", "invalid_request", "unsupported"}:
-            rejected += 1
-        else:
-            skipped += 1
-        provenance.extend(_normalize_provenance(raw))
-        if retrieval_trace is None and isinstance(raw.get("retrieval_trace"), dict):
-            retrieval_trace = dict(raw["retrieval_trace"])
+        item_result = _normalize_write_result(raw=raw, operation=payload["operation"])
+        accepted += item_result.accepted_count
+        rejected += item_result.rejected_count
+        skipped += item_result.skipped_count
+        provenance.extend(item_result.provenance)
+        if retrieval_trace is None and item_result.retrieval_trace is not None:
+            retrieval_trace = dict(item_result.retrieval_trace)
+        if first_reason is None and item_result.reason:
+            first_reason = item_result.reason
     result_status = "succeeded" if accepted > 0 and rejected == 0 else ("abstained" if accepted == 0 else "partial")
     result = MemoryWriteResult(
         status=result_status,
@@ -1021,7 +1050,7 @@ def _write_personality_observations(
         abstained=accepted == 0,
         retrieval_trace=retrieval_trace,
         provenance=provenance,
-        reason=None if accepted > 0 else "sdk_abstained_or_rejected",
+        reason=None if accepted > 0 else (first_reason or "sdk_abstained_or_rejected"),
     )
     _record_memory_write_event(
         state_db=state_db,
@@ -1169,11 +1198,38 @@ def _normalize_domain_write_result(*, result: Any, default_role: str) -> dict[st
     ]
     accepted = bool(getattr(result, "accepted", False))
     unsupported_reason = _optional_string(getattr(result, "unsupported_reason", None))
+    operation = default_role if default_role == "event" else str(getattr(result, "operation", None) or "update")
+    memory_role = provenance[0]["memory_role"] if provenance else "unknown"
+    if memory_role == "unknown" and accepted:
+        memory_role = default_role
+    retrieval_trace = dict(getattr(result, "trace", {}) or {})
+    contract_reason = memory_contract_reason(
+        memory_role=memory_role,
+        operation=operation,
+        allow_unknown=not accepted,
+    )
+    if contract_reason:
+        return {
+            "status": "abstained",
+            "memory_role": "unknown",
+            "provenance": provenance,
+            "retrieval_trace": annotate_contract_trace(
+                retrieval_trace,
+                scope="domain_write_result",
+                reason=contract_reason,
+                observed_role=memory_role,
+                operation=operation,
+            ),
+            "reason": contract_reason,
+            "accepted_count": 0,
+            "rejected_count": 1 if accepted else 0,
+            "skipped_count": 0,
+        }
     return {
         "status": "accepted" if accepted else ("unsupported" if unsupported_reason else "rejected"),
-        "memory_role": provenance[0]["memory_role"] if provenance else default_role,
+        "memory_role": memory_role,
         "provenance": provenance,
-        "retrieval_trace": dict(getattr(result, "trace", {}) or {}),
+        "retrieval_trace": retrieval_trace,
         "reason": unsupported_reason,
         "accepted_count": int(getattr(result, "observations_written", 0) or 0) + int(getattr(result, "events_written", 0) or 0),
         "rejected_count": 0 if accepted else 1,
@@ -1193,29 +1249,74 @@ def _normalize_domain_lookup_result(*, result: Any, subject: str, predicate: str
                 "text": getattr(result, "text", None),
             }
         )
+    raw_memory_role = getattr(result, "memory_role", "unknown")
+    memory_role = normalize_memory_role(raw_memory_role, allow_unknown=not records)
+    retrieval_trace = dict(getattr(result, "trace", {}) or {})
+    contract_reason = memory_contract_reason(
+        memory_role=raw_memory_role,
+        method="get_current_state",
+        allow_unknown=not records,
+    )
+    if contract_reason:
+        return {
+            "status": "abstained",
+            "memory_role": "unknown",
+            "records": [],
+            "provenance": provenance,
+            "retrieval_trace": annotate_contract_trace(
+                retrieval_trace,
+                scope="domain_lookup_result",
+                reason=contract_reason,
+                observed_role=memory_role,
+                method="get_current_state",
+            ),
+            "reason": contract_reason,
+        }
     return {
         "status": "supported" if bool(getattr(result, "found", False)) else "not_found",
-        "memory_role": str(getattr(result, "memory_role", "unknown") or "unknown"),
+        "memory_role": memory_role,
         "records": records,
         "provenance": provenance,
-        "retrieval_trace": dict(getattr(result, "trace", {}) or {}),
+        "retrieval_trace": retrieval_trace,
     }
 
 
-def _normalize_domain_retrieval_result(*, result: Any) -> dict[str, Any]:
+def _normalize_domain_retrieval_result(*, result: Any, method: str) -> dict[str, Any]:
     records = [_domain_record_to_dict(item) for item in list(getattr(result, "items", []) or [])]
+    memory_role = records[0]["memory_role"] if records else "unknown"
+    retrieval_trace = dict(getattr(result, "trace", {}) or {})
+    contract_reason = memory_contract_reason(
+        memory_role=memory_role,
+        method=method,
+        allow_unknown=not records,
+    )
+    if contract_reason:
+        return {
+            "status": "abstained",
+            "memory_role": "unknown",
+            "records": [],
+            "provenance": records,
+            "retrieval_trace": annotate_contract_trace(
+                retrieval_trace,
+                scope="domain_retrieval_result",
+                reason=contract_reason,
+                observed_role=memory_role,
+                method=method,
+            ),
+            "reason": contract_reason,
+        }
     return {
         "status": "supported" if records else "not_found",
-        "memory_role": records[0]["memory_role"] if records else "unknown",
+        "memory_role": memory_role,
         "records": records,
         "provenance": records,
-        "retrieval_trace": dict(getattr(result, "trace", {}) or {}),
+        "retrieval_trace": retrieval_trace,
     }
 
 
 def _domain_record_to_dict(record: Any) -> dict[str, Any]:
     return {
-        "memory_role": str(getattr(record, "memory_role", "unknown") or "unknown"),
+        "memory_role": normalize_memory_role(getattr(record, "memory_role", "unknown"), allow_unknown=True),
         "subject": _optional_string(getattr(record, "subject", None)),
         "predicate": _optional_string(getattr(record, "predicate", None)),
         "text": _optional_string(getattr(record, "text", None)),
@@ -1249,16 +1350,44 @@ def _normalize_read_result(
 ) -> MemoryReadResult:
     status = str(raw.get("status") or "").lower()
     abstained = status in {"abstained", "invalid_request", "unsupported", "not_found", ""}
+    raw_memory_role = raw.get("memory_role")
+    memory_role = normalize_memory_role(raw_memory_role, allow_unknown=abstained)
+    retrieval_trace = dict(raw["retrieval_trace"]) if isinstance(raw.get("retrieval_trace"), dict) else None
+    reason = str(raw.get("reason") or "") or None
+    contract_reason = memory_contract_reason(
+        memory_role=raw_memory_role,
+        method=method,
+        allow_unknown=abstained,
+    )
+    if contract_reason:
+        return MemoryReadResult(
+            status="abstained",
+            method=method,
+            memory_role="unknown",
+            records=[],
+            provenance=_normalize_provenance(raw),
+            retrieval_trace=annotate_contract_trace(
+                retrieval_trace,
+                scope="read_result",
+                reason=contract_reason,
+                observed_role=memory_role,
+                method=method,
+            ),
+            answer_explanation=None,
+            abstained=True,
+            reason=contract_reason,
+            shadow_only=shadow_only,
+        )
     return MemoryReadResult(
         status=status or "abstained",
         method=method,
-        memory_role=str(raw.get("memory_role") or "current_state"),
+        memory_role=memory_role,
         records=_normalize_records(raw),
         provenance=_normalize_provenance(raw),
-        retrieval_trace=dict(raw["retrieval_trace"]) if isinstance(raw.get("retrieval_trace"), dict) else None,
+        retrieval_trace=retrieval_trace,
         answer_explanation=dict(raw["answer_explanation"]) if isinstance(raw.get("answer_explanation"), dict) else None,
         abstained=abstained,
-        reason=str(raw.get("reason") or "") or None,
+        reason=reason,
         shadow_only=shadow_only,
     )
 
@@ -1277,40 +1406,76 @@ def _normalize_write_result(
     if status in {"accepted", "written", "created", "updated", "deleted"} and accepted_count <= 0:
         accepted_count = 1
     abstained = status in {"abstained", "invalid_request", "unsupported", "not_found", "", "disabled"} or accepted_count == 0
+    raw_memory_role = raw.get("memory_role")
+    memory_role = normalize_memory_role(raw_memory_role, allow_unknown=accepted_count == 0)
+    retrieval_trace = dict(raw["retrieval_trace"]) if isinstance(raw.get("retrieval_trace"), dict) else None
+    reason = str(raw.get("reason") or "") or None
+    contract_reason = memory_contract_reason(
+        memory_role=raw_memory_role,
+        operation=operation,
+        allow_unknown=accepted_count == 0,
+    )
+    if contract_reason:
+        return MemoryWriteResult(
+            status="abstained",
+            operation=operation,
+            method=method,
+            memory_role="unknown",
+            accepted_count=0,
+            rejected_count=max(rejected_count, 1 if accepted_count > 0 else 0),
+            skipped_count=skipped_count,
+            abstained=True,
+            retrieval_trace=annotate_contract_trace(
+                retrieval_trace,
+                scope="write_result",
+                reason=contract_reason,
+                observed_role=memory_role,
+                operation=operation,
+            ),
+            provenance=_normalize_provenance(raw),
+            reason=contract_reason,
+        )
     normalized_status = "succeeded" if accepted_count > 0 and rejected_count == 0 else ("partial" if accepted_count > 0 else (status or "abstained"))
     return MemoryWriteResult(
         status=normalized_status,
         operation=operation,
         method=method,
-        memory_role=str(raw.get("memory_role") or default_role),
+        memory_role=memory_role if memory_role != "unknown" else default_role,
         accepted_count=accepted_count,
         rejected_count=rejected_count,
         skipped_count=skipped_count,
         abstained=abstained,
-        retrieval_trace=dict(raw["retrieval_trace"]) if isinstance(raw.get("retrieval_trace"), dict) else None,
+        retrieval_trace=retrieval_trace,
         provenance=_normalize_provenance(raw),
-        reason=str(raw.get("reason") or "") or None,
+        reason=reason,
     )
 
 
 def _normalize_records(raw: dict[str, Any]) -> list[dict[str, Any]]:
     records = raw.get("records")
     if isinstance(records, list):
-        return [dict(record) for record in records if isinstance(record, dict)]
+        return [_normalize_record_dict(record) for record in records if isinstance(record, dict)]
     if isinstance(raw.get("record"), dict):
-        return [dict(raw["record"])]
+        return [_normalize_record_dict(raw["record"])]
     if isinstance(raw.get("state"), dict):
-        return [dict(raw["state"])]
+        return [_normalize_record_dict(raw["state"])]
     return []
 
 
 def _normalize_provenance(raw: dict[str, Any]) -> list[dict[str, Any]]:
     provenance = raw.get("provenance")
     if isinstance(provenance, list):
-        return [dict(item) for item in provenance if isinstance(item, dict)]
+        return [_normalize_record_dict(item) for item in provenance if isinstance(item, dict)]
     if isinstance(provenance, dict):
-        return [dict(provenance)]
+        return [_normalize_record_dict(provenance)]
     return []
+
+
+def _normalize_record_dict(raw: dict[str, Any]) -> dict[str, Any]:
+    record = dict(raw)
+    if "memory_role" in record:
+        record["memory_role"] = normalize_memory_role(record.get("memory_role"), allow_unknown=True)
+    return record
 
 
 def _memory_enabled(config_manager: ConfigManager) -> bool:

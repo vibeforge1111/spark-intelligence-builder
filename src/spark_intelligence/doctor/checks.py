@@ -431,6 +431,15 @@ def _watchtower_health_checks(state_db: StateDB) -> list[DoctorCheck]:
                 ),
             )
         )
+    contract_violations = int(memory_counts.get("contract_violations") or 0)
+    invalid_role_events = int(memory_counts.get("invalid_role_events") or 0)
+    checks.append(
+        DoctorCheck(
+            "watchtower-memory-contract",
+            contract_violations == 0,
+            f"contract_violations={contract_violations} invalid_role_events={invalid_role_events}",
+        )
+    )
     observer_incidents = (snapshot.get("panels") or {}).get("observer_incidents") or {}
     observer_counts = observer_incidents.get("counts") or {}
     observer_total = int(observer_counts.get("total") or 0)

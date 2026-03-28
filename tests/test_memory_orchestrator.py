@@ -73,6 +73,34 @@ class _AbstainingMemoryClient(_FakeMemoryClient):
         }
 
 
+class _InvalidMemoryRoleClient(_FakeMemoryClient):
+    def write_observation(self, **payload):
+        self.observation_calls.append(payload)
+        return {
+            "status": "accepted",
+            "memory_role": "timeline",
+            "provenance": [{"memory_role": "timeline", "source": "fake_sdk"}],
+            "retrieval_trace": {"trace_id": "mem-trace-write-invalid"},
+        }
+
+    def get_current_state(self, **payload):
+        self.current_state_calls.append(payload)
+        return {
+            "status": "supported",
+            "memory_role": "timeline",
+            "records": [
+                {
+                    "subject": payload["subject"],
+                    "predicate": "personality.preference.directness",
+                    "value": 0.35,
+                }
+            ],
+            "provenance": [{"memory_role": "timeline", "source": "fake_sdk"}],
+            "retrieval_trace": {"trace_id": "mem-trace-read-invalid"},
+            "answer_explanation": {"method": "get_current_state"},
+        }
+
+
 class MemoryOrchestratorTests(SparkTestCase):
     def test_profile_city_detection_and_write_use_structured_current_state_observation(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -464,6 +492,50 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertIn("watchtower-memory-shadow", checks)
         self.assertFalse(checks["watchtower-memory-shadow"].ok)
         self.assertIn("memory_abstaining", checks["watchtower-memory-shadow"].detail)
+
+    def test_invalid_sdk_memory_role_is_abstained_and_counted_in_watchtower(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        fake_client = _InvalidMemoryRoleClient()
+
+        with (
+            patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client),
+            patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client),
+        ):
+            write_result = write_profile_fact_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                predicate="profile.city",
+                value="Dubai",
+                evidence_text="I moved to Dubai.",
+                fact_name="city",
+                session_id="session:invalid-role",
+                turn_id="turn:invalid-role-write",
+                channel_kind="telegram",
+            )
+            lookup_result = lookup_current_state_in_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                subject="human:human:test",
+                predicate="profile.city",
+            )
+
+        self.assertTrue(write_result.abstained)
+        self.assertEqual(write_result.reason, "invalid_memory_role")
+        self.assertTrue(lookup_result.read_result.abstained)
+        self.assertEqual(lookup_result.read_result.reason, "invalid_memory_role")
+
+        snapshot = build_watchtower_snapshot(self.state_db)
+        panel = snapshot["panels"]["memory_shadow"]
+        self.assertEqual(panel["counts"]["contract_violations"], 2)
+        self.assertEqual(panel["counts"]["invalid_role_events"], 2)
+
+        report = run_doctor(self.config_manager, self.state_db)
+        checks = {check.name: check for check in report.checks}
+        self.assertIn("watchtower-memory-contract", checks)
+        self.assertFalse(checks["watchtower-memory-contract"].ok)
+        self.assertIn("contract_violations=2", checks["watchtower-memory-contract"].detail)
 
     def test_shadow_replay_payload_uses_real_turns_and_memory_observation_probes(self) -> None:
         with self.state_db.connect() as conn:
@@ -953,6 +1025,110 @@ class MemoryOrchestratorTests(SparkTestCase):
         conversation = payload["conversations"][0]
         self.assertEqual(conversation["turns"][0]["metadata"]["memory_kind"], "event")
         self.assertEqual(conversation["turns"][0]["metadata"]["memory_role"], "event")
+        self.assertNotIn("probes", conversation)
+
+    def test_shadow_replay_omits_invalid_memory_role_observations(self) -> None:
+        with self.state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, run_id, request_id, channel_id,
+                    session_id, human_id, agent_id, actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-user-invalid-role",
+                    "intent_committed",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "telegram_runtime",
+                    "run-invalid-role",
+                    "turn-invalid-role",
+                    "telegram",
+                    "session-invalid-role",
+                    "human:test",
+                    "agent:test",
+                    "telegram_runtime",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Turn committed.",
+                    "2026-03-27T12:00:00Z",
+                    json.dumps({"message_text": "Remember this."}),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-mem-req-invalid-role",
+                    "memory_write_requested",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "turn-invalid-role",
+                    "session-invalid-role",
+                    "human:test",
+                    "personality_loader",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Memory write requested.",
+                    "2026-03-27T12:00:01Z",
+                    json.dumps(
+                        {
+                            "observations": [
+                                {
+                                    "subject": "human:human:test",
+                                    "predicate": "profile.city",
+                                    "value": "Dubai",
+                                    "operation": "update",
+                                    "memory_role": "timeline",
+                                }
+                            ]
+                        }
+                    ),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-mem-ok-invalid-role",
+                    "memory_write_succeeded",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "turn-invalid-role",
+                    "session-invalid-role",
+                    "human:test",
+                    "personality_loader",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Memory write succeeded.",
+                    "2026-03-27T12:00:02Z",
+                    json.dumps({"accepted_count": 1, "rejected_count": 0, "skipped_count": 0}),
+                ),
+            )
+            conn.commit()
+
+        payload = build_shadow_replay_payload(
+            state_db=self.state_db,
+            conversation_limit=10,
+            event_limit=100,
+        )
+
+        conversation = payload["conversations"][0]
+        self.assertNotIn("memory_kind", conversation["turns"][0].get("metadata") or {})
         self.assertNotIn("probes", conversation)
 
     def test_shadow_replay_batch_export_runs_validation_and_batch_report(self) -> None:

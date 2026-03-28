@@ -9,6 +9,7 @@ from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.execution import run_governed_command
+from spark_intelligence.memory_contracts import memory_contract_reason, normalize_memory_role
 from spark_intelligence.state.db import StateDB
 
 
@@ -491,6 +492,10 @@ def _load_accepted_observations(*, state_db: StateDB, event_limit: int) -> list[
         for item in requested:
             if not isinstance(item, dict):
                 continue
+            operation = str(item.get("operation") or "")
+            memory_role = normalize_memory_role(item.get("memory_role"), allow_unknown=False)
+            if memory_contract_reason(memory_role=memory_role, operation=operation, allow_unknown=False):
+                continue
             observations.append(
                 {
                     "session_id": request_key[0] or None,
@@ -499,8 +504,8 @@ def _load_accepted_observations(*, state_db: StateDB, event_limit: int) -> list[
                     "subject": str(item.get("subject") or ""),
                     "predicate": str(item.get("predicate") or ""),
                     "value": item.get("value"),
-                    "operation": str(item.get("operation") or ""),
-                    "memory_role": str(item.get("memory_role") or "current_state"),
+                    "operation": operation,
+                    "memory_role": memory_role,
                 }
             )
     return observations
@@ -644,7 +649,7 @@ def _build_conversation_probes(
 
 def _memory_kind_for_observation(observation: dict[str, Any]) -> str:
     operation = str(observation.get("operation") or "").strip().lower()
-    memory_role = str(observation.get("memory_role") or "").strip().lower()
+    memory_role = normalize_memory_role(observation.get("memory_role"), allow_unknown=True)
     return "event" if operation == "event" or memory_role == "event" else "observation"
 
 

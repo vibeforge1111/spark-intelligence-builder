@@ -8,6 +8,11 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+from spark_intelligence.memory_contracts import (
+    is_memory_contract_reason,
+    memory_contract_reason,
+    normalize_memory_role,
+)
 from spark_intelligence.state.db import StateDB
 
 
@@ -2708,6 +2713,8 @@ def _build_memory_shadow_panel(state_db: StateDB) -> dict[str, Any]:
     read_hits = 0
     abstention_reasons: dict[str, int] = {}
     memory_roles: dict[str, int] = {}
+    contract_violations = 0
+    invalid_role_events = 0
 
     for event in write_results + read_results:
         facts = event.get("facts_json") or {}
@@ -2723,9 +2730,29 @@ def _build_memory_shadow_panel(state_db: StateDB) -> dict[str, Any]:
         reason = str(facts.get("reason") or "")
         if reason:
             abstention_reasons[reason] = abstention_reasons.get(reason, 0) + 1
-        role = str(facts.get("memory_role") or "")
+        raw_role = facts.get("memory_role")
+        role = normalize_memory_role(raw_role, allow_unknown=True)
         if role:
             memory_roles[role] = memory_roles.get(role, 0) + 1
+        violation = None
+        if is_memory_contract_reason(reason):
+            violation = reason
+        elif str(facts.get("method") or ""):
+            violation = memory_contract_reason(
+                memory_role=raw_role,
+                method=str(facts.get("method") or ""),
+                allow_unknown=int(facts.get("record_count") or 0) == 0,
+            )
+        elif str(facts.get("operation") or ""):
+            violation = memory_contract_reason(
+                memory_role=raw_role,
+                operation=str(facts.get("operation") or ""),
+                allow_unknown=int(facts.get("accepted_count") or 0) == 0,
+            )
+        if violation:
+            contract_violations += 1
+            if violation == "invalid_memory_role":
+                invalid_role_events += 1
 
     return {
         "counts": {
@@ -2738,6 +2765,8 @@ def _build_memory_shadow_panel(state_db: StateDB) -> dict[str, Any]:
             "read_results": len(read_results),
             "read_hits": read_hits,
             "shadow_only_reads": shadow_only_reads,
+            "contract_violations": contract_violations,
+            "invalid_role_events": invalid_role_events,
         },
         "memory_role_mix": [
             {"memory_role": role, "count": count}
