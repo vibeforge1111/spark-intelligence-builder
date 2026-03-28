@@ -79,6 +79,75 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["result"]["origin"], "https://docs.example.com/guide")
         self.assertEqual(payload["artifacts"][0]["type"], "page_snapshot")
 
+    def test_browser_status_command_surfaces_governed_hook_failures(self) -> None:
+        chip_root = create_fake_hook_chip(self.home, chip_key="spark-browser")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+
+        activate_exit, _, activate_stderr = self.run_cli(
+            "attachments",
+            "activate-chip",
+            "spark-browser",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(activate_exit, 0, activate_stderr)
+
+        fake_execution = SimpleNamespace(
+            ok=True,
+            chip_key="spark-browser",
+            hook="browser.status",
+            repo_root=str(chip_root),
+            command=["python", "-m", "fake_startup_chip.chip_hooks", "browser.status"],
+            exit_code=0,
+            stdout="",
+            stderr="",
+            payload={},
+            output={
+                "status": "failed",
+                "approval_state": "blocked",
+                "result": None,
+                "artifacts": [],
+                "provenance": {
+                    "browser_family": "brave",
+                    "profile_key": "spark-default",
+                    "profile_mode": "dedicated",
+                },
+                "error": {
+                    "code": "BROWSER_SESSION_NOT_CONNECTED",
+                    "message": "No live browser session is registered.",
+                },
+            },
+        )
+        fake_execution.to_payload = lambda: {
+            "chip_key": fake_execution.chip_key,
+            "hook": fake_execution.hook,
+            "repo_root": fake_execution.repo_root,
+            "command": fake_execution.command,
+            "exit_code": fake_execution.exit_code,
+            "stdout": fake_execution.stdout,
+            "stderr": fake_execution.stderr,
+            "payload": fake_execution.payload,
+            "output": fake_execution.output,
+            "ok": fake_execution.ok,
+        }
+
+        with patch("spark_intelligence.cli.run_first_active_chip_hook", return_value=fake_execution):
+            exit_code, stdout, stderr = self.run_cli(
+                "browser",
+                "status",
+                "--home",
+                str(self.home),
+                "--json",
+            )
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(exit_code, 1)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["status"], "failed")
+        self.assertEqual(payload["hook_status"], "failed")
+        self.assertEqual(payload["error"]["code"], "BROWSER_SESSION_NOT_CONNECTED")
+        self.assertEqual(payload["result"], {})
+
     def test_memory_direct_smoke_runs_in_process_domain_chip_bridge(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
             "memory",
