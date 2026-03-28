@@ -12,6 +12,7 @@ from spark_intelligence.identity.service import (
 from spark_intelligence.personality.loader import (
     detect_and_persist_nl_preferences,
     load_personality_profile,
+    migrate_legacy_human_personality_to_agent_persona,
     save_agent_persona_profile,
 )
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
@@ -242,3 +243,101 @@ class AgentIdentityContractTests(SparkTestCase):
         base_traits = json.loads(agent_row["base_traits_json"])
         self.assertGreater(base_traits["directness"], 0.5)
         self.assertGreater(base_traits["assertiveness"], 0.5)
+
+    def test_stale_swarm_name_does_not_override_newer_builder_rename(self) -> None:
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+        rename_agent_identity(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+            new_name="Atlas",
+            source_surface="telegram",
+            source_ref="turn-new",
+        )
+
+        linked = link_spark_swarm_agent(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+            swarm_agent_id="swarm-agent:atlas",
+            agent_name="Legacy Swarm Name",
+            confirmed_at="2026-03-28T00:00:00+00:00",
+            metadata={"workspace_id": "ws-test"},
+        )
+
+        self.assertEqual(linked.agent_name, "Atlas")
+        self.assertEqual(linked.name_source, "telegram")
+
+    def test_fresher_swarm_name_overrides_older_builder_name(self) -> None:
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+        rename_agent_identity(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+            new_name="Atlas",
+            source_surface="telegram",
+            source_ref="turn-old",
+        )
+
+        linked = link_spark_swarm_agent(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+            swarm_agent_id="swarm-agent:atlas",
+            agent_name="Swarm Prime",
+            confirmed_at="2026-03-29T00:00:00+00:00",
+            metadata={"workspace_id": "ws-test"},
+        )
+
+        self.assertEqual(linked.agent_name, "Swarm Prime")
+        self.assertEqual(linked.name_source, "spark_swarm")
+
+    def test_migrate_legacy_human_personality_to_agent_persona_preserves_effective_profile(self) -> None:
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+        agent_state = read_canonical_agent_state(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+        )
+        detect_and_persist_nl_preferences(
+            human_id="human:telegram:111",
+            user_message="be more direct and stop hedging",
+            state_db=self.state_db,
+        )
+        before = load_personality_profile(
+            human_id="human:telegram:111",
+            agent_id=agent_state.agent_id,
+            state_db=self.state_db,
+            config_manager=self.config_manager,
+        )
+
+        result = migrate_legacy_human_personality_to_agent_persona(
+            human_id="human:telegram:111",
+            state_db=self.state_db,
+            source_surface="agent_cli",
+            source_ref="migration-test",
+        )
+
+        self.assertEqual(result.status, "migrated")
+        self.assertTrue(result.cleared_overlay)
+        after = load_personality_profile(
+            human_id="human:telegram:111",
+            agent_id=agent_state.agent_id,
+            state_db=self.state_db,
+            config_manager=self.config_manager,
+        )
+        assert before is not None
+        assert after is not None
+        self.assertTrue(after["agent_persona_applied"])
+        self.assertFalse(after["user_deltas_applied"])
+        self.assertEqual(after["traits"], before["traits"])

@@ -732,6 +732,8 @@ class StateDB:
             for statement in SCHEMA_STATEMENTS:
                 conn.execute(statement)
             self._ensure_column(conn, "provider_records", "default_auth_profile_id", "TEXT")
+            self._ensure_column(conn, "agent_profiles", "name_updated_at", "TEXT")
+            self._ensure_column(conn, "agent_profiles", "name_source", "TEXT")
             conn.execute("INSERT OR IGNORE INTO schema_info(version) VALUES (1)")
             conn.execute(
                 """

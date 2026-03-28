@@ -30,7 +30,7 @@ from typing import Any
 from uuid import uuid4
 
 from spark_intelligence.config.loader import ConfigManager
-from spark_intelligence.identity.service import rename_agent_identity
+from spark_intelligence.identity.service import read_canonical_agent_state, rename_agent_identity
 from spark_intelligence.memory.orchestrator import (
     delete_personality_preferences_from_memory,
     read_personality_preferences_from_memory,
@@ -125,6 +125,16 @@ class AgentPersonaMutationResult:
     trait_deltas: dict[str, float]
     persona_profile: dict[str, Any]
     context_injection: str
+
+
+@dataclass
+class LegacyPersonalityMigrationResult:
+    human_id: str
+    agent_id: str
+    status: str
+    migrated_traits: dict[str, float]
+    cleared_overlay: bool
+    persona_profile: dict[str, Any]
 
 
 def _extract_trait_deltas(text: str) -> dict[str, float]:
@@ -484,6 +494,95 @@ def save_agent_persona_profile(
         )
         conn.commit()
     return load_agent_persona_profile(agent_id=agent_id, state_db=state_db)
+
+
+def migrate_legacy_human_personality_to_agent_persona(
+    *,
+    human_id: str,
+    state_db: StateDB,
+    agent_id: str | None = None,
+    clear_overlay: bool = True,
+    force: bool = False,
+    source_surface: str = "agent_cli",
+    source_ref: str | None = None,
+) -> LegacyPersonalityMigrationResult:
+    resolved_agent_id = agent_id or read_canonical_agent_state(state_db=state_db, human_id=human_id).agent_id
+    existing_persona = load_agent_persona_profile(agent_id=resolved_agent_id, state_db=state_db)
+    if existing_persona and not force:
+        return LegacyPersonalityMigrationResult(
+            human_id=human_id,
+            agent_id=resolved_agent_id,
+            status="existing_agent_persona",
+            migrated_traits={},
+            cleared_overlay=False,
+            persona_profile=existing_persona,
+        )
+
+    user_deltas = _load_user_trait_deltas(human_id=human_id, state_db=state_db)
+    if not user_deltas:
+        return LegacyPersonalityMigrationResult(
+            human_id=human_id,
+            agent_id=resolved_agent_id,
+            status="no_legacy_deltas",
+            migrated_traits={},
+            cleared_overlay=False,
+            persona_profile=existing_persona,
+        )
+
+    effective_profile = load_personality_profile(
+        human_id=human_id,
+        agent_id=resolved_agent_id,
+        state_db=state_db,
+        config_manager=None,
+    )
+    effective_traits = (effective_profile or {}).get("traits") or {}
+    migrated_traits = {
+        trait: round(
+            max(
+                0.0,
+                min(
+                    1.0,
+                    float(
+                        effective_traits.get(
+                            trait,
+                            _DEFAULT_TRAITS[trait] + float(user_deltas.get(trait, 0.0)),
+                        )
+                    ),
+                ),
+            ),
+            3,
+        )
+        for trait in _DEFAULT_TRAITS
+    }
+    persona_profile = save_agent_persona_profile(
+        agent_id=resolved_agent_id,
+        human_id=human_id,
+        state_db=state_db,
+        base_traits=migrated_traits,
+        persona_name=(existing_persona.get("persona_name") if existing_persona else None),
+        persona_summary=(existing_persona.get("persona_summary") if existing_persona else _compact_persona_summary(migrated_traits)),
+        provenance={
+            "source_surface": source_surface,
+            "source_ref": source_ref,
+            "migration": "legacy_human_trait_deltas",
+            "legacy_deltas": user_deltas,
+        },
+        mutation_kind="legacy_human_migration",
+        source_surface=source_surface,
+        source_ref=source_ref,
+    )
+    cleared_overlay = False
+    if clear_overlay:
+        _clear_legacy_user_trait_overlay(human_id=human_id, state_db=state_db)
+        cleared_overlay = True
+    return LegacyPersonalityMigrationResult(
+        human_id=human_id,
+        agent_id=resolved_agent_id,
+        status="migrated",
+        migrated_traits=migrated_traits,
+        cleared_overlay=cleared_overlay,
+        persona_profile=persona_profile,
+    )
 
 
 # ── NL preference detection and persistence ──
@@ -944,6 +1043,19 @@ def _clear_user_trait_deltas(*, human_id: str, state_db: StateDB) -> list[str]:
         )
         conn.commit()
     return cleared_state_keys
+
+
+def _clear_legacy_user_trait_overlay(*, human_id: str, state_db: StateDB) -> None:
+    with state_db.connect() as conn:
+        conn.execute(
+            "DELETE FROM personality_trait_profiles WHERE human_id = ?",
+            (human_id,),
+        )
+        conn.execute(
+            "DELETE FROM runtime_state WHERE state_key = ?",
+            (_state_key(human_id),),
+        )
+        conn.commit()
 
 
 # ── Self-observation ──

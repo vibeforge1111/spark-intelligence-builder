@@ -78,6 +78,7 @@ from spark_intelligence.memory import (
     lookup_current_state_in_memory,
     run_memory_sdk_smoke_test,
 )
+from spark_intelligence.personality import migrate_legacy_human_personality_to_agent_persona
 from spark_intelligence.observability.policy import screen_model_visible_text
 from spark_intelligence.observability.store import (
     build_watchtower_snapshot,
@@ -1462,7 +1463,17 @@ def build_parser() -> argparse.ArgumentParser:
     agent_link_swarm_parser.add_argument("--human-id", required=True, help="Human id owning the Builder-side canonical agent")
     agent_link_swarm_parser.add_argument("--swarm-agent-id", required=True, help="Spark Swarm agent id to canonicalize onto")
     agent_link_swarm_parser.add_argument("--agent-name", required=True, help="Agent display name to use after link")
+    agent_link_swarm_parser.add_argument("--confirmed-at", help="Confirmed timestamp for the inbound Spark Swarm name update")
     agent_link_swarm_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    agent_migrate_persona_parser = agent_subparsers.add_parser(
+        "migrate-legacy-personality",
+        help="Move legacy human-scoped personality deltas into the canonical agent persona base",
+    )
+    agent_migrate_persona_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    agent_migrate_persona_parser.add_argument("--human-id", required=True, help="Human id whose legacy personality state should be migrated")
+    agent_migrate_persona_parser.add_argument("--keep-overlay", action="store_true", help="Keep the human-scoped overlay after seeding the agent persona")
+    agent_migrate_persona_parser.add_argument("--force", action="store_true", help="Overwrite an existing agent persona with the migrated legacy state")
+    agent_migrate_persona_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     pairing_parser = subparsers.add_parser("pairings", help="Manage pairings")
     pairing_subparsers = pairing_parser.add_subparsers(dest="pairings_command", required=True)
@@ -3919,6 +3930,7 @@ def handle_agent_link_swarm(args: argparse.Namespace) -> int:
         human_id=args.human_id,
         swarm_agent_id=args.swarm_agent_id,
         agent_name=args.agent_name,
+        confirmed_at=args.confirmed_at,
         metadata={"linked_via": "agent_cli"},
     )
     payload = state.to_payload()
@@ -3927,6 +3939,37 @@ def handle_agent_link_swarm(args: argparse.Namespace) -> int:
         if args.json
         else f"Linked {args.human_id} to canonical Spark Swarm agent {payload['agent_id']}."
     )
+    return 0
+
+
+def handle_agent_migrate_legacy_personality(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = migrate_legacy_human_personality_to_agent_persona(
+        human_id=args.human_id,
+        state_db=state_db,
+        clear_overlay=not args.keep_overlay,
+        force=args.force,
+        source_surface="agent_cli",
+        source_ref="agent migrate-legacy-personality",
+    )
+    payload = {
+        "human_id": result.human_id,
+        "agent_id": result.agent_id,
+        "status": result.status,
+        "migrated_traits": result.migrated_traits,
+        "cleared_overlay": result.cleared_overlay,
+        "persona_profile": result.persona_profile,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(
+            f"Legacy personality migration for {result.human_id}: {result.status} "
+            f"(agent_id={result.agent_id}, cleared_overlay={'yes' if result.cleared_overlay else 'no'})."
+        )
     return 0
 
 
@@ -4140,6 +4183,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_agent_rename(args)
     if args.command == "agent" and args.agent_command == "link-swarm":
         return handle_agent_link_swarm(args)
+    if args.command == "agent" and args.agent_command == "migrate-legacy-personality":
+        return handle_agent_migrate_legacy_personality(args)
     if args.command == "pairings" and args.pairings_command == "list":
         return handle_pairings_list(args)
     if args.command == "pairings" and args.pairings_command == "approve":

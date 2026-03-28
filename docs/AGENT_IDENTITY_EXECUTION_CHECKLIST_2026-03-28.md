@@ -27,14 +27,14 @@ Tasks:
 - [x] add agent profile storage for mutable names and source metadata
 - [x] add alias/tombstone mapping for superseded local ids
 - [x] keep current pairing/session flow compatible with local derived ids
-- [ ] add operator-facing identity repair surfaces
+- [x] add operator-facing identity repair surfaces
 
 Tests:
 
 - [x] contract tests for local canonical creation
 - [x] contract tests for Swarm canonicalization and aliasing
 - [x] contract tests for rename history
-- [ ] CLI/operator smoke for identity repair workflow
+- [x] CLI/operator smoke for identity repair workflow
 
 ### Phase B. Agent-Scoped Persona Base
 
@@ -48,14 +48,14 @@ Tasks:
 - [x] add agent persona mutation history
 - [x] merge runtime profile as defaults/chip -> agent base -> human overlay
 - [x] expose agent persona in operator personality inspection
-- [ ] migrate legacy human-only style state into agent base where appropriate
+- [x] migrate legacy human-only style state into agent base where appropriate
 
 Tests:
 
 - [x] unit coverage for agent base plus human overlay merge
 - [x] bridge contract coverage for explicit agent persona authoring
 - [x] CLI smoke for operator personality with agent identity attached
-- [ ] migration harness coverage
+- [x] migration harness coverage
 
 ### Phase C. Builder-First Agent Creation
 
@@ -107,7 +107,7 @@ Tasks:
 - [x] rename mutation log
 - [x] conflict state in canonical link storage
 - [x] operator repair command surfaces
-- [ ] latest-confirmed-write sync policy across Builder and Swarm
+- [x] latest-confirmed-write sync policy across Builder and Swarm
 
 Tests:
 
@@ -124,9 +124,9 @@ Status:
 Tasks:
 
 - [x] doctor/watchtower identity surfaces
-- [ ] migration command or automatic migration pass
+- [x] migration command or automatic migration pass
 - [ ] docs closeout with shipped state
-- [ ] broader regression pass
+- [x] broader regression pass
 
 Tests:
 
@@ -141,6 +141,7 @@ Use these while shipping this track:
 
 - `python -m pytest tests/test_agent_identity_contracts.py`
 - `python -m pytest tests/test_memory_orchestrator.py tests/test_builder_prelaunch_contracts.py tests/test_cli_smoke.py tests/test_operator_pairing_flows.py`
+- `python -m pytest tests/test_agent_identity_contracts.py tests/test_cli_smoke.py`
 
 Run the broader combined pass after the current slice is stable:
 

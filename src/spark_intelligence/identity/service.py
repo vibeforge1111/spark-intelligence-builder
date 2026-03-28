@@ -192,6 +192,8 @@ class CanonicalAgentState:
     conflict_agent_id: str | None = None
     conflict_reason: str | None = None
     alias_agent_ids: list[str] | None = None
+    name_updated_at: str | None = None
+    name_source: str | None = None
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -206,6 +208,8 @@ class CanonicalAgentState:
             "conflict_agent_id": self.conflict_agent_id,
             "conflict_reason": self.conflict_reason,
             "alias_agent_ids": list(self.alias_agent_ids or []),
+            "name_updated_at": self.name_updated_at,
+            "name_source": self.name_source,
         }
 
 
@@ -229,6 +233,46 @@ def _canonical_agent_id(human_id: str) -> str:
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _choose_agent_name(
+    *,
+    current_name: str | None,
+    current_confirmed_at: str | None,
+    current_source: str | None,
+    incoming_name: str | None,
+    incoming_confirmed_at: str | None,
+    incoming_source: str,
+) -> tuple[str | None, str | None, str | None]:
+    resolved_incoming_name = _read_optional_text(incoming_name)
+    if not resolved_incoming_name:
+        return current_name, current_confirmed_at, current_source
+    current_ts = _parse_iso_datetime(current_confirmed_at)
+    incoming_ts = _parse_iso_datetime(incoming_confirmed_at)
+    if current_name and current_ts is not None and incoming_ts is not None and incoming_ts < current_ts:
+        return current_name, current_confirmed_at, current_source
+    return (
+        resolved_incoming_name,
+        incoming_confirmed_at or current_confirmed_at or _utc_now_iso(),
+        incoming_source,
+    )
 
 
 def _canonical_channel_account_id(channel_id: str, external_user_id: str) -> str:
@@ -285,7 +329,7 @@ def resolve_canonical_agent_identity(
         canonical_agent_id = str(link_row["canonical_agent_id"] or local_agent_id)
         profile_row = conn.execute(
             """
-            SELECT agent_id, human_id, agent_name, origin, status, external_system, external_agent_id
+            SELECT agent_id, human_id, agent_name, origin, status, external_system, external_agent_id, name_updated_at, name_source
             FROM agent_profiles
             WHERE agent_id = ?
             LIMIT 1
@@ -297,11 +341,12 @@ def resolve_canonical_agent_identity(
             origin = "builder_local" if canonical_agent_id == local_agent_id else "spark_swarm"
             external_system = "spark_swarm" if canonical_agent_id != local_agent_id else None
             external_agent_id = canonical_agent_id if canonical_agent_id != local_agent_id else None
+            name_updated_at = _utc_now_iso()
             conn.execute(
                 """
                 INSERT INTO agent_profiles(
-                    agent_id, human_id, agent_name, origin, status, external_system, external_agent_id
-                ) VALUES (?, ?, ?, ?, 'active', ?, ?)
+                    agent_id, human_id, agent_name, origin, status, external_system, external_agent_id, name_updated_at, name_source
+                ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)
                 """,
                 (
                     canonical_agent_id,
@@ -310,11 +355,13 @@ def resolve_canonical_agent_identity(
                     origin,
                     external_system,
                     external_agent_id,
+                    name_updated_at,
+                    origin,
                 ),
             )
             profile_row = conn.execute(
                 """
-                SELECT agent_id, human_id, agent_name, origin, status, external_system, external_agent_id
+                SELECT agent_id, human_id, agent_name, origin, status, external_system, external_agent_id, name_updated_at, name_source
                 FROM agent_profiles
                 WHERE agent_id = ?
                 LIMIT 1
@@ -325,14 +372,14 @@ def resolve_canonical_agent_identity(
             conn.execute(
                 """
                 UPDATE agent_profiles
-                SET agent_name = ?, updated_at = CURRENT_TIMESTAMP
+                SET agent_name = ?, name_updated_at = ?, name_source = 'builder_local', updated_at = CURRENT_TIMESTAMP
                 WHERE agent_id = ?
                 """,
-                (resolved_name, canonical_agent_id),
+                (resolved_name, _utc_now_iso(), canonical_agent_id),
             )
             profile_row = conn.execute(
                 """
-                SELECT agent_id, human_id, agent_name, origin, status, external_system, external_agent_id
+                SELECT agent_id, human_id, agent_name, origin, status, external_system, external_agent_id, name_updated_at, name_source
                 FROM agent_profiles
                 WHERE agent_id = ?
                 LIMIT 1
@@ -377,7 +424,7 @@ def read_canonical_agent_state(
         canonical_agent_id = str(link_row["canonical_agent_id"])
         profile_row = conn.execute(
             """
-            SELECT agent_id, human_id, agent_name, origin, status, external_system, external_agent_id
+            SELECT agent_id, human_id, agent_name, origin, status, external_system, external_agent_id, name_updated_at, name_source
             FROM agent_profiles
             WHERE agent_id = ?
             LIMIT 1
@@ -408,6 +455,8 @@ def read_canonical_agent_state(
         conflict_agent_id=_read_optional_text(link_row["conflict_agent_id"]),
         conflict_reason=_read_optional_text(link_row["conflict_reason"]),
         alias_agent_ids=[str(row["alias_agent_id"]) for row in alias_rows],
+        name_updated_at=_read_optional_text(profile_row["name_updated_at"]),
+        name_source=_read_optional_text(profile_row["name_source"]),
     )
 
 
@@ -417,21 +466,52 @@ def link_spark_swarm_agent(
     human_id: str,
     swarm_agent_id: str,
     agent_name: str,
+    confirmed_at: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> CanonicalAgentState:
     if not swarm_agent_id.strip():
         raise ValueError("Spark Swarm agent_id must not be empty.")
     local_agent_id = _canonical_agent_id(human_id)
-    resolved_name = agent_name.strip() or "Spark Agent"
+    incoming_name = agent_name.strip() or "Spark Agent"
+    incoming_confirmed_at = confirmed_at or _utc_now_iso()
     existing = resolve_canonical_agent_identity(state_db=state_db, human_id=human_id)
     metadata_json = json.dumps(metadata, sort_keys=True) if metadata else None
 
     with state_db.connect() as conn:
+        existing_swarm_row = conn.execute(
+            """
+            SELECT agent_name, name_updated_at, name_source
+            FROM agent_profiles
+            WHERE agent_id = ?
+            LIMIT 1
+            """,
+            (swarm_agent_id,),
+        ).fetchone()
+        current_name = existing.agent_name
+        current_confirmed_at = existing.name_updated_at
+        current_source = existing.name_source
+        if existing_swarm_row:
+            current_name, current_confirmed_at, current_source = _choose_agent_name(
+                current_name=current_name,
+                current_confirmed_at=current_confirmed_at,
+                current_source=current_source,
+                incoming_name=existing_swarm_row["agent_name"],
+                incoming_confirmed_at=existing_swarm_row["name_updated_at"],
+                incoming_source=str(existing_swarm_row["name_source"] or "spark_swarm"),
+            )
+        chosen_name, chosen_confirmed_at, chosen_source = _choose_agent_name(
+            current_name=current_name,
+            current_confirmed_at=current_confirmed_at,
+            current_source=current_source,
+            incoming_name=incoming_name,
+            incoming_confirmed_at=incoming_confirmed_at,
+            incoming_source="spark_swarm",
+        )
         conn.execute(
             """
             INSERT INTO agent_profiles(
-                agent_id, human_id, agent_name, origin, status, external_system, external_agent_id, metadata_json
-            ) VALUES (?, ?, ?, 'spark_swarm', 'active', 'spark_swarm', ?, ?)
+                agent_id, human_id, agent_name, origin, status, external_system, external_agent_id, metadata_json, name_updated_at, name_source
+            ) VALUES (?, ?, ?, 'spark_swarm', 'active', 'spark_swarm', ?, ?, ?, ?)
             ON CONFLICT(agent_id) DO UPDATE SET
                 human_id=excluded.human_id,
                 agent_name=excluded.agent_name,
@@ -440,9 +520,19 @@ def link_spark_swarm_agent(
                 external_system='spark_swarm',
                 external_agent_id=excluded.external_agent_id,
                 metadata_json=COALESCE(excluded.metadata_json, agent_profiles.metadata_json),
+                name_updated_at=excluded.name_updated_at,
+                name_source=excluded.name_source,
                 updated_at=CURRENT_TIMESTAMP
             """,
-            (swarm_agent_id, human_id, resolved_name, swarm_agent_id, metadata_json),
+            (
+                swarm_agent_id,
+                human_id,
+                chosen_name or "Spark Agent",
+                swarm_agent_id,
+                metadata_json,
+                chosen_confirmed_at or incoming_confirmed_at,
+                chosen_source or "spark_swarm",
+            ),
         )
         conn.execute(
             """
@@ -546,10 +636,10 @@ def rename_agent_identity(
         conn.execute(
             """
             UPDATE agent_profiles
-            SET agent_name = ?, updated_at = CURRENT_TIMESTAMP
+            SET agent_name = ?, name_updated_at = ?, name_source = ?, updated_at = CURRENT_TIMESTAMP
             WHERE agent_id = ?
             """,
-            (resolved_name, state.agent_id),
+            (resolved_name, recorded_at, source_surface, state.agent_id),
         )
         conn.execute(
             """

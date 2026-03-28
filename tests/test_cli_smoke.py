@@ -1348,6 +1348,36 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(link_payload["preferred_source"], "spark_swarm")
         self.assertIn("agent:human:telegram:111", link_payload["alias_agent_ids"])
 
+    def test_agent_migrate_legacy_personality_command_moves_overlay_into_agent_base(self) -> None:
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+        detect_and_persist_nl_preferences(
+            human_id="human:telegram:111",
+            user_message="be more direct and stop hedging",
+            state_db=self.state_db,
+        )
+
+        exit_code, stdout, stderr = self.run_cli(
+            "agent",
+            "migrate-legacy-personality",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:telegram:111",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["status"], "migrated")
+        self.assertTrue(payload["cleared_overlay"])
+        self.assertGreater(payload["migrated_traits"]["directness"], 0.5)
+        self.assertGreater(payload["migrated_traits"]["assertiveness"], 0.5)
+
     def test_operator_security_escalates_sustained_discord_webhook_auth_rejections(self) -> None:
         setup_exit, _, setup_stderr = self.run_cli(
             "channel",
