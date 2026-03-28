@@ -305,6 +305,21 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertTrue(read_events)
         self.assertFalse(bool((read_events[0]["facts_json"] or {}).get("shadow_only")))
 
+    def test_load_personality_profile_gracefully_handles_missing_runtime_dependencies(self) -> None:
+        missing_state_path = self.home / "missing-personality-evolver.json"
+        with patch("spark_intelligence.personality.loader._PERSONALITY_EVOLUTION_FILE", missing_state_path):
+            profile = load_personality_profile(
+                human_id="human:test",
+                state_db=None,
+                config_manager=None,
+            )
+
+        assert profile is not None
+        self.assertEqual(profile["source"], "defaults")
+        self.assertFalse(profile["user_deltas_applied"])
+        self.assertEqual(profile["traits"]["warmth"], 0.5)
+        self.assertEqual(profile["traits"]["directness"], 0.5)
+
     def test_durable_preference_updates_write_structured_memory_observations(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

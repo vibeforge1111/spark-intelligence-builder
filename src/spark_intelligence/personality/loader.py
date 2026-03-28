@@ -148,8 +148,8 @@ def _has_personality_signal(text: str) -> bool:
 def load_personality_profile(
     *,
     human_id: str,
-    state_db: StateDB,
-    config_manager: ConfigManager,
+    state_db: StateDB | None = None,
+    config_manager: ConfigManager | None = None,
 ) -> dict[str, Any] | None:
     """Load the active personality profile with per-user trait overrides.
 
@@ -163,9 +163,10 @@ def load_personality_profile(
 
     Returns None if personality is disabled in config.
     """
-    enabled = config_manager.get_path("spark.personality.enabled", default=True)
-    if not enabled:
-        return None
+    if config_manager is not None:
+        enabled = config_manager.get_path("spark.personality.enabled", default=True)
+        if not enabled:
+            return None
 
     # 1. Load base traits from personality_evolution_v1.json (written by personality hooks)
     base_traits = dict(_DEFAULT_TRAITS)
@@ -173,9 +174,13 @@ def load_personality_profile(
     personality_name = None
     source = "defaults"
 
-    configured_path = config_manager.get_path(
-        "spark.personality.evolver_state_path",
-        default=None,
+    configured_path = (
+        config_manager.get_path(
+            "spark.personality.evolver_state_path",
+            default=None,
+        )
+        if config_manager is not None
+        else None
     )
     evolver_path = Path(configured_path) if configured_path else _PERSONALITY_EVOLUTION_FILE
 
@@ -365,8 +370,10 @@ def _state_key(human_id: str) -> str:
     return f"personality:{human_id}:trait_deltas"
 
 
-def _load_user_trait_deltas(*, human_id: str, state_db: StateDB) -> dict[str, float]:
+def _load_user_trait_deltas(*, human_id: str, state_db: StateDB | None) -> dict[str, float]:
     """Load persisted per-user trait deltas from typed storage or compatibility state."""
+    if state_db is None:
+        return {}
     try:
         with state_db.connect() as conn:
             row = conn.execute(
