@@ -7,6 +7,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
 
 import yaml
 
@@ -75,12 +76,21 @@ from spark_intelligence.memory import (
     run_memory_sdk_smoke_test,
 )
 from spark_intelligence.observability.policy import screen_model_visible_text
-from spark_intelligence.observability.store import build_watchtower_snapshot, close_run, latest_events_by_type, open_run, record_event
+from spark_intelligence.observability.store import (
+    build_watchtower_snapshot,
+    close_run,
+    latest_events_by_type,
+    open_run,
+    record_event,
+    record_observer_handoff_record,
+)
 from spark_intelligence.ops import (
+    build_observer_handoff_payload,
     build_operator_inbox,
     export_operator_observer_packets,
     build_operator_security_report,
     clear_webhook_alert_snooze,
+    list_observer_handoffs,
     list_observer_packets,
     list_operator_events,
     list_webhook_alert_events,
@@ -1011,6 +1021,28 @@ def build_parser() -> argparse.ArgumentParser:
     operator_export_observer_packets_parser.add_argument("--write", help="Explicit path for the exported JSON bundle")
     operator_export_observer_packets_parser.add_argument("--reason", help="Short audit reason for this export")
     operator_export_observer_packets_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    operator_handoff_observer_parser = operator_subparsers.add_parser(
+        "handoff-observer",
+        help="Run the observer packet handoff against a chip packets hook",
+    )
+    operator_handoff_observer_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    operator_handoff_observer_parser.add_argument("--chip-key", help="Explicit chip key to run. Defaults to the first active chip exposing packets.")
+    operator_handoff_observer_parser.add_argument("--limit", type=int, default=200, help="Maximum packets to hand off")
+    operator_handoff_observer_parser.add_argument("--kind", help="Filter handoff to one packet kind")
+    operator_handoff_observer_parser.add_argument("--include-archived", action="store_true", help="Include archived packet rows")
+    operator_handoff_observer_parser.add_argument("--write-bundle", help="Explicit path for the handoff bundle JSON")
+    operator_handoff_observer_parser.add_argument("--write-result", help="Explicit path for the chip result JSON")
+    operator_handoff_observer_parser.add_argument("--reason", help="Short audit reason for this handoff")
+    operator_handoff_observer_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    operator_observer_handoffs_parser = operator_subparsers.add_parser(
+        "observer-handoffs",
+        help="Show typed observer handoff records",
+    )
+    operator_observer_handoffs_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    operator_observer_handoffs_parser.add_argument("--limit", type=int, default=20, help="Number of handoff rows to show")
+    operator_observer_handoffs_parser.add_argument("--chip-key", help="Filter to one chip key")
+    operator_observer_handoffs_parser.add_argument("--status", help="Filter to one handoff status")
+    operator_observer_handoffs_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     operator_snooze_webhook_parser = operator_subparsers.add_parser(
         "snooze-webhook-alert",
         help="Temporarily suppress one webhook alert family from operator surfaces",
@@ -2003,6 +2035,348 @@ def handle_operator_export_observer_packets(args: argparse.Namespace) -> int:
             "active_only": not args.include_archived,
             "packet_count": report.payload.get("packet_count"),
         },
+    )
+    print(report.to_json() if args.json else report.to_text())
+    return 0
+
+
+def handle_operator_handoff_observer(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    handoff_id = f"observer-handoff-{uuid4().hex[:12]}"
+    run = open_run(
+        state_db,
+        run_kind="operator:observer_handoff",
+        origin_surface="operator_cli",
+        summary="Operator started an observer chip handoff.",
+        request_id=handoff_id,
+        actor_id="local-operator",
+        reason_code="observer_handoff_requested",
+        facts={
+            "chip_key": args.chip_key or "active",
+            "hook": "packets",
+        },
+    )
+    payload = build_observer_handoff_payload(
+        config_manager=config_manager,
+        state_db=state_db,
+        handoff_id=handoff_id,
+        chip_key=args.chip_key,
+        write_path=args.write_bundle,
+        limit=args.limit,
+        packet_kind=args.kind,
+        active_only=not args.include_archived,
+    )
+    bundle = payload.get("packet_bundle") or {}
+    bundle_path = str(bundle.get("write_path") or "")
+    packet_count = int(bundle.get("packet_count") or 0)
+    payload_summary = {
+        "schema_version": payload.get("schema_version"),
+        "generated_at": payload.get("generated_at"),
+        "workspace_id": payload.get("workspace_id"),
+        "hook": payload.get("hook"),
+        "target_chip_key": payload.get("target_chip_key"),
+        "bundle_path": bundle_path,
+        "packet_count": packet_count,
+        "counts_by_kind": bundle.get("counts_by_kind") or {},
+        "watchtower": payload.get("watchtower") or {},
+        "attachments": payload.get("attachments") or {},
+    }
+    try:
+        if args.chip_key:
+            execution = run_chip_hook(config_manager, chip_key=args.chip_key, hook="packets", payload=payload)
+        else:
+            execution = run_first_active_chip_hook(config_manager, hook="packets", payload=payload)
+            if execution is None:
+                summary = "Observer handoff found no active chip exposing the packets hook."
+                record_observer_handoff_record(
+                    state_db,
+                    handoff_id=handoff_id,
+                    chip_key="active",
+                    hook="packets",
+                    run_id=run.run_id,
+                    request_id=run.request_id,
+                    bundle_path=bundle_path,
+                    result_path=None,
+                    packet_count=packet_count,
+                    packet_kind_filter=args.kind,
+                    active_only=not args.include_archived,
+                    status="stalled",
+                    summary=summary,
+                    error_text="no_active_chip_for_packets_hook",
+                    payload=payload_summary,
+                    completed_at=bundle.get("generated_at"),
+                )
+                log_operator_event(
+                    state_db=state_db,
+                    action="handoff_observer",
+                    target_kind="observer_handoff",
+                    target_ref=handoff_id,
+                    reason=args.reason,
+                    details={
+                        "status": "stalled",
+                        "chip_key": None,
+                        "packet_count": packet_count,
+                        "bundle_path": bundle_path,
+                        "error": "no_active_chip_for_packets_hook",
+                    },
+                )
+                close_run(
+                    state_db,
+                    run_id=run.run_id,
+                    status="stalled",
+                    close_reason="no_active_chip_for_packets_hook",
+                    summary=summary,
+                    facts={"hook": "packets"},
+                )
+                print(
+                    "No active chip exposes hook 'packets'. Activate a chip first or pass --chip-key.",
+                    file=sys.stderr,
+                )
+                return 1
+    except ValueError as exc:
+        summary = "Observer handoff failed validation before chip execution."
+        record_observer_handoff_record(
+            state_db,
+            handoff_id=handoff_id,
+            chip_key=args.chip_key or "active",
+            hook="packets",
+            run_id=run.run_id,
+            request_id=run.request_id,
+            bundle_path=bundle_path,
+            result_path=None,
+            packet_count=packet_count,
+            packet_kind_filter=args.kind,
+            active_only=not args.include_archived,
+            status="stalled",
+            summary=summary,
+            error_text=str(exc),
+            payload=payload_summary,
+            completed_at=bundle.get("generated_at"),
+        )
+        log_operator_event(
+            state_db=state_db,
+            action="handoff_observer",
+            target_kind="observer_handoff",
+            target_ref=handoff_id,
+            reason=args.reason,
+            details={
+                "status": "stalled",
+                "chip_key": args.chip_key,
+                "packet_count": packet_count,
+                "bundle_path": bundle_path,
+                "error": str(exc),
+            },
+        )
+        close_run(
+            state_db,
+            run_id=run.run_id,
+            status="stalled",
+            close_reason="observer_handoff_invalid",
+            summary=summary,
+            facts={"hook": "packets", "error": str(exc)},
+        )
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    record_chip_hook_execution(
+        state_db,
+        execution=execution,
+        component="operator_cli",
+        actor_id="local-operator",
+        summary="Operator executed an observer chip handoff via the packets hook.",
+        reason_code="observer_handoff",
+        keepability="operator_debug_only",
+        run_id=run.run_id,
+        request_id=run.request_id,
+    )
+    output_text = execution.to_json()
+    screened_output = screen_chip_hook_text(
+        state_db=state_db,
+        execution=execution,
+        text=output_text,
+        summary="Observer handoff blocked secret-like chip output before operator display.",
+        reason_code="observer_handoff_secret_like",
+        policy_domain="observer_handoff",
+        blocked_stage="operator_output",
+        run_id=run.run_id,
+        request_id=run.request_id,
+    )
+    if not screened_output["allowed"]:
+        summary = "Observer handoff output was blocked by the secret boundary."
+        record_observer_handoff_record(
+            state_db,
+            handoff_id=handoff_id,
+            chip_key=execution.chip_key,
+            hook="packets",
+            run_id=run.run_id,
+            request_id=run.request_id,
+            bundle_path=bundle_path,
+            result_path=None,
+            packet_count=packet_count,
+            packet_kind_filter=args.kind,
+            active_only=not args.include_archived,
+            status="blocked",
+            summary=summary,
+            exit_code=execution.exit_code,
+            error_text=f"secret_boundary_blocked:{screened_output['quarantine_id']}",
+            payload=payload_summary,
+            completed_at=bundle.get("generated_at"),
+        )
+        log_operator_event(
+            state_db=state_db,
+            action="handoff_observer",
+            target_kind="observer_handoff",
+            target_ref=handoff_id,
+            reason=args.reason,
+            details={
+                "status": "blocked",
+                "chip_key": execution.chip_key,
+                "packet_count": packet_count,
+                "bundle_path": bundle_path,
+                "quarantine_id": screened_output["quarantine_id"],
+            },
+        )
+        record_event(
+            state_db,
+            event_type="dispatch_failed",
+            component="operator_cli",
+            summary="Observer handoff blocked chip output because it contained secret-like material.",
+            run_id=run.run_id,
+            request_id=run.request_id,
+            actor_id="local-operator",
+            reason_code="secret_boundary_blocked",
+            severity="high",
+            facts={
+                "chip_key": execution.chip_key,
+                "hook": execution.hook,
+                "quarantine_id": screened_output["quarantine_id"],
+            },
+        )
+        close_run(
+            state_db,
+            run_id=run.run_id,
+            status="stalled",
+            close_reason="secret_boundary_blocked",
+            summary=summary,
+            facts={
+                "chip_key": execution.chip_key,
+                "hook": execution.hook,
+                "quarantine_id": screened_output["quarantine_id"],
+            },
+        )
+        print(
+            "Observer handoff output was blocked because it contained secret-like material. "
+            "Review quarantine records instead of raw output.",
+            file=sys.stderr,
+        )
+        return 1
+
+    result_path = Path(args.write_result) if args.write_result else (
+        config_manager.paths.home / "artifacts" / "observer-handoffs" / f"{handoff_id}.result.json"
+    )
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    result_payload = execution.to_payload()
+    result_path.write_text(json.dumps(result_payload, indent=2, ensure_ascii=True), encoding="utf-8")
+    handoff_status = "completed" if execution.ok else "failed"
+    summary = (
+        "Observer handoff completed and wrote the chip result artifact."
+        if execution.ok
+        else "Observer handoff wrote the chip result artifact but the chip returned a non-zero exit code."
+    )
+    record_observer_handoff_record(
+        state_db,
+        handoff_id=handoff_id,
+        chip_key=execution.chip_key,
+        hook="packets",
+        run_id=run.run_id,
+        request_id=run.request_id,
+        bundle_path=bundle_path,
+        result_path=str(result_path),
+        packet_count=packet_count,
+        packet_kind_filter=args.kind,
+        active_only=not args.include_archived,
+        status=handoff_status,
+        summary=summary,
+        exit_code=execution.exit_code,
+        payload=payload_summary,
+        output=execution.output,
+        completed_at=bundle.get("generated_at"),
+    )
+    log_operator_event(
+        state_db=state_db,
+        action="handoff_observer",
+        target_kind="observer_handoff",
+        target_ref=handoff_id,
+        reason=args.reason,
+        details={
+            "status": handoff_status,
+            "chip_key": execution.chip_key,
+            "packet_count": packet_count,
+            "bundle_path": bundle_path,
+            "result_path": str(result_path),
+            "exit_code": execution.exit_code,
+        },
+    )
+    close_run(
+        state_db,
+        run_id=run.run_id,
+        status="closed" if execution.ok else "failed",
+        close_reason="observer_handoff_completed" if execution.ok else "observer_handoff_failed",
+        summary=summary,
+        facts={
+            "chip_key": execution.chip_key,
+            "hook": execution.hook,
+            "packet_count": packet_count,
+            "result_path": str(result_path),
+            "exit_code": execution.exit_code,
+        },
+    )
+    report_payload = {
+        "handoff_id": handoff_id,
+        "status": handoff_status,
+        "chip_key": execution.chip_key,
+        "hook": execution.hook,
+        "packet_count": packet_count,
+        "packet_kind_filter": args.kind,
+        "active_only": not args.include_archived,
+        "bundle_path": bundle_path,
+        "result_path": str(result_path),
+        "counts_by_kind": bundle.get("counts_by_kind") or {},
+        "execution": result_payload,
+    }
+    if args.json:
+        print(json.dumps(report_payload, indent=2))
+    else:
+        print(
+            "\n".join(
+                [
+                    "Observer handoff:",
+                    f"- id: {handoff_id}",
+                    f"- status: {handoff_status}",
+                    f"- chip_key: {execution.chip_key}",
+                    f"- packet_count: {packet_count}",
+                    f"- bundle_path: {bundle_path}",
+                    f"- result_path: {result_path}",
+                ]
+            )
+        )
+    return 0 if execution.ok else 1
+
+
+def handle_operator_observer_handoffs(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    report = list_observer_handoffs(
+        config_manager=config_manager,
+        state_db=state_db,
+        limit=args.limit,
+        chip_key=args.chip_key,
+        status=args.status,
     )
     print(report.to_json() if args.json else report.to_text())
     return 0
@@ -3575,6 +3949,10 @@ def main(argv: list[str] | None = None) -> int:
         return handle_operator_observer_packets(args)
     if args.command == "operator" and args.operator_command == "export-observer-packets":
         return handle_operator_export_observer_packets(args)
+    if args.command == "operator" and args.operator_command == "handoff-observer":
+        return handle_operator_handoff_observer(args)
+    if args.command == "operator" and args.operator_command == "observer-handoffs":
+        return handle_operator_observer_handoffs(args)
     if args.command == "operator" and args.operator_command == "snooze-webhook-alert":
         return handle_operator_snooze_webhook_alert(args)
     if args.command == "operator" and args.operator_command == "webhook-alert-snoozes":

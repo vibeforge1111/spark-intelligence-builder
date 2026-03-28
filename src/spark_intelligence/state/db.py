@@ -575,6 +575,28 @@ SCHEMA_STATEMENTS = [
         content_json TEXT
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS observer_handoff_records (
+        handoff_id TEXT PRIMARY KEY,
+        chip_key TEXT NOT NULL,
+        hook TEXT NOT NULL,
+        run_id TEXT,
+        request_id TEXT,
+        bundle_path TEXT NOT NULL,
+        result_path TEXT,
+        packet_count INTEGER NOT NULL DEFAULT 0,
+        packet_kind_filter TEXT,
+        active_only INTEGER NOT NULL DEFAULT 1,
+        status TEXT NOT NULL,
+        exit_code INTEGER,
+        summary TEXT NOT NULL,
+        error_text TEXT,
+        payload_json TEXT,
+        output_json TEXT,
+        created_at TEXT NOT NULL,
+        completed_at TEXT
+    )
+    """,
     "CREATE INDEX IF NOT EXISTS idx_builder_events_run_id ON builder_events(run_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_builder_events_type ON builder_events(event_type, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_builder_runs_status ON builder_runs(status, opened_at)",
@@ -605,6 +627,8 @@ SCHEMA_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_resume_richness_guard_state_key ON resume_richness_guard_records(state_key, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_observer_packet_records_active ON observer_packet_records(active, last_seen_at)",
     "CREATE INDEX IF NOT EXISTS idx_observer_packet_records_kind ON observer_packet_records(packet_kind, last_seen_at)",
+    "CREATE INDEX IF NOT EXISTS idx_observer_handoff_records_created_at ON observer_handoff_records(created_at, handoff_id)",
+    "CREATE INDEX IF NOT EXISTS idx_observer_handoff_records_chip_status ON observer_handoff_records(chip_key, status, created_at)",
 ]
 
 

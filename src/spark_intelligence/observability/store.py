@@ -1109,6 +1109,108 @@ def recent_observer_packet_records(
     return payload
 
 
+def recent_observer_handoff_records(
+    state_db: StateDB,
+    *,
+    limit: int = 20,
+    chip_key: str | None = None,
+    status: str | None = None,
+) -> list[dict[str, Any]]:
+    query = """
+        SELECT *
+        FROM observer_handoff_records
+    """
+    clauses: list[str] = []
+    params: list[Any] = []
+    if chip_key:
+        clauses.append("chip_key = ?")
+        params.append(chip_key)
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+    query += " ORDER BY created_at DESC, handoff_id DESC LIMIT ?"
+    params.append(limit)
+    with state_db.connect() as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+    payload = [_row_to_dict(row) for row in rows]
+    for row in payload:
+        row["active_only"] = bool(row.get("active_only"))
+    return payload
+
+
+def record_observer_handoff_record(
+    state_db: StateDB,
+    *,
+    handoff_id: str,
+    chip_key: str,
+    hook: str,
+    run_id: str | None,
+    request_id: str | None,
+    bundle_path: str,
+    result_path: str | None,
+    packet_count: int,
+    packet_kind_filter: str | None,
+    active_only: bool,
+    status: str,
+    summary: str,
+    exit_code: int | None = None,
+    error_text: str | None = None,
+    payload: dict[str, Any] | None = None,
+    output: dict[str, Any] | None = None,
+    created_at: str | None = None,
+    completed_at: str | None = None,
+) -> None:
+    handoff_created_at = str(created_at or utc_now_iso())
+    with state_db.connect() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO observer_handoff_records(
+                handoff_id,
+                chip_key,
+                hook,
+                run_id,
+                request_id,
+                bundle_path,
+                result_path,
+                packet_count,
+                packet_kind_filter,
+                active_only,
+                status,
+                exit_code,
+                summary,
+                error_text,
+                payload_json,
+                output_json,
+                created_at,
+                completed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                handoff_id,
+                chip_key,
+                hook,
+                run_id,
+                request_id,
+                bundle_path,
+                result_path,
+                int(packet_count),
+                packet_kind_filter,
+                1 if active_only else 0,
+                status,
+                exit_code,
+                summary,
+                error_text,
+                json.dumps(payload, ensure_ascii=True, sort_keys=True) if payload is not None else None,
+                json.dumps(output, ensure_ascii=True, sort_keys=True) if output is not None else None,
+                handoff_created_at,
+                completed_at,
+            ),
+        )
+        conn.commit()
+
+
 def build_watchtower_snapshot(
     state_db: StateDB,
     *,
@@ -1450,6 +1552,7 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
         "after_summary_json",
         "rollback_payload_json",
         "payload_json",
+        "output_json",
         "semantic_diff_json",
     ):
         value = payload.get(key)

@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
-from spark_intelligence.observability.store import latest_events_by_type
+from spark_intelligence.observability.store import latest_events_by_type, record_event
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
 
 from tests.test_support import SparkTestCase
@@ -50,6 +50,25 @@ def main() -> int:
                 "stage_transition_suggested": None,
             },
         }
+    elif args.hook == "packets":
+        packet_bundle = payload.get("packet_bundle", {})
+        packets = packet_bundle.get("packets", [])
+        packet_kinds = sorted({str(packet.get("packet_kind") or "unknown") for packet in packets})
+        result = {
+            "returncode": 0,
+            "stdout": f"packet_count: {len(packets)}\\npacket_kinds: {','.join(packet_kinds)}",
+            "stderr": "",
+            "metrics": {"packet_count": len(packets), "packet_kind_count": len(packet_kinds)},
+            "result": {
+                "packet_count": len(packets),
+                "packet_kinds": packet_kinds,
+                "analysis": "Observer doctrine: convert bounded packet evidence into diagnosis and repair workstreams.",
+                "recommended_actions": [
+                    "review latest incident_report packets",
+                    "prioritize repair_plan items with high-severity provenance drift",
+                ],
+            },
+        }
     else:
         result = {"result": {}}
 
@@ -86,6 +105,86 @@ if __name__ == "__main__":
 
 
 class AttachmentHookTests(SparkTestCase):
+    def test_operator_handoff_observer_runs_packets_hook_and_records_handoff(self) -> None:
+        chip_root = _create_fake_hook_chip(self.home)
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+
+        activate_exit, _, activate_stderr = self.run_cli(
+            "attachments",
+            "activate-chip",
+            "startup-yc",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(activate_exit, 0, activate_stderr)
+
+        record_event(
+            self.state_db,
+            event_type="plugin_or_chip_influence_recorded",
+            component="researcher_bridge",
+            summary="unlabeled provenance mutation",
+            request_id="req-observer-handoff",
+            actor_id="researcher_bridge",
+            facts={"keepability": "ephemeral_context"},
+            provenance={},
+        )
+
+        handoff_exit, handoff_stdout, handoff_stderr = self.run_cli(
+            "operator",
+            "handoff-observer",
+            "--home",
+            str(self.home),
+            "--reason",
+            "observer runtime sync",
+            "--json",
+        )
+        self.assertEqual(handoff_exit, 0, handoff_stderr)
+        payload = json.loads(handoff_stdout)
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["chip_key"], "startup-yc")
+        self.assertGreaterEqual(payload["packet_count"], 1)
+        self.assertTrue(Path(payload["bundle_path"]).exists())
+        self.assertTrue(Path(payload["result_path"]).exists())
+        self.assertEqual(payload["execution"]["output"]["result"]["packet_count"], payload["packet_count"])
+
+        handoffs_exit, handoffs_stdout, handoffs_stderr = self.run_cli(
+            "operator",
+            "observer-handoffs",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(handoffs_exit, 0, handoffs_stderr)
+        handoffs_payload = json.loads(handoffs_stdout)
+        self.assertEqual(handoffs_payload["rows"][0]["handoff_id"], payload["handoff_id"])
+        self.assertEqual(handoffs_payload["rows"][0]["chip_key"], "startup-yc")
+        self.assertEqual(handoffs_payload["rows"][0]["status"], "completed")
+        self.assertEqual(handoffs_payload["rows"][0]["packet_count"], payload["packet_count"])
+
+        history_exit, history_stdout, history_stderr = self.run_cli(
+            "operator",
+            "history",
+            "--home",
+            str(self.home),
+            "--action",
+            "handoff_observer",
+            "--json",
+        )
+        self.assertEqual(history_exit, 0, history_stderr)
+        history_payload = json.loads(history_stdout)
+        self.assertEqual(history_payload["rows"][0]["target_ref"], payload["handoff_id"])
+        self.assertEqual(history_payload["rows"][0]["reason"], "observer runtime sync")
+
+        events = latest_events_by_type(self.state_db, event_type="plugin_or_chip_influence_recorded", limit=20)
+        self.assertTrue(
+            any(
+                str(event.get("component") or "") == "operator_cli"
+                and str((event.get("provenance_json") or {}).get("source_kind") or "") == "chip_hook"
+                and str((event.get("provenance_json") or {}).get("hook") or "") == "packets"
+                for event in events
+            )
+        )
+
     def test_attachments_run_hook_executes_active_chip_evaluate(self) -> None:
         chip_root = _create_fake_hook_chip(self.home)
         self.config_manager.set_path("spark.chips.roots", [str(chip_root)])

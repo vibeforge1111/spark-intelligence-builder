@@ -9,6 +9,7 @@ from typing import Any
 from spark_intelligence.adapters.discord.runtime import build_discord_runtime_summary
 from spark_intelligence.adapters.telegram.runtime import read_telegram_runtime_health
 from spark_intelligence.adapters.whatsapp.runtime import build_whatsapp_runtime_summary
+from spark_intelligence.attachments import build_attachment_snapshot
 from spark_intelligence.auth.runtime import build_auth_status_report
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.gateway.tracing import read_gateway_traces, read_outbound_audit
@@ -20,6 +21,7 @@ from spark_intelligence.observability.store import (
     export_observer_packet_bundle,
     recent_contradictions,
     recent_delivery_records,
+    recent_observer_handoff_records,
     recent_observer_packet_records,
     recent_policy_gate_records,
     recent_provenance_mutations,
@@ -260,6 +262,37 @@ class ObserverPacketExportReport:
             lines.append(
                 "- counts_by_kind: "
                 + " ".join(f"{kind}={count}" for kind, count in sorted(counts_by_kind.items()))
+            )
+        return "\n".join(lines)
+
+
+@dataclass
+class ObserverHandoffReport:
+    rows: list[dict[str, Any]]
+    chip_key: str | None = None
+    status: str | None = None
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "rows": self.rows,
+                "chip_key": self.chip_key,
+                "status": self.status,
+            },
+            indent=2,
+        )
+
+    def to_text(self) -> str:
+        if not self.rows:
+            return "No observer handoffs recorded."
+        lines = ["Observer handoffs:"]
+        lines.append(
+            f"- filters: chip_key={self.chip_key or 'all'} status={self.status or 'all'}"
+        )
+        for row in self.rows:
+            lines.append(
+                f"- {row['created_at']} chip={row['chip_key']} status={row['status']} "
+                f"packets={row['packet_count']} id={row['handoff_id']} summary={row['summary']}"
             )
         return "\n".join(lines)
 
@@ -663,6 +696,72 @@ def export_operator_observer_packets(
         limit=limit,
     )
     return ObserverPacketExportReport(payload=payload)
+
+
+def build_observer_handoff_payload(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    handoff_id: str,
+    chip_key: str | None = None,
+    write_path: str | Path | None = None,
+    limit: int = 200,
+    packet_kind: str | None = None,
+    active_only: bool = True,
+) -> dict[str, Any]:
+    resolved_write_path = str(write_path) if write_path is not None else str(
+        config_manager.paths.home / "artifacts" / "observer-handoffs" / f"{handoff_id}.bundle.json"
+    )
+    bundle = export_observer_packet_bundle(
+        state_db,
+        write_path=resolved_write_path,
+        packet_kind=packet_kind,
+        active_only=active_only,
+        limit=limit,
+    )
+    watchtower = build_watchtower_snapshot(state_db)
+    attachment_snapshot = build_attachment_snapshot(config_manager)
+    panels = watchtower.get("panels") or {}
+    return {
+        "schema_version": "spark-observer-handoff.v1",
+        "handoff_id": handoff_id,
+        "generated_at": bundle.get("generated_at"),
+        "workspace_id": str(config_manager.get_path("workspace.id", default="default")),
+        "target_chip_key": chip_key,
+        "hook": "packets",
+        "packet_bundle": bundle,
+        "watchtower": {
+            "top_level_state": watchtower.get("top_level_state"),
+            "health_dimensions": watchtower.get("health_dimensions") or {},
+            "observer_incidents": (panels.get("observer_incidents") or {}).get("counts") or {},
+            "observer_packets": (panels.get("observer_packets") or {}).get("counts") or {},
+            "memory_shadow": (panels.get("memory_shadow") or {}).get("counts") or {},
+            "session_integrity": (panels.get("session_integrity") or {}).get("counts") or {},
+        },
+        "attachments": {
+            "snapshot_path": attachment_snapshot.snapshot_path,
+            "active_chip_keys": attachment_snapshot.active_chip_keys,
+            "pinned_chip_keys": attachment_snapshot.pinned_chip_keys,
+            "active_path_key": attachment_snapshot.active_path_key,
+        },
+    }
+
+
+def list_observer_handoffs(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    limit: int = 20,
+    chip_key: str | None = None,
+    status: str | None = None,
+) -> ObserverHandoffReport:
+    rows = recent_observer_handoff_records(
+        state_db,
+        limit=limit,
+        chip_key=chip_key,
+        status=status,
+    )
+    return ObserverHandoffReport(rows=rows, chip_key=chip_key, status=status)
 
 
 def _load_channel_alerts(*, config_manager: ConfigManager, state_db: StateDB) -> list[dict[str, Any]]:
