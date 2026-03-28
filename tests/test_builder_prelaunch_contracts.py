@@ -8,6 +8,7 @@ from spark_intelligence.gateway.guardrails import prepare_outbound_text
 from spark_intelligence.observability.policy import looks_secret_like
 from spark_intelligence.jobs.service import jobs_tick
 from spark_intelligence.doctor.checks import run_doctor
+from spark_intelligence.identity.service import record_pairing_context
 from spark_intelligence.ops.service import build_operator_security_report
 from spark_intelligence.observability.checks import evaluate_stop_ship_issues
 from spark_intelligence.observability.store import (
@@ -23,6 +24,8 @@ from spark_intelligence.observability.store import (
 )
 from spark_intelligence.personality.loader import (
     detect_and_persist_nl_preferences,
+    detect_personality_query,
+    load_personality_profile,
     maybe_evolve_traits,
     record_observation,
 )
@@ -473,6 +476,80 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertTrue(panel["lane_labels_present"]["execution_evidence"])
         self.assertTrue(panel["lane_labels_present"]["ops_transcripts"])
         self.assertFalse(panel["lane_labels_present"]["durable_intelligence_memory"])
+
+    def test_watchtower_session_integrity_panel_tracks_reset_and_resume_surfaces(self) -> None:
+        detect_and_persist_nl_preferences(
+            human_id="human:test",
+            user_message="be more direct",
+            state_db=self.state_db,
+            config_manager=self.config_manager,
+            session_id="session:test",
+            turn_id="turn:pref",
+            channel_kind="telegram",
+        )
+        detect_personality_query(
+            user_message="reset personality",
+            human_id="human:test",
+            state_db=self.state_db,
+            profile=load_personality_profile(
+                human_id="human:test",
+                state_db=self.state_db,
+                config_manager=self.config_manager,
+            ),
+            config_manager=self.config_manager,
+            session_id="session:test",
+            turn_id="turn:reset",
+        )
+        record_pairing_context(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            context={
+                "telegram_username": "alice",
+                "chat_id": "chat-1",
+                "last_message_text": "hello",
+                "last_seen_at": "2026-03-28T00:00:00+00:00",
+            },
+        )
+        record_pairing_context(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            context={"last_seen_at": "2026-03-28T00:05:00+00:00"},
+        )
+
+        snapshot = build_watchtower_snapshot(self.state_db)
+        panel = snapshot["panels"]["session_integrity"]
+        issues = {
+            issue.name: issue
+            for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)
+        }
+
+        self.assertGreaterEqual(panel["counts"]["registered_reset_sensitive_keys"], 1)
+        self.assertEqual(panel["counts"]["recent_reset_events"], 1)
+        self.assertEqual(panel["counts"]["resume_richness_guard_interventions"], 1)
+        self.assertEqual(panel["counts"]["active_reset_sensitive_keys"], 0)
+        self.assertTrue(issues["stop_ship_reset_integrity"].ok)
+
+    def test_promotion_candidate_records_explicit_policy_gate_blocks(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="promotion candidate",
+            request_id="req-promotion-gates",
+            actor_id="researcher_bridge",
+            facts={
+                "keepability": "ephemeral_context",
+                "promotion_disposition": "durable_candidate",
+            },
+        )
+
+        policy_blocks = recent_policy_gate_records(self.state_db, limit=10)
+        gate_names = {str(row["gate_name"]) for row in policy_blocks}
+
+        self.assertIn("keepability_check", gate_names)
+        self.assertIn("residue_check", gate_names)
 
     def test_build_researcher_reply_records_chip_influence_provenance(self) -> None:
         self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])

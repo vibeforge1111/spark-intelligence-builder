@@ -17,6 +17,7 @@ from spark_intelligence.observability.store import (
     recent_memory_lane_records,
     recent_config_mutations,
     recent_contradictions,
+    recent_reset_sensitive_state_registry,
     recent_provenance_mutations,
     recent_quarantine_records,
     record_contradiction,
@@ -74,6 +75,7 @@ def evaluate_stop_ship_issues(
         _delivery_truth_issue(state_db),
         _background_closure_issue(state_db),
         _runtime_state_authority_issue(state_db),
+        _reset_integrity_issue(state_db),
         _plugin_provenance_issue(config_manager=config_manager, state_db=state_db),
         _provenance_ledger_issue(state_db),
         _unlabeled_provenance_quarantine_issue(state_db),
@@ -426,6 +428,47 @@ def _runtime_state_authority_issue(state_db: StateDB) -> StopShipIssue:
         name="stop_ship_runtime_state_authority",
         ok=True,
         detail="Critical runtime_state keys have typed domain mirrors available.",
+        severity="high",
+    )
+
+
+def _reset_integrity_issue(state_db: StateDB) -> StopShipIssue:
+    reset_events = latest_events_by_type(state_db, event_type="session_reset_performed", limit=50)
+    if not reset_events:
+        return StopShipIssue(
+            name="stop_ship_reset_integrity",
+            ok=True,
+            detail="No registered reset operations have executed yet.",
+            severity="high",
+        )
+    active_rows = recent_reset_sensitive_state_registry(state_db, limit=500, active_only=True)
+    leaked_scopes: list[str] = []
+    for event in reset_events:
+        facts = event.get("facts_json") or {}
+        if not isinstance(facts, dict):
+            continue
+        scope_kind = str(facts.get("scope_kind") or "")
+        scope_ref = str(facts.get("scope_ref") or "")
+        if not scope_kind or not scope_ref:
+            continue
+        leaking = [
+            row
+            for row in active_rows
+            if str(row.get("scope_kind") or "") == scope_kind and str(row.get("scope_ref") or "") == scope_ref
+        ]
+        if leaking:
+            leaked_scopes.append(f"{scope_kind}:{scope_ref}")
+    if leaked_scopes:
+        return StopShipIssue(
+            name="stop_ship_reset_integrity",
+            ok=False,
+            detail="Reset-sensitive state remained active after reset for " + ", ".join(sorted(set(leaked_scopes))),
+            severity="high",
+        )
+    return StopShipIssue(
+        name="stop_ship_reset_integrity",
+        ok=True,
+        detail="Registered reset-sensitive state is cleared when reset events execute.",
         severity="high",
     )
 

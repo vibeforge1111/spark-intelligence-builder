@@ -8,6 +8,7 @@ from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.observability.policy import looks_secret_like
 from spark_intelligence.observability.store import record_event, record_policy_gate_block, record_quarantine
 from spark_intelligence.state.db import StateDB
+from spark_intelligence.state.hygiene import upsert_runtime_state
 
 
 def load_channel_security_policy(
@@ -169,15 +170,21 @@ def prepare_outbound_text(
         cleaned = "Spark Intelligence produced an empty reply."
         actions.append("replace_empty_reply")
     return {"text": cleaned, "actions": actions}
-def set_runtime_state_value(*, state_db: StateDB, state_key: str, value: str) -> None:
+def set_runtime_state_value(
+    *,
+    state_db: StateDB,
+    state_key: str,
+    value: str,
+    component: str = "gateway_guardrails",
+    guard_strategy: str | None = None,
+) -> None:
     with state_db.connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO runtime_state(state_key, value)
-            VALUES (?, ?)
-            ON CONFLICT(state_key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
-            """,
-            (state_key, value),
+        upsert_runtime_state(
+            conn,
+            state_key=state_key,
+            value=value,
+            component=component,
+            guard_strategy=guard_strategy,
         )
         conn.commit()
 

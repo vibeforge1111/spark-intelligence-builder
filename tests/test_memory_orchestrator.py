@@ -16,7 +16,11 @@ from spark_intelligence.memory import (
     write_profile_fact_to_memory,
 )
 from spark_intelligence.memory.profile_facts import detect_profile_fact_observation
-from spark_intelligence.observability.store import build_watchtower_snapshot, latest_events_by_type
+from spark_intelligence.observability.store import (
+    build_watchtower_snapshot,
+    latest_events_by_type,
+    recent_reset_sensitive_state_registry,
+)
 from spark_intelligence.personality.loader import (
     detect_and_persist_nl_preferences,
     detect_personality_query,
@@ -333,6 +337,12 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(query.kind, "reset")
         self.assertTrue(fake_client.observation_calls)
         self.assertTrue(all(call["operation"] == "delete" for call in fake_client.observation_calls))
+        reset_events = latest_events_by_type(self.state_db, event_type="session_reset_performed", limit=10)
+        self.assertTrue(reset_events)
+        registry_rows = recent_reset_sensitive_state_registry(self.state_db, limit=20)
+        human_rows = [row for row in registry_rows if row["scope_ref"] == "human:test"]
+        self.assertTrue(human_rows)
+        self.assertTrue(all(int(row["active"]) == 0 for row in human_rows))
 
     def test_status_query_uses_narrow_current_state_read_when_memory_is_live(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

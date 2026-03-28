@@ -3,13 +3,51 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from spark_intelligence.adapters.telegram.runtime import simulate_telegram_update
-from spark_intelligence.identity.service import approve_pairing, pairing_summary, review_pairings
+from spark_intelligence.identity.service import approve_pairing, pairing_summary, record_pairing_context, review_pairings
+from spark_intelligence.observability.store import recent_resume_richness_guard_records
 from spark_intelligence.researcher_bridge.advisory import ResearcherBridgeResult
 
 from tests.test_support import SparkTestCase, make_telegram_update
 
 
 class OperatorPairingFlowTests(SparkTestCase):
+    def test_pairing_context_preserves_richer_state_on_sparse_resume_write(self) -> None:
+        record_pairing_context(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            context={
+                "display_name": "alice",
+                "telegram_username": "alice",
+                "chat_id": "chat-1",
+                "last_message_text": "hello from a richer state",
+                "last_update_id": 101,
+                "last_seen_at": "2026-03-28T00:00:00+00:00",
+            },
+        )
+        record_pairing_context(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            context={
+                "last_seen_at": "2026-03-28T00:05:00+00:00",
+            },
+        )
+
+        with self.state_db.connect() as conn:
+            context = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1",
+                ("pairing_context:telegram:111",),
+            ).fetchone()
+        self.assertIsNotNone(context)
+        payload = json.loads(context["value"])
+        self.assertEqual(payload["last_seen_at"], "2026-03-28T00:05:00+00:00")
+        self.assertEqual(payload["last_message_text"], "hello from a richer state")
+        self.assertEqual(payload["chat_id"], "chat-1")
+        guard_rows = recent_resume_richness_guard_records(self.state_db, limit=10)
+        self.assertTrue(guard_rows)
+        self.assertEqual(guard_rows[0]["state_key"], "pairing_context:telegram:111")
+
     def test_allowlist_user_is_allowed_without_creating_pending_or_approved_pairing(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 

@@ -19,6 +19,7 @@ from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.observability.store import latest_events_by_type, record_environment_snapshot, record_event
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
 from spark_intelligence.state.db import StateDB
+from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_runtime_state
 
 
 @dataclass
@@ -1306,6 +1307,7 @@ def _record_swarm_sync_state(
             conn,
             "swarm:last_sync",
             json.dumps(facts, sort_keys=True),
+            guard_strategy=JSON_RICHNESS_MERGE_GUARD,
         )
         if accepted:
             conn.execute("DELETE FROM runtime_state WHERE state_key = ?", ("swarm:last_failure",))
@@ -1358,6 +1360,7 @@ def _record_swarm_decision_state(
             conn,
             "swarm:last_decision",
             json.dumps(facts, sort_keys=True),
+            guard_strategy=JSON_RICHNESS_MERGE_GUARD,
         )
         conn.commit()
     record_event(
@@ -1418,7 +1421,12 @@ def _record_swarm_failure_state(
                 "triggers": result.triggers,
                 "recorded_at": _utc_now_iso(),
             }
-        _set_runtime_state(conn, "swarm:last_failure", json.dumps(payload, sort_keys=True))
+        _set_runtime_state(
+            conn,
+            "swarm:last_failure",
+            json.dumps(payload, sort_keys=True),
+            guard_strategy=JSON_RICHNESS_MERGE_GUARD,
+        )
         conn.commit()
     record_event(
         state_db,
@@ -1482,14 +1490,19 @@ def _read_failure_count(conn: Any, state_key: str) -> int:
         return 0
 
 
-def _set_runtime_state(conn: Any, state_key: str, value: str) -> None:
-    conn.execute(
-        """
-        INSERT INTO runtime_state(state_key, value)
-        VALUES (?, ?)
-        ON CONFLICT(state_key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
-        """,
-        (state_key, value),
+def _set_runtime_state(
+    conn: Any,
+    state_key: str,
+    value: str,
+    *,
+    guard_strategy: str | None = None,
+) -> None:
+    upsert_runtime_state(
+        conn,
+        state_key=state_key,
+        value=value,
+        component="swarm_bridge",
+        guard_strategy=guard_strategy,
     )
 
 

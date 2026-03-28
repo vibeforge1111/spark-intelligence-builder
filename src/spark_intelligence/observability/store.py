@@ -446,6 +446,22 @@ def record_event(
         provenance=normalized_provenance,
         facts=normalized_facts,
     )
+    _record_follow_on_promotion_gate_block_if_needed(
+        state_db,
+        event_id=event_id,
+        event_type=event_type,
+        component=component,
+        request_id=request_id,
+        trace_ref=trace_ref,
+        run_id=run_id,
+        channel_id=channel_id,
+        session_id=session_id,
+        actor_id=actor_id,
+        reason_code=reason_code,
+        severity=severity,
+        provenance=normalized_provenance,
+        facts=normalized_facts,
+    )
     return event_id
 
 
@@ -1019,6 +1035,44 @@ def recent_memory_lane_records(
     return [_row_to_dict(row) for row in rows]
 
 
+def recent_reset_sensitive_state_registry(
+    state_db: StateDB,
+    *,
+    limit: int = 50,
+    active_only: bool = False,
+) -> list[dict[str, Any]]:
+    query = """
+        SELECT *
+        FROM reset_sensitive_state_registry
+    """
+    params: list[Any] = []
+    if active_only:
+        query += " WHERE active = 1"
+    query += " ORDER BY updated_at DESC, registry_id DESC LIMIT ?"
+    params.append(limit)
+    with state_db.connect() as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+    return [_row_to_dict(row) for row in rows]
+
+
+def recent_resume_richness_guard_records(
+    state_db: StateDB,
+    *,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM resume_richness_guard_records
+            ORDER BY created_at DESC, guard_record_id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [_row_to_dict(row) for row in rows]
+
+
 def build_watchtower_snapshot(
     state_db: StateDB,
     *,
@@ -1056,6 +1110,7 @@ def build_watchtower_snapshot(
             "environment_parity": environment_panel,
             "provenance_and_quarantine": _build_provenance_and_quarantine_panel(state_db),
             "memory_lane_hygiene": _build_memory_lane_hygiene_panel(state_db),
+            "session_integrity": _build_session_integrity_panel(state_db),
             "memory_shadow": _build_memory_shadow_panel(state_db),
         },
     }
@@ -1696,6 +1751,8 @@ def _mirror_memory_lane_event(
     facts: dict[str, Any],
     provenance: dict[str, Any],
 ) -> None:
+    if event_type == "policy_gate_blocked":
+        return
     keepability = str(facts.get("keepability") or "")
     promotion_disposition = _normalized_promotion_disposition(
         facts.get("promotion_disposition"),
@@ -1815,6 +1872,117 @@ def _record_follow_on_policy_block_if_needed(
         },
         facts={"source_event_id": event_id},
     )
+
+
+def _record_follow_on_promotion_gate_block_if_needed(
+    state_db: StateDB,
+    *,
+    event_id: str,
+    event_type: str,
+    component: str,
+    request_id: str | None,
+    trace_ref: str | None,
+    run_id: str | None,
+    channel_id: str | None,
+    session_id: str | None,
+    actor_id: str | None,
+    reason_code: str | None,
+    severity: str,
+    provenance: dict[str, Any],
+    facts: dict[str, Any],
+) -> None:
+    if event_type == "policy_gate_blocked":
+        return
+    keepability = str(facts.get("keepability") or "")
+    promotion_disposition = _normalized_promotion_disposition(
+        facts.get("promotion_disposition"),
+        keepability,
+    )
+    if not promotion_disposition or promotion_disposition in NON_PROMOTABLE_DISPOSITIONS:
+        return
+
+    source_kind = str(provenance.get("source_kind") or facts.get("source_kind") or "unknown")
+    source_ref = str(
+        provenance.get("source_ref")
+        or facts.get("source_ref")
+        or request_id
+        or trace_ref
+        or run_id
+        or "unknown"
+    )
+    artifact_lane = _artifact_lane_from_keepability(keepability)
+    open_contradictions = recent_contradictions(state_db, limit=25, status="open")
+    gate_records: list[tuple[str, str, str]] = []
+
+    if source_kind == "unknown" or source_ref == "unknown":
+        gate_records.append(
+            (
+                "provenance_check",
+                "Promotion candidate was blocked because provenance is incomplete.",
+                "promotion_provenance_missing",
+            )
+        )
+    if keepability in NON_PROMOTABLE_KEEPABILITY:
+        gate_records.append(
+            (
+                "keepability_check",
+                "Promotion candidate was blocked because its keepability is non-promotable.",
+                "promotion_keepability_blocked",
+            )
+        )
+    if artifact_lane in {"ops_transcripts", "execution_evidence"}:
+        gate_records.append(
+            (
+                "residue_check",
+                "Promotion candidate was blocked because it still lives in an ops or execution lane.",
+                "promotion_residue_blocked",
+            )
+        )
+    if open_contradictions:
+        gate_records.append(
+            (
+                "contradiction_check",
+                "Promotion candidate was blocked because open contradictions are still active.",
+                "promotion_contradiction_blocked",
+            )
+        )
+
+    for gate_name, summary, gate_reason in gate_records:
+        record_policy_gate_block(
+            state_db,
+            component=component,
+            policy_domain="memory_promotion",
+            gate_name=gate_name,
+            source_kind=source_kind,
+            source_ref=source_ref,
+            summary=summary,
+            action="promotion_blocked",
+            reason_code=gate_reason,
+            blocked_stage="promotion",
+            input_ref=event_id,
+            output_ref=_promotion_target_lane(promotion_disposition),
+            severity="high" if severity == "critical" else severity,
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_id,
+            session_id=session_id,
+            actor_id=actor_id,
+            provenance={
+                "source_kind": source_kind,
+                "source_ref": source_ref,
+                "origin_component": component,
+            },
+            facts={
+                "source_event_id": event_id,
+                "event_type": event_type,
+                "keepability": keepability or None,
+                "promotion_disposition": promotion_disposition,
+                "artifact_lane": artifact_lane,
+                "open_contradiction_count": len(open_contradictions),
+                "reason_code": reason_code,
+            },
+        )
 
 
 def _delivery_failure_family(error_value: Any) -> str | None:
@@ -2244,6 +2412,26 @@ def _build_memory_lane_hygiene_panel(state_db: StateDB) -> dict[str, Any]:
         },
         "recent_promotions": lane_records[:10],
         "recent_integrity_incidents": resume_integrity_incidents[:10],
+    }
+
+
+def _build_session_integrity_panel(state_db: StateDB) -> dict[str, Any]:
+    reset_registry = recent_reset_sensitive_state_registry(state_db, limit=200)
+    active_registry = [row for row in reset_registry if int(row.get("active") or 0) == 1]
+    cleared_registry = [row for row in reset_registry if int(row.get("active") or 0) == 0]
+    guard_rows = recent_resume_richness_guard_records(state_db, limit=50)
+    reset_events = latest_events_by_type(state_db, event_type="session_reset_performed", limit=20)
+    return {
+        "counts": {
+            "registered_reset_sensitive_keys": len(reset_registry),
+            "active_reset_sensitive_keys": len(active_registry),
+            "cleared_reset_sensitive_keys": len(cleared_registry),
+            "resume_richness_guard_interventions": len(guard_rows),
+            "recent_reset_events": len(reset_events),
+        },
+        "recent_reset_sensitive_keys": active_registry[:10],
+        "recent_guard_interventions": guard_rows[:10],
+        "recent_reset_events": reset_events[:10],
     }
 
 

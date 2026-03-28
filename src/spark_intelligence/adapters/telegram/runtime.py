@@ -22,6 +22,7 @@ from spark_intelligence.identity.service import consume_pairing_welcome, record_
 from spark_intelligence.observability.store import close_run, open_run, record_event
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply, record_researcher_bridge_result
 from spark_intelligence.state.db import StateDB
+from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD
 from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_status, sync_swarm_collective
 
 
@@ -189,6 +190,8 @@ def record_telegram_auth_result(
             },
             sort_keys=True,
         ),
+        component="telegram_runtime",
+        guard_strategy=JSON_RICHNESS_MERGE_GUARD,
     )
 
 
@@ -197,7 +200,13 @@ def record_telegram_poll_success(*, state_db: StateDB) -> None:
     payload["last_ok_at"] = _utc_now_iso()
     payload["consecutive_failures"] = 0
     payload["last_backoff_seconds"] = 0
-    set_runtime_state_value(state_db=state_db, state_key="telegram:poll_state", value=json.dumps(payload, sort_keys=True))
+    set_runtime_state_value(
+        state_db=state_db,
+        state_key="telegram:poll_state",
+        value=json.dumps(payload, sort_keys=True),
+        component="telegram_runtime",
+        guard_strategy=JSON_RICHNESS_MERGE_GUARD,
+    )
 
 
 def record_telegram_poll_failure(
@@ -213,7 +222,13 @@ def record_telegram_poll_failure(
     payload["last_failure_message"] = message
     payload["consecutive_failures"] = _read_optional_int(payload.get("consecutive_failures")) + 1
     payload["last_backoff_seconds"] = max(backoff_seconds, 0)
-    set_runtime_state_value(state_db=state_db, state_key="telegram:poll_state", value=json.dumps(payload, sort_keys=True))
+    set_runtime_state_value(
+        state_db=state_db,
+        state_key="telegram:poll_state",
+        value=json.dumps(payload, sort_keys=True),
+        component="telegram_runtime",
+        guard_strategy=JSON_RICHNESS_MERGE_GUARD,
+    )
 
 
 def simulate_telegram_update(

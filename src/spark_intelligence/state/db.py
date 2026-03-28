@@ -496,6 +496,35 @@ SCHEMA_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS reset_sensitive_state_registry (
+        registry_id TEXT PRIMARY KEY,
+        state_key TEXT NOT NULL UNIQUE,
+        component TEXT NOT NULL,
+        storage_kind TEXT NOT NULL,
+        scope_kind TEXT NOT NULL,
+        scope_ref TEXT NOT NULL,
+        reset_reason TEXT NOT NULL,
+        active INTEGER NOT NULL DEFAULT 1,
+        last_registered_at TEXT NOT NULL,
+        last_cleared_at TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS resume_richness_guard_records (
+        guard_record_id TEXT PRIMARY KEY,
+        state_key TEXT NOT NULL,
+        component TEXT NOT NULL,
+        action TEXT NOT NULL,
+        existing_richness INTEGER NOT NULL DEFAULT 0,
+        incoming_richness INTEGER NOT NULL DEFAULT 0,
+        stored_richness INTEGER NOT NULL DEFAULT 0,
+        evidence_json TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS job_records (
         job_id TEXT PRIMARY KEY,
         job_kind TEXT NOT NULL,
@@ -544,6 +573,9 @@ SCHEMA_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_policy_gate_records_gate_name ON policy_gate_records(gate_name, recorded_at)",
     "CREATE INDEX IF NOT EXISTS idx_memory_lane_records_recorded_at ON memory_lane_records(recorded_at)",
     "CREATE INDEX IF NOT EXISTS idx_memory_lane_records_artifact_lane ON memory_lane_records(artifact_lane, recorded_at)",
+    "CREATE INDEX IF NOT EXISTS idx_reset_sensitive_state_scope ON reset_sensitive_state_registry(scope_kind, scope_ref, active, updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_resume_richness_guard_created_at ON resume_richness_guard_records(created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_resume_richness_guard_state_key ON resume_richness_guard_records(state_key, created_at)",
 ]
 
 

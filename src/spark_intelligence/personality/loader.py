@@ -34,7 +34,13 @@ from spark_intelligence.memory.orchestrator import (
     read_personality_preferences_from_memory,
     write_personality_preferences_to_memory,
 )
+from spark_intelligence.observability.store import record_event
 from spark_intelligence.state.db import StateDB
+from spark_intelligence.state.hygiene import (
+    clear_registered_state_keys,
+    clear_reset_sensitive_scope,
+    upsert_runtime_state,
+)
 
 
 # ── Filesystem paths ──
@@ -420,13 +426,12 @@ def _save_user_trait_deltas(
             """,
             (human_id, json.dumps(normalized, sort_keys=True), updated_at),
         )
-        conn.execute(
-            """
-            INSERT INTO runtime_state(state_key, value)
-            VALUES (?, ?)
-            ON CONFLICT(state_key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
-            """,
-            (_state_key(human_id), payload),
+        upsert_runtime_state(
+            conn,
+            state_key=_state_key(human_id),
+            value=payload,
+            component="personality_profile",
+            reset_sensitive_scope=("human", human_id, "personality_preference_reset"),
         )
         conn.commit()
 
@@ -489,7 +494,7 @@ def detect_personality_query(
     for pattern in _QUERY_RESET_PATTERNS:
         if pattern.search(text):
             existing_deltas = _load_user_trait_deltas(human_id=human_id, state_db=state_db)
-            _clear_user_trait_deltas(human_id=human_id, state_db=state_db)
+            cleared_state_keys = _clear_user_trait_deltas(human_id=human_id, state_db=state_db)
             if config_manager is not None:
                 try:
                     delete_personality_preferences_from_memory(
@@ -503,6 +508,25 @@ def detect_personality_query(
                     )
                 except Exception:
                     pass
+            record_event(
+                state_db,
+                event_type="session_reset_performed",
+                component="personality_profile",
+                summary="Personality reset cleared reset-sensitive preference state.",
+                request_id=turn_id,
+                session_id=session_id,
+                human_id=human_id,
+                actor_id="personality_profile",
+                reason_code="personality_reset",
+                facts={
+                    "scope_kind": "human",
+                    "scope_ref": human_id,
+                    "reset_reason": "personality_preference_reset",
+                    "cleared_state_keys": cleared_state_keys,
+                    "cleared_state_key_count": len(cleared_state_keys),
+                },
+                provenance={"source_kind": "personality_query"},
+            )
             return PersonalityQueryResult(
                 kind="reset",
                 context_injection=(
@@ -626,18 +650,21 @@ def _format_profile_status(
     return "\n".join(lines)
 
 
-def _clear_user_trait_deltas(*, human_id: str, state_db: StateDB) -> None:
+def _clear_user_trait_deltas(*, human_id: str, state_db: StateDB) -> list[str]:
     """Clear all per-user trait deltas (reset to base personality)."""
     with state_db.connect() as conn:
         conn.execute(
             "DELETE FROM personality_trait_profiles WHERE human_id = ?",
             (human_id,),
         )
-        conn.execute(
-            "DELETE FROM runtime_state WHERE state_key = ?",
-            (_state_key(human_id),),
+        cleared_state_keys = clear_reset_sensitive_scope(
+            conn,
+            scope_kind="human",
+            scope_ref=human_id,
+            component="personality_profile",
         )
         conn.commit()
+    return cleared_state_keys
 
 
 # ── Self-observation ──
@@ -697,10 +724,22 @@ def _store_observation_runtime_mirror(
 ) -> None:
     payload = json.dumps({"observations": observations}, sort_keys=True)
     if conn is not None:
-        _set_runtime_state(conn, _observation_state_key(human_id), payload)
+        upsert_runtime_state(
+            conn,
+            state_key=_observation_state_key(human_id),
+            value=payload,
+            component="personality_profile",
+            reset_sensitive_scope=("human", human_id, "personality_preference_reset"),
+        )
         return
     with state_db.connect() as mirror_conn:
-        _set_runtime_state(mirror_conn, _observation_state_key(human_id), payload)
+        upsert_runtime_state(
+            mirror_conn,
+            state_key=_observation_state_key(human_id),
+            value=payload,
+            component="personality_profile",
+            reset_sensitive_scope=("human", human_id, "personality_preference_reset"),
+        )
         mirror_conn.commit()
 
 
@@ -751,22 +790,23 @@ def _store_evolution_runtime_mirror(
 ) -> None:
     payload = json.dumps({"events": events[-20:]}, sort_keys=True)
     if conn is not None:
-        _set_runtime_state(conn, _evolution_log_state_key(human_id), payload)
+        upsert_runtime_state(
+            conn,
+            state_key=_evolution_log_state_key(human_id),
+            value=payload,
+            component="personality_profile",
+            reset_sensitive_scope=("human", human_id, "personality_preference_reset"),
+        )
         return
     with state_db.connect() as mirror_conn:
-        _set_runtime_state(mirror_conn, _evolution_log_state_key(human_id), payload)
+        upsert_runtime_state(
+            mirror_conn,
+            state_key=_evolution_log_state_key(human_id),
+            value=payload,
+            component="personality_profile",
+            reset_sensitive_scope=("human", human_id, "personality_preference_reset"),
+        )
         mirror_conn.commit()
-
-
-def _set_runtime_state(conn: Any, state_key: str, value: str) -> None:
-    conn.execute(
-        """
-        INSERT INTO runtime_state(state_key, value)
-        VALUES (?, ?)
-        ON CONFLICT(state_key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
-        """,
-        (state_key, value),
-    )
 
 
 _OBSERVATION_WINDOW = 50  # keep last N observations per user
@@ -984,9 +1024,9 @@ def maybe_evolve_traits(
             "DELETE FROM personality_observations WHERE human_id = ?",
             (human_id,),
         )
-        conn.execute(
-            "DELETE FROM runtime_state WHERE state_key = ?",
-            (_observation_state_key(human_id),),
+        clear_registered_state_keys(
+            conn,
+            state_keys=[_observation_state_key(human_id)],
         )
         conn.commit()
 

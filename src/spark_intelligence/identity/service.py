@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from spark_intelligence.state.db import StateDB
+from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_runtime_state
 
 
 LOCAL_OPERATOR_HUMAN_ID = "local-operator"
@@ -497,13 +498,12 @@ def record_pairing_context(
 ) -> None:
     state_key = _pairing_context_state_key(channel_id, external_user_id)
     with state_db.connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO runtime_state(state_key, value)
-            VALUES (?, ?)
-            ON CONFLICT(state_key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
-            """,
-            (state_key, json.dumps(context, sort_keys=True)),
+        upsert_runtime_state(
+            conn,
+            state_key=state_key,
+            value=json.dumps(context, sort_keys=True),
+            component="pairing_context",
+            guard_strategy=JSON_RICHNESS_MERGE_GUARD,
         )
         conn.commit()
 

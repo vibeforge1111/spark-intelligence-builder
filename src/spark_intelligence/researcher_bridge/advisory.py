@@ -44,6 +44,7 @@ from spark_intelligence.personality import (
 )
 from spark_intelligence.personality.loader import build_personality_system_directive
 from spark_intelligence.state.db import StateDB
+from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_runtime_state
 
 
 @dataclass
@@ -985,6 +986,7 @@ def record_researcher_bridge_result(*, state_db: StateDB, result: ResearcherBrid
             conn,
             "researcher:last_attachment_context",
             json.dumps(result.attachment_context or {}, sort_keys=True),
+            guard_strategy=JSON_RICHNESS_MERGE_GUARD,
         )
         if result.mode == "bridge_error":
             failure_count = _read_failure_count(conn, "researcher:failure_count")
@@ -1007,6 +1009,7 @@ def record_researcher_bridge_result(*, state_db: StateDB, result: ResearcherBrid
                     },
                     sort_keys=True,
                 ),
+                guard_strategy=JSON_RICHNESS_MERGE_GUARD,
             )
         conn.commit()
 
@@ -2195,12 +2198,17 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _set_runtime_state(conn: Any, state_key: str, value: str) -> None:
-    conn.execute(
-        """
-        INSERT INTO runtime_state(state_key, value)
-        VALUES (?, ?)
-        ON CONFLICT(state_key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
-        """,
-        (state_key, value),
+def _set_runtime_state(
+    conn: Any,
+    state_key: str,
+    value: str,
+    *,
+    guard_strategy: str | None = None,
+) -> None:
+    upsert_runtime_state(
+        conn,
+        state_key=state_key,
+        value=value,
+        component="researcher_bridge",
+        guard_strategy=guard_strategy,
     )
