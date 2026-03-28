@@ -129,6 +129,29 @@ What the Builder-side packet ledger now does:
 
 This closes the remaining repo-local follow-on work around packet persistence, direct packet inspection, and Builder-side handoff packaging for a replaceable external observer runtime.
 
+### Observer chip handoff runtime
+
+Added a Builder-side runtime path that hands bounded observer packets to an invokeable chip `packets` hook and records the exchange as typed Builder evidence.
+
+What now exists:
+
+- `observer_handoff_records`
+- `spark-intelligence operator handoff-observer`
+- `spark-intelligence operator observer-handoffs`
+- per-handoff bundle and result artifacts under `artifacts/observer-handoffs/`
+- typed operator audit history for chip handoff attempts
+- secret-boundary screening on observer chip output before operator display
+
+What the Builder-side handoff runtime now does:
+
+- builds a bounded `spark-observer-handoff.v1` payload over the persisted observer packet bundle
+- includes focused Watchtower and attachment state context for the chip without turning the chip into runtime authority
+- invokes the active chip or an explicit chip key through the existing `spark-hook-io.v1` `packets` hook contract
+- records completed, failed, blocked, or stalled handoff attempts in a typed ledger instead of leaving them only in generic traces
+- writes a result artifact only when the chip output passes secret-boundary screening
+
+This closes the Builder-side runtime half of the self-observer handoff doctrine. The external chip implementation still lives outside this repo, but Builder now has a bounded, typed, operator-visible way to hand observer packets to it.
+
 ### Builder memory contract enforcement
 
 Added a Builder-local contract layer around downstream memory read and write roles.
@@ -147,11 +170,11 @@ This closes the Builder-side piece of the previously deferred memory-domain cont
 
 Validated in repo with:
 
-- `python -m pytest tests/test_builder_prelaunch_contracts.py tests/test_memory_orchestrator.py tests/test_operator_pairing_flows.py tests/test_cli_smoke.py tests/test_gateway_discord_webhook.py tests/test_gateway_whatsapp_webhook.py`
+- `python -m pytest tests/test_builder_prelaunch_contracts.py tests/test_memory_orchestrator.py tests/test_operator_pairing_flows.py tests/test_cli_smoke.py tests/test_attachment_hooks.py tests/test_gateway_discord_webhook.py tests/test_gateway_whatsapp_webhook.py`
 
 Result:
 
-- `179 passed`
+- `183 passed`
 
 ## Still Deferred
 
