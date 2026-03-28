@@ -56,7 +56,7 @@ from pathlib import Path
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("hook", choices=["evaluate", "suggest", "packets", "watchtower", "identity"])
+    parser.add_argument("hook", choices=["evaluate", "suggest", "packets", "watchtower", "identity", "personality"])
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
@@ -120,6 +120,48 @@ def main() -> int:
                 },
             },
         }
+    elif args.hook == "personality":
+        human_id = str(payload.get("human_id") or "human:unknown")
+        agent_id = str(payload.get("agent_id") or "agent:unknown")
+        current_identity = payload.get("identity") or {}
+        current_name = str(current_identity.get("agent_name") or "Founder Operator").strip() or "Founder Operator"
+        result = {
+            "returncode": 0,
+            "stdout": f"persona_name: {current_name}\\nagent_id: {agent_id}",
+            "stderr": "",
+            "metrics": {"observation_count": len(payload.get("recent_observations") or []), "evolution_count": len(payload.get("recent_evolutions") or [])},
+            "result": {
+                "human_id": human_id,
+                "agent_id": agent_id,
+                "persona_name": current_name,
+                "persona_summary": "Direct, calm, low-fluff, strategic.",
+                "base_traits": {
+                    "warmth": 0.46,
+                    "directness": 0.82,
+                    "playfulness": 0.18,
+                    "pacing": 0.63,
+                    "assertiveness": 0.79,
+                },
+                "behavioral_rules": [
+                    "Prefer clear decisions over open-ended brainstorming unless asked.",
+                    "Avoid emotional padding.",
+                    "Push toward execution.",
+                ],
+                "evolver_state": {
+                    "traits": {
+                        "warmth": 0.46,
+                        "directness": 0.82,
+                        "playfulness": 0.18,
+                        "pacing": 0.63,
+                        "assertiveness": 0.79,
+                    },
+                    "last_signals": {
+                        "personality_id": "founder_operator",
+                        "personality_name": current_name,
+                    },
+                },
+            },
+        }
     else:
         result = {"result": {}}
 
@@ -140,13 +182,14 @@ if __name__ == "__main__":
                 "chip_name": chip_key,
                 "domain": "startup-advisory",
                 "description": "Fake startup chip for hook tests.",
-                "capabilities": ["evaluate", "suggest", "packets", "watchtower", "identity"],
+                "capabilities": ["evaluate", "suggest", "packets", "watchtower", "identity", "personality"],
                 "commands": {
                     "evaluate": ["python", "-m", "fake_startup_chip.chip_hooks", "evaluate"],
                     "suggest": ["python", "-m", "fake_startup_chip.chip_hooks", "suggest"],
                     "packets": ["python", "-m", "fake_startup_chip.chip_hooks", "packets"],
                     "watchtower": ["python", "-m", "fake_startup_chip.chip_hooks", "watchtower"],
                     "identity": ["python", "-m", "fake_startup_chip.chip_hooks", "identity"],
+                    "personality": ["python", "-m", "fake_startup_chip.chip_hooks", "personality"],
                 },
             },
             indent=2,

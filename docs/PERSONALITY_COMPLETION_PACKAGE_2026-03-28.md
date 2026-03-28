@@ -4,6 +4,8 @@
 
 Builder-side personality integration is now completed as a first-class subsystem rather than a bridge-only wiring pass.
 
+Builder also now exposes a hook-backed import path for the external personality runtime instead of relying only on an out-of-band file writer.
+
 ## What Shipped
 
 - Hardened `load_personality_profile()` so it can operate safely without a live `ConfigManager` or `StateDB` when used in isolated contract or smoke contexts.
@@ -20,6 +22,10 @@ Builder-side personality integration is now completed as a first-class subsystem
 - Added an operator CLI surface:
   - `spark-intelligence operator personality`
   - `spark-intelligence operator personality --human-id <human_id>`
+- Added a hook-backed Builder import surface:
+  - `spark-intelligence agent import-personality --human-id <human_id> [--chip-key <chip-key>]`
+  - writes a validated agent persona profile into Builder typed storage
+  - writes the imported evolver state into the configured `personality_evolution_v1.json` path
 
 ## Operator Contract
 
@@ -52,10 +58,11 @@ Builder now owns:
 - typed observation and evolution history
 - Watchtower and doctor visibility
 - operator inspection surfaces
+- hook-backed import of external personality runtime output into Builder-owned storage and evolver state
 
 The external personality chip repo still owns:
 
-- the evolver/runtime that writes `personality_evolution_v1.json`
+- the runtime that exposes the `personality` hook and produces the evolver/persona result Builder imports
 - any personality-model heuristics beyond the Builder-side storage and inspection contract
 
 ## Validation
@@ -63,7 +70,7 @@ The external personality chip repo still owns:
 Validated with:
 
 ```text
-python -m pytest tests/test_memory_orchestrator.py tests/test_builder_prelaunch_contracts.py tests/test_cli_smoke.py
+python -m pytest tests/test_agent_identity_contracts.py tests/test_attachment_hooks.py tests/test_memory_orchestrator.py tests/test_builder_prelaunch_contracts.py tests/test_cli_smoke.py tests/test_operator_pairing_flows.py
 ```
 
-Result: `136 passed`
+Result: `176 passed`

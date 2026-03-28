@@ -256,6 +256,77 @@ class AttachmentHookTests(SparkTestCase):
         history_payload = json.loads(history_stdout)
         self.assertEqual(history_payload["rows"][0]["target_ref"], "human:telegram:111")
 
+    def test_agent_import_personality_runs_hook_and_updates_persona_state(self) -> None:
+        chip_root = create_fake_hook_chip(self.home, chip_key="spark-personality")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+        self.add_telegram_channel()
+
+        approve_exit, _, approve_stderr = self.run_cli(
+            "pairings",
+            "approve",
+            "telegram",
+            "111",
+            "--home",
+            str(self.home),
+            "--display-name",
+            "Alice",
+        )
+        self.assertEqual(approve_exit, 0, approve_stderr)
+
+        activate_exit, _, activate_stderr = self.run_cli(
+            "attachments",
+            "activate-chip",
+            "spark-personality",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(activate_exit, 0, activate_stderr)
+
+        import_exit, import_stdout, import_stderr = self.run_cli(
+            "agent",
+            "import-personality",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:telegram:111",
+            "--json",
+        )
+        self.assertEqual(import_exit, 0, import_stderr)
+        payload = json.loads(import_stdout)
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["chip_key"], "spark-personality")
+        self.assertEqual(payload["persona_profile"]["persona_name"], "Alice")
+        self.assertTrue(Path(payload["payload_path"]).exists())
+        self.assertTrue(Path(payload["result_path"]).exists())
+        self.assertTrue(Path(payload["evolver_state_path"]).exists())
+
+        detail_exit, detail_stdout, detail_stderr = self.run_cli(
+            "operator",
+            "personality",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:telegram:111",
+            "--json",
+        )
+        self.assertEqual(detail_exit, 0, detail_stderr)
+        detail_payload = json.loads(detail_stdout)
+        self.assertEqual(detail_payload["agent_persona"]["persona_name"], "Alice")
+        self.assertEqual(detail_payload["profile"]["personality_name"], "Alice")
+
+        history_exit, history_stdout, history_stderr = self.run_cli(
+            "operator",
+            "history",
+            "--home",
+            str(self.home),
+            "--action",
+            "import_personality",
+            "--json",
+        )
+        self.assertEqual(history_exit, 0, history_stderr)
+        history_payload = json.loads(history_stdout)
+        self.assertEqual(history_payload["rows"][0]["target_ref"], "agent:human:telegram:111")
+
     def test_researcher_bridge_includes_active_chip_evaluate_context_in_provider_fallback(self) -> None:
         self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
         self.config_manager.set_path("spark.chips.pinned_keys", ["startup-yc"])

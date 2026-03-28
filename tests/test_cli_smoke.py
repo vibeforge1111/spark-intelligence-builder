@@ -1446,6 +1446,44 @@ class CliSmokeTests(SparkTestCase):
         self.assertTrue(Path(payload["payload_path"]).exists())
         self.assertTrue(Path(payload["result_path"]).exists())
 
+    def test_agent_import_personality_command_updates_agent_persona_from_hook_runtime(self) -> None:
+        chip_root = create_fake_hook_chip(self.home, chip_key="spark-personality")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+
+        activate_exit, _, activate_stderr = self.run_cli(
+            "attachments",
+            "activate-chip",
+            "spark-personality",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(activate_exit, 0, activate_stderr)
+
+        import_exit, import_stdout, import_stderr = self.run_cli(
+            "agent",
+            "import-personality",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:telegram:111",
+            "--json",
+        )
+        self.assertEqual(import_exit, 0, import_stderr)
+        payload = json.loads(import_stdout)
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["chip_key"], "spark-personality")
+        self.assertEqual(payload["persona_profile"]["persona_name"], "Alice")
+        self.assertEqual(payload["persona_profile"]["base_traits"]["directness"], 0.82)
+        self.assertTrue(Path(payload["payload_path"]).exists())
+        self.assertTrue(Path(payload["result_path"]).exists())
+        self.assertTrue(Path(payload["evolver_state_path"]).exists())
+
     def test_agent_migrate_legacy_personality_command_moves_overlay_into_agent_base(self) -> None:
         approve_pairing(
             state_db=self.state_db,

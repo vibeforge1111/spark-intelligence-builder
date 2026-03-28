@@ -64,6 +64,7 @@ from spark_intelligence.identity.service import (
     normalize_spark_swarm_identity_import,
     pairing_summary,
     peek_latest_pairing_external_user_id,
+    read_canonical_agent_state,
     rename_agent_identity,
     revoke_latest_pairing,
     review_pairings,
@@ -80,7 +81,13 @@ from spark_intelligence.memory import (
     lookup_current_state_in_memory,
     run_memory_sdk_smoke_test,
 )
-from spark_intelligence.personality import migrate_legacy_human_personality_to_agent_persona
+from spark_intelligence.personality import (
+    build_personality_import_payload,
+    migrate_legacy_human_personality_to_agent_persona,
+    normalize_personality_import,
+    save_agent_persona_profile,
+    write_personality_evolver_state,
+)
 from spark_intelligence.observability.policy import screen_model_visible_text
 from spark_intelligence.observability.store import (
     build_watchtower_snapshot,
@@ -1478,6 +1485,18 @@ def build_parser() -> argparse.ArgumentParser:
     agent_import_swarm_parser.add_argument("--write-payload", help="Optional path to write the import request payload")
     agent_import_swarm_parser.add_argument("--write-result", help="Optional path to write the hook execution result")
     agent_import_swarm_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    agent_import_personality_parser = agent_subparsers.add_parser(
+        "import-personality",
+        help="Fetch and persist agent personality state from an external hook-backed runtime",
+    )
+    agent_import_personality_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    agent_import_personality_parser.add_argument("--human-id", required=True, help="Human id whose agent personality should be imported")
+    agent_import_personality_parser.add_argument("--chip-key", help="Explicit chip key exposing the personality hook")
+    agent_import_personality_parser.add_argument("--reason", default="personality import", help="Operator reason recorded in history")
+    agent_import_personality_parser.add_argument("--write-payload", help="Optional path to write the import request payload")
+    agent_import_personality_parser.add_argument("--write-result", help="Optional path to write the hook execution result")
+    agent_import_personality_parser.add_argument("--write-evolver-state", help="Optional path to write the imported evolver state")
+    agent_import_personality_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     agent_migrate_persona_parser = agent_subparsers.add_parser(
         "migrate-legacy-personality",
         help="Move legacy human-scoped personality deltas into the canonical agent persona base",
@@ -4262,6 +4281,326 @@ def handle_agent_import_swarm(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_agent_import_personality(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    import_id = f"personality-import:{uuid4().hex[:12]}"
+    canonical_state = read_canonical_agent_state(state_db=state_db, human_id=args.human_id)
+    payload = build_personality_import_payload(
+        human_id=args.human_id,
+        agent_id=canonical_state.agent_id,
+        state_db=state_db,
+        config_manager=config_manager,
+    )
+    payload["import_id"] = import_id
+    payload["requested_by"] = "local-operator"
+    payload["reason"] = args.reason
+
+    payload_path = Path(args.write_payload) if args.write_payload else (
+        config_manager.paths.home / "artifacts" / "personality-imports" / f"{import_id}.payload.json"
+    )
+    payload_path.parent.mkdir(parents=True, exist_ok=True)
+    payload_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+
+    run = open_run(
+        state_db,
+        run_kind="operator:agent_import_personality",
+        origin_surface="agent_cli",
+        summary="Operator started a personality import.",
+        request_id=import_id,
+        actor_id="local-operator",
+        reason_code="agent_import_personality",
+        human_id=args.human_id,
+        agent_id=canonical_state.agent_id,
+        facts={"chip_key": args.chip_key or "active", "payload_path": str(payload_path)},
+    )
+    try:
+        if args.chip_key:
+            execution = run_chip_hook(config_manager, chip_key=args.chip_key, hook="personality", payload=payload)
+        else:
+            execution = run_first_active_chip_hook(config_manager, hook="personality", payload=payload)
+            if execution is None:
+                close_run(
+                    state_db,
+                    run_id=run.run_id,
+                    status="stalled",
+                    close_reason="no_active_chip_for_hook",
+                    summary="Personality import found no active chip exposing the personality hook.",
+                    facts={"hook": "personality"},
+                )
+                print(
+                    "No active chip exposes hook 'personality'. Activate the personality runtime first or pass --chip-key.",
+                    file=sys.stderr,
+                )
+                return 1
+    except ValueError as exc:
+        close_run(
+            state_db,
+            run_id=run.run_id,
+            status="stalled",
+            close_reason="personality_import_invalid",
+            summary="Personality import failed validation before hook execution.",
+            facts={"hook": "personality", "error": str(exc)},
+        )
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    result_payload = execution.to_payload()
+    result_path = Path(args.write_result) if args.write_result else (
+        config_manager.paths.home / "artifacts" / "personality-imports" / f"{import_id}.result.json"
+    )
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    record_chip_hook_execution(
+        state_db,
+        execution=execution,
+        component="agent_cli",
+        actor_id="local-operator",
+        summary="Agent CLI executed a personality hook.",
+        reason_code="agent_import_personality",
+        keepability="operator_debug_only",
+        run_id=run.run_id,
+        request_id=run.request_id,
+        human_id=args.human_id,
+        agent_id=canonical_state.agent_id,
+    )
+    screened_output = screen_chip_hook_text(
+        state_db=state_db,
+        execution=execution,
+        text=json.dumps(
+            {
+                "chip_key": execution.chip_key,
+                "hook": execution.hook,
+                "exit_code": execution.exit_code,
+                "stdout": execution.stdout,
+                "result": execution.output.get("result") if isinstance(execution.output, dict) else {},
+            },
+            indent=2,
+            ensure_ascii=True,
+        ),
+        summary="Personality import blocked secret-like hook output before operator display.",
+        reason_code="agent_import_personality_secret_like",
+        policy_domain="agent_cli",
+        blocked_stage="operator_output",
+        run_id=run.run_id,
+        request_id=run.request_id,
+    )
+    if not screened_output["allowed"]:
+        log_operator_event(
+            state_db=state_db,
+            action="import_personality",
+            target_kind="agent_persona",
+            target_ref=canonical_state.agent_id,
+            reason=args.reason,
+            details={
+                "status": "blocked",
+                "chip_key": execution.chip_key,
+                "hook": execution.hook,
+                "payload_path": str(payload_path),
+                "result_path": str(result_path),
+                "quarantine_id": screened_output["quarantine_id"],
+            },
+        )
+        record_event(
+            state_db,
+            event_type="dispatch_failed",
+            component="agent_cli",
+            summary="Personality import blocked hook output because it contained secret-like material.",
+            run_id=run.run_id,
+            request_id=run.request_id,
+            actor_id="local-operator",
+            reason_code="secret_boundary_blocked",
+            severity="high",
+            human_id=args.human_id,
+            agent_id=canonical_state.agent_id,
+            facts={
+                "chip_key": execution.chip_key,
+                "hook": execution.hook,
+                "quarantine_id": screened_output["quarantine_id"],
+            },
+        )
+        close_run(
+            state_db,
+            run_id=run.run_id,
+            status="stalled",
+            close_reason="secret_boundary_blocked",
+            summary="Personality import was blocked by the secret boundary.",
+            facts={
+                "chip_key": execution.chip_key,
+                "hook": execution.hook,
+                "quarantine_id": screened_output["quarantine_id"],
+            },
+        )
+        print(
+            "Personality import output was blocked because it contained secret-like material. "
+            "Review quarantine records instead of raw output.",
+            file=sys.stderr,
+        )
+        return 1
+
+    result_path.write_text(json.dumps(result_payload, indent=2, ensure_ascii=True), encoding="utf-8")
+
+    if not execution.ok:
+        log_operator_event(
+            state_db=state_db,
+            action="import_personality",
+            target_kind="agent_persona",
+            target_ref=canonical_state.agent_id,
+            reason=args.reason,
+            details={
+                "status": "failed",
+                "chip_key": execution.chip_key,
+                "hook": execution.hook,
+                "payload_path": str(payload_path),
+                "result_path": str(result_path),
+                "exit_code": execution.exit_code,
+            },
+        )
+        close_run(
+            state_db,
+            run_id=run.run_id,
+            status="failed",
+            close_reason="personality_import_hook_failed",
+            summary="Personality hook returned a non-zero exit code.",
+            facts={
+                "chip_key": execution.chip_key,
+                "hook": execution.hook,
+                "payload_path": str(payload_path),
+                "result_path": str(result_path),
+                "exit_code": execution.exit_code,
+            },
+        )
+        print(
+            json.dumps(
+                {
+                    "import_id": import_id,
+                    "status": "failed",
+                    "chip_key": execution.chip_key,
+                    "hook": execution.hook,
+                    "payload_path": str(payload_path),
+                    "result_path": str(result_path),
+                    "execution": result_payload,
+                },
+                indent=2,
+            )
+            if args.json
+            else f"Personality import failed because the external hook returned a non-zero exit code. Result artifact: {result_path}"
+        )
+        return 1
+
+    try:
+        normalized = normalize_personality_import(
+            human_id=args.human_id,
+            agent_id=canonical_state.agent_id,
+            hook_output=execution.output,
+        )
+    except ValueError as exc:
+        log_operator_event(
+            state_db=state_db,
+            action="import_personality",
+            target_kind="agent_persona",
+            target_ref=canonical_state.agent_id,
+            reason=args.reason,
+            details={
+                "status": "invalid",
+                "chip_key": execution.chip_key,
+                "hook": execution.hook,
+                "payload_path": str(payload_path),
+                "result_path": str(result_path),
+                "error": str(exc),
+            },
+        )
+        close_run(
+            state_db,
+            run_id=run.run_id,
+            status="stalled",
+            close_reason="personality_import_invalid_payload",
+            summary="Personality hook returned an invalid import payload.",
+            facts={
+                "chip_key": execution.chip_key,
+                "hook": execution.hook,
+                "payload_path": str(payload_path),
+                "result_path": str(result_path),
+                "error": str(exc),
+            },
+        )
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    evolver_state_path = write_personality_evolver_state(
+        config_manager=config_manager,
+        evolver_state=normalized.evolver_state,
+        write_path=args.write_evolver_state,
+    )
+    persona_profile = save_agent_persona_profile(
+        agent_id=canonical_state.agent_id,
+        human_id=args.human_id,
+        state_db=state_db,
+        base_traits=normalized.base_traits,
+        persona_name=normalized.persona_name,
+        persona_summary=normalized.persona_summary,
+        behavioral_rules=normalized.behavioral_rules,
+        provenance={
+            "source_surface": "agent_cli",
+            "source_ref": "agent import-personality",
+            "import_id": import_id,
+            "chip_key": execution.chip_key,
+            "evolver_state_path": evolver_state_path,
+        },
+        mutation_kind="external_import",
+        source_surface="agent_cli",
+        source_ref="agent import-personality",
+    )
+    payload_out = {
+        "import_id": import_id,
+        "status": "completed",
+        "chip_key": execution.chip_key,
+        "hook": execution.hook,
+        "payload_path": str(payload_path),
+        "result_path": str(result_path),
+        "evolver_state_path": evolver_state_path,
+        "agent_id": canonical_state.agent_id,
+        "persona_profile": persona_profile,
+        "execution": result_payload,
+    }
+    log_operator_event(
+        state_db=state_db,
+        action="import_personality",
+        target_kind="agent_persona",
+        target_ref=canonical_state.agent_id,
+        reason=args.reason,
+        details={
+            "status": "completed",
+            "chip_key": execution.chip_key,
+            "hook": execution.hook,
+            "payload_path": str(payload_path),
+            "result_path": str(result_path),
+            "evolver_state_path": evolver_state_path,
+        },
+    )
+    close_run(
+        state_db,
+        run_id=run.run_id,
+        status="closed",
+        close_reason="personality_import_completed",
+        summary="Personality import completed and updated the agent persona.",
+        facts={
+            "chip_key": execution.chip_key,
+            "hook": execution.hook,
+            "payload_path": str(payload_path),
+            "result_path": str(result_path),
+            "evolver_state_path": evolver_state_path,
+        },
+    )
+    print(
+        json.dumps(payload_out, indent=2)
+        if args.json
+        else f"Imported personality for {args.human_id} onto agent {canonical_state.agent_id}."
+    )
+    return 0
+
+
 def handle_agent_migrate_legacy_personality(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -4505,6 +4844,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_agent_link_swarm(args)
     if args.command == "agent" and args.agent_command == "import-swarm":
         return handle_agent_import_swarm(args)
+    if args.command == "agent" and args.agent_command == "import-personality":
+        return handle_agent_import_personality(args)
     if args.command == "agent" and args.agent_command == "migrate-legacy-personality":
         return handle_agent_migrate_legacy_personality(args)
     if args.command == "pairings" and args.pairings_command == "list":

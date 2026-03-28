@@ -12,9 +12,11 @@ from spark_intelligence.identity.service import (
     resolve_inbound_dm,
 )
 from spark_intelligence.personality.loader import (
+    build_personality_import_payload,
     detect_and_persist_nl_preferences,
     load_personality_profile,
     migrate_legacy_human_personality_to_agent_persona,
+    normalize_personality_import,
     save_agent_persona_profile,
 )
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
@@ -84,6 +86,81 @@ class AgentIdentityContractTests(SparkTestCase):
         self.assertEqual(normalized["agent_name"], "Atlas")
         self.assertEqual(normalized["confirmed_at"], "2026-03-28T12:00:00+00:00")
         self.assertEqual(normalized["metadata"]["workspace_id"], "ws-test")
+
+    def test_build_personality_import_payload_includes_profile_and_history(self) -> None:
+        self.add_telegram_channel()
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+        agent_state = read_canonical_agent_state(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+        )
+        save_agent_persona_profile(
+            agent_id=agent_state.agent_id,
+            human_id="human:telegram:111",
+            state_db=self.state_db,
+            base_traits={"warmth": 0.6, "directness": 0.7, "playfulness": 0.4, "pacing": 0.5, "assertiveness": 0.7},
+            persona_name="Atlas",
+            persona_summary="Direct and calm.",
+        )
+
+        payload = build_personality_import_payload(
+            human_id="human:telegram:111",
+            agent_id=agent_state.agent_id,
+            state_db=self.state_db,
+            config_manager=self.config_manager,
+        )
+
+        self.assertEqual(payload["schema_version"], "spark-personality-import-request.v1")
+        self.assertEqual(payload["hook"], "personality")
+        self.assertEqual(payload["human_id"], "human:telegram:111")
+        self.assertEqual(payload["agent_id"], agent_state.agent_id)
+        self.assertEqual(payload["identity"]["agent_name"], "Alice")
+        self.assertEqual(payload["current_agent_persona"]["persona_name"], "Atlas")
+
+    def test_normalize_personality_import_validates_expected_result_shape(self) -> None:
+        result = normalize_personality_import(
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            hook_output={
+                "result": {
+                    "human_id": "human:telegram:111",
+                    "agent_id": "agent:human:telegram:111",
+                    "persona_name": "Founder Operator",
+                    "persona_summary": "Direct, calm, low-fluff.",
+                    "base_traits": {
+                        "warmth": 0.46,
+                        "directness": 0.82,
+                        "playfulness": 0.18,
+                        "pacing": 0.63,
+                        "assertiveness": 0.79,
+                    },
+                    "behavioral_rules": ["Push toward execution."],
+                    "evolver_state": {
+                        "traits": {
+                            "warmth": 0.46,
+                            "directness": 0.82,
+                            "playfulness": 0.18,
+                            "pacing": 0.63,
+                            "assertiveness": 0.79,
+                        },
+                        "last_signals": {
+                            "personality_id": "founder_operator",
+                            "personality_name": "Founder Operator",
+                        },
+                    },
+                }
+            },
+        )
+
+        self.assertEqual(result.persona_name, "Founder Operator")
+        self.assertEqual(result.base_traits["directness"], 0.82)
+        self.assertEqual(result.behavioral_rules, ["Push toward execution."])
+        self.assertEqual(result.evolver_state["last_signals"]["personality_id"], "founder_operator")
 
     def test_rename_agent_identity_changes_name_without_changing_agent_id(self) -> None:
         approve_pairing(
