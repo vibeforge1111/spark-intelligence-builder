@@ -132,6 +132,54 @@ class PairingSummaryReport:
 
 
 @dataclass
+class CanonicalAgentReport:
+    payload: dict[str, Any]
+
+    def to_text(self) -> str:
+        identity = self.payload.get("identity") or {}
+        lines = ["Canonical agent identity:"]
+        lines.append(f"- human_id: {identity.get('human_id') or 'unknown'}")
+        lines.append(f"- agent_id: {identity.get('agent_id') or 'unknown'}")
+        lines.append(f"- agent_name: {identity.get('agent_name') or 'unknown'}")
+        lines.append(
+            f"- source: {identity.get('preferred_source') or 'builder_local'} "
+            f"origin={identity.get('origin') or 'builder_local'} "
+            f"status={identity.get('status') or 'active'}"
+        )
+        if identity.get("external_system") or identity.get("external_agent_id"):
+            lines.append(
+                f"- external: system={identity.get('external_system') or 'none'} "
+                f"agent_id={identity.get('external_agent_id') or 'none'}"
+            )
+        if identity.get("conflict_agent_id"):
+            lines.append(
+                f"- conflict: agent_id={identity.get('conflict_agent_id')} "
+                f"reason={identity.get('conflict_reason') or 'unknown'}"
+            )
+        alias_ids = identity.get("alias_agent_ids") or []
+        lines.append(f"- aliases: {', '.join(alias_ids) if alias_ids else 'none'}")
+        sessions = self.payload.get("sessions") or []
+        lines.append(f"- active_sessions: {len(sessions)}")
+        for session in sessions[:5]:
+            lines.append(
+                f"  {session.get('session_id')} channel={session.get('channel_id')} "
+                f"user={session.get('external_user_id')} status={session.get('status')}"
+            )
+        renames = self.payload.get("rename_history") or []
+        if renames:
+            lines.append("- rename_history:")
+            for row in renames[:5]:
+                lines.append(
+                    f"  {row.get('created_at')} {row.get('old_name') or 'none'} -> {row.get('new_name')} "
+                    f"via {row.get('source_surface')}"
+                )
+        return "\n".join(lines)
+
+    def to_json(self) -> str:
+        return json.dumps(self.payload, indent=2)
+
+
+@dataclass
 class CanonicalAgentState:
     human_id: str
     agent_id: str
@@ -522,6 +570,50 @@ def rename_agent_identity(
         )
         conn.commit()
     return read_canonical_agent_state(state_db=state_db, human_id=human_id)
+
+
+def list_agent_rename_history(
+    *,
+    state_db: StateDB,
+    human_id: str,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT rename_id, agent_id, human_id, old_name, new_name, source_surface, source_ref, created_at
+            FROM agent_rename_history
+            WHERE human_id = ?
+            ORDER BY created_at DESC, rename_id DESC
+            LIMIT ?
+            """,
+            (human_id, limit),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def inspect_canonical_agent(
+    *,
+    state_db: StateDB,
+    human_id: str,
+) -> CanonicalAgentReport:
+    state = read_canonical_agent_state(state_db=state_db, human_id=human_id)
+    with state_db.connect() as conn:
+        session_rows = conn.execute(
+            """
+            SELECT session_id, channel_id, external_user_id, session_mode, status, updated_at
+            FROM session_bindings
+            WHERE agent_id = ?
+            ORDER BY updated_at DESC, session_id DESC
+            """,
+            (state.agent_id,),
+        ).fetchall()
+    payload = {
+        "identity": state.to_payload(),
+        "sessions": [dict(row) for row in session_rows],
+        "rename_history": list_agent_rename_history(state_db=state_db, human_id=human_id, limit=20),
+    }
+    return CanonicalAgentReport(payload=payload)
 
 
 def _activate_channel_access(

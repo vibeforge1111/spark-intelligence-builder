@@ -56,10 +56,13 @@ from spark_intelligence.identity.service import (
     approve_pairing,
     hold_pairing,
     hold_latest_pairing,
+    inspect_canonical_agent,
+    link_spark_swarm_agent,
     list_pairings,
     list_sessions,
     pairing_summary,
     peek_latest_pairing_external_user_id,
+    rename_agent_identity,
     revoke_latest_pairing,
     review_pairings,
     revoke_pairing,
@@ -1447,7 +1450,19 @@ def build_parser() -> argparse.ArgumentParser:
     agent_subparsers = agent_parser.add_subparsers(dest="agent_command", required=True)
     agent_inspect_parser = agent_subparsers.add_parser("inspect", help="Inspect current workspace identity state")
     agent_inspect_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    agent_inspect_parser.add_argument("--human-id", help="Inspect one canonical agent instead of the global workspace summary")
     agent_inspect_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    agent_rename_parser = agent_subparsers.add_parser("rename", help="Rename one canonical agent without changing its agent id")
+    agent_rename_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    agent_rename_parser.add_argument("--human-id", required=True, help="Human id owning the canonical agent")
+    agent_rename_parser.add_argument("--name", required=True, help="New display name for the agent")
+    agent_rename_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    agent_link_swarm_parser = agent_subparsers.add_parser("link-swarm", help="Link or canonicalize one human's agent to a Spark Swarm agent id")
+    agent_link_swarm_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    agent_link_swarm_parser.add_argument("--human-id", required=True, help="Human id owning the Builder-side canonical agent")
+    agent_link_swarm_parser.add_argument("--swarm-agent-id", required=True, help="Spark Swarm agent id to canonicalize onto")
+    agent_link_swarm_parser.add_argument("--agent-name", required=True, help="Agent display name to use after link")
+    agent_link_swarm_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     pairing_parser = subparsers.add_parser("pairings", help="Manage pairings")
     pairing_subparsers = pairing_parser.add_subparsers(dest="pairings_command", required=True)
@@ -3852,6 +3867,10 @@ def handle_agent_inspect(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
+    if args.human_id:
+        report = inspect_canonical_agent(state_db=state_db, human_id=args.human_id)
+        print(report.to_json() if args.json else report.to_text())
+        return 0
     owner = config_manager.load().get("workspace", {}).get("owner_human_id", "local-operator")
     report = agent_inspect(state_db=state_db, workspace_owner=owner)
     attachments = attachment_status(config_manager)
@@ -3870,6 +3889,44 @@ def handle_agent_inspect(args: argparse.Namespace) -> int:
         print(report.to_json())
     else:
         print(report.to_text())
+    return 0
+
+
+def handle_agent_rename(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    state = rename_agent_identity(
+        state_db=state_db,
+        human_id=args.human_id,
+        new_name=args.name,
+        source_surface="agent_cli",
+        source_ref="agent rename",
+    )
+    payload = state.to_payload()
+    print(json.dumps(payload, indent=2) if args.json else f"Renamed {payload['agent_id']} to {payload['agent_name']}.")
+    return 0
+
+
+def handle_agent_link_swarm(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    state = link_spark_swarm_agent(
+        state_db=state_db,
+        human_id=args.human_id,
+        swarm_agent_id=args.swarm_agent_id,
+        agent_name=args.agent_name,
+        metadata={"linked_via": "agent_cli"},
+    )
+    payload = state.to_payload()
+    print(
+        json.dumps(payload, indent=2)
+        if args.json
+        else f"Linked {args.human_id} to canonical Spark Swarm agent {payload['agent_id']}."
+    )
     return 0
 
 
@@ -4079,6 +4136,10 @@ def main(argv: list[str] | None = None) -> int:
         return handle_jobs_list(args)
     if args.command == "agent" and args.agent_command == "inspect":
         return handle_agent_inspect(args)
+    if args.command == "agent" and args.agent_command == "rename":
+        return handle_agent_rename(args)
+    if args.command == "agent" and args.agent_command == "link-swarm":
+        return handle_agent_link_swarm(args)
     if args.command == "pairings" and args.pairings_command == "list":
         return handle_pairings_list(args)
     if args.command == "pairings" and args.pairings_command == "approve":

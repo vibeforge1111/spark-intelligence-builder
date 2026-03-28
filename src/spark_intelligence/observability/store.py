@@ -1311,6 +1311,7 @@ def build_watchtower_snapshot(
             "environment_parity": environment_panel,
             "provenance_and_quarantine": _build_provenance_and_quarantine_panel(state_db),
             "memory_lane_hygiene": _build_memory_lane_hygiene_panel(state_db),
+            "agent_identity": _build_agent_identity_panel(state_db),
             "personality": _build_personality_panel(state_db),
             "session_integrity": _build_session_integrity_panel(state_db),
             "observer_incidents": _build_observer_incident_panel(state_db),
@@ -2777,6 +2778,80 @@ def _build_personality_panel(state_db: StateDB) -> dict[str, Any]:
             ),
             reverse=True,
         )[:10],
+    }
+
+
+def _build_agent_identity_panel(state_db: StateDB) -> dict[str, Any]:
+    with state_db.connect() as conn:
+        link_rows = conn.execute(
+            """
+            SELECT human_id, canonical_agent_id, preferred_source, status, conflict_agent_id, conflict_reason, updated_at
+            FROM canonical_agent_links
+            ORDER BY updated_at DESC, human_id DESC
+            """
+        ).fetchall()
+        alias_rows = conn.execute(
+            """
+            SELECT alias_agent_id, canonical_agent_id, alias_kind, reason_code, created_at
+            FROM agent_identity_aliases
+            ORDER BY created_at DESC, alias_agent_id DESC
+            """
+        ).fetchall()
+        rename_rows = conn.execute(
+            """
+            SELECT agent_id, human_id, old_name, new_name, source_surface, created_at
+            FROM agent_rename_history
+            ORDER BY created_at DESC, rename_id DESC
+            LIMIT 20
+            """
+        ).fetchall()
+        profile_rows = conn.execute(
+            """
+            SELECT agent_id, human_id, agent_name, origin, status, external_system, external_agent_id, updated_at
+            FROM agent_profiles
+            ORDER BY updated_at DESC, agent_id DESC
+            """
+        ).fetchall()
+
+    profile_by_agent = {str(row["agent_id"]): dict(row) for row in profile_rows}
+    source_counts: dict[str, int] = {}
+    status_counts: dict[str, int] = {}
+    recent_conflicts: list[dict[str, Any]] = []
+    for row in link_rows:
+        preferred_source = str(row["preferred_source"] or "builder_local")
+        status = str(row["status"] or "active")
+        source_counts[preferred_source] = source_counts.get(preferred_source, 0) + 1
+        status_counts[status] = status_counts.get(status, 0) + 1
+        if status != "identity_conflict":
+            continue
+        canonical_agent_id = str(row["canonical_agent_id"] or "")
+        profile = profile_by_agent.get(canonical_agent_id) or {}
+        recent_conflicts.append(
+            {
+                "human_id": row["human_id"],
+                "canonical_agent_id": canonical_agent_id,
+                "canonical_agent_name": profile.get("agent_name"),
+                "preferred_source": preferred_source,
+                "conflict_agent_id": row["conflict_agent_id"],
+                "conflict_reason": row["conflict_reason"],
+                "updated_at": row["updated_at"],
+            }
+        )
+
+    return {
+        "counts": {
+            "canonical_agents": len(link_rows),
+            "builder_local": int(source_counts.get("builder_local") or 0),
+            "spark_swarm": int(source_counts.get("spark_swarm") or 0),
+            "identity_conflicts": int(status_counts.get("identity_conflict") or 0),
+            "aliases": len(alias_rows),
+            "rename_events": len(rename_rows),
+        },
+        "status_counts": status_counts,
+        "recent_conflicts": recent_conflicts[:10],
+        "recent_aliases": [dict(row) for row in alias_rows[:10]],
+        "recent_renames": [dict(row) for row in rename_rows[:10]],
+        "recent_agents": [dict(row) for row in profile_rows[:10]],
     }
 
 

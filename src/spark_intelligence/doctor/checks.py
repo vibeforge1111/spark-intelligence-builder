@@ -506,4 +506,19 @@ def _watchtower_health_checks(state_db: StateDB) -> list[DoctorCheck]:
             ),
         )
     )
+    identity_panel = (snapshot.get("panels") or {}).get("agent_identity") or {}
+    identity_counts = identity_panel.get("counts") or {}
+    checks.append(
+        DoctorCheck(
+            "watchtower-agent-identity",
+            int(identity_counts.get("identity_conflicts") or 0) == 0,
+            (
+                f"canonical_agents={int(identity_counts.get('canonical_agents') or 0)} "
+                f"builder_local={int(identity_counts.get('builder_local') or 0)} "
+                f"spark_swarm={int(identity_counts.get('spark_swarm') or 0)} "
+                f"aliases={int(identity_counts.get('aliases') or 0)} "
+                f"identity_conflicts={int(identity_counts.get('identity_conflicts') or 0)}"
+            ),
+        )
+    )
     return checks

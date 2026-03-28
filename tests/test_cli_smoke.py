@@ -13,6 +13,7 @@ from spark_intelligence.channel.service import TelegramBotProfile
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.gateway.discord_webhook import DISCORD_WEBHOOK_PATH, handle_discord_webhook
 from spark_intelligence.gateway.whatsapp_webhook import WHATSAPP_WEBHOOK_PATH, handle_whatsapp_webhook
+from spark_intelligence.identity.service import approve_pairing
 from spark_intelligence.observability.store import record_event
 from spark_intelligence.personality.loader import detect_and_persist_nl_preferences, record_observation
 
@@ -1278,6 +1279,74 @@ class CliSmokeTests(SparkTestCase):
             payload["channel_alerts"][0]["recommended_command"],
             "spark-intelligence channel add discord --interaction-public-key <public-key>",
         )
+
+    def test_agent_inspect_human_surfaces_canonical_identity_detail(self) -> None:
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+
+        exit_code, stdout, stderr = self.run_cli(
+            "agent",
+            "inspect",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:telegram:111",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["identity"]["agent_id"], "agent:human:telegram:111")
+        self.assertEqual(payload["identity"]["agent_name"], "Alice")
+        self.assertEqual(payload["identity"]["preferred_source"], "builder_local")
+        self.assertEqual(payload["sessions"][0]["session_id"], "session:telegram:dm:111")
+
+    def test_agent_rename_and_link_swarm_commands_update_canonical_identity(self) -> None:
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+
+        rename_exit, rename_stdout, rename_stderr = self.run_cli(
+            "agent",
+            "rename",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:telegram:111",
+            "--name",
+            "Atlas",
+            "--json",
+        )
+        self.assertEqual(rename_exit, 0, rename_stderr)
+        rename_payload = json.loads(rename_stdout)
+        self.assertEqual(rename_payload["agent_id"], "agent:human:telegram:111")
+        self.assertEqual(rename_payload["agent_name"], "Atlas")
+
+        link_exit, link_stdout, link_stderr = self.run_cli(
+            "agent",
+            "link-swarm",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:telegram:111",
+            "--swarm-agent-id",
+            "swarm-agent:atlas",
+            "--agent-name",
+            "Atlas",
+            "--json",
+        )
+        self.assertEqual(link_exit, 0, link_stderr)
+        link_payload = json.loads(link_stdout)
+        self.assertEqual(link_payload["agent_id"], "swarm-agent:atlas")
+        self.assertEqual(link_payload["preferred_source"], "spark_swarm")
+        self.assertIn("agent:human:telegram:111", link_payload["alias_agent_ids"])
 
     def test_operator_security_escalates_sustained_discord_webhook_auth_rejections(self) -> None:
         setup_exit, _, setup_stderr = self.run_cli(

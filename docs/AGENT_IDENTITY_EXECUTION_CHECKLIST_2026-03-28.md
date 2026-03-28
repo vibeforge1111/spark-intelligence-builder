@@ -100,39 +100,39 @@ Tests:
 
 Status:
 
-- planned
+- shipped in progress
 
 Tasks:
 
 - [x] rename mutation log
 - [x] conflict state in canonical link storage
-- [ ] operator repair command surfaces
+- [x] operator repair command surfaces
 - [ ] latest-confirmed-write sync policy across Builder and Swarm
 
 Tests:
 
 - [x] contract tests for rename without id churn
-- [ ] repair-path smoke tests
+- [x] repair-path smoke tests
 - [ ] conflict-resolution harness tests
 
 ### Phase F. Closure
 
 Status:
 
-- planned
+- shipped in progress
 
 Tasks:
 
-- [ ] doctor/watchtower identity surfaces
+- [x] doctor/watchtower identity surfaces
 - [ ] migration command or automatic migration pass
 - [ ] docs closeout with shipped state
 - [ ] broader regression pass
 
 Tests:
 
-- [ ] targeted phase suite
-- [ ] CLI smoke suite
-- [ ] operator pairing harness suite
+- [x] targeted phase suite
+- [x] CLI smoke suite
+- [x] operator pairing harness suite
 - [ ] broader regression suite
 
 ## Current Verification Command Set
