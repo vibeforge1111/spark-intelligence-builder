@@ -19,7 +19,7 @@ Builder and Spark Swarm converge on one canonical agent per human with:
 
 Status:
 
-- shipped in progress
+- shipped
 
 Tasks:
 
@@ -40,7 +40,7 @@ Tests:
 
 Status:
 
-- shipped in progress
+- shipped
 
 Tasks:
 
@@ -61,7 +61,7 @@ Tests:
 
 Status:
 
-- shipped in progress
+- partially shipped
 
 Tasks:
 
@@ -80,7 +80,7 @@ Tests:
 
 Status:
 
-- shipped in progress
+- Builder-side implementation shipped
 
 Tasks:
 
@@ -100,7 +100,7 @@ Tests:
 
 Status:
 
-- shipped in progress
+- shipped
 
 Tasks:
 
@@ -119,13 +119,13 @@ Tests:
 
 Status:
 
-- shipped in progress
+- mostly shipped in Builder
 
 Tasks:
 
 - [x] doctor/watchtower identity surfaces
 - [x] migration command or automatic migration pass
-- [ ] docs closeout with shipped state
+- [x] docs closeout with shipped state
 - [x] broader regression pass
 
 Tests:
@@ -133,7 +133,14 @@ Tests:
 - [x] targeted phase suite
 - [x] CLI smoke suite
 - [x] operator pairing harness suite
-- [ ] broader regression suite
+- [x] broader regression suite
+
+## Remaining Follow-Up
+
+- [ ] multi-turn onboarding prompts for first-time Telegram users
+- [ ] live Spark Swarm identity fetch/import from the external runtime path
+- [ ] live import harness against the external Swarm runtime
+- [ ] fuller conflict-resolution harness coverage
 
 ## Current Verification Command Set
 

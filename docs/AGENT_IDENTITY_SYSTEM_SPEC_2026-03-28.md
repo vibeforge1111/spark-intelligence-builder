@@ -1,4 +1,4 @@
-# Agent Identity System Spec — March 28, 2026
+# Agent Identity System Spec - March 28, 2026
 
 ## 1. Purpose
 
@@ -30,7 +30,7 @@ Conflict repair path:
 
 Spark Swarm currently operates as one human to one agent.
 
-Builder must match that model.
+Builder matches that model.
 
 Within one workspace, one human may own:
 
@@ -46,7 +46,7 @@ Builder may temporarily create a local-first agent before Spark Swarm is connect
 
 - in Builder
 - in Spark Swarm
-- via bot-facing flows later
+- via bot-facing flows
 
 Renames must never create a new agent identity by themselves.
 
@@ -57,31 +57,35 @@ The canonical base persona belongs to the agent, not the channel, not the sessio
 This means:
 
 - renaming the agent does not reset persona
-- linking Builder and Swarm should merge into one agent persona history
-- per-user style preferences must remain overlays, not the core persona
+- linking Builder and Swarm merges into one agent persona history
+- human-specific style preferences remain overlays, not the core persona
 
 ### 3.4 Builder And Swarm Are Two Front Doors To One Agent
 
-Builder and Spark Swarm should be treated as two entry points to the same eventual agent record.
+Builder and Spark Swarm are treated as two entry points to the same eventual agent record.
 
-The system should never force users to choose a permanent “birthplace” for the agent.
+The system should never force users to choose a permanent birthplace for the agent.
 
-## 4. Canonical Model
+## 4. Builder-Side Canonical Model
+
+Builder now ships the following local identity records.
 
 ### 4.1 Canonical Agent Identity
 
-Recommended fields:
+Implemented in `canonical_agent_links`:
 
 ```text
-agent_id
 human_id
-canonical_source
+canonical_agent_id
+preferred_source
 status
+conflict_agent_id
+conflict_reason
 created_at
 updated_at
 ```
 
-`canonical_source` values:
+`preferred_source` values:
 
 - `builder_local`
 - `spark_swarm`
@@ -89,77 +93,83 @@ updated_at
 
 ### 4.2 Mutable Agent Profile
 
-Recommended fields:
+Implemented in `agent_profiles`:
 
 ```text
 agent_id
+human_id
 agent_name
+origin
+status
+external_system
+external_agent_id
+metadata_json
 name_updated_at
 name_source
 created_at
 updated_at
 ```
 
-The display name should be stored separately from the canonical identity anchor.
+The display name is stored separately from the canonical identity anchor.
 
-### 4.3 External Agent References
+### 4.3 Alias And Supersession Mapping
 
-Recommended fields:
+Implemented in `agent_identity_aliases`:
 
 ```text
-link_id
-agent_id
-external_system
-external_agent_id
-external_human_id
-status
-linked_at
-last_synced_at
+alias_agent_id
+canonical_agent_id
+alias_kind
+reason_code
 created_at
-updated_at
 ```
 
-For Spark Swarm:
+This is how Builder preserves provisional local ids after canonicalizing onto a Spark Swarm id.
 
-- `external_system = spark_swarm`
+### 4.4 Rename History
 
-This table is the authority for import, linking, and reconciliation.
+Implemented in `agent_rename_history`:
 
-### 4.4 Agent Persona Base
+```text
+rename_id
+agent_id
+human_id
+old_name
+new_name
+source_surface
+source_ref
+created_at
+```
 
-Recommended fields:
+### 4.5 Agent Persona Base
+
+Implemented in `agent_persona_profiles`:
 
 ```text
 agent_id
 persona_name
 persona_summary
-traits_json
+base_traits_json
 behavioral_rules_json
-source
-created_at
+provenance_json
 updated_at
+created_at
 ```
 
-The current Builder personality system stores live customization per `human_id`.
+Builder also records explicit persona mutations in `agent_persona_mutations`.
 
-That is acceptable only as an interim model while one-human-one-agent holds.
+### 4.6 Human Overlay Compatibility
 
-The canonical base persona should move to `agent_id`.
-
-### 4.5 Human-Agent Overlay
-
-Recommended fields:
+Implemented today as a compatibility overlay in `personality_trait_profiles` plus a runtime mirror:
 
 ```text
-agent_id
 human_id
-overlay_traits_json
-source
-created_at
+deltas_json
 updated_at
+created_at
 ```
 
-This captures relationship-scoped or user-specific style shaping without redefining the agent’s core persona.
+This captures human-scoped style shaping without redefining the agent's core persona.
 
 ## 5. Source Of Truth Rules
 
@@ -190,13 +200,39 @@ Rules:
 - resolve visible current name by latest confirmed write
 - preserve prior names in mutation history
 
+Builder implements this with:
+
+- `agent_profiles.name_updated_at`
+- `agent_profiles.name_source`
+- `agent_rename_history`
+
+Current operator surfaces:
+
+- `spark-intelligence agent inspect`
+- `spark-intelligence agent rename --human-id <human_id> --name <name>`
+- `spark-intelligence agent link-swarm --human-id <human_id> --swarm-agent-id <id> --agent-name <name> [--confirmed-at <timestamp>]`
+
+Current precedence behavior:
+
+- stale Swarm names do not overwrite a newer Builder rename
+- fresher Swarm names can replace an older Builder name
+- the winning visible name is recorded with `name_source` and `name_updated_at`
+
 ### 5.3 Persona
 
-Canonical base persona should be agent-scoped.
+Canonical base persona is agent-scoped.
 
 Explicit persona authoring beats passive inferred drift.
 
-Passive evolution should remain bounded and reversible.
+Passive evolution remains bounded and reversible.
+
+Builder currently supports:
+
+- explicit conversational persona authoring from the bridge
+- agent-scoped persona persistence
+- human-scoped overlay compatibility
+- migration of legacy human-only overlays via:
+  - `spark-intelligence agent migrate-legacy-personality --human-id <human_id>`
 
 ## 6. Recommended User Paths
 
@@ -237,7 +273,7 @@ Builder behavior:
 - do not silently merge by name
 - detect conflict
 - canonicalize to Spark Swarm
-- migrate Builder persona/history
+- migrate Builder persona and history
 - retain alias and audit history for the local Builder identity
 
 ## 7. Conflict Cases
@@ -250,7 +286,7 @@ If two different agent IDs appear for the same human:
 - stop automatic canonical writes
 - do not merge by name alone
 - choose a canonical agent according to policy
-- migrate the losing identity into an alias/tombstone record
+- migrate the losing identity into an alias record
 
 Preferred rule:
 
@@ -270,7 +306,7 @@ If local Builder and Spark Swarm names differ:
 If both Builder and Spark Swarm already have meaningful persona state:
 
 - do not silently overwrite
-- log a merge record
+- log a merge record or explicit migration provenance
 - prefer explicit confirmation or deterministic precedence
 - preserve mutation history from both sides
 
@@ -299,14 +335,14 @@ Defines:
 Defines:
 
 - how the agent should adapt to one human
-- per-user pacing/directness/warmth adjustments
+- per-human pacing, directness, warmth, playfulness, and assertiveness adjustments
 
 ### 9.3 Session-Scoped Tone
 
 Defines:
 
 - temporary conversational adjustments
-- should not silently become global persona
+- should not silently become canonical persona
 
 ## 10. Adapter Rule
 
@@ -322,12 +358,18 @@ should use the same identity and persona contract.
 
 Adapters must not invent separate identity rules.
 
-## 11. Recommended Internal States
+Current Builder-first authoring support already exists through the bridge for:
 
-Suggested lifecycle states:
+- explicit agent rename
+- explicit agent persona updates
+- human-scoped style overlays
+
+## 11. Lifecycle States
+
+Builder-side lifecycle states in use or reserved:
 
 - `builder_local`
-- `swarm_imported`
+- `spark_swarm`
 - `linked`
 - `identity_conflict`
 - `link_pending`
@@ -341,12 +383,27 @@ This spec does not currently authorize:
 - automatic merge by name alone
 - session-scoped style residue silently becoming canonical persona
 
-## 13. Immediate Implication For Builder
+## 13. Current Builder Status
 
-The current Builder-side human-scoped personality storage is not the correct final authority for canonical persona.
+Builder-side canonical agent identity is now shipped locally.
 
-Builder should migrate toward:
+Completed locally:
 
-- canonical agent-scoped persona base
-- separate human-scoped overlays
-- explicit linking to Spark Swarm external identities
+- canonical link storage
+- mutable agent profiles with name provenance
+- alias preservation for superseded local ids
+- rename history
+- agent-scoped persona base
+- human-overlay compatibility
+- legacy human-overlay migration command
+- operator inspect, rename, and Swarm-link surfaces
+- doctor and Watchtower identity visibility
+
+Remaining Builder-local follow-up:
+
+- richer multi-turn onboarding prompts for first-time Telegram users
+- fuller conflict-repair harness coverage
+
+Remaining external dependency:
+
+- live Spark Swarm identity fetch and import from the external runtime path
