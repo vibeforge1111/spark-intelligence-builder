@@ -633,6 +633,8 @@ class BuilderPrelaunchContractTests(SparkTestCase):
 
         snapshot = build_watchtower_snapshot(self.state_db)
         memory_panel = snapshot["panels"]["memory_shadow"]
+        observer_panel = snapshot["panels"]["observer_incidents"]
+        packet_panel = snapshot["panels"]["observer_packets"]
         issues = {
             issue.name: issue
             for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)
@@ -641,6 +643,8 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         checks = {check.name: check for check in report.checks}
 
         self.assertEqual(memory_panel["counts"]["contract_violations"], 1)
+        self.assertIn("memory_contract_drift", observer_panel["counts_by_class"])
+        self.assertIn("incident_report", packet_panel["counts_by_kind"])
         self.assertFalse(issues["stop_ship_memory_contract"].ok)
         self.assertIn("violated the Builder memory role contract", issues["stop_ship_memory_contract"].detail)
         self.assertIn("watchtower-memory-contract", checks)

@@ -2497,6 +2497,7 @@ def _collect_observer_incidents(state_db: StateDB) -> list[dict[str, Any]]:
     contradictions = recent_contradictions(state_db, limit=100, status="open")
     provenance_rows = recent_provenance_mutations(state_db, limit=100)
     guard_rows = recent_resume_richness_guard_records(state_db, limit=100)
+    memory_events = _recent_memory_contract_events(state_db)
 
     for row in provenance_rows:
         source_kind = str(row.get("source_kind") or "")
@@ -2586,6 +2587,96 @@ def _collect_observer_incidents(state_db: StateDB) -> list[dict[str, Any]]:
                 "source_ref": str(row.get("state_key") or "unknown"),
                 "recorded_at": str(row.get("created_at") or "") or None,
                 "evidence_refs": [f"resume_guard:{str(row.get('guard_record_id') or 'unknown')}"],
+            }
+        )
+
+    for row in memory_events:
+        incidents.append(
+            {
+                "incident_class": "memory_contract_drift",
+                "severity": str(row.get("severity") or "high"),
+                "summary": str(row.get("summary") or "Memory event violated the Builder memory role contract."),
+                "item_ref": str(row.get("event_id") or row.get("request_id") or "memory-contract"),
+                "source_kind": "memory_orchestrator",
+                "source_ref": str(row.get("reason") or row.get("event_type") or "memory_contract"),
+                "recorded_at": str(row.get("created_at") or "") or None,
+                "event_id": str(row.get("event_id") or "") or None,
+                "evidence_refs": [f"memory_event:{str(row.get('event_id') or 'unknown')}"],
+            }
+        )
+    return incidents
+
+
+def _recent_memory_contract_events(state_db: StateDB) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for event_type in (
+        "memory_write_requested",
+        "memory_write_succeeded",
+        "memory_write_abstained",
+        "memory_read_succeeded",
+        "memory_read_abstained",
+    ):
+        rows.extend(
+            [
+                event
+                for event in latest_events_by_type(state_db, event_type=event_type, limit=100)
+                if str(event.get("component") or "") == "memory_orchestrator"
+            ]
+        )
+
+    incidents: list[dict[str, Any]] = []
+    seen_event_ids: set[str] = set()
+    for row in rows:
+        event_id = str(row.get("event_id") or "")
+        if event_id and event_id in seen_event_ids:
+            continue
+        facts = row.get("facts_json") or {}
+        if not isinstance(facts, dict):
+            continue
+        event_type = str(row.get("event_type") or "")
+        violation_reason: str | None = None
+        if event_type == "memory_write_requested":
+            observations = facts.get("observations")
+            if isinstance(observations, list):
+                for observation in observations:
+                    if not isinstance(observation, dict):
+                        continue
+                    violation_reason = memory_contract_reason(
+                        memory_role=observation.get("memory_role"),
+                        operation=str(observation.get("operation") or ""),
+                        allow_unknown=False,
+                    )
+                    if violation_reason:
+                        break
+        else:
+            reason = str(facts.get("reason") or "")
+            if is_memory_contract_reason(reason):
+                violation_reason = reason
+            elif "method" in facts:
+                violation_reason = memory_contract_reason(
+                    memory_role=facts.get("memory_role"),
+                    method=str(facts.get("method") or ""),
+                    allow_unknown=int(facts.get("record_count") or 0) == 0,
+                )
+            elif "operation" in facts:
+                violation_reason = memory_contract_reason(
+                    memory_role=facts.get("memory_role"),
+                    operation=str(facts.get("operation") or ""),
+                    allow_unknown=int(facts.get("accepted_count") or 0) == 0,
+                )
+        if not violation_reason:
+            continue
+        if event_id:
+            seen_event_ids.add(event_id)
+        incidents.append(
+            {
+                "event_id": event_id or None,
+                "request_id": str(row.get("request_id") or "") or None,
+                "event_type": event_type,
+                "created_at": str(row.get("created_at") or "") or None,
+                "severity": "high",
+                "reason": violation_reason,
+                "summary": "Memory event violated the Builder memory role contract.",
             }
         )
     return incidents
@@ -2874,6 +2965,7 @@ def _observer_observation_type(incident_class: str) -> str:
     mapping = {
         "provenance_contamination": "security_signal",
         "promotion_contamination": "contract_drift",
+        "memory_contract_drift": "contract_drift",
         "secret_boundary": "security_signal",
         "session_integrity": "regression",
         "residue_contamination": "contract_drift",
@@ -2910,6 +3002,7 @@ def _observer_issue_type(incident_class: str) -> str:
     mapping = {
         "provenance_contamination": "provenance_gap",
         "promotion_contamination": "promotion_gate_drift",
+        "memory_contract_drift": "memory_role_contract_drift",
         "secret_boundary": "secret_exposure_risk",
         "session_integrity": "session_integrity_regression",
         "residue_contamination": "residue_persistence",
@@ -2922,6 +3015,7 @@ def _observer_blast_radius(incident_class: str) -> str:
     mapping = {
         "provenance_contamination": "builder_and_downstream_lineage",
         "promotion_contamination": "builder_memory_promotion",
+        "memory_contract_drift": "builder_memory_boundary",
         "secret_boundary": "operator_and_delivery_security",
         "session_integrity": "session_state_and_resume_flow",
         "residue_contamination": "bridge_and_delivery_surfaces",
@@ -2943,6 +3037,10 @@ def _observer_next_checks(incident_class: str) -> list[str]:
         "promotion_contamination": [
             "confirm keepability and promotion disposition stayed aligned",
             "review the typed memory-lane record for the blocked artifact",
+        ],
+        "memory_contract_drift": [
+            "inspect the violating memory read or write event in Watchtower memory-shadow history",
+            "confirm downstream memory_role values match the Builder-facing operation contract",
         ],
         "secret_boundary": [
             "inspect recent secret-boundary policy violations",
@@ -2968,6 +3066,7 @@ def _observer_recommended_fix(incident_class: str) -> str:
     mapping = {
         "provenance_contamination": "Restore explicit provenance refs on the affected mutation path and re-run the contract check.",
         "promotion_contamination": "Tighten the promotion gate so the artifact stays blocked until classification and lane labels agree.",
+        "memory_contract_drift": "Repair the downstream memory_role mapping so Builder reads and writes fail closed only on real contract drift.",
         "secret_boundary": "Keep the boundary blocked, review the source text, and harden the relevant output path before retrying.",
         "session_integrity": "Expand reset-sensitive coverage or merge logic on the affected runtime-state path before another resume cycle.",
         "residue_contamination": "Preserve raw-vs-mutated refs and prevent residue-bearing artifacts from being promoted.",
@@ -2980,6 +3079,7 @@ def _observer_fix_scope(incident_class: str) -> str:
     mapping = {
         "provenance_contamination": "mutation_lineage",
         "promotion_contamination": "promotion_gate_policy",
+        "memory_contract_drift": "memory_contract_boundary",
         "secret_boundary": "delivery_and_boundary_controls",
         "session_integrity": "runtime_state_integrity",
         "residue_contamination": "bridge_output_governance",
