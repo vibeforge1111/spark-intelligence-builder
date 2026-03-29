@@ -170,6 +170,41 @@ class AttachmentHookTests(SparkTestCase):
         self.assertEqual(row["status"], "closed")
         self.assertEqual(row["close_reason"], "attachments_hook_completed")
 
+    def test_attachments_run_hook_accepts_payload_file(self) -> None:
+        chip_root = create_fake_hook_chip(self.home)
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+
+        activate_exit, _, activate_stderr = self.run_cli(
+            "attachments",
+            "activate-chip",
+            "startup-yc",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(activate_exit, 0, activate_stderr)
+
+        payload_path = self.home / "evaluate.payload.json"
+        payload_path.write_text(
+            json.dumps({"situation": "We have growth but poor retention from agencies"}, indent=2),
+            encoding="utf-8-sig",
+        )
+
+        hook_exit, hook_stdout, hook_stderr = self.run_cli(
+            "attachments",
+            "run-hook",
+            "evaluate",
+            "--home",
+            str(self.home),
+            "--json",
+            "--payload-file",
+            str(payload_path),
+        )
+        self.assertEqual(hook_exit, 0, hook_stderr)
+        payload = json.loads(hook_stdout)
+        self.assertEqual(payload["chip_key"], "startup-yc")
+        self.assertTrue(payload["ok"])
+        self.assertIn("agencies", payload["output"]["result"]["analysis"])
+
     def test_attachments_run_hook_blocks_secret_like_output(self) -> None:
         chip_root = create_fake_hook_chip(self.home)
         self.config_manager.set_path("spark.chips.roots", [str(chip_root)])

@@ -1283,6 +1283,7 @@ def build_parser() -> argparse.ArgumentParser:
     attachments_run_hook_parser.add_argument("hook", help="Hook name to run")
     attachments_run_hook_parser.add_argument("--chip-key", help="Chip key to run. Defaults to the first active chip that supports the hook.")
     attachments_run_hook_parser.add_argument("--payload-json", default="{}", help="JSON payload to send to the hook")
+    attachments_run_hook_parser.add_argument("--payload-file", help="Path to a JSON payload file to send to the hook")
     attachments_run_hook_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     attachments_run_hook_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
@@ -3147,10 +3148,19 @@ def handle_attachments_run_hook(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
+    if args.payload_file:
+        try:
+            payload_source = Path(args.payload_file).read_text(encoding="utf-8-sig")
+        except OSError as exc:
+            print(f"Invalid --payload-file: {exc}", file=sys.stderr)
+            return 2
+    else:
+        payload_source = args.payload_json
     try:
-        payload = json.loads(args.payload_json)
+        payload = json.loads(payload_source)
     except json.JSONDecodeError as exc:
-        print(f"Invalid --payload-json: {exc}", file=sys.stderr)
+        source_flag = "--payload-file" if args.payload_file else "--payload-json"
+        print(f"Invalid {source_flag}: {exc}", file=sys.stderr)
         return 2
     if not isinstance(payload, dict):
         print("Hook payload must be a JSON object.", file=sys.stderr)
