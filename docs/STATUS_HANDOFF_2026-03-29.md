@@ -6,7 +6,7 @@ This note captures what moved on 2026-03-29 across the main Builder repo and the
 
 ## 2. Builder Work Shipped Today
 
-Builder shipped three important slices today.
+Builder shipped five important slices today.
 
 ### 2.1 Telegram Reply Cleanup
 
@@ -66,6 +66,28 @@ Why it mattered:
 
 - the browser-extension repo already chose the right contract shape: manifest-backed hooks over `spark-hook-io.v1`
 - Builder now has a clean native landing zone for that runtime instead of forcing operators through raw generic hook invocations
+
+### 2.4 Browser Hook Failure Surfacing
+
+Commits:
+
+- `8047999` `feat: surface governed browser hook failures`
+- `ddba0e7` `test: cover failed browser hook responses`
+
+What changed:
+
+- Builder browser commands now respect the inner governed hook result instead of treating command exit `0` as a real browser success by itself
+- failed browser-hook responses now preserve:
+  - hook status
+  - approval state
+  - governed error payload
+- human-readable browser status now shows the actual failure code and message instead of rendering an empty "unknown" posture
+- JSON output now exits nonzero and preserves the real browser error when the runtime is not connected
+
+Why it mattered:
+
+- before this fix, live-session `browser status` could look misleadingly successful even when the browser runtime was absent
+- after this fix, Builder stays aligned with the governed adapter rule: fail closed, surface the real reason, and do not pretend missing browser state is usable
 
 ## 3. Browser Extension Repo Progress Today
 
@@ -132,8 +154,8 @@ That means:
 
 What is not done yet:
 
-- the browser runtime is not yet attached live to Builder as a discoverable manifest-backed attachment in this repo
-- the first true end-to-end Builder-to-browser-extension smoke has not been run yet
+- the unpacked browser extension is not yet loaded and holding a live native session open in Brave or Chrome
+- the first true end-to-end Builder-to-browser-extension live-page smoke has not been run yet
 - Builder does not yet have browser-specific Watchtower/readiness/operator surfaces beyond the new CLI wrapper
 - approval-heavy browser hooks like `navigate`, `fill_draft`, `click.preview`, and `submit` are not yet integrated here
 
@@ -141,13 +163,19 @@ What is not done yet:
 
 Builder verification completed:
 
-- `python -m pytest tests/test_attachment_hooks.py -k "browser_status_hook" -q`
-- `python -m pytest tests/test_cli_smoke.py -k "browser_status_command_reports_governed_runtime_posture or browser_page_snapshot_command_reports_bounded_snapshot" -q`
-- `python -m pytest tests/test_attachment_hooks.py tests/test_cli_smoke.py -q`
+- `python -m pytest tests/test_cli_smoke.py -k browser -q`
+- `spark-intelligence attachments add-root chips C:\Users\USER\Desktop\spark-browser-extension --home C:\Users\USER\Desktop\spark-intelligence-builder\.tmp-home-browser-extension`
+- `spark-intelligence attachments activate-chip spark-browser --home C:\Users\USER\Desktop\spark-intelligence-builder\.tmp-home-browser-extension`
+- fixture-mode `spark-intelligence browser status --chip-key spark-browser --home C:\Users\USER\Desktop\spark-intelligence-builder\.tmp-home-browser-extension`
+- fixture-mode `spark-intelligence browser page-snapshot --origin https://example.com --chip-key spark-browser --home C:\Users\USER\Desktop\spark-intelligence-builder\.tmp-home-browser-extension`
+- live-session `spark-intelligence browser status --chip-key spark-browser --home C:\Users\USER\Desktop\spark-intelligence-builder\.tmp-home-browser-extension`
 
 Result:
 
-- `85 passed`
+- browser CLI smoke tests passed
+- the browser chip is discoverable and active through the standard attachment system
+- fixture mode works through the real `spark-browser` manifest-backed attachment path
+- live-session mode now fails honestly with `BROWSER_SESSION_NOT_CONNECTED`
 
 Additional live verification earlier today:
 
@@ -195,26 +223,26 @@ These should be treated as separate work.
 
 Recommended order:
 
-1. Finish the browser repo manifest/attachment shape.
+1. Load the unpacked browser extension in Brave or Chrome and keep the native port connected.
    Goal:
-   make the browser runtime discoverable by Builder through the normal attachment scan and activation flow.
+   move from fixture and no-session validation into the first real live browser session.
 
-2. Run the first true end-to-end attach smoke from Builder.
+2. Run the first true end-to-end attach smoke from Builder against the real browser session.
    Goal:
-   activate the browser runtime in Builder and prove:
-   - `spark-intelligence browser status`
-   - `spark-intelligence browser page-snapshot --origin <url>`
+   prove:
+   - `spark-intelligence browser status --chip-key spark-browser`
+   - `spark-intelligence browser page-snapshot --chip-key spark-browser --origin <url>`
 
-3. Expand to the next browser hook class only after the attach smoke is green.
+3. Add browser readiness and operator surfaces only after the live attach smoke is green.
+   Goal:
+   browser failures should surface in Builder status/doctor/operator paths without requiring raw JSON inspection.
+
+4. Expand to the next browser hook class only after the live attach smoke and readiness surfaces are green.
    Recommended next hook order:
    - `browser.navigate`
    - `browser.form.fill_draft`
    - `browser.click.preview`
    - later only with approvals: `browser.click.execute` and `browser.form.submit`
-
-4. Add Builder-side browser observability once real attach flow exists.
-   Goal:
-   browser readiness and browser failures should surface in Watchtower, doctor, and operator views the same way other integrations now do.
 
 5. Continue live Telegram quality tuning only after browser attach flow is stable.
    Reason:
@@ -225,9 +253,9 @@ Recommended order:
 For Builder:
 
 ```text
-python -m pytest tests/test_attachment_hooks.py tests/test_cli_smoke.py -q
-spark-intelligence attachments list --kind chip
-spark-intelligence browser status
+python -m pytest tests/test_cli_smoke.py -k browser -q
+spark-intelligence attachments status --home C:\Users\USER\Desktop\spark-intelligence-builder\.tmp-home-browser-extension --json
+spark-intelligence browser status --chip-key spark-browser --home C:\Users\USER\Desktop\spark-intelligence-builder\.tmp-home-browser-extension
 ```
 
 For the browser repo:
@@ -247,6 +275,11 @@ Browser repo latest pushed commit at handoff:
 
 - `c1ca08c` `docs: document zero-arg native host install`
 
+Builder latest local browser-failure commit at handoff:
+
+- `8047999` `feat: surface governed browser hook failures`
+- `ddba0e7` `test: cover failed browser hook responses`
+
 ## 10. Final Summary
 
 Today did two useful things at once:
@@ -256,4 +289,4 @@ Today did two useful things at once:
 
 The next day should not start by rethinking the architecture again.
 
-It should start by closing the first real Builder <-> browser-extension attach loop.
+It should start by loading the real extension and closing the first live Builder <-> browser-extension attach loop.

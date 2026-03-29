@@ -59,6 +59,7 @@ This repo currently includes:
 - [docs/IMPLEMENTATION_READINESS_AUDIT_2026-03-25.md](./docs/IMPLEMENTATION_READINESS_AUDIT_2026-03-25.md)
 - [docs/IMPLEMENTATION_PLAN_V1.md](./docs/IMPLEMENTATION_PLAN_V1.md)
 - [docs/IMPLEMENTATION_STATUS_2026-03-26.md](./docs/IMPLEMENTATION_STATUS_2026-03-26.md)
+- [docs/STATUS_HANDOFF_2026-03-29.md](./docs/STATUS_HANDOFF_2026-03-29.md)
 
 Key repo skills:
 
@@ -332,6 +333,8 @@ The next architecture pass for gateway, provider auth, OAuth, and runtime model 
 The current execution refocus is recorded in [docs/EXECUTION_REFOCUS_TELEGRAM_LLM_2026-03-26.md](./docs/EXECUTION_REFOCUS_TELEGRAM_LLM_2026-03-26.md).
 
 The current system-connection and productization plan is recorded in [docs/SYSTEM_CONNECTION_AND_PRODUCTIZATION_PLAN_2026-03-26.md](./docs/SYSTEM_CONNECTION_AND_PRODUCTIZATION_PLAN_2026-03-26.md).
+
+The latest cross-repo end-of-day state, including the browser-extension integration track, is recorded in [docs/STATUS_HANDOFF_2026-03-29.md](./docs/STATUS_HANDOFF_2026-03-29.md).
 
 ## Current Start
 
