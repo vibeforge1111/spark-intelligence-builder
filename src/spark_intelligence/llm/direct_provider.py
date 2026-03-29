@@ -9,6 +9,8 @@ from pathlib import Path
 from spark_intelligence.observability.policy import screen_model_visible_text
 from spark_intelligence.state.db import StateDB
 
+_REQUEST_TIMEOUT_SECONDS = 60
+
 
 @dataclass(frozen=True)
 class DirectProviderRequest:
@@ -147,7 +149,7 @@ def _post_json(url: str, *, headers: dict[str, str], payload: dict[str, object])
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=_REQUEST_TIMEOUT_SECONDS) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")

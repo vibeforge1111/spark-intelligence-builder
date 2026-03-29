@@ -254,14 +254,7 @@ def _render_reply_from_advisory(advisory: dict) -> tuple[str, str, str]:
 
 
 def _render_reply_from_execution(execution: dict[str, Any], advisory: dict[str, Any]) -> tuple[str, str, str]:
-    response = execution.get("response")
-    reply_text = ""
-    if isinstance(response, dict):
-        raw = response.get("raw_response")
-        if isinstance(raw, str):
-            reply_text = raw.strip()
-    elif isinstance(response, str):
-        reply_text = response.strip()
+    reply_text = _extract_execution_reply_text(execution)
 
     if not reply_text:
         reply_text, _, _ = _render_reply_from_advisory(advisory)
@@ -274,6 +267,57 @@ def _render_reply_from_execution(execution: dict[str, Any], advisory: dict[str, 
     )
     evidence_summary = f"status={decision} provider_execution=yes"
     return reply_text, evidence_summary, trace_ref
+
+
+def _extract_execution_reply_text(execution: dict[str, Any]) -> str:
+    for candidate in _execution_reply_candidates(execution):
+        text = _extract_text_from_response_payload(candidate)
+        if text:
+            return text
+
+    critique = execution.get("critique")
+    if isinstance(critique, dict):
+        best_next_question = str(critique.get("best_next_question") or "").strip()
+        if best_next_question:
+            return f"I need one thing before I give you a hard answer: {best_next_question}"
+
+    clarifying_questions = execution.get("clarifying_questions")
+    if isinstance(clarifying_questions, list):
+        for item in clarifying_questions:
+            question = str(item or "").strip()
+            if question:
+                return f"I need one thing before I give you a hard answer: {question}"
+
+    return ""
+
+
+def _execution_reply_candidates(execution: dict[str, Any]) -> list[Any]:
+    candidates: list[Any] = [execution.get("response")]
+    drafts = execution.get("drafts")
+    if isinstance(drafts, dict):
+        selected = str(drafts.get("selected") or "").strip().lower()
+        if selected in {"a", "b"}:
+            candidates.append(drafts.get(selected))
+    candidates.extend([execution.get("draft"), execution.get("revised")])
+    if isinstance(drafts, dict):
+        candidates.extend([drafts.get("a"), drafts.get("b")])
+    return [candidate for candidate in candidates if candidate]
+
+
+def _extract_text_from_response_payload(payload: Any) -> str:
+    if isinstance(payload, str):
+        return payload.strip()
+    if not isinstance(payload, dict):
+        return ""
+    raw = payload.get("raw_response")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    response = payload.get("response")
+    if response is not None and response is not payload:
+        nested = _extract_text_from_response_payload(response)
+        if nested:
+            return nested
+    return ""
 
 
 def _researcher_routing_policy(config_manager: ConfigManager) -> dict[str, Any]:
@@ -370,6 +414,8 @@ def _render_direct_provider_chat_fallback(
         "and you are not confident, say you need more context or verification before giving a hard answer. "
         "Do not mention internal advisory or verification systems."
     )
+    if _is_startup_operator_chip(active_chip_evaluate):
+        base_system_prompt = f"{base_system_prompt} {_startup_operator_reply_contract()}"
     if personality_profile:
         personality_directive = build_personality_system_directive(personality_profile)
         if personality_directive:
@@ -421,6 +467,28 @@ def _render_direct_provider_chat_fallback(
     if not raw_response:
         raise RuntimeError("Direct provider fallback returned no text content.")
     return raw_response
+
+
+def _is_startup_operator_chip(active_chip_evaluate: dict[str, Any] | None) -> bool:
+    if not isinstance(active_chip_evaluate, dict):
+        return False
+    return str(active_chip_evaluate.get("chip_key") or "").strip().lower() == "startup-yc"
+
+
+def _startup_operator_reply_contract() -> str:
+    return (
+        "When the active chip is startup-yc, answer like a decisive startup operator. "
+        "Answer the user's actual question in the first sentence. "
+        "If they ask what to focus on, which segment to choose, or whether to drop something, "
+        "make a provisional recommendation instead of only listing considerations. "
+        "Then give 2 to 4 concrete actions for this week. "
+        "Do not invent numbers, cohort sizes, revenue, timelines, retention windows, or interview counts. "
+        "If the user supplied a count, you may use it; otherwise prefer plain-language quantities like "
+        "'talk to a few' or 'talk to all of them' only when the total is known. "
+        "Avoid numeric ranges like 3-5 or 2-3. "
+        "If evidence is thin, say what missing fact would change the call, but still give your current best recommendation. "
+        "Keep the reply in plain text with no markdown headings, no bold emphasis, and no memo framing."
+    )
 
 
 def _maybe_apply_swarm_recommendation(
@@ -571,14 +639,23 @@ def _clean_messaging_reply(text: str, *, channel_kind: str) -> str:
     return cleaned
 
 
+def _strip_reasoning_blocks(text: str) -> tuple[str, bool]:
+    normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    stripped = re.sub(r"(?is)<think>.*?</think>", "", normalized)
+    stripped = re.sub(r"\n{3,}", "\n\n", stripped).strip()
+    return stripped, stripped != normalized
+
+
 def _clean_messaging_reply_with_metadata(text: str, *, channel_kind: str) -> tuple[str, list[str]]:
+    visible_text, _ = _strip_reasoning_blocks(text)
     if channel_kind != "telegram":
-        return _strip_operational_residue_lines(text.strip())
-    rewritten = _rewrite_structured_telegram_reply(text)
+        cleaned, removed_lines = _strip_operational_residue_lines(visible_text)
+        return (cleaned if cleaned or not visible_text else visible_text), removed_lines
+    rewritten = _rewrite_structured_telegram_reply(visible_text)
     if rewritten:
-        text = rewritten
+        visible_text = rewritten
     cleaned_lines: list[str] = []
-    for raw_line in text.replace("\r\n", "\n").split("\n"):
+    for raw_line in visible_text.split("\n"):
         line = raw_line.strip()
         if not line or line == "---":
             if cleaned_lines and cleaned_lines[-1] != "":
@@ -601,8 +678,9 @@ def _clean_messaging_reply_with_metadata(text: str, *, channel_kind: str) -> tup
     reply = "\n".join(cleaned_lines)
     reply = re.sub(r"\n{3,}", "\n\n", reply).strip()
     reply = _strip_internal_reply_prefixes(reply)
-    sanitized, removed_lines = _strip_operational_residue_lines(reply or text.strip())
-    return sanitized or text.strip(), removed_lines
+    reply = _strip_inline_markdown_emphasis(reply)
+    sanitized, removed_lines = _strip_operational_residue_lines(reply or visible_text)
+    return (sanitized if sanitized or not visible_text else visible_text), removed_lines
 
 
 def _strip_operational_residue_lines(text: str) -> tuple[str, list[str]]:
@@ -723,6 +801,12 @@ def _strip_internal_reply_prefixes(text: str) -> str:
     for pattern in patterns:
         cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE).strip()
     return cleaned
+
+
+def _strip_inline_markdown_emphasis(text: str) -> str:
+    cleaned = re.sub(r"\*\*(.*?)\*\*", r"\1", str(text or ""))
+    cleaned = re.sub(r"__(.*?)__", r"\1", cleaned)
+    return cleaned.strip()
 
 
 def _first_distinct_line(lines: list[str]) -> str | None:
@@ -1241,11 +1325,14 @@ def build_researcher_reply(
                 "user_deltas_applied": bool(personality_profile.get("user_deltas_applied")) if personality_profile else False,
                 "query_kind": personality_query_kind,
                 "agent_persona_name": personality_profile.get("agent_persona_name") if personality_profile else None,
+                "agent_persona_summary": personality_profile.get("agent_persona_summary") if personality_profile else None,
+                "agent_behavioral_rules": personality_profile.get("agent_behavioral_rules") if personality_profile else [],
                 "agent_base_traits": personality_profile.get("agent_base_traits") if personality_profile else {},
                 "agent_persona_mutation": (
                     {
                         "agent_name": agent_persona_mutation.agent_name,
                         "trait_deltas": agent_persona_mutation.trait_deltas,
+                        "behavioral_rules": agent_persona_mutation.behavioral_rules,
                     }
                     if agent_persona_mutation is not None
                     else {}
@@ -1603,6 +1690,134 @@ def build_researcher_reply(
                         extra={"runtime_source": runtime_source},
                     ),
                 )
+                if (
+                    channel_kind == "telegram"
+                    and active_chip_evaluate is not None
+                    and provider_selection.provider
+                    and provider_selection.provider.execution_transport == "direct_http"
+                ):
+                    raw_reply_text = _render_direct_provider_chat_fallback(
+                        state_db=state_db,
+                        provider=provider_selection.provider,
+                        user_message=user_message,
+                        channel_kind=channel_kind,
+                        attachment_context=attachment_context,
+                        active_chip_evaluate=active_chip_evaluate,
+                        personality_profile=personality_profile,
+                        personality_context_extra=personality_context_extra,
+                        run_id=run_id,
+                        request_id=request_id,
+                        trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+                    )
+                    cleaned_reply, removed_residue = _clean_messaging_reply_with_metadata(
+                        raw_reply_text,
+                        channel_kind=channel_kind,
+                    )
+                    reply_mutation_actions: list[str] = []
+                    if removed_residue:
+                        reply_mutation_actions.append("strip_operational_residue")
+                        record_quarantine(
+                            state_db,
+                            run_id=run_id,
+                            request_id=request_id,
+                            source_kind="reply_residue",
+                            source_ref=request_id,
+                            policy_domain="researcher_bridge_residue",
+                            reason_code="operational_residue_removed",
+                            summary="Operational residue was stripped from a chip-guided direct-provider reply before delivery.",
+                            payload_preview="\n".join(removed_residue)[:160],
+                            provenance={"channel_kind": channel_kind, "trace_ref": f"trace:{agent_id}:{human_id}:{request_id}"},
+                        )
+                    if cleaned_reply != raw_reply_text and not reply_mutation_actions:
+                        reply_mutation_actions.append("rewrite_reply")
+                    reply_text = cleaned_reply
+                    trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+                    evidence_summary = "status=chip_guided provider_fallback=direct_http_chat"
+                    reply_text, evidence_summary, escalation_hint, routing_decision = _maybe_apply_swarm_recommendation(
+                        config_manager=config_manager,
+                        state_db=state_db,
+                        user_message=user_message,
+                        channel_kind=channel_kind,
+                        reply_text=reply_text,
+                        evidence_summary=evidence_summary,
+                        routing_decision="provider_fallback_chat",
+                        run_id=run_id,
+                        request_id=request_id,
+                        trace_ref=trace_ref,
+                        session_id=session_id,
+                        human_id=human_id,
+                        agent_id=agent_id,
+                    )
+                    if reply_text != cleaned_reply:
+                        reply_mutation_actions.append("apply_swarm_recommendation")
+                    output_keepability, promotion_disposition = _bridge_output_classification(
+                        mode=f"external_{runtime_source}",
+                        routing_decision=routing_decision,
+                    )
+                    record_event(
+                        state_db,
+                        event_type="tool_result_received",
+                        component="researcher_bridge",
+                        summary="Researcher bridge produced a chip-guided direct-provider result.",
+                        run_id=run_id,
+                        request_id=request_id,
+                        trace_ref=trace_ref,
+                        channel_id=channel_kind,
+                        session_id=session_id,
+                        human_id=human_id,
+                        agent_id=agent_id,
+                        actor_id="researcher_bridge",
+                        reason_code="provider_fallback_chat",
+                        facts=_bridge_event_facts(
+                            routing_decision=routing_decision,
+                            bridge_mode=f"external_{runtime_source}",
+                            evidence_summary=evidence_summary,
+                            runtime_root=str(runtime_root),
+                            config_path=str(config_path),
+                            provider_id=provider_selection.provider.provider_id,
+                            provider_auth_method=provider_selection.provider.auth_method,
+                            provider_model=provider_selection.provider.default_model,
+                            provider_model_family=provider_selection.model_family,
+                            provider_execution_transport=provider_selection.provider.execution_transport,
+                            provider_base_url=provider_selection.provider.base_url,
+                            provider_source=provider_selection.provider.source,
+                            active_chip_key=active_chip_key,
+                            active_chip_task_type=active_chip_task_type,
+                            active_chip_evaluate_used=active_chip_evaluate_used,
+                            keepability=output_keepability,
+                            promotion_disposition=promotion_disposition,
+                            extra=_bridge_reply_mutation_facts(
+                                raw_text=raw_reply_text,
+                                mutated_text=reply_text,
+                                mutation_actions=reply_mutation_actions,
+                            ),
+                        ),
+                    )
+                    return ResearcherBridgeResult(
+                        request_id=request_id,
+                        reply_text=reply_text,
+                        evidence_summary=evidence_summary,
+                        escalation_hint=escalation_hint,
+                        trace_ref=trace_ref,
+                        mode=f"external_{runtime_source}",
+                        runtime_root=str(runtime_root),
+                        config_path=str(config_path),
+                        attachment_context=attachment_context,
+                        provider_id=provider_selection.provider.provider_id,
+                        provider_auth_profile_id=provider_selection.provider.auth_profile_id,
+                        provider_auth_method=provider_selection.provider.auth_method,
+                        provider_model=provider_selection.provider.default_model,
+                        provider_model_family=provider_selection.model_family,
+                        provider_execution_transport=provider_selection.provider.execution_transport,
+                        provider_base_url=provider_selection.provider.base_url,
+                        provider_source=provider_selection.provider.source,
+                        routing_decision=routing_decision,
+                        active_chip_key=active_chip_key,
+                        active_chip_task_type=active_chip_task_type,
+                        active_chip_evaluate_used=active_chip_evaluate_used,
+                        output_keepability=output_keepability,
+                        promotion_disposition=promotion_disposition,
+                    )
                 build_advisory = _import_build_advisory(runtime_root)
                 execute_with_research = _import_execute_with_research(runtime_root)
                 advisory = build_advisory(

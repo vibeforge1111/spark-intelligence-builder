@@ -4,11 +4,13 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+from spark_intelligence.auth.runtime import RuntimeProviderResolution
 from spark_intelligence.memory import write_profile_fact_to_memory
 from spark_intelligence.observability.store import latest_events_by_type
 from spark_intelligence.researcher_bridge.advisory import (
     _build_contextual_task,
     _clean_messaging_reply,
+    _render_direct_provider_chat_fallback,
     build_researcher_reply,
 )
 
@@ -53,6 +55,22 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
 
         self.assertEqual(cleaned, "the strongest next move is to tighten operator docs.")
 
+    def test_clean_messaging_reply_strips_think_blocks_before_delivery(self) -> None:
+        cleaned = _clean_messaging_reply(
+            "<think>private reasoning</think>\n\nUse the startup signal, not vanity metrics.",
+            channel_kind="telegram",
+        )
+
+        self.assertEqual(cleaned, "Use the startup signal, not vanity metrics.")
+
+    def test_clean_messaging_reply_strips_inline_markdown_emphasis_for_telegram(self) -> None:
+        cleaned = _clean_messaging_reply(
+            "**The 4 churned agencies** matter more than the headline MRR right now.",
+            channel_kind="telegram",
+        )
+
+        self.assertEqual(cleaned, "The 4 churned agencies matter more than the headline MRR right now.")
+
     def test_build_contextual_task_summarizes_chip_guidance_without_meta_scaffolding(self) -> None:
         prompt = _build_contextual_task(
             user_message="what next",
@@ -84,6 +102,39 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertNotIn("Confidence:", prompt)
         self.assertNotIn("Evidence gap:", prompt)
         self.assertNotIn("## Primary Focus", prompt)
+
+    def test_build_contextual_task_prefers_agent_persona_over_global_personality_name(self) -> None:
+        prompt = _build_contextual_task(
+            user_message="what next",
+            attachment_context={
+                "active_chip_keys": ["startup-yc"],
+                "pinned_chip_keys": [],
+                "active_path_key": "startup-operator",
+            },
+            personality_profile={
+                "personality_name": "Alice",
+                "agent_persona_name": "Operator",
+                "traits": {
+                    "warmth": 0.7,
+                    "directness": 1.0,
+                    "playfulness": 0.5,
+                    "pacing": 0.55,
+                    "assertiveness": 0.3,
+                },
+                "style_labels": {
+                    "warmth": "warm",
+                    "directness": "very direct",
+                    "playfulness": "balanced playfulness",
+                    "pacing": "brisk",
+                    "assertiveness": "balanced assertiveness",
+                },
+                "agent_persona_applied": True,
+                "user_deltas_applied": False,
+            },
+        )
+
+        self.assertIn("agent_persona=Operator", prompt)
+        self.assertNotIn("active_personality=Alice", prompt)
 
     def test_build_researcher_reply_cleans_memo_style_execution_reply_for_telegram(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
@@ -182,6 +233,91 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             )
         )
 
+    def test_build_researcher_reply_uses_selected_draft_when_verifier_returns_no_response(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        connect_exit, _, connect_stderr = self.run_cli(
+            "auth",
+            "connect",
+            "custom",
+            "--home",
+            str(self.home),
+            "--api-key",
+            "minimax-secret",
+            "--model",
+            "MiniMax-M2.7",
+            "--base-url",
+            "https://api.minimax.io/v1",
+        )
+        self.assertEqual(connect_exit, 0, connect_stderr)
+
+        runtime_root = self.home / "fake-researcher"
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        config_path = runtime_root / "spark-researcher.project.json"
+        config_path.write_text("{}", encoding="utf-8")
+
+        def fake_build_advisory(path: Path, task: str, *, model: str = "generic", limit: int = 4, domain: str | None = None):
+            return {
+                "guidance": [
+                    "A lower learning rate should improve val_loss.",
+                    "Operators need a documented interpretation for successful backend runs that yield no actionable diff.",
+                ],
+                "epistemic_status": {"status": "partial", "packet_stability": {"status": "provisional_only"}},
+                "selected_packet_ids": ["packet-1"],
+                "trace_path": "trace:test",
+            }
+
+        def fake_execute_with_research(*args, **kwargs):
+            return {
+                "status": "needs_verification",
+                "decision": "needs_verification",
+                "response": None,
+                "draft": {
+                    "response": {
+                        "raw_response": (
+                            "<think>private reasoning</think>\n\n"
+                            "8% weekly churn is an emergency. Pick one ICP, talk to three churned users this week, "
+                            "and pause net-new features until you know why they leave."
+                        )
+                    }
+                },
+                "drafts": {"selected": "a"},
+                "critique": {
+                    "decision": "needs_verification",
+                    "selected": "a",
+                    "issues": ["Verifier did not return parseable JSON."],
+                    "best_next_question": "",
+                },
+                "trace_path": "trace:execution",
+            }
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
+            return_value=(runtime_root, "configured"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
+            return_value=config_path,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_build_advisory",
+            return_value=fake_build_advisory,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_execute_with_research",
+            return_value=fake_execute_with_research,
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-draft-fallback",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-1",
+                channel_kind="telegram",
+                user_message="We have 8 percent weekly churn and two ICPs. What should we prioritize this week?",
+            )
+
+        self.assertIn("8% weekly churn is an emergency.", result.reply_text)
+        self.assertNotIn("learning rate", result.reply_text.lower())
+        self.assertNotIn("<think>", result.reply_text)
+
     def test_build_researcher_reply_uses_direct_provider_chat_fallback_for_under_supported_conversation(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         connect_exit, _, connect_stderr = self.run_cli(
@@ -259,6 +395,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual(captured["provider_id"], "custom")
         self.assertEqual(captured["provider_model"], "MiniMax-M2.7")
         self.assertIn("1:1 messaging conversation", str(captured["system_prompt"]))
+        self.assertNotIn("decisive startup operator", str(captured["system_prompt"]))
         self.assertIn("[fallback_mode=conversational_under_supported]", str(captured["user_prompt"]))
         self.assertIsNotNone(captured["governance"])
         self.assertEqual(result.output_keepability, "ephemeral_context")
@@ -268,6 +405,56 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual(result.provider_id, "custom")
         self.assertEqual(result.provider_execution_transport, "direct_http")
         self.assertEqual(result.evidence_summary, "status=under_supported provider_fallback=direct_http_chat")
+
+    def test_render_direct_provider_chat_fallback_adds_startup_operator_contract_for_startup_chip(self) -> None:
+        provider = RuntimeProviderResolution(
+            provider_id="custom",
+            provider_kind="custom",
+            auth_profile_id="custom:default",
+            auth_method="api_key_env",
+            api_mode="chat_completions",
+            execution_transport="direct_http",
+            base_url="https://api.minimax.io/v1",
+            default_model="MiniMax-M2.7",
+            secret_ref=None,
+            secret_value="secret",
+            source="config+env",
+        )
+        captured: dict[str, object] = {}
+
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
+            captured["system_prompt"] = system_prompt
+            captured["user_prompt"] = user_prompt
+            return {"raw_response": "Focus on in-house teams for now."}
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=fake_direct_provider_prompt,
+        ):
+            reply = _render_direct_provider_chat_fallback(
+                state_db=self.state_db,
+                provider=provider,
+                user_message="Should we drop agencies entirely?",
+                channel_kind="telegram",
+                attachment_context={
+                    "active_chip_keys": ["startup-yc"],
+                    "pinned_chip_keys": ["startup-yc"],
+                    "active_path_key": "startup-operator",
+                },
+                active_chip_evaluate={
+                    "chip_key": "startup-yc",
+                    "task_type": "boundary_detection",
+                    "stage": "post_launch",
+                    "analysis": "Agencies churn fast. In-house teams activate slower and retain longer.",
+                },
+            )
+
+        self.assertEqual(reply, "Focus on in-house teams for now.")
+        self.assertIn("decisive startup operator", str(captured["system_prompt"]))
+        self.assertIn("Do not invent numbers", str(captured["system_prompt"]))
+        self.assertIn("Avoid numeric ranges like 3-5 or 2-3", str(captured["system_prompt"]))
+        self.assertIn("no bold emphasis", str(captured["system_prompt"]))
+        self.assertIn("Should we drop agencies entirely?", str(captured["user_prompt"]))
 
     def test_build_researcher_reply_persists_city_profile_fact_before_bridge_execution(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
