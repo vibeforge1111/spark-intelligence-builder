@@ -70,6 +70,44 @@ class DirectProviderExecutionTests(SparkTestCase):
         self.assertEqual(captured["body"]["messages"][0]["role"], "system")
         self.assertEqual(captured["body"]["messages"][1]["content"], "User task")
 
+    def test_custom_chat_completions_strips_openai_prefix_for_model(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_urlopen(request, timeout: int = 30):
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return _FakeHttpResponse(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "Normalized custom reply",
+                            }
+                        }
+                    ]
+                }
+            )
+
+        provider = DirectProviderRequest(
+            provider_id="custom",
+            provider_kind="custom",
+            auth_method="api_key_env",
+            api_mode="chat_completions",
+            base_url="https://api.minimax.io/v1",
+            model="openai/MiniMax-M2.7",
+            secret_value="custom-secret",
+        )
+
+        with patch("spark_intelligence.llm.direct_provider.urllib.request.urlopen", side_effect=fake_urlopen):
+            payload = execute_direct_provider_prompt(
+                provider=provider,
+                system_prompt="System instructions",
+                user_prompt="User task",
+            )
+
+        self.assertEqual(payload["raw_response"], "Normalized custom reply")
+        self.assertEqual(payload["model"], "MiniMax-M2.7")
+        self.assertEqual(captured["body"]["model"], "MiniMax-M2.7")
+
     def test_anthropic_execution_uses_messages_api_headers(self) -> None:
         captured: dict[str, object] = {}
 

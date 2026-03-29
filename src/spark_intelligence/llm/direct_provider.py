@@ -83,8 +83,9 @@ def _execute_chat_completions(
     system_prompt: str,
     user_prompt: str,
 ) -> dict[str, object]:
+    model_name = _normalize_chat_completions_model(provider)
     payload = {
-        "model": provider.model,
+        "model": model_name,
         "messages": _chat_messages(system_prompt=system_prompt, user_prompt=user_prompt),
         "temperature": 0.2,
     }
@@ -100,7 +101,7 @@ def _execute_chat_completions(
     return {
         "raw_response": content,
         "provider_id": provider.provider_id,
-        "model": provider.model,
+        "model": model_name,
         "api_mode": provider.api_mode,
         "response": response,
     }
@@ -222,3 +223,15 @@ def _normalize_anthropic_base_url(base_url: str) -> str:
     if normalized.endswith("/v1"):
         return normalized
     return f"{normalized}/v1"
+
+
+def _normalize_chat_completions_model(provider: DirectProviderRequest) -> str:
+    model_name = str(provider.model or "").strip()
+    if (
+        provider.provider_id == "custom"
+        and model_name.lower().startswith("openai/")
+        and "openrouter.ai" not in str(provider.base_url or "").lower()
+    ):
+        _, _, stripped = model_name.partition("/")
+        return stripped or model_name
+    return model_name
