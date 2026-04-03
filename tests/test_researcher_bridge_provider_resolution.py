@@ -1546,12 +1546,14 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         runtime_root.mkdir(parents=True, exist_ok=True)
         config_path = runtime_root / "spark-researcher.project.json"
         config_path.write_text("{}", encoding="utf-8")
+        observed_queries: dict[str, str] = {}
 
         def fake_build_advisory(path: Path, task: str, *, model: str = "generic", limit: int = 4, domain: str | None = None):
             return {
                 "guidance": [],
                 "epistemic_status": {"status": "under_supported", "packet_stability": {"status": "no_belief_packets"}},
                 "selected_packet_ids": [],
+                "intent": {"resource_modes": ["web"], "query": task},
                 "trace_path": "trace:test",
             }
 
@@ -1563,10 +1565,14 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             command_override: list[str] | None = None,
             dry_run: bool = False,
         ) -> dict[str, object]:
+            intent = advisory.get("intent")
+            if isinstance(intent, dict):
+                observed_queries["intent_query"] = str(intent.get("query") or "")
+            observed_queries["original_user_message"] = str(advisory.get("original_user_message") or "")
             return {
                 "status": "research_needed",
                 "decision": "research_needed",
-                "research_query": "current BTC price in USD",
+                "research_query": str(advisory.get("original_user_message") or ""),
                 "clarifying_questions": [],
                 "trace_path": "trace:execution",
             }
@@ -1598,7 +1604,15 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual(result.routing_decision, "provider_execution")
         self.assertEqual(result.evidence_summary, "status=research_needed provider_execution=yes")
         self.assertIn("I need live web evidence before I answer that", result.reply_text)
-        self.assertIn("current BTC price in USD", result.reply_text)
+        self.assertIn("Search the web and tell me the current BTC price in USD with the source you used.", result.reply_text)
+        self.assertEqual(
+            observed_queries["intent_query"],
+            "Search the web and tell me the current BTC price in USD with the source you used.",
+        )
+        self.assertEqual(
+            observed_queries["original_user_message"],
+            "Search the web and tell me the current BTC price in USD with the source you used.",
+        )
 
     def test_build_researcher_reply_keeps_codex_on_external_wrapper_transport(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)

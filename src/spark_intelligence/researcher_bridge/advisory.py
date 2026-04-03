@@ -268,7 +268,12 @@ def _render_reply_from_execution(execution: dict[str, Any], advisory: dict[str, 
 
     if not reply_text:
         if decision == "research_needed":
-            research_query = str(execution.get("research_query") or advisory.get("task") or "").strip()
+            research_query = str(
+                execution.get("research_query")
+                or advisory.get("original_user_message")
+                or advisory.get("task")
+                or ""
+            ).strip()
             if research_query:
                 reply_text = (
                     "I need live web evidence before I answer that, so I'm checking the web now for: "
@@ -2481,6 +2486,10 @@ def build_researcher_reply(
                     limit=3,
                     domain=None,
                 )
+                advisory["original_user_message"] = user_message
+                advisory_intent = advisory.get("intent")
+                if isinstance(advisory_intent, dict):
+                    advisory_intent["query"] = user_message
                 if (
                     provider_selection.provider
                     and provider_selection.provider.execution_transport == "direct_http"
