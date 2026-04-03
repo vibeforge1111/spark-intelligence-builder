@@ -685,6 +685,15 @@ def _build_browser_search_context(
     if not _should_collect_browser_search_context(user_message):
         return empty
 
+    session_unavailable = {
+        "context": "",
+        "blocked_reply": (
+            "Web search is currently unavailable because the Spark Browser Extension live session "
+            "is disconnected. Reload or reconnect the extension, then retry the search."
+        ),
+        "blocked_code": "BROWSER_SESSION_UNAVAILABLE",
+    }
+
     search_query = _normalize_browser_search_query(user_message)
     search_url = _build_browser_search_url(search_query)
     status_output, chip_key = _execute_browser_hook(
@@ -704,16 +713,16 @@ def _build_browser_search_context(
         agent_id=agent_id,
     )
     if not status_output:
-        return empty
+        return session_unavailable
     blocked_reply, blocked_code = _browser_hook_blocked_reply(status_output)
     if blocked_reply:
         return {"context": "", "blocked_reply": blocked_reply, "blocked_code": blocked_code}
     if not _browser_hook_succeeded(status_output):
-        return empty
+        return session_unavailable
     status_result = status_output.get("result") if isinstance(status_output.get("result"), dict) else {}
     extension = status_result.get("extension") if isinstance(status_result.get("extension"), dict) else {}
     if not bool(extension.get("running")):
-        return empty
+        return session_unavailable
 
     navigate_output, chip_key = _execute_browser_hook(
         config_manager=config_manager,
@@ -918,6 +927,27 @@ def _is_startup_operator_chip(active_chip_evaluate: dict[str, Any] | None) -> bo
     if not isinstance(active_chip_evaluate, dict):
         return False
     return str(active_chip_evaluate.get("chip_key") or "").strip().lower() == "startup-yc"
+
+
+def _browser_block_metadata(blocked_code: str | None) -> tuple[str, str, str]:
+    code = str(blocked_code or "").strip().upper()
+    if code == "HOST_PERMISSION_REQUIRED":
+        return (
+            "browser_permission_required",
+            "grant_origin_access",
+            "Browser search blocked by missing host permission.",
+        )
+    if code == "BROWSER_SESSION_UNAVAILABLE":
+        return (
+            "browser_unavailable",
+            "reconnect_browser_session",
+            "Browser search unavailable because the live browser session is disconnected.",
+        )
+    return (
+        "browser_unavailable",
+        "reconnect_browser_session",
+        "Browser search is currently unavailable.",
+    )
 
 
 def _startup_operator_reply_contract() -> str:
@@ -2118,15 +2148,18 @@ def build_researcher_reply(
             promotion_disposition=promotion_disposition,
         )
     if browser_search_blocked_reply:
+        blocked_routing_decision, blocked_escalation_hint, blocked_evidence_summary = _browser_block_metadata(
+            browser_search_blocked_code
+        )
         output_keepability, promotion_disposition = _bridge_output_classification(
             mode="blocked",
-            routing_decision="browser_permission_required",
+            routing_decision=blocked_routing_decision,
         )
         record_event(
             state_db,
             event_type="dispatch_failed",
             component="researcher_bridge",
-            summary="Researcher bridge browser search was blocked by missing host permission.",
+            summary=blocked_evidence_summary,
             run_id=run_id,
             request_id=request_id,
             trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
@@ -2135,10 +2168,10 @@ def build_researcher_reply(
             human_id=human_id,
             agent_id=agent_id,
             actor_id="researcher_bridge",
-            reason_code="browser_permission_required",
+            reason_code=blocked_routing_decision,
             severity="medium",
             facts=_bridge_event_facts(
-                routing_decision="browser_permission_required",
+                routing_decision=blocked_routing_decision,
                 bridge_mode="blocked",
                 provider_id=provider_selection.provider.provider_id if provider_selection.provider else None,
                 provider_auth_method=provider_selection.provider.auth_method if provider_selection.provider else None,
@@ -2160,8 +2193,8 @@ def build_researcher_reply(
         return ResearcherBridgeResult(
             request_id=request_id,
             reply_text=browser_search_blocked_reply,
-            evidence_summary="Browser search blocked by missing host permission.",
-            escalation_hint="grant_origin_access",
+            evidence_summary=blocked_evidence_summary,
+            escalation_hint=blocked_escalation_hint,
             trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
             mode="blocked",
             runtime_root=str(runtime_root) if runtime_root else None,
@@ -2177,7 +2210,7 @@ def build_researcher_reply(
             ),
             provider_base_url=provider_selection.provider.base_url if provider_selection.provider else None,
             provider_source=provider_selection.provider.source if provider_selection.provider else None,
-            routing_decision="browser_permission_required",
+            routing_decision=blocked_routing_decision,
             active_chip_key=active_chip_key,
             active_chip_task_type=active_chip_task_type,
             active_chip_evaluate_used=active_chip_evaluate_used,

@@ -658,3 +658,59 @@ class AttachmentHookTests(SparkTestCase):
         self.assertEqual(result.escalation_hint, "grant_origin_access")
         self.assertIn("does not have host access for https://duckduckgo.com", result.reply_text)
         self.assertIn("grant explicit site access for https://duckduckgo.com", result.reply_text)
+
+    def test_researcher_bridge_returns_explicit_browser_session_unavailable_block(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        provider = RuntimeProviderResolution(
+            provider_id="custom",
+            provider_kind="custom",
+            auth_profile_id="custom:default",
+            auth_method="api_key_env",
+            api_mode="openai_chat_completions",
+            execution_transport="direct_http",
+            base_url="https://api.minimax.io/v1",
+            default_model="MiniMax-M2.7",
+            secret_ref=None,
+            secret_value="minimax-secret",
+            source="test",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._build_browser_search_context",
+            return_value={
+                "context": "",
+                "blocked_reply": (
+                    "Web search is currently unavailable because the Spark Browser Extension live session "
+                    "is disconnected. Reload or reconnect the extension, then retry the search."
+                ),
+                "blocked_code": "BROWSER_SESSION_UNAVAILABLE",
+            },
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            return_value=type(
+                "Selection",
+                (),
+                {"provider": provider, "model_family": "generic", "error": None},
+            )(),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("execute_direct_provider_prompt should not run"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_execute_with_research",
+            side_effect=AssertionError("execute_with_research should not run"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-browser-session-block",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-1",
+                channel_kind="telegram",
+                user_message="Search the web and tell me the current BTC price in USD with the source you used.",
+            )
+
+        self.assertEqual(result.mode, "blocked")
+        self.assertEqual(result.routing_decision, "browser_unavailable")
+        self.assertEqual(result.escalation_hint, "reconnect_browser_session")
+        self.assertIn("live session is disconnected", result.reply_text)
