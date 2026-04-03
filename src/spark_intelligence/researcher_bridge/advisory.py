@@ -264,11 +264,21 @@ def _render_reply_from_advisory(advisory: dict) -> tuple[str, str, str]:
 
 def _render_reply_from_execution(execution: dict[str, Any], advisory: dict[str, Any]) -> tuple[str, str, str]:
     reply_text = _extract_execution_reply_text(execution)
+    decision = str(execution.get("decision") or execution.get("status") or "unknown")
 
     if not reply_text:
-        reply_text, _, _ = _render_reply_from_advisory(advisory)
+        if decision == "research_needed":
+            research_query = str(execution.get("research_query") or advisory.get("task") or "").strip()
+            if research_query:
+                reply_text = (
+                    "I need live web evidence before I answer that, so I'm checking the web now for: "
+                    f"{research_query}"
+                )
+            else:
+                reply_text = "I need live web evidence before I answer that, so I'm checking the web now."
+        else:
+            reply_text, _, _ = _render_reply_from_advisory(advisory)
 
-    decision = str(execution.get("decision") or execution.get("status") or "unknown")
     trace_ref = (
         str(execution.get("research_trace_path") or "")
         or str(execution.get("trace_path") or "")
