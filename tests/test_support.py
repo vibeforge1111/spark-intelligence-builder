@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 
@@ -66,6 +67,10 @@ def main() -> int:
             "identity",
             "personality",
             "browser.status",
+            "browser.navigate",
+            "browser.tab.wait",
+            "browser.page.dom_extract",
+            "browser.page.text_extract",
             "browser.page.snapshot",
         ],
     )
@@ -199,6 +204,7 @@ def main() -> int:
                     "supported": True,
                     "version": "0.1.0",
                 },
+                "runtime_mode": os.environ.get("SPARK_BROWSER_ATTACHMENT_MODE"),
             },
             "artifacts": [],
             "provenance": {
@@ -209,6 +215,220 @@ def main() -> int:
                 "executed_at": "2026-03-29T12:00:00.000Z",
                 "origin": target.get("origin"),
                 "tab_id": target.get("tab_id"),
+            },
+            "policy_flags": {
+                "sensitive_domain": False,
+                "redacted_fields": [],
+                "quarantine_recommended": False,
+            },
+            "error": None,
+        }
+    elif args.hook == "browser.navigate":
+        arguments = payload.get("arguments") or {}
+        requested_url = str(arguments.get("url") or "https://duckduckgo.com/?q=spark").strip()
+        is_source = "coingecko.com" in requested_url
+        tab_id = "tab-source-1" if is_source else "tab-search-1"
+        result = {
+            "status": "succeeded",
+            "risk_class": payload.get("risk_class") or "read_only",
+            "approval_state": "not_required",
+            "result": {
+                "url": requested_url,
+                "origin": requested_url,
+                "disposition": arguments.get("disposition") or "new_background_tab",
+                "tab": {
+                    "id": tab_id,
+                    "active": False,
+                    "status": "complete",
+                    "title": "BTC price search" if not is_source else "Bitcoin price today | CoinGecko",
+                },
+                "wait_hint": {
+                    "available": True,
+                    "named_action": "browser.tab.wait",
+                    "approval_mode": "not_required",
+                    "target": {
+                        "origin": requested_url,
+                        "tab_id": tab_id,
+                    },
+                    "arguments": {
+                        "wait_until": "complete",
+                        "timeout_ms": 2000,
+                        "poll_interval_ms": 50,
+                    },
+                },
+                "activation_hint": None,
+                "operator_surface": {
+                    "named_action": "browser.navigate",
+                    "avoids_screen_hijack": True,
+                },
+            },
+            "artifacts": [],
+            "provenance": {
+                "browser_family": "brave",
+                "profile_key": "spark-default",
+                "extension_version": "0.1.0",
+                "native_host_version": "0.1.0",
+                "executed_at": "2026-03-29T12:00:00.000Z",
+                "origin": requested_url,
+                "tab_id": tab_id,
+            },
+            "policy_flags": {
+                "sensitive_domain": False,
+                "redacted_fields": [],
+                "quarantine_recommended": False,
+            },
+            "error": None,
+        }
+    elif args.hook == "browser.tab.wait":
+        target = payload.get("target") or {}
+        result = {
+            "status": "succeeded",
+            "risk_class": payload.get("risk_class") or "read_only",
+            "approval_state": "not_required",
+            "result": {
+                "origin": target.get("origin") or "https://duckduckgo.com/?q=btc",
+                "tab": {
+                    "id": target.get("tab_id") or "tab-search-1",
+                    "active": False,
+                    "status": "complete",
+                },
+                "wait_status": {
+                    "target_status": "complete",
+                    "observed_status": "complete",
+                    "condition_met": True,
+                    "timed_out": False,
+                    "waited_ms": 120,
+                    "poll_attempts": 2,
+                },
+                "continuation_hint": None,
+                "wait_surface": {
+                    "named_action": "browser.tab.wait",
+                    "bounded_capture": True,
+                    "execution_performed": False,
+                    "waited_for_known_tab": True,
+                },
+            },
+            "artifacts": [],
+            "provenance": {
+                "browser_family": "brave",
+                "profile_key": "spark-default",
+                "extension_version": "0.1.0",
+                "native_host_version": "0.1.0",
+                "executed_at": "2026-03-29T12:00:00.000Z",
+                "origin": target.get("origin"),
+                "tab_id": target.get("tab_id"),
+            },
+            "policy_flags": {
+                "sensitive_domain": False,
+                "redacted_fields": [],
+                "quarantine_recommended": False,
+            },
+            "error": None,
+        }
+    elif args.hook == "browser.page.dom_extract":
+        target = payload.get("target") or {}
+        origin = str(target.get("origin") or "https://duckduckgo.com/?q=btc")
+        if "duckduckgo.com" in origin:
+            title = "BTC price search at DuckDuckGo"
+            nodes = [
+                {
+                    "tag": "a",
+                    "role": "link",
+                    "text_summary": "Bitcoin price today, BTC to USD live price, market cap and chart | CoinGecko",
+                    "href": "https://www.coingecko.com/en/coins/bitcoin",
+                },
+                {
+                    "tag": "a",
+                    "role": "link",
+                    "text_summary": "Bitcoin USD price live | CoinMarketCap",
+                    "href": "https://coinmarketcap.com/currencies/bitcoin/",
+                },
+            ]
+        else:
+            title = "Bitcoin price today | CoinGecko"
+            nodes = [
+                {
+                    "tag": "p",
+                    "role": None,
+                    "text_summary": "Bitcoin price today is $84,321.18 with a 24-hour trading volume of $31B.",
+                    "href": None,
+                }
+            ]
+        result = {
+            "status": "succeeded",
+            "risk_class": payload.get("risk_class") or "read_only",
+            "approval_state": "not_required",
+            "result": {
+                "title": title,
+                "origin": origin,
+                "headings": [{"level": 1, "text": title}],
+                "landmarks": [{"role": "main", "label": "Main content"}],
+                "dom_outline": {
+                    "nodes": nodes,
+                },
+                "sensitive_surface_hints": {
+                    "likely_sensitive_domain": False,
+                },
+                "extraction_surface": {
+                    "named_action": "browser.page.dom_extract",
+                    "bounded_capture": True,
+                    "execution_performed": False,
+                },
+            },
+            "artifacts": [],
+            "provenance": {
+                "browser_family": "brave",
+                "profile_key": "spark-default",
+                "extension_version": "0.1.0",
+                "native_host_version": "0.1.0",
+                "executed_at": "2026-03-29T12:00:00.000Z",
+                "origin": origin,
+                "tab_id": target.get("tab_id") or "tab-search-1",
+            },
+            "policy_flags": {
+                "sensitive_domain": False,
+                "redacted_fields": [],
+                "quarantine_recommended": False,
+            },
+            "error": None,
+        }
+    elif args.hook == "browser.page.text_extract":
+        target = payload.get("target") or {}
+        origin = str(target.get("origin") or "https://www.coingecko.com/en/coins/bitcoin")
+        result = {
+            "status": "succeeded",
+            "risk_class": payload.get("risk_class") or "read_only",
+            "approval_state": "not_required",
+            "result": {
+                "title": "Bitcoin price today | CoinGecko",
+                "origin": origin,
+                "visible_text": {
+                    "summary": "Bitcoin price today is $84,321.18 USD according to the CoinGecko Bitcoin page.",
+                    "excerpt": "CoinGecko lists the live BTC to USD price and market summary.",
+                    "character_count": 112,
+                    "truncated": False,
+                    "redacted": False,
+                },
+                "page_classification_hints": {
+                    "content_type": "reference",
+                },
+                "sensitive_surface_hints": {
+                    "likely_sensitive_domain": False,
+                },
+                "provenance_fields": {
+                    "bounded_capture": True,
+                    "text_only": True,
+                },
+            },
+            "artifacts": [],
+            "provenance": {
+                "browser_family": "brave",
+                "profile_key": "spark-default",
+                "extension_version": "0.1.0",
+                "native_host_version": "0.1.0",
+                "executed_at": "2026-03-29T12:00:00.000Z",
+                "origin": origin,
+                "tab_id": target.get("tab_id") or "tab-source-1",
             },
             "policy_flags": {
                 "sensitive_domain": False,
@@ -289,7 +509,20 @@ if __name__ == "__main__":
                 "chip_name": chip_key,
                 "domain": "startup-advisory",
                 "description": "Fake startup chip for hook tests.",
-                "capabilities": ["evaluate", "suggest", "packets", "watchtower", "identity", "personality", "browser.status", "browser.page.snapshot"],
+                "capabilities": [
+                    "evaluate",
+                    "suggest",
+                    "packets",
+                    "watchtower",
+                    "identity",
+                    "personality",
+                    "browser.status",
+                    "browser.navigate",
+                    "browser.tab.wait",
+                    "browser.page.dom_extract",
+                    "browser.page.text_extract",
+                    "browser.page.snapshot",
+                ],
                 "commands": {
                     "evaluate": ["python", "-m", "fake_startup_chip.chip_hooks", "evaluate"],
                     "suggest": ["python", "-m", "fake_startup_chip.chip_hooks", "suggest"],
@@ -298,8 +531,20 @@ if __name__ == "__main__":
                     "identity": ["python", "-m", "fake_startup_chip.chip_hooks", "identity"],
                     "personality": ["python", "-m", "fake_startup_chip.chip_hooks", "personality"],
                     "browser.status": ["python", "-m", "fake_startup_chip.chip_hooks", "browser.status"],
+                    "browser.navigate": ["python", "-m", "fake_startup_chip.chip_hooks", "browser.navigate"],
+                    "browser.tab.wait": ["python", "-m", "fake_startup_chip.chip_hooks", "browser.tab.wait"],
+                    "browser.page.dom_extract": ["python", "-m", "fake_startup_chip.chip_hooks", "browser.page.dom_extract"],
+                    "browser.page.text_extract": ["python", "-m", "fake_startup_chip.chip_hooks", "browser.page.text_extract"],
                     "browser.page.snapshot": ["python", "-m", "fake_startup_chip.chip_hooks", "browser.page.snapshot"],
                 },
+                "frontier": (
+                    {
+                        "runtime_family": "browser-capability",
+                        "runtime_mode": "governed_adapter",
+                    }
+                    if chip_key == "spark-browser"
+                    else None
+                ),
             },
             indent=2,
         ),

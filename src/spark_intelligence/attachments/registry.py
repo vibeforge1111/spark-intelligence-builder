@@ -86,7 +86,7 @@ class AttachmentScanResult:
 
 
 def attachment_status(config_manager: ConfigManager) -> AttachmentScanResult:
-    chip_roots, chip_source = _resolve_roots(config_manager, "spark.chips.roots", "domain-chip-*")
+    chip_roots, chip_source = _resolve_chip_roots(config_manager)
     path_roots, path_source = _resolve_roots(config_manager, "spark.specialization_paths.roots", "specialization-path-*")
     records: list[AttachmentRecord] = []
     warnings: list[str] = []
@@ -127,6 +127,32 @@ def add_attachment_root(config_manager: ConfigManager, *, target: str, root: str
         values.append(normalized)
         config_manager.set_path(dotted_path, values)
     return values
+
+
+def _resolve_chip_roots(config_manager: ConfigManager) -> tuple[list[Path], str]:
+    configured = config_manager.get_path("spark.chips.roots", default=[]) or []
+    normalized = [Path(str(item)).expanduser() for item in configured if str(item).strip()]
+    if normalized:
+        return normalized, "configured"
+
+    desktop = Path.home() / "Desktop"
+    if not desktop.exists():
+        return [], "missing"
+
+    autodetected: list[Path] = []
+    seen: set[str] = set()
+    candidates = list(desktop.glob("domain-chip-*"))
+    candidates.extend(
+        path
+        for path in desktop.iterdir()
+        if path.is_dir() and (path / "spark-chip.json").exists()
+    )
+    for candidate in sorted(candidates):
+        key = str(candidate.resolve())
+        if key not in seen:
+            seen.add(key)
+            autodetected.append(candidate)
+    return autodetected, "autodiscovered" if autodetected else "missing"
 
 
 def _resolve_roots(config_manager: ConfigManager, dotted_path: str, default_glob: str) -> tuple[list[Path], str]:

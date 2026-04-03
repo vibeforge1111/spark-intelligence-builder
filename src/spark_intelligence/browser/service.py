@@ -7,6 +7,10 @@ from uuid import uuid4
 from spark_intelligence.config.loader import ConfigManager
 
 BROWSER_STATUS_HOOK = "browser.status"
+BROWSER_NAVIGATE_HOOK = "browser.navigate"
+BROWSER_TAB_WAIT_HOOK = "browser.tab.wait"
+BROWSER_PAGE_DOM_EXTRACT_HOOK = "browser.page.dom_extract"
+BROWSER_PAGE_TEXT_EXTRACT_HOOK = "browser.page.text_extract"
 BROWSER_PAGE_SNAPSHOT_HOOK = "browser.page.snapshot"
 SCHEMA_VERSION = "spark-browser-hook.v1"
 DEFAULT_BROWSER_FAMILY = "brave"
@@ -90,6 +94,182 @@ def build_browser_page_snapshot_payload(
     }
 
 
+def build_browser_navigate_payload(
+    *,
+    config_manager: ConfigManager,
+    url: str,
+    disposition: str = "new_background_tab",
+    browser_family: str | None = None,
+    profile_key: str | None = None,
+    profile_mode: str | None = None,
+    agent_id: str | None = None,
+    request_id: str | None = None,
+) -> dict[str, Any]:
+    origin = _normalize_origin(url)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "request_id": request_id or f"browser-navigate:{uuid4().hex[:12]}",
+        "hook_name": BROWSER_NAVIGATE_HOOK,
+        "agent_id": agent_id or DEFAULT_AGENT_ID,
+        "workspace_id": _workspace_id(config_manager),
+        "risk_class": "read_only",
+        "approval_mode": "not_required",
+        "approval_id": None,
+        "target": _build_target(
+            browser_family=browser_family,
+            profile_key=profile_key,
+            profile_mode=profile_mode,
+            origin=origin,
+        ),
+        "arguments": {
+            "url": url,
+            "disposition": disposition,
+        },
+        "policy_context": {
+            "allowed_domains": _normalize_allowed_domains(url, []),
+            "sensitive_domain": False,
+            "operator_required": False,
+        },
+    }
+
+
+def build_browser_tab_wait_payload(
+    *,
+    config_manager: ConfigManager,
+    origin: str,
+    tab_id: str,
+    browser_family: str | None = None,
+    profile_key: str | None = None,
+    profile_mode: str | None = None,
+    agent_id: str | None = None,
+    request_id: str | None = None,
+    wait_until: str = "complete",
+    timeout_ms: int = 4000,
+    poll_interval_ms: int = 100,
+) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "request_id": request_id or f"browser-tab-wait:{uuid4().hex[:12]}",
+        "hook_name": BROWSER_TAB_WAIT_HOOK,
+        "agent_id": agent_id or DEFAULT_AGENT_ID,
+        "workspace_id": _workspace_id(config_manager),
+        "risk_class": "read_only",
+        "approval_mode": "not_required",
+        "approval_id": None,
+        "target": {
+            **_build_target(
+                browser_family=browser_family,
+                profile_key=profile_key,
+                profile_mode=profile_mode,
+                origin=origin,
+            ),
+            "tab_id": tab_id,
+        },
+        "arguments": {
+            "wait_until": wait_until,
+            "timeout_ms": timeout_ms,
+            "poll_interval_ms": poll_interval_ms,
+        },
+        "policy_context": {
+            "allowed_domains": _normalize_allowed_domains(origin, []),
+            "sensitive_domain": False,
+            "operator_required": False,
+        },
+    }
+
+
+def build_browser_page_dom_extract_payload(
+    *,
+    config_manager: ConfigManager,
+    origin: str,
+    tab_id: str | None = None,
+    browser_family: str | None = None,
+    profile_key: str | None = None,
+    profile_mode: str | None = None,
+    agent_id: str | None = None,
+    request_id: str | None = None,
+    max_nodes: int = 12,
+    max_text_characters_per_node: int = 160,
+    max_headings: int = 6,
+    max_landmarks: int = 6,
+    allowed_domains: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "request_id": request_id or f"browser-page-dom-extract:{uuid4().hex[:12]}",
+        "hook_name": BROWSER_PAGE_DOM_EXTRACT_HOOK,
+        "agent_id": agent_id or DEFAULT_AGENT_ID,
+        "workspace_id": _workspace_id(config_manager),
+        "risk_class": "read_only",
+        "approval_mode": "not_required",
+        "approval_id": None,
+        "target": {
+            **_build_target(
+                browser_family=browser_family,
+                profile_key=profile_key,
+                profile_mode=profile_mode,
+                origin=origin,
+            ),
+            "tab_id": tab_id,
+        },
+        "arguments": {
+            "max_nodes": max_nodes,
+            "max_text_characters_per_node": max_text_characters_per_node,
+            "max_headings": max_headings,
+            "max_landmarks": max_landmarks,
+        },
+        "policy_context": {
+            "allowed_domains": _normalize_allowed_domains(origin, allowed_domains or []),
+            "sensitive_domain": False,
+            "operator_required": False,
+        },
+    }
+
+
+def build_browser_page_text_extract_payload(
+    *,
+    config_manager: ConfigManager,
+    origin: str,
+    tab_id: str | None = None,
+    browser_family: str | None = None,
+    profile_key: str | None = None,
+    profile_mode: str | None = None,
+    agent_id: str | None = None,
+    request_id: str | None = None,
+    max_text_characters: int = 1600,
+    max_controls: int = 10,
+    allowed_domains: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "request_id": request_id or f"browser-page-text-extract:{uuid4().hex[:12]}",
+        "hook_name": BROWSER_PAGE_TEXT_EXTRACT_HOOK,
+        "agent_id": agent_id or DEFAULT_AGENT_ID,
+        "workspace_id": _workspace_id(config_manager),
+        "risk_class": "read_only",
+        "approval_mode": "not_required",
+        "approval_id": None,
+        "target": {
+            **_build_target(
+                browser_family=browser_family,
+                profile_key=profile_key,
+                profile_mode=profile_mode,
+                origin=origin,
+            ),
+            "tab_id": tab_id,
+        },
+        "arguments": {
+            "max_text_characters": max_text_characters,
+            "max_controls": max_controls,
+        },
+        "policy_context": {
+            "allowed_domains": _normalize_allowed_domains(origin, allowed_domains or []),
+            "sensitive_domain": False,
+            "operator_required": False,
+        },
+    }
+
+
 def render_browser_status(result: dict[str, Any]) -> str:
     browser = result.get("browser") if isinstance(result.get("browser"), dict) else {}
     profile = result.get("profile") if isinstance(result.get("profile"), dict) else {}
@@ -159,3 +339,10 @@ def _normalize_allowed_domains(origin: str, allowed_domains: list[str]) -> list[
     if parsed.hostname:
         return [parsed.hostname]
     return []
+
+
+def _normalize_origin(url: str) -> str | None:
+    parsed = urlparse(url)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"

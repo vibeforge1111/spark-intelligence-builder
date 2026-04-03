@@ -10,14 +10,23 @@ from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, quote, urlparse
 
 from spark_intelligence.attachments import (
     build_attachment_context,
     record_chip_hook_execution,
     run_first_active_chip_hook,
+    run_first_chip_hook_supporting,
     screen_chip_hook_text,
 )
 from spark_intelligence.auth.runtime import RuntimeProviderResolution, resolve_runtime_provider
+from spark_intelligence.browser.service import (
+    build_browser_navigate_payload,
+    build_browser_page_dom_extract_payload,
+    build_browser_page_text_extract_payload,
+    build_browser_status_payload,
+    build_browser_tab_wait_payload,
+)
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.memory import lookup_current_state_in_memory, write_profile_fact_to_memory
 from spark_intelligence.memory.profile_facts import (
@@ -399,6 +408,7 @@ def _render_direct_provider_chat_fallback(
     active_chip_evaluate: dict[str, Any] | None = None,
     personality_profile: dict[str, Any] | None = None,
     personality_context_extra: str = "",
+    browser_search_context_extra: str = "",
     run_id: str | None = None,
     request_id: str | None = None,
     trace_ref: str | None = None,
@@ -414,6 +424,15 @@ def _render_direct_provider_chat_fallback(
         "and you are not confident, say you need more context or verification before giving a hard answer. "
         "Do not mention internal advisory or verification systems."
     )
+    if browser_search_context_extra:
+        base_system_prompt = (
+            f"{base_system_prompt} "
+            "Browser search evidence is already attached in the user prompt. "
+            "Do not say you cannot browse, cannot access real-time data, or need to look something up. "
+            "Answer directly from the attached browser evidence. "
+            "When you cite a source, cite the provided source_url in plain text. "
+            "If the evidence is approximate or snippet-based, say that plainly, but still answer the user's question."
+        )
     if _is_startup_operator_chip(active_chip_evaluate):
         base_system_prompt = f"{base_system_prompt} {_startup_operator_reply_contract()}"
     if personality_profile:
@@ -439,9 +458,10 @@ def _render_direct_provider_chat_fallback(
             ),
             attachment_context=attachment_context,
             active_chip_evaluate=active_chip_evaluate,
-                personality_profile=personality_profile,
-                personality_context_extra=personality_context_extra,
-            ),
+            personality_profile=personality_profile,
+            personality_context_extra=personality_context_extra,
+            browser_search_context_extra=browser_search_context_extra,
+        ),
         governance=DirectProviderGovernance(
             state_db_path=str(state_db.path),
             source_kind="researcher_bridge_direct_prompt",
@@ -467,6 +487,416 @@ def _render_direct_provider_chat_fallback(
     if not raw_response:
         raise RuntimeError("Direct provider fallback returned no text content.")
     return raw_response
+
+
+def _should_collect_browser_search_context(user_message: str) -> bool:
+    lowered = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
+    if not lowered:
+        return False
+    explicit_signals = (
+        "search the web",
+        "web search",
+        "websearch",
+        "look up",
+        "browse for",
+        "find online",
+        "search online",
+        "google ",
+    )
+    if any(signal in lowered for signal in explicit_signals):
+        return True
+    current_fact_signals = ("current", "latest", "today", "price", "news", "source")
+    return any(signal in lowered for signal in current_fact_signals) and any(
+        token in lowered for token in ("search", "look", "find", "source")
+    )
+
+
+def _normalize_browser_search_query(user_message: str) -> str:
+    query = str(user_message or "").strip()
+    patterns = (
+        r"^\s*(please\s+)?search (the )?web (for|and tell me)?\s+",
+        r"^\s*(please\s+)?websearch\s+",
+        r"^\s*(please\s+)?look up\s+",
+        r"^\s*(please\s+)?find online\s+",
+        r"^\s*(please\s+)?search online\s+",
+    )
+    for pattern in patterns:
+        updated = re.sub(pattern, "", query, flags=re.IGNORECASE)
+        if updated != query:
+            query = updated
+            break
+    query = re.sub(r"^\s*tell me\s+", "", query, flags=re.IGNORECASE)
+    query = re.sub(r"^\s*the\s+", "", query, flags=re.IGNORECASE)
+    query = re.sub(r"\s+with the source you used\.?\s*$", "", query, flags=re.IGNORECASE)
+    query = re.sub(r"\s+and cite (the )?source(s)?\.?\s*$", "", query, flags=re.IGNORECASE)
+    query = query.strip(" ?")
+    return query or str(user_message or "").strip()
+
+
+def _build_browser_search_url(query: str) -> str:
+    return f"https://duckduckgo.com/?q={quote(query)}&ia=web"
+
+
+def _execute_browser_hook(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    hook: str,
+    payload: dict[str, Any],
+    run_id: str | None,
+    request_id: str,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    agent_id: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    try:
+        execution = run_first_chip_hook_supporting(config_manager, hook=hook, payload=payload)
+    except Exception:
+        return None, None
+    if not execution or not execution.ok:
+        return None, None
+    record_chip_hook_execution(
+        state_db,
+        execution=execution,
+        component="researcher_bridge",
+        actor_id="researcher_bridge",
+        summary="Researcher bridge executed a browser chip hook before provider execution.",
+        reason_code=f"browser_hook_{hook.replace('.', '_')}",
+        keepability="ephemeral_context",
+        run_id=run_id,
+        request_id=request_id,
+        channel_id=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+    )
+    output = execution.output if isinstance(execution.output, dict) else None
+    return output, execution.chip_key
+
+
+def _browser_hook_blocked_reply(output: dict[str, Any]) -> tuple[str | None, str | None]:
+    error = output.get("error") if isinstance(output.get("error"), dict) else {}
+    code = str(error.get("code") or "").strip()
+    if code != "HOST_PERMISSION_REQUIRED":
+        return None, code or None
+    details = error.get("details") if isinstance(error.get("details"), dict) else {}
+    origin = str(details.get("origin") or "").strip() or "the requested origin"
+    return (
+        (
+            f"Web search is blocked because the browser extension does not have host access for {origin}. "
+            f"Open the extension popup and grant explicit site access for {origin}, then retry the search."
+        ),
+        code,
+    )
+
+
+def _browser_hook_succeeded(output: dict[str, Any] | None) -> bool:
+    return isinstance(output, dict) and str(output.get("status") or "").strip().lower() == "succeeded"
+
+
+def _resolve_external_search_result_href(href: str, *, search_host: str) -> str | None:
+    candidate = str(href or "").strip()
+    if not candidate:
+        return None
+    parsed = urlparse(candidate)
+    if parsed.hostname and parsed.hostname.endswith(search_host):
+        redirected = parse_qs(parsed.query).get("uddg")
+        if redirected:
+            return str(redirected[0]).strip() or None
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        return candidate
+    return None
+
+
+def _summarize_dom_outline_nodes(nodes: Any, *, max_items: int = 5) -> list[str]:
+    if not isinstance(nodes, list):
+        return []
+    lines: list[str] = []
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        text = str(node.get("text_summary") or "").strip()
+        href = str(node.get("href") or "").strip()
+        if not text and not href:
+            continue
+        line = text or href
+        if href:
+            line = f"{line} | href={href}"
+        lines.append(line)
+        if len(lines) >= max_items:
+            break
+    return lines
+
+
+def _select_search_result_candidate(dom_extract_output: dict[str, Any], *, search_url: str) -> dict[str, str] | None:
+    result = dom_extract_output.get("result") if isinstance(dom_extract_output.get("result"), dict) else {}
+    dom_outline = result.get("dom_outline") if isinstance(result.get("dom_outline"), dict) else {}
+    search_host = str(urlparse(search_url).hostname or "").lower()
+    nodes = dom_outline.get("nodes") if isinstance(dom_outline.get("nodes"), list) else []
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        href = _resolve_external_search_result_href(str(node.get("href") or ""), search_host=search_host)
+        if not href:
+            continue
+        candidate_host = str(urlparse(href).hostname or "").lower()
+        if not candidate_host or candidate_host == search_host:
+            continue
+        return {
+            "href": href,
+            "text_summary": str(node.get("text_summary") or "").strip(),
+        }
+    return None
+
+
+def _build_browser_search_context(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    user_message: str,
+    request_id: str,
+    channel_kind: str,
+    agent_id: str,
+    human_id: str,
+    session_id: str,
+    run_id: str | None = None,
+) -> dict[str, str | None]:
+    empty = {
+        "context": "",
+        "blocked_reply": None,
+        "blocked_code": None,
+    }
+    if not _should_collect_browser_search_context(user_message):
+        return empty
+
+    search_query = _normalize_browser_search_query(user_message)
+    search_url = _build_browser_search_url(search_query)
+    status_output, chip_key = _execute_browser_hook(
+        config_manager=config_manager,
+        state_db=state_db,
+        hook="browser.status",
+        payload=build_browser_status_payload(
+            config_manager=config_manager,
+            agent_id=agent_id,
+            request_id=f"{request_id}:browser-status",
+        ),
+        run_id=run_id,
+        request_id=request_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+    )
+    if not status_output:
+        return empty
+    blocked_reply, blocked_code = _browser_hook_blocked_reply(status_output)
+    if blocked_reply:
+        return {"context": "", "blocked_reply": blocked_reply, "blocked_code": blocked_code}
+    if not _browser_hook_succeeded(status_output):
+        return empty
+    status_result = status_output.get("result") if isinstance(status_output.get("result"), dict) else {}
+    extension = status_result.get("extension") if isinstance(status_result.get("extension"), dict) else {}
+    if not bool(extension.get("running")):
+        return empty
+
+    navigate_output, chip_key = _execute_browser_hook(
+        config_manager=config_manager,
+        state_db=state_db,
+        hook="browser.navigate",
+        payload=build_browser_navigate_payload(
+            config_manager=config_manager,
+            url=search_url,
+            agent_id=agent_id,
+            request_id=f"{request_id}:browser-search-navigate",
+        ),
+        run_id=run_id,
+        request_id=request_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+    )
+    if not navigate_output:
+        return empty
+    blocked_reply, blocked_code = _browser_hook_blocked_reply(navigate_output)
+    if blocked_reply:
+        return {"context": "", "blocked_reply": blocked_reply, "blocked_code": blocked_code}
+    if not _browser_hook_succeeded(navigate_output):
+        return empty
+    navigate_result = navigate_output.get("result") if isinstance(navigate_output.get("result"), dict) else {}
+    wait_hint = navigate_result.get("wait_hint") if isinstance(navigate_result.get("wait_hint"), dict) else {}
+    wait_target = wait_hint.get("target") if isinstance(wait_hint.get("target"), dict) else {}
+    search_origin = str(wait_target.get("origin") or navigate_result.get("origin") or search_url).strip()
+    search_tab_id = str(wait_target.get("tab_id") or ((navigate_result.get("tab") or {}).get("id") if isinstance(navigate_result.get("tab"), dict) else "") or "").strip()
+    if not search_tab_id:
+        return empty
+
+    wait_output, _ = _execute_browser_hook(
+        config_manager=config_manager,
+        state_db=state_db,
+        hook="browser.tab.wait",
+        payload=build_browser_tab_wait_payload(
+            config_manager=config_manager,
+            origin=search_origin,
+            tab_id=search_tab_id,
+            agent_id=agent_id,
+            request_id=f"{request_id}:browser-search-wait",
+        ),
+        run_id=run_id,
+        request_id=request_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+    )
+    blocked_reply, blocked_code = _browser_hook_blocked_reply(wait_output or {})
+    if blocked_reply:
+        return {"context": "", "blocked_reply": blocked_reply, "blocked_code": blocked_code}
+
+    dom_output, chip_key = _execute_browser_hook(
+        config_manager=config_manager,
+        state_db=state_db,
+        hook="browser.page.dom_extract",
+        payload=build_browser_page_dom_extract_payload(
+            config_manager=config_manager,
+            origin=search_origin,
+            tab_id=search_tab_id,
+            agent_id=agent_id,
+            request_id=f"{request_id}:browser-search-dom",
+        ),
+        run_id=run_id,
+        request_id=request_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+    )
+    if not dom_output:
+        return empty
+    blocked_reply, blocked_code = _browser_hook_blocked_reply(dom_output)
+    if blocked_reply:
+        return {"context": "", "blocked_reply": blocked_reply, "blocked_code": blocked_code}
+    if not _browser_hook_succeeded(dom_output):
+        return empty
+    dom_result = dom_output.get("result") if isinstance(dom_output.get("result"), dict) else {}
+    search_nodes = _summarize_dom_outline_nodes((dom_result.get("dom_outline") or {}).get("nodes"))
+    candidate = _select_search_result_candidate(dom_output, search_url=search_url)
+
+    source_url = candidate["href"] if candidate else search_url
+    source_navigate_output, _ = _execute_browser_hook(
+        config_manager=config_manager,
+        state_db=state_db,
+        hook="browser.navigate",
+        payload=build_browser_navigate_payload(
+            config_manager=config_manager,
+            url=source_url,
+            agent_id=agent_id,
+            request_id=f"{request_id}:browser-source-navigate",
+        ),
+        run_id=run_id,
+        request_id=request_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+    )
+    source_origin = search_origin
+    source_tab_id = search_tab_id
+    if source_navigate_output:
+        source_navigate_result = (
+            source_navigate_output.get("result")
+            if isinstance(source_navigate_output.get("result"), dict)
+            else {}
+        )
+        source_wait_hint = (
+            source_navigate_result.get("wait_hint")
+            if isinstance(source_navigate_result.get("wait_hint"), dict)
+            else {}
+        )
+        source_wait_target = source_wait_hint.get("target") if isinstance(source_wait_hint.get("target"), dict) else {}
+        source_origin = str(source_wait_target.get("origin") or source_navigate_result.get("origin") or source_url).strip()
+        source_tab_id = str(source_wait_target.get("tab_id") or ((source_navigate_result.get("tab") or {}).get("id") if isinstance(source_navigate_result.get("tab"), dict) else "") or source_tab_id).strip()
+        if source_tab_id:
+            wait_output, _ = _execute_browser_hook(
+                config_manager=config_manager,
+                state_db=state_db,
+                hook="browser.tab.wait",
+                payload=build_browser_tab_wait_payload(
+                    config_manager=config_manager,
+                    origin=source_origin,
+                    tab_id=source_tab_id,
+                    agent_id=agent_id,
+                    request_id=f"{request_id}:browser-source-wait",
+                ),
+                run_id=run_id,
+                request_id=request_id,
+                channel_kind=channel_kind,
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
+            )
+            blocked_reply, blocked_code = _browser_hook_blocked_reply(wait_output or {})
+            if blocked_reply:
+                return {"context": "", "blocked_reply": blocked_reply, "blocked_code": blocked_code}
+
+    text_output, _ = _execute_browser_hook(
+        config_manager=config_manager,
+        state_db=state_db,
+        hook="browser.page.text_extract",
+        payload=build_browser_page_text_extract_payload(
+            config_manager=config_manager,
+            origin=source_origin,
+            tab_id=source_tab_id or None,
+            agent_id=agent_id,
+            request_id=f"{request_id}:browser-source-text",
+        ),
+        run_id=run_id,
+        request_id=request_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+    )
+    if not text_output:
+        return empty
+    blocked_reply, blocked_code = _browser_hook_blocked_reply(text_output)
+    if blocked_reply:
+        return {"context": "", "blocked_reply": blocked_reply, "blocked_code": blocked_code}
+    if not _browser_hook_succeeded(text_output):
+        return empty
+    text_result = text_output.get("result") if isinstance(text_output.get("result"), dict) else {}
+    visible_text = text_result.get("visible_text") if isinstance(text_result.get("visible_text"), dict) else {}
+
+    lines = [
+        "[Browser search evidence]",
+        "The user explicitly asked for web/current/source-backed information.",
+        "Use this evidence as the factual basis for the reply instead of asking the user what to optimize for.",
+        "If you cite a source, cite the source_url field directly in plain text.",
+        f"browser_chip_key={chip_key or 'unknown'}",
+        f"search_query={search_query}",
+        f"search_url={search_url}",
+        f"search_results_title={dom_result.get('title') or 'unknown'}",
+    ]
+    if search_nodes:
+        lines.append("search_result_candidates=" + json.dumps(search_nodes, ensure_ascii=True))
+    if candidate:
+        lines.append(f"selected_result_hint={candidate.get('text_summary') or 'unknown'}")
+    lines.extend(
+        [
+            f"source_url={source_url}",
+            f"source_title={text_result.get('title') or 'unknown'}",
+            f"source_origin={text_result.get('origin') or source_origin}",
+            f"source_summary={visible_text.get('summary') or ''}",
+            f"source_excerpt={visible_text.get('excerpt') or ''}",
+            "",
+        ]
+    )
+    return {
+        "context": "\n".join(lines),
+        "blocked_reply": None,
+        "blocked_code": None,
+    }
 
 
 def _is_startup_operator_chip(active_chip_evaluate: dict[str, Any] | None) -> bool:
@@ -551,6 +981,7 @@ def _build_contextual_task(
     active_chip_evaluate: dict[str, Any] | None = None,
     personality_profile: dict[str, Any] | None = None,
     personality_context_extra: str = "",
+    browser_search_context_extra: str = "",
 ) -> str:
     active_chip_keys = attachment_context.get("active_chip_keys") or []
     pinned_chip_keys = attachment_context.get("pinned_chip_keys") or []
@@ -568,6 +999,8 @@ def _build_contextual_task(
             lines.extend([personality_ctx, ""])
     if personality_context_extra:
         lines.extend([personality_context_extra, ""])
+    if browser_search_context_extra:
+        lines.extend([browser_search_context_extra, ""])
     if active_chip_evaluate:
         chip_guidance = _summarize_active_chip_guidance(str(active_chip_evaluate.get("analysis") or ""))
         lines.extend(
@@ -1415,12 +1848,27 @@ def build_researcher_reply(
                 "source_ref": active_chip_evaluate.get("chip_key") if active_chip_evaluate else "attachments",
             },
         )
+    browser_search_support = _build_browser_search_context(
+        config_manager=config_manager,
+        state_db=state_db,
+        user_message=user_message,
+        request_id=request_id,
+        channel_kind=channel_kind,
+        agent_id=agent_id,
+        human_id=human_id,
+        session_id=session_id,
+        run_id=run_id,
+    )
+    browser_search_context_extra = str(browser_search_support.get("context") or "")
+    browser_search_blocked_reply = str(browser_search_support.get("blocked_reply") or "") or None
+    browser_search_blocked_code = str(browser_search_support.get("blocked_code") or "") or None
     contextual_task = _build_contextual_task(
         user_message=user_message,
         attachment_context=attachment_context,
         active_chip_evaluate=active_chip_evaluate,
         personality_profile=personality_profile,
         personality_context_extra=personality_context_extra,
+        browser_search_context_extra=browser_search_context_extra,
     )
     active_chip_key = str(active_chip_evaluate.get("chip_key")) if active_chip_evaluate else None
     active_chip_task_type = str(active_chip_evaluate.get("task_type")) if active_chip_evaluate and active_chip_evaluate.get("task_type") else None
@@ -1654,6 +2102,201 @@ def build_researcher_reply(
             output_keepability=output_keepability,
             promotion_disposition=promotion_disposition,
         )
+    if browser_search_blocked_reply:
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="blocked",
+            routing_decision="browser_permission_required",
+        )
+        record_event(
+            state_db,
+            event_type="dispatch_failed",
+            component="researcher_bridge",
+            summary="Researcher bridge browser search was blocked by missing host permission.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="browser_permission_required",
+            severity="medium",
+            facts=_bridge_event_facts(
+                routing_decision="browser_permission_required",
+                bridge_mode="blocked",
+                provider_id=provider_selection.provider.provider_id if provider_selection.provider else None,
+                provider_auth_method=provider_selection.provider.auth_method if provider_selection.provider else None,
+                provider_model=provider_selection.provider.default_model if provider_selection.provider else None,
+                provider_model_family=provider_selection.model_family,
+                provider_execution_transport=(
+                    provider_selection.provider.execution_transport if provider_selection.provider else None
+                ),
+                provider_base_url=provider_selection.provider.base_url if provider_selection.provider else None,
+                provider_source=provider_selection.provider.source if provider_selection.provider else None,
+                active_chip_key=active_chip_key,
+                active_chip_task_type=active_chip_task_type,
+                active_chip_evaluate_used=active_chip_evaluate_used,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={"blocked_code": browser_search_blocked_code},
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=browser_search_blocked_reply,
+            evidence_summary="Browser search blocked by missing host permission.",
+            escalation_hint="grant_origin_access",
+            trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+            mode="blocked",
+            runtime_root=str(runtime_root) if runtime_root else None,
+            config_path=str(config_path) if config_path else None,
+            attachment_context=attachment_context,
+            provider_id=provider_selection.provider.provider_id if provider_selection.provider else None,
+            provider_auth_profile_id=provider_selection.provider.auth_profile_id if provider_selection.provider else None,
+            provider_auth_method=provider_selection.provider.auth_method if provider_selection.provider else None,
+            provider_model=provider_selection.provider.default_model if provider_selection.provider else None,
+            provider_model_family=provider_selection.model_family,
+            provider_execution_transport=(
+                provider_selection.provider.execution_transport if provider_selection.provider else None
+            ),
+            provider_base_url=provider_selection.provider.base_url if provider_selection.provider else None,
+            provider_source=provider_selection.provider.source if provider_selection.provider else None,
+            routing_decision="browser_permission_required",
+            active_chip_key=active_chip_key,
+            active_chip_task_type=active_chip_task_type,
+            active_chip_evaluate_used=active_chip_evaluate_used,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+    if (
+        browser_search_context_extra
+        and provider_selection.provider
+        and provider_selection.provider.execution_transport == "direct_http"
+    ):
+        raw_reply_text = _render_direct_provider_chat_fallback(
+            state_db=state_db,
+            provider=provider_selection.provider,
+            user_message=user_message,
+            channel_kind=channel_kind,
+            attachment_context=attachment_context,
+            active_chip_evaluate=active_chip_evaluate,
+            personality_profile=personality_profile,
+            personality_context_extra=personality_context_extra,
+            browser_search_context_extra=browser_search_context_extra,
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+        )
+        cleaned_reply, removed_residue = _clean_messaging_reply_with_metadata(
+            raw_reply_text,
+            channel_kind=channel_kind,
+        )
+        reply_mutation_actions: list[str] = []
+        if removed_residue:
+            reply_mutation_actions.append("strip_operational_residue")
+            record_quarantine(
+                state_db,
+                run_id=run_id,
+                request_id=request_id,
+                source_kind="reply_residue",
+                source_ref=request_id,
+                policy_domain="researcher_bridge_residue",
+                reason_code="operational_residue_removed",
+                summary="Operational residue was stripped from a browser-evidence direct-provider reply before delivery.",
+                payload_preview="\n".join(removed_residue)[:160],
+                provenance={"channel_kind": channel_kind, "trace_ref": f"trace:{agent_id}:{human_id}:{request_id}"},
+            )
+        if cleaned_reply != raw_reply_text and not reply_mutation_actions:
+            reply_mutation_actions.append("rewrite_reply")
+        reply_text = cleaned_reply
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        evidence_summary = "status=browser_evidence provider_fallback=direct_http_chat"
+        reply_text, evidence_summary, escalation_hint, routing_decision = _maybe_apply_swarm_recommendation(
+            config_manager=config_manager,
+            state_db=state_db,
+            user_message=user_message,
+            channel_kind=channel_kind,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            routing_decision="browser_search_provider_chat",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+        )
+        if reply_text != cleaned_reply:
+            reply_mutation_actions.append("apply_swarm_recommendation")
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="browser_evidence",
+            routing_decision=routing_decision,
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge produced a browser-evidence direct-provider result.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="browser_search_provider_chat",
+            facts=_bridge_event_facts(
+                routing_decision=routing_decision,
+                bridge_mode="browser_evidence",
+                evidence_summary=evidence_summary,
+                runtime_root=str(runtime_root) if runtime_root else None,
+                config_path=str(config_path) if config_path else None,
+                provider_id=provider_selection.provider.provider_id,
+                provider_auth_method=provider_selection.provider.auth_method,
+                provider_model=provider_selection.provider.default_model,
+                provider_model_family=provider_selection.model_family,
+                provider_execution_transport=provider_selection.provider.execution_transport,
+                provider_base_url=provider_selection.provider.base_url,
+                provider_source=provider_selection.provider.source,
+                active_chip_key=active_chip_key,
+                active_chip_task_type=active_chip_task_type,
+                active_chip_evaluate_used=active_chip_evaluate_used,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra=_bridge_reply_mutation_facts(
+                    raw_text=raw_reply_text,
+                    mutated_text=reply_text,
+                    mutation_actions=reply_mutation_actions,
+                ),
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=escalation_hint,
+            trace_ref=trace_ref,
+            mode="browser_evidence",
+            runtime_root=str(runtime_root) if runtime_root else None,
+            config_path=str(config_path) if config_path else None,
+            attachment_context=attachment_context,
+            provider_id=provider_selection.provider.provider_id,
+            provider_auth_profile_id=provider_selection.provider.auth_profile_id,
+            provider_auth_method=provider_selection.provider.auth_method,
+            provider_model=provider_selection.provider.default_model,
+            provider_model_family=provider_selection.model_family,
+            provider_execution_transport=provider_selection.provider.execution_transport,
+            provider_base_url=provider_selection.provider.base_url,
+            provider_source=provider_selection.provider.source,
+            routing_decision=routing_decision,
+            active_chip_key=active_chip_key,
+            active_chip_task_type=active_chip_task_type,
+            active_chip_evaluate_used=active_chip_evaluate_used,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
     if runtime_root is not None:
         if config_path.exists():
             try:
@@ -1705,6 +2348,7 @@ def build_researcher_reply(
                         active_chip_evaluate=active_chip_evaluate,
                         personality_profile=personality_profile,
                         personality_context_extra=personality_context_extra,
+                        browser_search_context_extra=browser_search_context_extra,
                         run_id=run_id,
                         request_id=request_id,
                         trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
@@ -1846,6 +2490,7 @@ def build_researcher_reply(
                         active_chip_evaluate=active_chip_evaluate,
                         personality_profile=personality_profile,
                         personality_context_extra=personality_context_extra,
+                        browser_search_context_extra=browser_search_context_extra,
                         run_id=run_id,
                         request_id=request_id,
                         trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",

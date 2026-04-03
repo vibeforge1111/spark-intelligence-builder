@@ -7,11 +7,13 @@ from spark_intelligence.attachments.registry import (
 )
 from spark_intelligence.attachments.hooks import (
     ChipHookExecution,
+    list_chip_records,
     list_active_chip_records,
     record_chip_hook_execution,
     resolve_chip_record,
     run_chip_hook,
     run_first_active_chip_hook,
+    run_first_chip_hook_supporting,
     screen_chip_hook_text,
 )
 from spark_intelligence.attachments.snapshot import (
@@ -39,6 +41,7 @@ __all__ = [
     "build_attachment_snapshot",
     "clear_active_path",
     "deactivate_chip",
+    "list_chip_records",
     "list_active_chip_records",
     "list_attachments",
     "pin_chip",
@@ -46,6 +49,7 @@ __all__ = [
     "resolve_chip_record",
     "run_chip_hook",
     "run_first_active_chip_hook",
+    "run_first_chip_hook_supporting",
     "screen_chip_hook_text",
     "set_active_path",
     "sync_attachment_snapshot",

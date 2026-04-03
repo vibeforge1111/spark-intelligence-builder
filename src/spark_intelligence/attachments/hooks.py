@@ -84,6 +84,11 @@ def list_active_chip_records(config_manager: ConfigManager) -> list[AttachmentRe
     return [records[key] for key in active_keys if key in records]
 
 
+def list_chip_records(config_manager: ConfigManager) -> list[AttachmentRecord]:
+    scan = attachment_status(config_manager)
+    return [record for record in scan.records if record.kind == "chip"]
+
+
 def resolve_chip_record(config_manager: ConfigManager, *, chip_key: str) -> AttachmentRecord:
     scan = attachment_status(config_manager)
     for record in scan.records:
@@ -116,6 +121,25 @@ def run_first_active_chip_hook(
     return None
 
 
+def run_first_chip_hook_supporting(
+    config_manager: ConfigManager,
+    *,
+    hook: str,
+    payload: dict[str, Any],
+) -> ChipHookExecution | None:
+    active_records = list_active_chip_records(config_manager)
+    active_roots = {record.repo_root for record in active_records}
+    for record in active_records:
+        if hook in record.commands:
+            return execute_chip_hook_record(record, hook=hook, payload=payload)
+    for record in list_chip_records(config_manager):
+        if record.repo_root in active_roots:
+            continue
+        if hook in record.commands:
+            return execute_chip_hook_record(record, hook=hook, payload=payload)
+    return None
+
+
 def execute_chip_hook_record(
     record: AttachmentRecord,
     *,
@@ -142,6 +166,7 @@ def execute_chip_hook_record(
         env["PYTHONPATH"] = (
             str(src_root) if not existing_pythonpath else os.pathsep.join([str(src_root), existing_pythonpath])
         )
+    env.update(_runtime_env_overrides(record))
 
     with tempfile.TemporaryDirectory(prefix=f"spark-chip-{record.key}-{hook}-") as temp_dir:
         temp_root = Path(temp_dir)
@@ -306,3 +331,13 @@ def _load_json_file(path: Path) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _runtime_env_overrides(record: AttachmentRecord) -> dict[str, str]:
+    frontier = record.frontier if isinstance(record.frontier, dict) else {}
+    runtime_family = str(frontier.get("runtime_family") or "").strip().lower()
+    if runtime_family == "browser-capability":
+        return {
+            "SPARK_BROWSER_ATTACHMENT_MODE": "native-host-session",
+        }
+    return {}
