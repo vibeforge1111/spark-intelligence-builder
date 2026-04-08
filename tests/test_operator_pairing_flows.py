@@ -808,6 +808,178 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Swarm sync ok.", str(result.detail["response_text"]))
         self.assertEqual(result.detail["bridge_mode"], "runtime_command")
 
+    def test_swarm_absorb_command_runs_hosted_action(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.swarm_absorb_insight",
+            return_value={
+                "insight": {"id": "insight-1", "summary": "Landing page insight"},
+                "mastery": {"id": "mastery-1", "status": "provisional_mastery"},
+                "review": {"decision": "approve"},
+            },
+        ) as absorb_mock:
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=224,
+                    user_id="111",
+                    username="alice",
+                    text="/swarm absorb insight-1 because this is repeatable",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm insight absorbed.", str(result.detail["response_text"]))
+        self.assertIn("Landing page insight", str(result.detail["response_text"]))
+        absorb_mock.assert_called_once()
+
+    def test_natural_language_swarm_review_command_runs_hosted_action(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.swarm_review_mastery",
+            return_value={
+                "mastery": {"id": "mastery-7", "status": "shared_mastery"},
+                "review": {"decision": "approve"},
+            },
+        ) as review_mock:
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=225,
+                    user_id="111",
+                    username="alice",
+                    text="review mastery mastery-7 approve in swarm because it held up under testing",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm mastery review recorded.", str(result.detail["response_text"]))
+        self.assertIn("shared_mastery", str(result.detail["response_text"]))
+        review_mock.assert_called_once()
+
+    def test_swarm_review_command_requires_reason(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=226,
+                user_id="111",
+                username="alice",
+                text="/swarm review mastery-7 approve",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            str(result.detail["response_text"]),
+            "Usage: `/swarm review <mastery_id> <approve|defer|reject> because <reason>`.",
+        )
+
+    def test_swarm_hosted_action_failure_returns_bounded_message(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.swarm_absorb_insight",
+            side_effect=RuntimeError("Swarm API request failed with HTTP 404. insight not found"),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2261,
+                    user_id="111",
+                    username="alice",
+                    text="/swarm absorb insight-1",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            str(result.detail["response_text"]),
+            "Swarm action is unavailable right now.\nSwarm API request failed with HTTP 404. insight not found",
+        )
+
+    def test_natural_language_swarm_mode_command_runs_hosted_action(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.swarm_set_evolution_mode",
+            return_value={"id": "spec-2", "label": "Startup", "evolutionMode": "checked_auto_merge"},
+        ) as mode_mock:
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=227,
+                    user_id="111",
+                    username="alice",
+                    text="set specialization spec-2 to checked auto merge in swarm",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm evolution mode updated.", str(result.detail["response_text"]))
+        self.assertIn("checked_auto_merge", str(result.detail["response_text"]))
+        mode_mock.assert_called_once()
+
+    def test_swarm_deliver_command_runs_hosted_action(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.swarm_deliver_upgrade",
+            return_value={
+                "upgrade": {"id": "upgrade-2", "changeSummary": "Refresh onboarding flow", "status": "awaiting_review"},
+                "delivery": {"status": "awaiting_review"},
+            },
+        ) as deliver_mock:
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=228,
+                    user_id="111",
+                    username="alice",
+                    text="/swarm deliver upgrade-2",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm upgrade delivery recorded.", str(result.detail["response_text"]))
+        self.assertIn("Refresh onboarding flow", str(result.detail["response_text"]))
+        deliver_mock.assert_called_once()
+
+    def test_natural_language_swarm_sync_delivery_command_runs_hosted_action(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.swarm_sync_upgrade_delivery_status",
+            return_value={
+                "upgrade": {"id": "upgrade-2", "changeSummary": "Refresh onboarding flow", "status": "merged"},
+                "delivery": {"status": "merged"},
+            },
+        ) as sync_mock:
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=229,
+                    user_id="111",
+                    username="alice",
+                    text="sync delivery status for upgrade upgrade-2 in swarm",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm delivery status synced.", str(result.detail["response_text"]))
+        self.assertIn("merged", str(result.detail["response_text"]))
+        sync_mock.assert_called_once()
+
     def test_natural_language_swarm_collective_command_returns_summary(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 

@@ -31,6 +31,8 @@ from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD
 from spark_intelligence.swarm_bridge import (
     evaluate_swarm_escalation,
+    swarm_absorb_insight,
+    swarm_deliver_upgrade,
     swarm_read_collective_snapshot,
     swarm_read_evolution_inbox,
     swarm_read_live_session,
@@ -38,6 +40,9 @@ from spark_intelligence.swarm_bridge import (
     swarm_read_overview,
     swarm_read_runtime_pulse,
     swarm_read_upgrades,
+    swarm_review_mastery,
+    swarm_set_evolution_mode,
+    swarm_sync_upgrade_delivery_status,
     swarm_status,
     sync_swarm_collective,
 )
@@ -1217,7 +1222,9 @@ def _handle_runtime_command(
             "reply_text": (
                 "Swarm commands: `/swarm status`, `/swarm overview`, `/swarm live`, `/swarm runtime`, "
                 "`/swarm upgrades`, `/swarm issues`, `/swarm inbox`, `/swarm collective`, `/swarm sync`, "
-                "and `/swarm evaluate <task>`."
+                "`/swarm evaluate <task>`, `/swarm absorb <insight_id>`, `/swarm review <mastery_id> <approve|defer|reject> because <reason>`, "
+                "`/swarm mode <specialization_id> <observe_only|review_required|checked_auto_merge|trusted_auto_apply>`, "
+                "`/swarm deliver <upgrade_id>`, and `/swarm sync-delivery <upgrade_id>`."
             ),
         }
     if lowered == "/swarm status" or natural_swarm_command == ("/swarm status", None):
@@ -1299,6 +1306,73 @@ def _handle_runtime_command(
                 f"{result.message}"
             ),
         }
+    absorb_args = _parse_swarm_absorb_command(normalized)
+    if absorb_args:
+        return _run_swarm_action_command(
+            command="/swarm absorb",
+            runner=lambda: swarm_absorb_insight(
+                config_manager,
+                state_db,
+                insight_id=absorb_args["insight_id"],
+                reason=absorb_args.get("reason"),
+            ),
+            renderer=_render_swarm_absorb_reply,
+        )
+    review_args = _parse_swarm_review_command(normalized)
+    if review_args:
+        if not review_args["reason"]:
+            return {
+                "command": "/swarm review",
+                "reply_text": "Usage: `/swarm review <mastery_id> <approve|defer|reject> because <reason>`.",
+            }
+        return _run_swarm_action_command(
+            command="/swarm review",
+            runner=lambda: swarm_review_mastery(
+                config_manager,
+                state_db,
+                mastery_id=review_args["mastery_id"],
+                decision=review_args["decision"],
+                reason=review_args["reason"],
+            ),
+            renderer=_render_swarm_review_reply,
+        )
+    mode_args = _parse_swarm_mode_command(normalized)
+    if mode_args:
+        return _run_swarm_action_command(
+            command="/swarm mode",
+            runner=lambda: swarm_set_evolution_mode(
+                config_manager,
+                state_db,
+                specialization_id=mode_args["specialization_id"],
+                evolution_mode=mode_args["evolution_mode"],
+            ),
+            renderer=_render_swarm_mode_reply,
+        )
+    deliver_args = _parse_swarm_deliver_command(normalized)
+    if deliver_args:
+        return _run_swarm_action_command(
+            command="/swarm deliver",
+            runner=lambda: swarm_deliver_upgrade(
+                config_manager,
+                state_db,
+                upgrade_id=deliver_args["upgrade_id"],
+                evolution_mode=deliver_args.get("evolution_mode"),
+                pr_url=deliver_args.get("pr_url"),
+            ),
+            renderer=_render_swarm_delivery_reply,
+        )
+    sync_delivery_args = _parse_swarm_sync_delivery_command(normalized)
+    if sync_delivery_args:
+        return _run_swarm_action_command(
+            command="/swarm sync-delivery",
+            runner=lambda: swarm_sync_upgrade_delivery_status(
+                config_manager,
+                state_db,
+                upgrade_id=sync_delivery_args["upgrade_id"],
+                pr_url=sync_delivery_args.get("pr_url"),
+            ),
+            renderer=_render_swarm_delivery_sync_reply,
+        )
     if lowered.startswith("/swarm evaluate") or (natural_swarm_command and natural_swarm_command[0] == "/swarm evaluate"):
         task = normalized[len("/swarm evaluate") :].strip() if lowered.startswith("/swarm evaluate") else str(natural_swarm_command[1] or "").strip()
         if not task:
@@ -1346,6 +1420,23 @@ def _run_swarm_read_command(
             reply_text = unavailable_message
         else:
             reply_text = f"Swarm read is unavailable right now.\n{exc}"
+    return {
+        "command": command,
+        "reply_text": reply_text,
+    }
+
+
+def _run_swarm_action_command(
+    *,
+    command: str,
+    runner: Any,
+    renderer: Any,
+) -> dict[str, str]:
+    try:
+        payload = runner()
+        reply_text = renderer(payload)
+    except RuntimeError as exc:
+        reply_text = f"Swarm action is unavailable right now.\n{exc}"
     return {
         "command": command,
         "reply_text": reply_text,
@@ -1476,6 +1567,59 @@ def _render_swarm_collective_reply(payload: dict[str, Any]) -> str:
         f"Open contradictions: {len(open_contradictions)}.\n"
         f"Pending upgrades: {len(pending_upgrades)}.\n"
         f"Inbox items: {len(inbox_items) if isinstance(inbox_items, list) else 0}."
+    )
+
+
+def _render_swarm_absorb_reply(payload: dict[str, Any]) -> str:
+    insight = payload.get("insight") if isinstance(payload, dict) else {}
+    mastery = payload.get("mastery") if isinstance(payload, dict) else {}
+    review = payload.get("review") if isinstance(payload, dict) else {}
+    return (
+        "Swarm insight absorbed.\n"
+        f"Insight: {str((insight or {}).get('summary') or (insight or {}).get('title') or (insight or {}).get('id') or 'unknown')}.\n"
+        f"Mastery: {str((mastery or {}).get('id') or 'unknown')} ({str((mastery or {}).get('status') or 'unknown')}).\n"
+        f"Review: {str((review or {}).get('decision') or 'unknown')}."
+    )
+
+
+def _render_swarm_review_reply(payload: dict[str, Any]) -> str:
+    mastery = payload.get("mastery") if isinstance(payload, dict) else {}
+    review = payload.get("review") if isinstance(payload, dict) else {}
+    return (
+        "Swarm mastery review recorded.\n"
+        f"Mastery: {str((mastery or {}).get('id') or 'unknown')}.\n"
+        f"Decision: {str((review or {}).get('decision') or 'unknown')}.\n"
+        f"Status: {str((mastery or {}).get('status') or 'unknown')}."
+    )
+
+
+def _render_swarm_mode_reply(payload: dict[str, Any]) -> str:
+    return (
+        "Swarm evolution mode updated.\n"
+        f"Specialization: {str(payload.get('label') or payload.get('key') or payload.get('id') or 'unknown')}.\n"
+        f"Evolution mode: {str(payload.get('evolutionMode') or 'unknown')}."
+    )
+
+
+def _render_swarm_delivery_reply(payload: dict[str, Any]) -> str:
+    upgrade = payload.get("upgrade") if isinstance(payload, dict) else {}
+    delivery = payload.get("delivery") if isinstance(payload, dict) else {}
+    return (
+        "Swarm upgrade delivery recorded.\n"
+        f"Upgrade: {str((upgrade or {}).get('changeSummary') or (upgrade or {}).get('id') or 'unknown')}.\n"
+        f"Upgrade status: {str((upgrade or {}).get('status') or 'unknown')}.\n"
+        f"Delivery status: {str((delivery or {}).get('status') or 'unknown')}."
+    )
+
+
+def _render_swarm_delivery_sync_reply(payload: dict[str, Any]) -> str:
+    upgrade = payload.get("upgrade") if isinstance(payload, dict) else {}
+    delivery = payload.get("delivery") if isinstance(payload, dict) else {}
+    return (
+        "Swarm delivery status synced.\n"
+        f"Upgrade: {str((upgrade or {}).get('changeSummary') or (upgrade or {}).get('id') or 'unknown')}.\n"
+        f"Upgrade status: {str((upgrade or {}).get('status') or 'unknown')}.\n"
+        f"Delivery status: {str((delivery or {}).get('status') or 'unknown')}."
     )
 
 
@@ -1616,6 +1760,103 @@ def _match_natural_swarm_command(inbound_text: str) -> tuple[str, str | None] | 
             if task:
                 return ("/swarm evaluate", task)
     return None
+
+
+def _parse_swarm_absorb_command(inbound_text: str) -> dict[str, str | None] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    for pattern in (
+        r"^/swarm absorb (?P<insight_id>[A-Za-z0-9:_-]+)(?: because (?P<reason>.+))?$",
+        r"^(?:please\s+|can you\s+)?absorb(?:\s+insight)?\s+(?P<insight_id>[A-Za-z0-9:_-]+)(?:\s+(?:in|into)\s+swarm)?(?: because (?P<reason>.+))?$",
+    ):
+        match = re.match(pattern, normalized, flags=re.IGNORECASE)
+        if match:
+            return {
+                "insight_id": str(match.group("insight_id")),
+                "reason": str(match.group("reason")).strip() if match.groupdict().get("reason") else None,
+            }
+    return None
+
+
+def _parse_swarm_review_command(inbound_text: str) -> dict[str, str | None] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    for pattern in (
+        r"^/swarm review (?P<mastery_id>[A-Za-z0-9:_-]+) (?P<decision>approve|defer|reject)(?: because (?P<reason>.+))?$",
+        r"^(?:please\s+|can you\s+)?review mastery (?P<mastery_id>[A-Za-z0-9:_-]+) (?:as )?(?P<decision>approve|defer|reject)(?:\s+in\s+swarm)?(?: because (?P<reason>.+))?$",
+    ):
+        match = re.match(pattern, normalized, flags=re.IGNORECASE)
+        if match:
+            return {
+                "mastery_id": str(match.group("mastery_id")),
+                "decision": str(match.group("decision")).lower(),
+                "reason": str(match.group("reason")).strip() if match.groupdict().get("reason") else None,
+            }
+    return None
+
+
+def _parse_swarm_mode_command(inbound_text: str) -> dict[str, str] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    for pattern in (
+        r"^/swarm mode (?P<specialization_id>[A-Za-z0-9:_-]+) (?P<mode>[A-Za-z0-9_\- ]+)$",
+        r"^(?:please\s+|can you\s+)?set specialization (?P<specialization_id>[A-Za-z0-9:_-]+) to (?P<mode>[A-Za-z0-9_\- ]+?)(?:\s+in\s+swarm)?$",
+    ):
+        match = re.match(pattern, normalized, flags=re.IGNORECASE)
+        if match:
+            parsed_mode = _parse_swarm_evolution_mode(str(match.group("mode")))
+            if parsed_mode:
+                return {
+                    "specialization_id": str(match.group("specialization_id")),
+                    "evolution_mode": parsed_mode,
+                }
+    return None
+
+
+def _parse_swarm_deliver_command(inbound_text: str) -> dict[str, str | None] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    for pattern in (
+        r"^/swarm deliver (?P<upgrade_id>[A-Za-z0-9:_-]+)(?: mode (?P<mode>[A-Za-z0-9_\- ]+))?(?: pr (?P<pr_url>https?://\S+))?$",
+        r"^(?:please\s+|can you\s+)?deliver upgrade (?P<upgrade_id>[A-Za-z0-9:_-]+)(?:\s+in\s+swarm)?(?: using (?P<pr_url>https?://\S+))?$",
+    ):
+        match = re.match(pattern, normalized, flags=re.IGNORECASE)
+        if match:
+            parsed_mode = _parse_swarm_evolution_mode(str(match.group("mode"))) if match.groupdict().get("mode") else None
+            return {
+                "upgrade_id": str(match.group("upgrade_id")),
+                "evolution_mode": parsed_mode,
+                "pr_url": str(match.group("pr_url")).strip() if match.groupdict().get("pr_url") else None,
+            }
+    return None
+
+
+def _parse_swarm_sync_delivery_command(inbound_text: str) -> dict[str, str | None] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    for pattern in (
+        r"^/swarm sync-delivery (?P<upgrade_id>[A-Za-z0-9:_-]+)(?: pr (?P<pr_url>https?://\S+))?$",
+        r"^(?:please\s+|can you\s+)?sync delivery status for upgrade (?P<upgrade_id>[A-Za-z0-9:_-]+)(?:\s+in\s+swarm)?(?: using (?P<pr_url>https?://\S+))?$",
+    ):
+        match = re.match(pattern, normalized, flags=re.IGNORECASE)
+        if match:
+            return {
+                "upgrade_id": str(match.group("upgrade_id")),
+                "pr_url": str(match.group("pr_url")).strip() if match.groupdict().get("pr_url") else None,
+            }
+    return None
+
+
+def _parse_swarm_evolution_mode(value: str) -> str | None:
+    normalized = "_".join(str(value or "").strip().lower().replace("-", " ").split())
+    aliases = {
+        "observe_only": "observe_only",
+        "review_required": "review_required",
+        "checked_auto_merge": "checked_auto_merge",
+        "trusted_auto_apply": "trusted_auto_apply",
+        "observe": "observe_only",
+        "review": "review_required",
+        "auto_merge": "checked_auto_merge",
+        "checked_auto": "checked_auto_merge",
+        "trusted_auto": "trusted_auto_apply",
+        "auto_apply": "trusted_auto_apply",
+    }
+    return aliases.get(normalized)
 
 
 def _think_state_key(*, external_user_id: str) -> str:
