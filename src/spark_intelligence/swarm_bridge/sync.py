@@ -249,6 +249,33 @@ def swarm_read_collective_snapshot(config_manager: ConfigManager, state_db: Stat
     return payload if isinstance(payload, dict) else {}
 
 
+def swarm_read_specializations(config_manager: ConfigManager, state_db: StateDB) -> list[dict[str, Any]]:
+    payload = _fetch_swarm_api_json(
+        config_manager=config_manager,
+        state_db=state_db,
+        route_path="api/workspaces/{workspace_id}/specializations",
+    )
+    return payload if isinstance(payload, list) else []
+
+
+def swarm_read_insights(config_manager: ConfigManager, state_db: StateDB) -> list[dict[str, Any]]:
+    payload = _fetch_swarm_api_json(
+        config_manager=config_manager,
+        state_db=state_db,
+        route_path="api/workspaces/{workspace_id}/insights",
+    )
+    return payload if isinstance(payload, list) else []
+
+
+def swarm_read_masteries(config_manager: ConfigManager, state_db: StateDB) -> list[dict[str, Any]]:
+    payload = _fetch_swarm_api_json(
+        config_manager=config_manager,
+        state_db=state_db,
+        route_path="api/workspaces/{workspace_id}/masteries",
+    )
+    return payload if isinstance(payload, list) else []
+
+
 def swarm_read_upgrades(config_manager: ConfigManager, state_db: StateDB) -> list[dict[str, Any]]:
     payload = _fetch_swarm_api_json(
         config_manager=config_manager,

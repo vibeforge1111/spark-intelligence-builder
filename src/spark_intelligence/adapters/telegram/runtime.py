@@ -35,10 +35,13 @@ from spark_intelligence.swarm_bridge import (
     swarm_deliver_upgrade,
     swarm_read_collective_snapshot,
     swarm_read_evolution_inbox,
+    swarm_read_insights,
     swarm_read_live_session,
+    swarm_read_masteries,
     swarm_read_operator_issues,
     swarm_read_overview,
     swarm_read_runtime_pulse,
+    swarm_read_specializations,
     swarm_read_upgrades,
     swarm_review_mastery,
     swarm_set_evolution_mode,
@@ -1221,7 +1224,7 @@ def _handle_runtime_command(
             "command": "/swarm",
             "reply_text": (
                 "Swarm commands: `/swarm status`, `/swarm overview`, `/swarm live`, `/swarm runtime`, "
-                "`/swarm upgrades`, `/swarm issues`, `/swarm inbox`, `/swarm collective`, `/swarm sync`, "
+                "`/swarm specializations`, `/swarm insights`, `/swarm masteries`, `/swarm upgrades`, `/swarm issues`, `/swarm inbox`, `/swarm collective`, `/swarm sync`, "
                 "`/swarm evaluate <task>`, `/swarm absorb <insight_id>`, `/swarm review <mastery_id> <approve|defer|reject> because <reason>`, "
                 "`/swarm mode <specialization_id> <observe_only|review_required|checked_auto_merge|trusted_auto_apply>`, "
                 "`/swarm deliver <upgrade_id>`, and `/swarm sync-delivery <upgrade_id>`."
@@ -1255,6 +1258,24 @@ def _handle_runtime_command(
             command="/swarm runtime",
             loader=lambda: swarm_read_runtime_pulse(config_manager, state_db),
             renderer=_render_swarm_runtime_reply,
+        )
+    if lowered == "/swarm specializations" or natural_swarm_command == ("/swarm specializations", None):
+        return _run_swarm_read_command(
+            command="/swarm specializations",
+            loader=lambda: swarm_read_specializations(config_manager, state_db),
+            renderer=_render_swarm_specializations_reply,
+        )
+    if lowered == "/swarm insights" or natural_swarm_command == ("/swarm insights", None):
+        return _run_swarm_read_command(
+            command="/swarm insights",
+            loader=lambda: swarm_read_insights(config_manager, state_db),
+            renderer=_render_swarm_insights_reply,
+        )
+    if lowered == "/swarm masteries" or natural_swarm_command == ("/swarm masteries", None):
+        return _run_swarm_read_command(
+            command="/swarm masteries",
+            loader=lambda: swarm_read_masteries(config_manager, state_db),
+            renderer=_render_swarm_masteries_reply,
         )
     if lowered == "/swarm upgrades" or natural_swarm_command == ("/swarm upgrades", None):
         return _run_swarm_read_command(
@@ -1477,6 +1498,60 @@ def _render_swarm_runtime_reply(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _render_swarm_specializations_reply(payload: list[dict[str, Any]]) -> str:
+    specializations = payload if isinstance(payload, list) else []
+    if not specializations:
+        return "Swarm specializations:\nNo specialization records are available right now."
+    ranked = sorted(
+        [item for item in specializations if isinstance(item, dict)],
+        key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""),
+        reverse=True,
+    )[:5]
+    lines = [f"Swarm specializations:\n{len(specializations)} specialization(s)."]
+    for item in ranked:
+        lines.append(
+            f"- {str(item.get('id') or 'unknown')}: {str(item.get('label') or item.get('key') or 'specialization')} "
+            f"[mode={str(item.get('evolutionMode') or 'unknown')}]"
+        )
+    return "\n".join(lines)
+
+
+def _render_swarm_insights_reply(payload: list[dict[str, Any]]) -> str:
+    insights = payload if isinstance(payload, list) else []
+    actionable_statuses = {"captured", "distilled", "queued_for_test", "benchmark_supported", "live_supported"}
+    actionable = [
+        item for item in insights if isinstance(item, dict) and str(item.get("status") or "") in actionable_statuses
+    ]
+    if not actionable:
+        return "Swarm insights:\nNo absorbable insights are waiting right now."
+    ranked = sorted(actionable, key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""), reverse=True)[:5]
+    lines = [f"Swarm insights:\n{len(actionable)} absorbable insight(s)."]
+    for item in ranked:
+        lines.append(
+            f"- {str(item.get('id') or 'unknown')}: {str(item.get('summary') or item.get('title') or 'insight')} "
+            f"[status={str(item.get('status') or 'unknown')}]"
+        )
+    return "\n".join(lines)
+
+
+def _render_swarm_masteries_reply(payload: list[dict[str, Any]]) -> str:
+    masteries = payload if isinstance(payload, list) else []
+    if not masteries:
+        return "Swarm masteries:\nNo mastery records are available right now."
+    ranked = sorted(
+        [item for item in masteries if isinstance(item, dict)],
+        key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""),
+        reverse=True,
+    )[:5]
+    lines = [f"Swarm masteries:\n{len(masteries)} mastery record(s)."]
+    for item in ranked:
+        lines.append(
+            f"- {str(item.get('id') or 'unknown')}: {str(item.get('summary') or item.get('title') or 'mastery')} "
+            f"[status={str(item.get('status') or 'unknown')}]"
+        )
+    return "\n".join(lines)
+
+
 def _render_swarm_live_reply(payload: dict[str, Any]) -> str:
     lines = [
         "Swarm live state:",
@@ -1692,6 +1767,31 @@ def _match_natural_swarm_command(inbound_text: str) -> tuple[str, str | None] | 
         "what is the swarm runtime pulse",
     }:
         return ("/swarm runtime", None)
+    if simplified in {
+        "swarm specializations",
+        "show swarm specializations",
+        "show me swarm specializations",
+        "list swarm specializations",
+        "what specializations are in swarm",
+    }:
+        return ("/swarm specializations", None)
+    if simplified in {
+        "swarm insights",
+        "show swarm insights",
+        "show me swarm insights",
+        "list swarm insights",
+        "show me absorbable insights in swarm",
+        "what insights can i absorb in swarm",
+    }:
+        return ("/swarm insights", None)
+    if simplified in {
+        "swarm masteries",
+        "show swarm masteries",
+        "show me swarm masteries",
+        "list swarm masteries",
+        "what masteries are in swarm",
+    }:
+        return ("/swarm masteries", None)
     if simplified in {
         "swarm upgrades",
         "show swarm upgrades",

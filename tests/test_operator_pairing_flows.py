@@ -808,6 +808,102 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Swarm sync ok.", str(result.detail["response_text"]))
         self.assertEqual(result.detail["bridge_mode"], "runtime_command")
 
+    def test_swarm_specializations_command_returns_recent_specializations(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.swarm_read_specializations",
+            return_value=[
+                {
+                    "id": "spec-1",
+                    "label": "Startup",
+                    "evolutionMode": "review_required",
+                    "updatedAt": "2026-04-08T10:00:00Z",
+                }
+            ],
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2161,
+                    user_id="111",
+                    username="alice",
+                    text="/swarm specializations",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm specializations:", str(result.detail["response_text"]))
+        self.assertIn("spec-1", str(result.detail["response_text"]))
+        self.assertIn("review_required", str(result.detail["response_text"]))
+
+    def test_natural_language_swarm_insights_command_returns_actionable_insights(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.swarm_read_insights",
+            return_value=[
+                {
+                    "id": "insight-1",
+                    "summary": "Homepage headline insight",
+                    "status": "captured",
+                    "updatedAt": "2026-04-08T10:00:00Z",
+                },
+                {
+                    "id": "insight-2",
+                    "summary": "Old contradicted insight",
+                    "status": "contradicted",
+                    "updatedAt": "2026-04-07T10:00:00Z",
+                },
+            ],
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2162,
+                    user_id="111",
+                    username="alice",
+                    text="show me absorbable insights in swarm",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm insights:", str(result.detail["response_text"]))
+        self.assertIn("insight-1", str(result.detail["response_text"]))
+        self.assertNotIn("insight-2", str(result.detail["response_text"]))
+
+    def test_natural_language_swarm_masteries_command_returns_mastery_ids(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.swarm_read_masteries",
+            return_value=[
+                {
+                    "id": "mastery-1",
+                    "summary": "Onboarding mastery",
+                    "status": "shared_mastery",
+                    "updatedAt": "2026-04-08T10:00:00Z",
+                }
+            ],
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2163,
+                    user_id="111",
+                    username="alice",
+                    text="show me swarm masteries",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm masteries:", str(result.detail["response_text"]))
+        self.assertIn("mastery-1", str(result.detail["response_text"]))
+        self.assertIn("shared_mastery", str(result.detail["response_text"]))
+
     def test_swarm_absorb_command_runs_hosted_action(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
