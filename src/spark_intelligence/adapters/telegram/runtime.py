@@ -1467,6 +1467,7 @@ def _handle_runtime_command(
                 rounds=int(prepared_autoloop.get("rounds") or 1),
                 session_id=str(prepared_autoloop.get("session_id") or "") or None,
                 allow_fallback_planner=bool(prepared_autoloop.get("allow_fallback_planner")),
+                force=bool(prepared_autoloop.get("force")),
             ),
             renderer=_render_swarm_bridge_autoloop_reply,
         )
@@ -1491,6 +1492,7 @@ def _handle_runtime_command(
                 rounds=int(prepared_autoloop.get("rounds") or 1),
                 session_id=str(prepared_autoloop.get("session_id") or "") or None,
                 allow_fallback_planner=bool(prepared_autoloop.get("allow_fallback_planner")),
+                force=bool(prepared_autoloop.get("force")),
             ),
             renderer=_render_swarm_bridge_autoloop_reply,
         )
@@ -2118,6 +2120,9 @@ def _render_swarm_bridge_run_reply(result: Any) -> str:
 
 def _render_swarm_bridge_autoloop_reply(result: Any) -> str:
     if not getattr(result, "ok", False):
+        paused_reply = _render_swarm_bridge_autoloop_pause_reply(result)
+        if paused_reply is not None:
+            return paused_reply
         return _render_swarm_bridge_failure("autoloop", result)
     session_summary = getattr(result, "session_summary", None) if isinstance(getattr(result, "session_summary", None), dict) else None
     round_history = getattr(result, "round_history", None) if isinstance(getattr(result, "round_history", None), dict) else None
@@ -2148,6 +2153,39 @@ def _render_swarm_bridge_autoloop_reply(result: Any) -> str:
         lines.append(f"Scores: current={score_text}, best={best_text}, no-gain streak={no_gain_streak}.")
     lines.append(f"Next: `/swarm session {str(getattr(result, 'path_key', '') or 'unknown')} {session_id}`")
     return "\n".join(lines)
+
+
+def _render_swarm_bridge_autoloop_pause_reply(result: Any) -> str | None:
+    stdout = str(getattr(result, "stdout", "") or "")
+    if "paused_no_gain_streak" not in stdout and "Autoloop paused:" not in stdout:
+        return None
+    session_summary = getattr(result, "session_summary", None) if isinstance(getattr(result, "session_summary", None), dict) else None
+    round_history = getattr(result, "round_history", None) if isinstance(getattr(result, "round_history", None), dict) else None
+    path_key = str(getattr(result, "path_key", "") or "unknown")
+    session_id = str(getattr(result, "session_id", "") or (session_summary or {}).get("sessionId") or "unknown")
+    completed_rounds = int((session_summary or {}).get("completedRounds") or 0)
+    requested_rounds = int((session_summary or {}).get("requestedRoundsTotal") or 0)
+    kept_rounds = int((session_summary or {}).get("keptRounds") or 0)
+    reverted_rounds = int((session_summary or {}).get("revertedRounds") or 0)
+    planner_readiness = str((session_summary or {}).get("plannerReadinessStatus") or "unknown")
+    current_score = round_history.get("currentScore") if round_history else None
+    best_score = round_history.get("bestScore") if round_history else None
+    no_gain_streak = int(round_history.get("noGainStreak") or (session_summary or {}).get("noGainStreak") or 0)
+    score_text = f"{float(current_score):.4f}" if isinstance(current_score, (int, float)) else "unknown"
+    best_text = f"{float(best_score):.4f}" if isinstance(best_score, (int, float)) else "unknown"
+    return "\n".join(
+        [
+            "Swarm autoloop paused.",
+            f"Path: {path_key}.",
+            f"Session: {session_id}.",
+            f"Rounds: {completed_rounds} completed / {requested_rounds} requested.",
+            f"Decisions: {kept_rounds} kept, {reverted_rounds} reverted.",
+            "Reason: auto-generated planner hit the no-gain pause guard.",
+            f"Planner readiness: {planner_readiness}.",
+            f"History: current={score_text}, best={best_text}, no-gain streak={no_gain_streak}.",
+            f"Next: `/swarm continue {path_key} session {session_id} rounds 1 force`",
+        ]
+    )
 
 
 def _render_swarm_sessions_reply(payload: dict[str, Any]) -> str:
@@ -2200,10 +2238,12 @@ def _render_swarm_session_reply(payload: dict[str, Any]) -> str:
     if round_history and isinstance(round_history, dict):
         current_score = round_history.get("currentScore")
         best_score = round_history.get("bestScore")
-        no_gain_streak = int(round_history.get("noGainStreak") or 0)
+        no_gain_streak = int(round_history.get("noGainStreak") or session_summary.get("noGainStreak") or 0)
         score_text = f"{float(current_score):.4f}" if isinstance(current_score, (int, float)) else "unknown"
         best_text = f"{float(best_score):.4f}" if isinstance(best_score, (int, float)) else "unknown"
         lines.append(f"History: current={score_text}, best={best_text}, no-gain streak={no_gain_streak}.")
+    elif session_summary.get("noGainStreak") is not None:
+        lines.append(f"History: current=unknown, best=unknown, no-gain streak={int(session_summary.get('noGainStreak') or 0)}.")
     if latest_round:
         lines.append(
             f"Latest round: #{int(latest_round.get('ordinal') or 0)} {str(latest_round.get('decision') or 'unknown')} "
@@ -2213,7 +2253,11 @@ def _render_swarm_session_reply(payload: dict[str, Any]) -> str:
             lines.append(f"Latest planner kind: {str(latest_round.get('plannerKind'))}.")
         if latest_round.get("candidateSummary"):
             lines.append(f"Latest candidate: {str(latest_round.get('candidateSummary'))}.")
-    lines.append(f"Next: `/swarm continue {path_key} session {str(session_summary.get('sessionId') or 'unknown')} rounds 1`")
+    next_command = f"/swarm continue {path_key} session {str(session_summary.get('sessionId') or 'unknown')} rounds 1"
+    if str(session_summary.get("stopReason") or "") == "paused_no_gain_streak":
+        lines.append("Autoloop is paused on the no-gain guard.")
+        next_command = f"{next_command} force"
+    lines.append(f"Next: `{next_command}`")
     return "\n".join(lines)
 
 
@@ -2560,7 +2604,7 @@ def _parse_swarm_path_run_command(inbound_text: str) -> dict[str, str] | None:
 def _parse_swarm_autoloop_command(inbound_text: str) -> dict[str, Any] | None:
     normalized = " ".join(str(inbound_text or "").strip().split())
     autoloop_match = re.match(
-        r"^/swarm autoloop (?P<path_key>[A-Za-z0-9:_-]+)(?: rounds (?P<rounds>\d+))?(?: session (?P<session_id>[A-Za-z0-9:_-]+))?(?: allow-fallback)?$",
+        r"^/swarm autoloop (?P<path_key>[A-Za-z0-9:_-]+)(?: rounds (?P<rounds>\d+))?(?: session (?P<session_id>[A-Za-z0-9:_-]+))?(?: allow-fallback)?(?: force)?$",
         normalized,
         flags=re.IGNORECASE,
     )
@@ -2570,10 +2614,11 @@ def _parse_swarm_autoloop_command(inbound_text: str) -> dict[str, Any] | None:
             "rounds": int(autoloop_match.group("rounds") or 1),
             "session_id": str(autoloop_match.group("session_id") or "").strip() or None,
             "allow_fallback_planner": "allow-fallback" in normalized.lower(),
+            "force": normalized.lower().endswith(" force"),
             "continue_latest": False,
         }
     continue_match = re.match(
-        r"^/swarm continue (?P<path_key>[A-Za-z0-9:_-]+)(?: session (?P<session_id>[A-Za-z0-9:_-]+))?(?: rounds (?P<rounds>\d+))?$",
+        r"^/swarm continue (?P<path_key>[A-Za-z0-9:_-]+)(?: session (?P<session_id>[A-Za-z0-9:_-]+))?(?: rounds (?P<rounds>\d+))?(?: force)?$",
         normalized,
         flags=re.IGNORECASE,
     )
@@ -2584,6 +2629,7 @@ def _parse_swarm_autoloop_command(inbound_text: str) -> dict[str, Any] | None:
             "rounds": int(continue_match.group("rounds") or 1),
             "session_id": session_id,
             "allow_fallback_planner": False,
+            "force": normalized.lower().endswith(" force"),
             "continue_latest": session_id is None,
         }
     return None
@@ -2678,8 +2724,9 @@ def _resolve_natural_swarm_autoloop_target(
     config_manager: ConfigManager,
 ) -> dict[str, Any] | None:
     normalized = " ".join(str(inbound_text or "").strip().split())
+    force_suffix = r"(?:\s+(?:force|anyway|still|ignore(?:\s+the)?\s+pause|override(?:\s+the)?\s+pause))?"
     start_match = re.match(
-        r"^(?:please\s+|can you\s+)?start\s+(?:an?\s+)?autoloop\s+for\s+(?:the\s+)?(?P<label>.+?)(?:\s+path)?(?:\s+in\s+swarm)?(?:\s+for\s+(?P<rounds>\d+)\s+(?:more\s+)?rounds?)?$",
+        rf"^(?:please\s+|can you\s+)?start\s+(?:an?\s+)?autoloop\s+for\s+(?:the\s+)?(?P<label>.+?)(?:\s+path)?(?:\s+in\s+swarm)?(?:\s+for\s+(?P<rounds>\d+)\s+(?:more\s+)?rounds?)?{force_suffix}$",
         normalized,
         flags=re.IGNORECASE,
     )
@@ -2692,10 +2739,11 @@ def _resolve_natural_swarm_autoloop_target(
             "rounds": int(start_match.group("rounds") or 1),
             "session_id": None,
             "allow_fallback_planner": False,
+            "force": _natural_swarm_autoloop_force_requested(normalized),
             "continue_latest": False,
         }
     continue_match = re.match(
-        r"^(?:please\s+|can you\s+)?continue\s+(?:the\s+)?(?P<label>.+?)\s+autoloop(?:\s+session\s+(?P<session_id>[A-Za-z0-9:_-]+))?(?:\s+in\s+swarm)?(?:\s+for\s+(?P<rounds>\d+)\s+(?:more\s+)?rounds?)?$",
+        rf"^(?:please\s+|can you\s+)?continue\s+(?:the\s+)?(?P<label>.+?)\s+autoloop(?:\s+session\s+(?P<session_id>[A-Za-z0-9:_-]+))?(?:\s+in\s+swarm)?(?:\s+for\s+(?P<rounds>\d+)\s+(?:more\s+)?rounds?)?{force_suffix}$",
         normalized,
         flags=re.IGNORECASE,
     )
@@ -2710,8 +2758,24 @@ def _resolve_natural_swarm_autoloop_target(
         "rounds": int(continue_match.group("rounds") or 1),
         "session_id": session_id,
         "allow_fallback_planner": False,
+        "force": _natural_swarm_autoloop_force_requested(normalized),
         "continue_latest": session_id is None,
     }
+
+
+def _natural_swarm_autoloop_force_requested(inbound_text: str) -> bool:
+    lowered = " ".join(str(inbound_text or "").strip().lower().split())
+    force_markers = (
+        " force ",
+        " force",
+        " anyway",
+        " still",
+        " ignore the pause",
+        " ignore pause",
+        " override the pause",
+        " override pause",
+    )
+    return any(marker in lowered for marker in force_markers)
 
 
 def _resolve_natural_swarm_sessions_target(

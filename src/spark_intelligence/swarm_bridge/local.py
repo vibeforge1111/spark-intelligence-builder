@@ -83,6 +83,7 @@ def swarm_bridge_autoloop(
     rounds: int = 1,
     session_id: str | None = None,
     allow_fallback_planner: bool = False,
+    force: bool = False,
 ) -> SwarmBridgeCommandResult:
     repo_root = _resolve_specialization_path_repo_root(config_manager, path_key)
     command = [
@@ -100,6 +101,8 @@ def swarm_bridge_autoloop(
         command.extend(["--session-id", session_id])
     if allow_fallback_planner:
         command.append("--allow-fallback-planner")
+    if force:
+        command.append("--force")
     return _run_swarm_bridge_command(
         config_manager,
         action="autoloop",

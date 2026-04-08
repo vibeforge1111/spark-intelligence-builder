@@ -1806,6 +1806,62 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Session: session-latest.", str(result.detail["response_text"]))
         self.assertEqual(autoloop_mock.call_args.kwargs["session_id"], "session-latest")
 
+    def test_natural_language_swarm_continue_force_sets_force_flag(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with (
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_bridge_list_paths",
+                return_value={
+                    "paths": [
+                        {"key": "startup-operator", "label": "Startup Operator", "active": "yes"},
+                    ],
+                },
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_bridge_read_autoloop_session",
+                return_value={
+                    "session_id": "session-force",
+                    "session_summary": {"sessionId": "session-force"},
+                },
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_bridge_autoloop",
+                return_value=SimpleNamespace(
+                    ok=True,
+                    path_key="startup-operator",
+                    session_id="session-force",
+                    session_summary={
+                        "sessionId": "session-force",
+                        "completedRounds": 1,
+                        "requestedRoundsTotal": 1,
+                        "keptRounds": 0,
+                        "revertedRounds": 1,
+                        "stopReason": "completed_requested_rounds",
+                    },
+                    round_history={
+                        "currentScore": 0.62,
+                        "bestScore": 0.62,
+                        "noGainStreak": 0,
+                    },
+                ),
+            ) as autoloop_mock,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=23041,
+                    user_id="111",
+                    username="alice",
+                    text="continue the Startup Operator autoloop in swarm for 1 more round anyway",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(autoloop_mock.call_args.kwargs["session_id"], "session-force")
+        self.assertTrue(autoloop_mock.call_args.kwargs["force"])
+
     def test_natural_language_swarm_session_command_returns_latest_session_summary(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
@@ -1864,6 +1920,66 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Swarm autoloop session:", str(result.detail["response_text"]))
         self.assertIn("Session: session-777.", str(result.detail["response_text"]))
         self.assertIn("Latest round: #3 reverted target=docs/AUTORESEARCH.md.", str(result.detail["response_text"]))
+        self.assertIn("Autoloop is paused on the no-gain guard.", str(result.detail["response_text"]))
+        self.assertIn("/swarm continue startup-operator session session-777 rounds 1 force", str(result.detail["response_text"]))
+
+    def test_swarm_autoloop_pause_failure_returns_bounded_guidance(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with (
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_bridge_list_paths",
+                return_value={
+                    "paths": [
+                        {"key": "startup-operator", "label": "Startup Operator", "active": "yes"},
+                    ],
+                },
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_bridge_autoloop",
+                return_value=SimpleNamespace(
+                    ok=False,
+                    exit_code=1,
+                    path_key="startup-operator",
+                    session_id="session-pause",
+                    stdout=(
+                        "Spark Swarm specialization path autoloop\n"
+                        "Autoloop paused: auto-generated planner hit a no-gain streak of 2 rounds. Blocked before round 1.\n"
+                        "Session stop: paused_no_gain_streak\n"
+                    ),
+                    stderr="",
+                    session_summary={
+                        "sessionId": "session-pause",
+                        "completedRounds": 0,
+                        "requestedRoundsTotal": 1,
+                        "keptRounds": 0,
+                        "revertedRounds": 0,
+                        "plannerReadinessStatus": "available",
+                        "noGainStreak": 2,
+                    },
+                    round_history={
+                        "currentScore": 0.6222,
+                        "bestScore": 0.6222,
+                        "noGainStreak": 2,
+                    },
+                ),
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=23042,
+                    user_id="111",
+                    username="alice",
+                    text="start autoloop for Startup Operator in swarm for 1 round",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm autoloop paused.", str(result.detail["response_text"]))
+        self.assertIn("Reason: auto-generated planner hit the no-gain pause guard.", str(result.detail["response_text"]))
+        self.assertIn("/swarm continue startup-operator session session-pause rounds 1 force", str(result.detail["response_text"]))
 
     def test_natural_language_swarm_rerun_command_executes_requested_path(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
