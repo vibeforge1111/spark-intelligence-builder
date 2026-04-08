@@ -11,6 +11,7 @@ from spark_intelligence.researcher_bridge.advisory import (
     _build_contextual_task,
     _clean_messaging_reply,
     _normalize_browser_search_query,
+    _should_collect_browser_search_context,
     _render_direct_provider_chat_fallback,
     _sanitize_browser_search_reply,
     _select_search_result_candidate_from_text_result,
@@ -34,6 +35,22 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         )
 
         self.assertEqual(query, "Example Domain")
+
+    def test_normalize_browser_search_query_extracts_domain_from_browse_request(self) -> None:
+        query = _normalize_browser_search_query(
+            "Go to vibeship.co and tell me what you think."
+        )
+
+        self.assertEqual(query, "vibeship.co")
+
+    def test_should_collect_browser_search_context_for_domain_browse_request(self) -> None:
+        self.assertTrue(_should_collect_browser_search_context("browse vibeship.co"))
+        self.assertTrue(
+            _should_collect_browser_search_context(
+                "Open https://vibeship.co and tell me what you think."
+            )
+        )
+        self.assertFalse(_should_collect_browser_search_context("open the discussion"))
 
     def test_select_search_result_candidate_from_text_result_prefers_external_domain(self) -> None:
         candidate = _select_search_result_candidate_from_text_result(
@@ -92,6 +109,24 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("Source capture failed on the result page", cleaned)
         self.assertIn("strip_search_engine_citation", actions)
         self.assertIn("append_source_capture_warning", actions)
+
+    def test_sanitize_browser_search_reply_polishes_quote_spacing_and_generic_tail(self) -> None:
+        cleaned, actions = _sanitize_browser_search_reply(
+            (
+                'VibeShip is a toolkit for "vibe coders"developers using AI assistants.\n\n'
+                'The bundle is broad rather than a single wedge"they\'re stacking memory, security, and backend scaffolding.\n\n'
+                "What problem are you trying to solve with this?"
+            ),
+            source_url="https://vibeship.co",
+        )
+
+        self.assertIn('"vibe coders" developers', cleaned)
+        self.assertIn('wedge" they\'re', cleaned)
+        self.assertNotIn("What problem are you trying to solve with this?", cleaned)
+        self.assertIn("Source: https://vibeship.co", cleaned)
+        self.assertIn("repair_quote_spacing", actions)
+        self.assertIn("strip_generic_followup_question", actions)
+        self.assertIn("append_external_source_citation", actions)
 
     def test_clean_messaging_reply_rewrites_structured_chip_memo_for_telegram(self) -> None:
         cleaned = _clean_messaging_reply(

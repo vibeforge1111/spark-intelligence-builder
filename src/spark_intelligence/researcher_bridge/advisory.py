@@ -448,6 +448,8 @@ def _render_direct_provider_chat_fallback(
             "Browser search evidence is already attached in the user prompt. "
             "Do not say you cannot browse, cannot access real-time data, or need to look something up. "
             "Answer directly from the attached browser evidence. "
+            "When the user wants an opinion on a site or product, anchor the answer in two or three concrete details from the page before giving your verdict. "
+            "Prefer a crisp conclusion over a generic coaching question. "
             "Only cite the provided source_url in plain text when it is present and external. "
             "Never cite search_url or a search-engine results page as the source. "
             "If the evidence is approximate or snippet-based, say that plainly, but still answer the user's question."
@@ -512,6 +514,10 @@ def _should_collect_browser_search_context(user_message: str) -> bool:
     lowered = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
     if not lowered:
         return False
+    domain_or_url_hint = re.search(
+        r"(https?://\S+|www\.\S+|\b[a-z0-9-]+(?:\.[a-z0-9-]+)+\b)",
+        lowered,
+    )
     explicit_signals = (
         "search the web",
         "web search",
@@ -523,6 +529,11 @@ def _should_collect_browser_search_context(user_message: str) -> bool:
         "google ",
     )
     if any(signal in lowered for signal in explicit_signals):
+        return True
+    if domain_or_url_hint and any(
+        signal in lowered
+        for signal in ("browse ", "open ", "go to ", "visit ", "check out ")
+    ):
         return True
     current_fact_signals = ("current", "latest", "today", "price", "news", "source")
     return any(signal in lowered for signal in current_fact_signals) and any(
@@ -544,6 +555,11 @@ def _normalize_browser_search_query(user_message: str) -> str:
         r"^\s*(please\s+)?look up\s+",
         r"^\s*(please\s+)?find online\s+",
         r"^\s*(please\s+)?search online\s+",
+        r"^\s*(please\s+)?browse\s+",
+        r"^\s*(please\s+)?open\s+",
+        r"^\s*(please\s+)?go to\s+",
+        r"^\s*(please\s+)?visit\s+",
+        r"^\s*(please\s+)?check out\s+",
     )
     for pattern in patterns:
         updated = re.sub(pattern, "", query, flags=re.IGNORECASE)
@@ -557,6 +573,13 @@ def _normalize_browser_search_query(user_message: str) -> str:
     query = re.sub(r"\s+(?:and\s+)?cite your source\.?\s*$", "", query, flags=re.IGNORECASE)
     query = re.sub(r"\s+(?:and\s+)?with sources?\.?\s*$", "", query, flags=re.IGNORECASE)
     query = re.sub(r"\s+and cite (the )?source(s)?\.?\s*$", "", query, flags=re.IGNORECASE)
+    domain_or_url_match = re.search(
+        r"(https?://\S+|www\.\S+|\b[a-z0-9-]+(?:\.[a-z0-9-]+)+\b)",
+        query,
+        flags=re.IGNORECASE,
+    )
+    if domain_or_url_match:
+        query = domain_or_url_match.group(1)
     query = query.strip(" ?")
     return query or str(user_message or "").strip()
 
@@ -1298,6 +1321,8 @@ def _sanitize_browser_search_reply(
         if source_url not in sanitized:
             sanitized = f"{sanitized}\n\nSource: {source_url}" if sanitized else f"Source: {source_url}"
             mutation_actions.append("append_external_source_citation")
+        sanitized, polish_actions = _polish_browser_grounded_reply(sanitized)
+        mutation_actions.extend(polish_actions)
         return sanitized, mutation_actions
     if _contains_search_engine_url(sanitized):
         sanitized = re.sub(r"https?://[^\s<>()]+", "", sanitized)
@@ -1308,7 +1333,47 @@ def _sanitize_browser_search_reply(
     if warning not in sanitized:
         sanitized = f"{sanitized}\n\n{warning}" if sanitized else warning
         mutation_actions.append("append_source_capture_warning")
+    sanitized, polish_actions = _polish_browser_grounded_reply(sanitized)
+    mutation_actions.extend(polish_actions)
     return sanitized, mutation_actions
+
+
+def _polish_browser_grounded_reply(text: str) -> tuple[str, list[str]]:
+    body_lines: list[str] = []
+    source_lines: list[str] = []
+    actions: list[str] = []
+    quote_spacing_fixed = False
+    for raw_line in str(text or "").replace("\r\n", "\n").split("\n"):
+        line = raw_line.strip()
+        if not line:
+            body_lines.append("")
+            continue
+        if line.lower().startswith("source:"):
+            source_lines.append(line)
+            continue
+        fixed = raw_line
+        fixed = re.sub(r'([A-Za-z0-9])(["”])([A-Za-z])', r"\1\2 \3", fixed)
+        if fixed != raw_line:
+            quote_spacing_fixed = True
+        body_lines.append(fixed.strip())
+    body = "\n".join(body_lines)
+    body = re.sub(r"\n{3,}", "\n\n", body).strip()
+    if quote_spacing_fixed:
+        actions.append("repair_quote_spacing")
+    generic_followup_patterns = (
+        r"(?is)\n\nWhat problem are you trying to solve with this\?\s*$",
+        r"(?is)\n\nWhat problem are you trying to solve\?\s*$",
+        r"(?is)\n\nWhat are you trying to solve with this\?\s*$",
+    )
+    stripped_followup = body
+    for pattern in generic_followup_patterns:
+        stripped_followup = re.sub(pattern, "", stripped_followup).strip()
+    if stripped_followup != body:
+        body = stripped_followup
+        actions.append("strip_generic_followup_question")
+    parts = [part for part in (body, "\n".join(source_lines).strip()) if part]
+    polished = "\n\n".join(parts).strip()
+    return polished, actions
 
 
 def _strip_reasoning_blocks(text: str) -> tuple[str, bool]:
