@@ -76,10 +76,32 @@ What still remains outside this specific Builder checkpoint:
 
 Those unrelated local files should not be confused with the shipped browser integration state.
 
-## 6. Release State
+## 6. Telegram Ingress Ownership Addendum
+
+Later on 2026-04-08, the production-shape runtime was clarified:
+
+- `Spark Swarm` owns the production Telegram bot ingress for the shared bot token
+- Builder should not run a second long-poll gateway against that same bot token
+- Builder remains the downstream browser and reasoning runtime, not a competing Telegram ingress owner for the production bot
+
+That cutover was applied on the canonical Builder live home:
+
+- `.tmp-home-live-telegram-real` now keeps `channels.records.telegram.status: paused`
+- the Builder autostart registration for that live home was removed
+- the local Builder gateway poller for that live home was stopped
+- Telegram auth remains configured so the home can still run `channel test telegram`, simulations, and downstream browser work without owning production ingress
+
+Why this matters:
+
+- it removes Telegram `HTTP 409` long-poll conflicts when `Spark Swarm` is already connected to the same bot token
+- it preserves the governed browser integration without making the production runtime ownership ambiguous
+- it keeps the rollback simple if direct Builder ingress is needed later on a different bot or staging surface
+
+## 7. Release State
 
 As of 2026-04-08:
 
-- `spark-browser-extension` is pushed at `57b95bf`
-- `spark-intelligence-builder` is pushed at `0e7d433`
+- `spark-browser-extension` is pushed at `be01fc3`
+- `spark-intelligence-builder` is pushed at `1623352`
 - the real cross-repo governed browser path is working for the current Builder CLI surface
+- the canonical production-shape decision is now `Swarm owns Telegram ingress; Builder stays downstream`
