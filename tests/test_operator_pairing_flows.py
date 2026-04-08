@@ -1348,6 +1348,106 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("merged", str(result.detail["response_text"]))
         sync_mock.assert_called_once()
 
+    def test_natural_language_swarm_sync_delivery_command_resolves_latest_upgrade_by_specialization(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with (
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_read_specializations",
+                return_value=[
+                    {"id": "specialization:startup-operator", "key": "startup-operator", "label": "Startup Operator"},
+                ],
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_read_masteries",
+                return_value=[
+                    {
+                        "id": "mastery-a",
+                        "specializationScope": "startup-operator",
+                        "summary": "Startup mastery",
+                        "status": "shared_mastery",
+                        "updatedAt": "2026-04-08T10:00:00Z",
+                    },
+                ],
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_read_upgrades",
+                return_value=[
+                    {
+                        "id": "upgrade-old",
+                        "derivedFromMasteryId": "mastery-a",
+                        "changeSummary": "Old upgrade",
+                        "status": "queued",
+                        "updatedAt": "2026-04-08T09:00:00Z",
+                    },
+                    {
+                        "id": "upgrade-new",
+                        "derivedFromMasteryId": "mastery-a",
+                        "changeSummary": "Latest upgrade",
+                        "status": "awaiting_review",
+                        "updatedAt": "2026-04-08T10:00:00Z",
+                    },
+                ],
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_sync_upgrade_delivery_status",
+                return_value={
+                    "upgrade": {"id": "upgrade-new", "changeSummary": "Latest upgrade", "status": "merged"},
+                    "delivery": {"status": "merged"},
+                },
+            ) as sync_mock,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2291,
+                    user_id="111",
+                    username="alice",
+                    text="sync delivery status for the latest Startup Operator upgrade",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm delivery status synced.", str(result.detail["response_text"]))
+        self.assertEqual(sync_mock.call_args.kwargs["upgrade_id"], "upgrade-new")
+
+    def test_natural_language_swarm_sync_delivery_command_rejects_missing_upgrade_target(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with (
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_read_specializations",
+                return_value=[
+                    {"id": "specialization:startup-operator", "key": "startup-operator", "label": "Startup Operator"},
+                ],
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_read_masteries",
+                return_value=[],
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_read_upgrades",
+                return_value=[],
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2292,
+                    user_id="111",
+                    username="alice",
+                    text="sync delivery status for the latest Startup Operator upgrade",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            str(result.detail["response_text"]),
+            "Swarm action needs a clearer upgrade target.\nNo pending upgrades matched Startup Operator. Use `/swarm upgrades` to pick an exact ID.",
+        )
+
     def test_natural_language_swarm_collective_command_returns_summary(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 

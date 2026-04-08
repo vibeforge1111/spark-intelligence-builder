@@ -1478,6 +1478,26 @@ def _handle_runtime_command(
             ),
             renderer=_render_swarm_delivery_sync_reply,
         )
+    sync_delivery_resolution = _resolve_natural_swarm_sync_delivery_target(
+        inbound_text=normalized,
+        config_manager=config_manager,
+        state_db=state_db,
+    )
+    if sync_delivery_resolution is not None:
+        if sync_delivery_resolution.get("error"):
+            return {
+                "command": "/swarm sync-delivery",
+                "reply_text": str(sync_delivery_resolution["error"]),
+            }
+        return _run_swarm_action_command(
+            command="/swarm sync-delivery",
+            runner=lambda: swarm_sync_upgrade_delivery_status(
+                config_manager,
+                state_db,
+                upgrade_id=str(sync_delivery_resolution["upgrade_id"]),
+            ),
+            renderer=_render_swarm_delivery_sync_reply,
+        )
     if lowered.startswith("/swarm evaluate") or (natural_swarm_command and natural_swarm_command[0] == "/swarm evaluate"):
         task = normalized[len("/swarm evaluate") :].strip() if lowered.startswith("/swarm evaluate") else str(natural_swarm_command[1] or "").strip()
         if not task:
@@ -2203,10 +2223,44 @@ def _resolve_natural_swarm_deliver_target(
     )
     if not match:
         return None
-    specialization = _resolve_swarm_specialization_by_label(
+    return _resolve_latest_swarm_upgrade_target(
         config_manager=config_manager,
         state_db=state_db,
         label=str(match.group("label") or ""),
+    )
+
+
+def _resolve_natural_swarm_sync_delivery_target(
+    *,
+    inbound_text: str,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+) -> dict[str, str] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    match = re.match(
+        r"^(?:please\s+|can you\s+)?sync delivery status for (?:the\s+)?latest\s+(?P<label>.+?)\s+upgrade(?:\s+in\s+swarm)?$",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return _resolve_latest_swarm_upgrade_target(
+        config_manager=config_manager,
+        state_db=state_db,
+        label=str(match.group("label") or ""),
+    )
+
+
+def _resolve_latest_swarm_upgrade_target(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    label: str,
+) -> dict[str, str]:
+    specialization = _resolve_swarm_specialization_by_label(
+        config_manager=config_manager,
+        state_db=state_db,
+        label=label,
     )
     if specialization.get("error"):
         return {
