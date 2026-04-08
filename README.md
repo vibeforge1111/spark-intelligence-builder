@@ -61,6 +61,7 @@ This repo currently includes:
 - [docs/IMPLEMENTATION_STATUS_2026-03-26.md](./docs/IMPLEMENTATION_STATUS_2026-03-26.md)
 - [docs/STATUS_HANDOFF_2026-03-29.md](./docs/STATUS_HANDOFF_2026-03-29.md)
 - [docs/STATUS_HANDOFF_2026-04-08.md](./docs/STATUS_HANDOFF_2026-04-08.md)
+- [docs/STATUS_HANDOFF_2026-04-09.md](./docs/STATUS_HANDOFF_2026-04-09.md)
 
 Key repo skills:
 
@@ -248,6 +249,13 @@ Live commands verified on the production-shaped home:
 - `/swarm upgrades`
 - `/swarm inbox`
 - `/swarm collective`
+
+Current operator checkpoint:
+
+- Telegram natural-language Swarm reads, hosted actions, and local autoloop/session control are live through Builder
+- `spark-browser-extension` remains the downstream governed browser runtime for Telegram browse/search tasks
+- `startup-operator` autoloop control is live, but real score-improving Startup Bench autoloops are intentionally blocked until the benchmark can consume repo-owned mutations
+- the current tomorrow handoff is documented in [docs/STATUS_HANDOFF_2026-04-09.md](./docs/STATUS_HANDOFF_2026-04-09.md)
 
 Local Swarm bridge commands now available through Builder Telegram:
 
