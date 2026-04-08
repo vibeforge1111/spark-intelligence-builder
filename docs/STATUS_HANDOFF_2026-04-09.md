@@ -205,6 +205,10 @@ Therefore:
 
 Tomorrow should begin with the real mutation seam, not more Telegram polish first.
 
+The focused communication and evolution plan for that work is documented in:
+
+- `docs/TELEGRAM_COMMUNICATION_AND_EVOLUTION_PLAN_2026-04-09.md`
+
 ### Priority 1. Create A Benchmark-Coupled Mutation Path
 
 Goal:

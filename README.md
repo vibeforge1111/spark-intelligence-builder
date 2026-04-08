@@ -62,6 +62,7 @@ This repo currently includes:
 - [docs/STATUS_HANDOFF_2026-03-29.md](./docs/STATUS_HANDOFF_2026-03-29.md)
 - [docs/STATUS_HANDOFF_2026-04-08.md](./docs/STATUS_HANDOFF_2026-04-08.md)
 - [docs/STATUS_HANDOFF_2026-04-09.md](./docs/STATUS_HANDOFF_2026-04-09.md)
+- [docs/TELEGRAM_COMMUNICATION_AND_EVOLUTION_PLAN_2026-04-09.md](./docs/TELEGRAM_COMMUNICATION_AND_EVOLUTION_PLAN_2026-04-09.md)
 
 Key repo skills:
 
@@ -256,6 +257,7 @@ Current operator checkpoint:
 - `spark-browser-extension` remains the downstream governed browser runtime for Telegram browse/search tasks
 - `startup-operator` autoloop control is live, but real score-improving Startup Bench autoloops are intentionally blocked until the benchmark can consume repo-owned mutations
 - the current tomorrow handoff is documented in [docs/STATUS_HANDOFF_2026-04-09.md](./docs/STATUS_HANDOFF_2026-04-09.md)
+- the focused next-step plan for communication quality and visible agent evolution is documented in [docs/TELEGRAM_COMMUNICATION_AND_EVOLUTION_PLAN_2026-04-09.md](./docs/TELEGRAM_COMMUNICATION_AND_EVOLUTION_PLAN_2026-04-09.md)
 
 Local Swarm bridge commands now available through Builder Telegram:
 
