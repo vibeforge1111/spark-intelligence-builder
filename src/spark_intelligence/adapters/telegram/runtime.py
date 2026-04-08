@@ -29,7 +29,18 @@ from spark_intelligence.personality import maybe_handle_agent_persona_onboarding
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply, record_researcher_bridge_result
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD
-from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_status, sync_swarm_collective
+from spark_intelligence.swarm_bridge import (
+    evaluate_swarm_escalation,
+    swarm_read_collective_snapshot,
+    swarm_read_evolution_inbox,
+    swarm_read_live_session,
+    swarm_read_operator_issues,
+    swarm_read_overview,
+    swarm_read_runtime_pulse,
+    swarm_read_upgrades,
+    swarm_status,
+    sync_swarm_collective,
+)
 
 
 @dataclass
@@ -1203,7 +1214,11 @@ def _handle_runtime_command(
     if lowered == "/swarm" or natural_swarm_command == ("/swarm", None):
         return {
             "command": "/swarm",
-            "reply_text": "Swarm commands: `/swarm status`, `/swarm sync`, and `/swarm evaluate <task>`.",
+            "reply_text": (
+                "Swarm commands: `/swarm status`, `/swarm overview`, `/swarm live`, `/swarm runtime`, "
+                "`/swarm upgrades`, `/swarm issues`, `/swarm inbox`, `/swarm collective`, `/swarm sync`, "
+                "and `/swarm evaluate <task>`."
+            ),
         }
     if lowered == "/swarm status" or natural_swarm_command == ("/swarm status", None):
         status = swarm_status(config_manager, state_db)
@@ -1216,6 +1231,48 @@ def _handle_runtime_command(
                 f"Last decision: {(status.last_decision or {}).get('mode', 'none')}."
             ),
         }
+    if lowered == "/swarm overview" or natural_swarm_command == ("/swarm overview", None):
+        return _run_swarm_read_command(
+            command="/swarm overview",
+            loader=lambda: swarm_read_overview(config_manager, state_db),
+            renderer=_render_swarm_overview_reply,
+        )
+    if lowered == "/swarm live" or natural_swarm_command == ("/swarm live", None):
+        return _run_swarm_read_command(
+            command="/swarm live",
+            loader=lambda: swarm_read_live_session(config_manager, state_db),
+            renderer=_render_swarm_live_reply,
+        )
+    if lowered == "/swarm runtime" or natural_swarm_command == ("/swarm runtime", None):
+        return _run_swarm_read_command(
+            command="/swarm runtime",
+            loader=lambda: swarm_read_runtime_pulse(config_manager, state_db),
+            renderer=_render_swarm_runtime_reply,
+        )
+    if lowered == "/swarm upgrades" or natural_swarm_command == ("/swarm upgrades", None):
+        return _run_swarm_read_command(
+            command="/swarm upgrades",
+            loader=lambda: swarm_read_upgrades(config_manager, state_db),
+            renderer=_render_swarm_upgrades_reply,
+        )
+    if lowered == "/swarm issues" or natural_swarm_command == ("/swarm issues", None):
+        return _run_swarm_read_command(
+            command="/swarm issues",
+            loader=lambda: swarm_read_operator_issues(config_manager, state_db),
+            renderer=_render_swarm_operator_issues_reply,
+        )
+    if lowered == "/swarm inbox" or natural_swarm_command == ("/swarm inbox", None):
+        return _run_swarm_read_command(
+            command="/swarm inbox",
+            loader=lambda: swarm_read_evolution_inbox(config_manager, state_db),
+            renderer=_render_swarm_inbox_reply,
+        )
+    if lowered == "/swarm collective" or natural_swarm_command == ("/swarm collective", None):
+        return _run_swarm_read_command(
+            command="/swarm collective",
+            loader=lambda: swarm_read_collective_snapshot(config_manager, state_db),
+            renderer=_render_swarm_collective_reply,
+        )
     if lowered == "/swarm sync" or natural_swarm_command == ("/swarm sync", None):
         result = sync_swarm_collective(
             config_manager=config_manager,
@@ -1270,6 +1327,150 @@ def _handle_runtime_command(
     return None
 
 
+def _run_swarm_read_command(
+    *,
+    command: str,
+    loader: Any,
+    renderer: Any,
+) -> dict[str, str]:
+    try:
+        payload = loader()
+        reply_text = renderer(payload)
+    except RuntimeError as exc:
+        reply_text = f"Swarm read is unavailable right now.\n{exc}"
+    return {
+        "command": command,
+        "reply_text": reply_text,
+    }
+
+
+def _render_swarm_overview_reply(payload: dict[str, Any]) -> str:
+    session = payload.get("session") if isinstance(payload, dict) else {}
+    agent = payload.get("agent") if isinstance(payload, dict) else {}
+    attached_repos = payload.get("attachedRepos") if isinstance(payload, dict) else []
+    repos = attached_repos if isinstance(attached_repos, list) else []
+    verified_count = sum(1 for repo in repos if isinstance(repo, dict) and str(repo.get("verificationState") or "") == "verified")
+    pending_count = sum(1 for repo in repos if isinstance(repo, dict) and str(repo.get("verificationState") or "") != "verified")
+    return (
+        "Swarm overview:\n"
+        f"Workspace: {str((session or {}).get('workspaceName') or (session or {}).get('workspaceSlug') or (session or {}).get('workspaceId') or 'unknown')}.\n"
+        f"Agent: {str((agent or {}).get('name') or (agent or {}).get('id') or 'unknown')}.\n"
+        f"Repos: {len(repos)} attached, {verified_count} verified, {pending_count} pending."
+    )
+
+
+def _render_swarm_runtime_reply(payload: dict[str, Any]) -> str:
+    intelligence = payload.get("intelligencePulse") if isinstance(payload, dict) else {}
+    pending_upgrades = (intelligence or {}).get("pendingUpgradeCount") if isinstance(intelligence, dict) else None
+    pending_contradictions = (intelligence or {}).get("pendingContradictionCount") if isinstance(intelligence, dict) else None
+    lines = [
+        "Swarm runtime pulse:",
+        f"State: {str(payload.get('runtimeState') or 'unknown')}.",
+        f"Stage: {str(payload.get('stageLabel') or payload.get('stageKey') or 'unknown')}.",
+        f"Recommendation: {str(payload.get('recommendation') or 'none')}.",
+    ]
+    if payload.get("blocker"):
+        lines.append(f"Blocker: {str(payload.get('blocker'))}.")
+    if pending_upgrades is not None or pending_contradictions is not None:
+        lines.append(
+            f"Pressure: {int(pending_upgrades or 0)} pending upgrades, {int(pending_contradictions or 0)} open contradictions."
+        )
+    return "\n".join(lines)
+
+
+def _render_swarm_live_reply(payload: dict[str, Any]) -> str:
+    lines = [
+        "Swarm live state:",
+        f"Runtime: {str(payload.get('runtimeState') or 'unknown')}.",
+        f"Current stage: {str(payload.get('currentStageLabel') or payload.get('currentStageKey') or 'unknown')}.",
+        f"Activity: {int(payload.get('activeAgentCount') or 0)} active agents, {int(payload.get('activePathCount') or 0)} active paths, {int(payload.get('queuedEventCount') or 0)} queued events.",
+    ]
+    if payload.get("recommendation"):
+        lines.append(f"Recommendation: {str(payload.get('recommendation'))}.")
+    latest_delivery = payload.get("latestUpgradeDelivery")
+    if isinstance(latest_delivery, dict) and latest_delivery.get("status"):
+        lines.append(
+            f"Latest delivery: {str(latest_delivery.get('status'))} for {str(latest_delivery.get('changeSummary') or latest_delivery.get('upgradeId') or 'latest upgrade')}."
+        )
+    return "\n".join(lines)
+
+
+def _render_swarm_upgrades_reply(payload: list[dict[str, Any]]) -> str:
+    upgrades = payload if isinstance(payload, list) else []
+    pending_statuses = {"draft", "queued", "upgrade_opened", "awaiting_review"}
+    pending = [item for item in upgrades if isinstance(item, dict) and str(item.get("status") or "") in pending_statuses]
+    if not pending:
+        return "Swarm upgrades:\nNo pending upgrades are waiting right now."
+    recent = sorted(pending, key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""), reverse=True)[:3]
+    lines = [f"Swarm upgrades:\n{len(pending)} pending upgrade(s)."]
+    for item in recent:
+        lines.append(
+            f"- {str(item.get('status') or 'unknown')}: {str(item.get('changeSummary') or item.get('id') or 'upgrade')} ({str(item.get('riskLevel') or 'unknown')} risk)"
+        )
+    return "\n".join(lines)
+
+
+def _render_swarm_operator_issues_reply(payload: list[dict[str, Any]]) -> str:
+    issues = payload if isinstance(payload, list) else []
+    open_issues = [item for item in issues if isinstance(item, dict) and str(item.get("status") or "") != "resolved"]
+    if not open_issues:
+        return "Swarm operator issues:\nNo open operator issues right now."
+    ranked = sorted(
+        open_issues,
+        key=lambda item: (str(item.get("severity") or "") != "critical", str(item.get("updatedAt") or item.get("createdAt") or "")),
+        reverse=False,
+    )[:3]
+    lines = [f"Swarm operator issues:\n{len(open_issues)} open issue(s)."]
+    for item in ranked:
+        lines.append(f"- {str(item.get('severity') or 'warn')}: {str(item.get('summary') or item.get('kind') or 'issue')}")
+    return "\n".join(lines)
+
+
+def _render_swarm_inbox_reply(payload: dict[str, Any]) -> str:
+    items = payload.get("items") if isinstance(payload, dict) else []
+    inbox_items = items if isinstance(items, list) else []
+    if not inbox_items:
+        return "Swarm inbox:\nNo evolution inbox items are waiting right now."
+    ranked = sorted(inbox_items, key=lambda item: str((item if isinstance(item, dict) else {}).get("createdAt") or ""), reverse=True)[:3]
+    lines = [f"Swarm inbox:\n{len(inbox_items)} item(s) waiting."]
+    for item in ranked:
+        if isinstance(item, dict):
+            lines.append(
+                f"- {str(item.get('priority') or 'medium')}: {str(item.get('title') or item.get('summary') or item.get('id') or 'inbox item')}"
+            )
+    return "\n".join(lines)
+
+
+def _render_swarm_collective_reply(payload: dict[str, Any]) -> str:
+    specializations = payload.get("specializations") if isinstance(payload, dict) else []
+    paths = payload.get("evolutionPaths") if isinstance(payload, dict) else []
+    insights = payload.get("insights") if isinstance(payload, dict) else []
+    masteries = payload.get("masteries") if isinstance(payload, dict) else []
+    contradictions = payload.get("contradictions") if isinstance(payload, dict) else []
+    upgrades = payload.get("upgrades") if isinstance(payload, dict) else []
+    inbox = payload.get("inbox") if isinstance(payload, dict) else {}
+    inbox_items = (inbox or {}).get("items") if isinstance(inbox, dict) else []
+    open_contradictions = [
+        item for item in (contradictions if isinstance(contradictions, list) else [])
+        if isinstance(item, dict) and str(item.get("status") or "open") != "resolved"
+    ]
+    pending_statuses = {"draft", "queued", "upgrade_opened", "awaiting_review"}
+    pending_upgrades = [
+        item for item in (upgrades if isinstance(upgrades, list) else [])
+        if isinstance(item, dict) and str(item.get("status") or "") in pending_statuses
+    ]
+    return (
+        "Swarm collective summary:\n"
+        f"Specializations: {len(specializations) if isinstance(specializations, list) else 0}.\n"
+        f"Paths: {len(paths) if isinstance(paths, list) else 0}.\n"
+        f"Insights: {len(insights) if isinstance(insights, list) else 0}.\n"
+        f"Masteries: {len(masteries) if isinstance(masteries, list) else 0}.\n"
+        f"Open contradictions: {len(open_contradictions)}.\n"
+        f"Pending upgrades: {len(pending_upgrades)}.\n"
+        f"Inbox items: {len(inbox_items) if isinstance(inbox_items, list) else 0}."
+    )
+
+
 def _match_natural_swarm_command(inbound_text: str) -> tuple[str, str | None] | None:
     normalized = " ".join(str(inbound_text or "").strip().split())
     lowered = normalized.lower()
@@ -1309,6 +1510,71 @@ def _match_natural_swarm_command(inbound_text: str) -> tuple[str, str | None] | 
         flags=re.IGNORECASE,
     ):
         return ("/swarm status", None)
+    if simplified in {
+        "swarm overview",
+        "show swarm overview",
+        "show me swarm overview",
+        "show swarm summary",
+        "show me swarm summary",
+        "summarize swarm",
+        "summarize the swarm",
+    }:
+        return ("/swarm overview", None)
+    if simplified in {
+        "swarm live",
+        "show swarm live",
+        "show me swarm live",
+        "show swarm live state",
+        "show me swarm live state",
+        "what is the live state in swarm",
+        "what is the swarm live state",
+    }:
+        return ("/swarm live", None)
+    if simplified in {
+        "swarm runtime",
+        "show swarm runtime",
+        "show me swarm runtime",
+        "show swarm runtime pulse",
+        "show me the swarm runtime pulse",
+        "what is the swarm runtime state",
+        "what is the swarm runtime pulse",
+    }:
+        return ("/swarm runtime", None)
+    if simplified in {
+        "swarm upgrades",
+        "show swarm upgrades",
+        "show me swarm upgrades",
+        "show pending upgrades in swarm",
+        "what upgrades are pending in swarm",
+        "what pending upgrades are in swarm",
+    }:
+        return ("/swarm upgrades", None)
+    if simplified in {
+        "swarm issues",
+        "show swarm issues",
+        "show me swarm issues",
+        "show operator issues in swarm",
+        "show me operator issues in swarm",
+        "what operator issues are open in swarm",
+    }:
+        return ("/swarm issues", None)
+    if simplified in {
+        "swarm inbox",
+        "show swarm inbox",
+        "show me swarm inbox",
+        "show evolution inbox in swarm",
+        "what is in the swarm inbox",
+    }:
+        return ("/swarm inbox", None)
+    if simplified in {
+        "swarm collective",
+        "show swarm collective",
+        "show me swarm collective",
+        "summarize the collective in swarm",
+        "show me the collective summary in swarm",
+        "summarize the swarm collective",
+    }:
+        return ("/swarm collective", None)
 
     if simplified in {
         "swarm sync",

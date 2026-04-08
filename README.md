@@ -111,6 +111,13 @@ spark-intelligence gateway start
 # /think off
 # /swarm
 # /swarm status
+# /swarm overview
+# /swarm live
+# /swarm runtime
+# /swarm upgrades
+# /swarm issues
+# /swarm inbox
+# /swarm collective
 # /swarm sync
 # /swarm evaluate <task>
 ```
@@ -236,6 +243,11 @@ Live commands verified on the production-shaped home:
 The Telegram runtime also accepts bounded natural-language equivalents for those commands when the message makes the intent explicit, for example:
 
 - `Can you show me the swarm status?`
+- `Show me swarm overview`
+- `Show me the swarm runtime pulse`
+- `What upgrades are pending in swarm?`
+- `What is in the swarm inbox?`
+- `Summarize the collective in swarm`
 - `Please sync with swarm`
 - `Can you evaluate this for swarm: <task>`
 

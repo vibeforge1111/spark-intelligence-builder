@@ -213,6 +213,69 @@ class SwarmSession:
     auth_state: str
 
 
+def swarm_read_overview(config_manager: ConfigManager, state_db: StateDB) -> dict[str, Any]:
+    payload = _fetch_swarm_api_json(
+        config_manager=config_manager,
+        state_db=state_db,
+        route_path="api/workspaces/{workspace_id}/overview",
+    )
+    return payload if isinstance(payload, dict) else {}
+
+
+def swarm_read_runtime_pulse(config_manager: ConfigManager, state_db: StateDB) -> dict[str, Any]:
+    payload = _fetch_swarm_api_json(
+        config_manager=config_manager,
+        state_db=state_db,
+        route_path="api/workspaces/{workspace_id}/runtime/pulse",
+    )
+    return payload if isinstance(payload, dict) else {}
+
+
+def swarm_read_live_session(config_manager: ConfigManager, state_db: StateDB) -> dict[str, Any]:
+    payload = _fetch_swarm_api_json(
+        config_manager=config_manager,
+        state_db=state_db,
+        route_path="api/workspaces/{workspace_id}/live",
+    )
+    return payload if isinstance(payload, dict) else {}
+
+
+def swarm_read_collective_snapshot(config_manager: ConfigManager, state_db: StateDB) -> dict[str, Any]:
+    payload = _fetch_swarm_api_json(
+        config_manager=config_manager,
+        state_db=state_db,
+        route_path="api/workspaces/{workspace_id}/collective-snapshot",
+    )
+    return payload if isinstance(payload, dict) else {}
+
+
+def swarm_read_upgrades(config_manager: ConfigManager, state_db: StateDB) -> list[dict[str, Any]]:
+    payload = _fetch_swarm_api_json(
+        config_manager=config_manager,
+        state_db=state_db,
+        route_path="api/workspaces/{workspace_id}/upgrades",
+    )
+    return payload if isinstance(payload, list) else []
+
+
+def swarm_read_operator_issues(config_manager: ConfigManager, state_db: StateDB) -> list[dict[str, Any]]:
+    payload = _fetch_swarm_api_json(
+        config_manager=config_manager,
+        state_db=state_db,
+        route_path="api/workspaces/{workspace_id}/operator-issues",
+    )
+    return payload if isinstance(payload, list) else []
+
+
+def swarm_read_evolution_inbox(config_manager: ConfigManager, state_db: StateDB) -> dict[str, Any]:
+    payload = _fetch_swarm_api_json(
+        config_manager=config_manager,
+        state_db=state_db,
+        route_path="api/workspaces/{workspace_id}/evolution-inbox",
+    )
+    return payload if isinstance(payload, dict) else {}
+
+
 def swarm_status(config_manager: ConfigManager, state_db: StateDB | None = None) -> SwarmStatus:
     enabled = bool(config_manager.get_path("spark.swarm.enabled", default=True))
     runtime_root, _ = _discover_swarm_runtime_root(config_manager)
@@ -1206,6 +1269,77 @@ def _build_collective_payload(
     if _normalize_collective_payload(payload):
         payload_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return payload, payload_path
+
+
+def _fetch_swarm_api_json(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    route_path: str,
+) -> Any:
+    status = swarm_status(config_manager, state_db)
+    if not status.enabled:
+        raise RuntimeError("Spark Swarm bridge is disabled by operator.")
+    if not status.api_url:
+        raise RuntimeError("Swarm API URL is missing.")
+    if not status.workspace_id:
+        raise RuntimeError("Swarm workspace id is missing.")
+
+    session = _resolve_swarm_session(config_manager, state_db=state_db)
+    if session.auth_state == "expired":
+        raise RuntimeError("Swarm access token is expired and no refresh path is configured.")
+    if not session.access_token and session.auth_state != "refreshable":
+        raise RuntimeError("Swarm access token is missing.")
+    if session.auth_state == "refreshable":
+        session = _refresh_swarm_access_token(config_manager=config_manager, state_db=state_db, session=session)
+
+    request_path = route_path.format(workspace_id=status.workspace_id)
+    try:
+        return _get_swarm_api_json(
+            api_url=status.api_url,
+            route_path=request_path,
+            access_token=session.access_token or "",
+        )
+    except urllib.error.HTTPError as exc:
+        body = _read_http_error_body(exc)
+        if (
+            exc.code == 401
+            and _http_error_requires_auth(body)
+            and session.refresh_token
+            and session.auth_client_key
+            and session.supabase_url
+        ):
+            session = _refresh_swarm_access_token(config_manager=config_manager, state_db=state_db, session=session)
+            return _get_swarm_api_json(
+                api_url=status.api_url,
+                route_path=request_path,
+                access_token=session.access_token or "",
+            )
+        message = f"Swarm API request failed with HTTP {exc.code}."
+        if isinstance(body, dict) and body.get("message"):
+            message = f"{message} {body['message']}"
+        raise RuntimeError(message) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Could not reach Swarm API: {exc.reason}") from exc
+
+
+def _get_swarm_api_json(
+    *,
+    api_url: str,
+    route_path: str,
+    access_token: str,
+) -> Any:
+    request = urllib.request.Request(
+        url=urllib.parse.urljoin(f"{api_url}/", route_path),
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+        },
+        method="GET",
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        raw = response.read().decode("utf-8")
+    return json.loads(raw) if raw.strip() else {}
 
 
 def _post_collective_payload(

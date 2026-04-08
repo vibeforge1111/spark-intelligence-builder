@@ -592,6 +592,36 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Swarm is ready.", str(result.detail["response_text"]))
         self.assertEqual(result.detail["bridge_mode"], "runtime_command")
 
+    def test_swarm_overview_command_returns_hosted_summary(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.swarm_read_overview",
+            return_value={
+                "session": {"workspaceName": "Vibe Forge Workspace"},
+                "agent": {"name": "Vibe Forge Agent"},
+                "attachedRepos": [
+                    {"verificationState": "verified"},
+                    {"verificationState": "pending"},
+                ],
+            },
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=218,
+                    user_id="111",
+                    username="alice",
+                    text="/swarm overview",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm overview:", str(result.detail["response_text"]))
+        self.assertIn("Vibe Forge Workspace", str(result.detail["response_text"]))
+        self.assertIn("2 attached, 1 verified, 1 pending", str(result.detail["response_text"]))
+
     def test_swarm_evaluate_command_returns_escalation_decision(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
@@ -647,6 +677,82 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Swarm decision: manual_recommended.", str(result.detail["response_text"]))
         self.assertEqual(evaluate_mock.call_args.kwargs["task"], "delegate this as parallel swarm work")
 
+    def test_natural_language_swarm_upgrades_command_returns_pending_summary(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.swarm_read_upgrades",
+            return_value=[
+                {
+                    "id": "upg-1",
+                    "status": "awaiting_review",
+                    "changeSummary": "Tighten startup benchmark prompt",
+                    "riskLevel": "medium",
+                    "updatedAt": "2026-04-08T10:00:00Z",
+                },
+                {
+                    "id": "upg-2",
+                    "status": "queued",
+                    "changeSummary": "Refresh YC specialization defaults",
+                    "riskLevel": "low",
+                    "updatedAt": "2026-04-08T09:00:00Z",
+                },
+            ],
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=219,
+                    user_id="111",
+                    username="alice",
+                    text="What upgrades are pending in swarm?",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm upgrades:", str(result.detail["response_text"]))
+        self.assertIn("2 pending upgrade(s).", str(result.detail["response_text"]))
+        self.assertEqual(result.detail["bridge_mode"], "runtime_command")
+
+    def test_natural_language_swarm_issues_command_returns_open_issues(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.swarm_read_operator_issues",
+            return_value=[
+                {
+                    "id": "issue-1",
+                    "status": "open",
+                    "severity": "critical",
+                    "summary": "Collective sync failed for the current workspace.",
+                    "updatedAt": "2026-04-08T10:00:00Z",
+                },
+                {
+                    "id": "issue-2",
+                    "status": "resolved",
+                    "severity": "warn",
+                    "summary": "Old issue",
+                    "updatedAt": "2026-04-07T10:00:00Z",
+                },
+            ],
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=220,
+                    user_id="111",
+                    username="alice",
+                    text="Show me operator issues in swarm",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm operator issues:", str(result.detail["response_text"]))
+        self.assertIn("1 open issue(s).", str(result.detail["response_text"]))
+        self.assertIn("Collective sync failed", str(result.detail["response_text"]))
+
     def test_swarm_sync_command_runs_sync_from_telegram_runtime(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
@@ -701,6 +807,59 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(result.ok)
         self.assertIn("Swarm sync ok.", str(result.detail["response_text"]))
         self.assertEqual(result.detail["bridge_mode"], "runtime_command")
+
+    def test_natural_language_swarm_collective_command_returns_summary(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.swarm_read_collective_snapshot",
+            return_value={
+                "specializations": [{"id": "spec-1"}],
+                "evolutionPaths": [{"id": "path-1"}, {"id": "path-2"}],
+                "insights": [{"id": "insight-1"}],
+                "masteries": [{"id": "mastery-1"}],
+                "contradictions": [{"id": "contr-1", "status": "open"}],
+                "upgrades": [{"id": "upg-1", "status": "queued"}],
+                "inbox": {"items": [{"id": "inbox-1"}]},
+            },
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=221,
+                    user_id="111",
+                    username="alice",
+                    text="Summarize the collective in swarm",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm collective summary:", str(result.detail["response_text"]))
+        self.assertIn("Specializations: 1.", str(result.detail["response_text"]))
+        self.assertIn("Pending upgrades: 1.", str(result.detail["response_text"]))
+
+    def test_swarm_read_failure_returns_bounded_message(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.swarm_read_runtime_pulse",
+            side_effect=RuntimeError("Swarm API URL is missing."),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=222,
+                    user_id="111",
+                    username="alice",
+                    text="/swarm runtime",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm read is unavailable right now.", str(result.detail["response_text"]))
+        self.assertIn("Swarm API URL is missing.", str(result.detail["response_text"]))
 
     def test_generic_swarm_mention_stays_on_normal_chat_path(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
