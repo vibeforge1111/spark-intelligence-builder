@@ -23,6 +23,14 @@ As of 2026-04-08:
   - `/swarm evaluate <task>`
   - `/swarm sync`
 - Builder is already connected to `spark-swarm` as a downstream system.
+- Builder now exposes hosted Swarm reads and hosted governance actions in Telegram.
+- Builder now also exposes bounded local Swarm bridge commands in Telegram for:
+  - path discovery
+  - specialization-path run
+  - autoloop start
+  - autoloop continuation by saved session
+  - autoloop session inspection
+  - rerun-request execution
 - `spark-swarm` does not currently implement Telegram bot ingress in this repo.
 - `spark-browser-extension` is the governed browser runtime used downstream through Builder.
 - `spark-researcher` remains the heavy local runtime behind Builder and Swarm.
@@ -212,6 +220,10 @@ Implementation rule:
 
 ### Phase 3. Governed Local Bridge Actions
 
+Status:
+
+- materially implemented in Builder Telegram for the current bounded operator surface
+
 Goal:
 
 - let Telegram start real Swarm local execution without silently escalating privileges
@@ -220,13 +232,15 @@ Add intents such as:
 
 - run startup-operator
 - start autoloop for startup-operator
+- continue startup-operator autoloop for 1 more round
+- show the latest startup-operator autoloop session
 - execute the latest rerun request
 
 Implementation rule:
 
 - treat these as operator-grade actions
-- default to approval-required when the action starts local runtime work or may mutate local repo state
 - return structured execution summaries and artifact references, not raw logs
+- keep natural-language matching bounded and explicit around `run`, `autoloop`, `continue`, `session`, and `rerun`
 
 ### Phase 4. Rich Linked Telegram Operator Experience
 
@@ -305,10 +319,10 @@ These should remain in Builder reasoning mode, with Swarm-aware guidance layered
 
 If we continue immediately, the best order is:
 
-1. Add natural-language Swarm read intents in Builder.
-2. Add hosted Swarm summary responses and page links.
-3. Add hosted Swarm action intents for safe governance actions.
-4. Add approval-gated local bridge execution intents for specialization-path and rerun flows.
+1. Tighten lane-specific Telegram reads for specialization-scoped insights, masteries, and upgrades.
+2. Add richer run/session summaries and optional deep links into Swarm web when a hosted runs surface exists.
+3. Decide whether any local bridge actions should require a second confirmation layer before Telegram executes them.
+4. Extend the same bounded resolver pattern to more specialization-path families as they become real.
 
 This keeps risk low while making Telegram materially more useful as a front door to Swarm.
 

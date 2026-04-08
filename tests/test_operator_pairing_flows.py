@@ -1479,6 +1479,267 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Specializations: 1.", str(result.detail["response_text"]))
         self.assertIn("Pending upgrades: 1.", str(result.detail["response_text"]))
 
+    def test_natural_language_swarm_paths_command_lists_attached_paths(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.swarm_bridge_list_paths",
+            return_value={
+                "active_path_key": "startup-operator",
+                "paths": [
+                    {"key": "startup-operator", "label": "Startup Operator", "active": "yes"},
+                    {"key": "gtm-distribution", "label": "GTM Distribution", "active": "no"},
+                ],
+            },
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2301,
+                    user_id="111",
+                    username="alice",
+                    text="show me swarm paths",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm paths:", str(result.detail["response_text"]))
+        self.assertIn("* startup-operator: Startup Operator", str(result.detail["response_text"]))
+        self.assertIn("Next: `/swarm autoloop startup-operator`", str(result.detail["response_text"]))
+
+    def test_swarm_run_command_executes_local_bridge_path(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.swarm_bridge_run_specialization_path",
+            return_value=SimpleNamespace(
+                ok=True,
+                path_key="startup-operator",
+                artifacts_path="C:/tmp/run-artifacts",
+                payload_path="C:/tmp/payload.json",
+            ),
+        ) as run_mock:
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2302,
+                    user_id="111",
+                    username="alice",
+                    text="/swarm run startup-operator",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm specialization-path run completed.", str(result.detail["response_text"]))
+        self.assertEqual(run_mock.call_args.kwargs["path_key"], "startup-operator")
+
+    def test_natural_language_swarm_autoloop_command_runs_local_loop(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with (
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_bridge_list_paths",
+                return_value={
+                    "paths": [
+                        {"key": "startup-operator", "label": "Startup Operator", "active": "yes"},
+                    ],
+                },
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_bridge_autoloop",
+                return_value=SimpleNamespace(
+                    ok=True,
+                    path_key="startup-operator",
+                    session_id="session-123",
+                    session_summary={
+                        "sessionId": "session-123",
+                        "completedRounds": 2,
+                        "requestedRoundsTotal": 2,
+                        "keptRounds": 1,
+                        "revertedRounds": 1,
+                        "stopReason": "completed_requested_rounds",
+                        "plannerStatus": "spark_researcher_planned",
+                        "latestPlannerKind": "spark_researcher_candidate",
+                    },
+                    round_history={
+                        "currentScore": 0.78,
+                        "bestScore": 0.81,
+                        "noGainStreak": 0,
+                    },
+                ),
+            ) as autoloop_mock,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2303,
+                    user_id="111",
+                    username="alice",
+                    text="start autoloop for Startup Operator in swarm for 2 rounds",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm autoloop finished.", str(result.detail["response_text"]))
+        self.assertIn("Session: session-123.", str(result.detail["response_text"]))
+        self.assertEqual(autoloop_mock.call_args.kwargs["path_key"], "startup-operator")
+        self.assertEqual(autoloop_mock.call_args.kwargs["rounds"], 2)
+
+    def test_natural_language_swarm_continue_uses_latest_session_when_unspecified(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with (
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_bridge_list_paths",
+                return_value={
+                    "paths": [
+                        {"key": "startup-operator", "label": "Startup Operator", "active": "yes"},
+                    ],
+                },
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_bridge_read_autoloop_session",
+                return_value={
+                    "session_id": "session-latest",
+                    "session_summary": {"sessionId": "session-latest"},
+                },
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_bridge_autoloop",
+                return_value=SimpleNamespace(
+                    ok=True,
+                    path_key="startup-operator",
+                    session_id="session-latest",
+                    session_summary={
+                        "sessionId": "session-latest",
+                        "completedRounds": 3,
+                        "requestedRoundsTotal": 4,
+                        "keptRounds": 2,
+                        "revertedRounds": 1,
+                        "stopReason": "completed_requested_rounds",
+                    },
+                    round_history={
+                        "currentScore": 0.82,
+                        "bestScore": 0.85,
+                        "noGainStreak": 1,
+                    },
+                ),
+            ) as autoloop_mock,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2304,
+                    user_id="111",
+                    username="alice",
+                    text="continue the Startup Operator autoloop in swarm for 1 more round",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Session: session-latest.", str(result.detail["response_text"]))
+        self.assertEqual(autoloop_mock.call_args.kwargs["session_id"], "session-latest")
+
+    def test_natural_language_swarm_session_command_returns_latest_session_summary(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with (
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_bridge_list_paths",
+                return_value={
+                    "paths": [
+                        {"key": "startup-operator", "label": "Startup Operator", "active": "yes"},
+                    ],
+                },
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_bridge_read_autoloop_session",
+                return_value={
+                    "path_key": "startup-operator",
+                    "session_summary": {
+                        "sessionId": "session-777",
+                        "completedRounds": 3,
+                        "requestedRoundsTotal": 5,
+                        "keptRounds": 2,
+                        "revertedRounds": 1,
+                        "stopReason": "paused_no_gain_streak",
+                        "plannerStatus": "mixed",
+                        "plannerReadinessStatus": "ready",
+                        "rounds": [
+                            {
+                                "ordinal": 3,
+                                "decision": "reverted",
+                                "targetPath": "docs/AUTORESEARCH.md",
+                                "plannerKind": "spark_researcher_candidate",
+                                "candidateSummary": "Tighten operator loop heuristics",
+                            }
+                        ],
+                    },
+                    "round_history": {
+                        "currentScore": 0.73,
+                        "bestScore": 0.81,
+                        "noGainStreak": 2,
+                    },
+                },
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2305,
+                    user_id="111",
+                    username="alice",
+                    text="show me the latest Startup Operator autoloop session",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm autoloop session:", str(result.detail["response_text"]))
+        self.assertIn("Session: session-777.", str(result.detail["response_text"]))
+        self.assertIn("Latest round: #3 reverted target=docs/AUTORESEARCH.md.", str(result.detail["response_text"]))
+
+    def test_natural_language_swarm_rerun_command_executes_requested_path(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with (
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_bridge_list_paths",
+                return_value={
+                    "paths": [
+                        {"key": "startup-operator", "label": "Startup Operator", "active": "yes"},
+                    ],
+                },
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_bridge_execute_rerun_request",
+                return_value=SimpleNamespace(
+                    ok=True,
+                    path_key="startup-operator",
+                    artifacts_path="C:/tmp/rerun-artifacts",
+                    payload_path="C:/tmp/rerun-payload.json",
+                ),
+            ) as rerun_mock,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2306,
+                    user_id="111",
+                    username="alice",
+                    text="execute the latest Startup Operator rerun request in swarm",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm rerun request executed.", str(result.detail["response_text"]))
+        self.assertEqual(rerun_mock.call_args.kwargs["path_key"], "startup-operator")
+
     def test_swarm_read_failure_returns_bounded_message(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 

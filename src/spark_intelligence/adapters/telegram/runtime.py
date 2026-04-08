@@ -31,6 +31,12 @@ from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD
 from spark_intelligence.swarm_bridge import (
     evaluate_swarm_escalation,
+    swarm_bridge_autoloop,
+    swarm_bridge_execute_rerun_request,
+    swarm_bridge_list_autoloop_sessions,
+    swarm_bridge_list_paths,
+    swarm_bridge_read_autoloop_session,
+    swarm_bridge_run_specialization_path,
     swarm_absorb_insight,
     swarm_deliver_upgrade,
     swarm_read_collective_snapshot,
@@ -1225,6 +1231,9 @@ def _handle_runtime_command(
             "reply_text": (
                 "Swarm commands: `/swarm status`, `/swarm overview`, `/swarm live`, `/swarm runtime`, "
                 "`/swarm specializations`, `/swarm insights`, `/swarm masteries`, `/swarm upgrades`, `/swarm issues`, `/swarm inbox`, `/swarm collective`, `/swarm sync`, "
+                "`/swarm paths`, `/swarm run <path_key>`, `/swarm autoloop <path_key> [rounds <n>]`, "
+                "`/swarm continue <path_key> [session <id>] [rounds <n>]`, `/swarm sessions <path_key>`, "
+                "`/swarm session <path_key> [latest|<session_id>]`, `/swarm rerun [path_key]`, "
                 "`/swarm evaluate <task>`, `/swarm absorb <insight_id>`, `/swarm review <mastery_id> <approve|defer|reject> because <reason>`, "
                 "`/swarm mode <specialization_id> <observe_only|review_required|checked_auto_merge|trusted_auto_apply>`, "
                 "`/swarm deliver <upgrade_id>`, and `/swarm sync-delivery <upgrade_id>`."
@@ -1305,6 +1314,12 @@ def _handle_runtime_command(
             loader=lambda: swarm_read_collective_snapshot(config_manager, state_db),
             renderer=_render_swarm_collective_reply,
         )
+    if lowered == "/swarm paths" or natural_swarm_command == ("/swarm paths", None):
+        return _run_swarm_read_command(
+            command="/swarm paths",
+            loader=lambda: swarm_bridge_list_paths(config_manager),
+            renderer=_render_swarm_paths_reply,
+        )
     if lowered == "/swarm sync" or natural_swarm_command == ("/swarm sync", None):
         result = sync_swarm_collective(
             config_manager=config_manager,
@@ -1327,6 +1342,151 @@ def _handle_runtime_command(
                 f"{result.message}"
             ),
         }
+    run_args = _parse_swarm_path_run_command(normalized)
+    if run_args:
+        return _run_swarm_bridge_command(
+            command="/swarm run",
+            runner=lambda: swarm_bridge_run_specialization_path(
+                config_manager,
+                path_key=run_args["path_key"],
+            ),
+            renderer=_render_swarm_bridge_run_reply,
+        )
+    run_resolution = _resolve_natural_swarm_run_target(
+        inbound_text=normalized,
+        config_manager=config_manager,
+    )
+    if run_resolution is not None:
+        if run_resolution.get("error"):
+            return {"command": "/swarm run", "reply_text": str(run_resolution["error"])}
+        return _run_swarm_bridge_command(
+            command="/swarm run",
+            runner=lambda: swarm_bridge_run_specialization_path(
+                config_manager,
+                path_key=str(run_resolution["path_key"]),
+            ),
+            renderer=_render_swarm_bridge_run_reply,
+        )
+    autoloop_args = _parse_swarm_autoloop_command(normalized)
+    if autoloop_args:
+        prepared_autoloop = _prepare_swarm_autoloop_request(
+            config_manager=config_manager,
+            payload=autoloop_args,
+        )
+        if prepared_autoloop.get("error"):
+            return {"command": "/swarm autoloop", "reply_text": str(prepared_autoloop["error"])}
+        return _run_swarm_bridge_command(
+            command="/swarm autoloop",
+            runner=lambda: swarm_bridge_autoloop(
+                config_manager,
+                path_key=str(prepared_autoloop["path_key"]),
+                rounds=int(prepared_autoloop.get("rounds") or 1),
+                session_id=str(prepared_autoloop.get("session_id") or "") or None,
+                allow_fallback_planner=bool(prepared_autoloop.get("allow_fallback_planner")),
+            ),
+            renderer=_render_swarm_bridge_autoloop_reply,
+        )
+    autoloop_resolution = _resolve_natural_swarm_autoloop_target(
+        inbound_text=normalized,
+        config_manager=config_manager,
+    )
+    if autoloop_resolution is not None:
+        if autoloop_resolution.get("error"):
+            return {"command": "/swarm autoloop", "reply_text": str(autoloop_resolution["error"])}
+        prepared_autoloop = _prepare_swarm_autoloop_request(
+            config_manager=config_manager,
+            payload=autoloop_resolution,
+        )
+        if prepared_autoloop.get("error"):
+            return {"command": "/swarm autoloop", "reply_text": str(prepared_autoloop["error"])}
+        return _run_swarm_bridge_command(
+            command="/swarm autoloop",
+            runner=lambda: swarm_bridge_autoloop(
+                config_manager,
+                path_key=str(prepared_autoloop["path_key"]),
+                rounds=int(prepared_autoloop.get("rounds") or 1),
+                session_id=str(prepared_autoloop.get("session_id") or "") or None,
+                allow_fallback_planner=bool(prepared_autoloop.get("allow_fallback_planner")),
+            ),
+            renderer=_render_swarm_bridge_autoloop_reply,
+        )
+    sessions_args = _parse_swarm_sessions_command(normalized)
+    if sessions_args:
+        return _run_swarm_read_command(
+            command="/swarm sessions",
+            loader=lambda: swarm_bridge_list_autoloop_sessions(
+                config_manager,
+                path_key=sessions_args["path_key"],
+            ),
+            renderer=_render_swarm_sessions_reply,
+        )
+    sessions_resolution = _resolve_natural_swarm_sessions_target(
+        inbound_text=normalized,
+        config_manager=config_manager,
+    )
+    if sessions_resolution is not None:
+        if sessions_resolution.get("error"):
+            return {"command": "/swarm sessions", "reply_text": str(sessions_resolution["error"])}
+        return _run_swarm_read_command(
+            command="/swarm sessions",
+            loader=lambda: swarm_bridge_list_autoloop_sessions(
+                config_manager,
+                path_key=str(sessions_resolution["path_key"]),
+            ),
+            renderer=_render_swarm_sessions_reply,
+        )
+    session_args = _parse_swarm_session_command(normalized)
+    if session_args:
+        return _run_swarm_read_command(
+            command="/swarm session",
+            loader=lambda: swarm_bridge_read_autoloop_session(
+                config_manager,
+                path_key=session_args["path_key"],
+                session_id=session_args.get("session_id"),
+            ),
+            renderer=_render_swarm_session_reply,
+        )
+    session_resolution = _resolve_natural_swarm_session_target(
+        inbound_text=normalized,
+        config_manager=config_manager,
+    )
+    if session_resolution is not None:
+        if session_resolution.get("error"):
+            return {"command": "/swarm session", "reply_text": str(session_resolution["error"])}
+        return _run_swarm_read_command(
+            command="/swarm session",
+            loader=lambda: swarm_bridge_read_autoloop_session(
+                config_manager,
+                path_key=str(session_resolution["path_key"]),
+                session_id=str(session_resolution.get("session_id") or "") or None,
+            ),
+            renderer=_render_swarm_session_reply,
+        )
+    rerun_args = _parse_swarm_rerun_command(normalized)
+    if rerun_args is not None:
+        return _run_swarm_bridge_command(
+            command="/swarm rerun",
+            runner=lambda: swarm_bridge_execute_rerun_request(
+                config_manager,
+                path_key=rerun_args.get("path_key"),
+            ),
+            renderer=_render_swarm_bridge_rerun_reply,
+        )
+    rerun_resolution = _resolve_natural_swarm_rerun_target(
+        inbound_text=normalized,
+        config_manager=config_manager,
+    )
+    if rerun_resolution is not None:
+        if rerun_resolution.get("error"):
+            return {"command": "/swarm rerun", "reply_text": str(rerun_resolution["error"])}
+        return _run_swarm_bridge_command(
+            command="/swarm rerun",
+            runner=lambda: swarm_bridge_execute_rerun_request(
+                config_manager,
+                path_key=str(rerun_resolution.get("path_key") or "") or None,
+            ),
+            renderer=_render_swarm_bridge_rerun_reply,
+        )
     absorb_args = _parse_swarm_absorb_command(normalized)
     if absorb_args:
         return _run_swarm_action_command(
@@ -1568,6 +1728,23 @@ def _run_swarm_action_command(
     }
 
 
+def _run_swarm_bridge_command(
+    *,
+    command: str,
+    runner: Any,
+    renderer: Any,
+) -> dict[str, str]:
+    try:
+        result = runner()
+        reply_text = renderer(result)
+    except RuntimeError as exc:
+        reply_text = f"Swarm bridge action is unavailable right now.\n{exc}"
+    return {
+        "command": command,
+        "reply_text": reply_text,
+    }
+
+
 def _render_swarm_overview_reply(payload: dict[str, Any]) -> str:
     session = payload.get("session") if isinstance(payload, dict) else {}
     agent = payload.get("agent") if isinstance(payload, dict) else {}
@@ -1757,6 +1934,163 @@ def _render_swarm_collective_reply(payload: dict[str, Any]) -> str:
     )
 
 
+def _render_swarm_paths_reply(payload: dict[str, Any]) -> str:
+    paths = payload.get("paths") if isinstance(payload, dict) else []
+    entries = paths if isinstance(paths, list) else []
+    if not entries:
+        return "Swarm paths:\nNo attached specialization paths are available right now."
+    lines = [f"Swarm paths:\n{len(entries)} attached path(s)."]
+    active_path_key = str(payload.get("active_path_key") or "").strip()
+    for item in entries[:5]:
+        if not isinstance(item, dict):
+            continue
+        prefix = "* " if str(item.get("key") or "") == active_path_key else "- "
+        lines.append(f"{prefix}{str(item.get('key') or 'unknown')}: {str(item.get('label') or 'path')}")
+    first_key = str((entries[0] if entries and isinstance(entries[0], dict) else {}).get("key") or "startup-operator")
+    lines.append(f"Next: `/swarm autoloop {first_key}` or `/swarm session {first_key}`")
+    return "\n".join(lines)
+
+
+def _render_swarm_bridge_run_reply(result: Any) -> str:
+    if not getattr(result, "ok", False):
+        return _render_swarm_bridge_failure("run", result)
+    artifacts_path = str(getattr(result, "artifacts_path", "") or "").strip() or "unknown"
+    payload_path = str(getattr(result, "payload_path", "") or "").strip() or "not written"
+    return (
+        "Swarm specialization-path run completed.\n"
+        f"Path: {str(getattr(result, 'path_key', '') or 'unknown')}.\n"
+        f"Artifacts: {artifacts_path}.\n"
+        f"Collective payload: {payload_path}."
+    )
+
+
+def _render_swarm_bridge_autoloop_reply(result: Any) -> str:
+    if not getattr(result, "ok", False):
+        return _render_swarm_bridge_failure("autoloop", result)
+    session_summary = getattr(result, "session_summary", None) if isinstance(getattr(result, "session_summary", None), dict) else None
+    round_history = getattr(result, "round_history", None) if isinstance(getattr(result, "round_history", None), dict) else None
+    session_id = str(getattr(result, "session_id", "") or (session_summary or {}).get("sessionId") or "unknown")
+    lines = [
+        "Swarm autoloop finished.",
+        f"Path: {str(getattr(result, 'path_key', '') or 'unknown')}.",
+        f"Session: {session_id}.",
+    ]
+    if session_summary:
+        lines.append(
+            f"Rounds: {int(session_summary.get('completedRounds') or 0)} completed / {int(session_summary.get('requestedRoundsTotal') or 0)} requested."
+        )
+        lines.append(
+            f"Decisions: {int(session_summary.get('keptRounds') or 0)} kept, {int(session_summary.get('revertedRounds') or 0)} reverted."
+        )
+        lines.append(f"Stop: {str(session_summary.get('stopReason') or 'unknown')}.")
+        if session_summary.get("plannerStatus"):
+            lines.append(f"Planner: {str(session_summary.get('plannerStatus'))}.")
+        if session_summary.get("latestPlannerKind"):
+            lines.append(f"Latest planner kind: {str(session_summary.get('latestPlannerKind'))}.")
+    if round_history:
+        current_score = round_history.get("currentScore")
+        best_score = round_history.get("bestScore")
+        no_gain_streak = int(round_history.get("noGainStreak") or 0)
+        score_text = f"{float(current_score):.4f}" if isinstance(current_score, (int, float)) else "unknown"
+        best_text = f"{float(best_score):.4f}" if isinstance(best_score, (int, float)) else "unknown"
+        lines.append(f"Scores: current={score_text}, best={best_text}, no-gain streak={no_gain_streak}.")
+    lines.append(f"Next: `/swarm session {str(getattr(result, 'path_key', '') or 'unknown')} {session_id}`")
+    return "\n".join(lines)
+
+
+def _render_swarm_sessions_reply(payload: dict[str, Any]) -> str:
+    sessions = payload.get("sessions") if isinstance(payload, dict) else []
+    entries = sessions if isinstance(sessions, list) else []
+    path_key = str(payload.get("path_key") or "path")
+    if not entries:
+        return (
+            "Swarm autoloop sessions:\n"
+            f"No session summaries exist yet for {path_key}. Start one with `/swarm autoloop {path_key}`."
+        )
+    lines = [f"Swarm autoloop sessions:\n{len(entries)} recent session(s) for {path_key}."]
+    for item in entries[:3]:
+        if not isinstance(item, dict):
+            continue
+        lines.append(
+            f"- {str(item.get('session_id') or 'unknown')}: completed={int(item.get('completed_rounds') or 0)}/{int(item.get('requested_rounds_total') or 0)} "
+            f"stop={str(item.get('stop_reason') or 'active')} planner={str(item.get('planner_status') or 'pending')}"
+        )
+    first_id = str((entries[0] if entries and isinstance(entries[0], dict) else {}).get("session_id") or "session_id")
+    lines.append(f"Next: `/swarm session {path_key} {first_id}`")
+    return "\n".join(lines)
+
+
+def _render_swarm_session_reply(payload: dict[str, Any]) -> str:
+    session_summary = payload.get("session_summary") if isinstance(payload, dict) else None
+    round_history = payload.get("round_history") if isinstance(payload, dict) else None
+    path_key = str(payload.get("path_key") or "path")
+    if not isinstance(session_summary, dict):
+        return (
+            "Swarm autoloop session:\n"
+            f"No saved session summary exists yet for {path_key}. Start one with `/swarm autoloop {path_key}`."
+        )
+    latest_round = None
+    rounds = session_summary.get("rounds")
+    if isinstance(rounds, list) and rounds:
+        latest_round = rounds[-1] if isinstance(rounds[-1], dict) else None
+    lines = [
+        "Swarm autoloop session:",
+        f"Path: {path_key}.",
+        f"Session: {str(session_summary.get('sessionId') or 'unknown')}.",
+        f"Rounds: {int(session_summary.get('completedRounds') or 0)} completed / {int(session_summary.get('requestedRoundsTotal') or 0)} requested.",
+        f"Decisions: {int(session_summary.get('keptRounds') or 0)} kept, {int(session_summary.get('revertedRounds') or 0)} reverted.",
+        f"Stop: {str(session_summary.get('stopReason') or 'active')}.",
+    ]
+    if session_summary.get("plannerStatus"):
+        lines.append(f"Planner: {str(session_summary.get('plannerStatus'))}.")
+    if session_summary.get("plannerReadinessStatus"):
+        lines.append(f"Planner readiness: {str(session_summary.get('plannerReadinessStatus'))}.")
+    if round_history and isinstance(round_history, dict):
+        current_score = round_history.get("currentScore")
+        best_score = round_history.get("bestScore")
+        no_gain_streak = int(round_history.get("noGainStreak") or 0)
+        score_text = f"{float(current_score):.4f}" if isinstance(current_score, (int, float)) else "unknown"
+        best_text = f"{float(best_score):.4f}" if isinstance(best_score, (int, float)) else "unknown"
+        lines.append(f"History: current={score_text}, best={best_text}, no-gain streak={no_gain_streak}.")
+    if latest_round:
+        lines.append(
+            f"Latest round: #{int(latest_round.get('ordinal') or 0)} {str(latest_round.get('decision') or 'unknown')} "
+            f"target={str(latest_round.get('targetPath') or 'unknown')}."
+        )
+        if latest_round.get("plannerKind"):
+            lines.append(f"Latest planner kind: {str(latest_round.get('plannerKind'))}.")
+        if latest_round.get("candidateSummary"):
+            lines.append(f"Latest candidate: {str(latest_round.get('candidateSummary'))}.")
+    lines.append(f"Next: `/swarm continue {path_key} session {str(session_summary.get('sessionId') or 'unknown')} rounds 1`")
+    return "\n".join(lines)
+
+
+def _render_swarm_bridge_rerun_reply(result: Any) -> str:
+    if not getattr(result, "ok", False):
+        return _render_swarm_bridge_failure("rerun request", result)
+    path_key = str(getattr(result, "path_key", "") or "latest open path")
+    artifacts_path = str(getattr(result, "artifacts_path", "") or "").strip() or "unknown"
+    payload_path = str(getattr(result, "payload_path", "") or "").strip() or "not written"
+    return (
+        "Swarm rerun request executed.\n"
+        f"Path: {path_key}.\n"
+        f"Artifacts: {artifacts_path}.\n"
+        f"Collective payload: {payload_path}."
+    )
+
+
+def _render_swarm_bridge_failure(action: str, result: Any) -> str:
+    stdout = str(getattr(result, "stdout", "") or "").strip()
+    stderr = str(getattr(result, "stderr", "") or "").strip()
+    detail = stderr or stdout or "Command failed without stdout or stderr."
+    lines = [
+        f"Swarm {action} failed.",
+        f"Exit code: {int(getattr(result, 'exit_code', 1) or 1)}.",
+        detail[:800],
+    ]
+    return "\n".join(lines)
+
+
 def _render_swarm_absorb_reply(payload: dict[str, Any]) -> str:
     insight = payload.get("insight") if isinstance(payload, dict) else {}
     mastery = payload.get("mastery") if isinstance(payload, dict) else {}
@@ -1939,6 +2273,15 @@ def _match_natural_swarm_command(inbound_text: str) -> tuple[str, str | None] | 
         "summarize the swarm collective",
     }:
         return ("/swarm collective", None)
+    if simplified in {
+        "swarm paths",
+        "show swarm paths",
+        "show me swarm paths",
+        "list swarm paths",
+        "what swarm paths are attached",
+        "what specialization paths are attached in swarm",
+    }:
+        return ("/swarm paths", None)
 
     if simplified in {
         "swarm sync",
@@ -2054,6 +2397,81 @@ def _parse_swarm_sync_delivery_command(inbound_text: str) -> dict[str, str | Non
     return None
 
 
+def _parse_swarm_path_run_command(inbound_text: str) -> dict[str, str] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    match = re.match(r"^/swarm run (?P<path_key>[A-Za-z0-9:_-]+)$", normalized, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return {"path_key": str(match.group("path_key"))}
+
+
+def _parse_swarm_autoloop_command(inbound_text: str) -> dict[str, Any] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    autoloop_match = re.match(
+        r"^/swarm autoloop (?P<path_key>[A-Za-z0-9:_-]+)(?: rounds (?P<rounds>\d+))?(?: session (?P<session_id>[A-Za-z0-9:_-]+))?(?: allow-fallback)?$",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if autoloop_match:
+        return {
+            "path_key": str(autoloop_match.group("path_key")),
+            "rounds": int(autoloop_match.group("rounds") or 1),
+            "session_id": str(autoloop_match.group("session_id") or "").strip() or None,
+            "allow_fallback_planner": "allow-fallback" in normalized.lower(),
+            "continue_latest": False,
+        }
+    continue_match = re.match(
+        r"^/swarm continue (?P<path_key>[A-Za-z0-9:_-]+)(?: session (?P<session_id>[A-Za-z0-9:_-]+))?(?: rounds (?P<rounds>\d+))?$",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if continue_match:
+        session_id = str(continue_match.group("session_id") or "").strip() or None
+        return {
+            "path_key": str(continue_match.group("path_key")),
+            "rounds": int(continue_match.group("rounds") or 1),
+            "session_id": session_id,
+            "allow_fallback_planner": False,
+            "continue_latest": session_id is None,
+        }
+    return None
+
+
+def _parse_swarm_sessions_command(inbound_text: str) -> dict[str, str] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    match = re.match(r"^/swarm sessions (?P<path_key>[A-Za-z0-9:_-]+)$", normalized, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return {"path_key": str(match.group("path_key"))}
+
+
+def _parse_swarm_session_command(inbound_text: str) -> dict[str, str | None] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    match = re.match(
+        r"^/swarm session (?P<path_key>[A-Za-z0-9:_-]+)(?: (?P<session_id>latest|[A-Za-z0-9:_-]+))?$",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    session_id = str(match.group("session_id") or "").strip() or None
+    if session_id and session_id.lower() == "latest":
+        session_id = None
+    return {
+        "path_key": str(match.group("path_key")),
+        "session_id": session_id,
+    }
+
+
+def _parse_swarm_rerun_command(inbound_text: str) -> dict[str, str] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    match = re.match(r"^/swarm rerun(?: (?P<path_key>[A-Za-z0-9:_-]+))?$", normalized, flags=re.IGNORECASE)
+    if not match:
+        return None
+    path_key = str(match.group("path_key") or "").strip() or None
+    return {"path_key": path_key} if path_key else {}
+
+
 def _parse_swarm_evolution_mode(value: str) -> str | None:
     normalized = "_".join(str(value or "").strip().lower().replace("-", " ").split())
     aliases = {
@@ -2069,6 +2487,148 @@ def _parse_swarm_evolution_mode(value: str) -> str | None:
         "auto_apply": "trusted_auto_apply",
     }
     return aliases.get(normalized)
+
+
+def _resolve_natural_swarm_run_target(
+    *,
+    inbound_text: str,
+    config_manager: ConfigManager,
+) -> dict[str, str] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    match = re.match(
+        r"^(?:please\s+|can you\s+)?run\s+(?:the\s+)?(?P<label>.+?)\s+path(?:\s+in\s+swarm)?$",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return _resolve_swarm_path_by_label(config_manager=config_manager, label=str(match.group("label") or ""))
+
+
+def _resolve_natural_swarm_autoloop_target(
+    *,
+    inbound_text: str,
+    config_manager: ConfigManager,
+) -> dict[str, Any] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    start_match = re.match(
+        r"^(?:please\s+|can you\s+)?start\s+(?:an?\s+)?autoloop\s+for\s+(?:the\s+)?(?P<label>.+?)(?:\s+path)?(?:\s+in\s+swarm)?(?:\s+for\s+(?P<rounds>\d+)\s+(?:more\s+)?rounds?)?$",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if start_match:
+        path_target = _resolve_swarm_path_by_label(config_manager=config_manager, label=str(start_match.group("label") or ""))
+        if path_target.get("error"):
+            return path_target
+        return {
+            "path_key": str(path_target["path_key"]),
+            "rounds": int(start_match.group("rounds") or 1),
+            "session_id": None,
+            "allow_fallback_planner": False,
+            "continue_latest": False,
+        }
+    continue_match = re.match(
+        r"^(?:please\s+|can you\s+)?continue\s+(?:the\s+)?(?P<label>.+?)\s+autoloop(?:\s+session\s+(?P<session_id>[A-Za-z0-9:_-]+))?(?:\s+in\s+swarm)?(?:\s+for\s+(?P<rounds>\d+)\s+(?:more\s+)?rounds?)?$",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if not continue_match:
+        return None
+    path_target = _resolve_swarm_path_by_label(config_manager=config_manager, label=str(continue_match.group("label") or ""))
+    if path_target.get("error"):
+        return path_target
+    session_id = str(continue_match.group("session_id") or "").strip() or None
+    return {
+        "path_key": str(path_target["path_key"]),
+        "rounds": int(continue_match.group("rounds") or 1),
+        "session_id": session_id,
+        "allow_fallback_planner": False,
+        "continue_latest": session_id is None,
+    }
+
+
+def _resolve_natural_swarm_sessions_target(
+    *,
+    inbound_text: str,
+    config_manager: ConfigManager,
+) -> dict[str, str] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    match = re.match(
+        r"^(?:please\s+|can you\s+)?(?:show(?:\s+me)?|list)\s+(?:recent\s+)?(?P<label>.+?)\s+autoloop\s+sessions(?:\s+in\s+swarm)?$",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return _resolve_swarm_path_by_label(config_manager=config_manager, label=str(match.group("label") or ""))
+
+
+def _resolve_natural_swarm_session_target(
+    *,
+    inbound_text: str,
+    config_manager: ConfigManager,
+) -> dict[str, str | None] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    match = re.match(
+        r"^(?:please\s+|can you\s+)?(?:show(?:\s+me)?|inspect)\s+(?:the\s+)?(?:(?P<latest>latest)\s+)?(?P<label>.+?)\s+autoloop\s+session(?:\s+(?P<session_id>[A-Za-z0-9:_-]+))?(?:\s+in\s+swarm)?$",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    path_target = _resolve_swarm_path_by_label(config_manager=config_manager, label=str(match.group("label") or ""))
+    if path_target.get("error"):
+        return path_target
+    session_id = str(match.group("session_id") or "").strip() or None
+    if match.group("latest"):
+        session_id = None
+    return {
+        "path_key": str(path_target["path_key"]),
+        "session_id": session_id,
+    }
+
+
+def _resolve_natural_swarm_rerun_target(
+    *,
+    inbound_text: str,
+    config_manager: ConfigManager,
+) -> dict[str, str] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    match = re.match(
+        r"^(?:please\s+|can you\s+)?execute\s+(?:the\s+)?latest\s+(?P<label>.+?)\s+rerun\s+request(?:\s+in\s+swarm)?$",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return _resolve_swarm_path_by_label(config_manager=config_manager, label=str(match.group("label") or ""))
+
+
+def _prepare_swarm_autoloop_request(
+    *,
+    config_manager: ConfigManager,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    prepared = dict(payload)
+    if not prepared.get("continue_latest"):
+        return prepared
+    latest = swarm_bridge_read_autoloop_session(
+        config_manager,
+        path_key=str(prepared.get("path_key") or ""),
+        session_id=None,
+    )
+    session_id = str(latest.get("session_id") or "").strip()
+    if not session_id:
+        return {
+            "error": (
+                "Swarm autoloop continuation needs an existing session.\n"
+                f"No saved session summary exists yet for {str(prepared.get('path_key') or 'that path')}. "
+                "Start one first with `/swarm autoloop <path_key>`."
+            )
+        }
+    prepared["session_id"] = session_id
+    prepared["continue_latest"] = False
+    return prepared
 
 
 def _resolve_natural_swarm_mode_target(
@@ -2293,6 +2853,51 @@ def _resolve_latest_swarm_upgrade_target(
     ranked = sorted(candidates, key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""), reverse=True)
     return {
         "upgrade_id": str(ranked[0].get("id") or ""),
+    }
+
+
+def _resolve_swarm_path_by_label(
+    *,
+    config_manager: ConfigManager,
+    label: str,
+) -> dict[str, str]:
+    payload = swarm_bridge_list_paths(config_manager)
+    paths = payload.get("paths") if isinstance(payload, dict) else []
+    entries = [item for item in paths if isinstance(item, dict)]
+    target = _normalize_swarm_label(label)
+    if not target:
+        return {
+            "error": "Swarm path action needs a clearer path target.\nUse `/swarm paths` to inspect available path keys.",
+        }
+    exact_matches = [
+        item
+        for item in entries
+        if target
+        in {
+            _normalize_swarm_label(str(item.get("key") or "")),
+            _normalize_swarm_label(str(item.get("label") or "")),
+        }
+    ]
+    matches = exact_matches
+    if not matches:
+        matches = [
+            item
+            for item in entries
+            if (
+                target in _normalize_swarm_label(str(item.get("key") or ""))
+                or target in _normalize_swarm_label(str(item.get("label") or ""))
+                or _normalize_swarm_label(str(item.get("key") or "")).startswith(target)
+                or _normalize_swarm_label(str(item.get("label") or "")).startswith(target)
+            )
+        ]
+    if len(matches) != 1:
+        return {
+            "error": "Swarm path action needs a clearer path target.\nUse `/swarm paths` to inspect available path keys.",
+        }
+    match = matches[0]
+    return {
+        "path_key": str(match.get("key") or ""),
+        "path_label": str(match.get("label") or ""),
     }
 
 

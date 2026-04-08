@@ -239,6 +239,36 @@ Live commands verified on the production-shaped home:
 - `/swarm status`
 - `/swarm evaluate <task>`
 - `/swarm sync`
+- `/swarm overview`
+- `/swarm live`
+- `/swarm runtime`
+- `/swarm specializations`
+- `/swarm insights`
+- `/swarm masteries`
+- `/swarm upgrades`
+- `/swarm inbox`
+- `/swarm collective`
+
+Local Swarm bridge commands now available through Builder Telegram:
+
+- `/swarm paths`
+- `/swarm run <path_key>`
+- `/swarm autoloop <path_key> [rounds <n>]`
+- `/swarm continue <path_key> [session <id>] [rounds <n>]`
+- `/swarm sessions <path_key>`
+- `/swarm session <path_key> [latest|<session_id>]`
+- `/swarm rerun [path_key]`
+
+Those local-bridge commands map onto the existing `spark-swarm` specialization-path system rather than inventing a second loop kernel in Builder. The current Telegram surface now covers:
+
+- attached path discovery
+- specialization-path benchmark runs
+- bounded autoloop start
+- autoloop continuation through saved session ids
+- session and round-history inspection through local session summaries
+- latest rerun-request execution
+
+The current command surface still returns bounded summaries, not raw bridge logs. Long-running path execution remains explicit and operator-shaped rather than being silently inferred from vague natural language.
 
 The Telegram runtime also accepts bounded natural-language equivalents for those commands when the message makes the intent explicit, for example:
 
@@ -250,6 +280,12 @@ The Telegram runtime also accepts bounded natural-language equivalents for those
 - `Summarize the collective in swarm`
 - `Please sync with swarm`
 - `Can you evaluate this for swarm: <task>`
+- `Show me swarm paths`
+- `Run the Startup Operator path in swarm`
+- `Start autoloop for Startup Operator in swarm for 2 rounds`
+- `Continue the Startup Operator autoloop in swarm for 1 more round`
+- `Show me the latest Startup Operator autoloop session`
+- `Execute the latest Startup Operator rerun request in swarm`
 
 `status` now also surfaces the last bridge routing decision plus the last active chip route, and the text forms of `gateway traces` and `gateway outbound` now include `route=...` and `chip=...` when that metadata is available. That makes it possible to see whether a Telegram reply came from researcher advisory, direct provider fallback, or another bridge path without dropping to raw JSON.
 

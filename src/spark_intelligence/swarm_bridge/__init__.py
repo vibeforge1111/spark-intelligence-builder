@@ -1,3 +1,12 @@
+from spark_intelligence.swarm_bridge.local import (
+    SwarmBridgeCommandResult,
+    swarm_bridge_autoloop,
+    swarm_bridge_execute_rerun_request,
+    swarm_bridge_list_autoloop_sessions,
+    swarm_bridge_list_paths,
+    swarm_bridge_read_autoloop_session,
+    swarm_bridge_run_specialization_path,
+)
 from spark_intelligence.swarm_bridge.sync import (
     SwarmDecisionResult,
     SwarmStatus,
@@ -23,10 +32,17 @@ from spark_intelligence.swarm_bridge.sync import (
 )
 
 __all__ = [
+    "SwarmBridgeCommandResult",
     "SwarmDecisionResult",
     "SwarmStatus",
     "SwarmSyncResult",
     "evaluate_swarm_escalation",
+    "swarm_bridge_autoloop",
+    "swarm_bridge_execute_rerun_request",
+    "swarm_bridge_list_autoloop_sessions",
+    "swarm_bridge_list_paths",
+    "swarm_bridge_read_autoloop_session",
+    "swarm_bridge_run_specialization_path",
     "swarm_absorb_insight",
     "swarm_deliver_upgrade",
     "swarm_read_collective_snapshot",
