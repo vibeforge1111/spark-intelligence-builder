@@ -1339,6 +1339,27 @@ def _handle_runtime_command(
             ),
             renderer=_render_swarm_absorb_reply,
         )
+    absorb_resolution = _resolve_natural_swarm_absorb_target(
+        inbound_text=normalized,
+        config_manager=config_manager,
+        state_db=state_db,
+    )
+    if absorb_resolution is not None:
+        if absorb_resolution.get("error"):
+            return {
+                "command": "/swarm absorb",
+                "reply_text": str(absorb_resolution["error"]),
+            }
+        return _run_swarm_action_command(
+            command="/swarm absorb",
+            runner=lambda: swarm_absorb_insight(
+                config_manager,
+                state_db,
+                insight_id=str(absorb_resolution["insight_id"]),
+                reason=str(absorb_resolution["reason"]) if absorb_resolution.get("reason") else None,
+            ),
+            renderer=_render_swarm_absorb_reply,
+        )
     review_args = _parse_swarm_review_command(normalized)
     if review_args:
         if not review_args["reason"]:
@@ -1422,6 +1443,26 @@ def _handle_runtime_command(
                 upgrade_id=deliver_args["upgrade_id"],
                 evolution_mode=deliver_args.get("evolution_mode"),
                 pr_url=deliver_args.get("pr_url"),
+            ),
+            renderer=_render_swarm_delivery_reply,
+        )
+    deliver_resolution = _resolve_natural_swarm_deliver_target(
+        inbound_text=normalized,
+        config_manager=config_manager,
+        state_db=state_db,
+    )
+    if deliver_resolution is not None:
+        if deliver_resolution.get("error"):
+            return {
+                "command": "/swarm deliver",
+                "reply_text": str(deliver_resolution["error"]),
+            }
+        return _run_swarm_action_command(
+            command="/swarm deliver",
+            runner=lambda: swarm_deliver_upgrade(
+                config_manager,
+                state_db,
+                upgrade_id=str(deliver_resolution["upgrade_id"]),
             ),
             renderer=_render_swarm_delivery_reply,
         )
@@ -2045,6 +2086,60 @@ def _resolve_natural_swarm_mode_target(
     }
 
 
+def _resolve_natural_swarm_absorb_target(
+    *,
+    inbound_text: str,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+) -> dict[str, str] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    match = re.match(
+        r"^(?:please\s+|can you\s+)?absorb\s+(?:the\s+)?latest\s+(?P<label>.+?)\s+insight(?:\s+in\s+swarm)?(?:\s+because\s+(?P<reason>.+))?$",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    specialization = _resolve_swarm_specialization_by_label(
+        config_manager=config_manager,
+        state_db=state_db,
+        label=str(match.group("label") or ""),
+    )
+    if specialization.get("error"):
+        return {
+            "error": str(specialization["error"]).replace("specialization target", "insight target"),
+        }
+    specialization_id = str(specialization["specialization_id"])
+    insights = swarm_read_insights(config_manager, state_db)
+    actionable_statuses = {"captured", "distilled", "queued_for_test", "benchmark_supported", "live_supported"}
+    candidates = [
+        item
+        for item in insights
+        if isinstance(item, dict)
+        and str(item.get("status") or "") in actionable_statuses
+        and (
+            str(item.get("specializationId") or "") == specialization_id
+            or _normalize_swarm_label(str(item.get("specializationId") or "")) == _normalize_swarm_label(str(specialization.get("specialization_key") or ""))
+        )
+    ]
+    if not candidates:
+        label = str(specialization.get("specialization_label") or specialization.get("specialization_key") or "")
+        return {
+            "error": (
+                "Swarm action needs a clearer insight target.\n"
+                f"No absorbable insights matched {label}. Use `/swarm insights` to pick an exact ID."
+            ),
+        }
+    ranked = sorted(candidates, key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""), reverse=True)
+    reason = str(match.group("reason") or "").strip()
+    if not reason:
+        reason = f"Recorded from Telegram natural-language request: {normalized}"
+    return {
+        "insight_id": str(ranked[0].get("id") or ""),
+        "reason": reason,
+    }
+
+
 def _resolve_natural_swarm_review_target(
     *,
     inbound_text: str,
@@ -2091,6 +2186,59 @@ def _resolve_natural_swarm_review_target(
         "mastery_id": str(ranked[0].get("id") or ""),
         "decision": str(match.group("decision") or "").lower(),
         "reason": reason,
+    }
+
+
+def _resolve_natural_swarm_deliver_target(
+    *,
+    inbound_text: str,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+) -> dict[str, str] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    match = re.match(
+        r"^(?:please\s+|can you\s+)?deliver\s+(?:the\s+)?latest\s+(?P<label>.+?)\s+upgrade(?:\s+in\s+swarm)?$",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    specialization = _resolve_swarm_specialization_by_label(
+        config_manager=config_manager,
+        state_db=state_db,
+        label=str(match.group("label") or ""),
+    )
+    if specialization.get("error"):
+        return {
+            "error": str(specialization["error"]).replace("specialization target", "upgrade target"),
+        }
+    specialization_key = str(specialization["specialization_key"])
+    masteries = swarm_read_masteries(config_manager, state_db)
+    specialization_mastery_ids = {
+        str(item.get("id") or "")
+        for item in masteries
+        if isinstance(item, dict) and _normalize_swarm_label(str(item.get("specializationScope") or "")) == _normalize_swarm_label(specialization_key)
+    }
+    pending_statuses = {"draft", "queued", "upgrade_opened", "awaiting_review"}
+    upgrades = swarm_read_upgrades(config_manager, state_db)
+    candidates = [
+        item
+        for item in upgrades
+        if isinstance(item, dict)
+        and str(item.get("status") or "") in pending_statuses
+        and str(item.get("derivedFromMasteryId") or "") in specialization_mastery_ids
+    ]
+    if not candidates:
+        label = str(specialization.get("specialization_label") or specialization_key)
+        return {
+            "error": (
+                "Swarm action needs a clearer upgrade target.\n"
+                f"No pending upgrades matched {label}. Use `/swarm upgrades` to pick an exact ID."
+            ),
+        }
+    ranked = sorted(candidates, key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""), reverse=True)
+    return {
+        "upgrade_id": str(ranked[0].get("id") or ""),
     }
 
 

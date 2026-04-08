@@ -935,6 +935,60 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Landing page insight", str(result.detail["response_text"]))
         absorb_mock.assert_called_once()
 
+    def test_natural_language_swarm_absorb_command_resolves_latest_insight_by_specialization(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with (
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_read_specializations",
+                return_value=[
+                    {"id": "specialization:startup-operator", "key": "startup-operator", "label": "Startup Operator"},
+                ],
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_read_insights",
+                return_value=[
+                    {
+                        "id": "insight-old",
+                        "specializationId": "specialization:startup-operator",
+                        "summary": "Older startup insight",
+                        "status": "captured",
+                        "updatedAt": "2026-04-08T09:00:00Z",
+                    },
+                    {
+                        "id": "insight-new",
+                        "specializationId": "specialization:startup-operator",
+                        "summary": "Latest startup insight",
+                        "status": "live_supported",
+                        "updatedAt": "2026-04-08T10:00:00Z",
+                    },
+                ],
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_absorb_insight",
+                return_value={
+                    "insight": {"id": "insight-new", "summary": "Latest startup insight"},
+                    "mastery": {"id": "mastery-1", "status": "provisional_mastery"},
+                    "review": {"decision": "approve"},
+                },
+            ) as absorb_mock,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2241,
+                    user_id="111",
+                    username="alice",
+                    text="absorb the latest Startup Operator insight",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm insight absorbed.", str(result.detail["response_text"]))
+        self.assertEqual(absorb_mock.call_args.kwargs["insight_id"], "insight-new")
+        self.assertIn("Telegram natural-language request", str(absorb_mock.call_args.kwargs["reason"]))
+
     def test_natural_language_swarm_review_command_runs_hosted_action(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
@@ -1167,6 +1221,106 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Swarm upgrade delivery recorded.", str(result.detail["response_text"]))
         self.assertIn("Refresh onboarding flow", str(result.detail["response_text"]))
         deliver_mock.assert_called_once()
+
+    def test_natural_language_swarm_deliver_command_resolves_latest_upgrade_by_specialization(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with (
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_read_specializations",
+                return_value=[
+                    {"id": "specialization:startup-operator", "key": "startup-operator", "label": "Startup Operator"},
+                ],
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_read_masteries",
+                return_value=[
+                    {
+                        "id": "mastery-a",
+                        "specializationScope": "startup-operator",
+                        "summary": "Startup mastery",
+                        "status": "shared_mastery",
+                        "updatedAt": "2026-04-08T10:00:00Z",
+                    },
+                ],
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_read_upgrades",
+                return_value=[
+                    {
+                        "id": "upgrade-old",
+                        "derivedFromMasteryId": "mastery-a",
+                        "changeSummary": "Old upgrade",
+                        "status": "queued",
+                        "updatedAt": "2026-04-08T09:00:00Z",
+                    },
+                    {
+                        "id": "upgrade-new",
+                        "derivedFromMasteryId": "mastery-a",
+                        "changeSummary": "Latest upgrade",
+                        "status": "awaiting_review",
+                        "updatedAt": "2026-04-08T10:00:00Z",
+                    },
+                ],
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_deliver_upgrade",
+                return_value={
+                    "upgrade": {"id": "upgrade-new", "changeSummary": "Latest upgrade", "status": "awaiting_review"},
+                    "delivery": {"status": "awaiting_review"},
+                },
+            ) as deliver_mock,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2281,
+                    user_id="111",
+                    username="alice",
+                    text="deliver the latest Startup Operator upgrade",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm upgrade delivery recorded.", str(result.detail["response_text"]))
+        self.assertEqual(deliver_mock.call_args.kwargs["upgrade_id"], "upgrade-new")
+
+    def test_natural_language_swarm_deliver_command_rejects_missing_upgrade_target(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with (
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_read_specializations",
+                return_value=[
+                    {"id": "specialization:startup-operator", "key": "startup-operator", "label": "Startup Operator"},
+                ],
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_read_masteries",
+                return_value=[],
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_read_upgrades",
+                return_value=[],
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2282,
+                    user_id="111",
+                    username="alice",
+                    text="deliver the latest Startup Operator upgrade",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            str(result.detail["response_text"]),
+            "Swarm action needs a clearer upgrade target.\nNo pending upgrades matched Startup Operator. Use `/swarm upgrades` to pick an exact ID.",
+        )
 
     def test_natural_language_swarm_sync_delivery_command_runs_hosted_action(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
