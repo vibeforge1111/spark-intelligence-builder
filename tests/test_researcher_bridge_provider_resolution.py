@@ -10,6 +10,7 @@ from spark_intelligence.observability.store import latest_events_by_type
 from spark_intelligence.researcher_bridge.advisory import (
     _build_contextual_task,
     _clean_messaging_reply,
+    _normalize_browser_search_query,
     _render_direct_provider_chat_fallback,
     build_researcher_reply,
 )
@@ -18,6 +19,13 @@ from tests.test_support import SparkTestCase
 
 
 class ResearcherBridgeProviderResolutionTests(SparkTestCase):
+    def test_normalize_browser_search_query_strips_source_citation_suffix(self) -> None:
+        query = _normalize_browser_search_query(
+            "Search the web for Example Domain and cite the source you used."
+        )
+
+        self.assertEqual(query, "Example Domain")
+
     def test_clean_messaging_reply_rewrites_structured_chip_memo_for_telegram(self) -> None:
         cleaned = _clean_messaging_reply(
             (

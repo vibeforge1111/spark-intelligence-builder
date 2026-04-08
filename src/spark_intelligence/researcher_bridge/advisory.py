@@ -61,6 +61,9 @@ from spark_intelligence.personality.loader import build_personality_system_direc
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_runtime_state
 
+_BROWSER_SEARCH_SUMMARY_MAX_CHARS = 280
+_BROWSER_SEARCH_EXCERPT_MAX_CHARS = 480
+
 
 @dataclass
 class ResearcherBridgeResult:
@@ -543,6 +546,9 @@ def _normalize_browser_search_query(user_message: str) -> str:
     query = re.sub(r"^\s*tell me\s+", "", query, flags=re.IGNORECASE)
     query = re.sub(r"^\s*the\s+", "", query, flags=re.IGNORECASE)
     query = re.sub(r"\s+with the source you used\.?\s*$", "", query, flags=re.IGNORECASE)
+    query = re.sub(r"\s+(?:and\s+)?cite (?:the )?source(?:s)?(?: you used)?\.?\s*$", "", query, flags=re.IGNORECASE)
+    query = re.sub(r"\s+(?:and\s+)?cite your source\.?\s*$", "", query, flags=re.IGNORECASE)
+    query = re.sub(r"\s+(?:and\s+)?with sources?\.?\s*$", "", query, flags=re.IGNORECASE)
     query = re.sub(r"\s+and cite (the )?source(s)?\.?\s*$", "", query, flags=re.IGNORECASE)
     query = query.strip(" ?")
     return query or str(user_message or "").strip()
@@ -550,6 +556,13 @@ def _normalize_browser_search_query(user_message: str) -> str:
 
 def _build_browser_search_url(query: str) -> str:
     return f"https://duckduckgo.com/?q={quote(query)}&ia=web"
+
+
+def _truncate_browser_evidence_text(text: str, *, max_chars: int) -> str:
+    normalized = re.sub(r"\s+", " ", str(text or "").strip())
+    if len(normalized) <= max_chars:
+        return normalized
+    return f"{normalized[: max_chars - 3].rstrip()}..."
 
 
 def _execute_browser_hook(
@@ -808,25 +821,27 @@ def _build_browser_search_context(
     candidate = _select_search_result_candidate(dom_output, search_url=search_url)
 
     source_url = candidate["href"] if candidate else search_url
-    source_navigate_output, _ = _execute_browser_hook(
-        config_manager=config_manager,
-        state_db=state_db,
-        hook="browser.navigate",
-        payload=build_browser_navigate_payload(
-            config_manager=config_manager,
-            url=source_url,
-            agent_id=agent_id,
-            request_id=f"{request_id}:browser-source-navigate",
-        ),
-        run_id=run_id,
-        request_id=request_id,
-        channel_kind=channel_kind,
-        session_id=session_id,
-        human_id=human_id,
-        agent_id=agent_id,
-    )
     source_origin = search_origin
     source_tab_id = search_tab_id
+    source_navigate_output = None
+    if source_url != search_url:
+        source_navigate_output, _ = _execute_browser_hook(
+            config_manager=config_manager,
+            state_db=state_db,
+            hook="browser.navigate",
+            payload=build_browser_navigate_payload(
+                config_manager=config_manager,
+                url=source_url,
+                agent_id=agent_id,
+                request_id=f"{request_id}:browser-source-navigate",
+            ),
+            run_id=run_id,
+            request_id=request_id,
+            channel_kind=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+        )
     if source_navigate_output:
         source_navigate_result = (
             source_navigate_output.get("result")
@@ -874,6 +889,8 @@ def _build_browser_search_context(
             tab_id=source_tab_id or None,
             agent_id=agent_id,
             request_id=f"{request_id}:browser-source-text",
+            max_text_characters=900,
+            max_controls=6,
         ),
         run_id=run_id,
         request_id=request_id,
@@ -906,13 +923,21 @@ def _build_browser_search_context(
         lines.append("search_result_candidates=" + json.dumps(search_nodes, ensure_ascii=True))
     if candidate:
         lines.append(f"selected_result_hint={candidate.get('text_summary') or 'unknown'}")
+    source_summary = _truncate_browser_evidence_text(
+        str(visible_text.get("summary") or ""),
+        max_chars=_BROWSER_SEARCH_SUMMARY_MAX_CHARS,
+    )
+    source_excerpt = _truncate_browser_evidence_text(
+        str(visible_text.get("excerpt") or ""),
+        max_chars=_BROWSER_SEARCH_EXCERPT_MAX_CHARS,
+    )
     lines.extend(
         [
             f"source_url={source_url}",
             f"source_title={text_result.get('title') or 'unknown'}",
             f"source_origin={text_result.get('origin') or source_origin}",
-            f"source_summary={visible_text.get('summary') or ''}",
-            f"source_excerpt={visible_text.get('excerpt') or ''}",
+            f"source_summary={source_summary}",
+            f"source_excerpt={source_excerpt}",
             "",
         ]
     )
