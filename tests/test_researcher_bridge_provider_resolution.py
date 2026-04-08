@@ -12,6 +12,7 @@ from spark_intelligence.researcher_bridge.advisory import (
     _clean_messaging_reply,
     _normalize_browser_search_query,
     _render_direct_provider_chat_fallback,
+    _sanitize_browser_search_reply,
     _select_search_result_candidate_from_text_result,
     build_researcher_reply,
 )
@@ -48,6 +49,49 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         )
 
         self.assertEqual(candidate, {"href": "https://www.example.com", "text_summary": ""})
+
+    def test_select_search_result_candidate_from_text_result_skips_search_engine_hosts(self) -> None:
+        candidate = _select_search_result_candidate_from_text_result(
+            {
+                "result": {
+                    "visible_text": {
+                        "summary": "DuckDuckGo https://duck.ai/?q=Example%20Domain Example Domain www.example.com",
+                        "excerpt": "Example Domain is reserved for documentation.",
+                    }
+                }
+            },
+            search_url="https://duckduckgo.com/?q=Example%20Domain&ia=web",
+        )
+
+        self.assertEqual(candidate, {"href": "https://www.example.com", "text_summary": ""})
+
+    def test_sanitize_browser_search_reply_replaces_search_engine_citation_with_external_source(self) -> None:
+        cleaned, actions = _sanitize_browser_search_reply(
+            (
+                "Example Domain is reserved for documentation and examples.\n\n"
+                "Source: https://duckduckgo.com/?q=Example%20Domain&ia=web (DuckDuckGo search)"
+            ),
+            source_url="https://www.iana.org/domains/reserved",
+        )
+
+        self.assertNotIn("duckduckgo.com", cleaned)
+        self.assertIn("Source: https://www.iana.org/domains/reserved", cleaned)
+        self.assertIn("strip_search_engine_citation", actions)
+        self.assertIn("append_external_source_citation", actions)
+
+    def test_sanitize_browser_search_reply_warns_when_external_source_missing(self) -> None:
+        cleaned, actions = _sanitize_browser_search_reply(
+            (
+                "Example Domain is reserved for documentation and examples.\n\n"
+                "Source: https://duckduckgo.com/?q=Example%20Domain&ia=web (DuckDuckGo search)"
+            ),
+            source_url=None,
+        )
+
+        self.assertNotIn("duckduckgo.com", cleaned)
+        self.assertIn("Source capture failed on the result page", cleaned)
+        self.assertIn("strip_search_engine_citation", actions)
+        self.assertIn("append_source_capture_warning", actions)
 
     def test_clean_messaging_reply_rewrites_structured_chip_memo_for_telegram(self) -> None:
         cleaned = _clean_messaging_reply(

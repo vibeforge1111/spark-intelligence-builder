@@ -448,7 +448,8 @@ def _render_direct_provider_chat_fallback(
             "Browser search evidence is already attached in the user prompt. "
             "Do not say you cannot browse, cannot access real-time data, or need to look something up. "
             "Answer directly from the attached browser evidence. "
-            "When you cite a source, cite the provided source_url in plain text. "
+            "Only cite the provided source_url in plain text when it is present and external. "
+            "Never cite search_url or a search-engine results page as the source. "
             "If the evidence is approximate or snippet-based, say that plainly, but still answer the user's question."
         )
     if _is_startup_operator_chip(active_chip_evaluate):
@@ -571,6 +572,38 @@ def _truncate_browser_evidence_text(text: str, *, max_chars: int) -> str:
     return f"{normalized[: max_chars - 3].rstrip()}..."
 
 
+_SEARCH_ENGINE_HOST_SUFFIXES = (
+    "duckduckgo.com",
+    "duck.ai",
+    "google.com",
+    "bing.com",
+    "search.brave.com",
+    "search.yahoo.com",
+)
+
+
+def _normalize_hostname(host: str) -> str:
+    normalized = str(host or "").strip().lower().rstrip(".")
+    if normalized.startswith("www."):
+        normalized = normalized[4:]
+    return normalized
+
+
+def _is_search_engine_host(host: str) -> bool:
+    normalized = _normalize_hostname(host)
+    if not normalized:
+        return False
+    return any(
+        normalized == suffix or normalized.endswith(f".{suffix}")
+        for suffix in _SEARCH_ENGINE_HOST_SUFFIXES
+    )
+
+
+def _is_search_engine_url(url: str) -> bool:
+    host = str(urlparse(str(url or "").strip()).hostname or "")
+    return _is_search_engine_host(host)
+
+
 def _execute_browser_hook(
     *,
     config_manager: ConfigManager,
@@ -634,11 +667,13 @@ def _resolve_external_search_result_href(href: str, *, search_host: str) -> str 
     if not candidate:
         return None
     parsed = urlparse(candidate)
-    if parsed.hostname and parsed.hostname.endswith(search_host):
+    parsed_host = _normalize_hostname(str(parsed.hostname or ""))
+    normalized_search_host = _normalize_hostname(search_host)
+    if parsed_host and (parsed_host == normalized_search_host or _is_search_engine_host(parsed_host)):
         redirected = parse_qs(parsed.query).get("uddg")
         if redirected:
             return str(redirected[0]).strip() or None
-    if parsed.scheme in {"http", "https"} and parsed.netloc:
+    if parsed.scheme in {"http", "https"} and parsed.netloc and not _is_search_engine_host(parsed_host):
         return candidate
     return None
 
@@ -655,8 +690,8 @@ def _normalize_search_result_candidate_href(raw_value: str, *, search_host: str)
     resolved = _resolve_external_search_result_href(candidate, search_host=search_host)
     if not resolved:
         return None
-    host = str(urlparse(resolved).hostname or "").lower()
-    if not host or host == search_host:
+    host = _normalize_hostname(str(urlparse(resolved).hostname or ""))
+    if not host or host == _normalize_hostname(search_host) or _is_search_engine_host(host):
         return None
     return resolved
 
@@ -684,7 +719,7 @@ def _summarize_dom_outline_nodes(nodes: Any, *, max_items: int = 5) -> list[str]
 def _select_search_result_candidate(dom_extract_output: dict[str, Any], *, search_url: str) -> dict[str, str] | None:
     result = dom_extract_output.get("result") if isinstance(dom_extract_output.get("result"), dict) else {}
     dom_outline = result.get("dom_outline") if isinstance(result.get("dom_outline"), dict) else {}
-    search_host = str(urlparse(search_url).hostname or "").lower()
+    search_host = _normalize_hostname(str(urlparse(search_url).hostname or ""))
     nodes = dom_outline.get("nodes") if isinstance(dom_outline.get("nodes"), list) else []
     for node in nodes:
         if not isinstance(node, dict):
@@ -692,8 +727,8 @@ def _select_search_result_candidate(dom_extract_output: dict[str, Any], *, searc
         href = _resolve_external_search_result_href(str(node.get("href") or ""), search_host=search_host)
         if not href:
             continue
-        candidate_host = str(urlparse(href).hostname or "").lower()
-        if not candidate_host or candidate_host == search_host:
+        candidate_host = _normalize_hostname(str(urlparse(href).hostname or ""))
+        if not candidate_host or candidate_host == search_host or _is_search_engine_host(candidate_host):
             continue
         return {
             "href": href,
@@ -718,7 +753,7 @@ def _select_search_result_candidate_from_text_result(
     )
     if not combined:
         return None
-    search_host = str(urlparse(search_url).hostname or "").lower()
+    search_host = _normalize_hostname(str(urlparse(search_url).hostname or ""))
     pattern = r"https?://[^\s<>\"']+|(?:www\.)?[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:/[^\s<>\"']*)?"
     seen: set[str] = set()
     for match in re.finditer(pattern, combined):
@@ -997,16 +1032,19 @@ def _build_browser_search_context(
         or text_result.get("title")
         or "unknown"
     )
+    external_source_url = source_url if source_url and not _is_search_engine_url(source_url) else None
 
     lines = [
         "[Browser search evidence]",
         "The user explicitly asked for web/current/source-backed information.",
         "Use this evidence as the factual basis for the reply instead of asking the user what to optimize for.",
-        "If you cite a source, cite the source_url field directly in plain text.",
+        "Only cite the source_url field when it is present.",
+        "Never cite search_url or a search-engine results page as the source.",
         f"browser_chip_key={chip_key or 'unknown'}",
         f"search_query={search_query}",
         f"search_url={search_url}",
         f"search_results_title={search_results_title}",
+        f"external_source_captured={'yes' if external_source_url else 'no'}",
     ]
     if search_nodes:
         lines.append("search_result_candidates=" + json.dumps(search_nodes, ensure_ascii=True))
@@ -1022,7 +1060,7 @@ def _build_browser_search_context(
     )
     lines.extend(
         [
-            f"source_url={source_url}",
+            *( [f"source_url={external_source_url}"] if external_source_url else ["source_capture_status=external_source_missing"] ),
             f"source_title={text_result.get('title') or 'unknown'}",
             f"source_origin={text_result.get('origin') or source_origin}",
             f"source_summary={source_summary}",
@@ -1034,6 +1072,7 @@ def _build_browser_search_context(
         "context": "\n".join(lines),
         "blocked_reply": None,
         "blocked_code": None,
+        "source_url": external_source_url,
     }
 
 
@@ -1229,6 +1268,47 @@ def _summarize_active_chip_guidance(analysis: str, *, max_lines: int = 4, max_ch
 def _clean_messaging_reply(text: str, *, channel_kind: str) -> str:
     cleaned, _ = _clean_messaging_reply_with_metadata(text, channel_kind=channel_kind)
     return cleaned
+
+
+def _contains_search_engine_url(text: str) -> bool:
+    for match in re.finditer(r"https?://[^\s<>()]+", str(text or "")):
+        if _is_search_engine_url(match.group(0).rstrip(".,);:]>}")):
+            return True
+    return False
+
+
+def _sanitize_browser_search_reply(
+    text: str,
+    *,
+    source_url: str | None,
+) -> tuple[str, list[str]]:
+    cleaned_lines: list[str] = []
+    mutation_actions: list[str] = []
+    for raw_line in str(text or "").replace("\r\n", "\n").split("\n"):
+        line = raw_line.strip()
+        lowered = line.lower()
+        if line and (lowered.startswith("source:") or lowered.startswith("sources:") or lowered.startswith("duckduckgo:")):
+            if _contains_search_engine_url(line):
+                mutation_actions.append("strip_search_engine_citation")
+                continue
+        cleaned_lines.append(raw_line)
+    sanitized = "\n".join(cleaned_lines)
+    sanitized = re.sub(r"\n{3,}", "\n\n", sanitized).strip()
+    if source_url and not _is_search_engine_url(source_url):
+        if source_url not in sanitized:
+            sanitized = f"{sanitized}\n\nSource: {source_url}" if sanitized else f"Source: {source_url}"
+            mutation_actions.append("append_external_source_citation")
+        return sanitized, mutation_actions
+    if _contains_search_engine_url(sanitized):
+        sanitized = re.sub(r"https?://[^\s<>()]+", "", sanitized)
+        sanitized = re.sub(r"\(\s*\)", "", sanitized)
+        sanitized = re.sub(r"\n{3,}", "\n\n", sanitized).strip()
+        mutation_actions.append("strip_inline_search_engine_url")
+    warning = "Source capture failed on the result page, so retry the search if you need an authoritative citation."
+    if warning not in sanitized:
+        sanitized = f"{sanitized}\n\n{warning}" if sanitized else warning
+        mutation_actions.append("append_source_capture_warning")
+    return sanitized, mutation_actions
 
 
 def _strip_reasoning_blocks(text: str) -> tuple[str, bool]:
@@ -2021,6 +2101,9 @@ def build_researcher_reply(
     browser_search_context_extra = str(browser_search_support.get("context") or "")
     browser_search_blocked_reply = str(browser_search_support.get("blocked_reply") or "") or None
     browser_search_blocked_code = str(browser_search_support.get("blocked_code") or "") or None
+    browser_search_source_url = str(browser_search_support.get("source_url") or "") or None
+    if browser_search_source_url and _is_search_engine_url(browser_search_source_url):
+        browser_search_source_url = None
     contextual_task = _build_contextual_task(
         user_message=user_message,
         attachment_context=attachment_context,
@@ -2371,6 +2454,11 @@ def build_researcher_reply(
             )
         if cleaned_reply != raw_reply_text and not reply_mutation_actions:
             reply_mutation_actions.append("rewrite_reply")
+        cleaned_reply, browser_search_mutations = _sanitize_browser_search_reply(
+            cleaned_reply,
+            source_url=browser_search_source_url,
+        )
+        reply_mutation_actions.extend(browser_search_mutations)
         reply_text = cleaned_reply
         trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
         evidence_summary = "status=browser_evidence provider_fallback=direct_http_chat"
