@@ -233,6 +233,12 @@ Live commands verified on the production-shaped home:
 - `/swarm evaluate <task>`
 - `/swarm sync`
 
+The Telegram runtime also accepts bounded natural-language equivalents for those commands when the message makes the intent explicit, for example:
+
+- `Can you show me the swarm status?`
+- `Please sync with swarm`
+- `Can you evaluate this for swarm: <task>`
+
 `status` now also surfaces the last bridge routing decision plus the last active chip route, and the text forms of `gateway traces` and `gateway outbound` now include `route=...` and `chip=...` when that metadata is available. That makes it possible to see whether a Telegram reply came from researcher advisory, direct provider fallback, or another bridge path without dropping to raw JSON.
 
 `spark-intelligence connect route-policy` is the matching operator-facing summary for that behavior. It explains when Spark Intelligence stays on external Researcher advisory, when it falls back to direct provider chat, when it executes directly through the configured provider, and when Spark Swarm escalation should be considered.

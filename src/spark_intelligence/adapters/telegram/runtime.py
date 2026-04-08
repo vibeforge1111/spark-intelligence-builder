@@ -1173,6 +1173,7 @@ def _handle_runtime_command(
 ) -> dict[str, str] | None:
     normalized = " ".join(str(inbound_text or "").strip().split())
     lowered = normalized.lower()
+    natural_swarm_command = _match_natural_swarm_command(normalized)
     if lowered in {"/think", "/think on", "/think off"}:
         if lowered == "/think":
             enabled = _think_enabled_for_user(state_db=state_db, external_user_id=external_user_id)
@@ -1199,12 +1200,12 @@ def _handle_runtime_command(
             ),
         }
 
-    if lowered == "/swarm":
+    if lowered == "/swarm" or natural_swarm_command == ("/swarm", None):
         return {
             "command": "/swarm",
             "reply_text": "Swarm commands: `/swarm status`, `/swarm sync`, and `/swarm evaluate <task>`.",
         }
-    if lowered == "/swarm status":
+    if lowered == "/swarm status" or natural_swarm_command == ("/swarm status", None):
         status = swarm_status(config_manager, state_db)
         return {
             "command": "/swarm status",
@@ -1215,7 +1216,7 @@ def _handle_runtime_command(
                 f"Last decision: {(status.last_decision or {}).get('mode', 'none')}."
             ),
         }
-    if lowered == "/swarm sync":
+    if lowered == "/swarm sync" or natural_swarm_command == ("/swarm sync", None):
         result = sync_swarm_collective(
             config_manager=config_manager,
             state_db=state_db,
@@ -1237,8 +1238,8 @@ def _handle_runtime_command(
                 f"{result.message}"
             ),
         }
-    if lowered.startswith("/swarm evaluate"):
-        task = normalized[len("/swarm evaluate") :].strip()
+    if lowered.startswith("/swarm evaluate") or (natural_swarm_command and natural_swarm_command[0] == "/swarm evaluate"):
+        task = normalized[len("/swarm evaluate") :].strip() if lowered.startswith("/swarm evaluate") else str(natural_swarm_command[1] or "").strip()
         if not task:
             return {
                 "command": "/swarm evaluate",
@@ -1266,6 +1267,80 @@ def _handle_runtime_command(
                 f"{result.reason}"
             ),
         }
+    return None
+
+
+def _match_natural_swarm_command(inbound_text: str) -> tuple[str, str | None] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    lowered = normalized.lower()
+    simplified = " ".join(re.sub(r"[^a-z0-9\s/]", " ", lowered).split())
+
+    if simplified in {
+        "swarm",
+        "swarm help",
+        "help with swarm",
+        "show swarm commands",
+        "show me swarm commands",
+        "what are the swarm commands",
+        "what can swarm do",
+    }:
+        return ("/swarm", None)
+
+    if simplified in {
+        "swarm status",
+        "show swarm status",
+        "show me swarm status",
+        "check swarm status",
+        "what is swarm status",
+        "what s swarm status",
+        "what is the swarm status",
+        "what s the swarm status",
+        "is swarm ready",
+        "is spark swarm ready",
+        "is swarm connected",
+        "is spark swarm connected",
+        "check if swarm is ready",
+        "check if spark swarm is ready",
+    }:
+        return ("/swarm status", None)
+    if re.match(
+        r"^(?:please\s+|can you\s+)?(?:show(?:\s+me)?|check|tell me)\s+(?:the\s+)?(?:spark\s+)?swarm\s+status$",
+        simplified,
+        flags=re.IGNORECASE,
+    ):
+        return ("/swarm status", None)
+
+    if simplified in {
+        "swarm sync",
+        "sync swarm",
+        "sync with swarm",
+        "sync the swarm",
+        "please sync with swarm",
+        "upload to swarm",
+        "upload this to swarm",
+        "push this to swarm",
+        "sync this with swarm",
+    }:
+        return ("/swarm sync", None)
+    if re.match(
+        r"^(?:please\s+|can you\s+)?(?:sync|upload|push)\s+(?:(?:this|the latest payload)\s+)?(?:with|to)?\s*swarm$",
+        simplified,
+        flags=re.IGNORECASE,
+    ):
+        return ("/swarm sync", None)
+
+    evaluate_patterns = (
+        r"^(?:please\s+|can you\s+)?evaluate(?:\s+this)?\s+for\s+swarm[:\s-]*(?P<task>.+)$",
+        r"^(?:please\s+|can you\s+)?check(?:\s+this)?\s+for\s+swarm[:\s-]*(?P<task>.+)$",
+        r"^(?:please\s+|can you\s+)?should\s+(?:this|we)\s+(?:go\s+to|use|delegate\s+to|escalate\s+to)\s+swarm[:\s-]*(?P<task>.+)$",
+        r"^(?:please\s+|can you\s+)?should\s+this\s+be\s+(?:delegated|escalated)\s+to\s+swarm[:\s-]*(?P<task>.+)$",
+    )
+    for pattern in evaluate_patterns:
+        match = re.match(pattern, lowered, flags=re.IGNORECASE)
+        if match:
+            task = re.sub(r"^[\s:\-]+", "", str(match.group("task") or "").strip())
+            if task:
+                return ("/swarm evaluate", task)
     return None
 
 

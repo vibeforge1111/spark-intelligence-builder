@@ -565,6 +565,33 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Auth: configured.", str(result.detail["response_text"]))
         self.assertIn("Last sync: uploaded.", str(result.detail["response_text"]))
 
+    def test_natural_language_swarm_status_command_returns_live_bridge_summary(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.swarm_status",
+            return_value=SimpleNamespace(
+                api_ready=True,
+                auth_state="configured",
+                last_sync={"mode": "uploaded"},
+                last_decision={"mode": "manual_recommended"},
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=214,
+                    user_id="111",
+                    username="alice",
+                    text="Can you show me the swarm status?",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm is ready.", str(result.detail["response_text"]))
+        self.assertEqual(result.detail["bridge_mode"], "runtime_command")
+
     def test_swarm_evaluate_command_returns_escalation_decision(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
@@ -593,6 +620,33 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Escalate: yes.", str(result.detail["response_text"]))
         self.assertIn("explicit_swarm, parallel_work", str(result.detail["response_text"]))
 
+    def test_natural_language_swarm_evaluate_command_returns_escalation_decision(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.evaluate_swarm_escalation",
+            return_value=SimpleNamespace(
+                mode="manual_recommended",
+                escalate=True,
+                triggers=["explicit_swarm", "parallel_work"],
+                reason="This task shows explicit escalation signals and Spark Swarm is available.",
+            ),
+        ) as evaluate_mock:
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=215,
+                    user_id="111",
+                    username="alice",
+                    text="Can you evaluate this for swarm: delegate this as parallel swarm work",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm decision: manual_recommended.", str(result.detail["response_text"]))
+        self.assertEqual(evaluate_mock.call_args.kwargs["task"], "delegate this as parallel swarm work")
+
     def test_swarm_sync_command_runs_sync_from_telegram_runtime(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
@@ -620,6 +674,78 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Swarm sync ok.", str(result.detail["response_text"]))
         self.assertIn("Mode: uploaded.", str(result.detail["response_text"]))
         self.assertIn("Accepted: yes.", str(result.detail["response_text"]))
+
+    def test_natural_language_swarm_sync_command_runs_sync_from_telegram_runtime(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.sync_swarm_collective",
+            return_value=SimpleNamespace(
+                ok=True,
+                mode="uploaded",
+                accepted=True,
+                message="Uploaded the latest Spark Researcher collective payload to Spark Swarm.",
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=216,
+                    user_id="111",
+                    username="alice",
+                    text="Please sync with swarm",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm sync ok.", str(result.detail["response_text"]))
+        self.assertEqual(result.detail["bridge_mode"], "runtime_command")
+
+    def test_generic_swarm_mention_stays_on_normal_chat_path(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            return_value=ResearcherBridgeResult(
+                request_id="req-swarm-chat",
+                reply_text="Normal chat path.",
+                evidence_summary="status=under_supported provider_fallback=direct_http_chat",
+                escalation_hint=None,
+                trace_ref="trace:swarm-chat",
+                mode="external_configured",
+                runtime_root="C:/fake-researcher",
+                config_path="C:/fake-researcher/spark-researcher.project.json",
+                attachment_context=None,
+                provider_id="custom",
+                provider_auth_profile_id="custom:default",
+                provider_auth_method="api_key_env",
+                provider_model="MiniMax-M2.7",
+                provider_model_family="generic",
+                provider_execution_transport="direct_http",
+                provider_base_url="https://api.minimax.io/v1",
+                provider_source="config+env",
+                routing_decision="provider_fallback_chat",
+                active_chip_key="startup-yc",
+                active_chip_task_type="memo_quality",
+                active_chip_evaluate_used=True,
+            ),
+        ) as bridge_mock:
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=217,
+                    user_id="111",
+                    username="alice",
+                    text="I was reading about Spark Swarm today.",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.detail["response_text"], "Normal chat path.")
+        self.assertEqual(result.detail["bridge_mode"], "external_configured")
+        bridge_mock.assert_called_once()
 
     def test_status_and_gateway_traces_surface_bridge_route_and_active_chip(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
