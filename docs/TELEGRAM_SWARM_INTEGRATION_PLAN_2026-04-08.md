@@ -259,6 +259,32 @@ Add replies that include:
 - exact Swarm page link
 - exact Builder command or Swarm bridge command when operator follow-up is needed
 
+### Phase 5. Human Reply Composition Layer
+
+Goal:
+
+- make the Telegram bot feel like a real operator assistant rather than a raw system-output wrapper
+
+What this layer should do:
+
+- lead with the verdict first
+- separate answer, evidence, and next action clearly
+- compress raw bridge detail into readable summaries
+- preserve truthfulness without sounding robotic or dumpy
+- use different reply shapes for:
+  - status
+  - action confirmation
+  - autoloop pause
+  - autoloop completion
+  - lane summary
+  - browser-backed opinion / analysis
+
+Implementation rule:
+
+- reply formatting should happen after intent resolution, not by weakening the runtime command system
+- structured replies should remain bounded and deterministic for runtime-command paths
+- freeform advisory tone should not be allowed to invent unsupported actions or hide failure states
+
 ## 7. Intent Mapping Model
 
 Builder should implement Swarm Telegram intents in three tiers.
@@ -325,8 +351,9 @@ If we continue immediately, the best order is:
 
 1. Tighten lane-specific Telegram reads for specialization-scoped insights, masteries, and upgrades.
 2. Add richer run/session summaries and optional deep links into Swarm web when a hosted runs surface exists.
-3. Decide whether any local bridge actions should require a second confirmation layer before Telegram executes them.
-4. Extend the same bounded resolver pattern to more specialization-path families as they become real.
+3. Add the human reply composition layer so Telegram answers feel like operator briefings instead of raw output blocks.
+4. Decide whether any local bridge actions should require a second confirmation layer before Telegram executes them.
+5. Extend the same bounded resolver pattern to more specialization-path families as they become real.
 
 This keeps risk low while making Telegram materially more useful as a front door to Swarm.
 

@@ -234,7 +234,46 @@ Focus:
 - better summaries of runs, loops, and agent state
 - better “what changed?” and “what should I do next?” answers
 
-### Priority 3. Expand Observe / Run / Improve Coverage
+### Priority 3. Make Replies Feel Human And Composed
+
+Goal:
+
+- make the bot sound less like a raw bridge dump and more like a clear, capable operator assistant
+
+Problems seen today:
+
+- replies often arrive as a flat block of text
+- formatting is informative but not well composed
+- the bot often states facts without framing the conclusion first
+- replies do not always separate verdict, evidence, and next action cleanly
+- some answers still read like system output instead of conversation
+
+What to improve:
+
+- lead with the answer or verdict first
+- break replies into short readable paragraphs or small bullets when the content is list-shaped
+- use a clearer structure:
+  - what happened
+  - why it matters
+  - what to do next
+- make autoloop and run replies feel like operator briefings rather than raw summaries
+- reduce repetitive labels when they do not help the user
+- add reply-specific templates for:
+  - status checks
+  - autoloop pauses
+  - autoloop completions
+  - lane insight summaries
+  - browser-backed reads
+  - hosted action confirmations
+- improve the conversational close so the bot suggests the next useful action instead of ending abruptly
+
+Testing focus:
+
+- compare the same action before and after formatting changes
+- verify that responses remain truthful while becoming easier to read
+- verify that natural-language requests still route correctly after reply-shaping changes
+
+### Priority 4. Expand Observe / Run / Improve Coverage
 
 Goal:
 
@@ -283,6 +322,8 @@ Confirm:
 - replies stay on the runtime-command path
 - they do not fall back to generic provider chat
 - autoloop session replies include candidate / hypothesis / delta / interpretation
+- replies feel composed and readable, not like raw bridge output
+- replies lead with the answer before the detail block
 
 ### C. Browser-Backed Checks
 
@@ -314,6 +355,26 @@ Check whether rerun-request execution is still blocked by auth refresh issues.
 If yes:
 
 - keep it explicitly marked as an auth/runtime problem, not a Telegram intent problem
+
+### F. Communication Quality Review
+
+Use the real Telegram bot and inspect whether replies feel human and operationally useful.
+
+Good prompts:
+
+- `show me swarm paths`
+- `show me the latest Startup Operator autoloop session`
+- `continue the Startup Operator autoloop in swarm for 1 more round anyway`
+- `browse vibeship.co and tell me what you think`
+- `what changed in swarm for Startup Operator`
+
+Confirm:
+
+- the first line gives the conclusion, not just metadata
+- lists are only used when they help
+- long outputs are broken into readable chunks
+- the reply tells the operator what to do next when relevant
+- the answer sounds like a capable assistant, not a pasted trace
 
 ## 8. The Right Product Direction
 
