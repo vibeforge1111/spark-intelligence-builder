@@ -76,7 +76,7 @@ What still remains outside this specific Builder checkpoint:
 
 Those unrelated local files should not be confused with the shipped browser integration state.
 
-## 6. Telegram Ingress Ownership Addendum
+## 6. Telegram Ownership And System Shape
 
 Later on 2026-04-08, the production-shape runtime was clarified:
 
@@ -92,6 +92,28 @@ Current live truth:
 - the live Builder gateway was restarted and verified on the Telegram socket
 - real Telegram traffic processed again after the rollback
 - `spark-swarm` remains a downstream or adjacent system here, not the active Telegram ingress owner for this bot
+- `spark-browser-extension` remains the downstream governed browser runtime for Brave execution
+
+The current production-shaped runtime is:
+
+1. Telegram ingress is owned by Builder.
+2. Builder enforces pairing, operator policy, and delivery.
+3. Builder handles runtime commands such as `/swarm status`, `/swarm evaluate <task>`, and `/swarm sync` locally.
+4. Builder uses Spark Researcher and the configured provider path for normal conversational reasoning.
+5. Builder uses the `spark-browser-extension` attachment when a Telegram request needs governed browser evidence.
+6. Builder uses the Swarm bridge when the operator asks for evaluation or collective sync.
+
+This keeps one clear chain of responsibility:
+
+- Telegram channel ownership: Builder
+- multi-agent escalation and collective sync: Swarm
+- governed browser execution: `spark-browser-extension`
+
+Live verification completed on the production-shaped Telegram home:
+
+- `/swarm status` returned ready/auth/sync state
+- `/swarm evaluate delegate this as parallel swarm work` returned `manual_recommended`
+- `/swarm sync` returned `ok`, `uploaded`, and `accepted: yes`
 
 Why this matters:
 
@@ -104,6 +126,7 @@ Why this matters:
 As of 2026-04-08:
 
 - `spark-browser-extension` is pushed at `be01fc3`
-- `spark-intelligence-builder` is pushed at `d84b895`
+- `spark-intelligence-builder` is pushed at `7796397`
 - the real cross-repo governed browser path is working for the current Builder CLI surface
 - the canonical current production Telegram owner remains Builder until a real `spark-swarm` Telegram ingress exists
+- the live Telegram -> Builder -> Swarm command path is verified

@@ -210,6 +210,29 @@ Production ingress ownership rule:
 - if `spark-swarm` later gains real Telegram ingress ownership, Builder must stop polling that same bot token and remain downstream for reasoning, chips, and governed browser execution
 - if direct Builder Telegram testing is needed alongside another ingress owner later, use a separate staging bot token instead of dual-polling the production bot
 
+Live Telegram system shape:
+
+- Telegram DMs land in Builder's Telegram runtime first
+- Builder owns pairing, identity, operator controls, channel delivery, and bot-token polling
+- Builder then decides whether the message should stay local as a runtime command, go through provider-backed reasoning, use chip-guided browser work, or trigger a Swarm recommendation
+- `Spark Swarm` stays downstream from Builder for evaluation and collective sync, not as the current Telegram ingress owner
+- `spark-browser-extension` stays downstream from Builder for governed Brave/browser execution
+
+In practice, the current live stack is:
+
+1. Telegram user sends a DM to the production bot.
+2. Builder receives the update and applies pairing and operator policy.
+3. If the message is a runtime command such as `/swarm status`, `/swarm evaluate <task>`, or `/swarm sync`, Builder handles it directly and returns the result to Telegram.
+4. If the message needs reasoning or browsing, Builder routes into the active chips and provider bridge.
+5. If browser evidence is needed, Builder calls the `spark-browser-extension` attachment and uses the governed browser hooks against the dedicated Brave profile.
+6. If Swarm escalation or collective export is needed, Builder calls the Swarm bridge and returns the downstream result back to Telegram.
+
+Live commands verified on the production-shaped home:
+
+- `/swarm status`
+- `/swarm evaluate <task>`
+- `/swarm sync`
+
 `status` now also surfaces the last bridge routing decision plus the last active chip route, and the text forms of `gateway traces` and `gateway outbound` now include `route=...` and `chip=...` when that metadata is available. That makes it possible to see whether a Telegram reply came from researcher advisory, direct provider fallback, or another bridge path without dropping to raw JSON.
 
 `spark-intelligence connect route-policy` is the matching operator-facing summary for that behavior. It explains when Spark Intelligence stays on external Researcher advisory, when it falls back to direct provider chat, when it executes directly through the configured provider, and when Spark Swarm escalation should be considered.
