@@ -1028,6 +1028,120 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("checked_auto_merge", str(result.detail["response_text"]))
         mode_mock.assert_called_once()
 
+    def test_natural_language_swarm_mode_command_resolves_specialization_label(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with (
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_read_specializations",
+                return_value=[
+                    {"id": "specialization:startup-operator", "key": "startup-operator", "label": "Startup Operator"},
+                    {"id": "specialization:startup-yc", "key": "startup-yc", "label": "Startup YC"},
+                ],
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_set_evolution_mode",
+                return_value={"id": "specialization:startup-operator", "label": "Startup Operator", "evolutionMode": "checked_auto_merge"},
+            ) as mode_mock,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2271,
+                    user_id="111",
+                    username="alice",
+                    text="set Startup Operator to checked auto merge in swarm",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm evolution mode updated.", str(result.detail["response_text"]))
+        self.assertIn("Startup Operator", str(result.detail["response_text"]))
+        self.assertEqual(mode_mock.call_args.kwargs["specialization_id"], "specialization:startup-operator")
+
+    def test_natural_language_swarm_review_command_resolves_latest_mastery_by_specialization(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with (
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_read_specializations",
+                return_value=[
+                    {"id": "specialization:startup-operator", "key": "startup-operator", "label": "Startup Operator"},
+                    {"id": "specialization:trading-crypto", "key": "trading-crypto", "label": "Crypto Trading"},
+                ],
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_read_masteries",
+                return_value=[
+                    {
+                        "id": "mastery-old",
+                        "specializationScope": "startup-operator",
+                        "summary": "Older startup mastery",
+                        "status": "provisional_mastery",
+                        "updatedAt": "2026-04-08T09:00:00Z",
+                    },
+                    {
+                        "id": "mastery-new",
+                        "specializationScope": "startup-operator",
+                        "summary": "Latest startup mastery",
+                        "status": "shared_mastery",
+                        "updatedAt": "2026-04-08T10:00:00Z",
+                    },
+                ],
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_review_mastery",
+                return_value={
+                    "mastery": {"id": "mastery-new", "status": "shared_mastery"},
+                    "review": {"decision": "approve"},
+                },
+            ) as review_mock,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2272,
+                    user_id="111",
+                    username="alice",
+                    text="approve the latest Startup Operator mastery",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm mastery review recorded.", str(result.detail["response_text"]))
+        self.assertEqual(review_mock.call_args.kwargs["mastery_id"], "mastery-new")
+        self.assertEqual(review_mock.call_args.kwargs["decision"], "approve")
+        self.assertIn("Telegram natural-language request", review_mock.call_args.kwargs["reason"])
+
+    def test_natural_language_swarm_mode_command_rejects_ambiguous_target(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.swarm_read_specializations",
+            return_value=[
+                {"id": "specialization:startup-operator", "key": "startup-operator", "label": "Startup Operator"},
+                {"id": "specialization:startup-yc", "key": "startup-yc", "label": "Startup YC"},
+            ],
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2273,
+                    user_id="111",
+                    username="alice",
+                    text="set startup to checked auto merge in swarm",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            str(result.detail["response_text"]),
+            "Swarm action needs a clearer specialization target.\nUse `/swarm specializations` to pick an exact ID.",
+        )
+
     def test_swarm_deliver_command_runs_hosted_action(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 

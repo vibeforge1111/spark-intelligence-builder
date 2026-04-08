@@ -1357,6 +1357,28 @@ def _handle_runtime_command(
             ),
             renderer=_render_swarm_review_reply,
         )
+    review_resolution = _resolve_natural_swarm_review_target(
+        inbound_text=normalized,
+        config_manager=config_manager,
+        state_db=state_db,
+    )
+    if review_resolution is not None:
+        if review_resolution.get("error"):
+            return {
+                "command": "/swarm review",
+                "reply_text": str(review_resolution["error"]),
+            }
+        return _run_swarm_action_command(
+            command="/swarm review",
+            runner=lambda: swarm_review_mastery(
+                config_manager,
+                state_db,
+                mastery_id=str(review_resolution["mastery_id"]),
+                decision=str(review_resolution["decision"]),
+                reason=str(review_resolution["reason"]),
+            ),
+            renderer=_render_swarm_review_reply,
+        )
     mode_args = _parse_swarm_mode_command(normalized)
     if mode_args:
         return _run_swarm_action_command(
@@ -1366,6 +1388,27 @@ def _handle_runtime_command(
                 state_db,
                 specialization_id=mode_args["specialization_id"],
                 evolution_mode=mode_args["evolution_mode"],
+            ),
+            renderer=_render_swarm_mode_reply,
+        )
+    mode_resolution = _resolve_natural_swarm_mode_target(
+        inbound_text=normalized,
+        config_manager=config_manager,
+        state_db=state_db,
+    )
+    if mode_resolution is not None:
+        if mode_resolution.get("error"):
+            return {
+                "command": "/swarm mode",
+                "reply_text": str(mode_resolution["error"]),
+            }
+        return _run_swarm_action_command(
+            command="/swarm mode",
+            runner=lambda: swarm_set_evolution_mode(
+                config_manager,
+                state_db,
+                specialization_id=str(mode_resolution["specialization_id"]),
+                evolution_mode=str(mode_resolution["evolution_mode"]),
             ),
             renderer=_render_swarm_mode_reply,
         )
@@ -1965,6 +2008,145 @@ def _parse_swarm_evolution_mode(value: str) -> str | None:
         "auto_apply": "trusted_auto_apply",
     }
     return aliases.get(normalized)
+
+
+def _resolve_natural_swarm_mode_target(
+    *,
+    inbound_text: str,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+) -> dict[str, str] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    match = re.match(
+        r"^(?:please\s+|can you\s+)?set (?P<label>.+?) to (?P<mode>[A-Za-z0-9_\- ]+?)(?:\s+in\s+swarm)?$",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    raw_label = str(match.group("label") or "").strip()
+    if raw_label.lower().startswith("specialization "):
+        return None
+    evolution_mode = _parse_swarm_evolution_mode(str(match.group("mode") or ""))
+    if not evolution_mode:
+        return None
+    specialization = _resolve_swarm_specialization_by_label(
+        config_manager=config_manager,
+        state_db=state_db,
+        label=raw_label,
+    )
+    if specialization.get("error"):
+        return {
+            "error": str(specialization["error"]),
+        }
+    return {
+        "specialization_id": str(specialization["specialization_id"]),
+        "evolution_mode": evolution_mode,
+    }
+
+
+def _resolve_natural_swarm_review_target(
+    *,
+    inbound_text: str,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+) -> dict[str, str] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    match = re.match(
+        r"^(?:please\s+|can you\s+)?(?P<decision>approve|defer|reject)\s+(?:the\s+)?latest\s+(?P<label>.+?)\s+mastery(?:\s+in\s+swarm)?(?:\s+because\s+(?P<reason>.+))?$",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    specialization = _resolve_swarm_specialization_by_label(
+        config_manager=config_manager,
+        state_db=state_db,
+        label=str(match.group("label") or ""),
+    )
+    if specialization.get("error"):
+        return {
+            "error": str(specialization["error"]).replace("specialization target", "mastery target"),
+        }
+    specialization_key = str(specialization["specialization_key"])
+    masteries = swarm_read_masteries(config_manager, state_db)
+    candidates = [
+        item
+        for item in masteries
+        if isinstance(item, dict) and _normalize_swarm_label(str(item.get("specializationScope") or "")) == _normalize_swarm_label(specialization_key)
+    ]
+    if not candidates:
+        label = str(specialization.get("specialization_label") or specialization_key)
+        return {
+            "error": (
+                "Swarm action needs a clearer mastery target.\n"
+                f"No mastery records matched {label}. Use `/swarm masteries` to pick an exact ID."
+            ),
+        }
+    ranked = sorted(candidates, key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""), reverse=True)
+    reason = str(match.group("reason") or "").strip()
+    if not reason:
+        reason = f"Recorded from Telegram natural-language request: {normalized}"
+    return {
+        "mastery_id": str(ranked[0].get("id") or ""),
+        "decision": str(match.group("decision") or "").lower(),
+        "reason": reason,
+    }
+
+
+def _resolve_swarm_specialization_by_label(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    label: str,
+) -> dict[str, str]:
+    specializations = swarm_read_specializations(config_manager, state_db)
+    target = _normalize_swarm_label(label)
+    if not target:
+        return {
+            "error": "Swarm action needs a clearer specialization target.\nUse `/swarm specializations` to pick an exact ID.",
+        }
+    exact_matches = [
+        item
+        for item in specializations
+        if isinstance(item, dict)
+        and target
+        in {
+            _normalize_swarm_label(str(item.get("label") or "")),
+            _normalize_swarm_label(str(item.get("key") or "")),
+            _normalize_swarm_label(str(item.get("id") or "")),
+        }
+    ]
+    matches = exact_matches
+    if not matches:
+        matches = [
+            item
+            for item in specializations
+            if isinstance(item, dict)
+            and (
+                target in _normalize_swarm_label(str(item.get("label") or ""))
+                or target in _normalize_swarm_label(str(item.get("key") or ""))
+                or _normalize_swarm_label(str(item.get("label") or "")).startswith(target)
+                or _normalize_swarm_label(str(item.get("key") or "")).startswith(target)
+            )
+        ]
+    if len(matches) != 1:
+        return {
+            "error": (
+                "Swarm action needs a clearer specialization target.\n"
+                "Use `/swarm specializations` to pick an exact ID."
+            ),
+        }
+    match = matches[0]
+    return {
+        "specialization_id": str(match.get("id") or ""),
+        "specialization_key": str(match.get("key") or ""),
+        "specialization_label": str(match.get("label") or ""),
+    }
+
+
+def _normalize_swarm_label(value: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).split())
 
 
 def _think_state_key(*, external_user_id: str) -> str:
