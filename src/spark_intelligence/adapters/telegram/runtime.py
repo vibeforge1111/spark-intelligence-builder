@@ -1260,6 +1260,10 @@ def _handle_runtime_command(
             command="/swarm issues",
             loader=lambda: swarm_read_operator_issues(config_manager, state_db),
             renderer=_render_swarm_operator_issues_reply,
+            unavailable_message=(
+                "Swarm operator issues are unavailable right now.\n"
+                "The current Spark Swarm host does not expose the operator issues route yet."
+            ),
         )
     if lowered == "/swarm inbox" or natural_swarm_command == ("/swarm inbox", None):
         return _run_swarm_read_command(
@@ -1332,12 +1336,16 @@ def _run_swarm_read_command(
     command: str,
     loader: Any,
     renderer: Any,
+    unavailable_message: str | None = None,
 ) -> dict[str, str]:
     try:
         payload = loader()
         reply_text = renderer(payload)
     except RuntimeError as exc:
-        reply_text = f"Swarm read is unavailable right now.\n{exc}"
+        if unavailable_message and "HTTP 404" in str(exc):
+            reply_text = unavailable_message
+        else:
+            reply_text = f"Swarm read is unavailable right now.\n{exc}"
     return {
         "command": command,
         "reply_text": reply_text,

@@ -861,6 +861,31 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Swarm read is unavailable right now.", str(result.detail["response_text"]))
         self.assertIn("Swarm API URL is missing.", str(result.detail["response_text"]))
 
+    def test_swarm_issues_404_returns_host_gap_message(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.swarm_read_operator_issues",
+            side_effect=RuntimeError("Swarm API request failed with HTTP 404."),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=223,
+                    user_id="111",
+                    username="alice",
+                    text="Show me operator issues in swarm",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            str(result.detail["response_text"]),
+            "Swarm operator issues are unavailable right now.\n"
+            "The current Spark Swarm host does not expose the operator issues route yet.",
+        )
+
     def test_generic_swarm_mention_stays_on_normal_chat_path(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
