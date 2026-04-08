@@ -1513,6 +1513,8 @@ def _render_swarm_specializations_reply(payload: list[dict[str, Any]]) -> str:
             f"- {str(item.get('id') or 'unknown')}: {str(item.get('label') or item.get('key') or 'specialization')} "
             f"[mode={str(item.get('evolutionMode') or 'unknown')}]"
         )
+    first_id = str(ranked[0].get("id") or "specialization_id")
+    lines.append(f"Next: `/swarm mode {first_id} review_required`")
     return "\n".join(lines)
 
 
@@ -1531,6 +1533,8 @@ def _render_swarm_insights_reply(payload: list[dict[str, Any]]) -> str:
             f"- {str(item.get('id') or 'unknown')}: {str(item.get('summary') or item.get('title') or 'insight')} "
             f"[status={str(item.get('status') or 'unknown')}]"
         )
+    first_id = str(ranked[0].get("id") or "insight_id")
+    lines.append(f"Next: `/swarm absorb {first_id} because <reason>`")
     return "\n".join(lines)
 
 
@@ -1549,6 +1553,8 @@ def _render_swarm_masteries_reply(payload: list[dict[str, Any]]) -> str:
             f"- {str(item.get('id') or 'unknown')}: {str(item.get('summary') or item.get('title') or 'mastery')} "
             f"[status={str(item.get('status') or 'unknown')}]"
         )
+    first_id = str(ranked[0].get("id") or "mastery_id")
+    lines.append(f"Next: `/swarm review {first_id} approve because <reason>`")
     return "\n".join(lines)
 
 
@@ -1581,6 +1587,8 @@ def _render_swarm_upgrades_reply(payload: list[dict[str, Any]]) -> str:
         lines.append(
             f"- {str(item.get('status') or 'unknown')}: {str(item.get('changeSummary') or item.get('id') or 'upgrade')} ({str(item.get('riskLevel') or 'unknown')} risk)"
         )
+    first_id = str(recent[0].get("id") or "upgrade_id")
+    lines.append(f"Next: `/swarm deliver {first_id}` or `/swarm sync-delivery {first_id}`")
     return "\n".join(lines)
 
 

@@ -713,6 +713,7 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(result.ok)
         self.assertIn("Swarm upgrades:", str(result.detail["response_text"]))
         self.assertIn("2 pending upgrade(s).", str(result.detail["response_text"]))
+        self.assertIn("Next: `/swarm deliver upg-1` or `/swarm sync-delivery upg-1`", str(result.detail["response_text"]))
         self.assertEqual(result.detail["bridge_mode"], "runtime_command")
 
     def test_natural_language_swarm_issues_command_returns_open_issues(self) -> None:
@@ -837,6 +838,7 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Swarm specializations:", str(result.detail["response_text"]))
         self.assertIn("spec-1", str(result.detail["response_text"]))
         self.assertIn("review_required", str(result.detail["response_text"]))
+        self.assertIn("Next: `/swarm mode spec-1 review_required`", str(result.detail["response_text"]))
 
     def test_natural_language_swarm_insights_command_returns_actionable_insights(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -873,6 +875,7 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Swarm insights:", str(result.detail["response_text"]))
         self.assertIn("insight-1", str(result.detail["response_text"]))
         self.assertNotIn("insight-2", str(result.detail["response_text"]))
+        self.assertIn("Next: `/swarm absorb insight-1 because <reason>`", str(result.detail["response_text"]))
 
     def test_natural_language_swarm_masteries_command_returns_mastery_ids(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -903,6 +906,7 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Swarm masteries:", str(result.detail["response_text"]))
         self.assertIn("mastery-1", str(result.detail["response_text"]))
         self.assertIn("shared_mastery", str(result.detail["response_text"]))
+        self.assertIn("Next: `/swarm review mastery-1 approve because <reason>`", str(result.detail["response_text"]))
 
     def test_swarm_absorb_command_runs_hosted_action(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
