@@ -204,10 +204,11 @@ spark-intelligence gateway outbound --channel-id telegram --delivery failed
 
 Production ingress ownership rule:
 
-- if the production Telegram bot is already owned by `Spark Swarm`, do not also run `spark-intelligence gateway start` against that same bot token from Builder
-- in that shape, `Spark Swarm` owns Telegram ingress and delivery, while Builder stays downstream for reasoning, chips, and governed browser execution
-- if direct Builder Telegram testing is needed later, use a separate staging bot token instead of dual-polling the production bot
-- the canonical Builder live home can keep Telegram configured for auth checks and simulation while leaving `channels.records.telegram.status=paused`
+- only one runtime may long-poll one Telegram bot token at a time
+- today, the implemented production Telegram ingress is still `spark-intelligence` Builder, not `spark-swarm`
+- do not run a second Telegram poller against the same bot token from another runtime, browser automation surface, or test harness
+- if `spark-swarm` later gains real Telegram ingress ownership, Builder must stop polling that same bot token and remain downstream for reasoning, chips, and governed browser execution
+- if direct Builder Telegram testing is needed alongside another ingress owner later, use a separate staging bot token instead of dual-polling the production bot
 
 `status` now also surfaces the last bridge routing decision plus the last active chip route, and the text forms of `gateway traces` and `gateway outbound` now include `route=...` and `chip=...` when that metadata is available. That makes it possible to see whether a Telegram reply came from researcher advisory, direct provider fallback, or another bridge path without dropping to raw JSON.
 
