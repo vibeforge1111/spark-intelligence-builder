@@ -26,6 +26,8 @@ class SwarmBridgeCommandResult:
     session_id: str | None = None
     session_summary_path: str | None = None
     session_summary: dict[str, Any] | None = None
+    latest_round_summary_path: str | None = None
+    latest_round_summary: dict[str, Any] | None = None
     round_history_path: str | None = None
     round_history: dict[str, Any] | None = None
     artifacts_path: str | None = None
@@ -153,6 +155,8 @@ def swarm_bridge_read_autoloop_session(
             "session_id": None,
             "session_summary_path": None,
             "session_summary": None,
+            "latest_round_summary_path": None,
+            "latest_round_summary": None,
             "round_history_path": None,
             "round_history": _load_round_history(repo_root, path_key),
             "available_session_ids": [],
@@ -165,11 +169,15 @@ def swarm_bridge_read_autoloop_session(
             "session_id": None,
             "session_summary_path": None,
             "session_summary": None,
+            "latest_round_summary_path": None,
+            "latest_round_summary": None,
             "round_history_path": None,
             "round_history": _load_round_history(repo_root, path_key),
             "available_session_ids": _list_session_ids(sessions_root),
         }
     summary = _load_json_file(summary_path)
+    latest_round_summary_path = _resolve_latest_round_summary_path(summary)
+    latest_round_summary = _load_json_file(latest_round_summary_path) if latest_round_summary_path is not None else None
     round_history = _load_round_history(repo_root, path_key)
     return {
         "path_key": path_key,
@@ -177,6 +185,8 @@ def swarm_bridge_read_autoloop_session(
         "session_id": str(summary.get("sessionId") or summary_path.parent.name),
         "session_summary_path": str(summary_path),
         "session_summary": summary,
+        "latest_round_summary_path": str(latest_round_summary_path) if latest_round_summary_path is not None else None,
+        "latest_round_summary": latest_round_summary,
         "round_history_path": str(_round_history_path(repo_root, path_key)) if _round_history_path(repo_root, path_key).exists() else None,
         "round_history": round_history,
         "available_session_ids": _list_session_ids(sessions_root),
@@ -238,6 +248,8 @@ def _run_swarm_bridge_command(
     session_summary_path = None
     round_history = None
     round_history_path = None
+    latest_round_summary = None
+    latest_round_summary_path = None
     if repo_root is not None and path_key:
         session_payload = swarm_bridge_read_autoloop_session(config_manager, path_key=path_key, session_id=session_id)
         session_id = str(session_payload.get("session_id") or session_id or "").strip() or None
@@ -245,6 +257,12 @@ def _run_swarm_bridge_command(
         session_summary_path = (
             str(session_payload.get("session_summary_path") or "").strip() or None
         )
+        latest_round_summary = (
+            session_payload.get("latest_round_summary")
+            if isinstance(session_payload.get("latest_round_summary"), dict)
+            else None
+        )
+        latest_round_summary_path = str(session_payload.get("latest_round_summary_path") or "").strip() or None
         round_history = session_payload.get("round_history") if isinstance(session_payload.get("round_history"), dict) else None
         round_history_path = str(session_payload.get("round_history_path") or "").strip() or None
     return SwarmBridgeCommandResult(
@@ -261,6 +279,8 @@ def _run_swarm_bridge_command(
         session_id=session_id,
         session_summary_path=session_summary_path,
         session_summary=session_summary,
+        latest_round_summary_path=latest_round_summary_path,
+        latest_round_summary=latest_round_summary,
         round_history_path=round_history_path,
         round_history=round_history,
         artifacts_path=_extract_labeled_path(execution.stdout, "Artifacts"),
@@ -311,6 +331,20 @@ def _resolve_session_summary_path(sessions_root: Path, *, session_id: str | None
 
 def _list_session_ids(sessions_root: Path) -> list[str]:
     return [path.parent.name for path in sorted(sessions_root.glob("*/summary.json"), key=lambda item: item.stat().st_mtime, reverse=True)]
+
+
+def _resolve_latest_round_summary_path(session_summary: dict[str, Any]) -> Path | None:
+    rounds = session_summary.get("rounds")
+    if not isinstance(rounds, list) or not rounds:
+        return None
+    latest = rounds[-1]
+    if not isinstance(latest, dict):
+        return None
+    summary_path = str(latest.get("summaryPath") or "").strip()
+    if not summary_path:
+        return None
+    candidate = Path(summary_path).expanduser()
+    return candidate.resolve() if candidate.exists() else None
 
 
 def _round_history_path(repo_root: Path, path_key: str) -> Path:

@@ -1730,6 +1730,19 @@ class OperatorPairingFlowTests(SparkTestCase):
                         "bestScore": 0.81,
                         "noGainStreak": 0,
                     },
+                    latest_round_summary={
+                        "decision": "kept",
+                        "baselineScore": 0.75,
+                        "candidateScore": 0.78,
+                        "planner": {
+                            "candidateSummary": "Sharpen startup doctrine around explicit operator constraints",
+                            "hypothesis": "Sharper constraints will improve benchmark decision quality.",
+                        },
+                        "mutationTarget": {
+                            "rationale": "Keep the mutation focused on the path-owned doctrine prompt.",
+                        },
+                    },
+                    latest_round_summary_path="C:/tmp/round-summary.json",
                 ),
             ) as autoloop_mock,
         ):
@@ -1747,6 +1760,9 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(result.ok)
         self.assertIn("Swarm autoloop finished.", str(result.detail["response_text"]))
         self.assertIn("Session: session-123.", str(result.detail["response_text"]))
+        self.assertIn("Round candidate: Sharpen startup doctrine around explicit operator constraints.", str(result.detail["response_text"]))
+        self.assertIn("Hypothesis: Sharper constraints will improve benchmark decision quality.", str(result.detail["response_text"]))
+        self.assertIn("Round delta: +0.0300 (0.7500 -> 0.7800).", str(result.detail["response_text"]))
         self.assertEqual(autoloop_mock.call_args.kwargs["path_key"], "startup-operator")
         self.assertEqual(autoloop_mock.call_args.kwargs["rounds"], 2)
 
@@ -1897,6 +1913,19 @@ class OperatorPairingFlowTests(SparkTestCase):
                             }
                         ],
                     },
+                    "latest_round_summary": {
+                        "decision": "reverted",
+                        "baselineScore": 0.81,
+                        "candidateScore": 0.73,
+                        "planner": {
+                            "candidateSummary": "Tighten operator loop heuristics",
+                            "hypothesis": "Tighter loop heuristics may reduce benchmark drift.",
+                        },
+                        "mutationTarget": {
+                            "rationale": "Stay inside the current AUTORESEARCH-owned mutation target.",
+                        },
+                    },
+                    "latest_round_summary_path": "C:/tmp/session-round-summary.json",
                     "round_history": {
                         "currentScore": 0.73,
                         "bestScore": 0.81,
@@ -1920,6 +1949,9 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Swarm autoloop session:", str(result.detail["response_text"]))
         self.assertIn("Session: session-777.", str(result.detail["response_text"]))
         self.assertIn("Latest round: #3 reverted target=docs/AUTORESEARCH.md.", str(result.detail["response_text"]))
+        self.assertIn("Hypothesis: Tighter loop heuristics may reduce benchmark drift.", str(result.detail["response_text"]))
+        self.assertIn("Round delta: -0.0800 (0.8100 -> 0.7300).", str(result.detail["response_text"]))
+        self.assertIn("Interpretation: this mutation did not beat the current benchmarked baseline, so the repo stayed unchanged.", str(result.detail["response_text"]))
         self.assertIn("Autoloop is paused on the no-gain guard.", str(result.detail["response_text"]))
         self.assertIn("/swarm continue startup-operator session session-777 rounds 1 force", str(result.detail["response_text"]))
 

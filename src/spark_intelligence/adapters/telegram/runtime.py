@@ -2125,6 +2125,8 @@ def _render_swarm_bridge_autoloop_reply(result: Any) -> str:
             return paused_reply
         return _render_swarm_bridge_failure("autoloop", result)
     session_summary = getattr(result, "session_summary", None) if isinstance(getattr(result, "session_summary", None), dict) else None
+    latest_round_summary = getattr(result, "latest_round_summary", None) if isinstance(getattr(result, "latest_round_summary", None), dict) else None
+    latest_round_summary_path = str(getattr(result, "latest_round_summary_path", "") or "").strip() or None
     round_history = getattr(result, "round_history", None) if isinstance(getattr(result, "round_history", None), dict) else None
     session_id = str(getattr(result, "session_id", "") or (session_summary or {}).get("sessionId") or "unknown")
     lines = [
@@ -2151,6 +2153,7 @@ def _render_swarm_bridge_autoloop_reply(result: Any) -> str:
         score_text = f"{float(current_score):.4f}" if isinstance(current_score, (int, float)) else "unknown"
         best_text = f"{float(best_score):.4f}" if isinstance(best_score, (int, float)) else "unknown"
         lines.append(f"Scores: current={score_text}, best={best_text}, no-gain streak={no_gain_streak}.")
+    lines.extend(_render_swarm_latest_round_detail_lines(latest_round_summary, latest_round_summary_path))
     lines.append(f"Next: `/swarm session {str(getattr(result, 'path_key', '') or 'unknown')} {session_id}`")
     return "\n".join(lines)
 
@@ -2212,6 +2215,8 @@ def _render_swarm_sessions_reply(payload: dict[str, Any]) -> str:
 
 def _render_swarm_session_reply(payload: dict[str, Any]) -> str:
     session_summary = payload.get("session_summary") if isinstance(payload, dict) else None
+    latest_round_summary = payload.get("latest_round_summary") if isinstance(payload, dict) else None
+    latest_round_summary_path = str(payload.get("latest_round_summary_path") or "").strip() or None
     round_history = payload.get("round_history") if isinstance(payload, dict) else None
     path_key = str(payload.get("path_key") or "path")
     if not isinstance(session_summary, dict):
@@ -2252,13 +2257,60 @@ def _render_swarm_session_reply(payload: dict[str, Any]) -> str:
         if latest_round.get("plannerKind"):
             lines.append(f"Latest planner kind: {str(latest_round.get('plannerKind'))}.")
         if latest_round.get("candidateSummary"):
-            lines.append(f"Latest candidate: {str(latest_round.get('candidateSummary'))}.")
+            lines.append(f"Latest candidate: {_with_terminal_period(str(latest_round.get('candidateSummary')))}")
+    lines.extend(_render_swarm_latest_round_detail_lines(latest_round_summary, latest_round_summary_path))
     next_command = f"/swarm continue {path_key} session {str(session_summary.get('sessionId') or 'unknown')} rounds 1"
     if str(session_summary.get("stopReason") or "") == "paused_no_gain_streak":
         lines.append("Autoloop is paused on the no-gain guard.")
         next_command = f"{next_command} force"
     lines.append(f"Next: `{next_command}`")
     return "\n".join(lines)
+
+
+def _render_swarm_latest_round_detail_lines(
+    latest_round_summary: dict[str, Any] | None,
+    latest_round_summary_path: str | None,
+) -> list[str]:
+    if not isinstance(latest_round_summary, dict):
+        return []
+    planner = latest_round_summary.get("planner") if isinstance(latest_round_summary.get("planner"), dict) else {}
+    mutation_target = (
+        latest_round_summary.get("mutationTarget")
+        if isinstance(latest_round_summary.get("mutationTarget"), dict)
+        else {}
+    )
+    candidate_summary = str(planner.get("candidateSummary") or "").strip()
+    hypothesis = str(planner.get("hypothesis") or "").strip()
+    target_rationale = str(mutation_target.get("rationale") or "").strip()
+    baseline_score = latest_round_summary.get("baselineScore")
+    candidate_score = latest_round_summary.get("candidateScore")
+    decision = str(latest_round_summary.get("decision") or "").strip() or "unknown"
+    lines: list[str] = []
+    if candidate_summary:
+        lines.append(f"Round candidate: {_with_terminal_period(candidate_summary)}")
+    if hypothesis:
+        lines.append(f"Hypothesis: {_with_terminal_period(hypothesis)}")
+    if target_rationale:
+        lines.append(f"Target rationale: {_with_terminal_period(target_rationale)}")
+    if isinstance(baseline_score, (int, float)) and isinstance(candidate_score, (int, float)):
+        delta = float(candidate_score) - float(baseline_score)
+        lines.append(
+            f"Round delta: {delta:+.4f} ({float(baseline_score):.4f} -> {float(candidate_score):.4f})."
+        )
+        if decision == "reverted":
+            lines.append("Interpretation: this mutation did not beat the current benchmarked baseline, so the repo stayed unchanged.")
+        elif decision == "kept":
+            lines.append("Interpretation: this mutation beat the baseline and was kept in the repo.")
+    if latest_round_summary_path:
+        lines.append(f"Round artifact: {latest_round_summary_path}.")
+    return lines
+
+
+def _with_terminal_period(text: str) -> str:
+    value = str(text or "").strip()
+    if not value:
+        return value
+    return value if value.endswith((".", "!", "?")) else f"{value}."
 
 
 def _render_swarm_bridge_rerun_reply(result: Any) -> str:
