@@ -60,6 +60,7 @@ This repo currently includes:
 - [docs/IMPLEMENTATION_PLAN_V1.md](./docs/IMPLEMENTATION_PLAN_V1.md)
 - [docs/IMPLEMENTATION_STATUS_2026-03-26.md](./docs/IMPLEMENTATION_STATUS_2026-03-26.md)
 - [docs/STATUS_HANDOFF_2026-03-29.md](./docs/STATUS_HANDOFF_2026-03-29.md)
+- [docs/STATUS_HANDOFF_2026-04-08.md](./docs/STATUS_HANDOFF_2026-04-08.md)
 
 Key repo skills:
 
