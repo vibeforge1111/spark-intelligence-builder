@@ -12,6 +12,7 @@ from spark_intelligence.researcher_bridge.advisory import (
     _clean_messaging_reply,
     _normalize_browser_search_query,
     _render_direct_provider_chat_fallback,
+    _select_search_result_candidate_from_text_result,
     build_researcher_reply,
 )
 
@@ -25,6 +26,28 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         )
 
         self.assertEqual(query, "Example Domain")
+
+    def test_normalize_browser_search_query_strips_imperative_prefix(self) -> None:
+        query = _normalize_browser_search_query(
+            "I want you to search the web for Example Domain"
+        )
+
+        self.assertEqual(query, "Example Domain")
+
+    def test_select_search_result_candidate_from_text_result_prefers_external_domain(self) -> None:
+        candidate = _select_search_result_candidate_from_text_result(
+            {
+                "result": {
+                    "visible_text": {
+                        "summary": "Example Domain www.example.com Example Domain",
+                        "excerpt": "Example Domain www.example.com Example Domain is reserved for documentation.",
+                    }
+                }
+            },
+            search_url="https://duckduckgo.com/?q=Example%20Domain&ia=web",
+        )
+
+        self.assertEqual(candidate, {"href": "https://www.example.com", "text_summary": ""})
 
     def test_clean_messaging_reply_rewrites_structured_chip_memo_for_telegram(self) -> None:
         cleaned = _clean_messaging_reply(

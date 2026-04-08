@@ -531,6 +531,12 @@ def _should_collect_browser_search_context(user_message: str) -> bool:
 
 def _normalize_browser_search_query(user_message: str) -> str:
     query = str(user_message or "").strip()
+    query = re.sub(
+        r"^\s*(?:i\s+want\s+you\s+to|can\s+you|could\s+you|would\s+you|please)\s+",
+        "",
+        query,
+        flags=re.IGNORECASE,
+    )
     patterns = (
         r"^\s*(please\s+)?search (the )?web (for|and tell me)?\s+",
         r"^\s*(please\s+)?websearch\s+",
@@ -637,6 +643,24 @@ def _resolve_external_search_result_href(href: str, *, search_host: str) -> str 
     return None
 
 
+def _normalize_search_result_candidate_href(raw_value: str, *, search_host: str) -> str | None:
+    candidate = str(raw_value or "").strip().rstrip(".,);:]}>")
+    if not candidate:
+        return None
+    if not re.match(r"^[a-z]+://", candidate, flags=re.IGNORECASE):
+        if re.match(r"^(?:www\.)?[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:/[^\s<>\"']*)?$", candidate):
+            candidate = f"https://{candidate}"
+        else:
+            return None
+    resolved = _resolve_external_search_result_href(candidate, search_host=search_host)
+    if not resolved:
+        return None
+    host = str(urlparse(resolved).hostname or "").lower()
+    if not host or host == search_host:
+        return None
+    return resolved
+
+
 def _summarize_dom_outline_nodes(nodes: Any, *, max_items: int = 5) -> list[str]:
     if not isinstance(nodes, list):
         return []
@@ -675,6 +699,34 @@ def _select_search_result_candidate(dom_extract_output: dict[str, Any], *, searc
             "href": href,
             "text_summary": str(node.get("text_summary") or "").strip(),
         }
+    return None
+
+
+def _select_search_result_candidate_from_text_result(
+    text_extract_output: dict[str, Any],
+    *,
+    search_url: str,
+) -> dict[str, str] | None:
+    result = text_extract_output.get("result") if isinstance(text_extract_output.get("result"), dict) else {}
+    visible_text = result.get("visible_text") if isinstance(result.get("visible_text"), dict) else {}
+    combined = "\n".join(
+        part for part in (
+            str(visible_text.get("summary") or "").strip(),
+            str(visible_text.get("excerpt") or "").strip(),
+        )
+        if part
+    )
+    if not combined:
+        return None
+    search_host = str(urlparse(search_url).hostname or "").lower()
+    pattern = r"https?://[^\s<>\"']+|(?:www\.)?[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:/[^\s<>\"']*)?"
+    seen: set[str] = set()
+    for match in re.finditer(pattern, combined):
+        href = _normalize_search_result_candidate_href(match.group(0), search_host=search_host)
+        if not href or href in seen:
+            continue
+        seen.add(href)
+        return {"href": href, "text_summary": ""}
     return None
 
 
@@ -819,6 +871,36 @@ def _build_browser_search_context(
     dom_result = dom_output.get("result") if isinstance(dom_output.get("result"), dict) else {}
     search_nodes = _summarize_dom_outline_nodes((dom_result.get("dom_outline") or {}).get("nodes"))
     candidate = _select_search_result_candidate(dom_output, search_url=search_url)
+    search_text_output = None
+    if not candidate:
+        search_text_output, _ = _execute_browser_hook(
+            config_manager=config_manager,
+            state_db=state_db,
+            hook="browser.page.text_extract",
+            payload=build_browser_page_text_extract_payload(
+                config_manager=config_manager,
+                origin=search_origin,
+                tab_id=search_tab_id,
+                agent_id=agent_id,
+                request_id=f"{request_id}:browser-search-text",
+                max_text_characters=900,
+                max_controls=6,
+            ),
+            run_id=run_id,
+            request_id=request_id,
+            channel_kind=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+        )
+        blocked_reply, blocked_code = _browser_hook_blocked_reply(search_text_output or {})
+        if blocked_reply:
+            return {"context": "", "blocked_reply": blocked_reply, "blocked_code": blocked_code}
+        if _browser_hook_succeeded(search_text_output):
+            candidate = _select_search_result_candidate_from_text_result(
+                search_text_output,
+                search_url=search_url,
+            )
 
     source_url = candidate["href"] if candidate else search_url
     source_origin = search_origin
@@ -879,26 +961,28 @@ def _build_browser_search_context(
             if blocked_reply:
                 return {"context": "", "blocked_reply": blocked_reply, "blocked_code": blocked_code}
 
-    text_output, _ = _execute_browser_hook(
-        config_manager=config_manager,
-        state_db=state_db,
-        hook="browser.page.text_extract",
-        payload=build_browser_page_text_extract_payload(
+    text_output = search_text_output if source_url == search_url and search_text_output else None
+    if text_output is None:
+        text_output, _ = _execute_browser_hook(
             config_manager=config_manager,
-            origin=source_origin,
-            tab_id=source_tab_id or None,
+            state_db=state_db,
+            hook="browser.page.text_extract",
+            payload=build_browser_page_text_extract_payload(
+                config_manager=config_manager,
+                origin=source_origin,
+                tab_id=source_tab_id or None,
+                agent_id=agent_id,
+                request_id=f"{request_id}:browser-source-text",
+                max_text_characters=900,
+                max_controls=6,
+            ),
+            run_id=run_id,
+            request_id=request_id,
+            channel_kind=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
             agent_id=agent_id,
-            request_id=f"{request_id}:browser-source-text",
-            max_text_characters=900,
-            max_controls=6,
-        ),
-        run_id=run_id,
-        request_id=request_id,
-        channel_kind=channel_kind,
-        session_id=session_id,
-        human_id=human_id,
-        agent_id=agent_id,
-    )
+        )
     if not text_output:
         return empty
     blocked_reply, blocked_code = _browser_hook_blocked_reply(text_output)
@@ -908,6 +992,11 @@ def _build_browser_search_context(
         return empty
     text_result = text_output.get("result") if isinstance(text_output.get("result"), dict) else {}
     visible_text = text_result.get("visible_text") if isinstance(text_result.get("visible_text"), dict) else {}
+    search_results_title = (
+        dom_result.get("title")
+        or text_result.get("title")
+        or "unknown"
+    )
 
     lines = [
         "[Browser search evidence]",
@@ -917,7 +1006,7 @@ def _build_browser_search_context(
         f"browser_chip_key={chip_key or 'unknown'}",
         f"search_query={search_query}",
         f"search_url={search_url}",
-        f"search_results_title={dom_result.get('title') or 'unknown'}",
+        f"search_results_title={search_results_title}",
     ]
     if search_nodes:
         lines.append("search_result_candidates=" + json.dumps(search_nodes, ensure_ascii=True))
