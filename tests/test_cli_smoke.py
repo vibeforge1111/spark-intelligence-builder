@@ -79,6 +79,183 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["result"]["origin"], "https://docs.example.com/guide")
         self.assertEqual(payload["artifacts"][0]["type"], "page_snapshot")
 
+    def test_browser_page_snapshot_command_falls_back_to_navigate_wait_for_live_page_context(self) -> None:
+        snapshot_failure = SimpleNamespace(
+            ok=True,
+            chip_key="spark-browser",
+            hook="browser.page.snapshot",
+            repo_root=str(self.home),
+            command=["python", "-m", "fake_startup_chip.chip_hooks", "browser.page.snapshot"],
+            exit_code=0,
+            stdout="",
+            stderr="",
+            payload={},
+            output={
+                "status": "failed",
+                "approval_state": "not_required",
+                "result": None,
+                "artifacts": [],
+                "provenance": {
+                    "browser_family": "brave",
+                    "profile_key": "spark-default",
+                    "profile_mode": "dedicated",
+                },
+                "error": {
+                    "code": "EXTENSION_RUNTIME_FAILED",
+                    "message": "Cannot access contents of the page. Extension manifest must request permission to access the respective host.",
+                },
+            },
+        )
+        snapshot_failure.to_payload = lambda: {
+            "chip_key": snapshot_failure.chip_key,
+            "hook": snapshot_failure.hook,
+            "repo_root": snapshot_failure.repo_root,
+            "command": snapshot_failure.command,
+            "exit_code": snapshot_failure.exit_code,
+            "stdout": snapshot_failure.stdout,
+            "stderr": snapshot_failure.stderr,
+            "payload": snapshot_failure.payload,
+            "output": snapshot_failure.output,
+            "ok": snapshot_failure.ok,
+        }
+        navigate_success = SimpleNamespace(
+            ok=True,
+            chip_key="spark-browser",
+            hook="browser.navigate",
+            repo_root=str(self.home),
+            command=["python", "-m", "fake_startup_chip.chip_hooks", "browser.navigate"],
+            exit_code=0,
+            stdout="",
+            stderr="",
+            payload={},
+            output={
+                "status": "succeeded",
+                "approval_state": "not_required",
+                "result": {
+                    "origin": "https://example.com/",
+                    "tab": {"id": "tab-live-123", "status": "complete"},
+                },
+                "artifacts": [],
+                "provenance": {"tab_id": "tab-live-123", "origin": "https://example.com/"},
+                "error": None,
+            },
+        )
+        navigate_success.to_payload = lambda: {
+            "chip_key": navigate_success.chip_key,
+            "hook": navigate_success.hook,
+            "repo_root": navigate_success.repo_root,
+            "command": navigate_success.command,
+            "exit_code": navigate_success.exit_code,
+            "stdout": navigate_success.stdout,
+            "stderr": navigate_success.stderr,
+            "payload": navigate_success.payload,
+            "output": navigate_success.output,
+            "ok": navigate_success.ok,
+        }
+        wait_success = SimpleNamespace(
+            ok=True,
+            chip_key="spark-browser",
+            hook="browser.tab.wait",
+            repo_root=str(self.home),
+            command=["python", "-m", "fake_startup_chip.chip_hooks", "browser.tab.wait"],
+            exit_code=0,
+            stdout="",
+            stderr="",
+            payload={},
+            output={
+                "status": "succeeded",
+                "approval_state": "not_required",
+                "result": {
+                    "origin": "https://example.com/",
+                    "tab": {"id": "tab-live-123", "status": "complete"},
+                },
+                "artifacts": [],
+                "provenance": {"tab_id": "tab-live-123", "origin": "https://example.com/"},
+                "error": None,
+            },
+        )
+        wait_success.to_payload = lambda: {
+            "chip_key": wait_success.chip_key,
+            "hook": wait_success.hook,
+            "repo_root": wait_success.repo_root,
+            "command": wait_success.command,
+            "exit_code": wait_success.exit_code,
+            "stdout": wait_success.stdout,
+            "stderr": wait_success.stderr,
+            "payload": wait_success.payload,
+            "output": wait_success.output,
+            "ok": wait_success.ok,
+        }
+        snapshot_success = SimpleNamespace(
+            ok=True,
+            chip_key="spark-browser",
+            hook="browser.page.snapshot",
+            repo_root=str(self.home),
+            command=["python", "-m", "fake_startup_chip.chip_hooks", "browser.page.snapshot"],
+            exit_code=0,
+            stdout="",
+            stderr="",
+            payload={},
+            output={
+                "status": "succeeded",
+                "approval_state": "not_required",
+                "result": {
+                    "title": "Live Example",
+                    "origin": "https://example.com/",
+                    "visible_text": {"summary": "Example Domain", "redacted": False},
+                    "forms_summary": {"form_count": 0},
+                    "important_controls": [],
+                    "sensitive_surface_hints": {"likely_sensitive_domain": False},
+                },
+                "artifacts": [{"type": "page_snapshot", "path": "artifacts/browser/page_snapshot.json"}],
+                "provenance": {"tab_id": "tab-live-123", "origin": "https://example.com/"},
+                "error": None,
+            },
+        )
+        snapshot_success.to_payload = lambda: {
+            "chip_key": snapshot_success.chip_key,
+            "hook": snapshot_success.hook,
+            "repo_root": snapshot_success.repo_root,
+            "command": snapshot_success.command,
+            "exit_code": snapshot_success.exit_code,
+            "stdout": snapshot_success.stdout,
+            "stderr": snapshot_success.stderr,
+            "payload": snapshot_success.payload,
+            "output": snapshot_success.output,
+            "ok": snapshot_success.ok,
+        }
+
+        with patch(
+            "spark_intelligence.cli.run_first_active_chip_hook",
+            side_effect=[snapshot_failure, navigate_success, wait_success, snapshot_success],
+        ) as run_hook:
+            exit_code, stdout, stderr = self.run_cli(
+                "browser",
+                "page-snapshot",
+                "--home",
+                str(self.home),
+                "--origin",
+                "https://example.com/",
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["hook"], "browser.page.snapshot")
+        self.assertEqual(payload["result"]["origin"], "https://example.com/")
+        self.assertEqual(payload["provenance"]["tab_id"], "tab-live-123")
+
+        self.assertEqual(run_hook.call_count, 4)
+        initial_snapshot_payload = run_hook.call_args_list[0].kwargs["payload"]
+        navigate_payload = run_hook.call_args_list[1].kwargs["payload"]
+        wait_payload = run_hook.call_args_list[2].kwargs["payload"]
+        final_snapshot_payload = run_hook.call_args_list[3].kwargs["payload"]
+        self.assertIsNone(initial_snapshot_payload["target"]["tab_id"])
+        self.assertEqual(navigate_payload["arguments"]["url"], "https://example.com/")
+        self.assertEqual(wait_payload["target"]["tab_id"], "tab-live-123")
+        self.assertEqual(final_snapshot_payload["target"]["tab_id"], "tab-live-123")
+
     def test_browser_status_command_surfaces_governed_hook_failures(self) -> None:
         chip_root = create_fake_hook_chip(self.home, chip_key="spark-browser")
         self.config_manager.set_path("spark.chips.roots", [str(chip_root)])

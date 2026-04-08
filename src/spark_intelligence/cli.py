@@ -31,10 +31,14 @@ from spark_intelligence.auth.providers import list_api_key_provider_ids, list_oa
 from spark_intelligence.auth.runtime import build_auth_status_report
 from spark_intelligence.auth.service import complete_oauth_login, connect_provider, logout_provider, refresh_provider, start_oauth_login
 from spark_intelligence.browser import (
+    BROWSER_NAVIGATE_HOOK,
     BROWSER_PAGE_SNAPSHOT_HOOK,
     BROWSER_STATUS_HOOK,
+    BROWSER_TAB_WAIT_HOOK,
+    build_browser_navigate_payload,
     build_browser_page_snapshot_payload,
     build_browser_status_payload,
+    build_browser_tab_wait_payload,
     render_browser_page_snapshot,
     render_browser_status,
 )
@@ -3290,6 +3294,30 @@ def _run_browser_hook(
     action: str,
     target_ref: str,
 ) -> int:
+    exit_code, display_payload, error_text = _execute_browser_hook(
+        args,
+        hook_name=hook_name,
+        payload=payload,
+        action=action,
+        target_ref=target_ref,
+    )
+    return _emit_browser_hook_output(
+        args,
+        exit_code=exit_code,
+        display_payload=display_payload,
+        error_text=error_text,
+        render_result=render_result,
+    )
+
+
+def _execute_browser_hook(
+    args: argparse.Namespace,
+    *,
+    hook_name: str,
+    payload: dict[str, object],
+    action: str,
+    target_ref: str,
+) -> tuple[int, dict[str, object] | None, str | None]:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
@@ -3325,11 +3353,11 @@ def _run_browser_hook(
                     summary="Browser CLI found no active chip exposing the requested browser hook.",
                     facts={"hook": hook_name},
                 )
-                print(
+                return (
+                    1,
+                    None,
                     f"No active chip exposes hook '{hook_name}'. Activate the browser runtime first or pass --chip-key.",
-                    file=sys.stderr,
                 )
-                return 1
     except ValueError as exc:
         close_run(
             state_db,
@@ -3339,8 +3367,7 @@ def _run_browser_hook(
             summary="Browser CLI failed validation before hook execution.",
             facts={"hook": hook_name, "error": str(exc)},
         )
-        print(str(exc), file=sys.stderr)
-        return 2
+        return 2, None, str(exc)
 
     result_path = Path(args.write_result) if getattr(args, "write_result", None) else (
         config_manager.paths.home / "artifacts" / "browser-hooks" / f"{request_id}.result.json"
@@ -3429,12 +3456,12 @@ def _run_browser_hook(
                 "quarantine_id": screened_output["quarantine_id"],
             },
         )
-        print(
+        return (
+            1,
+            None,
             "Browser hook output was blocked because it contained secret-like material. "
             "Review quarantine records instead of raw output.",
-            file=sys.stderr,
         )
-        return 1
 
     log_operator_event(
         state_db=state_db,
@@ -3466,11 +3493,7 @@ def _run_browser_hook(
                 "error_code": hook_error.get("code") if hook_error else None,
             },
         )
-        if args.json:
-            print(display_text)
-        else:
-            print(display_text, file=sys.stderr)
-        return 1
+        return 1, display_payload, None
 
     close_run(
         state_db,
@@ -3485,8 +3508,92 @@ def _run_browser_hook(
             "result_path": str(result_path),
         },
     )
-    print(display_text)
-    return 0
+    return 0, display_payload, None
+
+
+def _emit_browser_hook_output(
+    args: argparse.Namespace,
+    *,
+    exit_code: int,
+    display_payload: dict[str, object] | None,
+    error_text: str | None,
+    render_result,
+) -> int:
+    if error_text:
+        print(error_text, file=sys.stderr)
+        return exit_code
+    if display_payload is None:
+        return exit_code
+    display_text = _render_browser_hook_display(args, display_payload, render_result)
+    if exit_code != 0 and not args.json:
+        print(display_text, file=sys.stderr)
+    else:
+        print(display_text)
+    return exit_code
+
+
+def _render_browser_hook_display(
+    args: argparse.Namespace,
+    display_payload: dict[str, object],
+    render_result,
+) -> str:
+    if args.json:
+        return json.dumps(display_payload, indent=2, ensure_ascii=True)
+    if str(display_payload.get("status") or "").strip().lower() == "failed":
+        return _render_browser_hook_failure(display_payload)
+    result = display_payload.get("result")
+    return render_result(result if isinstance(result, dict) else {})
+
+
+def _browser_snapshot_failure_requires_page_context(display_payload: dict[str, object] | None) -> bool:
+    if not isinstance(display_payload, dict):
+        return False
+    if str(display_payload.get("status") or "").strip().lower() != "failed":
+        return False
+    error = display_payload.get("error")
+    if not isinstance(error, dict):
+        return False
+    if str(error.get("code") or "").strip() != "EXTENSION_RUNTIME_FAILED":
+        return False
+    message = str(error.get("message") or "").strip().lower()
+    return "cannot access contents of the page" in message
+
+
+def _browser_result_tab_id(display_payload: dict[str, object] | None) -> str | None:
+    if not isinstance(display_payload, dict):
+        return None
+    result = display_payload.get("result")
+    if isinstance(result, dict):
+        tab = result.get("tab")
+        if isinstance(tab, dict):
+            tab_id = tab.get("id") or tab.get("tab_id")
+            if tab_id:
+                return str(tab_id)
+        tab_id = result.get("tab_id")
+        if tab_id:
+            return str(tab_id)
+    provenance = display_payload.get("provenance")
+    if isinstance(provenance, dict) and provenance.get("tab_id"):
+        return str(provenance.get("tab_id"))
+    execution = display_payload.get("execution")
+    if isinstance(execution, dict):
+        output = execution.get("output")
+        if isinstance(output, dict):
+            output_provenance = output.get("provenance")
+            if isinstance(output_provenance, dict) and output_provenance.get("tab_id"):
+                return str(output_provenance.get("tab_id"))
+    return None
+
+
+def _browser_result_origin(display_payload: dict[str, object] | None, *, default: str) -> str:
+    if isinstance(display_payload, dict):
+        result = display_payload.get("result")
+        if isinstance(result, dict) and result.get("origin"):
+            return str(result.get("origin"))
+        provenance = display_payload.get("provenance")
+        if isinstance(provenance, dict) and provenance.get("origin"):
+            return str(provenance.get("origin"))
+    return default
 
 
 def _normalize_browser_hook_status(hook_output: dict[str, object]) -> str | None:
@@ -3540,13 +3647,103 @@ def handle_browser_page_snapshot(args: argparse.Namespace) -> int:
         sensitive_domain=args.sensitive_domain,
         operator_required=args.operator_required,
     )
-    return _run_browser_hook(
+    exit_code, display_payload, error_text = _execute_browser_hook(
         args,
         hook_name=BROWSER_PAGE_SNAPSHOT_HOOK,
         payload=payload,
-        render_result=render_browser_page_snapshot,
         action="browser_page_snapshot",
         target_ref=args.origin,
+    )
+    if exit_code == 0 or not _browser_snapshot_failure_requires_page_context(display_payload):
+        return _emit_browser_hook_output(
+            args,
+            exit_code=exit_code,
+            display_payload=display_payload,
+            error_text=error_text,
+            render_result=render_browser_page_snapshot,
+        )
+
+    navigate_payload = build_browser_navigate_payload(
+        config_manager=config_manager,
+        url=args.origin,
+        browser_family=args.browser_family,
+        profile_key=args.profile_key,
+        profile_mode=args.profile_mode,
+        agent_id=args.agent_id,
+    )
+    navigate_exit_code, navigate_display_payload, navigate_error_text = _execute_browser_hook(
+        args,
+        hook_name=BROWSER_NAVIGATE_HOOK,
+        payload=navigate_payload,
+        action="browser_page_snapshot_navigate",
+        target_ref=args.origin,
+    )
+    if navigate_exit_code != 0:
+        return _emit_browser_hook_output(
+            args,
+            exit_code=navigate_exit_code,
+            display_payload=navigate_display_payload,
+            error_text=navigate_error_text,
+            render_result=lambda result: "Browser navigation completed.",
+        )
+
+    tab_id = _browser_result_tab_id(navigate_display_payload)
+    if not tab_id:
+        return _emit_browser_hook_output(
+            args,
+            exit_code=1,
+            display_payload=None,
+            error_text="Browser navigation completed but did not return a tab id for the follow-up snapshot.",
+            render_result=render_browser_page_snapshot,
+        )
+
+    wait_origin = _browser_result_origin(navigate_display_payload, default=args.origin)
+    wait_payload = build_browser_tab_wait_payload(
+        config_manager=config_manager,
+        origin=wait_origin,
+        tab_id=tab_id,
+        browser_family=args.browser_family,
+        profile_key=args.profile_key,
+        profile_mode=args.profile_mode,
+        agent_id=args.agent_id,
+    )
+    wait_exit_code, wait_display_payload, wait_error_text = _execute_browser_hook(
+        args,
+        hook_name=BROWSER_TAB_WAIT_HOOK,
+        payload=wait_payload,
+        action="browser_page_snapshot_wait",
+        target_ref=tab_id,
+    )
+    if wait_exit_code != 0:
+        return _emit_browser_hook_output(
+            args,
+            exit_code=wait_exit_code,
+            display_payload=wait_display_payload,
+            error_text=wait_error_text,
+            render_result=lambda result: "Browser tab wait completed.",
+        )
+
+    snapshot_payload = build_browser_page_snapshot_payload(
+        config_manager=config_manager,
+        origin=wait_origin,
+        tab_id=tab_id,
+        browser_family=args.browser_family,
+        profile_key=args.profile_key,
+        profile_mode=args.profile_mode,
+        agent_id=args.agent_id,
+        max_text_characters=args.max_text_characters,
+        max_controls=args.max_controls,
+        allowed_domains=list(args.allowed_domain or []),
+        sensitive_domain=args.sensitive_domain,
+        operator_required=args.operator_required,
+    )
+    return _run_browser_hook(
+        args,
+        hook_name=BROWSER_PAGE_SNAPSHOT_HOOK,
+        payload=snapshot_payload,
+        render_result=render_browser_page_snapshot,
+        action="browser_page_snapshot",
+        target_ref=wait_origin,
     )
 
 

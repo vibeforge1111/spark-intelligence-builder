@@ -56,6 +56,7 @@ def build_browser_page_snapshot_payload(
     *,
     config_manager: ConfigManager,
     origin: str,
+    tab_id: str | None = None,
     browser_family: str | None = None,
     profile_key: str | None = None,
     profile_mode: str | None = None,
@@ -76,12 +77,15 @@ def build_browser_page_snapshot_payload(
         "risk_class": "read_only",
         "approval_mode": "not_required",
         "approval_id": None,
-        "target": _build_target(
-            browser_family=browser_family,
-            profile_key=profile_key,
-            profile_mode=profile_mode,
-            origin=origin,
-        ),
+        "target": {
+            **_build_target(
+                browser_family=browser_family,
+                profile_key=profile_key,
+                profile_mode=profile_mode,
+                origin=origin,
+            ),
+            "tab_id": tab_id,
+        },
         "arguments": {
             "max_text_characters": max_text_characters,
             "max_controls": max_controls,
