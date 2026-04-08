@@ -877,6 +877,53 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertNotIn("insight-2", str(result.detail["response_text"]))
         self.assertIn("Next: `/swarm absorb insight-1 because <reason>`", str(result.detail["response_text"]))
 
+    def test_scoped_swarm_insights_command_filters_by_specialization(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with (
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_read_specializations",
+                return_value=[
+                    {"id": "specialization:startup-operator", "key": "startup-operator", "label": "Startup Operator"},
+                ],
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_read_insights",
+                return_value=[
+                    {
+                        "id": "insight-1",
+                        "specializationId": "specialization:startup-operator",
+                        "summary": "Startup operator insight",
+                        "status": "captured",
+                        "updatedAt": "2026-04-08T10:00:00Z",
+                    },
+                    {
+                        "id": "insight-2",
+                        "specializationId": "specialization:other-lane",
+                        "summary": "Other lane insight",
+                        "status": "captured",
+                        "updatedAt": "2026-04-08T09:00:00Z",
+                    },
+                ],
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=21621,
+                    user_id="111",
+                    username="alice",
+                    text="show me Startup Operator insights in swarm",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm insights for Startup Operator:", str(result.detail["response_text"]))
+        self.assertIn("insight-1", str(result.detail["response_text"]))
+        self.assertNotIn("insight-2", str(result.detail["response_text"]))
+        self.assertIn("absorb the latest Startup Operator insight", str(result.detail["response_text"]))
+
     def test_natural_language_swarm_masteries_command_returns_mastery_ids(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
@@ -907,6 +954,121 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("mastery-1", str(result.detail["response_text"]))
         self.assertIn("shared_mastery", str(result.detail["response_text"]))
         self.assertIn("Next: `/swarm review mastery-1 approve because <reason>`", str(result.detail["response_text"]))
+
+    def test_scoped_swarm_masteries_command_filters_by_specialization(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with (
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_read_specializations",
+                return_value=[
+                    {"id": "specialization:startup-operator", "key": "startup-operator", "label": "Startup Operator"},
+                ],
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_read_masteries",
+                return_value=[
+                    {
+                        "id": "mastery-1",
+                        "specializationScope": "startup-operator",
+                        "summary": "Startup mastery",
+                        "status": "shared_mastery",
+                        "updatedAt": "2026-04-08T10:00:00Z",
+                    },
+                    {
+                        "id": "mastery-2",
+                        "specializationScope": "other-lane",
+                        "summary": "Other mastery",
+                        "status": "provisional_mastery",
+                        "updatedAt": "2026-04-08T09:00:00Z",
+                    },
+                ],
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=21631,
+                    user_id="111",
+                    username="alice",
+                    text="/swarm masteries Startup Operator",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm masteries for Startup Operator:", str(result.detail["response_text"]))
+        self.assertIn("mastery-1", str(result.detail["response_text"]))
+        self.assertNotIn("mastery-2", str(result.detail["response_text"]))
+        self.assertIn("approve the latest Startup Operator mastery", str(result.detail["response_text"]))
+
+    def test_scoped_swarm_upgrades_command_filters_by_specialization(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with (
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_read_specializations",
+                return_value=[
+                    {"id": "specialization:startup-operator", "key": "startup-operator", "label": "Startup Operator"},
+                ],
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_read_masteries",
+                return_value=[
+                    {
+                        "id": "mastery-1",
+                        "specializationScope": "startup-operator",
+                        "summary": "Startup mastery",
+                        "status": "shared_mastery",
+                        "updatedAt": "2026-04-08T10:00:00Z",
+                    },
+                    {
+                        "id": "mastery-2",
+                        "specializationScope": "other-lane",
+                        "summary": "Other mastery",
+                        "status": "shared_mastery",
+                        "updatedAt": "2026-04-08T09:00:00Z",
+                    },
+                ],
+            ),
+            patch(
+                "spark_intelligence.adapters.telegram.runtime.swarm_read_upgrades",
+                return_value=[
+                    {
+                        "id": "upgrade-1",
+                        "derivedFromMasteryId": "mastery-1",
+                        "changeSummary": "Startup upgrade",
+                        "status": "queued",
+                        "riskLevel": "medium",
+                        "updatedAt": "2026-04-08T10:00:00Z",
+                    },
+                    {
+                        "id": "upgrade-2",
+                        "derivedFromMasteryId": "mastery-2",
+                        "changeSummary": "Other upgrade",
+                        "status": "queued",
+                        "riskLevel": "high",
+                        "updatedAt": "2026-04-08T09:00:00Z",
+                    },
+                ],
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=21641,
+                    user_id="111",
+                    username="alice",
+                    text="show me pending Startup Operator upgrades in swarm",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm upgrades for Startup Operator:", str(result.detail["response_text"]))
+        self.assertIn("Startup upgrade", str(result.detail["response_text"]))
+        self.assertNotIn("Other upgrade", str(result.detail["response_text"]))
+        self.assertIn("deliver the latest Startup Operator upgrade", str(result.detail["response_text"]))
 
     def test_swarm_absorb_command_runs_hosted_action(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])

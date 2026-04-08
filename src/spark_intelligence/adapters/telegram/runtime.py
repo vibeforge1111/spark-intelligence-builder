@@ -1280,17 +1280,101 @@ def _handle_runtime_command(
             loader=lambda: swarm_read_insights(config_manager, state_db),
             renderer=_render_swarm_insights_reply,
         )
+    scoped_insights_args = _parse_swarm_scoped_read_command(normalized, noun="insights")
+    if scoped_insights_args:
+        return _run_swarm_read_command(
+            command="/swarm insights",
+            loader=lambda: _load_swarm_scoped_insights(
+                config_manager=config_manager,
+                state_db=state_db,
+                label=scoped_insights_args["label"],
+            ),
+            renderer=_render_swarm_scoped_insights_reply,
+        )
+    scoped_insights_resolution = _resolve_natural_swarm_scoped_read_target(
+        inbound_text=normalized,
+        noun="insights",
+        config_manager=config_manager,
+    )
+    if scoped_insights_resolution is not None:
+        if scoped_insights_resolution.get("error"):
+            return {"command": "/swarm insights", "reply_text": str(scoped_insights_resolution["error"])}
+        return _run_swarm_read_command(
+            command="/swarm insights",
+            loader=lambda: _load_swarm_scoped_insights(
+                config_manager=config_manager,
+                state_db=state_db,
+                label=str(scoped_insights_resolution["label"]),
+            ),
+            renderer=_render_swarm_scoped_insights_reply,
+        )
     if lowered == "/swarm masteries" or natural_swarm_command == ("/swarm masteries", None):
         return _run_swarm_read_command(
             command="/swarm masteries",
             loader=lambda: swarm_read_masteries(config_manager, state_db),
             renderer=_render_swarm_masteries_reply,
         )
+    scoped_masteries_args = _parse_swarm_scoped_read_command(normalized, noun="masteries")
+    if scoped_masteries_args:
+        return _run_swarm_read_command(
+            command="/swarm masteries",
+            loader=lambda: _load_swarm_scoped_masteries(
+                config_manager=config_manager,
+                state_db=state_db,
+                label=scoped_masteries_args["label"],
+            ),
+            renderer=_render_swarm_scoped_masteries_reply,
+        )
+    scoped_masteries_resolution = _resolve_natural_swarm_scoped_read_target(
+        inbound_text=normalized,
+        noun="masteries",
+        config_manager=config_manager,
+    )
+    if scoped_masteries_resolution is not None:
+        if scoped_masteries_resolution.get("error"):
+            return {"command": "/swarm masteries", "reply_text": str(scoped_masteries_resolution["error"])}
+        return _run_swarm_read_command(
+            command="/swarm masteries",
+            loader=lambda: _load_swarm_scoped_masteries(
+                config_manager=config_manager,
+                state_db=state_db,
+                label=str(scoped_masteries_resolution["label"]),
+            ),
+            renderer=_render_swarm_scoped_masteries_reply,
+        )
     if lowered == "/swarm upgrades" or natural_swarm_command == ("/swarm upgrades", None):
         return _run_swarm_read_command(
             command="/swarm upgrades",
             loader=lambda: swarm_read_upgrades(config_manager, state_db),
             renderer=_render_swarm_upgrades_reply,
+        )
+    scoped_upgrades_args = _parse_swarm_scoped_read_command(normalized, noun="upgrades")
+    if scoped_upgrades_args:
+        return _run_swarm_read_command(
+            command="/swarm upgrades",
+            loader=lambda: _load_swarm_scoped_upgrades(
+                config_manager=config_manager,
+                state_db=state_db,
+                label=scoped_upgrades_args["label"],
+            ),
+            renderer=_render_swarm_scoped_upgrades_reply,
+        )
+    scoped_upgrades_resolution = _resolve_natural_swarm_scoped_read_target(
+        inbound_text=normalized,
+        noun="upgrades",
+        config_manager=config_manager,
+    )
+    if scoped_upgrades_resolution is not None:
+        if scoped_upgrades_resolution.get("error"):
+            return {"command": "/swarm upgrades", "reply_text": str(scoped_upgrades_resolution["error"])}
+        return _run_swarm_read_command(
+            command="/swarm upgrades",
+            loader=lambda: _load_swarm_scoped_upgrades(
+                config_manager=config_manager,
+                state_db=state_db,
+                label=str(scoped_upgrades_resolution["label"]),
+            ),
+            renderer=_render_swarm_scoped_upgrades_reply,
         )
     if lowered == "/swarm issues" or natural_swarm_command == ("/swarm issues", None):
         return _run_swarm_read_command(
@@ -1819,6 +1903,28 @@ def _render_swarm_insights_reply(payload: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _render_swarm_scoped_insights_reply(payload: dict[str, Any]) -> str:
+    label = str(payload.get("specialization_label") or payload.get("specialization_key") or "lane")
+    insights = payload.get("insights") if isinstance(payload, dict) else []
+    actionable = insights if isinstance(insights, list) else []
+    if not actionable:
+        return f"Swarm insights for {label}:\nNo absorbable insights are waiting right now."
+    ranked = sorted(
+        [item for item in actionable if isinstance(item, dict)],
+        key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""),
+        reverse=True,
+    )[:5]
+    lines = [f"Swarm insights for {label}:\n{len(actionable)} absorbable insight(s)."]
+    for item in ranked:
+        lines.append(
+            f"- {str(item.get('id') or 'unknown')}: {str(item.get('summary') or item.get('title') or 'insight')} "
+            f"[status={str(item.get('status') or 'unknown')}]"
+        )
+    first_id = str(ranked[0].get("id") or "insight_id")
+    lines.append(f"Next: `/swarm absorb {first_id} because <reason>` or `absorb the latest {label} insight`")
+    return "\n".join(lines)
+
+
 def _render_swarm_masteries_reply(payload: list[dict[str, Any]]) -> str:
     masteries = payload if isinstance(payload, list) else []
     if not masteries:
@@ -1836,6 +1942,28 @@ def _render_swarm_masteries_reply(payload: list[dict[str, Any]]) -> str:
         )
     first_id = str(ranked[0].get("id") or "mastery_id")
     lines.append(f"Next: `/swarm review {first_id} approve because <reason>`")
+    return "\n".join(lines)
+
+
+def _render_swarm_scoped_masteries_reply(payload: dict[str, Any]) -> str:
+    label = str(payload.get("specialization_label") or payload.get("specialization_key") or "lane")
+    masteries = payload.get("masteries") if isinstance(payload, dict) else []
+    records = masteries if isinstance(masteries, list) else []
+    if not records:
+        return f"Swarm masteries for {label}:\nNo mastery records are available right now."
+    ranked = sorted(
+        [item for item in records if isinstance(item, dict)],
+        key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""),
+        reverse=True,
+    )[:5]
+    lines = [f"Swarm masteries for {label}:\n{len(records)} mastery record(s)."]
+    for item in ranked:
+        lines.append(
+            f"- {str(item.get('id') or 'unknown')}: {str(item.get('summary') or item.get('title') or 'mastery')} "
+            f"[status={str(item.get('status') or 'unknown')}]"
+        )
+    first_id = str(ranked[0].get("id") or "mastery_id")
+    lines.append(f"Next: `/swarm review {first_id} approve because <reason>` or `approve the latest {label} mastery`")
     return "\n".join(lines)
 
 
@@ -1870,6 +1998,30 @@ def _render_swarm_upgrades_reply(payload: list[dict[str, Any]]) -> str:
         )
     first_id = str(recent[0].get("id") or "upgrade_id")
     lines.append(f"Next: `/swarm deliver {first_id}` or `/swarm sync-delivery {first_id}`")
+    return "\n".join(lines)
+
+
+def _render_swarm_scoped_upgrades_reply(payload: dict[str, Any]) -> str:
+    label = str(payload.get("specialization_label") or payload.get("specialization_key") or "lane")
+    upgrades = payload.get("upgrades") if isinstance(payload, dict) else []
+    pending = upgrades if isinstance(upgrades, list) else []
+    if not pending:
+        return f"Swarm upgrades for {label}:\nNo pending upgrades are waiting right now."
+    recent = sorted(
+        [item for item in pending if isinstance(item, dict)],
+        key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""),
+        reverse=True,
+    )[:5]
+    lines = [f"Swarm upgrades for {label}:\n{len(pending)} pending upgrade(s)."]
+    for item in recent:
+        lines.append(
+            f"- {str(item.get('status') or 'unknown')}: {str(item.get('changeSummary') or item.get('id') or 'upgrade')} "
+            f"({str(item.get('riskLevel') or 'unknown')} risk)"
+        )
+    first_id = str(recent[0].get("id") or "upgrade_id")
+    lines.append(
+        f"Next: `/swarm deliver {first_id}` or `/swarm sync-delivery {first_id}` or `deliver the latest {label} upgrade`"
+    )
     return "\n".join(lines)
 
 
@@ -2472,6 +2624,21 @@ def _parse_swarm_rerun_command(inbound_text: str) -> dict[str, str] | None:
     return {"path_key": path_key} if path_key else {}
 
 
+def _parse_swarm_scoped_read_command(inbound_text: str, *, noun: str) -> dict[str, str] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    match = re.match(
+        rf"^/swarm {re.escape(noun)} (?P<label>.+)$",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    label = str(match.group("label") or "").strip()
+    if not label:
+        return None
+    return {"label": label}
+
+
 def _parse_swarm_evolution_mode(value: str) -> str | None:
     normalized = "_".join(str(value or "").strip().lower().replace("-", " ").split())
     aliases = {
@@ -2604,6 +2771,36 @@ def _resolve_natural_swarm_rerun_target(
     return _resolve_swarm_path_by_label(config_manager=config_manager, label=str(match.group("label") or ""))
 
 
+def _resolve_natural_swarm_scoped_read_target(
+    *,
+    inbound_text: str,
+    noun: str,
+    config_manager: ConfigManager,
+) -> dict[str, str] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    patterns = {
+        "insights": (
+            r"^(?:please\s+|can you\s+)?(?:show(?:\s+me)?|list)\s+(?P<label>.+?)\s+insights(?:\s+in\s+swarm)?$",
+            r"^(?:please\s+|can you\s+)?what\s+insights\s+are\s+in\s+(?P<label>.+?)(?:\s+in\s+swarm)?$",
+        ),
+        "masteries": (
+            r"^(?:please\s+|can you\s+)?(?:show(?:\s+me)?|list)\s+(?P<label>.+?)\s+masteries(?:\s+in\s+swarm)?$",
+            r"^(?:please\s+|can you\s+)?what\s+masteries\s+are\s+in\s+(?P<label>.+?)(?:\s+in\s+swarm)?$",
+        ),
+        "upgrades": (
+            r"^(?:please\s+|can you\s+)?(?:show(?:\s+me)?|list)\s+(?:pending\s+)?(?P<label>.+?)\s+upgrades(?:\s+in\s+swarm)?$",
+            r"^(?:please\s+|can you\s+)?what\s+(?:pending\s+)?upgrades\s+are\s+in\s+(?P<label>.+?)(?:\s+in\s+swarm)?$",
+        ),
+    }
+    for pattern in patterns.get(noun, ()):
+        match = re.match(pattern, normalized, flags=re.IGNORECASE)
+        if match:
+            label = str(match.group("label") or "").strip()
+            if label:
+                return {"label": label}
+    return None
+
+
 def _prepare_swarm_autoloop_request(
     *,
     config_manager: ConfigManager,
@@ -2629,6 +2826,101 @@ def _prepare_swarm_autoloop_request(
     prepared["session_id"] = session_id
     prepared["continue_latest"] = False
     return prepared
+
+
+def _load_swarm_scoped_insights(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    label: str,
+) -> dict[str, Any]:
+    specialization = _resolve_swarm_specialization_by_label(
+        config_manager=config_manager,
+        state_db=state_db,
+        label=label,
+    )
+    if specialization.get("error"):
+        raise RuntimeError(str(specialization["error"]).replace("specialization target", "insight lane"))
+    specialization_id = str(specialization["specialization_id"])
+    specialization_key = str(specialization["specialization_key"])
+    actionable_statuses = {"captured", "distilled", "queued_for_test", "benchmark_supported", "live_supported"}
+    insights = [
+        item
+        for item in swarm_read_insights(config_manager, state_db)
+        if isinstance(item, dict)
+        and str(item.get("status") or "") in actionable_statuses
+        and (
+            str(item.get("specializationId") or "") == specialization_id
+            or _normalize_swarm_label(str(item.get("specializationId") or "")) == _normalize_swarm_label(specialization_key)
+        )
+    ]
+    return {
+        "specialization_key": specialization_key,
+        "specialization_label": str(specialization["specialization_label"]),
+        "insights": insights,
+    }
+
+
+def _load_swarm_scoped_masteries(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    label: str,
+) -> dict[str, Any]:
+    specialization = _resolve_swarm_specialization_by_label(
+        config_manager=config_manager,
+        state_db=state_db,
+        label=label,
+    )
+    if specialization.get("error"):
+        raise RuntimeError(str(specialization["error"]).replace("specialization target", "mastery lane"))
+    specialization_key = str(specialization["specialization_key"])
+    masteries = [
+        item
+        for item in swarm_read_masteries(config_manager, state_db)
+        if isinstance(item, dict)
+        and _normalize_swarm_label(str(item.get("specializationScope") or "")) == _normalize_swarm_label(specialization_key)
+    ]
+    return {
+        "specialization_key": specialization_key,
+        "specialization_label": str(specialization["specialization_label"]),
+        "masteries": masteries,
+    }
+
+
+def _load_swarm_scoped_upgrades(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    label: str,
+) -> dict[str, Any]:
+    specialization = _resolve_swarm_specialization_by_label(
+        config_manager=config_manager,
+        state_db=state_db,
+        label=label,
+    )
+    if specialization.get("error"):
+        raise RuntimeError(str(specialization["error"]).replace("specialization target", "upgrade lane"))
+    specialization_key = str(specialization["specialization_key"])
+    mastery_ids = {
+        str(item.get("id") or "")
+        for item in swarm_read_masteries(config_manager, state_db)
+        if isinstance(item, dict)
+        and _normalize_swarm_label(str(item.get("specializationScope") or "")) == _normalize_swarm_label(specialization_key)
+    }
+    pending_statuses = {"draft", "queued", "upgrade_opened", "awaiting_review"}
+    upgrades = [
+        item
+        for item in swarm_read_upgrades(config_manager, state_db)
+        if isinstance(item, dict)
+        and str(item.get("status") or "") in pending_statuses
+        and str(item.get("derivedFromMasteryId") or "") in mastery_ids
+    ]
+    return {
+        "specialization_key": specialization_key,
+        "specialization_label": str(specialization["specialization_label"]),
+        "upgrades": upgrades,
+    }
 
 
 def _resolve_natural_swarm_mode_target(

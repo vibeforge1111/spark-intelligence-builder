@@ -31,6 +31,10 @@ As of 2026-04-08:
   - autoloop continuation by saved session
   - autoloop session inspection
   - rerun-request execution
+- Builder now also exposes lane-scoped hosted reads for specialization-specific:
+  - insights
+  - masteries
+  - pending upgrades
 - `spark-swarm` does not currently implement Telegram bot ingress in this repo.
 - `spark-browser-extension` is the governed browser runtime used downstream through Builder.
 - `spark-researcher` remains the heavy local runtime behind Builder and Swarm.

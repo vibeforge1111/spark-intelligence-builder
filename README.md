@@ -270,6 +270,14 @@ Those local-bridge commands map onto the existing `spark-swarm` specialization-p
 
 The current command surface still returns bounded summaries, not raw bridge logs. Long-running path execution remains explicit and operator-shaped rather than being silently inferred from vague natural language.
 
+Lane-scoped Swarm reads are also available now for attached specialization labels and keys:
+
+- `/swarm insights <specialization>`
+- `/swarm masteries <specialization>`
+- `/swarm upgrades <specialization>`
+
+That means the bot can inspect one lane directly instead of only returning the workspace-wide summary list before you act on a specific insight, mastery, or upgrade.
+
 The Telegram runtime also accepts bounded natural-language equivalents for those commands when the message makes the intent explicit, for example:
 
 - `Can you show me the swarm status?`
@@ -281,6 +289,9 @@ The Telegram runtime also accepts bounded natural-language equivalents for those
 - `Please sync with swarm`
 - `Can you evaluate this for swarm: <task>`
 - `Show me swarm paths`
+- `Show me Startup Operator insights in swarm`
+- `/swarm masteries Startup Operator`
+- `Show me pending Startup Operator upgrades in swarm`
 - `Run the Startup Operator path in swarm`
 - `Start autoloop for Startup Operator in swarm for 2 rounds`
 - `Continue the Startup Operator autoloop in swarm for 1 more round`
