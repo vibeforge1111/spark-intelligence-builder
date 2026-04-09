@@ -97,7 +97,7 @@ class GatewayAskTelegramTests(SparkTestCase):
     def test_gateway_ask_telegram_fails_closed_when_bridge_is_not_enabled(self) -> None:
         self.add_telegram_channel(allowed_users=["111"])
 
-        with self.assertRaisesRegex(ValueError, "Telegram terminal bridge is disabled"):
+        with self.assertRaisesRegex(ValueError, "terminal-to-Telegram bridge is disabled"):
             gateway_ask_telegram(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
