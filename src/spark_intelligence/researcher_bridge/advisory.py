@@ -29,6 +29,7 @@ from spark_intelligence.browser.service import (
     build_browser_status_payload,
     build_browser_tab_wait_payload,
 )
+from spark_intelligence.capability_router import build_capability_router_prompt_context
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.memory import (
     inspect_human_memory_in_memory,
@@ -602,6 +603,21 @@ def _render_direct_provider_chat_fallback(
             telegram_persona_contract = build_telegram_persona_reply_contract(personality_profile)
             if telegram_persona_contract:
                 base_system_prompt = f"{base_system_prompt} {telegram_persona_contract}"
+    system_registry_context = build_system_registry_prompt_context(
+        config_manager=config_manager,
+        state_db=state_db,
+        user_message=user_message,
+    )
+    mission_control_context = build_mission_control_prompt_context(
+        config_manager=config_manager,
+        state_db=state_db,
+        user_message=user_message,
+    )
+    capability_router_context = build_capability_router_prompt_context(
+        config_manager=config_manager,
+        state_db=state_db,
+        user_message=user_message,
+    )
     payload = execute_direct_provider_prompt(
         provider=DirectProviderRequest(
             provider_id=provider.provider_id,
@@ -626,6 +642,9 @@ def _render_direct_provider_chat_fallback(
             personality_context_extra=personality_context_extra,
             browser_search_context_extra=browser_search_context_extra,
             recent_conversation_context=recent_conversation_context,
+            system_registry_context=system_registry_context,
+            mission_control_context=mission_control_context,
+            capability_router_context=capability_router_context,
         ),
         governance=DirectProviderGovernance(
             state_db_path=str(state_db.path),
@@ -1503,6 +1522,9 @@ def _build_contextual_task(
     personality_context_extra: str = "",
     browser_search_context_extra: str = "",
     recent_conversation_context: str = "",
+    system_registry_context: str = "",
+    mission_control_context: str = "",
+    capability_router_context: str = "",
 ) -> str:
     active_chip_keys = attachment_context.get("active_chip_keys") or []
     pinned_chip_keys = attachment_context.get("pinned_chip_keys") or []
@@ -1527,6 +1549,12 @@ def _build_contextual_task(
     )
     if spark_self_knowledge_context:
         lines.extend([spark_self_knowledge_context, ""])
+    if system_registry_context:
+        lines.extend([system_registry_context, ""])
+    if mission_control_context:
+        lines.extend([mission_control_context, ""])
+    if capability_router_context:
+        lines.extend([capability_router_context, ""])
     if personality_profile:
         personality_ctx = build_personality_context(personality_profile)
         if personality_ctx:
@@ -2970,6 +2998,21 @@ def build_researcher_reply(
     browser_search_source_url = str(browser_search_support.get("source_url") or "") or None
     if browser_search_source_url and _is_search_engine_url(browser_search_source_url):
         browser_search_source_url = None
+    system_registry_context = build_system_registry_prompt_context(
+        config_manager=config_manager,
+        state_db=state_db,
+        user_message=user_message,
+    )
+    mission_control_context = build_mission_control_prompt_context(
+        config_manager=config_manager,
+        state_db=state_db,
+        user_message=user_message,
+    )
+    capability_router_context = build_capability_router_prompt_context(
+        config_manager=config_manager,
+        state_db=state_db,
+        user_message=user_message,
+    )
     contextual_task = _build_contextual_task(
         user_message=user_message,
         channel_kind=channel_kind,
@@ -2979,6 +3022,9 @@ def build_researcher_reply(
         personality_context_extra=personality_context_extra,
         browser_search_context_extra=browser_search_context_extra,
         recent_conversation_context=recent_conversation_context,
+        system_registry_context=system_registry_context,
+        mission_control_context=mission_control_context,
+        capability_router_context=capability_router_context,
     )
     active_chip_key = str(active_chip_evaluate.get("chip_key")) if active_chip_evaluate else None
     active_chip_task_type = str(active_chip_evaluate.get("task_type")) if active_chip_evaluate and active_chip_evaluate.get("task_type") else None
