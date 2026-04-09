@@ -881,6 +881,47 @@ class CliSmokeTests(SparkTestCase):
             self.assertIn("Spark Intelligence status", status_stdout)
             self.assertIn("- doctor: ok", status_stdout)
 
+    def test_status_reports_stale_browser_runtime_when_active_browser_hook_fails(self) -> None:
+        chip_root = create_fake_hook_chip(self.home, chip_key="spark-browser")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+
+        activate_exit, _, activate_stderr = self.run_cli(
+            "attachments",
+            "activate-chip",
+            "spark-browser",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(activate_exit, 0, activate_stderr)
+
+        browser_failure = SimpleNamespace(
+            ok=True,
+            chip_key="spark-browser",
+            output={
+                "status": "failed",
+                "approval_state": "blocked",
+                "result": None,
+                "artifacts": [],
+                "provenance": {
+                    "browser_family": "brave",
+                    "profile_key": "spark-default",
+                    "profile_mode": "dedicated",
+                },
+                "error": {
+                    "code": "BROWSER_SESSION_STALE",
+                    "message": "Live browser session is not currently connected.",
+                },
+            },
+        )
+
+        with patch("spark_intelligence.cli.run_first_active_chip_hook", return_value=browser_failure):
+            status_exit, status_stdout, status_stderr = self.run_cli("status", "--home", str(self.home))
+
+        self.assertEqual(status_stderr, "")
+        self.assertIn(status_exit, (0, 1))
+        self.assertIn("- browser: failed via spark-browser BROWSER_SESSION_STALE", status_stdout)
+        self.assertIn("- browser detail: Live browser session is not currently connected.", status_stdout)
+
     def test_bootstrap_telegram_agent_configures_supported_profile(self) -> None:
         researcher_root = self.home / "spark-researcher"
         researcher_root.mkdir()

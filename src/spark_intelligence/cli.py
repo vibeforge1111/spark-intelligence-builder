@@ -148,6 +148,17 @@ class SystemStatus:
         lines.append(f"- gateway: {'ready' if self.gateway_ready else 'not_ready'}")
         lines.append(f"- researcher: {'available' if self.researcher_available else 'missing'}")
         lines.append(f"- swarm: {'payload_ready' if self.swarm_payload_ready else 'not_ready'}")
+        browser = self.payload.get("browser") or {}
+        if isinstance(browser, dict) and browser:
+            browser_state = str(browser.get("status") or "unknown")
+            chip_key = str(browser.get("chip_key") or "browser")
+            if browser_state == "completed":
+                lines.append(f"- browser: connected via {chip_key}")
+            else:
+                error_code = str(browser.get("error_code") or browser_state)
+                lines.append(f"- browser: {browser_state} via {chip_key} {error_code}")
+                if browser.get("error_message"):
+                    lines.append(f"- browser detail: {browser['error_message']}")
         lines.append(
             f"- attachments: {self.payload['attachments']['record_count']} records "
             f"warnings={self.attachment_warning_count}"
@@ -2581,6 +2592,7 @@ def handle_status(args: argparse.Namespace) -> int:
     researcher = researcher_bridge_status(config_manager=config_manager, state_db=state_db)
     swarm = swarm_status(config_manager, state_db)
     attachments = attachment_status(config_manager)
+    browser = _collect_status_browser_payload(config_manager)
     watchtower = build_watchtower_snapshot(state_db)
     active_chip_keys = config_manager.get_path("spark.chips.active_keys", default=[]) or []
     active_path_key = config_manager.get_path("spark.specialization_paths.active_path_key")
@@ -2597,6 +2609,7 @@ def handle_status(args: argparse.Namespace) -> int:
         "gateway": json.loads(gateway.to_json()),
         "researcher": json.loads(researcher.to_json()),
         "swarm": json.loads(swarm.to_json()),
+        "browser": browser,
         "runtime": {
             "install_profile": config_manager.get_path("runtime.install.profile"),
             "default_gateway_mode": config_manager.get_path("runtime.run.default_gateway_mode"),
@@ -2623,6 +2636,42 @@ def handle_status(args: argparse.Namespace) -> int:
     )
     print(status.to_json() if args.json else status.to_text())
     return 0 if doctor_report.ok else 1
+
+
+def _collect_status_browser_payload(config_manager: ConfigManager) -> dict[str, object] | None:
+    payload = build_browser_status_payload(
+        config_manager=config_manager,
+        browser_family="brave",
+        profile_key="spark-default",
+        profile_mode="dedicated",
+        agent_id=None,
+    )
+    try:
+        execution = run_first_active_chip_hook(config_manager, hook=BROWSER_STATUS_HOOK, payload=payload)
+    except ValueError as exc:
+        return {
+            "status": "unavailable",
+            "chip_key": "browser",
+            "error_code": "BROWSER_STATUS_INVALID",
+            "error_message": str(exc),
+        }
+    if execution is None:
+        return None
+    hook_output = execution.output if isinstance(execution.output, dict) else {}
+    hook_status = _normalize_browser_hook_status(hook_output)
+    hook_error = hook_output.get("error") if isinstance(hook_output.get("error"), dict) else {}
+    hook_failed = (not execution.ok) or bool(hook_error) or (
+        hook_status is not None and hook_status not in {"succeeded", "completed", "ok", "success"}
+    )
+    return {
+        "status": "failed" if hook_failed else "completed",
+        "chip_key": execution.chip_key,
+        "hook_status": hook_status or ("failed" if hook_failed else "succeeded"),
+        "approval_state": hook_output.get("approval_state") if isinstance(hook_output.get("approval_state"), str) else None,
+        "error_code": str(hook_error.get("code") or "").strip() or None,
+        "error_message": str(hook_error.get("message") or "").strip() or None,
+        "provenance": hook_output.get("provenance") if isinstance(hook_output.get("provenance"), dict) else {},
+    }
 
 
 def handle_connect_status(args: argparse.Namespace) -> int:
