@@ -230,7 +230,6 @@ Telegram runtime verification is available in two forms:
 
 ```bash
 spark-intelligence gateway simulate-telegram-update ./sample-update.json
-spark-intelligence gateway ask-telegram "What are you connected to right now?"
 spark-intelligence gateway simulate-discord-message ./sample-discord-message.json
 spark-intelligence gateway simulate-whatsapp-message ./sample-whatsapp-message.json
 spark-intelligence gateway start --once --poll-timeout-seconds 0
@@ -241,7 +240,7 @@ spark-intelligence gateway outbound --limit 20
 spark-intelligence gateway outbound --channel-id telegram --delivery failed
 ```
 
-`gateway ask-telegram` is the direct terminal-side bridge for Telegram DM testing. It sends one synthetic private Telegram message through Builder's real Telegram runtime path and prints Spark's reply locally, so you can probe the live Telegram behavior from the CLI without copy-pasting through the bot chat. Pass `--user-id` when the home has multiple Telegram users; otherwise the command will reuse the most recent Telegram user or the single configured allowlisted user when it can infer one safely.
+There is also an internal operator-only terminal bridge for probing the Telegram runtime directly from the CLI, but it should remain disabled by default and should not be treated as a normal end-user surface.
 
 Production ingress ownership rule:
 
