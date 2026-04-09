@@ -36,6 +36,7 @@ from spark_intelligence.personality import (
     detect_and_persist_agent_persona_preferences,
     load_personality_profile,
     maybe_handle_agent_persona_onboarding_turn,
+    resolve_builder_persona_agent_id,
 )
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply, record_researcher_bridge_result
 from spark_intelligence.state.db import StateDB
@@ -2498,6 +2499,8 @@ def _parse_style_command(inbound_text: str) -> dict[str, str | None] | None:
         return {"command": "/style", "payload": None}
     if lowered in {"/style status", "style status"}:
         return {"command": "/style status", "payload": None}
+    if lowered in {"/style history", "style history"}:
+        return {"command": "/style history", "payload": None}
     if lowered in {"/style test", "style test"}:
         return {"command": "/style test", "payload": None}
     feedback_prefixes = ("/style feedback ", "style feedback ")
@@ -2534,6 +2537,7 @@ def _handle_style_command(
             "command": "/style",
             "reply_text": (
                 "Style controls: `/style status` to inspect the current Telegram persona, "
+                "`/style history` to inspect recent saved mutations, "
                 "`/style train <instruction>` to save a new style rule, and `/style feedback <note>` after a live test reply.\n"
                 "Next: after training, ask a normal question in this DM to test the visible voice."
             ),
@@ -2548,6 +2552,20 @@ def _handle_style_command(
         return {
             "command": "/style status",
             "reply_text": _render_style_status_reply(profile=profile, agent_name=agent_name),
+        }
+    if command == "/style history":
+        return {
+            "command": "/style history",
+            "reply_text": _render_style_history_reply(
+                rows=_list_recent_style_mutations(
+                    state_db=state_db,
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    limit=5,
+                ),
+                profile=profile,
+                agent_name=agent_name,
+            ),
         }
     if command == "/style test":
         return {
@@ -2578,7 +2596,7 @@ def _handle_style_command(
             marker in lowered_instruction
             for marker in ("your personality", "your style", "agent persona", "your name is", "call you", "rename yourself")
         ):
-            training_message = f"Your style should be {instruction}"
+            training_message = f"Your style.\n{instruction}"
         mutation = detect_and_persist_agent_persona_preferences(
             agent_id=agent_id,
             human_id=human_id,
@@ -2608,7 +2626,7 @@ def _handle_style_command(
                 agent_name=refreshed_agent_name,
                 mutation=mutation,
                 mode="training",
-                applied_instruction=training_message,
+                applied_instruction=_display_style_training_message(training_message),
             ),
         }
     if command in {"/style feedback", "/style good", "/style bad"}:
@@ -2671,7 +2689,7 @@ def _handle_style_command(
                 agent_name=refreshed_agent_name,
                 mutation=mutation,
                 mode="feedback",
-                applied_instruction=training_message,
+                applied_instruction=_display_style_training_message(training_message),
             ),
         }
     return {"command": command, "reply_text": "Style command is unavailable right now."}
@@ -2684,30 +2702,37 @@ def _build_style_feedback_training_message(*, feedback: str, sentiment: str) -> 
         return ""
     if sentiment == "positive":
         if "direct" in lowered or "concise" in lowered or "short" in lowered:
-            return "Your style should stay direct and keep replies short."
+            return "Your style.\nStay direct and keep replies short."
         if "warm" in lowered or "friendly" in lowered or "human" in lowered:
-            return "Your style should stay warm and friendly."
+            return "Your style.\nStay warm and friendly."
         if "calm" in lowered:
-            return "Your style should stay calm and steady."
+            return "Your style.\nStay calm and steady."
     if "too verbose" in lowered or "too long" in lowered or "rambling" in lowered:
-        return "Your style should be less verbose and keep replies short."
+        return "Your style.\nBe less verbose and keep replies short."
     if "too formal" in lowered or "stiff" in lowered:
-        return "Your style should be less formal and more human."
+        return "Your style.\nBe less formal and more human."
     if "too soft" in lowered or "hedging" in lowered or "wishy" in lowered:
-        return "Your style should be more assertive and stop hedging."
+        return "Your style.\nBe more assertive and stop hedging."
     if "too harsh" in lowered or "too blunt" in lowered or "too cold" in lowered:
-        return "Your style should be gentler and warmer."
+        return "Your style.\nBe gentler and warmer."
     if "too playful" in lowered:
-        return "Your style should be more serious."
+        return "Your style.\nBe more serious."
     if "too dry" in lowered or "robotic" in lowered:
-        return "Your style should be warmer and more human."
+        return "Your style.\nBe warmer and more human."
     if "too slow" in lowered:
-        return "Your style should speed it up and get to the point."
+        return "Your style.\nSpeed it up and get to the point."
     if "too rushed" in lowered:
-        return "Your style should slow down and explain more."
+        return "Your style.\nSlow down and explain more."
     if sentiment == "negative":
-        return f"Your style should be adjusted based on this feedback: {normalized}"
-    return f"Your style should be {normalized}"
+        return f"Your style.\nAdjust based on this feedback: {normalized}"
+    return f"Your style.\nBe {normalized}"
+
+
+def _display_style_training_message(training_message: str) -> str:
+    normalized = str(training_message or "").strip()
+    if normalized.lower().startswith("your style."):
+        normalized = normalized[len("your style.") :].strip()
+    return " ".join(normalized.split())
 
 
 def _render_style_status_reply(*, profile: dict[str, Any] | None, agent_name: str | None) -> str:
@@ -2731,7 +2756,73 @@ def _render_style_status_reply(*, profile: dict[str, Any] | None, agent_name: st
         lines.append(f"Traits: {style_summary}.")
     if behavioral_rules:
         lines.append("Rules: " + " | ".join(behavioral_rules[:4]) + ".")
-    lines.append("Next: `/style train <instruction>` and then ask a normal question here to test the live voice.")
+    lines.append("Next: `/style history` to inspect saved changes, then `/style train <instruction>` to shape the live voice.")
+    return "\n".join(lines)
+
+
+def _list_recent_style_mutations(
+    *,
+    state_db: StateDB,
+    human_id: str | None,
+    agent_id: str | None,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    resolved_agent_id = resolve_builder_persona_agent_id(human_id=human_id) or str(agent_id or "").strip()
+    if not resolved_agent_id:
+        return []
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT mutation_id, mutation_kind, persona_name, persona_summary, source_surface, source_ref, created_at
+            FROM agent_persona_mutations
+            WHERE agent_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (resolved_agent_id, limit),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _style_history_event_label(row: dict[str, Any]) -> str:
+    source_ref = str(row.get("source_ref") or "").strip().lower()
+    mutation_kind = str(row.get("mutation_kind") or "").strip().lower()
+    if source_ref == "telegram-style-feedback":
+        return "feedback"
+    if source_ref == "telegram-style-train":
+        return "training"
+    if mutation_kind == "onboarding_authoring":
+        return "onboarding"
+    if mutation_kind == "external_import":
+        return "import"
+    return mutation_kind.replace("_", " ") or "update"
+
+
+def _render_style_history_reply(
+    *,
+    rows: list[dict[str, Any]],
+    profile: dict[str, Any] | None,
+    agent_name: str | None,
+) -> str:
+    resolved_profile = profile or {}
+    name = str(agent_name or resolved_profile.get("agent_persona_name") or "the agent").strip()
+    if not rows:
+        return (
+            f"Style history for {name} is empty.\n"
+            "Next: use `/style train <instruction>` or `/style feedback <note>` to save the first durable change."
+        )
+
+    lines = [f"Recent style history for {name}."]
+    for index, row in enumerate(rows[:5], start=1):
+        label = _style_history_event_label(row)
+        summary = str(row.get("persona_summary") or "").strip()
+        created_at = str(row.get("created_at") or "").strip()
+        detail = summary or "Saved persona state updated."
+        if created_at:
+            lines.append(f"{index}. {label} at {created_at}: {detail}")
+        else:
+            lines.append(f"{index}. {label}: {detail}")
+    lines.append("Next: use `/style feedback <note>` after a reply to keep shaping the live voice.")
     return "\n".join(lines)
 
 

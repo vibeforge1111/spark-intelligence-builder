@@ -2847,6 +2847,53 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(profile["style_labels"]["directness"], "very direct")
         self.assertEqual(profile["style_labels"]["pacing"], "brisk")
 
+    def test_style_history_reports_empty_when_no_saved_mutations_exist(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11715,
+                user_id="111",
+                username="alice",
+                text="/style history",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Style history for", result.detail["response_text"])
+        self.assertIn("is empty", result.detail["response_text"])
+
+    def test_style_history_reports_recent_saved_mutations(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11716,
+                user_id="111",
+                username="alice",
+                text="/style train be more direct and keep replies short",
+            ),
+        )
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11717,
+                user_id="111",
+                username="alice",
+                text="/style history",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Recent style history for", result.detail["response_text"])
+        self.assertIn("training", result.detail["response_text"])
+        self.assertIn("Be more direct and keep replies short", result.detail["response_text"])
+
     def test_style_bad_requires_feedback_note(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
