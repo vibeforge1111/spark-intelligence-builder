@@ -48,6 +48,7 @@ This repo currently includes:
 - [docs/SECURITY_HISTORY_THEME_APPENDIX_2026-03-25.md](./docs/SECURITY_HISTORY_THEME_APPENDIX_2026-03-25.md)
 - [docs/TELEGRAM_ADAPTER_SPEC_V1.md](./docs/TELEGRAM_ADAPTER_SPEC_V1.md)
 - [docs/TELEGRAM_OPERATOR_RUNBOOK_2026-03-26.md](./docs/TELEGRAM_OPERATOR_RUNBOOK_2026-03-26.md)
+- [docs/TELEGRAM_COMMAND_REFERENCE_2026-04-09.md](./docs/TELEGRAM_COMMAND_REFERENCE_2026-04-09.md)
 - [docs/DISCORD_OPERATOR_RUNBOOK_2026-03-26.md](./docs/DISCORD_OPERATOR_RUNBOOK_2026-03-26.md)
 - [docs/GATEWAY_PROVIDER_AUTH_READINESS_REVIEW_2026-03-26.md](./docs/GATEWAY_PROVIDER_AUTH_READINESS_REVIEW_2026-03-26.md)
 - [docs/NEXT_EXECUTION_PLAN_2026-03-26.md](./docs/NEXT_EXECUTION_PLAN_2026-03-26.md)
@@ -112,6 +113,20 @@ spark-intelligence gateway start
 # /think
 # /think on
 # /think off
+# /style
+# /style status
+# /style history
+# /style test
+# /style train <instruction>
+# /style feedback <note>
+# /style good <note>
+# /style bad <note>
+# /voice
+# /voice plan
+# /voice reply
+# /voice reply on
+# /voice reply off
+# /voice speak <text>
 # /swarm
 # /swarm status
 # /swarm overview
@@ -239,6 +254,14 @@ In practice, the current live stack is:
 
 Live commands verified on the production-shaped home:
 
+- `/style status`
+- `/style history`
+- `/style train <instruction>`
+- `/style feedback <note>`
+- `/voice`
+- `/voice plan`
+- `/voice reply`
+- `/voice speak <text>`
 - `/swarm status`
 - `/swarm evaluate <task>`
 - `/swarm sync`
@@ -291,6 +314,15 @@ That means the bot can inspect one lane directly instead of only returning the w
 
 The Telegram runtime also accepts bounded natural-language equivalents for those commands when the message makes the intent explicit, for example:
 
+- `Can you show me my current style?`
+- `What style changes have you saved?`
+- `Train your style to be more direct and keep replies short`
+- `Be more Claude-like in conversation continuity`
+- `That was too verbose`
+- `Less canned and more grounded follow-up questions`
+- `What is the voice status?`
+- `Turn voice replies on`
+- `Please speak this out loud: <text>`
 - `Can you show me the swarm status?`
 - `Show me swarm overview`
 - `Show me the swarm runtime pulse`
@@ -310,6 +342,14 @@ The Telegram runtime also accepts bounded natural-language equivalents for those
 - `Execute the latest Startup Operator rerun request in swarm`
 
 `status` now also surfaces the last bridge routing decision plus the last active chip route, and the text forms of `gateway traces` and `gateway outbound` now include `route=...` and `chip=...` when that metadata is available. That makes it possible to see whether a Telegram reply came from researcher advisory, direct provider fallback, or another bridge path without dropping to raw JSON.
+
+The current Telegram command reference now lives in [docs/TELEGRAM_COMMAND_REFERENCE_2026-04-09.md](./docs/TELEGRAM_COMMAND_REFERENCE_2026-04-09.md). When new Telegram runtime commands are added, the repo rule is:
+
+- add the slash command first
+- add bounded natural-language equivalents only when the intent is reliably recognizable
+- map both forms onto the same internal command handler
+- add simulation coverage for both forms
+- update the command reference in the same change
 
 `spark-intelligence connect route-policy` is the matching operator-facing summary for that behavior. It explains when Spark Intelligence stays on external Researcher advisory, when it falls back to direct provider chat, when it executes directly through the configured provider, and when Spark Swarm escalation should be considered.
 

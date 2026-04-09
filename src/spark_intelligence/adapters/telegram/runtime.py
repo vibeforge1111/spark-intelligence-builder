@@ -1837,7 +1837,8 @@ def _handle_runtime_command(
     normalized = " ".join(str(inbound_text or "").strip().split())
     lowered = normalized.lower()
     natural_swarm_command = _match_natural_swarm_command(normalized)
-    style_command = _parse_style_command(normalized)
+    style_command = _parse_style_command(normalized) or _match_natural_style_command(normalized)
+    natural_voice_command = _match_natural_voice_command(normalized)
     if style_command is not None:
         return _handle_style_command(
             config_manager=config_manager,
@@ -1847,7 +1848,7 @@ def _handle_runtime_command(
             command=style_command["command"],
             payload=style_command.get("payload"),
         )
-    if lowered in {"/voice", "/voice status"}:
+    if lowered in {"/voice", "/voice status"} or natural_voice_command == ("/voice", None):
         return _run_voice_runtime_command(
             config_manager=config_manager,
             state_db=state_db,
@@ -1857,7 +1858,7 @@ def _handle_runtime_command(
             human_id=human_id,
             agent_id=agent_id,
         )
-    if lowered in {"/voice reply", "/voice reply status"}:
+    if lowered in {"/voice reply", "/voice reply status"} or natural_voice_command == ("/voice reply", None):
         enabled = _voice_reply_enabled_for_user(state_db=state_db, external_user_id=external_user_id)
         state_text = "on" if enabled else "off"
         return {
@@ -1869,8 +1870,11 @@ def _handle_runtime_command(
             ),
             "respect_voice_reply_state": False,
         }
-    if lowered in {"/voice reply on", "/voice reply off"}:
-        enabled = lowered == "/voice reply on"
+    if lowered in {"/voice reply on", "/voice reply off"} or natural_voice_command in {
+        ("/voice reply on", None),
+        ("/voice reply off", None),
+    }:
+        enabled = lowered == "/voice reply on" or natural_voice_command == ("/voice reply on", None)
         _set_voice_reply_enabled_for_user(
             state_db=state_db,
             external_user_id=external_user_id,
@@ -1886,7 +1890,7 @@ def _handle_runtime_command(
             ),
             "respect_voice_reply_state": False,
         }
-    if lowered == "/voice plan":
+    if lowered == "/voice plan" or natural_voice_command == ("/voice plan", None):
         return _run_voice_runtime_command(
             config_manager=config_manager,
             state_db=state_db,
@@ -1896,8 +1900,12 @@ def _handle_runtime_command(
             human_id=human_id,
             agent_id=agent_id,
         )
-    if lowered.startswith("/voice speak"):
-        speak_text = normalized[len("/voice speak") :].strip()
+    if lowered.startswith("/voice speak") or (natural_voice_command and natural_voice_command[0] == "/voice speak"):
+        speak_text = (
+            normalized[len("/voice speak") :].strip()
+            if lowered.startswith("/voice speak")
+            else str(natural_voice_command[1] or "").strip()
+        )
         if not speak_text:
             return {
                 "command": "/voice speak",
@@ -2520,6 +2528,150 @@ def _parse_style_command(inbound_text: str) -> dict[str, str | None] | None:
         if lowered.startswith(prefix):
             payload = normalized[len(prefix) :].strip()
             return {"command": "/style train", "payload": payload}
+    return None
+
+
+def _style_feedback_payload_from_natural_message(inbound_text: str) -> str | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    lowered = normalized.lower()
+    for pattern in (
+        r"^(?:that|this|the reply|your reply)\s+(?:was|felt|is)\s+(?P<payload>too\s+[a-z0-9\- ]+)$",
+        r"^(?:you(?:'re| are)|it(?:'s| is))\s+(?P<payload>too\s+[a-z0-9\- ]+)$",
+    ):
+        match = re.match(pattern, lowered, flags=re.IGNORECASE)
+        if match:
+            payload = " ".join(str(match.group("payload") or "").strip().split())
+            if any(
+                token in payload
+                for token in (
+                    "verbose",
+                    "formal",
+                    "soft",
+                    "harsh",
+                    "blunt",
+                    "cold",
+                    "playful",
+                    "dry",
+                    "robotic",
+                    "slow",
+                    "rushed",
+                    "canned",
+                    "generic",
+                    "scripted",
+                    "chatbot",
+                )
+            ):
+                return payload
+    return None
+
+
+def _match_natural_style_command(inbound_text: str) -> dict[str, str | None] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    lowered = normalized.lower()
+    simplified = " ".join(re.sub(r"[^a-z0-9\s/]", " ", lowered).split())
+
+    if simplified in {
+        "show my style",
+        "show me my style",
+        "what is my style",
+        "what s my style",
+        "what is my current style",
+        "what s my current style",
+        "show my personality",
+        "show me my personality",
+        "what is my personality",
+        "what s my personality",
+    }:
+        return {"command": "/style status", "payload": None}
+    if re.match(
+        r"^(?:please\s+|can you\s+)?(?:show(?:\s+me)?|tell me)\s+my\s+(?:current\s+)?(?:style|personality)$",
+        simplified,
+        flags=re.IGNORECASE,
+    ):
+        return {"command": "/style status", "payload": None}
+    if simplified in {
+        "show my style history",
+        "show me my style history",
+        "show style history",
+        "what style changes have you saved",
+        "what feedback have i given you about style",
+        "what style feedback have you saved",
+    }:
+        return {"command": "/style history", "payload": None}
+    if re.match(
+        r"^(?:please\s+|can you\s+)?(?:show(?:\s+me)?|tell me)\s+(?:my\s+)?style\s+history$",
+        simplified,
+        flags=re.IGNORECASE,
+    ):
+        return {"command": "/style history", "payload": None}
+    for pattern in (
+        r"^(?:please\s+|can you\s+)?(?:train|update|adjust|change)\s+(?:your|the)\s+(?:style|voice|personality)\s+(?:to|so (?:it|you)(?:'s| is))\s+(?P<payload>.+)$",
+        r"^(?:for future replies[,:\s]+)?(?:be|sound)\s+(?P<payload>more .+|less .+|.+)$",
+    ):
+        match = re.match(pattern, normalized, flags=re.IGNORECASE)
+        if match:
+            payload = " ".join(str(match.group("payload") or "").strip().split())
+            if payload:
+                return {"command": "/style train", "payload": payload}
+    feedback_payload = _style_feedback_payload_from_natural_message(normalized)
+    if feedback_payload:
+        return {"command": "/style feedback", "payload": feedback_payload}
+    return None
+
+
+def _match_natural_voice_command(inbound_text: str) -> tuple[str, str | None] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    lowered = normalized.lower()
+    simplified = " ".join(re.sub(r"[^a-z0-9\s/]", " ", lowered).split())
+
+    if simplified in {
+        "voice status",
+        "show voice status",
+        "show me voice status",
+        "what is the voice status",
+        "what s the voice status",
+        "is voice ready",
+    }:
+        return ("/voice", None)
+    if simplified in {
+        "voice reply status",
+        "show voice reply status",
+        "show me voice reply status",
+        "are voice replies on",
+        "is voice reply on",
+    }:
+        return ("/voice reply", None)
+    if simplified in {
+        "turn voice replies on",
+        "enable voice replies",
+        "reply with voice",
+        "reply in voice",
+    }:
+        return ("/voice reply on", None)
+    if simplified in {
+        "turn voice replies off",
+        "disable voice replies",
+        "keep replies text only",
+        "reply in text only",
+    }:
+        return ("/voice reply off", None)
+    if simplified in {
+        "voice plan",
+        "show voice plan",
+        "show me the voice plan",
+        "how does voice work",
+        "how will voice work",
+    }:
+        return ("/voice plan", None)
+    for pattern in (
+        r"^(?:please\s+|can you\s+)?(?:speak|say|read)\s+(?:this(?: out loud)?[:\s-]+)(?P<payload>.+)$",
+        r"^(?:send|reply with)\s+(?:this\s+)?(?:as\s+)?voice[:\s-]+(?P<payload>.+)$",
+    ):
+        match = re.match(pattern, normalized, flags=re.IGNORECASE)
+        if match:
+            payload = " ".join(str(match.group("payload") or "").strip().split())
+            if payload:
+                return ("/voice speak", payload)
     return None
 
 

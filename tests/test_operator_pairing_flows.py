@@ -2834,6 +2834,24 @@ class OperatorPairingFlowTests(SparkTestCase):
             profile["agent_behavioral_rules"],
         )
 
+    def test_natural_language_style_status_command_returns_saved_style_summary(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11706,
+                user_id="111",
+                username="alice",
+                text="Can you show me my current style?",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Style status for", result.detail["response_text"])
+        self.assertEqual(result.detail["bridge_mode"], "runtime_command")
+
     def test_style_test_command_returns_training_probe_prompts(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
@@ -2906,6 +2924,30 @@ class OperatorPairingFlowTests(SparkTestCase):
             "Avoid canned enthusiasm and generic assistant phrasing",
             profile["agent_behavioral_rules"],
         )
+
+    def test_natural_language_style_feedback_routes_into_saved_style_feedback(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11712,
+                user_id="111",
+                username="alice",
+                text="That was too verbose",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Saved style feedback", result.detail["response_text"])
+        profile = load_personality_profile(
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            state_db=self.state_db,
+            config_manager=self.config_manager,
+        )
+        self.assertEqual(profile["style_labels"]["directness"], "very direct")
 
     def test_style_history_reports_empty_when_no_saved_mutations_exist(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -3093,6 +3135,51 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Voice replies enabled", enabled.detail["response_text"])
         self.assertIn("currently on", after_enable.detail["response_text"])
         self.assertIn("Voice replies disabled", disabled.detail["response_text"])
+
+    def test_natural_language_voice_reply_enable_command_tracks_dm_voice_state(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        enabled = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11815,
+                user_id="111",
+                username="alice",
+                text="Turn voice replies on",
+            ),
+        )
+        status = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11816,
+                user_id="111",
+                username="alice",
+                text="/voice reply",
+            ),
+        )
+
+        self.assertIn("Voice replies enabled", enabled.detail["response_text"])
+        self.assertIn("currently on", status.detail["response_text"])
+
+    def test_natural_language_voice_speak_command_queues_one_shot_voice_reply(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11817,
+                user_id="111",
+                username="alice",
+                text="Please speak this out loud: hello from voice",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Voice reply queued.", result.detail["response_text"])
+        self.assertIn("hello from voice", result.detail["response_text"])
 
     def test_voice_speak_command_delivers_audio_on_poll_path(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"], bot_token="test-token")
