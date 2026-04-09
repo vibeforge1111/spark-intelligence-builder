@@ -2360,6 +2360,143 @@ class OperatorPairingFlowTests(SparkTestCase):
             "Next: retry the search if you need an authoritative citation.",
         )
 
+    def test_researcher_disabled_reply_is_composed_for_telegram(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            return_value=ResearcherBridgeResult(
+                request_id="req-bridge-disabled",
+                reply_text="[Spark Researcher disabled] The operator has disabled the Spark Researcher bridge for this workspace.",
+                evidence_summary="Spark Researcher bridge disabled by operator.",
+                escalation_hint=None,
+                trace_ref="trace:bridge-disabled",
+                mode="disabled",
+                runtime_root=None,
+                config_path=None,
+                attachment_context={},
+                provider_id=None,
+                provider_auth_profile_id=None,
+                provider_auth_method=None,
+                provider_model=None,
+                provider_model_family=None,
+                provider_execution_transport=None,
+                provider_base_url=None,
+                provider_source=None,
+                routing_decision="bridge_disabled",
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2184,
+                    user_id="111",
+                    username="alice",
+                    text="Research this company for me.",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            result.detail["response_text"],
+            "Researcher is unavailable right now.\n"
+            "Reason: the Spark Researcher bridge is disabled for this workspace.\n"
+            "Next: enable Spark Researcher for this workspace, then retry.",
+        )
+
+    def test_researcher_provider_auth_failure_is_composed_for_telegram(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            return_value=ResearcherBridgeResult(
+                request_id="req-provider-auth-error",
+                reply_text="[Spark Researcher provider auth error] Missing OPENAI_API_KEY for auth profile custom:default",
+                evidence_summary="Provider resolution failed closed before bridge execution.",
+                escalation_hint="provider_auth_error",
+                trace_ref="trace:provider-auth-error",
+                mode="bridge_error",
+                runtime_root=None,
+                config_path=None,
+                attachment_context={},
+                provider_id="custom",
+                provider_auth_profile_id="custom:default",
+                provider_auth_method="api_key_env",
+                provider_model="MiniMax-M2.7",
+                provider_model_family="generic",
+                provider_execution_transport="direct_http",
+                provider_base_url="https://api.minimax.io/v1",
+                provider_source="config+env",
+                routing_decision="provider_resolution_failed",
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2185,
+                    user_id="111",
+                    username="alice",
+                    text="Research this company for me.",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            result.detail["response_text"],
+            "Researcher is unavailable right now.\n"
+            "Reason: provider authentication is not configured correctly.\n"
+            "Detail: Missing OPENAI_API_KEY for auth profile custom:default\n"
+            "Next: fix the researcher provider auth configuration, then retry.",
+        )
+
+    def test_researcher_bridge_error_is_composed_for_telegram(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            return_value=ResearcherBridgeResult(
+                request_id="req-bridge-error",
+                reply_text="[Spark Researcher bridge error] subprocess timed out after 30s",
+                evidence_summary="External bridge failed closed.",
+                escalation_hint="bridge_error",
+                trace_ref="trace:bridge-error",
+                mode="bridge_error",
+                runtime_root="C:/fake-researcher",
+                config_path="C:/fake-researcher/spark-researcher.project.json",
+                attachment_context={},
+                provider_id="custom",
+                provider_auth_profile_id="custom:default",
+                provider_auth_method="api_key_env",
+                provider_model="MiniMax-M2.7",
+                provider_model_family="generic",
+                provider_execution_transport="direct_http",
+                provider_base_url="https://api.minimax.io/v1",
+                provider_source="config+env",
+                routing_decision="bridge_error",
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2186,
+                    user_id="111",
+                    username="alice",
+                    text="Research this company for me.",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            result.detail["response_text"],
+            "Researcher is unavailable right now.\n"
+            "Reason: the external researcher bridge failed during execution.\n"
+            "Detail: subprocess timed out after 30s\n"
+            "Next: inspect the researcher runtime, then retry.",
+        )
+
     def test_status_and_gateway_traces_surface_bridge_route_and_active_chip(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 

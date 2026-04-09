@@ -151,6 +151,8 @@ def _shape_telegram_bridge_reply(reply_text: str, *, bridge_mode: str | None, ro
     text = str(reply_text or "").strip()
     mode = str(bridge_mode or "").strip()
     route = str(routing_decision or "").strip()
+    detail_match = re.match(r"^\[[^\]]+\]\s*(.*)$", text, flags=re.DOTALL)
+    detail = str(detail_match.group(1)).strip() if detail_match else text
     citation_warning = "Source capture failed on the result page, so retry the search if you need an authoritative citation."
     if mode == "browser_evidence" and citation_warning in text:
         lines: list[str] = []
@@ -168,6 +170,32 @@ def _shape_telegram_bridge_reply(reply_text: str, *, bridge_mode: str | None, ro
         shaped = "\n".join(lines).strip()
         if next_inserted:
             return shaped
+    if mode == "disabled" or route == "bridge_disabled":
+        return "\n".join(
+            [
+                "Researcher is unavailable right now.",
+                "Reason: the Spark Researcher bridge is disabled for this workspace.",
+                "Next: enable Spark Researcher for this workspace, then retry.",
+            ]
+        )
+    if route == "provider_resolution_failed":
+        lines = [
+            "Researcher is unavailable right now.",
+            "Reason: provider authentication is not configured correctly.",
+        ]
+        if detail and detail != text:
+            lines.append(f"Detail: {detail}")
+        lines.append("Next: fix the researcher provider auth configuration, then retry.")
+        return "\n".join(lines)
+    if route == "bridge_error":
+        lines = [
+            "Researcher is unavailable right now.",
+            "Reason: the external researcher bridge failed during execution.",
+        ]
+        if detail and detail != text:
+            lines.append(f"Detail: {detail}")
+        lines.append("Next: inspect the researcher runtime, then retry.")
+        return "\n".join(lines)
     if mode != "blocked":
         return text
     if route == "browser_permission_required":
