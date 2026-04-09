@@ -960,6 +960,42 @@ class CliSmokeTests(SparkTestCase):
             status_stdout,
         )
 
+    def test_status_surfaces_latest_open_contradiction(self) -> None:
+        watchtower_snapshot = {
+            "top_level_state": "healthy",
+            "health_dimensions": {
+                "ingress_health": {"state": "healthy", "detail": "ok"},
+                "execution_health": {"state": "healthy", "detail": "ok"},
+                "delivery_health": {"state": "healthy", "detail": "ok"},
+                "scheduler_freshness": {"state": "unknown", "detail": "none"},
+                "environment_parity": {"state": "healthy", "detail": "ok"},
+            },
+            "contradictions": {
+                "counts": {"open": 1, "resolved": 4},
+                "recent_open": [
+                    {
+                        "contradiction_key": "stop_ship:stop_ship_keepability_rules",
+                        "detail": "122 influence or bridge output event(s) are missing keepability or promotion classification.",
+                    }
+                ],
+            },
+        }
+
+        with (
+            patch("spark_intelligence.cli.build_watchtower_snapshot", return_value=watchtower_snapshot),
+            patch("spark_intelligence.cli.run_first_active_chip_hook", return_value=None),
+        ):
+            status_exit, status_stdout, status_stderr = self.run_cli("status", "--home", str(self.home))
+
+        self.assertEqual(status_stderr, "")
+        self.assertIn(status_exit, (0, 1))
+        self.assertIn("- contradictions: open=1 resolved=4", status_stdout)
+        self.assertIn(
+            "- contradiction detail: 122 influence or bridge output event(s) are missing keepability or promotion classification.",
+            status_stdout,
+        )
+        self.assertIn("- contradiction key: stop_ship:stop_ship_keepability_rules", status_stdout)
+
     def test_bootstrap_telegram_agent_configures_supported_profile(self) -> None:
         researcher_root = self.home / "spark-researcher"
         researcher_root.mkdir()

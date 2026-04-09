@@ -195,6 +195,14 @@ class SystemStatus:
                 f"- contradictions: open={int(contradiction_counts.get('open') or 0)} "
                 f"resolved={int(contradiction_counts.get('resolved') or 0)}"
             )
+            recent_open = (watchtower.get("contradictions") or {}).get("recent_open") or []
+            latest_open = recent_open[0] if recent_open and isinstance(recent_open[0], dict) else {}
+            contradiction_detail = str(latest_open.get("detail") or latest_open.get("summary") or "").strip()
+            contradiction_key = str(latest_open.get("contradiction_key") or "").strip()
+            if contradiction_detail:
+                lines.append(f"- contradiction detail: {contradiction_detail}")
+            if contradiction_key:
+                lines.append(f"- contradiction key: {contradiction_key}")
         runtime_payload = self.payload.get("runtime") or {}
         autostart_payload = runtime_payload.get("autostart") or {}
         lines.append(f"- install profile: {runtime_payload.get('install_profile') or 'none'}")
