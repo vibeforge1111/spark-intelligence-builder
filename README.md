@@ -392,6 +392,9 @@ Current Telegram voice behavior:
 - voice-origin turns auto-reply with audio when TTS succeeds
 - `/voice reply on` enables audio replies for later text turns in that DM
 - Builder keeps the normal Telegram caption text but sends a voice-shaped spoken variant into `voice.speak` so audio replies sound more natural than raw text read aloud
+- Telegram voice replies should use Telegram voice-note delivery, not generic MP3/document delivery
+- the live path now requests Telegram-targeted Opus audio from `domain-chip-voice-comms` and delivers it with Telegram `sendVoice`
+- keep this contract when building future voice systems, because the older MP3 path caused degraded playback behavior and did not match the old Openclaw Telegram setup
 
 `status` now also surfaces the last bridge routing decision plus the last active chip route, and the text forms of `gateway traces` and `gateway outbound` now include `route=...` and `chip=...` when that metadata is available. That makes it possible to see whether a Telegram reply came from researcher advisory, direct provider fallback, or another bridge path without dropping to raw JSON.
 

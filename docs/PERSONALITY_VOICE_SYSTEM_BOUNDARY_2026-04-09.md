@@ -89,8 +89,11 @@ The voice chip should preserve the Builder-owned personality by operating around
 
 1. Builder decides to send a voice reply.
 2. Builder passes final reply text into `domain-chip-voice-comms` via `voice.speak`.
-3. The voice chip synthesizes audio.
-4. Builder delivers the returned audio artifact back to Telegram.
+3. For Telegram, the voice chip should synthesize Telegram-friendly Opus voice-note audio rather than generic MP3 output.
+4. Builder should deliver Telegram-compatible voice-note media with `sendVoice`, not a generic document/audio fallback path.
+5. Telegram receives the returned audio artifact back as a voice note.
+
+That transport detail matters. The old MP3-style path produced different playback behavior and was not equivalent to the older Openclaw Telegram setup.
 
 The important point is that the voice chip handles conversion, not personality authorship.
 

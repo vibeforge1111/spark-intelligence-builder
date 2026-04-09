@@ -121,6 +121,8 @@ Current live behavior:
 - voice-origin Telegram turns auto-reply with audio when TTS succeeds, even if `/voice reply on` is not set
 - `/voice reply on` enables automatic audio replies for later text-origin turns in that DM
 - Builder keeps the normal Telegram caption text, but sends a voice-shaped spoken variant into `voice.speak` so spoken replies stay shorter and cleaner
+- Telegram voice replies should be synthesized in a Telegram-friendly Opus voice-note format and delivered with `sendVoice`
+- do not silently fall back to generic MP3/document delivery unless you are intentionally accepting different playback behavior
 
 ## Think Visibility
 
