@@ -3268,6 +3268,68 @@ class OperatorPairingFlowTests(SparkTestCase):
             profile["agent_behavioral_rules"],
         )
 
+    def test_style_undo_reverts_last_saved_style_change(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11723,
+                user_id="111",
+                username="alice",
+                text="/style train be more direct and keep replies short",
+            ),
+        )
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11724,
+                user_id="111",
+                username="alice",
+                text="/style undo",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Reverted last style change for", result.detail["response_text"])
+        profile = load_personality_profile(
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            state_db=self.state_db,
+            config_manager=self.config_manager,
+        )
+        self.assertNotIn("Be more direct and keep replies short", profile["agent_behavioral_rules"])
+
+    def test_natural_language_style_undo_reverts_last_saved_style_change(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11725,
+                user_id="111",
+                username="alice",
+                text="/style preset concise",
+            ),
+        )
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11726,
+                user_id="111",
+                username="alice",
+                text="Undo the last style change",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Reverted last style change for", result.detail["response_text"])
+        self.assertEqual(result.detail["bridge_mode"], "runtime_command")
+
     def test_style_bad_requires_feedback_note(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 

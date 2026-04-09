@@ -53,6 +53,7 @@ Natural-language examples:
 - `/style history`
 - `/style presets`
 - `/style preset <name>`
+- `/style undo`
 - `/style score`
 - `/style examples`
 - `/style compare`
@@ -69,6 +70,7 @@ Natural-language examples:
 - `What style changes have you saved?`
 - `What style presets are available?`
 - `Set style preset to claude-like`
+- `Undo the last style change`
 - `Score my style`
 - `Show me my style examples`
 - `Compare my style`

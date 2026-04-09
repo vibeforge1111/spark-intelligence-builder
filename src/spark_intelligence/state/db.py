@@ -468,6 +468,21 @@ SCHEMA_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS agent_persona_undo_snapshots (
+        snapshot_id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        human_id TEXT NOT NULL,
+        persona_name TEXT,
+        persona_summary TEXT,
+        base_traits_json TEXT NOT NULL,
+        behavioral_rules_json TEXT,
+        provenance_json TEXT,
+        source_surface TEXT NOT NULL,
+        source_ref TEXT,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS personality_observations (
         observation_id TEXT PRIMARY KEY,
         human_id TEXT NOT NULL,

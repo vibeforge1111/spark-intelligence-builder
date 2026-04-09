@@ -36,6 +36,7 @@ from spark_intelligence.personality import (
     detect_and_persist_agent_persona_preferences,
     load_personality_profile,
     maybe_handle_agent_persona_onboarding_turn,
+    pop_agent_persona_undo_snapshot,
     resolve_builder_persona_agent_id,
 )
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply, record_researcher_bridge_result
@@ -2540,6 +2541,8 @@ def _parse_style_command(inbound_text: str) -> dict[str, str | None] | None:
         return {"command": "/style history", "payload": None}
     if lowered in {"/style presets", "style presets"}:
         return {"command": "/style presets", "payload": None}
+    if lowered in {"/style undo", "style undo", "/style rollback", "style rollback"}:
+        return {"command": "/style undo", "payload": None}
     if lowered in {"/style score", "style score"}:
         return {"command": "/style score", "payload": None}
     if lowered in {"/style examples", "style examples"}:
@@ -2658,6 +2661,14 @@ def _match_natural_style_command(inbound_text: str) -> dict[str, str | None] | N
         "list style presets",
     }:
         return {"command": "/style presets", "payload": None}
+    if simplified in {
+        "undo the last style change",
+        "undo my last style change",
+        "revert the last style change",
+        "rollback the last style change",
+        "undo the last preset",
+    }:
+        return {"command": "/style undo", "payload": None}
     if re.match(
         r"^(?:please\s+|can you\s+)?(?:show(?:\s+me)?|tell me)\s+(?:my\s+)?style\s+history$",
         simplified,
@@ -2832,6 +2843,7 @@ def _handle_style_command(
                 "Style controls: `/style status` to inspect the current Telegram persona, "
                 "`/style history` to inspect recent saved mutations, "
                 "`/style presets` to list named conversation presets, "
+                "`/style undo` to revert the last saved style change, "
                 "`/style score` to grade the current voice against the training rubric, "
                 "`/style examples` to see fixed sample replies in the current voice, "
                 "`/style compare` to preview how the current voice differs from the default baseline, "
@@ -2870,6 +2882,41 @@ def _handle_style_command(
         return {
             "command": "/style presets",
             "reply_text": _render_style_presets_reply(),
+        }
+    if command == "/style undo":
+        if not human_id or not agent_id:
+            return {
+                "command": "/style undo",
+                "reply_text": (
+                    "Style undo is unavailable right now.\n"
+                    "Reason: this Telegram DM does not have a resolved Builder identity yet."
+                ),
+            }
+        restored_profile = pop_agent_persona_undo_snapshot(
+            agent_id=agent_id,
+            human_id=human_id,
+            state_db=state_db,
+            source_surface="telegram",
+            source_ref="telegram-style-undo",
+        )
+        if restored_profile is None:
+            return {
+                "command": "/style undo",
+                "reply_text": (
+                    "No style undo is available.\n"
+                    "Reason: there is no saved pre-change snapshot yet.\n"
+                    "Next: use `/style train`, `/style feedback`, or `/style preset` first."
+                ),
+            }
+        refreshed_profile, refreshed_agent_name = _load_telegram_persona_surface_state(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            agent_id=agent_id,
+        )
+        return {
+            "command": "/style undo",
+            "reply_text": _render_style_undo_reply(profile=refreshed_profile, agent_name=refreshed_agent_name),
         }
     if command == "/style score":
         return {
@@ -2926,6 +2973,7 @@ def _handle_style_command(
             state_db=state_db,
             source_surface="telegram",
             source_ref="telegram-style-preset",
+            push_undo_snapshot=True,
         )
         if mutation is None:
             return {
@@ -2987,6 +3035,7 @@ def _handle_style_command(
             state_db=state_db,
             source_surface="telegram",
             source_ref="telegram-style-train",
+            push_undo_snapshot=True,
         )
         if mutation is None:
             return {
@@ -3050,6 +3099,7 @@ def _handle_style_command(
             state_db=state_db,
             source_surface="telegram",
             source_ref="telegram-style-feedback",
+            push_undo_snapshot=True,
         )
         if mutation is None:
             return {
@@ -3230,7 +3280,7 @@ def _render_style_presets_reply() -> str:
     lines = ["Style presets available."]
     for key, preset in _STYLE_PRESETS.items():
         lines.append(f"- `{key}`: {preset['description']}")
-    lines.append("Next: use `/style preset <name>` to apply one, or `/style before-after <instruction>` to preview a custom change.")
+    lines.append("Next: use `/style preset <name>` to apply one, `/style undo` to roll back the last saved change, or `/style before-after <instruction>` to preview a custom change.")
     return "\n".join(lines)
 
 
@@ -3265,6 +3315,8 @@ def _style_history_event_label(row: dict[str, Any]) -> str:
         return "feedback"
     if source_ref == "telegram-style-preset":
         return "preset"
+    if source_ref == "telegram-style-undo" or mutation_kind == "rollback":
+        return "undo"
     if source_ref == "telegram-style-train":
         return "training"
     if mutation_kind == "onboarding_authoring":
@@ -3341,6 +3393,22 @@ def _render_style_examples_reply(*, profile: dict[str, Any] | None, agent_name: 
         lines.append(f"{index}. Prompt: {prompt}")
         lines.append(f"Sample: {sample}")
     lines.append("Next: if one sample feels off, use `/style feedback <note>`. Use `/style compare` to see baseline drift.")
+    return "\n".join(lines)
+
+
+def _render_style_undo_reply(*, profile: dict[str, Any] | None, agent_name: str | None) -> str:
+    resolved_profile = profile or {}
+    name = str(agent_name or resolved_profile.get("agent_persona_name") or "the agent").strip()
+    persona_summary = str(resolved_profile.get("agent_persona_summary") or "").strip()
+    behavioral_rules = [
+        str(rule).strip() for rule in list(resolved_profile.get("agent_behavioral_rules") or []) if str(rule).strip()
+    ]
+    lines = [f"Reverted last style change for {name}."]
+    if persona_summary:
+        lines.append(f"Current summary: {persona_summary}.")
+    if behavioral_rules:
+        lines.append("Current rules: " + " | ".join(behavioral_rules[:4]) + ".")
+    lines.append("Next: ask a normal question in this DM to verify the rollback, or use `/style history` to inspect the mutation trail.")
     return "\n".join(lines)
 
 
