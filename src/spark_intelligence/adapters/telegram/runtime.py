@@ -1478,10 +1478,15 @@ def _handle_runtime_command(
             command=style_command["command"],
             payload=style_command.get("payload"),
         )
-    if lowered == "/voice":
+    if lowered in {"/voice", "/voice status"}:
         return {
             "command": "/voice",
             "reply_text": _render_telegram_voice_status_reply(),
+        }
+    if lowered == "/voice plan":
+        return {
+            "command": "/voice plan",
+            "reply_text": _render_telegram_voice_plan_reply(),
         }
     if lowered in {"/think", "/think on", "/think off"}:
         if lowered == "/think":
@@ -2067,6 +2072,8 @@ def _parse_style_command(inbound_text: str) -> dict[str, str | None] | None:
         return {"command": "/style", "payload": None}
     if lowered in {"/style status", "style status"}:
         return {"command": "/style status", "payload": None}
+    if lowered in {"/style test", "style test"}:
+        return {"command": "/style test", "payload": None}
     feedback_prefixes = ("/style feedback ", "style feedback ")
     for prefix in feedback_prefixes:
         if lowered.startswith(prefix):
@@ -2115,6 +2122,11 @@ def _handle_style_command(
         return {
             "command": "/style status",
             "reply_text": _render_style_status_reply(profile=profile, agent_name=agent_name),
+        }
+    if command == "/style test":
+        return {
+            "command": "/style test",
+            "reply_text": _render_style_test_reply(profile=profile, agent_name=agent_name),
         }
     if command == "/style train":
         instruction = str(payload or "").strip()
@@ -2297,6 +2309,22 @@ def _render_style_status_reply(*, profile: dict[str, Any] | None, agent_name: st
     return "\n".join(lines)
 
 
+def _render_style_test_reply(*, profile: dict[str, Any] | None, agent_name: str | None) -> str:
+    resolved_profile = profile or {}
+    name = str(agent_name or resolved_profile.get("agent_persona_name") or "the agent").strip()
+    persona_summary = str(resolved_profile.get("agent_persona_summary") or "").strip()
+    lines = [f"Style test kit for {name}."]
+    if persona_summary:
+        lines.append(f"Target voice: {persona_summary}.")
+    lines.append("Try these prompts:")
+    lines.append('1. `Give me the answer in two lines and skip filler.`')
+    lines.append('2. `Critique this plan bluntly and tell me the next step.`')
+    lines.append('3. `Search the web for BTC and cite the source.`')
+    lines.append('4. `Ask me one clarifying question, then stop.`')
+    lines.append("Next: after each reply, use `/style feedback <note>`, `/style good <note>`, or `/style bad <note>`.")
+    return "\n".join(lines)
+
+
 def _render_style_training_reply(
     *,
     profile: dict[str, Any] | None,
@@ -2331,6 +2359,16 @@ def _render_telegram_voice_status_reply() -> str:
         "Voice is not wired into Telegram yet.\n"
         "Current state: Builder handles text replies, but Telegram voice/audio messages are not transcribed or voiced back yet.\n"
         "Next: add voice-note ingestion, transcription into the same Telegram runtime, and optional voice reply synthesis."
+    )
+
+
+def _render_telegram_voice_plan_reply() -> str:
+    return (
+        "Telegram voice plan:\n"
+        "1. ingest Telegram voice/audio payloads and fetch the file bytes.\n"
+        "2. transcribe them into the same Builder Telegram runtime used for text.\n"
+        "3. optionally synthesize the reply back into voice while keeping the same saved persona.\n"
+        "Next: wire transcription first, then decide whether voice replies should be optional or default."
     )
 
 

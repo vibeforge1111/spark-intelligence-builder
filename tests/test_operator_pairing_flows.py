@@ -2801,6 +2801,25 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(profile["agent_persona_applied"])
         self.assertEqual(profile["style_labels"]["directness"], "very direct")
 
+    def test_style_test_command_returns_training_probe_prompts(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=1170,
+                user_id="111",
+                username="alice",
+                text="/style test",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Style test kit", result.detail["response_text"])
+        self.assertIn("Search the web for BTC and cite the source.", result.detail["response_text"])
+        self.assertIn("/style feedback <note>", result.detail["response_text"])
+
     def test_style_feedback_command_maps_common_negative_feedback_into_style_update(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
@@ -2861,6 +2880,24 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(result.ok)
         self.assertIn("Voice is not wired into Telegram yet.", result.detail["response_text"])
         self.assertIn("voice-note ingestion", result.detail["response_text"])
+
+    def test_voice_plan_command_returns_concrete_pipeline_steps(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=1181,
+                user_id="111",
+                username="alice",
+                text="/voice plan",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Telegram voice plan:", result.detail["response_text"])
+        self.assertIn("transcribe them into the same Builder Telegram runtime", result.detail["response_text"])
 
     def test_voice_message_returns_bounded_not_ready_reply(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
