@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import re
 from dataclasses import dataclass
@@ -13,6 +15,10 @@ from spark_intelligence.state.db import StateDB
 
 
 _URL_RE = re.compile(r"https?://[^\s)]+", re.IGNORECASE)
+_VOICE_SPEAK_RE = re.compile(
+    r"^(?:say|speak|voice|read(?:\s+this)?|send(?:\s+this)?\s+as\s+voice|reply(?:\s+with)?\s+voice)[:\s-]+(?P<text>.+)$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -230,6 +236,20 @@ def execute_harness_task(
                 config_manager=config_manager,
                 envelope=envelope,
             )
+        elif envelope.harness_id == "voice.io":
+            artifacts, summary, status = _execute_voice_io_harness(
+                config_manager=config_manager,
+                state_db=state_db,
+                envelope=envelope,
+                run_id=run.run_id,
+            )
+        elif envelope.harness_id == "swarm.escalation":
+            artifacts, summary, status = _execute_swarm_escalation_harness(
+                config_manager=config_manager,
+                state_db=state_db,
+                envelope=envelope,
+                run_id=run.run_id,
+            )
         else:
             summary = f"{envelope.harness_id} execution contract prepared but no active runner exists yet."
             artifacts = {
@@ -432,6 +452,336 @@ def _run_researcher_bridge_reply(
         channel_kind=envelope.channel_kind or "cli",
         user_message=envelope.task,
     )
+
+
+def _execute_voice_io_harness(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    envelope: HarnessTaskEnvelope,
+    run_id: str,
+) -> tuple[dict[str, Any], str, str]:
+    try:
+        status_output, status_chip_key = _run_voice_hook(
+            config_manager=config_manager,
+            state_db=state_db,
+            envelope=envelope,
+            hook="voice.status",
+            payload=_build_voice_hook_payload(config_manager=config_manager, envelope=envelope),
+            run_id=run_id,
+        )
+    except Exception as exc:
+        return (
+            {
+                "voice_status": {
+                    "chip_key": None,
+                    "ready": False,
+                    "reason": str(exc),
+                    "reply_text": "",
+                },
+                "resume_token": _build_harness_resume_token(
+                    config_manager=config_manager,
+                    envelope=envelope,
+                    step="voice_status_repair",
+                ),
+            },
+            "Voice I/O harness is blocked because no healthy voice status hook is available.",
+            "blocked",
+        )
+    status_result = status_output.get("result") if isinstance(status_output.get("result"), dict) else {}
+    ready = bool(status_result.get("ready"))
+    artifacts: dict[str, Any] = {
+        "voice_status": {
+            "chip_key": status_chip_key,
+            "ready": ready,
+            "reason": str(status_result.get("reason") or ""),
+            "reply_text": str(status_result.get("reply_text") or ""),
+        },
+    }
+    task_mode, task_payload = _classify_voice_task(envelope.task)
+    if task_mode == "speak":
+        if not ready:
+            artifacts["resume_token"] = _build_harness_resume_token(
+                config_manager=config_manager,
+                envelope=envelope,
+                step="voice_status_repair",
+            )
+            return (
+                artifacts,
+                "Voice I/O harness is not ready to synthesize speech yet.",
+                "blocked",
+            )
+        try:
+            speak_output, speak_chip_key = _run_voice_hook(
+                config_manager=config_manager,
+                state_db=state_db,
+                envelope=envelope,
+                hook="voice.speak",
+                payload=_build_voice_hook_payload(
+                    config_manager=config_manager,
+                    envelope=envelope,
+                    text=task_payload,
+                ),
+                run_id=run_id,
+            )
+        except Exception as exc:
+            artifacts["resume_token"] = _build_harness_resume_token(
+                config_manager=config_manager,
+                envelope=envelope,
+                step="voice_speak_retry",
+            )
+            artifacts["retry_token"] = {
+                "retry_command": f"python -m spark_intelligence.cli harness execute {json.dumps(envelope.task)} --home {config_manager.paths.home} --harness-id voice.io",
+                "reason": str(exc),
+            }
+            return (
+                artifacts,
+                "Voice I/O harness could not synthesize speech with the current provider/hook state.",
+                "blocked",
+            )
+        speak_result = speak_output.get("result") if isinstance(speak_output.get("result"), dict) else {}
+        audio_base64 = str(speak_result.get("audio_base64") or "")
+        audio_bytes = base64.b64decode(audio_base64.encode("ascii")) if audio_base64 else b""
+        artifacts["spoken_audio"] = {
+            "chip_key": speak_chip_key,
+            "provider_id": str(speak_result.get("provider_id") or ""),
+            "voice_id": str(speak_result.get("voice_id") or ""),
+            "model_id": str(speak_result.get("model_id") or ""),
+            "mime_type": str(speak_result.get("mime_type") or ""),
+            "filename": str(speak_result.get("filename") or ""),
+            "voice_compatible": bool(speak_result.get("voice_compatible")),
+            "audio_bytes": len(audio_bytes),
+            "audio_sha256": hashlib.sha256(audio_bytes).hexdigest() if audio_bytes else None,
+        }
+        artifacts["resume_token"] = _build_harness_resume_token(
+            config_manager=config_manager,
+            envelope=envelope,
+            step="voice_repeat",
+        )
+        return (
+            artifacts,
+            "Executed the voice harness and synthesized spoken audio through the active voice chip.",
+            "completed",
+        )
+
+    artifacts["needs_input"] = {
+        "reason": (
+            "Voice I/O harness needs explicit speech text for synthesis or real audio bytes for transcription."
+            if task_mode == "unspecified"
+            else "Voice transcription requires audio bytes from a voice-capable surface before execution can continue."
+        ),
+        "mode": task_mode,
+        "task": envelope.task,
+    }
+    artifacts["resume_token"] = _build_harness_resume_token(
+        config_manager=config_manager,
+        envelope=envelope,
+        step="voice_input_required",
+    )
+    return (
+        artifacts,
+        "Voice I/O harness is ready but needs explicit speech text or audio input before execution can continue.",
+        "needs_input",
+    )
+
+
+def _execute_swarm_escalation_harness(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    envelope: HarnessTaskEnvelope,
+    run_id: str,
+) -> tuple[dict[str, Any], str, str]:
+    status = _load_swarm_status(config_manager=config_manager, state_db=state_db)
+    artifacts: dict[str, Any] = {
+        "swarm_status": {
+            "enabled": bool(status.enabled),
+            "configured": bool(status.configured),
+            "researcher_ready": bool(status.researcher_ready),
+            "payload_ready": bool(status.payload_ready),
+            "api_ready": bool(status.api_ready),
+            "auth_state": str(status.auth_state or ""),
+            "workspace_id": status.workspace_id,
+            "api_url": status.api_url,
+            "last_decision": status.last_decision,
+            "last_failure": status.last_failure,
+        }
+    }
+    if not status.enabled:
+        artifacts["resume_token"] = _build_harness_resume_token(
+            config_manager=config_manager,
+            envelope=envelope,
+            step="swarm_enablement_required",
+        )
+        return (
+            artifacts,
+            "Swarm escalation is blocked because the Spark Swarm bridge is disabled.",
+            "blocked",
+        )
+    if not status.researcher_ready or not status.payload_ready:
+        artifacts["resume_token"] = _build_harness_resume_token(
+            config_manager=config_manager,
+            envelope=envelope,
+            step="swarm_payload_repair",
+        )
+        artifacts["retry_token"] = {
+            "retry_command": f"python -m spark_intelligence.cli swarm status --home {config_manager.paths.home}",
+            "reason": "Inspect Swarm bridge readiness before retrying this harness.",
+        }
+        return (
+            artifacts,
+            "Swarm escalation needs the Researcher collective payload path repaired before the task can continue.",
+            "needs_input",
+        )
+    sync_result = _run_swarm_sync_dry_run(
+        config_manager=config_manager,
+        state_db=state_db,
+        envelope=envelope,
+        run_id=run_id,
+    )
+    artifacts["swarm_sync_result"] = {
+        "ok": bool(sync_result.ok),
+        "mode": str(sync_result.mode or ""),
+        "message": str(sync_result.message or ""),
+        "payload_path": sync_result.payload_path,
+        "api_url": sync_result.api_url,
+        "workspace_id": sync_result.workspace_id,
+        "accepted": sync_result.accepted,
+        "response_body": sync_result.response_body,
+    }
+    artifacts["resume_token"] = {
+        "resume_kind": "swarm_dispatch",
+        "resume_command": f"python -m spark_intelligence.cli swarm sync --home {config_manager.paths.home}",
+        "reason": "Dispatch the prepared Spark Swarm collective payload when you want to move from dry-run to upload.",
+    }
+    artifacts["retry_token"] = {
+        "retry_command": f"python -m spark_intelligence.cli swarm sync --dry-run --home {config_manager.paths.home}",
+        "reason": "Rebuild the latest collective payload before retrying if the Swarm state changes.",
+    }
+    if sync_result.ok:
+        return (
+            artifacts,
+            "Executed the Swarm harness by building the latest collective payload in dry-run mode.",
+            "prepared",
+        )
+    return (
+        artifacts,
+        "Swarm escalation runner could not prepare a collective payload yet.",
+        "needs_input",
+    )
+
+
+def _build_voice_hook_payload(
+    *,
+    config_manager: ConfigManager,
+    envelope: HarnessTaskEnvelope,
+    text: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "surface": envelope.channel_kind or "cli",
+        "builder_env_file_path": str(config_manager.paths.env_file.resolve()),
+        "human_id": envelope.human_id,
+        "agent_id": envelope.agent_id,
+    }
+    if text is not None:
+        payload["text"] = text
+    return payload
+
+
+def _run_voice_hook(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    envelope: HarnessTaskEnvelope,
+    hook: str,
+    payload: dict[str, Any],
+    run_id: str,
+) -> tuple[dict[str, Any], str]:
+    from spark_intelligence.attachments import record_chip_hook_execution, run_first_chip_hook_supporting
+
+    execution = run_first_chip_hook_supporting(config_manager, hook=hook, payload=payload)
+    if not execution:
+        raise RuntimeError(f"No attached chip supports `{hook}`.")
+    if not execution.ok:
+        raise RuntimeError(str(execution.stderr or execution.stdout or f"{hook} failed.").strip())
+    record_chip_hook_execution(
+        state_db,
+        execution=execution,
+        component="harness_runtime",
+        actor_id="harness_runtime",
+        summary=f"Harness runtime executed {hook} through chip {execution.chip_key}.",
+        reason_code=f"harness_{hook.replace('.', '_')}",
+        keepability="ephemeral_context",
+        run_id=run_id,
+        request_id=envelope.envelope_id,
+        channel_id=envelope.channel_kind,
+        session_id=envelope.session_id,
+        human_id=envelope.human_id,
+        agent_id=envelope.agent_id,
+    )
+    output = execution.output if isinstance(execution.output, dict) else {}
+    return output, execution.chip_key
+
+
+def _load_swarm_status(*, config_manager: ConfigManager, state_db: StateDB):
+    from spark_intelligence.swarm_bridge import swarm_status
+
+    return swarm_status(config_manager, state_db)
+
+
+def _run_swarm_sync_dry_run(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    envelope: HarnessTaskEnvelope,
+    run_id: str,
+):
+    from spark_intelligence.swarm_bridge import sync_swarm_collective
+
+    return sync_swarm_collective(
+        config_manager=config_manager,
+        state_db=state_db,
+        dry_run=True,
+        run_id=run_id,
+        request_id=envelope.envelope_id,
+        channel_id=envelope.channel_kind,
+        session_id=envelope.session_id,
+        human_id=envelope.human_id,
+        agent_id=envelope.agent_id,
+        actor_id="harness_runtime",
+    )
+
+
+def _classify_voice_task(task: str) -> tuple[str, str | None]:
+    stripped = str(task or "").strip()
+    lowered = stripped.lower()
+    match = _VOICE_SPEAK_RE.match(stripped)
+    if match:
+        spoken_text = str(match.group("text") or "").strip()
+        return ("speak", spoken_text or None)
+    if "transcribe" in lowered or "transcription" in lowered:
+        return ("transcribe", None)
+    return ("unspecified", None)
+
+
+def _build_harness_resume_token(
+    *,
+    config_manager: ConfigManager,
+    envelope: HarnessTaskEnvelope,
+    step: str,
+) -> dict[str, Any]:
+    command = (
+        f"python -m spark_intelligence.cli harness execute {json.dumps(envelope.task)} "
+        f"--home {config_manager.paths.home} --harness-id {envelope.harness_id}"
+    )
+    if envelope.channel_kind:
+        command += f" --channel-kind {envelope.channel_kind}"
+    return {
+        "resume_kind": step,
+        "resume_command": command,
+        "harness_id": envelope.harness_id,
+        "envelope_id": envelope.envelope_id,
+    }
 
 
 def _extract_first_url(text: str) -> str | None:
