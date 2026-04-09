@@ -208,7 +208,7 @@ class SystemStatus:
                 continue
             name = str(check.get("name") or "").strip()
             detail = str(check.get("detail") or "").strip()
-            repair_hint = _doctor_check_repair_hint(name, detail)
+            repair_hint = _doctor_check_repair_hint(name, detail, watchtower)
             if not repair_hint:
                 continue
             if detail:
@@ -289,11 +289,28 @@ def _watchtower_dimension_repair_hint(dimension_key: str, dimension: dict[str, o
     return None
 
 
-def _doctor_check_repair_hint(check_name: str, detail: str) -> str | None:
+def _import_hook_repair_hint(*, hook_name: str, import_payload: dict[str, object]) -> str:
+    available = [str(item) for item in (import_payload.get("available_chip_keys") or []) if str(item)]
+    if available:
+        shown = ", ".join(available[:3])
+        return f"Activate a chip exposing the `{hook_name}` hook ({shown}), then rerun `spark-intelligence doctor`."
+    return f"No configured chip exposes the `{hook_name}` hook. Add or implement one, then rerun `spark-intelligence doctor`."
+
+
+def _doctor_check_repair_hint(check_name: str, detail: str, watchtower: dict[str, object]) -> str | None:
+    panels = (watchtower.get("panels") or {}) if isinstance(watchtower, dict) else {}
     if check_name == "watchtower-personality-import":
-        return "Install and activate a chip exposing the `personality` hook, then rerun `spark-intelligence doctor`."
+        personality_panel = panels.get("personality") or {}
+        personality_import = personality_panel.get("personality_import") or {}
+        if isinstance(personality_import, dict):
+            return _import_hook_repair_hint(hook_name="personality", import_payload=personality_import)
+        return "No configured chip exposes the `personality` hook. Add or implement one, then rerun `spark-intelligence doctor`."
     if check_name == "watchtower-agent-identity-import":
-        return "Install and activate a chip exposing the `identity` hook, then rerun `spark-intelligence doctor`."
+        identity_panel = panels.get("agent_identity") or {}
+        identity_import = identity_panel.get("identity_import") or {}
+        if isinstance(identity_import, dict):
+            return _import_hook_repair_hint(hook_name="identity", import_payload=identity_import)
+        return "No configured chip exposes the `identity` hook. Add or implement one, then rerun `spark-intelligence doctor`."
     return None
 
 

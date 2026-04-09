@@ -972,12 +972,12 @@ class CliSmokeTests(SparkTestCase):
                 DoctorCheck(
                     "watchtower-personality-import",
                     False,
-                    "enabled=yes required=yes canonical_agents=2 personality_import_ready=no active_personality_hook_chips=0",
+                    "enabled=yes required=yes canonical_agents=2 personality_import_ready=no available_personality_hook_chips=0 active_personality_hook_chips=0",
                 ),
                 DoctorCheck(
                     "watchtower-agent-identity-import",
                     False,
-                    "builder_local=2 identity_import_ready=no active_identity_hook_chips=0",
+                    "builder_local=2 identity_import_ready=no available_identity_hook_chips=0 active_identity_hook_chips=0",
                 ),
             ]
         )
@@ -991,6 +991,10 @@ class CliSmokeTests(SparkTestCase):
                 "environment_parity": {"state": "healthy", "detail": "ok"},
             },
             "contradictions": {"counts": {"open": 0, "resolved": 0}},
+            "panels": {
+                "personality": {"personality_import": {"available_chip_keys": [], "active_chip_keys": []}},
+                "agent_identity": {"identity_import": {"available_chip_keys": [], "active_chip_keys": []}},
+            },
         }
 
         with (
@@ -1003,19 +1007,72 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(status_stderr, "")
         self.assertEqual(status_exit, 1)
         self.assertIn(
-            "- watchtower-personality-import: enabled=yes required=yes canonical_agents=2 personality_import_ready=no active_personality_hook_chips=0",
+            "- watchtower-personality-import: enabled=yes required=yes canonical_agents=2 personality_import_ready=no available_personality_hook_chips=0 active_personality_hook_chips=0",
             status_stdout,
         )
         self.assertIn(
-            "- watchtower-personality-import repair: Install and activate a chip exposing the `personality` hook, then rerun `spark-intelligence doctor`.",
+            "- watchtower-personality-import repair: No configured chip exposes the `personality` hook. Add or implement one, then rerun `spark-intelligence doctor`.",
             status_stdout,
         )
         self.assertIn(
-            "- watchtower-agent-identity-import: builder_local=2 identity_import_ready=no active_identity_hook_chips=0",
+            "- watchtower-agent-identity-import: builder_local=2 identity_import_ready=no available_identity_hook_chips=0 active_identity_hook_chips=0",
             status_stdout,
         )
         self.assertIn(
-            "- watchtower-agent-identity-import repair: Install and activate a chip exposing the `identity` hook, then rerun `spark-intelligence doctor`.",
+            "- watchtower-agent-identity-import repair: No configured chip exposes the `identity` hook. Add or implement one, then rerun `spark-intelligence doctor`.",
+            status_stdout,
+        )
+
+    def test_status_surfaces_activation_hint_when_import_chip_is_available_but_inactive(self) -> None:
+        doctor_report = DoctorReport(
+            checks=[
+                DoctorCheck(
+                    "watchtower-personality-import",
+                    False,
+                    "enabled=yes required=yes canonical_agents=2 personality_import_ready=no available_personality_hook_chips=1 active_personality_hook_chips=0",
+                ),
+                DoctorCheck(
+                    "watchtower-agent-identity-import",
+                    False,
+                    "builder_local=2 identity_import_ready=no available_identity_hook_chips=1 active_identity_hook_chips=0",
+                ),
+            ]
+        )
+        watchtower_snapshot = {
+            "top_level_state": "healthy",
+            "health_dimensions": {
+                "ingress_health": {"state": "healthy", "detail": "ok"},
+                "execution_health": {"state": "healthy", "detail": "ok"},
+                "delivery_health": {"state": "healthy", "detail": "ok"},
+                "scheduler_freshness": {"state": "unknown", "detail": "none"},
+                "environment_parity": {"state": "healthy", "detail": "ok"},
+            },
+            "contradictions": {"counts": {"open": 0, "resolved": 0}},
+            "panels": {
+                "personality": {
+                    "personality_import": {"available_chip_keys": ["spark-personality"], "active_chip_keys": []}
+                },
+                "agent_identity": {
+                    "identity_import": {"available_chip_keys": ["spark-swarm"], "active_chip_keys": []}
+                },
+            },
+        }
+
+        with (
+            patch("spark_intelligence.cli.run_doctor", return_value=doctor_report),
+            patch("spark_intelligence.cli.build_watchtower_snapshot", return_value=watchtower_snapshot),
+            patch("spark_intelligence.cli.run_first_active_chip_hook", return_value=None),
+        ):
+            status_exit, status_stdout, status_stderr = self.run_cli("status", "--home", str(self.home))
+
+        self.assertEqual(status_stderr, "")
+        self.assertEqual(status_exit, 1)
+        self.assertIn(
+            "- watchtower-personality-import repair: Activate a chip exposing the `personality` hook (spark-personality), then rerun `spark-intelligence doctor`.",
+            status_stdout,
+        )
+        self.assertIn(
+            "- watchtower-agent-identity-import repair: Activate a chip exposing the `identity` hook (spark-swarm), then rerun `spark-intelligence doctor`.",
             status_stdout,
         )
 

@@ -534,6 +534,7 @@ def _watchtower_health_checks(*, config_manager: ConfigManager, state_db: StateD
                 f"required={'yes' if personality_import_required else 'no'} "
                 f"canonical_agents={canonical_agent_count} "
                 f"personality_import_ready={'yes' if personality_import_ready else 'no'} "
+                f"available_personality_hook_chips={len(personality_import.get('available_chip_keys') or [])} "
                 f"active_personality_hook_chips={len(personality_import.get('active_chip_keys') or [])}"
             ),
         )
@@ -561,6 +562,7 @@ def _watchtower_health_checks(*, config_manager: ConfigManager, state_db: StateD
             (
                 f"builder_local={builder_local_count} "
                 f"identity_import_ready={'yes' if identity_import_ready else 'no'} "
+                f"available_identity_hook_chips={len(identity_import.get('available_chip_keys') or [])} "
                 f"active_identity_hook_chips={len(identity_import.get('active_chip_keys') or [])}"
             ),
         )
