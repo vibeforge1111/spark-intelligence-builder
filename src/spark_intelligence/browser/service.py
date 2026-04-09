@@ -8,6 +8,7 @@ from spark_intelligence.config.loader import ConfigManager
 
 BROWSER_STATUS_HOOK = "browser.status"
 BROWSER_NAVIGATE_HOOK = "browser.navigate"
+BROWSER_PAGE_INTERACTIVES_LIST_HOOK = "browser.page.interactives.list"
 BROWSER_TAB_WAIT_HOOK = "browser.tab.wait"
 BROWSER_PAGE_DOM_EXTRACT_HOOK = "browser.page.dom_extract"
 BROWSER_PAGE_TEXT_EXTRACT_HOOK = "browser.page.text_extract"
@@ -131,6 +132,48 @@ def build_browser_navigate_payload(
         },
         "policy_context": {
             "allowed_domains": _normalize_allowed_domains(url, []),
+            "sensitive_domain": False,
+            "operator_required": False,
+        },
+    }
+
+
+def build_browser_page_interactives_list_payload(
+    *,
+    config_manager: ConfigManager,
+    origin: str,
+    tab_id: str | None = None,
+    browser_family: str | None = None,
+    profile_key: str | None = None,
+    profile_mode: str | None = None,
+    agent_id: str | None = None,
+    request_id: str | None = None,
+    max_items: int = 12,
+    allowed_domains: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "request_id": request_id or f"browser-page-interactives-list:{uuid4().hex[:12]}",
+        "hook_name": BROWSER_PAGE_INTERACTIVES_LIST_HOOK,
+        "agent_id": agent_id or DEFAULT_AGENT_ID,
+        "workspace_id": _workspace_id(config_manager),
+        "risk_class": "read_only",
+        "approval_mode": "not_required",
+        "approval_id": None,
+        "target": {
+            **_build_target(
+                browser_family=browser_family,
+                profile_key=profile_key,
+                profile_mode=profile_mode,
+                origin=origin,
+            ),
+            "tab_id": tab_id,
+        },
+        "arguments": {
+            "max_items": max_items,
+        },
+        "policy_context": {
+            "allowed_domains": _normalize_allowed_domains(origin, allowed_domains or []),
             "sensitive_domain": False,
             "operator_required": False,
         },

@@ -9,12 +9,15 @@ from spark_intelligence.memory import write_profile_fact_to_memory
 from spark_intelligence.observability.store import latest_events_by_type
 from spark_intelligence.researcher_bridge.advisory import (
     _build_browser_search_context,
+    _browser_reply_denies_browsing,
     _build_contextual_task,
     _clean_messaging_reply,
     _normalize_browser_search_query,
     _should_collect_browser_search_context,
     _render_direct_provider_chat_fallback,
+    _rewrite_browser_search_capability_denial,
     _sanitize_browser_search_reply,
+    _select_search_result_candidate_from_interactives_result,
     _select_search_result_candidate_from_text_result,
     build_researcher_reply,
 )
@@ -82,6 +85,33 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         )
 
         self.assertEqual(candidate, {"href": "https://www.example.com", "text_summary": ""})
+
+    def test_select_search_result_candidate_from_interactives_result_prefers_external_href(self) -> None:
+        candidate = _select_search_result_candidate_from_interactives_result(
+            {
+                "result": {
+                    "interactives": [
+                        {
+                            "label": "DuckDuckGo search box",
+                            "href": "https://duckduckgo.com/?q=BTC&ia=web",
+                        },
+                        {
+                            "label": "CoinMarketCap Bitcoin price",
+                            "href": "https://coinmarketcap.com/currencies/bitcoin/",
+                        },
+                    ]
+                }
+            },
+            search_url="https://duckduckgo.com/?q=BTC&ia=web",
+        )
+
+        self.assertEqual(
+            candidate,
+            {
+                "href": "https://coinmarketcap.com/currencies/bitcoin/",
+                "text_summary": "CoinMarketCap Bitcoin price",
+            },
+        )
 
     def test_sanitize_browser_search_reply_replaces_search_engine_citation_with_external_source(self) -> None:
         cleaned, actions = _sanitize_browser_search_reply(
@@ -179,6 +209,157 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual(hook_mock.call_args_list[0].kwargs["hook"], "browser.status")
         self.assertEqual(hook_mock.call_args_list[1].kwargs["hook"], "browser.status")
         self.assertEqual(hook_mock.call_args_list[2].kwargs["hook"], "browser.navigate")
+
+    def test_build_browser_search_context_uses_interactives_fallback_for_external_result(self) -> None:
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._execute_browser_hook",
+            side_effect=[
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {
+                            "extension": {
+                                "running": True,
+                            }
+                        },
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {
+                            "origin": "https://duckduckgo.com",
+                            "tab": {"id": "42"},
+                            "wait_hint": {"target": {"origin": "https://duckduckgo.com", "tab_id": "42"}},
+                        },
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {},
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {
+                            "dom_outline": {"nodes": []},
+                            "title": "BTC at DuckDuckGo",
+                        },
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {
+                            "interactives": [
+                                {
+                                    "label": "CoinMarketCap Bitcoin price",
+                                    "href": "https://coinmarketcap.com/currencies/bitcoin/",
+                                }
+                            ]
+                        },
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {
+                            "origin": "https://coinmarketcap.com",
+                            "tab": {"id": "43"},
+                            "wait_hint": {"target": {"origin": "https://coinmarketcap.com", "tab_id": "43"}},
+                        },
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {},
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {
+                            "title": "Bitcoin price today",
+                            "origin": "https://coinmarketcap.com",
+                            "visible_text": {
+                                "summary": "Bitcoin price is live on CoinMarketCap.",
+                                "excerpt": "BTC price and market cap details.",
+                            },
+                        },
+                    },
+                    "spark-browser",
+                ),
+            ],
+        ) as hook_mock:
+            result = _build_browser_search_context(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                user_message="Search the web for BTC and cite the source.",
+                request_id="req-browser-interactives-fallback",
+                channel_kind="telegram",
+                agent_id="agent:human:telegram:111",
+                human_id="human:telegram:111",
+                session_id="session:telegram:dm:111",
+            )
+
+        self.assertIn("source_url=https://coinmarketcap.com/currencies/bitcoin/", str(result["context"]))
+        self.assertIsNone(result["blocked_reply"])
+        self.assertIsNone(result["blocked_code"])
+        called_hooks = [call.kwargs["hook"] for call in hook_mock.call_args_list]
+        self.assertEqual(
+            called_hooks,
+            [
+                "browser.status",
+                "browser.navigate",
+                "browser.tab.wait",
+                "browser.page.dom_extract",
+                "browser.page.interactives.list",
+                "browser.navigate",
+                "browser.tab.wait",
+                "browser.page.text_extract",
+            ],
+        )
+
+    def test_browser_reply_denies_browsing_detects_false_capability_claim(self) -> None:
+        self.assertTrue(
+            _browser_reply_denies_browsing(
+                "I don't have real-time web browsing capability, so I can't pull live BTC price data right now."
+            )
+        )
+        self.assertTrue(
+            _browser_reply_denies_browsing(
+                "I don't have real-time web search, so I can't pull live BTC data for you."
+            )
+        )
+        self.assertFalse(_browser_reply_denies_browsing("I searched the web and found a result."))
+
+    def test_rewrite_browser_search_capability_denial_when_source_capture_is_weak(self) -> None:
+        rewritten = _rewrite_browser_search_capability_denial(
+            "I don't have real-time web browsing capability, so I can't pull live BTC price data right now.",
+            browser_search_context_extra=(
+                "[Browser search evidence]\n"
+                "search_query=BTC\n"
+                "search_url=https://duckduckgo.com/?q=BTC&ia=web\n"
+                "external_source_captured=no\n"
+                "source_capture_status=external_source_missing\n"
+                "source_summary=\n"
+                "source_excerpt=\n"
+            ),
+        )
+
+        self.assertIn('I did run a browser search for "BTC"', rewritten)
+        self.assertIn('Next: retry with a more specific query like "BTC price today"', rewritten)
+        self.assertNotIn("I don't have real-time web browsing capability", rewritten)
 
     def test_sanitize_browser_search_reply_polishes_quote_spacing_and_generic_tail(self) -> None:
         cleaned, actions = _sanitize_browser_search_reply(

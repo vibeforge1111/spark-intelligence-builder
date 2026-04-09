@@ -23,6 +23,7 @@ from spark_intelligence.attachments import (
 from spark_intelligence.auth.runtime import RuntimeProviderResolution, resolve_runtime_provider
 from spark_intelligence.browser.service import (
     build_browser_navigate_payload,
+    build_browser_page_interactives_list_payload,
     build_browser_page_dom_extract_payload,
     build_browser_page_text_extract_payload,
     build_browser_status_payload,
@@ -516,7 +517,70 @@ def _render_direct_provider_chat_fallback(
     raw_response = str(payload.get("raw_response") or "").strip()
     if not raw_response:
         raise RuntimeError("Direct provider fallback returned no text content.")
+    if browser_search_context_extra:
+        raw_response = _rewrite_browser_search_capability_denial(
+            raw_response,
+            browser_search_context_extra=browser_search_context_extra,
+        )
     return raw_response
+
+
+def _parse_browser_search_context_facts(context: str) -> dict[str, str]:
+    facts: dict[str, str] = {}
+    for raw_line in str(context or "").splitlines():
+        line = raw_line.strip()
+        if not line or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        facts[key.strip()] = value.strip()
+    return facts
+
+
+def _browser_reply_denies_browsing(text: str) -> bool:
+    normalized = str(text or "").strip().lower()
+    denial_patterns = (
+        "i don't have real-time web search",
+        "i do not have real-time web search",
+        "i don't have real-time web browsing capability",
+        "i do not have real-time web browsing capability",
+        "i don't have web access",
+        "i do not have web access",
+        "i can't browse",
+        "i cannot browse",
+        "i can't access the web",
+        "i cannot access the web",
+        "i can't pull live",
+        "i cannot pull live",
+        "i can't access real-time data",
+        "i cannot access real-time data",
+        "i can't look that up",
+        "i cannot look that up",
+    )
+    return any(pattern in normalized for pattern in denial_patterns)
+
+
+def _rewrite_browser_search_capability_denial(reply_text: str, *, browser_search_context_extra: str) -> str:
+    text = str(reply_text or "").strip()
+    if not text or not _browser_reply_denies_browsing(text):
+        return text
+    facts = _parse_browser_search_context_facts(browser_search_context_extra)
+    search_query = str(facts.get("search_query") or "that topic").strip()
+    external_source_captured = str(facts.get("external_source_captured") or "").strip().lower() == "yes"
+    source_url = str(facts.get("source_url") or "").strip()
+    source_summary = str(facts.get("source_summary") or "").strip()
+    source_excerpt = str(facts.get("source_excerpt") or "").strip()
+    has_usable_source = bool(source_url or source_summary or source_excerpt) and source_summary.lower() != "unknown"
+    if external_source_captured or has_usable_source:
+        return (
+            f"I did run a browser search for \"{search_query}\", but the captured source evidence still was not strong "
+            "enough to support a confident live answer. Retry the search if you need an authoritative citation."
+        )
+    targeted_query = search_query if len(search_query.split()) >= 2 else f"{search_query} price today"
+    return (
+        f"I did run a browser search for \"{search_query}\", but it only yielded weak search-page evidence and no "
+        "usable external source capture. I can't verify a live answer from that evidence yet.\n\n"
+        f"Next: retry with a more specific query like \"{targeted_query}\" if you need an authoritative citation."
+    )
 
 
 def _should_collect_browser_search_context(user_message: str) -> bool:
@@ -814,6 +878,29 @@ def _select_search_result_candidate_from_text_result(
     return None
 
 
+def _select_search_result_candidate_from_interactives_result(
+    interactives_output: dict[str, Any],
+    *,
+    search_url: str,
+) -> dict[str, str] | None:
+    result = interactives_output.get("result") if isinstance(interactives_output.get("result"), dict) else {}
+    interactives = result.get("interactives") if isinstance(result.get("interactives"), list) else []
+    search_host = _normalize_hostname(str(urlparse(search_url).hostname or ""))
+    seen: set[str] = set()
+    for item in interactives:
+        if not isinstance(item, dict):
+            continue
+        href = _normalize_search_result_candidate_href(str(item.get("href") or ""), search_host=search_host)
+        if not href or href in seen:
+            continue
+        seen.add(href)
+        return {
+            "href": href,
+            "text_summary": str(item.get("label") or item.get("text") or item.get("selector") or "").strip(),
+        }
+    return None
+
+
 def _build_browser_search_context(
     *,
     config_manager: ConfigManager,
@@ -978,6 +1065,34 @@ def _build_browser_search_context(
     dom_result = dom_output.get("result") if isinstance(dom_output.get("result"), dict) else {}
     search_nodes = _summarize_dom_outline_nodes((dom_result.get("dom_outline") or {}).get("nodes"))
     candidate = _select_search_result_candidate(dom_output, search_url=search_url)
+    if not candidate:
+        interactives_output, _ = _execute_browser_hook(
+            config_manager=config_manager,
+            state_db=state_db,
+            hook="browser.page.interactives.list",
+            payload=build_browser_page_interactives_list_payload(
+                config_manager=config_manager,
+                origin=search_origin,
+                tab_id=search_tab_id,
+                agent_id=agent_id,
+                request_id=f"{request_id}:browser-search-interactives",
+                max_items=10,
+            ),
+            run_id=run_id,
+            request_id=request_id,
+            channel_kind=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+        )
+        blocked_reply, blocked_code = _browser_hook_blocked_reply(interactives_output or {})
+        if blocked_reply:
+            return {"context": "", "blocked_reply": blocked_reply, "blocked_code": blocked_code}
+        if _browser_hook_succeeded(interactives_output):
+            candidate = _select_search_result_candidate_from_interactives_result(
+                interactives_output,
+                search_url=search_url,
+            )
     search_text_output = None
     if not candidate:
         search_text_output, _ = _execute_browser_hook(
