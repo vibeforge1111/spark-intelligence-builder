@@ -131,7 +131,7 @@ from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_doctor, swarm_status, sync_swarm_collective
 from spark_intelligence.harness_registry import build_harness_registry
-from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_doctor, swarm_status, sync_swarm_collective
+from spark_intelligence.harness_runtime import build_harness_runtime_snapshot
 from spark_intelligence.mission_control import build_mission_control_snapshot
 from spark_intelligence.system_registry import build_system_registry
 
@@ -200,6 +200,13 @@ class SystemStatus:
         available_harnesses = harness_summary.get("available_harnesses") or []
         if available_harnesses:
             lines.append(f"- harnesses: {', '.join(str(item) for item in available_harnesses[:5])}")
+        harness_runtime = self.payload.get("harness_runtime") or {}
+        harness_runtime_summary = harness_runtime.get("summary") or {}
+        if harness_runtime_summary.get("recent_run_count"):
+            lines.append(
+                f"- harness runtime: recent_runs={int(harness_runtime_summary.get('recent_run_count') or 0)} "
+                f"last={harness_runtime_summary.get('last_harness_id') or 'unknown'}"
+            )
         lines.append(
             f"- providers: {', '.join(self.payload['gateway']['configured_providers']) if self.payload['gateway']['configured_providers'] else 'none'}"
         )
@@ -2761,6 +2768,7 @@ def handle_status(args: argparse.Namespace) -> int:
     system_registry = build_system_registry(config_manager, state_db)
     mission_control = build_mission_control_snapshot(config_manager, state_db)
     harness_registry = build_harness_registry(config_manager, state_db)
+    harness_runtime = build_harness_runtime_snapshot(config_manager, state_db)
     active_chip_keys = config_manager.get_path("spark.chips.active_keys", default=[]) or []
     active_path_key = config_manager.get_path("spark.specialization_paths.active_path_key")
     autostart_payload = {
@@ -2785,6 +2793,7 @@ def handle_status(args: argparse.Namespace) -> int:
         "system_registry": system_registry.to_payload(),
         "mission_control": mission_control.to_payload(),
         "harness_registry": harness_registry.to_payload(),
+        "harness_runtime": harness_runtime.to_payload(),
         "attachments": {
             "record_count": len(attachments.records),
             "warning_count": len(attachments.warnings),
