@@ -134,6 +134,7 @@ from spark_intelligence.harness_registry import build_harness_registry
 from spark_intelligence.harness_runtime import (
     build_harness_runtime_snapshot,
     build_harness_task_envelope,
+    execute_harness_chain,
     execute_harness_task,
 )
 from spark_intelligence.mission_control import build_mission_control_snapshot
@@ -1663,6 +1664,11 @@ def build_parser() -> argparse.ArgumentParser:
     harness_execute_parser.add_argument("--human-id", help="Optional human id")
     harness_execute_parser.add_argument("--agent-id", help="Optional agent id")
     harness_execute_parser.add_argument("--harness-id", help="Force a specific harness id instead of routing automatically")
+    harness_execute_parser.add_argument(
+        "--then-harness-id",
+        action="append",
+        help="Append a follow-up harness after the primary one; repeat to build a small execution chain",
+    )
     harness_execute_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     agent_parser = subparsers.add_parser("agent", help="Inspect agent and workspace state")
@@ -4784,11 +4790,20 @@ def handle_harness_execute(args: argparse.Namespace) -> int:
         human_id=args.human_id,
         agent_id=args.agent_id,
     )
-    result = execute_harness_task(
-        config_manager=config_manager,
-        state_db=state_db,
-        envelope=envelope,
-    )
+    follow_up_harness_ids = [str(item).strip() for item in (args.then_harness_id or []) if str(item).strip()]
+    if follow_up_harness_ids:
+        result = execute_harness_chain(
+            config_manager=config_manager,
+            state_db=state_db,
+            envelope=envelope,
+            follow_up_harness_ids=follow_up_harness_ids,
+        )
+    else:
+        result = execute_harness_task(
+            config_manager=config_manager,
+            state_db=state_db,
+            envelope=envelope,
+        )
     if args.json:
         print(result.to_json())
     else:
@@ -4796,9 +4811,13 @@ def handle_harness_execute(args: argparse.Namespace) -> int:
         lines.append(f"- harness: {result.envelope.harness_id}")
         lines.append(f"- status: {result.status}")
         lines.append(f"- summary: {result.summary}")
+        if result.chain_status:
+            lines.append(f"- chain status: {result.chain_status}")
         artifact_keys = sorted(result.artifacts.keys())
         if artifact_keys:
             lines.append(f"- artifacts: {', '.join(artifact_keys)}")
+        for chained_result in result.chained_results or []:
+            lines.append(f"- chained harness: {chained_result.envelope.harness_id} ({chained_result.status})")
         if result.next_actions:
             lines.extend(f"- next action: {item}" for item in result.next_actions[:3])
         print("\n".join(lines))
