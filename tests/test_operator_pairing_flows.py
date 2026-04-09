@@ -3095,7 +3095,7 @@ class OperatorPairingFlowTests(SparkTestCase):
             config_manager=self.config_manager,
         )
         self.assertEqual(profile["style_labels"]["directness"], "very direct")
-        self.assertEqual(profile["style_labels"]["pacing"], "brisk")
+        self.assertIn("Be more direct and keep replies short", profile["agent_behavioral_rules"])
 
     def test_style_feedback_maps_canned_conversation_feedback_into_behavior_rules(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -3121,7 +3121,7 @@ class OperatorPairingFlowTests(SparkTestCase):
             config_manager=self.config_manager,
         )
         self.assertIn(
-            "Avoid canned enthusiasm and generic assistant phrasing",
+            "Avoid generic opener questions and canned assistant greetings",
             profile["agent_behavioral_rules"],
         )
 
@@ -3195,6 +3195,78 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Recent style history for", result.detail["response_text"])
         self.assertIn("training", result.detail["response_text"])
         self.assertIn("Be more direct and keep replies short", result.detail["response_text"])
+
+    def test_style_presets_command_lists_available_presets(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11720,
+                user_id="111",
+                username="alice",
+                text="/style presets",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Style presets available.", result.detail["response_text"])
+        self.assertIn("`operator`", result.detail["response_text"])
+        self.assertIn("`claude-like`", result.detail["response_text"])
+
+    def test_style_preset_command_applies_named_preset(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11721,
+                user_id="111",
+                username="alice",
+                text="/style preset concise",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Saved style preset", result.detail["response_text"])
+        profile = load_personality_profile(
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            state_db=self.state_db,
+            config_manager=self.config_manager,
+        )
+        self.assertEqual(profile["style_labels"]["directness"], "very direct")
+        self.assertIn("Be more direct and keep replies short", profile["agent_behavioral_rules"])
+
+    def test_natural_language_style_preset_command_applies_named_preset(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11722,
+                user_id="111",
+                username="alice",
+                text="Set style preset to claude-like",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Saved style preset", result.detail["response_text"])
+        self.assertEqual(result.detail["bridge_mode"], "runtime_command")
+        profile = load_personality_profile(
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            state_db=self.state_db,
+            config_manager=self.config_manager,
+        )
+        self.assertIn(
+            "Avoid generic opener questions and canned assistant greetings",
+            profile["agent_behavioral_rules"],
+        )
 
     def test_style_bad_requires_feedback_note(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])

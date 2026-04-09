@@ -116,6 +116,8 @@ spark-intelligence gateway start
 # /style
 # /style status
 # /style history
+# /style presets
+# /style preset <name>
 # /style score
 # /style examples
 # /style compare
@@ -260,6 +262,8 @@ Live commands verified on the production-shaped home:
 
 - `/style status`
 - `/style history`
+- `/style presets`
+- `/style preset <name>`
 - `/style score`
 - `/style examples`
 - `/style compare`
@@ -324,6 +328,8 @@ The Telegram runtime also accepts bounded natural-language equivalents for those
 
 - `Can you show me my current style?`
 - `What style changes have you saved?`
+- `What style presets are available?`
+- `Set style preset to claude-like`
 - `Score my style`
 - `Show me my style examples`
 - `Compare my style`

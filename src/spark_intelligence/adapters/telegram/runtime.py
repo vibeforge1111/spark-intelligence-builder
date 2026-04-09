@@ -124,6 +124,30 @@ class TelegramSimulationResult:
         return "\n".join(lines)
 
 
+_STYLE_PRESETS: dict[str, dict[str, str]] = {
+    "operator": {
+        "label": "Operator",
+        "description": "Direct, grounded, and concrete. Prefer next steps over filler.",
+        "instruction": "be direct, grounded, and concrete; keep replies focused on the user's actual thread; avoid filler and canned opener questions",
+    },
+    "claude-like": {
+        "label": "Claude-like",
+        "description": "Stronger continuity, less canned phrasing, and more grounded follow-up questions.",
+        "instruction": "be more Claude-like in conversation continuity and less canned with more grounded follow-up questions",
+    },
+    "concise": {
+        "label": "Concise",
+        "description": "Shorter answers, brisk pacing, and low filler.",
+        "instruction": "be more direct and keep replies short",
+    },
+    "warm": {
+        "label": "Warm",
+        "description": "More human and calm without losing structure.",
+        "instruction": "be less formal and more human while staying calm and friendly",
+    },
+}
+
+
 @dataclass
 class TelegramPollResult:
     fetched_update_count: int
@@ -2514,12 +2538,19 @@ def _parse_style_command(inbound_text: str) -> dict[str, str | None] | None:
         return {"command": "/style status", "payload": None}
     if lowered in {"/style history", "style history"}:
         return {"command": "/style history", "payload": None}
+    if lowered in {"/style presets", "style presets"}:
+        return {"command": "/style presets", "payload": None}
     if lowered in {"/style score", "style score"}:
         return {"command": "/style score", "payload": None}
     if lowered in {"/style examples", "style examples"}:
         return {"command": "/style examples", "payload": None}
     if lowered in {"/style compare", "style compare"}:
         return {"command": "/style compare", "payload": None}
+    preset_prefixes = ("/style preset ", "style preset ")
+    for prefix in preset_prefixes:
+        if lowered.startswith(prefix):
+            payload = normalized[len(prefix) :].strip()
+            return {"command": "/style preset", "payload": payload}
     before_after_prefixes = (
         "/style before-after ",
         "style before-after ",
@@ -2619,6 +2650,14 @@ def _match_natural_style_command(inbound_text: str) -> dict[str, str | None] | N
         "what style feedback have you saved",
     }:
         return {"command": "/style history", "payload": None}
+    if simplified in {
+        "show style presets",
+        "show me style presets",
+        "what style presets are available",
+        "what style presets do you have",
+        "list style presets",
+    }:
+        return {"command": "/style presets", "payload": None}
     if re.match(
         r"^(?:please\s+|can you\s+)?(?:show(?:\s+me)?|tell me)\s+(?:my\s+)?style\s+history$",
         simplified,
@@ -2643,6 +2682,8 @@ def _match_natural_style_command(inbound_text: str) -> dict[str, str | None] | N
     }:
         return {"command": "/style examples", "payload": None}
     for pattern in (
+        r"^(?:use|apply|set)\s+(?:the\s+)?style\s+preset(?:\s+to)?\s+(?P<payload>[a-z0-9\-_ ]+)$",
+        r"^(?:use|apply|switch to)\s+(?:the\s+)?(?P<payload>[a-z0-9\-_ ]+)\s+preset$",
         r"^(?:show(?:\s+me)?|preview|compare)\s+(?:my\s+)?style\s+before(?:\s+and\s+|\-)?after\s+(?:for|with)\s+(?P<payload>.+)$",
         r"^(?:show(?:\s+me)?|preview)\s+before(?:\s+and\s+|\-)?after\s+(?:style\s+)?for\s+(?P<payload>.+)$",
     ):
@@ -2650,6 +2691,8 @@ def _match_natural_style_command(inbound_text: str) -> dict[str, str | None] | N
         if match:
             payload = " ".join(str(match.group("payload") or "").strip().split())
             if payload:
+                if pattern.startswith("^(?:use|apply|set)") or pattern.startswith("^(?:use|apply|switch to)"):
+                    return {"command": "/style preset", "payload": payload}
                 return {"command": "/style before-after", "payload": payload}
     if simplified in {
         "compare my style",
@@ -2788,9 +2831,11 @@ def _handle_style_command(
             "reply_text": (
                 "Style controls: `/style status` to inspect the current Telegram persona, "
                 "`/style history` to inspect recent saved mutations, "
+                "`/style presets` to list named conversation presets, "
                 "`/style score` to grade the current voice against the training rubric, "
                 "`/style examples` to see fixed sample replies in the current voice, "
                 "`/style compare` to preview how the current voice differs from the default baseline, "
+                "`/style preset <name>` to apply a named preset, "
                 "`/style before-after <instruction>` to preview a training change before saving it, "
                 "`/style train <instruction>` to save a new style rule, and `/style feedback <note>` after a live test reply.\n"
                 "Next: after training, ask a normal question in this DM to test the visible voice."
@@ -2821,6 +2866,11 @@ def _handle_style_command(
                 agent_name=agent_name,
             ),
         }
+    if command == "/style presets":
+        return {
+            "command": "/style presets",
+            "reply_text": _render_style_presets_reply(),
+        }
     if command == "/style score":
         return {
             "command": "/style score",
@@ -2847,6 +2897,58 @@ def _handle_style_command(
                 profile=profile,
                 agent_name=agent_name,
                 instruction=instruction,
+            ),
+        }
+    if command == "/style preset":
+        preset_name = _resolve_style_preset_name(payload)
+        if not preset_name:
+            return {
+                "command": "/style preset",
+                "reply_text": (
+                    "Style preset not found.\n"
+                    "Next: use `/style presets` to list the available preset names."
+                ),
+            }
+        if not human_id or not agent_id:
+            return {
+                "command": "/style preset",
+                "reply_text": (
+                    "Style presets are unavailable right now.\n"
+                    "Reason: this Telegram DM does not have a resolved Builder identity yet."
+                ),
+            }
+        preset = _STYLE_PRESETS[preset_name]
+        training_message = _build_style_training_message(str(preset.get("instruction") or ""))
+        mutation = detect_and_persist_agent_persona_preferences(
+            agent_id=agent_id,
+            human_id=human_id,
+            user_message=training_message,
+            state_db=state_db,
+            source_surface="telegram",
+            source_ref="telegram-style-preset",
+        )
+        if mutation is None:
+            return {
+                "command": "/style preset",
+                "reply_text": (
+                    "I couldn't apply that style preset cleanly.\n"
+                    "Next: use `/style before-after <instruction>` or `/style train <instruction>` directly."
+                ),
+            }
+        refreshed_profile, refreshed_agent_name = _load_telegram_persona_surface_state(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            agent_id=agent_id,
+        )
+        return {
+            "command": "/style preset",
+            "reply_text": _render_style_training_reply(
+                profile=refreshed_profile,
+                agent_name=refreshed_agent_name,
+                mutation=mutation,
+                mode="preset",
+                applied_instruction=f"Preset {preset['label']}: {_display_style_training_message(training_message)}",
             ),
         }
     if command == "/style compare":
@@ -3070,6 +3172,28 @@ def _build_style_feedback_training_message(*, feedback: str, sentiment: str) -> 
     return f"Your style.\nBe {normalized}"
 
 
+def _normalize_style_preset_key(name: str | None) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", str(name or "").strip().lower()).strip("-")
+
+
+def _resolve_style_preset_name(name: str | None) -> str | None:
+    normalized = _normalize_style_preset_key(name)
+    if not normalized:
+        return None
+    alias_map = {
+        "claude": "claude-like",
+        "claude-like": "claude-like",
+        "continuity": "claude-like",
+        "operator": "operator",
+        "concise": "concise",
+        "short": "concise",
+        "warm": "warm",
+        "friendly": "warm",
+    }
+    candidate = alias_map.get(normalized, normalized)
+    return candidate if candidate in _STYLE_PRESETS else None
+
+
 def _display_style_training_message(training_message: str) -> str:
     normalized = str(training_message or "").strip()
     if normalized.lower().startswith("your style."):
@@ -3102,6 +3226,14 @@ def _render_style_status_reply(*, profile: dict[str, Any] | None, agent_name: st
     return "\n".join(lines)
 
 
+def _render_style_presets_reply() -> str:
+    lines = ["Style presets available."]
+    for key, preset in _STYLE_PRESETS.items():
+        lines.append(f"- `{key}`: {preset['description']}")
+    lines.append("Next: use `/style preset <name>` to apply one, or `/style before-after <instruction>` to preview a custom change.")
+    return "\n".join(lines)
+
+
 def _list_recent_style_mutations(
     *,
     state_db: StateDB,
@@ -3131,6 +3263,8 @@ def _style_history_event_label(row: dict[str, Any]) -> str:
     mutation_kind = str(row.get("mutation_kind") or "").strip().lower()
     if source_ref == "telegram-style-feedback":
         return "feedback"
+    if source_ref == "telegram-style-preset":
+        return "preset"
     if source_ref == "telegram-style-train":
         return "training"
     if mutation_kind == "onboarding_authoring":
@@ -3457,7 +3591,12 @@ def _render_style_training_reply(
     behavioral_rules = [
         str(rule).strip() for rule in list(resolved_profile.get("agent_behavioral_rules") or []) if str(rule).strip()
     ]
-    lead = "Saved style feedback" if mode == "feedback" else "Saved style update"
+    if mode == "feedback":
+        lead = "Saved style feedback"
+    elif mode == "preset":
+        lead = "Saved style preset"
+    else:
+        lead = "Saved style update"
     lines = [f"{lead} for {name}."]
     if getattr(mutation, "agent_name", None):
         lines.append(f"Visible name: {getattr(mutation, 'agent_name')}.")
