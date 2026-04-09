@@ -643,7 +643,6 @@ def _resolve_gateway_telegram_user_id(
         "Pass --user-id to target one explicitly."
     )
 
-
 def _telegram_terminal_bridge_enabled(config_manager: ConfigManager) -> bool:
     env_flag = str(os.environ.get("SPARK_OPERATOR_TELEGRAM_BRIDGE_ENABLED") or "").strip().lower()
     if env_flag in {"1", "true", "yes", "on"}:
@@ -656,8 +655,6 @@ def _telegram_terminal_bridge_enabled(config_manager: ConfigManager) -> bool:
     if not isinstance(experimental_config, dict):
         return False
     return bool(experimental_config.get("telegram_terminal_bridge_enabled"))
-
-
 def _latest_gateway_telegram_user_id(config_manager: ConfigManager) -> str | None:
     for record in read_gateway_traces(config_manager, limit=20):
         if _record_channel_id(record) != "telegram":
