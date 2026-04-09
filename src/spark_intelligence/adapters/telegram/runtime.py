@@ -1566,6 +1566,37 @@ def _synthesize_telegram_voice_reply(
     }
 
 
+def _prepare_voice_reply_text(text: str, *, max_chars: int = 320) -> str:
+    value = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not value:
+        return ""
+    lines: list[str] = []
+    for raw_line in value.split("\n"):
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.lower().startswith("next:"):
+            continue
+        line = re.sub(r"^[\-\*\u2022]+\s*", "", line)
+        lines.append(line)
+    if not lines:
+        return ""
+    spoken = " ".join(lines)
+    spoken = spoken.replace(" -- ", ", ")
+    spoken = re.sub(r"\s*[:;]\s*", ". ", spoken)
+    spoken = re.sub(r"\s+", " ", spoken).strip()
+    if len(spoken) > max_chars:
+        window = spoken[:max_chars]
+        last_break = max(window.rfind(". "), window.rfind("? "), window.rfind("! "), window.rfind(", "))
+        if last_break >= max_chars // 2:
+            spoken = window[: last_break + 1].strip()
+        else:
+            spoken = window.rstrip(" ,;:-")
+    if spoken and spoken[-1] not in ".!?":
+        spoken = f"{spoken}."
+    return spoken
+
+
 def _send_telegram_reply(
     *,
     config_manager: ConfigManager,
@@ -1642,7 +1673,7 @@ def _send_telegram_reply(
     voice_error: str | None = None
     voice_payload: dict[str, Any] | None = None
     if voice_requested:
-        spoken_text = str(voice_text or guarded["text"]).strip()
+        spoken_text = _prepare_voice_reply_text(str(voice_text or guarded["text"]))
         if spoken_text:
             try:
                 voice_payload = _synthesize_telegram_voice_reply(

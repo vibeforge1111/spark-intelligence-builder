@@ -90,6 +90,12 @@ Natural-language examples:
 
 Current natural-language style capture is intentionally bounded to explicit style/personality requests and clear reply-quality feedback. It should not try to reinterpret arbitrary conversation as style mutation.
 
+Recommended live workflow:
+
+- use the agent normally and save style feedback from real exchanges
+- prefer concrete notes like `too polished`, `too generic`, or `ask fewer follow-up questions`
+- avoid synthetic memory-probe loops unless you are isolating a runtime bug
+
 ## Voice
 
 - `/voice`
@@ -108,6 +114,13 @@ Natural-language examples:
 - `Turn voice replies off`
 - `Please speak this out loud: <text>`
 - `Send this as voice: <text>`
+
+Current live behavior:
+
+- Telegram voice and audio messages are transcribed through `domain-chip-voice-comms`
+- voice-origin Telegram turns auto-reply with audio when TTS succeeds, even if `/voice reply on` is not set
+- `/voice reply on` enables automatic audio replies for later text-origin turns in that DM
+- Builder keeps the normal Telegram caption text, but sends a voice-shaped spoken variant into `voice.speak` so spoken replies stay shorter and cleaner
 
 ## Think Visibility
 

@@ -3,7 +3,11 @@ import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from spark_intelligence.adapters.telegram.runtime import poll_telegram_updates_once, simulate_telegram_update
+from spark_intelligence.adapters.telegram.runtime import (
+    _prepare_voice_reply_text,
+    poll_telegram_updates_once,
+    simulate_telegram_update,
+)
 from spark_intelligence.identity.service import (
     approve_pairing,
     consume_pairing_welcome,
@@ -3831,7 +3835,7 @@ class OperatorPairingFlowTests(SparkTestCase):
         def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
             if hook != "voice.speak":
                 raise AssertionError(f"Unexpected hook: {hook}")
-            self.assertEqual(payload["text"], "Hello from audio")
+            self.assertEqual(payload["text"], "Hello from audio.")
             return SimpleNamespace(
                 ok=True,
                 chip_key="domain-chip-voice-comms",
@@ -4169,7 +4173,10 @@ class OperatorPairingFlowTests(SparkTestCase):
             ]
         )
 
+        voice_speak_payload: dict[str, object] | None = None
+
         def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+            nonlocal voice_speak_payload
             if hook == "voice.transcribe":
                 return SimpleNamespace(
                     ok=True,
@@ -4186,6 +4193,7 @@ class OperatorPairingFlowTests(SparkTestCase):
                     },
                 )
             if hook == "voice.speak":
+                voice_speak_payload = payload
                 return SimpleNamespace(
                     ok=True,
                     chip_key="domain-chip-voice-comms",
@@ -4231,6 +4239,21 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(len(client.sent_audio), 1)
         self.assertEqual(len(client.sent_messages), 0)
         self.assertEqual(str(client.sent_audio[0]["caption"]), "Hey, doing well -- ready to work.")
+        self.assertIsNotNone(voice_speak_payload)
+        assert voice_speak_payload is not None
+        self.assertEqual(str(voice_speak_payload["text"]), "Hey, doing well, ready to work.")
+
+    def test_prepare_voice_reply_text_makes_builder_replies_more_spoken(self) -> None:
+        text = (
+            "Here is the plan:\n"
+            "- Keep the sentences short\n"
+            "- Avoid stacked clauses\n"
+            "Next: ask me if you want more detail"
+        )
+
+        prepared = _prepare_voice_reply_text(text)
+
+        self.assertEqual(prepared, "Here is the plan. Keep the sentences short Avoid stacked clauses.")
 
     def test_voice_message_returns_bounded_transcription_unavailable_reply_for_unsupported_provider(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])

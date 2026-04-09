@@ -378,6 +378,21 @@ The Telegram runtime also accepts bounded natural-language equivalents for those
 - `Show me the latest Startup Operator autoloop session`
 - `Execute the latest Startup Operator rerun request in swarm`
 
+Recommended live operator loop:
+
+- use the agent normally before adding more style instructions
+- save style feedback from real replies that feel off, not synthetic memory-probe loops
+- prefer concrete feedback like `too polished`, `too generic`, `be more grounded`, or `ask fewer follow-up questions`
+- use `/style history`, `/style score`, `/style examples`, and `/style compare` to inspect drift only after a few real exchanges
+- treat voice quality separately from text personality: Builder owns the live persona, and `domain-chip-voice-comms` handles STT/TTS around it
+
+Current Telegram voice behavior:
+
+- voice and audio messages are transcribed through `domain-chip-voice-comms`
+- voice-origin turns auto-reply with audio when TTS succeeds
+- `/voice reply on` enables audio replies for later text turns in that DM
+- Builder keeps the normal Telegram caption text but sends a voice-shaped spoken variant into `voice.speak` so audio replies sound more natural than raw text read aloud
+
 `status` now also surfaces the last bridge routing decision plus the last active chip route, and the text forms of `gateway traces` and `gateway outbound` now include `route=...` and `chip=...` when that metadata is available. That makes it possible to see whether a Telegram reply came from researcher advisory, direct provider fallback, or another bridge path without dropping to raw JSON.
 
 The current Telegram command reference now lives in [docs/TELEGRAM_COMMAND_REFERENCE_2026-04-09.md](./docs/TELEGRAM_COMMAND_REFERENCE_2026-04-09.md). When new Telegram runtime commands are added, the repo rule is:
