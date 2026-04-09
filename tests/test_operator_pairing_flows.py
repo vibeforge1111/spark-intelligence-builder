@@ -2312,6 +2312,54 @@ class OperatorPairingFlowTests(SparkTestCase):
             "Next: reconnect the Spark Browser session, then retry.",
         )
 
+    def test_browser_evidence_source_capture_warning_gets_next_step_for_telegram(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            return_value=ResearcherBridgeResult(
+                request_id="req-browser-evidence-warning",
+                reply_text=(
+                    "Bitcoin is trading with elevated volatility after the latest ETF flow update.\n\n"
+                    "Source capture failed on the result page, so retry the search if you need an authoritative citation."
+                ),
+                evidence_summary="status=browser_evidence provider_fallback=direct_http_chat",
+                escalation_hint=None,
+                trace_ref="trace:browser-evidence-warning",
+                mode="browser_evidence",
+                runtime_root="C:/fake-researcher",
+                config_path="C:/fake-researcher/spark-researcher.project.json",
+                attachment_context={},
+                provider_id="custom",
+                provider_auth_profile_id="custom:default",
+                provider_auth_method="api_key_env",
+                provider_model="MiniMax-M2.7",
+                provider_model_family="generic",
+                provider_execution_transport="direct_http",
+                provider_base_url="https://api.minimax.io/v1",
+                provider_source="config+env",
+                routing_decision="browser_search_provider_chat",
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2183,
+                    user_id="111",
+                    username="alice",
+                    text="Search the web for BTC and give me the latest.",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            result.detail["response_text"],
+            "Bitcoin is trading with elevated volatility after the latest ETF flow update.\n\n"
+            "Citation status: source capture failed on the result page.\n"
+            "Next: retry the search if you need an authoritative citation.",
+        )
+
     def test_status_and_gateway_traces_surface_bridge_route_and_active_chip(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 

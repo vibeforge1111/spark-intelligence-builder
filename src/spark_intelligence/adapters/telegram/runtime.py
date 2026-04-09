@@ -151,6 +151,23 @@ def _shape_telegram_bridge_reply(reply_text: str, *, bridge_mode: str | None, ro
     text = str(reply_text or "").strip()
     mode = str(bridge_mode or "").strip()
     route = str(routing_decision or "").strip()
+    citation_warning = "Source capture failed on the result page, so retry the search if you need an authoritative citation."
+    if mode == "browser_evidence" and citation_warning in text:
+        lines: list[str] = []
+        next_inserted = False
+        for raw_line in text.split("\n"):
+            stripped = raw_line.strip()
+            if stripped != citation_warning:
+                lines.append(raw_line)
+                continue
+            if lines and lines[-1] != "":
+                lines.append("")
+            lines.append("Citation status: source capture failed on the result page.")
+            lines.append("Next: retry the search if you need an authoritative citation.")
+            next_inserted = True
+        shaped = "\n".join(lines).strip()
+        if next_inserted:
+            return shaped
     if mode != "blocked":
         return text
     if route == "browser_permission_required":
