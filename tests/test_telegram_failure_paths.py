@@ -15,6 +15,7 @@ class FakePollingClient:
         self.updates = updates or []
         self.update_error = update_error
         self.sent_messages: list[dict[str, str]] = []
+        self.sent_audio: list[dict[str, object]] = []
 
     def get_updates(self, *, offset: int | None = None, timeout_seconds: int = 5) -> list[dict[str, object]]:
         if self.update_error is not None:
@@ -23,6 +24,26 @@ class FakePollingClient:
 
     def send_message(self, *, chat_id: str, text: str) -> dict[str, object]:
         self.sent_messages.append({"chat_id": chat_id, "text": text})
+        return {"ok": True}
+
+    def send_audio(
+        self,
+        *,
+        chat_id: str,
+        audio_bytes: bytes,
+        filename: str,
+        caption: str | None = None,
+        mime_type: str | None = None,
+    ) -> dict[str, object]:
+        self.sent_audio.append(
+            {
+                "chat_id": chat_id,
+                "audio_bytes": audio_bytes,
+                "filename": filename,
+                "caption": caption,
+                "mime_type": mime_type,
+            }
+        )
         return {"ok": True}
 
 

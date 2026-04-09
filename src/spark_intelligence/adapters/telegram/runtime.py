@@ -1043,6 +1043,9 @@ def poll_telegram_updates_once(
                 run_id=run.run_id,
                 request_id=run.request_id,
                 trace_ref=None,
+                human_id=resolution.human_id,
+                agent_id=resolution.agent_id,
+                respect_voice_reply_state=False,
             )
             processed_count += 1
             if send_result["ok"]:
@@ -1135,6 +1138,15 @@ def poll_telegram_updates_once(
                 run_id=run.run_id,
                 request_id=run.request_id,
                 trace_ref=None,
+                human_id=resolution.human_id,
+                agent_id=resolution.agent_id,
+                force_voice=bool(command_result.get("force_voice", False)),
+                voice_text=(
+                    str(command_result.get("voice_text")).strip()
+                    if command_result.get("voice_text") is not None
+                    else None
+                ),
+                respect_voice_reply_state=bool(command_result.get("respect_voice_reply_state", True)),
             )
             processed_count += 1
             if send_result["ok"]:
@@ -1420,6 +1432,62 @@ def _telegram_security_policy(config_manager: ConfigManager) -> dict[str, Any]:
     )
 
 
+def _describe_telegram_delivery_exception(exc: Exception) -> str:
+    if isinstance(exc, RuntimeError):
+        return str(exc)
+    if isinstance(exc, HTTPError):
+        return f"HTTP {exc.code}"
+    if isinstance(exc, URLError):
+        return str(exc.reason)
+    return str(exc)
+
+
+def _synthesize_telegram_voice_reply(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    text: str,
+    human_id: str | None,
+    agent_id: str | None,
+) -> dict[str, Any]:
+    execution = run_first_chip_hook_supporting(
+        config_manager,
+        hook="voice.speak",
+        payload={
+            **_build_voice_chip_payload(
+                config_manager=config_manager,
+                state_db=state_db,
+                human_id=human_id,
+                agent_id=agent_id,
+            ),
+            "text": text,
+        },
+    )
+    if execution is None:
+        raise RuntimeError("No attached chip supports `voice.speak`. Attach and activate `domain-chip-voice-comms` first.")
+    result = execution.output.get("result") if isinstance(execution.output, dict) else None
+    if not execution.ok:
+        reason = ""
+        if isinstance(result, dict):
+            reason = str(result.get("error") or result.get("reply_text") or "").strip()
+        if not reason and isinstance(execution.output, dict):
+            reason = str(execution.output.get("error") or "").strip()
+        if not reason:
+            reason = str(execution.stderr or execution.stdout or "").strip()
+        raise RuntimeError(reason or f"Voice chip '{execution.chip_key}' could not synthesize the reply.")
+    audio_base64 = str((result or {}).get("audio_base64") or "").strip()
+    if not audio_base64:
+        raise RuntimeError("The voice chip returned no audio payload.")
+    mime_type = str((result or {}).get("mime_type") or "audio/mpeg").strip() or "audio/mpeg"
+    return {
+        "audio_bytes": base64.b64decode(audio_base64),
+        "mime_type": mime_type,
+        "filename": "telegram-reply.mp3" if "mpeg" in mime_type or "mp3" in mime_type else "telegram-reply.audio",
+        "provider_id": str((result or {}).get("provider_id") or "").strip() or None,
+        "voice_id": str((result or {}).get("voice_id") or "").strip() or None,
+    }
+
+
 def _send_telegram_reply(
     *,
     config_manager: ConfigManager,
@@ -1441,6 +1509,11 @@ def _send_telegram_reply(
     trace_ref: str | None,
     output_keepability: str | None = None,
     promotion_disposition: str | None = None,
+    human_id: str | None = None,
+    agent_id: str | None = None,
+    force_voice: bool = False,
+    voice_text: str | None = None,
+    respect_voice_reply_state: bool = True,
 ) -> dict[str, Any]:
     if output_keepability is None and event != "telegram_bridge_outbound":
         output_keepability = "operator_debug_only"
@@ -1475,6 +1548,28 @@ def _send_telegram_reply(
         guarded["actions"] = ["strip_think_blocks", *list(guarded["actions"])]
     if filtered_text != visible_text:
         guarded["actions"] = ["strip_swarm_routing_note", *list(guarded["actions"])]
+    voice_requested = force_voice or (
+        respect_voice_reply_state
+        and _voice_reply_enabled_for_user(state_db=state_db, external_user_id=telegram_user_id)
+    )
+    delivery_medium = "text"
+    voice_error: str | None = None
+    voice_payload: dict[str, Any] | None = None
+    if voice_requested:
+        spoken_text = str(voice_text or guarded["text"]).strip()
+        if spoken_text:
+            try:
+                voice_payload = _synthesize_telegram_voice_reply(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    text=spoken_text,
+                    human_id=human_id,
+                    agent_id=agent_id,
+                )
+                delivery_medium = "audio"
+            except Exception as exc:
+                voice_error = str(exc)
+                guarded["actions"] = ["voice_reply_fallback_to_text", *list(guarded["actions"])]
     error: str | None = None
     ok = True
     record_event(
@@ -1499,6 +1594,9 @@ def _send_telegram_reply(
             "guardrail_actions": guarded["actions"],
             "response_length": len(guarded["text"]),
             "delivered_text": guarded["text"],
+            "delivery_medium": delivery_medium,
+            "voice_requested": voice_requested,
+            "voice_error": voice_error,
             "keepability": output_keepability,
             "promotion_disposition": promotion_disposition,
             **build_text_mutation_facts(
@@ -1509,16 +1607,29 @@ def _send_telegram_reply(
         },
     )
     try:
-        client.send_message(chat_id=chat_id, text=guarded["text"])
-    except RuntimeError as exc:
-        ok = False
-        error = str(exc)
-    except HTTPError as exc:
-        ok = False
-        error = f"HTTP {exc.code}"
-    except URLError as exc:
-        ok = False
-        error = str(exc.reason)
+        if voice_payload is not None:
+            client.send_audio(
+                chat_id=chat_id,
+                audio_bytes=voice_payload["audio_bytes"],
+                filename=str(voice_payload["filename"]),
+                mime_type=str(voice_payload["mime_type"]),
+                caption=guarded["text"] if len(guarded["text"]) <= 1024 else None,
+            )
+        else:
+            client.send_message(chat_id=chat_id, text=guarded["text"])
+    except (RuntimeError, HTTPError, URLError) as exc:
+        if voice_payload is not None:
+            voice_error = _describe_telegram_delivery_exception(exc)
+            guarded["actions"] = ["voice_delivery_fallback_to_text", *list(guarded["actions"])]
+            delivery_medium = "text"
+            try:
+                client.send_message(chat_id=chat_id, text=guarded["text"])
+            except (RuntimeError, HTTPError, URLError) as fallback_exc:
+                ok = False
+                error = _describe_telegram_delivery_exception(fallback_exc)
+        else:
+            ok = False
+            error = _describe_telegram_delivery_exception(exc)
     record_event(
         state_db,
         event_type="delivery_succeeded" if ok else "delivery_failed",
@@ -1554,6 +1665,9 @@ def _send_telegram_reply(
             "retryable": bool(error),
             "guardrail_actions": guarded["actions"],
             "delivered_text": guarded["text"] if ok else None,
+            "delivery_medium": delivery_medium,
+            "voice_requested": voice_requested,
+            "voice_error": voice_error,
             "keepability": output_keepability,
             "promotion_disposition": promotion_disposition,
             **build_text_mutation_facts(
@@ -1583,11 +1697,20 @@ def _send_telegram_reply(
             "delivery_ok": ok,
             "delivery_error": error,
             "guardrail_actions": guarded["actions"],
+            "delivery_medium": delivery_medium,
+            "voice_requested": voice_requested,
+            "voice_error": voice_error,
             "response_preview": _preview_text(guarded["text"]),
             "response_length": len(guarded["text"]),
         },
     )
-    return {"ok": ok, "error": error, "guardrail_actions": guarded["actions"]}
+    return {
+        "ok": ok,
+        "error": error,
+        "guardrail_actions": guarded["actions"],
+        "delivery_medium": delivery_medium,
+        "voice_error": voice_error,
+    }
 
 
 def _preview_text(text: str, *, limit: int = 160) -> str:
@@ -1653,7 +1776,7 @@ def _handle_runtime_command(
     session_id: str | None = None,
     human_id: str | None = None,
     agent_id: str | None = None,
-) -> dict[str, str] | None:
+) -> dict[str, Any] | None:
     normalized = " ".join(str(inbound_text or "").strip().split())
     lowered = normalized.lower()
     natural_swarm_command = _match_natural_swarm_command(normalized)
@@ -1677,6 +1800,35 @@ def _handle_runtime_command(
             human_id=human_id,
             agent_id=agent_id,
         )
+    if lowered in {"/voice reply", "/voice reply status"}:
+        enabled = _voice_reply_enabled_for_user(state_db=state_db, external_user_id=external_user_id)
+        state_text = "on" if enabled else "off"
+        return {
+            "command": "/voice reply",
+            "reply_text": (
+                f"Voice replies are currently {state_text} for this Telegram DM. "
+                "Use `/voice reply on` to send future replies as audio, `/voice reply off` to stay text-only, "
+                "or `/voice speak <text>` for a one-shot spoken reply."
+            ),
+            "respect_voice_reply_state": False,
+        }
+    if lowered in {"/voice reply on", "/voice reply off"}:
+        enabled = lowered == "/voice reply on"
+        _set_voice_reply_enabled_for_user(
+            state_db=state_db,
+            external_user_id=external_user_id,
+            enabled=enabled,
+        )
+        return {
+            "command": lowered,
+            "reply_text": (
+                "Voice replies enabled for this Telegram DM. "
+                "Next: ask a normal question or use `/voice speak <text>` to test the voice path."
+                if enabled
+                else "Voice replies disabled for this Telegram DM. Future replies will stay text-only unless you use `/voice speak <text>`."
+            ),
+            "respect_voice_reply_state": False,
+        }
     if lowered == "/voice plan":
         return _run_voice_runtime_command(
             config_manager=config_manager,
@@ -1687,6 +1839,25 @@ def _handle_runtime_command(
             human_id=human_id,
             agent_id=agent_id,
         )
+    if lowered.startswith("/voice speak"):
+        speak_text = normalized[len("/voice speak") :].strip()
+        if not speak_text:
+            return {
+                "command": "/voice speak",
+                "reply_text": "Voice speak needs text. Use `/voice speak <what you want me to say>`.",
+                "respect_voice_reply_state": False,
+            }
+        return {
+            "command": "/voice speak",
+            "reply_text": (
+                "Voice reply queued.\n"
+                f"Text: {speak_text}\n"
+                "Next: use `/voice reply on` if you want future replies in this DM to synthesize automatically."
+            ),
+            "force_voice": True,
+            "voice_text": speak_text,
+            "respect_voice_reply_state": False,
+        }
     if lowered in {"/think", "/think on", "/think off"}:
         if lowered == "/think":
             enabled = _think_enabled_for_user(state_db=state_db, external_user_id=external_user_id)
@@ -2562,7 +2733,7 @@ def _run_voice_runtime_command(
     fallback_reply: str,
     human_id: str | None,
     agent_id: str | None,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     execution = run_first_chip_hook_supporting(
         config_manager,
         hook=hook,
@@ -4296,6 +4467,28 @@ def _normalize_swarm_label(value: str) -> str:
 
 def _think_state_key(*, external_user_id: str) -> str:
     return f"telegram:think_visibility:{external_user_id}"
+
+
+def _voice_reply_state_key(*, external_user_id: str) -> str:
+    return f"telegram:voice_reply:{external_user_id}"
+
+
+def _voice_reply_enabled_for_user(*, state_db: StateDB, external_user_id: str) -> bool:
+    payload = _load_runtime_json_object(state_db, _voice_reply_state_key(external_user_id=external_user_id))
+    return bool(payload.get("enabled", False))
+
+
+def _set_voice_reply_enabled_for_user(
+    *,
+    state_db: StateDB,
+    external_user_id: str,
+    enabled: bool,
+) -> None:
+    set_runtime_state_value(
+        state_db=state_db,
+        state_key=_voice_reply_state_key(external_user_id=external_user_id),
+        value=json.dumps({"enabled": enabled}, sort_keys=True),
+    )
 
 
 def _think_enabled_for_user(*, state_db: StateDB, external_user_id: str) -> bool:
