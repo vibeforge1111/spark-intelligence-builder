@@ -5,6 +5,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from spark_intelligence.attachments import attachment_status
+from spark_intelligence.attachments.snapshot import sync_attachment_snapshot
 from spark_intelligence.adapters.discord.runtime import build_discord_runtime_summary
 from spark_intelligence.adapters.telegram.runtime import build_telegram_runtime_summary, read_telegram_runtime_health
 from spark_intelligence.adapters.whatsapp.runtime import build_whatsapp_runtime_summary
@@ -71,6 +72,7 @@ class DoctorReport:
 def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport:
     checks: list[DoctorCheck] = []
     paths = config_manager.paths
+    sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
     record_environment_snapshot(
         state_db,
         surface="doctor_cli",

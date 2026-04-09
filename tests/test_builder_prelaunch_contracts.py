@@ -1043,6 +1043,32 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("watchtower-agent-identity-import", checks)
         self.assertTrue(checks["watchtower-agent-identity-import"].ok)
 
+    def test_operator_security_refreshes_stale_identity_import_snapshot(self) -> None:
+        self.add_telegram_channel()
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+        sync_attachment_snapshot(config_manager=self.config_manager, state_db=self.state_db)
+
+        chip_root = create_fake_hook_chip(self.home, chip_key="spark-swarm")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+        self.config_manager.set_path("spark.chips.active_keys", ["spark-swarm"])
+
+        report = build_operator_security_report(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            limit=20,
+        )
+
+        identity_panel = report.payload["watchtower"]["panels"]["agent_identity"]
+        self.assertEqual(identity_panel["counts"]["identity_hook_chip_records"], 1)
+        self.assertEqual(identity_panel["counts"]["identity_hook_active_chip_records"], 1)
+        self.assertEqual(identity_panel["counts"]["identity_import_ready"], 1)
+        self.assertEqual(identity_panel["identity_import"]["active_chip_keys"], ["spark-swarm"])
+
     def test_personality_state_uses_typed_tables_with_runtime_state_mirrors(self) -> None:
         deltas = detect_and_persist_nl_preferences(
             human_id="human:test",
@@ -1177,6 +1203,30 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         checks = {check.name: check for check in report.checks}
         self.assertIn("watchtower-personality-import", checks)
         self.assertTrue(checks["watchtower-personality-import"].ok)
+
+    def test_doctor_refreshes_stale_personality_import_snapshot(self) -> None:
+        resolve_canonical_agent_identity(
+            state_db=self.state_db,
+            human_id="human:telegram:personality-stale",
+            display_name="Personality Stale",
+        )
+        sync_attachment_snapshot(config_manager=self.config_manager, state_db=self.state_db)
+
+        chip_root = create_fake_hook_chip(self.home, chip_key="spark-personality")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+        self.config_manager.set_path("spark.chips.active_keys", ["spark-personality"])
+
+        report = run_doctor(self.config_manager, self.state_db)
+
+        checks = {check.name: check for check in report.checks}
+        self.assertIn("watchtower-personality-import", checks)
+        self.assertTrue(checks["watchtower-personality-import"].ok)
+        snapshot = build_watchtower_snapshot(self.state_db)
+        personality_panel = snapshot["panels"]["personality"]
+        self.assertEqual(personality_panel["counts"]["personality_hook_chip_records"], 1)
+        self.assertEqual(personality_panel["counts"]["personality_hook_active_chip_records"], 1)
+        self.assertEqual(personality_panel["counts"]["personality_import_ready"], 1)
+        self.assertEqual(personality_panel["personality_import"]["active_chip_keys"], ["spark-personality"])
 
     def test_stop_ship_requires_domain_specific_runtime_state_mirrors(self) -> None:
         with self.state_db.connect() as conn:

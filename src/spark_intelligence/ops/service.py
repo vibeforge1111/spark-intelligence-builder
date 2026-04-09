@@ -10,6 +10,7 @@ from spark_intelligence.adapters.discord.runtime import build_discord_runtime_su
 from spark_intelligence.adapters.telegram.runtime import read_telegram_runtime_health
 from spark_intelligence.adapters.whatsapp.runtime import build_whatsapp_runtime_summary
 from spark_intelligence.attachments import build_attachment_snapshot
+from spark_intelligence.attachments.snapshot import sync_attachment_snapshot
 from spark_intelligence.auth.runtime import build_auth_status_report
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.gateway.tracing import read_gateway_traces, read_outbound_audit
@@ -608,6 +609,7 @@ def list_webhook_alert_snoozes(
 
 
 def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) -> OperatorInboxReport:
+    sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
     repair_foreground_browser_hook_failures(state_db)
     repair_non_promotable_chip_hook_dispositions(state_db)
     watchtower = build_watchtower_snapshot(state_db)
@@ -725,6 +727,7 @@ def build_operator_security_report(
     state_db: StateDB,
     limit: int = 100,
 ) -> OperatorSecurityReport:
+    sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
     repair_foreground_browser_hook_failures(state_db)
     repair_non_promotable_chip_hook_dispositions(state_db)
     watchtower = build_watchtower_snapshot(state_db)
