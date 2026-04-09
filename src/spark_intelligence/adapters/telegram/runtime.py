@@ -1673,7 +1673,15 @@ def _send_telegram_reply(
     voice_error: str | None = None
     voice_payload: dict[str, Any] | None = None
     if voice_requested:
-        spoken_text = _prepare_voice_reply_text(str(voice_text or guarded["text"]))
+        spoken_source = str(voice_text or guarded["text"])
+        if voice_text is not None:
+            spoken_source = _apply_think_visibility(
+                state_db=state_db,
+                external_user_id=telegram_user_id,
+                text=spoken_source,
+            )
+            spoken_source = _strip_internal_swarm_recommendation(spoken_source)
+        spoken_text = _prepare_voice_reply_text(spoken_source)
         if spoken_text:
             try:
                 voice_payload = _synthesize_telegram_voice_reply(

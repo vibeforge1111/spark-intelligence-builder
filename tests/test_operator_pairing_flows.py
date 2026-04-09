@@ -4217,7 +4217,10 @@ class OperatorPairingFlowTests(SparkTestCase):
             "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
             return_value=ResearcherBridgeResult(
                 request_id="telegram:11842",
-                reply_text="Hey, doing well -- ready to work. What's on your mind?",
+                reply_text=(
+                    "Swarm: recommended for this task because the bridge detected a hosted execution path.\n"
+                    "Hey, doing well -- ready to work. What's on your mind?"
+                ),
                 evidence_summary="",
                 escalation_hint=None,
                 trace_ref="trace:test-voice-auto",
