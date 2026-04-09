@@ -3170,6 +3170,10 @@ class OperatorPairingFlowTests(SparkTestCase):
         def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
             if hook == "voice.transcribe":
                 self.assertEqual(payload["message_kind"], "voice")
+                self.assertEqual(
+                    payload["builder_env_file_path"],
+                    str(self.config_manager.paths.env_file.resolve()),
+                )
                 return SimpleNamespace(
                     ok=True,
                     chip_key="domain-chip-voice-comms",

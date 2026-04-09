@@ -391,7 +391,7 @@ def _build_voice_chip_payload(
         "surface": "telegram",
         "human_id": human_id,
         "agent_id": agent_id,
-        "builder_env_file_path": str(config_manager.paths.env_file),
+        "builder_env_file_path": str(config_manager.paths.env_file.resolve()),
     }
     try:
         provider = resolve_runtime_provider(config_manager=config_manager, state_db=state_db)
