@@ -1483,9 +1483,29 @@ def _load_recent_conversation_context(
     if not transcript:
         return ""
 
+    recent_turns = transcript[-(turn_limit * 2) :]
     lines = ["[Recent conversation]"]
-    for role, text in transcript[-(turn_limit * 2) :]:
+    for role, text in recent_turns:
         lines.append(f"{role}: {text}")
+    visible_turn_labels = (
+        "latest_visible_turn",
+        "previous_visible_turn",
+        "turn_before_previous_visible_turn",
+    )
+    for index, label in enumerate(visible_turn_labels, start=1):
+        if len(recent_turns) >= index:
+            role, text = recent_turns[-index]
+            lines.append(f"{label}.role={role}")
+            lines.append(f"{label}.text={text}")
+    user_turns = [text for role, text in recent_turns if role == "user"]
+    user_turn_labels = (
+        "latest_user_message",
+        "previous_user_message",
+        "user_message_before_previous",
+    )
+    for index, label in enumerate(user_turn_labels, start=1):
+        if len(user_turns) >= index:
+            lines.append(f"{label}={user_turns[-index]}")
     return "\n".join(lines)
 
 

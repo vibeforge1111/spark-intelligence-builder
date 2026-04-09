@@ -570,6 +570,16 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             self.state_db,
             event_type="intent_committed",
             component="telegram_runtime",
+            summary="Older user message committed.",
+            channel_id="telegram",
+            session_id="sess-1",
+            request_id="req-0",
+            facts={"message_text": "Keep the thread continuity hot."},
+        )
+        record_event(
+            self.state_db,
+            event_type="intent_committed",
+            component="telegram_runtime",
             summary="User message committed.",
             channel_id="telegram",
             session_id="sess-1",
@@ -608,6 +618,14 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("[Recent conversation]", context)
         self.assertIn("user: I want this to feel less scripted.", context)
         self.assertIn("assistant: The main issue is continuity, not just tone.", context)
+        self.assertIn("latest_visible_turn.role=assistant", context)
+        self.assertIn("latest_visible_turn.text=The main issue is continuity, not just tone.", context)
+        self.assertIn("previous_visible_turn.role=user", context)
+        self.assertIn("previous_visible_turn.text=I want this to feel less scripted.", context)
+        self.assertIn("turn_before_previous_visible_turn.role=user", context)
+        self.assertIn("turn_before_previous_visible_turn.text=Keep the thread continuity hot.", context)
+        self.assertIn("latest_user_message=I want this to feel less scripted.", context)
+        self.assertIn("previous_user_message=Keep the thread continuity hot.", context)
         self.assertNotIn("Now answer like you remember what I said.", context)
 
     def test_build_researcher_reply_includes_recent_telegram_turns_in_provider_prompt(self) -> None:
@@ -686,6 +704,9 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("[Recent conversation]", prompt)
         self.assertIn("user: I'm trying to make this agent feel more natural and less scripted.", prompt)
         self.assertIn("assistant: The main problem is continuity, not just tone.", prompt)
+        self.assertIn("latest_visible_turn.role=assistant", prompt)
+        self.assertIn("previous_visible_turn.role=user", prompt)
+        self.assertIn("latest_user_message=I'm trying to make this agent feel more natural and less scripted.", prompt)
         self.assertIn("[User message]", prompt)
         self.assertIn("Now answer like you actually remember what I just said.", prompt)
 
