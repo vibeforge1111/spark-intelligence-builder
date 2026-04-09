@@ -1101,6 +1101,7 @@ def poll_telegram_updates_once(
             continue
         effective_text = str(media_input.get("effective_text") or normalized.text)
         transcript_text = media_input.get("transcript_text")
+        voice_origin_reply = normalized.message_kind in {"voice", "audio"} and bool(transcript_text)
 
         command_result = _handle_runtime_command(
             config_manager=config_manager,
@@ -1162,11 +1163,11 @@ def poll_telegram_updates_once(
                 trace_ref=None,
                 human_id=resolution.human_id,
                 agent_id=resolution.agent_id,
-                force_voice=bool(command_result.get("force_voice", False)),
+                force_voice=bool(command_result.get("force_voice", False)) or voice_origin_reply,
                 voice_text=(
                     str(command_result.get("voice_text")).strip()
                     if command_result.get("voice_text") is not None
-                    else None
+                    else (outbound_text if voice_origin_reply else None)
                 ),
                 respect_voice_reply_state=bool(command_result.get("respect_voice_reply_state", True)),
             )
@@ -1270,6 +1271,10 @@ def poll_telegram_updates_once(
                 run_id=run.run_id,
                 request_id=run.request_id,
                 trace_ref=None,
+                human_id=resolution.human_id,
+                agent_id=resolution.agent_id,
+                force_voice=voice_origin_reply,
+                voice_text=outbound_text if voice_origin_reply else None,
             )
             processed_count += 1
             if send_result["ok"]:
@@ -1375,6 +1380,10 @@ def poll_telegram_updates_once(
             trace_ref=bridge_result.trace_ref,
             output_keepability=bridge_result.output_keepability,
             promotion_disposition=bridge_result.promotion_disposition,
+            human_id=resolution.human_id,
+            agent_id=resolution.agent_id,
+            force_voice=voice_origin_reply,
+            voice_text=outbound_text if voice_origin_reply else None,
         )
         processed_count += 1
         if send_result["ok"]:

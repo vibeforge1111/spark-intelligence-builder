@@ -3321,6 +3321,123 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(processed[0]["voice_transcribe_model"], "tiny")
         self.assertEqual(processed[0]["voice_transcribe_mode"], "local_faster_whisper")
 
+    def test_voice_message_auto_replies_with_audio_without_voice_reply_toggle(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"], bot_token="test-token")
+
+        class FakeVoicePollingClient:
+            def __init__(self, updates: list[dict[str, object]]) -> None:
+                self.updates = updates
+                self.sent_messages: list[dict[str, object]] = []
+                self.sent_audio: list[dict[str, object]] = []
+
+            def get_updates(self, *, offset: int | None = None, timeout_seconds: int = 5) -> list[dict[str, object]]:
+                return self.updates
+
+            def get_file(self, *, file_id: str) -> dict[str, object]:
+                return {"file_path": "voice/file_auto_reply.ogg"}
+
+            def download_file(self, *, file_path: str) -> bytes:
+                return b"fake-ogg-bytes"
+
+            def send_message(self, *, chat_id: str, text: str) -> dict[str, object]:
+                self.sent_messages.append({"chat_id": chat_id, "text": text})
+                return {"ok": True}
+
+            def send_audio(
+                self,
+                *,
+                chat_id: str,
+                audio_bytes: bytes,
+                filename: str,
+                caption: str | None = None,
+                mime_type: str | None = None,
+            ) -> dict[str, object]:
+                self.sent_audio.append(
+                    {
+                        "chat_id": chat_id,
+                        "audio_bytes": audio_bytes,
+                        "filename": filename,
+                        "caption": caption,
+                        "mime_type": mime_type,
+                    }
+                )
+                return {"ok": True}
+
+        client = FakeVoicePollingClient(
+            [
+                make_telegram_update(
+                    update_id=11842,
+                    user_id="111",
+                    username="alice",
+                    text=None,
+                    voice={"file_id": "voice-auto-reply", "duration": 3, "mime_type": "audio/ogg"},
+                )
+            ]
+        )
+
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+            if hook == "voice.transcribe":
+                return SimpleNamespace(
+                    ok=True,
+                    chip_key="domain-chip-voice-comms",
+                    stdout="hello spark how are you",
+                    stderr="",
+                    output={
+                        "result": {
+                            "transcript_text": "hello spark how are you",
+                            "provider_id": "local_faster_whisper",
+                            "model": "tiny",
+                            "mode": "local_faster_whisper",
+                        }
+                    },
+                )
+            if hook == "voice.speak":
+                return SimpleNamespace(
+                    ok=True,
+                    chip_key="domain-chip-voice-comms",
+                    stdout="",
+                    stderr="",
+                    output={
+                        "result": {
+                            "audio_base64": base64.b64encode(b"fake-audio-reply").decode("ascii"),
+                            "mime_type": "audio/mpeg",
+                            "provider_id": "elevenlabs",
+                            "voice_id": "spark-core",
+                        }
+                    },
+                )
+            raise AssertionError(f"Unexpected voice hook: {hook}")
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            side_effect=fake_voice_hook,
+        ), patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            return_value=ResearcherBridgeResult(
+                request_id="telegram:11842",
+                reply_text="Hey, doing well -- ready to work. What's on your mind?",
+                evidence_summary="",
+                escalation_hint=None,
+                trace_ref="trace:test-voice-auto",
+                mode="provider_fallback_chat",
+                runtime_root=None,
+                config_path=None,
+                attachment_context=None,
+                routing_decision="provider_fallback_chat",
+            ),
+        ):
+            result = poll_telegram_updates_once(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                client=client,
+                timeout_seconds=0,
+            )
+
+        self.assertEqual(result.processed_count, 1)
+        self.assertEqual(len(client.sent_audio), 1)
+        self.assertEqual(len(client.sent_messages), 0)
+        self.assertIn("Hey, doing well", str(client.sent_audio[0]["caption"]))
+
     def test_voice_message_returns_bounded_transcription_unavailable_reply_for_unsupported_provider(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
