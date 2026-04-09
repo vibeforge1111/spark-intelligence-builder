@@ -14,5 +14,6 @@ __pycache__/
 .tmp-home/
 .tmp-home-*/
 .tmp-telegram-*.json
+.operator-local/
 *.egg-info/
 .gstack/

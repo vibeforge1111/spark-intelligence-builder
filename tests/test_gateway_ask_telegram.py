@@ -12,6 +12,7 @@ from tests.test_support import SparkTestCase
 class GatewayAskTelegramTests(SparkTestCase):
     def test_gateway_ask_telegram_uses_single_allowed_user_and_formats_reply(self) -> None:
         self.add_telegram_channel(allowed_users=["111"])
+        self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
         simulated_result = SimpleNamespace(
             ok=True,
             decision="allowed",
@@ -46,6 +47,7 @@ class GatewayAskTelegramTests(SparkTestCase):
 
     def test_gateway_ask_telegram_prefers_latest_recent_telegram_user(self) -> None:
         self.add_telegram_channel(allowed_users=["111", "222"])
+        self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
         simulated_result = SimpleNamespace(
             ok=True,
             decision="allowed",
@@ -79,6 +81,7 @@ class GatewayAskTelegramTests(SparkTestCase):
 
     def test_gateway_ask_telegram_requires_explicit_user_when_multiple_candidates_exist(self) -> None:
         self.add_telegram_channel(allowed_users=["111", "222"])
+        self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
 
         with (
             patch("spark_intelligence.gateway.runtime.read_gateway_traces", return_value=[]),
@@ -90,3 +93,13 @@ class GatewayAskTelegramTests(SparkTestCase):
                     state_db=self.state_db,
                     message="hello",
                 )
+
+    def test_gateway_ask_telegram_fails_closed_when_bridge_is_not_enabled(self) -> None:
+        self.add_telegram_channel(allowed_users=["111"])
+
+        with self.assertRaisesRegex(ValueError, "Telegram terminal bridge is disabled"):
+            gateway_ask_telegram(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                message="hello",
+            )

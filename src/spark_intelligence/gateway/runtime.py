@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 import json
 import urllib.error
@@ -402,6 +403,12 @@ def gateway_ask_telegram(
     chat_id: str | None = None,
     as_json: bool = False,
 ) -> str:
+    if not _telegram_terminal_bridge_enabled(config_manager):
+        raise ValueError(
+            "The Telegram terminal bridge is disabled. "
+            "This operator-only feature must be enabled locally via "
+            "'operator.experimental.telegram_terminal_bridge_enabled'."
+        )
     normalized_message = str(message or "").strip()
     if not normalized_message:
         raise ValueError("Telegram ask needs a non-empty message.")
@@ -635,6 +642,20 @@ def _resolve_gateway_telegram_user_id(
         "No Telegram user id was provided and the workspace has multiple possible Telegram users. "
         "Pass --user-id to target one explicitly."
     )
+
+
+def _telegram_terminal_bridge_enabled(config_manager: ConfigManager) -> bool:
+    env_flag = str(os.environ.get("SPARK_OPERATOR_TELEGRAM_BRIDGE_ENABLED") or "").strip().lower()
+    if env_flag in {"1", "true", "yes", "on"}:
+        return True
+    config = config_manager.load()
+    operator_config = config.get("operator", {})
+    if not isinstance(operator_config, dict):
+        return False
+    experimental_config = operator_config.get("experimental", {})
+    if not isinstance(experimental_config, dict):
+        return False
+    return bool(experimental_config.get("telegram_terminal_bridge_enabled"))
 
 
 def _latest_gateway_telegram_user_id(config_manager: ConfigManager) -> str | None:
