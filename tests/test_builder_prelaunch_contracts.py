@@ -486,12 +486,20 @@ class BuilderPrelaunchContractTests(SparkTestCase):
             actor_id="telegram_runtime",
             facts={"update_id": 501, "telegram_user_id": "user-watchtower"},
         )
+        background_run = open_run(
+            self.state_db,
+            run_kind="job:watchtower_test",
+            origin_surface="jobs_tick",
+            summary="background run opened",
+            request_id="req-watchtower-job",
+            actor_id="jobs_tick",
+        )
         close_run(
             self.state_db,
-            run_id=run.run_id,
+            run_id=background_run.run_id,
             status="stalled",
             close_reason="watchtower_test_stall",
-            summary="stalled for watchtower test",
+            summary="background run stalled for watchtower test",
         )
         record_environment_snapshot(
             self.state_db,

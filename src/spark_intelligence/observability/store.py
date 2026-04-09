@@ -2325,7 +2325,12 @@ def _compute_health_facts(state_db: StateDB) -> dict[str, Any]:
         "last_environment_snapshot_at": _latest_snapshot_created_at(state_db),
         "current_stalled_run_count": _count_rows(
             state_db,
-            "SELECT COUNT(*) AS c FROM run_registry WHERE status = 'stalled'",
+            """
+            SELECT COUNT(*) AS c
+            FROM run_registry
+            WHERE status = 'stalled'
+              AND (run_kind LIKE 'job:%' OR surface_kind = 'jobs_tick')
+            """,
         ),
         "current_unacked_delivery_count": _count_rows(
             state_db,
