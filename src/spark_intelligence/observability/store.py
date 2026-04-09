@@ -2289,6 +2289,41 @@ def repair_non_promotable_chip_hook_dispositions(state_db: StateDB) -> int:
     return int(cursor.rowcount or 0)
 
 
+def repair_foreground_browser_hook_failures(state_db: StateDB) -> int:
+    params = (
+        "failed",
+        "operator:browser_hook:%",
+        "stalled",
+        "browser_hook_failed",
+        "browser_hook_invalid",
+        "no_active_chip_for_hook",
+        "secret_boundary_blocked",
+    )
+    with state_db.connect() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE builder_runs
+            SET status = ?
+            WHERE run_kind LIKE ?
+              AND status = ?
+              AND close_reason IN (?, ?, ?, ?)
+            """,
+            params,
+        )
+        conn.execute(
+            """
+            UPDATE run_registry
+            SET status = ?
+            WHERE run_kind LIKE ?
+              AND status = ?
+              AND closure_reason IN (?, ?, ?, ?)
+            """,
+            params,
+        )
+        conn.commit()
+    return int(cursor.rowcount or 0)
+
+
 def _artifact_lane_from_keepability(value: str) -> str:
     keepability = str(value or "")
     if keepability == "operator_debug_only":

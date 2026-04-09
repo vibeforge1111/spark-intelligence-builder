@@ -24,6 +24,7 @@ from spark_intelligence.observability.store import (
     open_run,
     recent_contradictions,
     recent_memory_lane_records,
+    recent_runs,
     record_observer_handoff_record,
     recent_observer_packet_records,
     recent_policy_gate_records,
@@ -1540,6 +1541,36 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("watchtower", report.payload)
         self.assertEqual(report.payload["watchtower"]["health_dimensions"]["scheduler_freshness"]["state"], "stalled")
         self.assertTrue(any("typed delivery ledger" in item["summary"] for item in report.payload["items"]))
+
+    def test_operator_security_report_repairs_foreground_browser_hook_failures_out_of_stalled_bucket(self) -> None:
+        run = open_run(
+            self.state_db,
+            run_kind="operator:browser_hook:browser.status",
+            origin_surface="browser_cli",
+            summary="opened browser hook",
+            request_id="req-browser-failure",
+            actor_id="local-operator",
+        )
+        close_run(
+            self.state_db,
+            run_id=run.run_id,
+            status="stalled",
+            close_reason="browser_hook_failed",
+            summary="Browser CLI hook returned a governed failure response.",
+            facts={"error_code": "BROWSER_SESSION_STALE"},
+        )
+
+        report = build_operator_security_report(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            limit=20,
+        )
+
+        self.assertEqual(report.payload["counts"]["stalled_runs"], 0)
+        failed_runs = recent_runs(self.state_db, limit=10, status="failed")
+        self.assertTrue(failed_runs)
+        self.assertEqual(failed_runs[0]["run_kind"], "operator:browser_hook:browser.status")
+        self.assertEqual(failed_runs[0]["closure_reason"], "browser_hook_failed")
 
     def test_operator_security_report_surfaces_open_contradictions(self) -> None:
         run = open_run(

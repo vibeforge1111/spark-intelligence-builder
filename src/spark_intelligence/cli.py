@@ -3439,7 +3439,7 @@ def _execute_browser_hook(
                 close_run(
                     state_db,
                     run_id=run.run_id,
-                    status="stalled",
+                    status="failed",
                     close_reason="no_active_chip_for_hook",
                     summary="Browser CLI found no active chip exposing the requested browser hook.",
                     facts={"hook": hook_name},
@@ -3453,7 +3453,7 @@ def _execute_browser_hook(
         close_run(
             state_db,
             run_id=run.run_id,
-            status="stalled",
+            status="failed",
             close_reason="browser_hook_invalid",
             summary="Browser CLI failed validation before hook execution.",
             facts={"hook": hook_name, "error": str(exc)},
@@ -3538,7 +3538,7 @@ def _execute_browser_hook(
         close_run(
             state_db,
             run_id=run.run_id,
-            status="stalled",
+            status="failed",
             close_reason="secret_boundary_blocked",
             summary="Browser CLI hook output was blocked by the secret boundary.",
             facts={
@@ -3573,7 +3573,7 @@ def _execute_browser_hook(
         close_run(
             state_db,
             run_id=run.run_id,
-            status="stalled",
+            status="failed",
             close_reason="browser_hook_failed",
             summary="Browser CLI hook returned a governed failure response.",
             facts={

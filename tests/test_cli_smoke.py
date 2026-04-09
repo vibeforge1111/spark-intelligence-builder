@@ -14,7 +14,7 @@ from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.gateway.discord_webhook import DISCORD_WEBHOOK_PATH, handle_discord_webhook
 from spark_intelligence.gateway.whatsapp_webhook import WHATSAPP_WEBHOOK_PATH, handle_whatsapp_webhook
 from spark_intelligence.identity.service import approve_pairing, read_canonical_agent_state
-from spark_intelligence.observability.store import record_event
+from spark_intelligence.observability.store import recent_runs, record_event
 from spark_intelligence.personality.loader import detect_and_persist_nl_preferences, record_observation
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
 
@@ -324,6 +324,11 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["hook_status"], "failed")
         self.assertEqual(payload["error"]["code"], "BROWSER_SESSION_NOT_CONNECTED")
         self.assertEqual(payload["result"], {})
+        failed_runs = recent_runs(self.state_db, limit=10, status="failed")
+        self.assertTrue(failed_runs)
+        self.assertEqual(failed_runs[0]["run_kind"], "operator:browser_hook:browser.status")
+        self.assertEqual(failed_runs[0]["closure_reason"], "browser_hook_failed")
+        self.assertFalse(recent_runs(self.state_db, limit=10, status="stalled"))
 
     def test_memory_direct_smoke_runs_in_process_domain_chip_bridge(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
