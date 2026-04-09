@@ -3792,6 +3792,7 @@ class OperatorPairingFlowTests(SparkTestCase):
             def __init__(self, updates: list[dict[str, object]]) -> None:
                 self.updates = updates
                 self.sent_messages: list[dict[str, object]] = []
+                self.sent_voices: list[dict[str, object]] = []
                 self.sent_documents: list[dict[str, object]] = []
 
             def get_updates(self, *, offset: int | None = None, timeout_seconds: int = 5) -> list[dict[str, object]]:
@@ -3814,6 +3815,26 @@ class OperatorPairingFlowTests(SparkTestCase):
                     {
                         "chat_id": chat_id,
                         "document_bytes": document_bytes,
+                        "filename": filename,
+                        "caption": caption,
+                        "mime_type": mime_type,
+                    }
+                )
+                return {"ok": True}
+
+            def send_voice(
+                self,
+                *,
+                chat_id: str,
+                voice_bytes: bytes,
+                filename: str,
+                caption: str | None = None,
+                mime_type: str | None = None,
+            ) -> dict[str, object]:
+                self.sent_voices.append(
+                    {
+                        "chat_id": chat_id,
+                        "voice_bytes": voice_bytes,
                         "filename": filename,
                         "caption": caption,
                         "mime_type": mime_type,
@@ -3844,7 +3865,9 @@ class OperatorPairingFlowTests(SparkTestCase):
                 output={
                     "result": {
                         "audio_base64": base64.b64encode(b"fake-mp3").decode("ascii"),
-                        "mime_type": "audio/mpeg",
+                        "mime_type": "audio/ogg",
+                        "filename": "telegram-reply-abcdef12.ogg",
+                        "voice_compatible": True,
                         "provider_id": "elevenlabs",
                         "voice_id": "spark-core",
                     }
@@ -3863,11 +3886,12 @@ class OperatorPairingFlowTests(SparkTestCase):
             )
 
         self.assertEqual(result.processed_count, 1)
-        self.assertEqual(len(client.sent_documents), 1)
+        self.assertEqual(len(client.sent_voices), 1)
+        self.assertEqual(len(client.sent_documents), 0)
         self.assertEqual(len(client.sent_messages), 0)
-        self.assertIn("Voice reply queued.", str(client.sent_documents[0]["caption"]))
-        self.assertEqual(client.sent_documents[0]["mime_type"], "audio/mpeg")
-        self.assertRegex(str(client.sent_documents[0]["filename"]), r"^telegram-reply-[0-9a-f]{8}\.mp3$")
+        self.assertIn("Voice reply queued.", str(client.sent_voices[0]["caption"]))
+        self.assertEqual(client.sent_voices[0]["mime_type"], "audio/ogg")
+        self.assertEqual(client.sent_voices[0]["filename"], "telegram-reply-abcdef12.ogg")
 
     def test_voice_reply_on_sends_runtime_command_as_audio(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"], bot_token="test-token")
@@ -3887,6 +3911,7 @@ class OperatorPairingFlowTests(SparkTestCase):
             def __init__(self, updates: list[dict[str, object]]) -> None:
                 self.updates = updates
                 self.sent_messages: list[dict[str, object]] = []
+                self.sent_voices: list[dict[str, object]] = []
                 self.sent_documents: list[dict[str, object]] = []
 
             def get_updates(self, *, offset: int | None = None, timeout_seconds: int = 5) -> list[dict[str, object]]:
@@ -3916,6 +3941,26 @@ class OperatorPairingFlowTests(SparkTestCase):
                 )
                 return {"ok": True}
 
+            def send_voice(
+                self,
+                *,
+                chat_id: str,
+                voice_bytes: bytes,
+                filename: str,
+                caption: str | None = None,
+                mime_type: str | None = None,
+            ) -> dict[str, object]:
+                self.sent_voices.append(
+                    {
+                        "chat_id": chat_id,
+                        "voice_bytes": voice_bytes,
+                        "filename": filename,
+                        "caption": caption,
+                        "mime_type": mime_type,
+                    }
+                )
+                return {"ok": True}
+
         client = FakeVoicePollingClient(
             [
                 make_telegram_update(
@@ -3937,7 +3982,9 @@ class OperatorPairingFlowTests(SparkTestCase):
                 output={
                     "result": {
                         "audio_base64": base64.b64encode(b"fake-runtime-audio").decode("ascii"),
-                        "mime_type": "audio/mpeg",
+                        "mime_type": "audio/ogg",
+                        "filename": "telegram-reply-runtime.ogg",
+                        "voice_compatible": True,
                         "provider_id": "elevenlabs",
                         "voice_id": "spark-core",
                     }
@@ -3952,9 +3999,10 @@ class OperatorPairingFlowTests(SparkTestCase):
             )
 
         self.assertEqual(result.processed_count, 1)
-        self.assertEqual(len(client.sent_documents), 1)
+        self.assertEqual(len(client.sent_voices), 1)
+        self.assertEqual(len(client.sent_documents), 0)
         self.assertEqual(len(client.sent_messages), 0)
-        self.assertIn("Swarm is", str(client.sent_documents[0]["caption"]))
+        self.assertIn("Swarm is", str(client.sent_voices[0]["caption"]))
 
     def test_voice_message_uses_transcript_as_runtime_command(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -4127,6 +4175,7 @@ class OperatorPairingFlowTests(SparkTestCase):
             def __init__(self, updates: list[dict[str, object]]) -> None:
                 self.updates = updates
                 self.sent_messages: list[dict[str, object]] = []
+                self.sent_voices: list[dict[str, object]] = []
                 self.sent_documents: list[dict[str, object]] = []
 
             def get_updates(self, *, offset: int | None = None, timeout_seconds: int = 5) -> list[dict[str, object]]:
@@ -4155,6 +4204,26 @@ class OperatorPairingFlowTests(SparkTestCase):
                     {
                         "chat_id": chat_id,
                         "document_bytes": document_bytes,
+                        "filename": filename,
+                        "caption": caption,
+                        "mime_type": mime_type,
+                    }
+                )
+                return {"ok": True}
+
+            def send_voice(
+                self,
+                *,
+                chat_id: str,
+                voice_bytes: bytes,
+                filename: str,
+                caption: str | None = None,
+                mime_type: str | None = None,
+            ) -> dict[str, object]:
+                self.sent_voices.append(
+                    {
+                        "chat_id": chat_id,
+                        "voice_bytes": voice_bytes,
                         "filename": filename,
                         "caption": caption,
                         "mime_type": mime_type,
@@ -4203,7 +4272,9 @@ class OperatorPairingFlowTests(SparkTestCase):
                     output={
                         "result": {
                             "audio_base64": base64.b64encode(b"fake-audio-reply").decode("ascii"),
-                            "mime_type": "audio/mpeg",
+                            "mime_type": "audio/ogg",
+                            "filename": "telegram-reply-auto.ogg",
+                            "voice_compatible": True,
                             "provider_id": "elevenlabs",
                             "voice_id": "spark-core",
                         }
@@ -4240,9 +4311,10 @@ class OperatorPairingFlowTests(SparkTestCase):
             )
 
         self.assertEqual(result.processed_count, 1)
-        self.assertEqual(len(client.sent_documents), 1)
+        self.assertEqual(len(client.sent_voices), 1)
+        self.assertEqual(len(client.sent_documents), 0)
         self.assertEqual(len(client.sent_messages), 0)
-        self.assertEqual(str(client.sent_documents[0]["caption"]), "Hey, doing well -- ready to work.")
+        self.assertEqual(str(client.sent_voices[0]["caption"]), "Hey, doing well -- ready to work.")
         self.assertIsNotNone(voice_speak_payload)
         assert voice_speak_payload is not None
         self.assertEqual(str(voice_speak_payload["text"]), "Hey, doing well, ready to work.")

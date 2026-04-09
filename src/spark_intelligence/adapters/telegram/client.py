@@ -61,6 +61,34 @@ class TelegramBotApiClient:
             file_bytes=audio_bytes,
         )
 
+    def send_voice(
+        self,
+        *,
+        chat_id: str,
+        voice_bytes: bytes,
+        filename: str,
+        caption: str | None = None,
+        mime_type: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "voice_bytes": voice_bytes,
+            "filename": filename,
+            "mime_type": mime_type or "audio/ogg",
+        }
+        if caption:
+            payload["caption"] = caption
+        if self.transport is not None:
+            return self.transport("sendVoice", payload)
+        return self._call_multipart(
+            "sendVoice",
+            fields={"chat_id": chat_id, "caption": caption},
+            file_field="voice",
+            filename=filename,
+            mime_type=str(payload["mime_type"]),
+            file_bytes=voice_bytes,
+        )
+
     def send_document(
         self,
         *,

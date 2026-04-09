@@ -1561,14 +1561,28 @@ def _synthesize_telegram_voice_reply(
     return {
         "audio_bytes": base64.b64decode(audio_base64),
         "mime_type": mime_type,
-        "filename": (
+        "filename": str((result or {}).get("filename") or "").strip()
+        or (
             f"telegram-reply-{uuid4().hex[:8]}.mp3"
             if "mpeg" in mime_type or "mp3" in mime_type
+            else f"telegram-reply-{uuid4().hex[:8]}.ogg"
+            if "ogg" in mime_type or "opus" in mime_type
             else f"telegram-reply-{uuid4().hex[:8]}.audio"
         ),
         "provider_id": str((result or {}).get("provider_id") or "").strip() or None,
         "voice_id": str((result or {}).get("voice_id") or "").strip() or None,
+        "voice_compatible": bool((result or {}).get("voice_compatible")),
     }
+
+
+def _telegram_voice_payload_is_voice_compatible(payload: dict[str, Any]) -> bool:
+    mime_type = str(payload.get("mime_type") or "").strip().lower()
+    filename = str(payload.get("filename") or "").strip().lower()
+    if bool(payload.get("voice_compatible")):
+        return True
+    if mime_type in {"audio/ogg", "audio/opus"}:
+        return True
+    return filename.endswith(".ogg") or filename.endswith(".opus")
 
 
 def _prepare_voice_reply_text(text: str, *, max_chars: int = 900) -> str:
@@ -1738,13 +1752,22 @@ def _send_telegram_reply(
     )
     try:
         if voice_payload is not None:
-            client.send_document(
-                chat_id=chat_id,
-                document_bytes=voice_payload["audio_bytes"],
-                filename=str(voice_payload["filename"]),
-                mime_type=str(voice_payload["mime_type"]),
-                caption=guarded["text"] if len(guarded["text"]) <= 1024 else None,
-            )
+            if _telegram_voice_payload_is_voice_compatible(voice_payload):
+                client.send_voice(
+                    chat_id=chat_id,
+                    voice_bytes=voice_payload["audio_bytes"],
+                    filename=str(voice_payload["filename"]),
+                    mime_type=str(voice_payload["mime_type"]),
+                    caption=guarded["text"] if len(guarded["text"]) <= 1024 else None,
+                )
+            else:
+                client.send_document(
+                    chat_id=chat_id,
+                    document_bytes=voice_payload["audio_bytes"],
+                    filename=str(voice_payload["filename"]),
+                    mime_type=str(voice_payload["mime_type"]),
+                    caption=guarded["text"] if len(guarded["text"]) <= 1024 else None,
+                )
         else:
             client.send_message(chat_id=chat_id, text=guarded["text"])
     except (RuntimeError, HTTPError, URLError) as exc:
