@@ -405,7 +405,7 @@ def gateway_ask_telegram(
 ) -> str:
     if not _telegram_terminal_bridge_enabled(config_manager):
         raise ValueError(
-            "The Telegram terminal bridge is disabled. "
+            "The terminal-to-Telegram bridge is disabled. "
             "This operator-only feature must be enabled locally via "
             "'operator.experimental.telegram_terminal_bridge_enabled'."
         )
