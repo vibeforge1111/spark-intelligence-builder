@@ -1953,6 +1953,7 @@ class CliSmokeTests(SparkTestCase):
     def test_agent_import_swarm_command_canonicalizes_agent_from_hook_runtime(self) -> None:
         chip_root = create_fake_hook_chip(self.home, chip_key="spark-swarm")
         self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+        self.config_manager.set_path("spark.swarm.workspace_id", "ws-live")
         approve_pairing(
             state_db=self.state_db,
             channel_id="telegram",
@@ -1984,8 +1985,11 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["chip_key"], "spark-swarm")
         self.assertEqual(payload["identity"]["agent_id"], "swarm-agent:111")
         self.assertEqual(payload["identity"]["preferred_source"], "spark_swarm")
+        self.assertEqual(payload["imported_identity"]["metadata"]["workspace_id"], "ws-live")
         self.assertTrue(Path(payload["payload_path"]).exists())
         self.assertTrue(Path(payload["result_path"]).exists())
+        request_payload = json.loads(Path(payload["payload_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(request_payload["workspace_id"], "ws-live")
 
     def test_agent_import_personality_command_updates_agent_persona_from_hook_runtime(self) -> None:
         chip_root = create_fake_hook_chip(self.home, chip_key="spark-personality")

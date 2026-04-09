@@ -4621,10 +4621,14 @@ def handle_agent_import_swarm(args: argparse.Namespace) -> int:
     config_manager.bootstrap()
     state_db.initialize()
     import_id = f"swarm-import:{uuid4().hex[:12]}"
+    workspace_id = (
+        str(config_manager.get_path("spark.swarm.workspace_id") or "").strip()
+        or str(config_manager.get_path("workspace.id", default="default"))
+    )
     payload = build_spark_swarm_identity_import_payload(
         state_db=state_db,
         human_id=args.human_id,
-        workspace_id=str(config_manager.get_path("workspace.id", default="default")),
+        workspace_id=workspace_id,
     )
     payload["import_id"] = import_id
     payload["requested_by"] = "local-operator"
