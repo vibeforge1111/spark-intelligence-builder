@@ -613,7 +613,12 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
     repair_foreground_browser_hook_failures(state_db)
     repair_non_promotable_chip_hook_dispositions(state_db)
     watchtower = build_watchtower_snapshot(state_db)
-    observer_incidents = ((watchtower.get("panels") or {}).get("observer_incidents") or {}).get("recent_incidents") or []
+    observer_incident_panel = (watchtower.get("panels") or {}).get("observer_incidents") or {}
+    observer_incidents = [
+        incident
+        for incident in (observer_incident_panel.get("recent_incidents") or [])
+        if str(incident.get("severity") or "medium") != "info"
+    ]
     observer_packets = ((watchtower.get("panels") or {}).get("observer_packets") or {}).get("recent_packets") or []
     observer_handoffs = ((watchtower.get("panels") or {}).get("observer_handoffs") or {}).get("recent_handoffs") or []
     problematic_observer_handoffs = [
@@ -731,7 +736,12 @@ def build_operator_security_report(
     repair_foreground_browser_hook_failures(state_db)
     repair_non_promotable_chip_hook_dispositions(state_db)
     watchtower = build_watchtower_snapshot(state_db)
-    observer_incidents = ((watchtower.get("panels") or {}).get("observer_incidents") or {}).get("recent_incidents") or []
+    observer_incident_panel = (watchtower.get("panels") or {}).get("observer_incidents") or {}
+    observer_incidents = [
+        incident
+        for incident in (observer_incident_panel.get("recent_incidents") or [])
+        if str(incident.get("severity") or "medium") != "info"
+    ]
     observer_packets = ((watchtower.get("panels") or {}).get("observer_packets") or {}).get("recent_packets") or []
     observer_handoffs = ((watchtower.get("panels") or {}).get("observer_handoffs") or {}).get("recent_handoffs") or []
     problematic_observer_handoffs = [

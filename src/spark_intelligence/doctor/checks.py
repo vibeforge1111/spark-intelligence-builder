@@ -452,12 +452,15 @@ def _watchtower_health_checks(*, config_manager: ConfigManager, state_db: StateD
     observer_incidents = (snapshot.get("panels") or {}).get("observer_incidents") or {}
     observer_counts = observer_incidents.get("counts") or {}
     observer_total = int(observer_counts.get("total") or 0)
+    actionable_value = observer_counts.get("actionable_total")
+    actionable_observer_total = int(actionable_value) if actionable_value is not None else observer_total
     checks.append(
         DoctorCheck(
             "watchtower-observer-incidents",
-            observer_total == 0,
+            actionable_observer_total == 0,
             (
                 f"total={observer_total} "
+                f"actionable={actionable_observer_total} "
                 f"distinct_classes={int(observer_counts.get('distinct_classes') or 0)}"
             ),
         )

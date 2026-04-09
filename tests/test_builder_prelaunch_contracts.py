@@ -765,6 +765,8 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         panel = snapshot["panels"]["observer_incidents"]
 
         self.assertGreaterEqual(panel["counts"]["total"], 3)
+        self.assertGreaterEqual(panel["counts"]["actionable_total"], 2)
+        self.assertEqual(panel["counts"]["informational_total"], 1)
         self.assertIn("provenance_contamination", panel["counts_by_class"])
         self.assertIn("promotion_contamination", panel["counts_by_class"])
         self.assertIn("resume_risk_intercepted", panel["counts_by_class"])
@@ -1698,6 +1700,35 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertTrue(any("observer contamination or integrity incident" in item["summary"].lower() for item in report.payload["items"]))
         self.assertTrue(any("observer packet" in item["summary"].lower() for item in report.payload["items"]))
 
+    def test_operator_security_ignores_info_only_observer_incidents(self) -> None:
+        record_pairing_context(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            context={
+                "telegram_username": "alice",
+                "chat_id": "chat-1",
+                "last_message_text": "richer state",
+                "last_seen_at": "2026-03-28T00:00:00+00:00",
+            },
+        )
+        record_pairing_context(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            context={"last_seen_at": "2026-03-28T00:05:00+00:00"},
+        )
+
+        report = build_operator_security_report(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            limit=20,
+        )
+
+        self.assertEqual(report.payload["counts"]["observer_incidents"], 0)
+        self.assertFalse(any("observer contamination or integrity incident" in item["summary"].lower() for item in report.payload["items"]))
+        self.assertGreaterEqual(report.payload["counts"]["observer_packets"], 1)
+
     def test_watchtower_and_operator_security_surface_problematic_observer_handoffs(self) -> None:
         record_observer_handoff_record(
             self.state_db,
@@ -1815,6 +1846,32 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertTrue(checks["watchtower-observer-packets"].ok)
         self.assertIn("watchtower-observer-packet-kinds", checks)
         self.assertTrue(checks["watchtower-observer-packet-kinds"].ok)
+
+    def test_doctor_ignores_info_only_observer_incidents(self) -> None:
+        record_pairing_context(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            context={
+                "telegram_username": "alice",
+                "chat_id": "chat-1",
+                "last_message_text": "richer state",
+                "last_seen_at": "2026-03-28T00:00:00+00:00",
+            },
+        )
+        record_pairing_context(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            context={"last_seen_at": "2026-03-28T00:05:00+00:00"},
+        )
+
+        report = run_doctor(self.config_manager, self.state_db)
+        checks = {check.name: check for check in report.checks}
+
+        self.assertIn("watchtower-observer-incidents", checks)
+        self.assertTrue(checks["watchtower-observer-incidents"].ok)
+        self.assertIn("actionable=0", checks["watchtower-observer-incidents"].detail)
 
     def test_doctor_report_includes_observer_handoff_check(self) -> None:
         record_observer_handoff_record(

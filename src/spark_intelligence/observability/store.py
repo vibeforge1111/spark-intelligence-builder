@@ -3036,9 +3036,15 @@ def _build_session_integrity_panel(state_db: StateDB) -> dict[str, Any]:
 def _build_observer_incident_panel(state_db: StateDB) -> dict[str, Any]:
     incidents = _collect_observer_incidents(state_db)
     counts_by_class: dict[str, int] = {}
+    counts_by_severity: dict[str, int] = {}
+    actionable_total = 0
     for item in incidents:
         incident_class = str(item.get("incident_class") or "unknown")
+        severity = str(item.get("severity") or "medium")
         counts_by_class[incident_class] = counts_by_class.get(incident_class, 0) + 1
+        counts_by_severity[severity] = counts_by_severity.get(severity, 0) + 1
+        if severity != "info":
+            actionable_total += 1
 
     incidents.sort(
         key=lambda item: (
@@ -3051,9 +3057,12 @@ def _build_observer_incident_panel(state_db: StateDB) -> dict[str, Any]:
     return {
         "counts": {
             "total": len(incidents),
+            "actionable_total": actionable_total,
+            "informational_total": counts_by_severity.get("info", 0),
             "distinct_classes": len(counts_by_class),
         },
         "counts_by_class": counts_by_class,
+        "counts_by_severity": counts_by_severity,
         "recent_incidents": incidents[:15],
     }
 
