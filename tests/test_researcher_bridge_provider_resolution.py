@@ -110,6 +110,27 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("strip_search_engine_citation", actions)
         self.assertIn("append_source_capture_warning", actions)
 
+    def test_sanitize_browser_search_reply_strips_internal_search_markup(self) -> None:
+        cleaned, actions = _sanitize_browser_search_reply(
+            (
+                "Let me search for Bitcoin BTC now.\n\n"
+                "<search>\n"
+                "<query>BTC Bitcoin price today 2025</query>\n"
+                "</search>"
+            ),
+            source_url=None,
+        )
+
+        self.assertEqual(
+            cleaned,
+            (
+                "Let me search for Bitcoin BTC now.\n\n"
+                "Source capture failed on the result page, so retry the search if you need an authoritative citation."
+            ),
+        )
+        self.assertIn("strip_internal_search_markup", actions)
+        self.assertIn("append_source_capture_warning", actions)
+
     def test_sanitize_browser_search_reply_polishes_quote_spacing_and_generic_tail(self) -> None:
         cleaned, actions = _sanitize_browser_search_reply(
             (

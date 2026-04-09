@@ -1318,9 +1318,16 @@ def _sanitize_browser_search_reply(
     *,
     source_url: str | None,
 ) -> tuple[str, list[str]]:
-    cleaned_lines: list[str] = []
     mutation_actions: list[str] = []
-    for raw_line in str(text or "").replace("\r\n", "\n").split("\n"):
+    sanitized = str(text or "").replace("\r\n", "\n")
+    stripped_search_markup = re.sub(r"(?is)<search>.*?</search>", "", sanitized)
+    stripped_search_markup = re.sub(r"(?im)^\s*</?(?:search|query)>\s*$", "", stripped_search_markup)
+    stripped_search_markup = re.sub(r"(?im)^\s*<query>.*?</query>\s*$", "", stripped_search_markup)
+    if stripped_search_markup != sanitized:
+        sanitized = stripped_search_markup
+        mutation_actions.append("strip_internal_search_markup")
+    cleaned_lines: list[str] = []
+    for raw_line in sanitized.split("\n"):
         line = raw_line.strip()
         lowered = line.lower()
         if line and (lowered.startswith("source:") or lowered.startswith("sources:") or lowered.startswith("duckduckgo:")):
