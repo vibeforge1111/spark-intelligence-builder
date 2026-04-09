@@ -1880,7 +1880,7 @@ def _run_swarm_read_command(
         if unavailable_message and "HTTP 404" in str(exc):
             reply_text = unavailable_message
         else:
-            reply_text = f"Swarm read is unavailable right now.\n{exc}"
+            reply_text = _render_swarm_unavailable_reply("Swarm read is unavailable.", exc)
     return {
         "command": command,
         "reply_text": reply_text,
@@ -1897,7 +1897,7 @@ def _run_swarm_action_command(
         payload = runner()
         reply_text = renderer(payload)
     except RuntimeError as exc:
-        reply_text = f"Swarm action is unavailable right now.\n{exc}"
+        reply_text = _render_swarm_unavailable_reply("Swarm action is unavailable.", exc)
     return {
         "command": command,
         "reply_text": reply_text,
@@ -1914,11 +1914,35 @@ def _run_swarm_bridge_command(
         result = runner()
         reply_text = renderer(result)
     except RuntimeError as exc:
-        reply_text = f"Swarm bridge action is unavailable right now.\n{exc}"
+        reply_text = _render_swarm_unavailable_reply("Swarm bridge action is unavailable.", exc)
     return {
         "command": command,
         "reply_text": reply_text,
     }
+
+
+def _render_swarm_unavailable_reply(verdict: str, exc: RuntimeError) -> str:
+    detail = str(exc).strip()
+    lines = [verdict]
+    if detail:
+        lines.append(f"Reason: {_with_terminal_period(detail)}")
+    next_step = _suggest_swarm_unavailable_next_step(detail)
+    if next_step:
+        lines.append(f"Next: {next_step}")
+    return "\n".join(lines)
+
+
+def _suggest_swarm_unavailable_next_step(detail: str) -> str | None:
+    normalized = str(detail or "").strip().lower()
+    if not normalized:
+        return None
+    if "api url is missing" in normalized:
+        return "configure the Swarm API URL, then retry."
+    if "http 404" in normalized and "not found" in normalized:
+        return "verify the target id or route on the current Swarm host."
+    if "http 404" in normalized:
+        return "check whether the current Swarm host exposes that route."
+    return None
 
 
 def _render_swarm_overview_reply(payload: dict[str, Any]) -> str:

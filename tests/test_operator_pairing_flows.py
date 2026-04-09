@@ -1274,7 +1274,9 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(result.ok)
         self.assertEqual(
             str(result.detail["response_text"]),
-            "Swarm action is unavailable right now.\nSwarm API request failed with HTTP 404. insight not found",
+            "Swarm action is unavailable.\n"
+            "Reason: Swarm API request failed with HTTP 404. insight not found.\n"
+            "Next: verify the target id or route on the current Swarm host.",
         )
 
     def test_natural_language_swarm_mode_command_runs_hosted_action(self) -> None:
@@ -2138,8 +2140,9 @@ class OperatorPairingFlowTests(SparkTestCase):
             )
 
         self.assertTrue(result.ok)
-        self.assertIn("Swarm read is unavailable right now.", str(result.detail["response_text"]))
-        self.assertIn("Swarm API URL is missing.", str(result.detail["response_text"]))
+        self.assertIn("Swarm read is unavailable.", str(result.detail["response_text"]))
+        self.assertIn("Reason: Swarm API URL is missing.", str(result.detail["response_text"]))
+        self.assertIn("Next: configure the Swarm API URL, then retry.", str(result.detail["response_text"]))
 
     def test_swarm_issues_404_returns_host_gap_message(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
