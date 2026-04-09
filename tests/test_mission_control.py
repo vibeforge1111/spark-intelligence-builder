@@ -5,6 +5,7 @@ import json
 from spark_intelligence.gateway.guardrails import set_runtime_state_value
 from spark_intelligence.jobs.service import OAUTH_MAINTENANCE_JOB_ID
 from spark_intelligence.mission_control import (
+    build_mission_control_plan,
     build_mission_control_prompt_context,
     build_mission_control_snapshot,
     looks_like_mission_control_query,
@@ -121,3 +122,32 @@ class MissionControlTests(SparkTestCase):
         self.assertTrue(looks_like_mission_control_query("What jobs are running?"))
         self.assertTrue(looks_like_mission_control_query("Show me mission control."))
         self.assertFalse(looks_like_mission_control_query("Write me a cold outbound email."))
+
+    def test_build_mission_control_plan_auto_selects_voice_recipe_for_voice_advisory_task(self) -> None:
+        plan = build_mission_control_plan(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="What is the difference between Spark Researcher and Builder? Answer in voice.",
+        )
+
+        payload = plan.to_payload()
+        self.assertEqual(payload["summary"]["selected_system"], "Spark Researcher")
+        self.assertEqual(payload["summary"]["selected_harness"], "researcher.advisory")
+        self.assertEqual(payload["summary"]["selected_recipe"], "advisory_voice_reply")
+        self.assertEqual(payload["summary"]["selection_mode"], "auto_recipe")
+        self.assertIn("Proceed with auto-selected recipe advisory_voice_reply unless the operator overrides it.", payload["summary"]["next_actions"])
+
+    def test_build_mission_control_plan_supports_forced_harness_override(self) -> None:
+        plan = build_mission_control_plan(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="Open https://example.com and inspect it.",
+            forced_harness_id="researcher.advisory",
+        )
+
+        payload = plan.to_payload()
+        self.assertEqual(payload["summary"]["selected_system"], "Spark Researcher")
+        self.assertEqual(payload["summary"]["route_target_system"], "Spark Browser")
+        self.assertEqual(payload["summary"]["selected_harness"], "researcher.advisory")
+        self.assertEqual(payload["summary"]["selection_mode"], "explicit_harness")
+        self.assertEqual(payload["details"]["harness"]["route_mode"], "forced_harness")
