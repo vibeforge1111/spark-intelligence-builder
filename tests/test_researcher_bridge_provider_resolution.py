@@ -141,6 +141,47 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("strip_search_engine_citation", actions)
         self.assertIn("append_source_capture_warning", actions)
 
+    def test_sanitize_browser_search_reply_rewrites_weak_source_capture_body(self) -> None:
+        cleaned, actions = _sanitize_browser_search_reply(
+            (
+                "Can't pull actual content from that search-the external source capture came back empty. "
+                "The DuckDuckGo search page returned no extractable data, so I can't cite meaningful information on BTC."
+            ),
+            source_url=None,
+        )
+
+        self.assertIn("Web search ran, but source capture failed on the result page.", cleaned)
+        self.assertIn("Reason: the search result page did not yield usable external content to cite.", cleaned)
+        self.assertIn("Next: retry with a more specific query or open a stronger source page.", cleaned)
+        self.assertIn("rewrite_weak_source_capture_reply", actions)
+        self.assertNotIn("Can't pull actual content from that search", cleaned)
+
+    def test_sanitize_browser_search_reply_rewrites_live_source_capture_variant(self) -> None:
+        cleaned, actions = _sanitize_browser_search_reply(
+            (
+                "I don't have actual BTC content from the search. The browser evidence shows a search was performed "
+                "but the source content wasn't captured-just metadata about the search itself."
+            ),
+            source_url=None,
+        )
+
+        self.assertIn("Web search ran, but source capture failed on the result page.", cleaned)
+        self.assertIn("rewrite_weak_source_capture_reply", actions)
+        self.assertNotIn("I don't have actual BTC content from the search", cleaned)
+
+    def test_sanitize_browser_search_reply_rewrites_empty_external_source_variant(self) -> None:
+        cleaned, actions = _sanitize_browser_search_reply(
+            (
+                "The browser search for BTC ran but the actual page content wasn't captured - "
+                "the external source came back empty."
+            ),
+            source_url=None,
+        )
+
+        self.assertIn("Web search ran, but source capture failed on the result page.", cleaned)
+        self.assertIn("rewrite_weak_source_capture_reply", actions)
+        self.assertNotIn("actual page content wasn't captured", cleaned)
+
     def test_sanitize_browser_search_reply_strips_internal_search_markup(self) -> None:
         cleaned, actions = _sanitize_browser_search_reply(
             (

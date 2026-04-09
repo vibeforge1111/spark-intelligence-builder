@@ -1505,6 +1505,10 @@ def _sanitize_browser_search_reply(
         sanitized = re.sub(r"\(\s*\)", "", sanitized)
         sanitized = re.sub(r"\n{3,}", "\n\n", sanitized).strip()
         mutation_actions.append("strip_inline_search_engine_url")
+    weak_capture_reply = _rewrite_weak_browser_source_capture_reply(sanitized)
+    if weak_capture_reply != sanitized:
+        sanitized = weak_capture_reply
+        mutation_actions.append("rewrite_weak_source_capture_reply")
     warning = "Source capture failed on the result page, so retry the search if you need an authoritative citation."
     if warning not in sanitized:
         sanitized = f"{sanitized}\n\n{warning}" if sanitized else warning
@@ -1512,6 +1516,37 @@ def _sanitize_browser_search_reply(
     sanitized, polish_actions = _polish_browser_grounded_reply(sanitized)
     mutation_actions.extend(polish_actions)
     return sanitized, mutation_actions
+
+
+def _rewrite_weak_browser_source_capture_reply(text: str) -> str:
+    original = str(text or "").strip()
+    if not original:
+        return original
+    normalized = re.sub(r"\s+", " ", original).strip().lower()
+    weak_capture_markers = (
+        "can't pull actual content from that search",
+        "cannot pull actual content from that search",
+        "external source came back empty",
+        "external source capture came back empty",
+        "returned no extractable data",
+        "can't cite meaningful information",
+        "cannot cite meaningful information",
+    )
+    weak_capture_patterns = (
+        r"\bi (?:don't|do not) have .* content from the search\b",
+        r"\bsource content (?:wasn't|was not) captured\b",
+        r"\bsearch was performed but the source content (?:wasn't|was not) captured\b",
+        r"\bactual (?:page )?content (?:wasn't|was not) captured\b",
+    )
+    if not any(marker in normalized for marker in weak_capture_markers) and not any(
+        re.search(pattern, normalized) for pattern in weak_capture_patterns
+    ):
+        return original
+    return (
+        "Web search ran, but source capture failed on the result page.\n"
+        "Reason: the search result page did not yield usable external content to cite.\n"
+        "Next: retry with a more specific query or open a stronger source page."
+    )
 
 
 def _polish_browser_grounded_reply(text: str) -> tuple[str, list[str]]:
