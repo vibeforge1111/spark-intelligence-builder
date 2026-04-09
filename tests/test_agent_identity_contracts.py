@@ -588,6 +588,123 @@ class AgentIdentityContractTests(SparkTestCase):
         self.assertEqual(local_row["persona_name"], "Founder Operator")
         self.assertIsNone(swarm_row)
 
+    def test_swarm_link_reanchors_legacy_swarm_persona_history_to_builder_local_agent_id(self) -> None:
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+        with self.state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO agent_persona_profiles(
+                    agent_id, persona_name, persona_summary, base_traits_json, behavioral_rules_json, provenance_json, updated_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "swarm-agent:atlas",
+                    "Founder Operator",
+                    "Direct, calm, low-fluff.",
+                    json.dumps(
+                        {
+                            "warmth": 0.55,
+                            "directness": 0.81,
+                            "playfulness": 0.22,
+                            "pacing": 0.61,
+                            "assertiveness": 0.77,
+                        }
+                    ),
+                    json.dumps(["Push toward execution."]),
+                    json.dumps({"source_ref": "agent import-personality"}),
+                    "2026-04-09T08:00:00+00:00",
+                    "2026-04-09T08:00:00+00:00",
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO agent_persona_mutations(
+                    mutation_id, agent_id, human_id, mutation_kind, delta_traits_json, persona_name, persona_summary, source_surface, source_ref, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "agent-persona-test123",
+                    "swarm-agent:atlas",
+                    "human:telegram:111",
+                    "external_import",
+                    json.dumps({"directness": 0.81}, sort_keys=True),
+                    "Founder Operator",
+                    "Direct, calm, low-fluff.",
+                    "agent_cli",
+                    "agent import-personality",
+                    "2026-04-09T08:00:00+00:00",
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO operator_events(actor_human_id, action, target_kind, target_ref, reason, details_json)
+                VALUES (?, 'import_personality', 'agent_persona', ?, ?, ?)
+                """,
+                (
+                    "local-operator",
+                    "swarm-agent:atlas",
+                    "personality import",
+                    json.dumps({"status": "completed", "chip_key": "spark-personality"}, sort_keys=True),
+                ),
+            )
+            conn.commit()
+
+        linked = link_spark_swarm_agent(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+            swarm_agent_id="swarm-agent:atlas",
+            agent_name="Atlas",
+            metadata={"workspace_id": "ws-test"},
+        )
+
+        profile = load_personality_profile(
+            human_id="human:telegram:111",
+            agent_id=linked.agent_id,
+            state_db=self.state_db,
+            config_manager=self.config_manager,
+        )
+        builder_persona_agent_id = resolve_builder_persona_agent_id(human_id="human:telegram:111")
+
+        assert profile is not None
+        self.assertEqual(profile["agent_id"], builder_persona_agent_id)
+        self.assertEqual(profile["agent_persona_name"], "Founder Operator")
+
+        with self.state_db.connect() as conn:
+            local_row = conn.execute(
+                "SELECT persona_name FROM agent_persona_profiles WHERE agent_id = ? LIMIT 1",
+                (builder_persona_agent_id,),
+            ).fetchone()
+            swarm_row = conn.execute(
+                "SELECT persona_name FROM agent_persona_profiles WHERE agent_id = ? LIMIT 1",
+                ("swarm-agent:atlas",),
+            ).fetchone()
+            mutation_row = conn.execute(
+                "SELECT agent_id FROM agent_persona_mutations WHERE mutation_id = ? LIMIT 1",
+                ("agent-persona-test123",),
+            ).fetchone()
+            operator_row = conn.execute(
+                """
+                SELECT target_ref
+                FROM operator_events
+                WHERE action = 'import_personality' AND target_kind = 'agent_persona'
+                ORDER BY event_id DESC
+                LIMIT 1
+                """,
+            ).fetchone()
+
+        self.assertIsNotNone(local_row)
+        self.assertEqual(local_row["persona_name"], "Founder Operator")
+        self.assertIsNone(swarm_row)
+        self.assertIsNotNone(mutation_row)
+        self.assertEqual(mutation_row["agent_id"], builder_persona_agent_id)
+        self.assertIsNotNone(operator_row)
+        self.assertEqual(operator_row["target_ref"], builder_persona_agent_id)
+
     def test_build_researcher_reply_persists_explicit_agent_persona_authoring(self) -> None:
         approve_pairing(
             state_db=self.state_db,

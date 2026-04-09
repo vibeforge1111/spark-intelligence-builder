@@ -252,6 +252,88 @@ def _parse_iso_datetime(value: str | None) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _reanchor_builder_persona_rows(
+    *,
+    conn: Any,
+    human_id: str,
+    builder_agent_id: str,
+    candidate_agent_ids: list[str],
+) -> None:
+    source_agent_ids: list[str] = []
+    for candidate in candidate_agent_ids:
+        normalized = str(candidate or "").strip()
+        if normalized and normalized != builder_agent_id and normalized not in source_agent_ids:
+            source_agent_ids.append(normalized)
+    if not source_agent_ids:
+        return
+
+    placeholders = ",".join("?" for _ in source_agent_ids)
+    target_row = conn.execute(
+        """
+        SELECT agent_id
+        FROM agent_persona_profiles
+        WHERE agent_id = ?
+        LIMIT 1
+        """,
+        (builder_agent_id,),
+    ).fetchone()
+    source_row = conn.execute(
+        f"""
+        SELECT agent_id, persona_name, persona_summary, base_traits_json, behavioral_rules_json, provenance_json, updated_at, created_at
+        FROM agent_persona_profiles
+        WHERE agent_id IN ({placeholders})
+        ORDER BY updated_at DESC, created_at DESC
+        LIMIT 1
+        """,
+        tuple(source_agent_ids),
+    ).fetchone()
+    if target_row is None and source_row is not None:
+        conn.execute(
+            """
+            INSERT INTO agent_persona_profiles(
+                agent_id, persona_name, persona_summary, base_traits_json, behavioral_rules_json, provenance_json, updated_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                builder_agent_id,
+                source_row["persona_name"],
+                source_row["persona_summary"],
+                source_row["base_traits_json"],
+                source_row["behavioral_rules_json"],
+                source_row["provenance_json"],
+                source_row["updated_at"],
+                source_row["created_at"],
+            ),
+        )
+
+    conn.execute(
+        f"""
+        UPDATE agent_persona_mutations
+        SET agent_id = ?
+        WHERE human_id = ?
+          AND agent_id IN ({placeholders})
+        """,
+        (builder_agent_id, human_id, *source_agent_ids),
+    )
+    conn.execute(
+        f"""
+        UPDATE operator_events
+        SET target_ref = ?
+        WHERE action = 'import_personality'
+          AND target_kind = 'agent_persona'
+          AND target_ref IN ({placeholders})
+        """,
+        (builder_agent_id, *source_agent_ids),
+    )
+    conn.execute(
+        f"""
+        DELETE FROM agent_persona_profiles
+        WHERE agent_id IN ({placeholders})
+        """,
+        tuple(source_agent_ids),
+    )
+
+
 def _choose_agent_name(
     *,
     current_name: str | None,
@@ -590,6 +672,12 @@ def link_spark_swarm_agent(
                     """,
                     (swarm_agent_id, existing.agent_id),
                 )
+        _reanchor_builder_persona_rows(
+            conn=conn,
+            human_id=human_id,
+            builder_agent_id=local_agent_id,
+            candidate_agent_ids=[existing.agent_id, swarm_agent_id],
+        )
 
         conn.execute(
             """
