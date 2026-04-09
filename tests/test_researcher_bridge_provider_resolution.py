@@ -566,6 +566,67 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("no bold emphasis", str(captured["system_prompt"]))
         self.assertIn("Should we drop agencies entirely?", str(captured["user_prompt"]))
 
+    def test_render_direct_provider_chat_fallback_adds_telegram_persona_contract(self) -> None:
+        provider = RuntimeProviderResolution(
+            provider_id="custom",
+            provider_kind="custom",
+            auth_profile_id="custom:default",
+            auth_method="api_key_env",
+            api_mode="chat_completions",
+            execution_transport="direct_http",
+            base_url="https://api.minimax.io/v1",
+            default_model="MiniMax-M2.7",
+            secret_ref=None,
+            secret_value="secret",
+            source="config+env",
+        )
+        captured: dict[str, object] = {}
+
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
+            captured["system_prompt"] = system_prompt
+            captured["user_prompt"] = user_prompt
+            return {"raw_response": "Start with the wedge."}
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=fake_direct_provider_prompt,
+        ):
+            reply = _render_direct_provider_chat_fallback(
+                state_db=self.state_db,
+                provider=provider,
+                user_message="How should we answer this founder?",
+                channel_kind="telegram",
+                attachment_context={
+                    "active_chip_keys": [],
+                    "pinned_chip_keys": [],
+                    "active_path_key": None,
+                },
+                personality_profile={
+                    "traits": {
+                        "warmth": 0.7,
+                        "directness": 0.8,
+                        "playfulness": 0.2,
+                        "pacing": 0.75,
+                        "assertiveness": 0.7,
+                    },
+                    "personality_name": "Spark",
+                    "agent_persona_name": "Founder Operator",
+                    "agent_persona_summary": "Sharp, concise, decision-oriented",
+                    "agent_behavioral_rules": [
+                        "Keep replies shorter unless asked for depth",
+                        "Identify the key split before giving advice",
+                    ],
+                },
+            )
+
+        self.assertEqual(reply, "Start with the wedge.")
+        self.assertIn("steady voice of 'Founder Operator'", str(captured["system_prompt"]))
+        self.assertIn("Lead with the answer, recommendation, or key split in the first sentence.", str(captured["system_prompt"]))
+        self.assertIn("Honor these saved Telegram reply rules", str(captured["system_prompt"]))
+        self.assertIn("[Telegram reply contract]", str(captured["user_prompt"]))
+        self.assertIn("Sharp, concise, decision-oriented", str(captured["user_prompt"]))
+        self.assertIn("Keep replies shorter unless asked for depth.", str(captured["user_prompt"]))
+
     def test_build_researcher_reply_persists_city_profile_fact_before_bridge_execution(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)

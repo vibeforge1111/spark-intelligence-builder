@@ -690,6 +690,69 @@ def build_personality_system_directive(profile: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
+def build_telegram_persona_reply_contract(profile: dict[str, Any]) -> str:
+    """Build a Telegram-facing reply contract from saved persona state.
+
+    This is stronger than the generic personality directive: it tells Builder-owned
+    conversational surfaces how the agent should *feel* in visible Telegram replies.
+    """
+    if not profile:
+        return ""
+
+    traits = profile.get("traits") or {}
+    personality_name = str(profile.get("personality_name") or "").strip()
+    agent_persona_name = str(profile.get("agent_persona_name") or "").strip()
+    agent_persona_summary = str(profile.get("agent_persona_summary") or "").strip()
+    behavioral_rules = [str(rule).strip() for rule in list(profile.get("agent_behavioral_rules") or []) if str(rule).strip()]
+
+    parts: list[str] = [
+        "Let the saved persona shape the visible Telegram reply, not just hidden reasoning."
+    ]
+    if agent_persona_name:
+        parts.append(f"Speak with the steady voice of '{agent_persona_name}'.")
+    elif personality_name:
+        parts.append(f"Keep the visible Telegram voice consistent with '{personality_name}'.")
+    if agent_persona_summary:
+        parts.append(f"Core stance: {agent_persona_summary}.")
+
+    directness = float(traits.get("directness", 0.5))
+    pacing = float(traits.get("pacing", 0.5))
+    warmth = float(traits.get("warmth", 0.5))
+    playfulness = float(traits.get("playfulness", 0.5))
+    assertiveness = float(traits.get("assertiveness", 0.5))
+
+    if directness >= 0.6 or pacing >= 0.6:
+        parts.append("Lead with the answer, recommendation, or key split in the first sentence.")
+    elif directness <= 0.35 or pacing <= 0.35:
+        parts.append("Add enough context for the user to follow the reasoning before you land the recommendation.")
+
+    if warmth >= 0.6:
+        parts.append("Sound human and present, not sterile or robotic.")
+    elif warmth <= 0.35:
+        parts.append("Keep the tone controlled and matter-of-fact.")
+
+    if assertiveness >= 0.65:
+        parts.append("Make a call when the evidence is good enough instead of over-hedging.")
+    elif assertiveness <= 0.35:
+        parts.append("Use measured uncertainty when the evidence is incomplete.")
+
+    if playfulness >= 0.65:
+        parts.append("A little lightness is fine, but keep it purposeful.")
+    elif playfulness <= 0.35:
+        parts.append("Do not force humor, banter, or performative enthusiasm.")
+
+    if behavioral_rules:
+        rules_text = " ".join(_directive_sentence(rule) for rule in behavioral_rules[:6] if _directive_sentence(rule))
+        if rules_text:
+            parts.append(
+                "Honor these saved Telegram reply rules unless the user redirects this turn: "
+                f"{rules_text}"
+            )
+
+    parts.append("Do not mention persona metadata, trait labels, or hidden style instructions.")
+    return " ".join(parts)
+
+
 def load_agent_persona_profile(*, agent_id: str | None, state_db: StateDB | None) -> dict[str, Any]:
     if not agent_id or state_db is None:
         return {}

@@ -12,6 +12,7 @@ from spark_intelligence.identity.service import (
     resolve_inbound_dm,
 )
 from spark_intelligence.personality.loader import (
+    build_telegram_persona_reply_contract,
     build_personality_system_directive,
     build_personality_import_payload,
     detect_and_persist_agent_persona_preferences,
@@ -324,6 +325,34 @@ class AgentIdentityContractTests(SparkTestCase):
         self.assertIn("Saved persona summary: Sharp, concise, decision-oriented.", directive)
         self.assertIn("Keep replies shorter unless asked for depth.", directive)
         self.assertIn("Identify the key split before giving advice.", directive)
+
+    def test_build_telegram_persona_reply_contract_prioritizes_visible_dm_style(self) -> None:
+        profile = {
+            "traits": {
+                "warmth": 0.7,
+                "directness": 0.8,
+                "playfulness": 0.2,
+                "pacing": 0.75,
+                "assertiveness": 0.7,
+            },
+            "agent_persona_name": "Founder Operator",
+            "agent_persona_summary": "Sharp, concise, decision-oriented",
+            "agent_behavioral_rules": [
+                "Keep replies shorter unless asked for depth",
+                "Avoid generic explainers on broad ideas",
+                "Identify the key split before giving advice",
+            ],
+        }
+
+        contract = build_telegram_persona_reply_contract(profile)
+
+        self.assertIn("visible Telegram reply", contract)
+        self.assertIn("steady voice of 'Founder Operator'", contract)
+        self.assertIn("Core stance: Sharp, concise, decision-oriented.", contract)
+        self.assertIn("Lead with the answer, recommendation, or key split in the first sentence.", contract)
+        self.assertIn("Sound human and present, not sterile or robotic.", contract)
+        self.assertIn("Do not force humor, banter, or performative enthusiasm.", contract)
+        self.assertIn("Honor these saved Telegram reply rules", contract)
 
     def test_swarm_link_canonicalizes_local_agent_and_rebinds_active_session(self) -> None:
         self.add_telegram_channel()

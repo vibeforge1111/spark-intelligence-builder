@@ -57,7 +57,10 @@ from spark_intelligence.personality import (
     maybe_evolve_traits,
     record_observation,
 )
-from spark_intelligence.personality.loader import build_personality_system_directive
+from spark_intelligence.personality.loader import (
+    build_personality_system_directive,
+    build_telegram_persona_reply_contract,
+)
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_runtime_state
 
@@ -460,6 +463,10 @@ def _render_direct_provider_chat_fallback(
         personality_directive = build_personality_system_directive(personality_profile)
         if personality_directive:
             base_system_prompt = f"{base_system_prompt} {personality_directive}"
+        if channel_kind == "telegram":
+            telegram_persona_contract = build_telegram_persona_reply_contract(personality_profile)
+            if telegram_persona_contract:
+                base_system_prompt = f"{base_system_prompt} {telegram_persona_contract}"
     payload = execute_direct_provider_prompt(
         provider=DirectProviderRequest(
             provider_id=provider.provider_id,
@@ -477,6 +484,7 @@ def _render_direct_provider_chat_fallback(
                 f"[fallback_mode=conversational_under_supported]\n"
                 f"{user_message}"
             ),
+            channel_kind=channel_kind,
             attachment_context=attachment_context,
             active_chip_evaluate=active_chip_evaluate,
             personality_profile=personality_profile,
@@ -1198,6 +1206,7 @@ def _maybe_apply_swarm_recommendation(
 def _build_contextual_task(
     *,
     user_message: str,
+    channel_kind: str | None = None,
     attachment_context: dict[str, object],
     active_chip_evaluate: dict[str, Any] | None = None,
     personality_profile: dict[str, Any] | None = None,
@@ -1218,6 +1227,10 @@ def _build_contextual_task(
         personality_ctx = build_personality_context(personality_profile)
         if personality_ctx:
             lines.extend([personality_ctx, ""])
+        if channel_kind == "telegram":
+            telegram_persona_contract = build_telegram_persona_reply_contract(personality_profile)
+            if telegram_persona_contract:
+                lines.extend(["[Telegram reply contract]", telegram_persona_contract, ""])
     if personality_context_extra:
         lines.extend([personality_context_extra, ""])
     if browser_search_context_extra:
@@ -2171,6 +2184,7 @@ def build_researcher_reply(
         browser_search_source_url = None
     contextual_task = _build_contextual_task(
         user_message=user_message,
+        channel_kind=channel_kind,
         attachment_context=attachment_context,
         active_chip_evaluate=active_chip_evaluate,
         personality_profile=personality_profile,
