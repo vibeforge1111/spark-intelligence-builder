@@ -11,6 +11,7 @@ from urllib.error import URLError
 
 from spark_intelligence.channel.service import TelegramBotProfile
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.doctor.checks import DoctorCheck, DoctorReport
 from spark_intelligence.gateway.discord_webhook import DISCORD_WEBHOOK_PATH, handle_discord_webhook
 from spark_intelligence.gateway.whatsapp_webhook import WHATSAPP_WEBHOOK_PATH, handle_whatsapp_webhook
 from spark_intelligence.identity.service import approve_pairing, read_canonical_agent_state
@@ -962,6 +963,59 @@ class CliSmokeTests(SparkTestCase):
         )
         self.assertIn(
             "- environment_parity repair: Align the conflicting runtime roots or config paths, then rerun `spark-intelligence doctor`.",
+            status_stdout,
+        )
+
+    def test_status_surfaces_doctor_import_repair_hints(self) -> None:
+        doctor_report = DoctorReport(
+            checks=[
+                DoctorCheck(
+                    "watchtower-personality-import",
+                    False,
+                    "enabled=yes required=yes canonical_agents=2 personality_import_ready=no active_personality_hook_chips=0",
+                ),
+                DoctorCheck(
+                    "watchtower-agent-identity-import",
+                    False,
+                    "builder_local=2 identity_import_ready=no active_identity_hook_chips=0",
+                ),
+            ]
+        )
+        watchtower_snapshot = {
+            "top_level_state": "healthy",
+            "health_dimensions": {
+                "ingress_health": {"state": "healthy", "detail": "ok"},
+                "execution_health": {"state": "healthy", "detail": "ok"},
+                "delivery_health": {"state": "healthy", "detail": "ok"},
+                "scheduler_freshness": {"state": "unknown", "detail": "none"},
+                "environment_parity": {"state": "healthy", "detail": "ok"},
+            },
+            "contradictions": {"counts": {"open": 0, "resolved": 0}},
+        }
+
+        with (
+            patch("spark_intelligence.cli.run_doctor", return_value=doctor_report),
+            patch("spark_intelligence.cli.build_watchtower_snapshot", return_value=watchtower_snapshot),
+            patch("spark_intelligence.cli.run_first_active_chip_hook", return_value=None),
+        ):
+            status_exit, status_stdout, status_stderr = self.run_cli("status", "--home", str(self.home))
+
+        self.assertEqual(status_stderr, "")
+        self.assertEqual(status_exit, 1)
+        self.assertIn(
+            "- watchtower-personality-import: enabled=yes required=yes canonical_agents=2 personality_import_ready=no active_personality_hook_chips=0",
+            status_stdout,
+        )
+        self.assertIn(
+            "- watchtower-personality-import repair: Install and activate a chip exposing the `personality` hook, then rerun `spark-intelligence doctor`.",
+            status_stdout,
+        )
+        self.assertIn(
+            "- watchtower-agent-identity-import: builder_local=2 identity_import_ready=no active_identity_hook_chips=0",
+            status_stdout,
+        )
+        self.assertIn(
+            "- watchtower-agent-identity-import repair: Install and activate a chip exposing the `identity` hook, then rerun `spark-intelligence doctor`.",
             status_stdout,
         )
 

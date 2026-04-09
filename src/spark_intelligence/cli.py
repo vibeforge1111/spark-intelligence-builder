@@ -203,6 +203,17 @@ class SystemStatus:
                 lines.append(f"- contradiction detail: {contradiction_detail}")
             if contradiction_key:
                 lines.append(f"- contradiction key: {contradiction_key}")
+        for check in self.payload.get("doctor", {}).get("checks") or []:
+            if bool(check.get("ok")):
+                continue
+            name = str(check.get("name") or "").strip()
+            detail = str(check.get("detail") or "").strip()
+            repair_hint = _doctor_check_repair_hint(name, detail)
+            if not repair_hint:
+                continue
+            if detail:
+                lines.append(f"- {name}: {detail}")
+            lines.append(f"- {name} repair: {repair_hint}")
         runtime_payload = self.payload.get("runtime") or {}
         autostart_payload = runtime_payload.get("autostart") or {}
         lines.append(f"- install profile: {runtime_payload.get('install_profile') or 'none'}")
@@ -275,6 +286,14 @@ def _watchtower_dimension_repair_hint(dimension_key: str, dimension: dict[str, o
         return "Inspect missing dispatch proof in `spark-intelligence operator security` before trusting runtime health."
     if detail:
         return "Use `spark-intelligence doctor` for the full diagnostic detail."
+    return None
+
+
+def _doctor_check_repair_hint(check_name: str, detail: str) -> str | None:
+    if check_name == "watchtower-personality-import":
+        return "Install and activate a chip exposing the `personality` hook, then rerun `spark-intelligence doctor`."
+    if check_name == "watchtower-agent-identity-import":
+        return "Install and activate a chip exposing the `identity` hook, then rerun `spark-intelligence doctor`."
     return None
 
 
