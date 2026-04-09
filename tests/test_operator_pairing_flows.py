@@ -1817,8 +1817,9 @@ class OperatorPairingFlowTests(SparkTestCase):
             )
 
         self.assertTrue(result.ok)
-        self.assertIn("Swarm autoloop finished.", str(result.detail["response_text"]))
+        self.assertIn("Startup Operator autoloop finished.", str(result.detail["response_text"]))
         self.assertIn("Session: session-123.", str(result.detail["response_text"]))
+        self.assertIn("It completed 2 of 2 requested rounds and kept 1 candidate(s) while reverting 1.", str(result.detail["response_text"]))
         self.assertIn("Stop: requested rounds completed.", str(result.detail["response_text"]))
         self.assertIn("Benchmark runner: script via benchmarks/startup-operator.tool_calls.json.", str(result.detail["response_text"]))
         self.assertIn("Mutation target: benchmarks/startup-operator.tool_calls.json.", str(result.detail["response_text"]))
@@ -2011,16 +2012,16 @@ class OperatorPairingFlowTests(SparkTestCase):
             )
 
         self.assertTrue(result.ok)
-        self.assertIn("Swarm autoloop session:", str(result.detail["response_text"]))
+        self.assertIn("Latest Startup Operator autoloop session is paused on the no-gain guard.", str(result.detail["response_text"]))
         self.assertIn("Session: session-777.", str(result.detail["response_text"]))
-        self.assertIn("Stop: paused on the no-gain guard.", str(result.detail["response_text"]))
+        self.assertIn("It has completed 3 of 5 requested rounds, with 2 kept and 1 reverted.", str(result.detail["response_text"]))
         self.assertIn("Latest round: #3 reverted target=benchmarks/startup-operator.tool_calls.json.", str(result.detail["response_text"]))
         self.assertIn("Benchmark runner: script via benchmarks/startup-operator.tool_calls.json.", str(result.detail["response_text"]))
         self.assertIn("Mutation target: benchmarks/startup-operator.tool_calls.json.", str(result.detail["response_text"]))
         self.assertIn("Hypothesis: Tighter tool-call sequencing may reduce benchmark drift.", str(result.detail["response_text"]))
         self.assertIn("Round delta: -0.0800 (0.8100 -> 0.7300).", str(result.detail["response_text"]))
         self.assertIn("Interpretation: this mutation did not beat the current benchmarked baseline, so the repo stayed unchanged.", str(result.detail["response_text"]))
-        self.assertIn("Autoloop is paused on the no-gain guard.", str(result.detail["response_text"]))
+        self.assertIn("The autoloop is paused on the no-gain guard.", str(result.detail["response_text"]))
         self.assertIn("/swarm continue startup-operator session session-777 rounds 1 force", str(result.detail["response_text"]))
 
     def test_swarm_autoloop_pause_failure_returns_bounded_guidance(self) -> None:
@@ -2077,8 +2078,8 @@ class OperatorPairingFlowTests(SparkTestCase):
             )
 
         self.assertTrue(result.ok)
-        self.assertIn("Swarm autoloop paused.", str(result.detail["response_text"]))
-        self.assertIn("Reason: auto-generated planner hit the no-gain pause guard.", str(result.detail["response_text"]))
+        self.assertIn("Startup Operator autoloop is paused.", str(result.detail["response_text"]))
+        self.assertIn("It hit the no-gain guard before another round, so nothing changed yet.", str(result.detail["response_text"]))
         self.assertIn("/swarm continue startup-operator session session-pause rounds 1 force", str(result.detail["response_text"]))
 
     def test_natural_language_swarm_rerun_command_executes_requested_path(self) -> None:

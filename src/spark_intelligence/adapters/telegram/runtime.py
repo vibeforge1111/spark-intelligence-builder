@@ -2218,33 +2218,39 @@ def _render_swarm_bridge_autoloop_reply(result: Any) -> str:
     latest_round_summary = getattr(result, "latest_round_summary", None) if isinstance(getattr(result, "latest_round_summary", None), dict) else None
     latest_round_summary_path = str(getattr(result, "latest_round_summary_path", "") or "").strip() or None
     round_history = getattr(result, "round_history", None) if isinstance(getattr(result, "round_history", None), dict) else None
+    path_key = str(getattr(result, "path_key", "") or "unknown")
+    path_label = _humanize_swarm_path_key(path_key)
     session_id = str(getattr(result, "session_id", "") or (session_summary or {}).get("sessionId") or "unknown")
-    lines = [
-        "Swarm autoloop finished.",
-        f"Path: {str(getattr(result, 'path_key', '') or 'unknown')}.",
-        f"Session: {session_id}.",
-    ]
+    completed_rounds = int((session_summary or {}).get("completedRounds") or 0)
+    requested_rounds = int((session_summary or {}).get("requestedRoundsTotal") or 0)
+    kept_rounds = int((session_summary or {}).get("keptRounds") or 0)
+    reverted_rounds = int((session_summary or {}).get("revertedRounds") or 0)
+    lines = [f"{path_label} autoloop finished."]
     if session_summary:
+        stop_reason = _describe_swarm_autoloop_stop_reason(str(session_summary.get("stopReason") or "unknown"))
         lines.append(
-            f"Rounds: {int(session_summary.get('completedRounds') or 0)} completed / {int(session_summary.get('requestedRoundsTotal') or 0)} requested."
+            f"It completed {completed_rounds} of {requested_rounds} requested rounds and kept {kept_rounds} candidate(s) while reverting {reverted_rounds}."
         )
+        lines.append(f"Session: {session_id}. Stop: {stop_reason}.")
         lines.append(
-            f"Decisions: {int(session_summary.get('keptRounds') or 0)} kept, {int(session_summary.get('revertedRounds') or 0)} reverted."
+            f"Path: {path_key}. Decisions: {kept_rounds} kept, {reverted_rounds} reverted."
         )
-        lines.append(f"Stop: {_describe_swarm_autoloop_stop_reason(str(session_summary.get('stopReason') or 'unknown'))}.")
         if session_summary.get("plannerStatus"):
             lines.append(f"Planner: {str(session_summary.get('plannerStatus'))}.")
         if session_summary.get("latestPlannerKind"):
             lines.append(f"Latest planner kind: {str(session_summary.get('latestPlannerKind'))}.")
+    else:
+        lines.append(f"Session: {session_id}.")
+        lines.append(f"Path: {path_key}.")
     if round_history:
         current_score = round_history.get("currentScore")
         best_score = round_history.get("bestScore")
         no_gain_streak = int(round_history.get("noGainStreak") or 0)
         score_text = f"{float(current_score):.4f}" if isinstance(current_score, (int, float)) else "unknown"
         best_text = f"{float(best_score):.4f}" if isinstance(best_score, (int, float)) else "unknown"
-        lines.append(f"Scores: current={score_text}, best={best_text}, no-gain streak={no_gain_streak}.")
+        lines.append(f"Scores: current {score_text}, best {best_text}, no-gain streak {no_gain_streak}.")
     lines.extend(_render_swarm_latest_round_detail_lines(latest_round_summary, latest_round_summary_path))
-    lines.append(f"Next: `/swarm session {str(getattr(result, 'path_key', '') or 'unknown')} {session_id}`")
+    lines.append(f"Next: inspect this session with `/swarm session {path_key} {session_id}`.")
     return "\n".join(lines)
 
 
@@ -2256,6 +2262,7 @@ def _render_swarm_bridge_autoloop_pause_reply(result: Any) -> str | None:
     round_history = getattr(result, "round_history", None) if isinstance(getattr(result, "round_history", None), dict) else None
     path_key = str(getattr(result, "path_key", "") or "unknown")
     session_id = str(getattr(result, "session_id", "") or (session_summary or {}).get("sessionId") or "unknown")
+    path_label = _humanize_swarm_path_key(path_key)
     completed_rounds = int((session_summary or {}).get("completedRounds") or 0)
     requested_rounds = int((session_summary or {}).get("requestedRoundsTotal") or 0)
     kept_rounds = int((session_summary or {}).get("keptRounds") or 0)
@@ -2268,15 +2275,13 @@ def _render_swarm_bridge_autoloop_pause_reply(result: Any) -> str | None:
     best_text = f"{float(best_score):.4f}" if isinstance(best_score, (int, float)) else "unknown"
     return "\n".join(
         [
-            "Swarm autoloop paused.",
-            f"Path: {path_key}.",
-            f"Session: {session_id}.",
-            f"Rounds: {completed_rounds} completed / {requested_rounds} requested.",
-            f"Decisions: {kept_rounds} kept, {reverted_rounds} reverted.",
-            "Reason: auto-generated planner hit the no-gain pause guard.",
+            f"{path_label} autoloop is paused.",
+            "It hit the no-gain guard before another round, so nothing changed yet.",
+            f"Session: {session_id}. Path: {path_key}.",
+            f"Rounds: {completed_rounds} of {requested_rounds}. Decisions: {kept_rounds} kept, {reverted_rounds} reverted.",
             f"Planner readiness: {planner_readiness}.",
-            f"History: current={score_text}, best={best_text}, no-gain streak={no_gain_streak}.",
-            f"Next: `/swarm continue {path_key} session {session_id} rounds 1 force`",
+            f"Scores: current {score_text}, best {best_text}, no-gain streak {no_gain_streak}.",
+            f"Next: continue with `/swarm continue {path_key} session {session_id} rounds 1 force`.",
         ]
     )
 
@@ -2285,21 +2290,23 @@ def _render_swarm_sessions_reply(payload: dict[str, Any]) -> str:
     sessions = payload.get("sessions") if isinstance(payload, dict) else []
     entries = sessions if isinstance(sessions, list) else []
     path_key = str(payload.get("path_key") or "path")
+    path_label = _humanize_swarm_path_key(path_key)
     if not entries:
         return (
-            "Swarm autoloop sessions:\n"
-            f"No session summaries exist yet for {path_key}. Start one with `/swarm autoloop {path_key}`."
+            f"{path_label} has no saved autoloop sessions yet.\n"
+            f"Next: start one with `/swarm autoloop {path_key}`."
         )
-    lines = [f"Swarm autoloop sessions:\n{len(entries)} recent session(s) for {path_key}."]
+    lines = [f"{path_label} has {len(entries)} recent autoloop session(s)."]
     for item in entries[:3]:
         if not isinstance(item, dict):
             continue
         lines.append(
-            f"- {str(item.get('session_id') or 'unknown')}: completed={int(item.get('completed_rounds') or 0)}/{int(item.get('requested_rounds_total') or 0)} "
-            f"stop={str(item.get('stop_reason') or 'active')} planner={str(item.get('planner_status') or 'pending')}"
+            f"- {str(item.get('session_id') or 'unknown')}: {int(item.get('completed_rounds') or 0)}/{int(item.get('requested_rounds_total') or 0)} rounds, "
+            f"stop={_describe_swarm_autoloop_stop_reason(str(item.get('stop_reason') or 'active'))}, "
+            f"planner={str(item.get('planner_status') or 'pending')}"
         )
     first_id = str((entries[0] if entries and isinstance(entries[0], dict) else {}).get("session_id") or "session_id")
-    lines.append(f"Next: `/swarm session {path_key} {first_id}`")
+    lines.append(f"Next: inspect the latest one with `/swarm session {path_key} {first_id}`.")
     return "\n".join(lines)
 
 
@@ -2309,22 +2316,26 @@ def _render_swarm_session_reply(payload: dict[str, Any]) -> str:
     latest_round_summary_path = str(payload.get("latest_round_summary_path") or "").strip() or None
     round_history = payload.get("round_history") if isinstance(payload, dict) else None
     path_key = str(payload.get("path_key") or "path")
+    path_label = _humanize_swarm_path_key(path_key)
     if not isinstance(session_summary, dict):
         return (
-            "Swarm autoloop session:\n"
-            f"No saved session summary exists yet for {path_key}. Start one with `/swarm autoloop {path_key}`."
+            f"No saved {path_label} session summary exists yet.\n"
+            f"Next: start one with `/swarm autoloop {path_key}`."
         )
     latest_round = None
     rounds = session_summary.get("rounds")
     if isinstance(rounds, list) and rounds:
         latest_round = rounds[-1] if isinstance(rounds[-1], dict) else None
+    session_id = str(session_summary.get("sessionId") or "unknown")
+    completed_rounds = int(session_summary.get("completedRounds") or 0)
+    requested_rounds = int(session_summary.get("requestedRoundsTotal") or 0)
+    kept_rounds = int(session_summary.get("keptRounds") or 0)
+    reverted_rounds = int(session_summary.get("revertedRounds") or 0)
+    stop_reason = _describe_swarm_autoloop_stop_reason(str(session_summary.get("stopReason") or "active"))
     lines = [
-        "Swarm autoloop session:",
-        f"Path: {path_key}.",
-        f"Session: {str(session_summary.get('sessionId') or 'unknown')}.",
-        f"Rounds: {int(session_summary.get('completedRounds') or 0)} completed / {int(session_summary.get('requestedRoundsTotal') or 0)} requested.",
-        f"Decisions: {int(session_summary.get('keptRounds') or 0)} kept, {int(session_summary.get('revertedRounds') or 0)} reverted.",
-        f"Stop: {_describe_swarm_autoloop_stop_reason(str(session_summary.get('stopReason') or 'active'))}.",
+        f"Latest {path_label} autoloop session is {stop_reason}.",
+        f"It has completed {completed_rounds} of {requested_rounds} requested rounds, with {kept_rounds} kept and {reverted_rounds} reverted.",
+        f"Session: {session_id}. Path: {path_key}.",
     ]
     if session_summary.get("plannerStatus"):
         lines.append(f"Planner: {str(session_summary.get('plannerStatus'))}.")
@@ -2336,9 +2347,9 @@ def _render_swarm_session_reply(payload: dict[str, Any]) -> str:
         no_gain_streak = int(round_history.get("noGainStreak") or session_summary.get("noGainStreak") or 0)
         score_text = f"{float(current_score):.4f}" if isinstance(current_score, (int, float)) else "unknown"
         best_text = f"{float(best_score):.4f}" if isinstance(best_score, (int, float)) else "unknown"
-        lines.append(f"History: current={score_text}, best={best_text}, no-gain streak={no_gain_streak}.")
+        lines.append(f"Scores: current {score_text}, best {best_text}, no-gain streak {no_gain_streak}.")
     elif session_summary.get("noGainStreak") is not None:
-        lines.append(f"History: current=unknown, best=unknown, no-gain streak={int(session_summary.get('noGainStreak') or 0)}.")
+        lines.append(f"Scores: current unknown, best unknown, no-gain streak {int(session_summary.get('noGainStreak') or 0)}.")
     if latest_round:
         lines.append(
             f"Latest round: #{int(latest_round.get('ordinal') or 0)} {str(latest_round.get('decision') or 'unknown')} "
@@ -2351,10 +2362,17 @@ def _render_swarm_session_reply(payload: dict[str, Any]) -> str:
     lines.extend(_render_swarm_latest_round_detail_lines(latest_round_summary, latest_round_summary_path))
     next_command = f"/swarm continue {path_key} session {str(session_summary.get('sessionId') or 'unknown')} rounds 1"
     if str(session_summary.get("stopReason") or "") == "paused_no_gain_streak":
-        lines.append("Autoloop is paused on the no-gain guard.")
+        lines.append("The autoloop is paused on the no-gain guard.")
         next_command = f"{next_command} force"
     lines.append(f"Next: `{next_command}`")
     return "\n".join(lines)
+
+
+def _humanize_swarm_path_key(path_key: str) -> str:
+    normalized = str(path_key or "").strip()
+    if not normalized:
+        return "Swarm"
+    return normalized.replace("-", " ").replace("_", " ").title()
 
 
 def _render_swarm_latest_round_detail_lines(
