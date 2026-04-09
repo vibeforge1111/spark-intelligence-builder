@@ -3867,6 +3867,7 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(len(client.sent_messages), 0)
         self.assertIn("Voice reply queued.", str(client.sent_audio[0]["caption"]))
         self.assertEqual(client.sent_audio[0]["mime_type"], "audio/mpeg")
+        self.assertRegex(str(client.sent_audio[0]["filename"]), r"^telegram-reply-[0-9a-f]{8}\.mp3$")
 
     def test_voice_reply_on_sends_runtime_command_as_audio(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"], bot_token="test-token")
@@ -4257,6 +4258,14 @@ class OperatorPairingFlowTests(SparkTestCase):
         prepared = _prepare_voice_reply_text(text)
 
         self.assertEqual(prepared, "Here is the plan. Keep the sentences short Avoid stacked clauses.")
+
+    def test_prepare_voice_reply_text_allows_longer_spoken_replies_before_truncating(self) -> None:
+        sentence = "This is a short sentence for voice playback."
+        text = " ".join([sentence] * 10)
+
+        prepared = _prepare_voice_reply_text(text)
+
+        self.assertEqual(prepared, text)
 
     def test_voice_message_returns_bounded_transcription_unavailable_reply_for_unsupported_provider(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])

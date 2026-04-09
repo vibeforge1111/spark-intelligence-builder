@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
+from uuid import uuid4
 
 from spark_intelligence.adapters.telegram.client import TelegramBotApiClient
 from spark_intelligence.adapters.telegram.normalize import normalize_telegram_update
@@ -1560,13 +1561,17 @@ def _synthesize_telegram_voice_reply(
     return {
         "audio_bytes": base64.b64decode(audio_base64),
         "mime_type": mime_type,
-        "filename": "telegram-reply.mp3" if "mpeg" in mime_type or "mp3" in mime_type else "telegram-reply.audio",
+        "filename": (
+            f"telegram-reply-{uuid4().hex[:8]}.mp3"
+            if "mpeg" in mime_type or "mp3" in mime_type
+            else f"telegram-reply-{uuid4().hex[:8]}.audio"
+        ),
         "provider_id": str((result or {}).get("provider_id") or "").strip() or None,
         "voice_id": str((result or {}).get("voice_id") or "").strip() or None,
     }
 
 
-def _prepare_voice_reply_text(text: str, *, max_chars: int = 320) -> str:
+def _prepare_voice_reply_text(text: str, *, max_chars: int = 900) -> str:
     value = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     if not value:
         return ""
