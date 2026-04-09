@@ -129,6 +129,7 @@ from spark_intelligence.researcher_bridge import discover_researcher_runtime_roo
 from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_status, sync_swarm_collective
+from spark_intelligence.harness_registry import build_harness_registry
 from spark_intelligence.mission_control import build_mission_control_snapshot
 from spark_intelligence.system_registry import build_system_registry
 
@@ -192,6 +193,11 @@ class SystemStatus:
                 lines.append(f"- active loops: {', '.join(str(item) for item in active_loops[:5])}")
             recommended_actions = mission_summary.get("recommended_actions") or []
             lines.extend(f"- next action: {str(item)}" for item in recommended_actions[:2])
+        harness_registry = self.payload.get("harness_registry") or {}
+        harness_summary = harness_registry.get("summary") or {}
+        available_harnesses = harness_summary.get("available_harnesses") or []
+        if available_harnesses:
+            lines.append(f"- harnesses: {', '.join(str(item) for item in available_harnesses[:5])}")
         lines.append(
             f"- providers: {', '.join(self.payload['gateway']['configured_providers']) if self.payload['gateway']['configured_providers'] else 'none'}"
         )
@@ -2696,6 +2702,7 @@ def handle_status(args: argparse.Namespace) -> int:
     watchtower = build_watchtower_snapshot(state_db)
     system_registry = build_system_registry(config_manager, state_db)
     mission_control = build_mission_control_snapshot(config_manager, state_db)
+    harness_registry = build_harness_registry(config_manager, state_db)
     active_chip_keys = config_manager.get_path("spark.chips.active_keys", default=[]) or []
     active_path_key = config_manager.get_path("spark.specialization_paths.active_path_key")
     autostart_payload = {
@@ -2719,6 +2726,7 @@ def handle_status(args: argparse.Namespace) -> int:
         },
         "system_registry": system_registry.to_payload(),
         "mission_control": mission_control.to_payload(),
+        "harness_registry": harness_registry.to_payload(),
         "attachments": {
             "record_count": len(attachments.records),
             "warning_count": len(attachments.warnings),
