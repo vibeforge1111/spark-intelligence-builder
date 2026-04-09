@@ -18,9 +18,9 @@ from spark_intelligence.observability.store import (
     events_for_run,
     latest_events_by_type,
     latest_snapshots_by_surface,
+    memory_lane_records_for_event_ids,
     open_runs,
     recent_delivery_records,
-    recent_memory_lane_records,
     recent_config_mutations,
     recent_contradictions,
     recent_reset_sensitive_state_registry,
@@ -550,7 +550,10 @@ def _keepability_issue(state_db: StateDB) -> StopShipIssue:
         promotion_disposition = str(facts.get("promotion_disposition") or "")
         if keepability in NON_PROMOTABLE_KEEPABILITY and promotion_disposition not in NON_PROMOTABLE_DISPOSITIONS:
             invalid_promotions.append(event)
-    lane_records = recent_memory_lane_records(state_db, limit=400)
+    lane_records = memory_lane_records_for_event_ids(
+        state_db,
+        event_ids=[str(event.get("event_id") or "") for event in classified_events],
+    )
     lane_records_by_event = {
         str(record.get("event_id")): record
         for record in lane_records

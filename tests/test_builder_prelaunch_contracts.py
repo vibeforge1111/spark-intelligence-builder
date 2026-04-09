@@ -886,6 +886,33 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         facts = events[0]["facts_json"]
         self.assertEqual(facts["keepability"], "ephemeral_context")
 
+    def test_build_researcher_reply_records_chip_hook_result_classification(self) -> None:
+        self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
+        self.config_manager.set_path("spark.specialization_paths.active_path_key", "startup-operator")
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-chip-result-classification",
+            agent_id="agent:test",
+            human_id="human:test",
+            session_id="session:test",
+            channel_kind="telegram",
+            user_message="hello",
+        )
+
+        events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=20)
+        chip_events = [
+            event
+            for event in events
+            if event.get("component") == "researcher_bridge"
+            and str((event.get("provenance_json") or {}).get("source_kind") or "") == "chip_hook"
+        ]
+        self.assertTrue(chip_events)
+        facts = chip_events[0]["facts_json"]
+        self.assertEqual(facts["keepability"], "ephemeral_context")
+        self.assertEqual(facts["promotion_disposition"], "not_promotable")
+
     def test_build_researcher_reply_records_output_keepability_for_stub_results(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
 
@@ -1266,6 +1293,37 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertFalse(issues["stop_ship_keepability_rules"].ok)
         self.assertIn("lack typed memory-lane records", issues["stop_ship_keepability_rules"].detail)
 
+    def test_stop_ship_uses_direct_lane_lookup_for_classified_events(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="classified bridge result with lane record",
+            request_id="req-direct-lane-lookup",
+            trace_ref="trace:req-direct-lane-lookup",
+            actor_id="researcher_bridge",
+            facts={
+                "bridge_mode": "external_typed",
+                "routing_decision": "researcher_advisory",
+                "keepability": "ephemeral_context",
+                "promotion_disposition": "not_promotable",
+            },
+            provenance={"source_kind": "researcher_bridge", "source_ref": "bridge:test"},
+        )
+        for index in range(450):
+            record_event(
+                self.state_db,
+                event_type="plugin_or_chip_influence_recorded",
+                component="researcher_bridge",
+                summary=f"filler classified influence {index}",
+                actor_id="researcher_bridge",
+                facts={"keepability": "operator_debug_only"},
+                provenance={"source_kind": "chip_hook", "source_ref": f"chip:{index}"},
+            )
+
+        issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
+        self.assertTrue(issues["stop_ship_keepability_rules"].ok)
+
     def test_stop_ship_flags_bridge_backed_webhook_delivery_without_keepability(self) -> None:
         record_event(
             self.state_db,
@@ -1595,6 +1653,36 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("execution_impaired", checks["watchtower-execution"].detail)
         self.assertIn("watchtower-contradictions", checks)
         self.assertFalse(checks["watchtower-contradictions"].ok)
+
+    def test_doctor_repairs_missing_chip_hook_promotion_disposition_before_stop_ship(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Chip hook startup-yc.evaluate produced a result.",
+            actor_id="researcher_bridge",
+            facts={"keepability": "ephemeral_context"},
+            provenance={"source_kind": "chip_hook", "source_ref": "startup-yc"},
+        )
+
+        report = run_doctor(self.config_manager, self.state_db)
+        checks = {check.name: check for check in report.checks}
+
+        self.assertTrue(checks["stop_ship_keepability_rules"].ok)
+        events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        repaired = [
+            event
+            for event in events
+            if event.get("component") == "researcher_bridge"
+            and str((event.get("provenance_json") or {}).get("source_kind") or "") == "chip_hook"
+        ]
+        self.assertTrue(repaired)
+        self.assertEqual(repaired[0]["facts_json"]["promotion_disposition"], "not_promotable")
+        open_keys = {
+            str(row.get("contradiction_key") or "")
+            for row in recent_contradictions(self.state_db, limit=20, status="open")
+        }
+        self.assertNotIn("stop_ship:stop_ship_keepability_rules", open_keys)
 
     def test_doctor_report_includes_observer_incident_check(self) -> None:
         record_event(

@@ -226,6 +226,11 @@ def record_chip_hook_execution(
         "ok": execution.ok,
         "exit_code": exit_code,
         "keepability": keepability,
+        "promotion_disposition": (
+            "not_promotable"
+            if keepability in {"ephemeral_context", "user_preference_ephemeral", "operator_debug_only"}
+            else None
+        ),
     }
     record_event(
         state_db,

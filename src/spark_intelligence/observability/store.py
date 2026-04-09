@@ -1041,6 +1041,23 @@ def recent_memory_lane_records(
     return [_row_to_dict(row) for row in rows]
 
 
+def memory_lane_records_for_event_ids(state_db: StateDB, *, event_ids: list[str]) -> list[dict[str, Any]]:
+    normalized_ids = [str(event_id) for event_id in event_ids if str(event_id or "").strip()]
+    if not normalized_ids:
+        return []
+    placeholders = ", ".join("?" for _ in normalized_ids)
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM memory_lane_records
+            WHERE event_id IN ({placeholders})
+            """,
+            tuple(normalized_ids),
+        ).fetchall()
+    return [_row_to_dict(row) for row in rows]
+
+
 def recent_reset_sensitive_state_registry(
     state_db: StateDB,
     *,
@@ -2245,6 +2262,31 @@ def _normalized_promotion_disposition(value: Any, keepability: str) -> str:
     if keepability in NON_PROMOTABLE_KEEPABILITY:
         return "not_promotable"
     return ""
+
+
+def repair_non_promotable_chip_hook_dispositions(state_db: StateDB) -> int:
+    with state_db.connect() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE builder_events
+            SET facts_json = json_set(
+                COALESCE(facts_json, '{}'),
+                '$.promotion_disposition',
+                'not_promotable'
+            )
+            WHERE component = 'researcher_bridge'
+              AND event_type IN ('tool_result_received', 'dispatch_failed')
+              AND json_extract(provenance_json, '$.source_kind') = 'chip_hook'
+              AND json_extract(facts_json, '$.keepability') IN (
+                    'ephemeral_context',
+                    'user_preference_ephemeral',
+                    'operator_debug_only'
+              )
+              AND json_extract(facts_json, '$.promotion_disposition') IS NULL
+            """
+        )
+        conn.commit()
+    return int(cursor.rowcount or 0)
 
 
 def _artifact_lane_from_keepability(value: str) -> str:

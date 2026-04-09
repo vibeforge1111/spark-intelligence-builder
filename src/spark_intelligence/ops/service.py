@@ -29,6 +29,7 @@ from spark_intelligence.observability.store import (
     recent_policy_gate_records,
     recent_provenance_mutations,
     recent_runs,
+    repair_non_promotable_chip_hook_dispositions,
 )
 from spark_intelligence.personality.loader import load_agent_persona_profile, load_personality_profile
 from spark_intelligence.researcher_bridge import researcher_bridge_status
@@ -606,6 +607,7 @@ def list_webhook_alert_snoozes(
 
 
 def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) -> OperatorInboxReport:
+    repair_non_promotable_chip_hook_dispositions(state_db)
     watchtower = build_watchtower_snapshot(state_db)
     observer_incidents = ((watchtower.get("panels") or {}).get("observer_incidents") or {}).get("recent_incidents") or []
     observer_packets = ((watchtower.get("panels") or {}).get("observer_packets") or {}).get("recent_packets") or []
@@ -721,6 +723,7 @@ def build_operator_security_report(
     state_db: StateDB,
     limit: int = 100,
 ) -> OperatorSecurityReport:
+    repair_non_promotable_chip_hook_dispositions(state_db)
     watchtower = build_watchtower_snapshot(state_db)
     observer_incidents = ((watchtower.get("panels") or {}).get("observer_incidents") or {}).get("recent_incidents") or []
     observer_packets = ((watchtower.get("panels") or {}).get("observer_packets") or {}).get("recent_packets") or []
