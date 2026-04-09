@@ -93,6 +93,12 @@ Natural-language examples:
 - `/think on`
 - `/think off`
 
+Natural-language examples:
+
+- `What is the thinking status?`
+- `Turn thinking on`
+- `Turn thinking off`
+
 ## Implementation Rule
 
 When adding a new Telegram runtime command:

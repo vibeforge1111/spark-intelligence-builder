@@ -1839,6 +1839,7 @@ def _handle_runtime_command(
     natural_swarm_command = _match_natural_swarm_command(normalized)
     style_command = _parse_style_command(normalized) or _match_natural_style_command(normalized)
     natural_voice_command = _match_natural_voice_command(normalized)
+    natural_think_command = _match_natural_think_command(normalized)
     if style_command is not None:
         return _handle_style_command(
             config_manager=config_manager,
@@ -1923,8 +1924,12 @@ def _handle_runtime_command(
             "voice_text": speak_text,
             "respect_voice_reply_state": False,
         }
-    if lowered in {"/think", "/think on", "/think off"}:
-        if lowered == "/think":
+    if lowered in {"/think", "/think on", "/think off"} or natural_think_command in {
+        "/think",
+        "/think on",
+        "/think off",
+    }:
+        if lowered == "/think" or natural_think_command == "/think":
             enabled = _think_enabled_for_user(state_db=state_db, external_user_id=external_user_id)
             state_text = "on" if enabled else "off"
             return {
@@ -1934,7 +1939,7 @@ def _handle_runtime_command(
                     "Use `/think on` to show `<think>` blocks or `/think off` to hide them."
                 ),
             }
-        enabled = lowered == "/think on"
+        enabled = lowered == "/think on" or natural_think_command == "/think on"
         _set_think_enabled_for_user(
             state_db=state_db,
             external_user_id=external_user_id,
@@ -1942,7 +1947,7 @@ def _handle_runtime_command(
         )
         state_text = "enabled" if enabled else "disabled"
         return {
-            "command": lowered,
+            "command": natural_think_command or lowered,
             "reply_text": (
                 f"Thinking visibility {state_text} for this Telegram DM. "
                 "This only affects `<think>` blocks in future replies."
@@ -2672,6 +2677,49 @@ def _match_natural_voice_command(inbound_text: str) -> tuple[str, str | None] | 
             payload = " ".join(str(match.group("payload") or "").strip().split())
             if payload:
                 return ("/voice speak", payload)
+    return None
+
+
+def _match_natural_think_command(inbound_text: str) -> str | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    lowered = normalized.lower()
+    simplified = " ".join(re.sub(r"[^a-z0-9\s/]", " ", lowered).split())
+
+    if simplified in {
+        "think status",
+        "show think status",
+        "show me think status",
+        "thinking status",
+        "show thinking status",
+        "show me thinking status",
+        "what is the thinking status",
+        "what s the thinking status",
+        "is thinking on",
+        "is think on",
+    }:
+        return "/think"
+    if simplified in {
+        "turn thinking on",
+        "enable thinking",
+        "show thinking",
+        "show think blocks",
+        "show hidden reasoning",
+    }:
+        return "/think on"
+    if simplified in {
+        "turn thinking off",
+        "disable thinking",
+        "hide thinking",
+        "hide think blocks",
+        "hide hidden reasoning",
+    }:
+        return "/think off"
+    if re.match(
+        r"^(?:please\s+|can you\s+)?(?:turn|set)\s+thinking\s+(on|off)$",
+        simplified,
+        flags=re.IGNORECASE,
+    ):
+        return "/think on" if simplified.endswith("on") else "/think off"
     return None
 
 

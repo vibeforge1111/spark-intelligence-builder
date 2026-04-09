@@ -323,6 +323,9 @@ The Telegram runtime also accepts bounded natural-language equivalents for those
 - `What is the voice status?`
 - `Turn voice replies on`
 - `Please speak this out loud: <text>`
+- `What is the thinking status?`
+- `Turn thinking on`
+- `Turn thinking off`
 - `Can you show me the swarm status?`
 - `Show me swarm overview`
 - `Show me the swarm runtime pulse`

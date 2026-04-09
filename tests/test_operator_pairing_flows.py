@@ -542,6 +542,48 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(disable_result.ok)
         self.assertIn("Thinking visibility disabled", str(disable_result.detail["response_text"]))
 
+    def test_natural_language_think_commands_toggle_telegram_visibility(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        enable_result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=1131,
+                user_id="111",
+                username="alice",
+                text="Turn thinking on",
+            ),
+        )
+        self.assertTrue(enable_result.ok)
+        self.assertIn("Thinking visibility enabled", str(enable_result.detail["response_text"]))
+
+        status_result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=1132,
+                user_id="111",
+                username="alice",
+                text="What is the thinking status?",
+            ),
+        )
+        self.assertTrue(status_result.ok)
+        self.assertIn("currently on", str(status_result.detail["response_text"]))
+
+        disable_result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=1133,
+                user_id="111",
+                username="alice",
+                text="Turn thinking off",
+            ),
+        )
+        self.assertTrue(disable_result.ok)
+        self.assertIn("Thinking visibility disabled", str(disable_result.detail["response_text"]))
+
     def test_swarm_status_command_returns_live_bridge_summary(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
