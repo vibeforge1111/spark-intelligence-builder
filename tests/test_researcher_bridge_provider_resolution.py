@@ -195,6 +195,19 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("rewrite_weak_source_capture_reply", actions)
         self.assertNotIn("capture returned empty results", cleaned)
 
+    def test_sanitize_browser_search_reply_rewrites_missing_source_variant(self) -> None:
+        cleaned, actions = _sanitize_browser_search_reply(
+            (
+                "The search was attempted but the actual content from the source couldn't be captured - "
+                "the external source came back missing. I don't have a live excerpt or page content to pull from."
+            ),
+            source_url=None,
+        )
+
+        self.assertIn("Web search ran, but source capture failed on the result page.", cleaned)
+        self.assertIn("rewrite_weak_source_capture_reply", actions)
+        self.assertNotIn("external source came back missing", cleaned)
+
     def test_sanitize_browser_search_reply_strips_internal_search_markup(self) -> None:
         cleaned, actions = _sanitize_browser_search_reply(
             (
