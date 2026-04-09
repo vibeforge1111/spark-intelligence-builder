@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from dataclasses import dataclass
@@ -689,8 +690,25 @@ def _browser_hook_blocked_reply(output: dict[str, Any]) -> tuple[str | None, str
     )
 
 
+def _browser_hook_error_code(output: dict[str, Any] | None) -> str | None:
+    if not isinstance(output, dict):
+        return None
+    error = output.get("error") if isinstance(output.get("error"), dict) else {}
+    code = str(error.get("code") or "").strip()
+    return code or None
+
+
 def _browser_hook_succeeded(output: dict[str, Any] | None) -> bool:
     return isinstance(output, dict) and str(output.get("status") or "").strip().lower() == "succeeded"
+
+
+def _is_transient_browser_session_error(code: str | None) -> bool:
+    normalized = str(code or "").strip().upper()
+    return normalized in {
+        "BROWSER_SESSION_STALE",
+        "BROWSER_SESSION_NOT_CONNECTED",
+        "BROWSER_SESSION_TIMEOUT",
+    }
 
 
 def _resolve_external_search_result_href(href: str, *, search_host: str) -> str | None:
@@ -843,6 +861,29 @@ def _build_browser_search_context(
         human_id=human_id,
         agent_id=agent_id,
     )
+    if not _browser_hook_succeeded(status_output):
+        status_error_code = _browser_hook_error_code(status_output)
+        if _is_transient_browser_session_error(status_error_code):
+            time.sleep(1.0)
+            retried_status_output, retried_chip_key = _execute_browser_hook(
+                config_manager=config_manager,
+                state_db=state_db,
+                hook="browser.status",
+                payload=build_browser_status_payload(
+                    config_manager=config_manager,
+                    agent_id=agent_id,
+                    request_id=f"{request_id}:browser-status-retry",
+                ),
+                run_id=run_id,
+                request_id=request_id,
+                channel_kind=channel_kind,
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
+            )
+            if retried_status_output:
+                status_output = retried_status_output
+                chip_key = retried_chip_key
     if not status_output:
         return session_unavailable
     blocked_reply, blocked_code = _browser_hook_blocked_reply(status_output)

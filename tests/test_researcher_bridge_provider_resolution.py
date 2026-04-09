@@ -8,6 +8,7 @@ from spark_intelligence.auth.runtime import RuntimeProviderResolution
 from spark_intelligence.memory import write_profile_fact_to_memory
 from spark_intelligence.observability.store import latest_events_by_type
 from spark_intelligence.researcher_bridge.advisory import (
+    _build_browser_search_context,
     _build_contextual_task,
     _clean_messaging_reply,
     _normalize_browser_search_query,
@@ -130,6 +131,54 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         )
         self.assertIn("strip_internal_search_markup", actions)
         self.assertIn("append_source_capture_warning", actions)
+
+    def test_build_browser_search_context_retries_transient_status_probe_failure(self) -> None:
+        with (
+            patch("spark_intelligence.researcher_bridge.advisory.time.sleep"),
+            patch(
+                "spark_intelligence.researcher_bridge.advisory._execute_browser_hook",
+                side_effect=[
+                    (
+                        {
+                            "status": "failed",
+                            "error": {
+                                "code": "BROWSER_SESSION_STALE",
+                                "message": "Live browser session is not currently connected.",
+                            },
+                        },
+                        "spark-browser",
+                    ),
+                    (
+                        {
+                            "status": "succeeded",
+                            "result": {
+                                "extension": {
+                                    "running": True,
+                                }
+                            },
+                        },
+                        "spark-browser",
+                    ),
+                    (None, "spark-browser"),
+                ],
+            ) as hook_mock,
+        ):
+            result = _build_browser_search_context(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                user_message="Search the web for BTC and cite the source.",
+                request_id="req-browser-retry",
+                channel_kind="telegram",
+                agent_id="agent:human:telegram:111",
+                human_id="human:telegram:111",
+                session_id="session:telegram:dm:111",
+            )
+
+        self.assertEqual(result, {"context": "", "blocked_reply": None, "blocked_code": None})
+        self.assertEqual(hook_mock.call_count, 3)
+        self.assertEqual(hook_mock.call_args_list[0].kwargs["hook"], "browser.status")
+        self.assertEqual(hook_mock.call_args_list[1].kwargs["hook"], "browser.status")
+        self.assertEqual(hook_mock.call_args_list[2].kwargs["hook"], "browser.navigate")
 
     def test_sanitize_browser_search_reply_polishes_quote_spacing_and_generic_tail(self) -> None:
         cleaned, actions = _sanitize_browser_search_reply(
