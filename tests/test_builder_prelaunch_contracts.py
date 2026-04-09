@@ -296,6 +296,40 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
         self.assertFalse(issues["stop_ship_intent_without_proof"].ok)
 
+    def test_stop_ship_accepts_terminal_run_closure_as_execution_proof(self) -> None:
+        run = open_run(
+            self.state_db,
+            run_kind="telegram_update",
+            origin_surface="telegram_runtime",
+            summary="opened",
+            request_id="req-1b",
+            channel_id="telegram",
+            actor_id="test",
+        )
+        record_event(
+            self.state_db,
+            event_type="intent_committed",
+            component="telegram_runtime",
+            summary="intent closed locally",
+            run_id=run.run_id,
+            request_id="req-1b",
+            channel_id="telegram",
+            actor_id="test",
+        )
+        close_run(
+            self.state_db,
+            run_id=run.run_id,
+            status="closed",
+            close_reason="local_command_completed",
+            summary="closed after local command handling",
+        )
+
+        issues = {
+            issue.name: issue
+            for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)
+        }
+        self.assertTrue(issues["stop_ship_intent_without_proof"].ok)
+
     def test_stop_ship_contradictions_accumulate_and_resolve(self) -> None:
         run = open_run(
             self.state_db,
@@ -535,6 +569,20 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(snapshot["contradictions"]["counts"]["open"], 0)
         self.assertEqual(snapshot["panels"]["provenance_and_quarantine"]["counts"]["policy_gate_blocks"], 0)
         self.assertEqual(snapshot["panels"]["memory_lane_hygiene"]["counts"]["promotion_attempts"], 0)
+
+    def test_watchtower_execution_health_ignores_unbound_dispatch_started_rows(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="dispatch_started",
+            component="researcher_bridge",
+            summary="dispatch started without run binding",
+            request_id="req-unbound-dispatch",
+            actor_id="researcher_bridge",
+        )
+
+        snapshot = build_watchtower_snapshot(self.state_db)
+
+        self.assertEqual(snapshot["health_dimensions"]["execution_health"]["state"], "healthy")
 
     def test_classified_bridge_output_creates_typed_memory_lane_record(self) -> None:
         record_event(

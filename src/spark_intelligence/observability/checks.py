@@ -157,6 +157,7 @@ def _config_audit_issue(state_db: StateDB) -> StopShipIssue:
 
 
 def _intent_execution_issue(state_db: StateDB) -> StopShipIssue:
+    terminal_run_events = {"run_closed", "run_failed", "run_stalled"}
     intents = latest_events_by_type(state_db, event_type="intent_committed", limit=200)
     incomplete: list[str] = []
     for intent in intents:
@@ -165,7 +166,7 @@ def _intent_execution_issue(state_db: StateDB) -> StopShipIssue:
             incomplete.append(str(intent.get("event_id")))
             continue
         events = {event.get("event_type") for event in events_for_run(state_db, run_id=str(run_id))}
-        if "tool_result_received" not in events and "dispatch_failed" not in events:
+        if "tool_result_received" not in events and "dispatch_failed" not in events and terminal_run_events.isdisjoint(events):
             incomplete.append(str(run_id))
     if incomplete:
         return StopShipIssue(

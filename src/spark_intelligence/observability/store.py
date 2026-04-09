@@ -2390,6 +2390,7 @@ def _build_config_authority_panel(state_db: StateDB) -> dict[str, Any]:
 
 
 def _build_execution_lineage_panel(state_db: StateDB) -> dict[str, Any]:
+    terminal_run_events = {"run_closed", "run_failed", "run_stalled"}
     with state_db.connect() as conn:
         counts = conn.execute(
             """
@@ -2412,15 +2413,19 @@ def _build_execution_lineage_panel(state_db: StateDB) -> dict[str, Any]:
             intent_without_dispatch += 1
             continue
         run_events = {event.get("event_type") for event in events_for_run(state_db, run_id=run_id)}
-        if "dispatch_started" not in run_events and "dispatch_failed" not in run_events and "tool_result_received" not in run_events:
+        if (
+            "dispatch_started" not in run_events
+            and "dispatch_failed" not in run_events
+            and "tool_result_received" not in run_events
+            and terminal_run_events.isdisjoint(run_events)
+        ):
             intent_without_dispatch += 1
     for dispatch in dispatches:
         run_id = str(dispatch.get("run_id") or "")
         if not run_id:
-            dispatch_without_result += 1
             continue
         run_events = {event.get("event_type") for event in events_for_run(state_db, run_id=run_id)}
-        if "tool_result_received" not in run_events and "dispatch_failed" not in run_events:
+        if "tool_result_received" not in run_events and "dispatch_failed" not in run_events and terminal_run_events.isdisjoint(run_events):
             dispatch_without_result += 1
     return {
         "counts": {
