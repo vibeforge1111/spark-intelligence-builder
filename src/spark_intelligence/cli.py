@@ -97,6 +97,7 @@ from spark_intelligence.personality import (
     build_personality_import_payload,
     migrate_legacy_human_personality_to_agent_persona,
     normalize_personality_import,
+    resolve_builder_persona_agent_id,
     save_agent_persona_profile,
     write_personality_evolver_state,
 )
@@ -4933,6 +4934,7 @@ def handle_agent_import_personality(args: argparse.Namespace) -> int:
     state_db.initialize()
     import_id = f"personality-import:{uuid4().hex[:12]}"
     canonical_state = read_canonical_agent_state(state_db=state_db, human_id=args.human_id)
+    persona_agent_id = resolve_builder_persona_agent_id(human_id=args.human_id) or canonical_state.agent_id
     payload = build_personality_import_payload(
         human_id=args.human_id,
         agent_id=canonical_state.agent_id,
@@ -5036,7 +5038,7 @@ def handle_agent_import_personality(args: argparse.Namespace) -> int:
             state_db=state_db,
             action="import_personality",
             target_kind="agent_persona",
-            target_ref=canonical_state.agent_id,
+            target_ref=persona_agent_id,
             reason=args.reason,
             details={
                 "status": "blocked",
@@ -5091,7 +5093,7 @@ def handle_agent_import_personality(args: argparse.Namespace) -> int:
             state_db=state_db,
             action="import_personality",
             target_kind="agent_persona",
-            target_ref=canonical_state.agent_id,
+            target_ref=persona_agent_id,
             reason=args.reason,
             details={
                 "status": "failed",
@@ -5145,7 +5147,7 @@ def handle_agent_import_personality(args: argparse.Namespace) -> int:
             state_db=state_db,
             action="import_personality",
             target_kind="agent_persona",
-            target_ref=canonical_state.agent_id,
+            target_ref=persona_agent_id,
             reason=args.reason,
             details={
                 "status": "invalid",
@@ -5205,7 +5207,7 @@ def handle_agent_import_personality(args: argparse.Namespace) -> int:
         "payload_path": str(payload_path),
         "result_path": str(result_path),
         "evolver_state_path": evolver_state_path,
-        "agent_id": canonical_state.agent_id,
+        "agent_id": persona_profile.get("agent_id") or persona_agent_id,
         "persona_profile": persona_profile,
         "execution": result_payload,
     }
@@ -5213,7 +5215,7 @@ def handle_agent_import_personality(args: argparse.Namespace) -> int:
         state_db=state_db,
         action="import_personality",
         target_kind="agent_persona",
-        target_ref=canonical_state.agent_id,
+        target_ref=persona_agent_id,
         reason=args.reason,
         details={
             "status": "completed",
@@ -5241,7 +5243,7 @@ def handle_agent_import_personality(args: argparse.Namespace) -> int:
     print(
         json.dumps(payload_out, indent=2)
         if args.json
-        else f"Imported personality for {args.human_id} onto agent {canonical_state.agent_id}."
+        else f"Imported personality for {args.human_id} onto Builder persona agent {persona_agent_id}."
     )
     return 0
 

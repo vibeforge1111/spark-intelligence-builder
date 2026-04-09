@@ -22,6 +22,7 @@ from spark_intelligence.personality.loader import (
     load_personality_profile,
     migrate_legacy_human_personality_to_agent_persona,
     normalize_personality_import,
+    resolve_builder_persona_agent_id,
     save_agent_persona_profile,
 )
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
@@ -516,6 +517,76 @@ class AgentIdentityContractTests(SparkTestCase):
 
         self.assertTrue(resolution.allowed)
         self.assertEqual(resolution.agent_id, "swarm-agent:atlas")
+
+    def test_swarm_linked_agent_persona_stays_on_builder_local_agent_id(self) -> None:
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+        linked = link_spark_swarm_agent(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+            swarm_agent_id="swarm-agent:atlas",
+            agent_name="Atlas",
+            metadata={"workspace_id": "ws-test"},
+        )
+
+        persona_profile = save_agent_persona_profile(
+            agent_id=linked.agent_id,
+            human_id="human:telegram:111",
+            state_db=self.state_db,
+            base_traits={
+                "warmth": 0.55,
+                "directness": 0.81,
+                "playfulness": 0.22,
+                "pacing": 0.61,
+                "assertiveness": 0.77,
+            },
+            persona_name="Founder Operator",
+            persona_summary="Direct, calm, low-fluff.",
+            source_surface="operator",
+            source_ref="seed-agent-persona",
+        )
+
+        profile = load_personality_profile(
+            human_id="human:telegram:111",
+            agent_id=linked.agent_id,
+            state_db=self.state_db,
+            config_manager=self.config_manager,
+        )
+
+        builder_persona_agent_id = resolve_builder_persona_agent_id(human_id="human:telegram:111")
+        self.assertEqual(persona_profile["agent_id"], builder_persona_agent_id)
+        assert profile is not None
+        self.assertEqual(profile["agent_id"], builder_persona_agent_id)
+        self.assertTrue(profile["agent_persona_applied"])
+        self.assertEqual(profile["agent_persona_name"], "Founder Operator")
+
+        with self.state_db.connect() as conn:
+            local_row = conn.execute(
+                """
+                SELECT persona_name
+                FROM agent_persona_profiles
+                WHERE agent_id = ?
+                LIMIT 1
+                """,
+                (builder_persona_agent_id,),
+            ).fetchone()
+            swarm_row = conn.execute(
+                """
+                SELECT persona_name
+                FROM agent_persona_profiles
+                WHERE agent_id = ?
+                LIMIT 1
+                """,
+                (linked.agent_id,),
+            ).fetchone()
+
+        self.assertIsNotNone(local_row)
+        self.assertEqual(local_row["persona_name"], "Founder Operator")
+        self.assertIsNone(swarm_row)
 
     def test_build_researcher_reply_persists_explicit_agent_persona_authoring(self) -> None:
         approve_pairing(

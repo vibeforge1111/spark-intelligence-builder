@@ -33,7 +33,11 @@ from spark_intelligence.observability.store import (
     repair_foreground_browser_hook_failures,
     repair_non_promotable_chip_hook_dispositions,
 )
-from spark_intelligence.personality.loader import load_agent_persona_profile, load_personality_profile
+from spark_intelligence.personality.loader import (
+    load_agent_persona_profile,
+    load_personality_profile,
+    resolve_builder_persona_agent_id,
+)
 from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import swarm_status
@@ -883,7 +887,12 @@ def build_personality_report(
         config_manager=config_manager,
     )
     agent_identity = agent_state.to_payload()
-    agent_persona = load_agent_persona_profile(agent_id=agent_identity["agent_id"], state_db=state_db)
+    persona_agent_id = resolve_builder_persona_agent_id(human_id=human_id) or agent_identity["agent_id"]
+    agent_persona = load_agent_persona_profile(
+        agent_id=agent_identity["agent_id"],
+        human_id=human_id,
+        state_db=state_db,
+    )
     trait_rows = recent_personality_trait_profiles(state_db, human_id=human_id, limit=1)
     observations = recent_personality_observations(state_db, human_id=human_id, limit=observation_limit)
     evolutions = recent_personality_evolution_events(state_db, human_id=human_id, limit=evolution_limit)
@@ -893,7 +902,7 @@ def build_personality_report(
         observation_states[state] = observation_states.get(state, 0) + 1
     recent_imports = [
         row for row in recent_imports
-        if str(row.get("target_ref") or "") == agent_identity["agent_id"]
+        if str(row.get("target_ref") or "") == persona_agent_id
     ]
 
     payload.update(

@@ -7,8 +7,8 @@ mirrors kept only for compatibility.
 Trait names follow PersonalityEvolver's 5-trait system:
   warmth, directness, playfulness, pacing, assertiveness
 
-Each trait is a float in [0.0, 1.0]. Agent-base traits are persisted per agent_id
-in agent_persona_profiles. Human-specific deltas shift the active baseline traits
+Each trait is a float in [0.0, 1.0]. Agent-base traits are persisted per Builder-owned
+agent_id in agent_persona_profiles. Human-specific deltas shift the active baseline traits
 and are persisted per human_id in personality_trait_profiles with a compatibility mirror
 in runtime_state using the key pattern:
   personality:{human_id}:trait_deltas
@@ -156,6 +156,24 @@ _BEHAVIORAL_RULE_PREFIXES = (
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def resolve_builder_persona_agent_id(*, human_id: str | None) -> str | None:
+    normalized = str(human_id or "").strip()
+    if not normalized:
+        return None
+    return f"agent:{normalized}"
+
+
+def _persona_lookup_agent_ids(*, agent_id: str | None, human_id: str | None) -> list[str]:
+    candidate_ids: list[str] = []
+    builder_agent_id = resolve_builder_persona_agent_id(human_id=human_id)
+    if builder_agent_id:
+        candidate_ids.append(builder_agent_id)
+    normalized_agent_id = str(agent_id or "").strip()
+    if normalized_agent_id and normalized_agent_id not in candidate_ids:
+        candidate_ids.append(normalized_agent_id)
+    return candidate_ids
 
 
 @dataclass
@@ -403,7 +421,11 @@ def load_personality_profile(
             pass
 
     # 2. Merge optional agent-base persona traits
-    agent_persona = load_agent_persona_profile(agent_id=agent_id, state_db=state_db) if agent_id else {}
+    agent_persona = (
+        load_agent_persona_profile(agent_id=agent_id, human_id=human_id, state_db=state_db)
+        if agent_id or human_id
+        else {}
+    )
     agent_base_traits = agent_persona.get("base_traits") or {}
     agent_persona_applied = bool(agent_base_traits)
     merged_base_traits = dict(base_traits)
@@ -429,7 +451,7 @@ def load_personality_profile(
         "style_labels": style_labels,
         "personality_id": personality_id,
         "personality_name": personality_name,
-        "agent_id": agent_id,
+        "agent_id": agent_persona.get("agent_id") or agent_id,
         "agent_persona_name": agent_persona.get("persona_name"),
         "agent_persona_summary": agent_persona.get("persona_summary"),
         "agent_behavioral_rules": agent_persona.get("behavioral_rules") or [],
@@ -468,7 +490,7 @@ def build_personality_import_payload(
         state_db=state_db,
         config_manager=config_manager,
     )
-    current_agent_persona = load_agent_persona_profile(agent_id=agent_id, state_db=state_db)
+    current_agent_persona = load_agent_persona_profile(agent_id=agent_id, human_id=human_id, state_db=state_db)
     observations = recent_personality_observations(state_db, human_id=human_id, limit=observation_limit)
     evolutions = recent_personality_evolution_events(state_db, human_id=human_id, limit=evolution_limit)
     evolver_path = resolve_personality_evolver_state_path(config_manager=config_manager)
@@ -848,34 +870,42 @@ def apply_telegram_surface_persona(
     return "\n".join(lines)
 
 
-def load_agent_persona_profile(*, agent_id: str | None, state_db: StateDB | None) -> dict[str, Any]:
-    if not agent_id or state_db is None:
+def load_agent_persona_profile(
+    *,
+    agent_id: str | None,
+    human_id: str | None = None,
+    state_db: StateDB | None,
+) -> dict[str, Any]:
+    candidate_ids = _persona_lookup_agent_ids(agent_id=agent_id, human_id=human_id)
+    if not candidate_ids or state_db is None:
         return {}
     try:
         with state_db.connect() as conn:
-            row = conn.execute(
-                """
-                SELECT persona_name, persona_summary, base_traits_json, behavioral_rules_json, provenance_json, updated_at
-                FROM agent_persona_profiles
-                WHERE agent_id = ?
-                LIMIT 1
-                """,
-                (agent_id,),
-            ).fetchone()
-        if not row:
-            return {}
-        base_traits = json.loads(row["base_traits_json"] or "{}")
-        behavioral_rules = json.loads(row["behavioral_rules_json"] or "[]") if row["behavioral_rules_json"] else []
-        provenance = json.loads(row["provenance_json"] or "{}") if row["provenance_json"] else {}
-        return {
-            "agent_id": agent_id,
-            "persona_name": _read_optional_text(row["persona_name"]),
-            "persona_summary": _read_optional_text(row["persona_summary"]),
-            "base_traits": {k: float(v) for k, v in base_traits.items() if k in _DEFAULT_TRAITS},
-            "behavioral_rules": behavioral_rules if isinstance(behavioral_rules, list) else [],
-            "provenance": provenance if isinstance(provenance, dict) else {},
-            "updated_at": row["updated_at"],
-        }
+            for candidate_agent_id in candidate_ids:
+                row = conn.execute(
+                    """
+                    SELECT persona_name, persona_summary, base_traits_json, behavioral_rules_json, provenance_json, updated_at
+                    FROM agent_persona_profiles
+                    WHERE agent_id = ?
+                    LIMIT 1
+                    """,
+                    (candidate_agent_id,),
+                ).fetchone()
+                if not row:
+                    continue
+                base_traits = json.loads(row["base_traits_json"] or "{}")
+                behavioral_rules = json.loads(row["behavioral_rules_json"] or "[]") if row["behavioral_rules_json"] else []
+                provenance = json.loads(row["provenance_json"] or "{}") if row["provenance_json"] else {}
+                return {
+                    "agent_id": candidate_agent_id,
+                    "persona_name": _read_optional_text(row["persona_name"]),
+                    "persona_summary": _read_optional_text(row["persona_summary"]),
+                    "base_traits": {k: float(v) for k, v in base_traits.items() if k in _DEFAULT_TRAITS},
+                    "behavioral_rules": behavioral_rules if isinstance(behavioral_rules, list) else [],
+                    "provenance": provenance if isinstance(provenance, dict) else {},
+                    "updated_at": row["updated_at"],
+                }
+        return {}
     except Exception:
         return {}
 
@@ -894,6 +924,7 @@ def save_agent_persona_profile(
     source_surface: str = "builder",
     source_ref: str | None = None,
 ) -> dict[str, Any]:
+    storage_agent_id = resolve_builder_persona_agent_id(human_id=human_id) or agent_id
     updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     normalized_traits = {
         key: round(max(0.0, min(1.0, float(value))), 3)
@@ -916,7 +947,7 @@ def save_agent_persona_profile(
                 updated_at=excluded.updated_at
             """,
             (
-                agent_id,
+                storage_agent_id,
                 persona_name,
                 persona_summary,
                 json.dumps(normalized_traits, sort_keys=True),
@@ -933,7 +964,7 @@ def save_agent_persona_profile(
             """,
             (
                 mutation_id,
-                agent_id,
+                storage_agent_id,
                 human_id,
                 mutation_kind,
                 json.dumps(normalized_traits, sort_keys=True),
@@ -945,7 +976,7 @@ def save_agent_persona_profile(
             ),
         )
         conn.commit()
-    return load_agent_persona_profile(agent_id=agent_id, state_db=state_db)
+    return load_agent_persona_profile(agent_id=storage_agent_id, human_id=human_id, state_db=state_db)
 
 
 def migrate_legacy_human_personality_to_agent_persona(
@@ -958,8 +989,12 @@ def migrate_legacy_human_personality_to_agent_persona(
     source_surface: str = "agent_cli",
     source_ref: str | None = None,
 ) -> LegacyPersonalityMigrationResult:
-    resolved_agent_id = agent_id or read_canonical_agent_state(state_db=state_db, human_id=human_id).agent_id
-    existing_persona = load_agent_persona_profile(agent_id=resolved_agent_id, state_db=state_db)
+    resolved_agent_id = (
+        resolve_builder_persona_agent_id(human_id=human_id)
+        or agent_id
+        or read_canonical_agent_state(state_db=state_db, human_id=human_id).agent_id
+    )
+    existing_persona = load_agent_persona_profile(agent_id=resolved_agent_id, human_id=human_id, state_db=state_db)
     if existing_persona and not force:
         return LegacyPersonalityMigrationResult(
             human_id=human_id,
@@ -1055,7 +1090,7 @@ def maybe_handle_agent_persona_onboarding_turn(
             _delete_agent_onboarding_state(human_id=human_id, state_db=state_db)
         return None
 
-    existing_persona = load_agent_persona_profile(agent_id=agent_id, state_db=state_db)
+    existing_persona = load_agent_persona_profile(agent_id=agent_id, human_id=human_id, state_db=state_db)
     if onboarding_state.get("status") == "completed":
         return None
 
@@ -1167,7 +1202,7 @@ def maybe_handle_agent_persona_onboarding_turn(
             reply_text=(
                 f"Onboarding complete. `{canonical_state.agent_name}` will keep the current balanced personality for now.\n\n"
                 "You can shape it anytime by saying things like `be more direct`, `be warmer`, or `what's my personality`.\n"
-                "Recommended later: connect your Spark Swarm agent so identity and personality stay unified."
+                "Recommended later: connect your Spark Swarm agent so Builder can link the external identity too."
             ),
             agent_name=canonical_state.agent_name,
             persona_profile=completed_profile,
@@ -1214,7 +1249,7 @@ def maybe_handle_agent_persona_onboarding_turn(
         reply_text=(
             f"Locked in. `{canonical_state.agent_name}` is now set up as {persona_profile.get('persona_summary') or 'your saved agent persona'}.\n\n"
             "You can keep shaping it anytime by saying things like `be more direct`, `be warmer`, or `what's my personality`.\n"
-            "Recommended later: connect your Spark Swarm agent so identity and personality stay unified."
+            "Recommended later: connect your Spark Swarm agent so Builder can link the external identity too."
         ),
         agent_name=canonical_state.agent_name,
         persona_profile=persona_profile,
@@ -1288,7 +1323,7 @@ def detect_and_persist_agent_persona_preferences(
 
     trait_deltas = _extract_trait_deltas(user_message)
     behavioral_rules = _extract_behavioral_rules(user_message)
-    current_profile = load_agent_persona_profile(agent_id=agent_id, state_db=state_db)
+    current_profile = load_agent_persona_profile(agent_id=agent_id, human_id=human_id, state_db=state_db)
     existing_traits = current_profile.get("base_traits") or dict(_DEFAULT_TRAITS)
     next_traits = dict(existing_traits)
     for trait, delta in trait_deltas.items():
