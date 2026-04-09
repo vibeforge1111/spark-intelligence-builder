@@ -74,24 +74,15 @@ from spark_intelligence.personality.loader import (
 )
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_runtime_state
+from spark_intelligence.system_registry import (
+    build_system_registry_prompt_context,
+    looks_like_system_registry_query,
+)
 
 _BROWSER_SEARCH_SUMMARY_MAX_CHARS = 280
 _BROWSER_SEARCH_EXCERPT_MAX_CHARS = 480
 _RECENT_CONVERSATION_TURN_LIMIT = 4
 _ATTACHMENT_PROMPT_CHIP_LIMIT = 12
-
-_KNOWN_SPARK_SYSTEM_BRIEFS: dict[str, str] = {
-    "Spark Intelligence Builder": (
-        "live runtime owner for adapters like Telegram; owns delivery, operator controls, chip and path attachments, "
-        "saved conversational persona state, and the final visible reply"
-    ),
-    "Spark Researcher": (
-        "main intelligence core behind normal reasoning through the researcher bridge and provider-backed advisory"
-    ),
-    "Spark Swarm": (
-        "deep-work escalation and collective coordination layer; not the default chat loop"
-    ),
-}
 
 _KNOWN_CHIP_ROLE_HINTS: dict[str, str] = {
     "startup-yc": "Founder/operator doctrine chip for decisive startup guidance when active.",
@@ -1628,56 +1619,8 @@ def _build_attachment_inventory_context(*, attachment_context: dict[str, object]
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
-def _build_spark_self_knowledge_context(*, user_message: str, attachment_context: dict[str, object]) -> str:
-    lowered = str(user_message or "").strip().lower()
-    if not _looks_like_spark_self_knowledge_query(lowered):
-        return ""
-    lines = ["[Spark platform map]"]
-    for label, detail in _KNOWN_SPARK_SYSTEM_BRIEFS.items():
-        lines.append(f"- {label}: {detail}")
-    chip_records = attachment_context.get("attached_chip_records") or []
-    known_chip_lines: list[str] = []
-    if isinstance(chip_records, list):
-        for record in chip_records:
-            if not isinstance(record, dict):
-                continue
-            key = str(record.get("key") or "").strip()
-            hint = _KNOWN_CHIP_ROLE_HINTS.get(key)
-            if key and hint:
-                known_chip_lines.append(f"- {key}: {hint}")
-    if known_chip_lines:
-        lines.append("[Known attached chip roles]")
-        lines.extend(known_chip_lines[:_ATTACHMENT_PROMPT_CHIP_LIMIT])
-    lines.extend(
-        [
-            "[Reply rule]",
-            "When the user asks about Spark's own systems, chips, adapters, or connections, answer from the Spark platform map and attached inventory above. "
-            "Do not claim missing verified knowledge when this runtime context already answers the question.",
-        ]
-    )
-    return "\n".join(lines)
-
-
 def _looks_like_spark_self_knowledge_query(lowered_message: str) -> bool:
-    if not lowered_message:
-        return False
-    direct_signals = (
-        "spark swarm",
-        "spark researcher",
-        "spark intelligence builder",
-        "what chips",
-        "which chips",
-        "active chips",
-        "attached chips",
-        "connected chips",
-        "what systems",
-        "what adapters",
-        "what is connected",
-        "around you right now",
-        "know about yourself",
-        "self-awareness",
-    )
-    return any(signal in lowered_message for signal in direct_signals)
+    return looks_like_system_registry_query(lowered_message)
 
 
 def _load_recent_conversation_context(

@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from spark_intelligence.attachments.snapshot import build_attachment_context
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
 from spark_intelligence.memory import write_profile_fact_to_memory
 from spark_intelligence.observability.store import latest_events_by_type, record_event
@@ -23,8 +24,9 @@ from spark_intelligence.researcher_bridge.advisory import (
     _select_search_result_candidate_from_text_result,
     build_researcher_reply,
 )
+from spark_intelligence.system_registry import build_system_registry_prompt_context
 
-from tests.test_support import SparkTestCase
+from tests.test_support import SparkTestCase, create_fake_hook_chip
 
 
 class ResearcherBridgeProviderResolutionTests(SparkTestCase):
@@ -567,36 +569,34 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertNotIn("active_personality=Alice", prompt)
 
     def test_build_contextual_task_includes_attached_chip_inventory_for_self_knowledge_queries(self) -> None:
+        create_fake_hook_chip(self.home, chip_key="startup-yc")
+        create_fake_hook_chip(self.home, chip_key="spark-browser")
+        create_fake_hook_chip(self.home, chip_key="spark-personality-chip-labs")
+        create_fake_hook_chip(self.home, chip_key="spark-swarm")
+        create_fake_hook_chip(self.home, chip_key="domain-chip-voice-comms")
+        self.config_manager.set_path("spark.chips.roots", [str(self.home)])
+        self.config_manager.set_path("spark.chips.active_keys", ["startup-yc", "spark-browser"])
+        self.config_manager.set_path("spark.chips.pinned_keys", ["startup-yc"])
+        attachment_context = build_attachment_context(self.config_manager)
+        system_registry_context = build_system_registry_prompt_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="What chips are active around you right now?",
+        )
         prompt = _build_contextual_task(
             user_message="What chips are active around you right now?",
-            attachment_context={
-                "active_chip_keys": ["startup-yc"],
-                "pinned_chip_keys": ["startup-yc"],
-                "attached_chip_keys": [
-                    "startup-yc",
-                    "spark-browser",
-                    "spark-personality-chip-labs",
-                    "spark-swarm",
-                    "domain-chip-voice-comms",
-                ],
-                "attached_path_keys": ["startup-operator"],
-                "attached_chip_records": [
-                    {"key": "startup-yc", "attachment_mode": "pinned", "hook_names": ["evaluate"], "description": ""},
-                    {"key": "spark-browser", "attachment_mode": "available", "hook_names": ["browser.status"], "description": ""},
-                    {"key": "spark-personality-chip-labs", "attachment_mode": "available", "hook_names": ["personality"], "description": ""},
-                    {"key": "spark-swarm", "attachment_mode": "available", "hook_names": ["identity"], "description": ""},
-                    {"key": "domain-chip-voice-comms", "attachment_mode": "available", "hook_names": ["voice.speak"], "description": ""},
-                ],
-                "active_path_key": "startup-operator",
-            },
+            attachment_context=attachment_context,
+            system_registry_context=system_registry_context,
         )
 
-        self.assertIn("attached_chip_keys=startup-yc,spark-browser,spark-personality-chip-labs,spark-swarm,domain-chip-voice-comms", prompt)
+        self.assertIn("active_chip_keys=startup-yc,spark-browser", prompt)
+        self.assertIn("attached_chip_keys=domain-chip-voice-comms,spark-browser,spark-personality-chip-labs,spark-swarm,startup-yc", prompt)
         self.assertIn("[Attached chip inventory]", prompt)
-        self.assertIn("spark-browser mode=available hooks=browser.status", prompt)
-        self.assertIn("[Spark platform map]", prompt)
-        self.assertIn("Spark Researcher: main intelligence core", prompt)
-        self.assertIn("domain-chip-voice-comms: Speech I/O chip", prompt)
+        self.assertIn("spark-browser mode=active", prompt)
+        self.assertIn("[Spark system registry]", prompt)
+        self.assertIn("Spark Researcher: status=", prompt)
+        self.assertIn("Spark Swarm: status=", prompt)
+        self.assertIn("[Current capabilities]", prompt)
 
     def test_load_recent_conversation_context_reads_prior_telegram_turns(self) -> None:
         record_event(
