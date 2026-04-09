@@ -130,7 +130,7 @@ from spark_intelligence.researcher_bridge import discover_researcher_runtime_roo
 from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_doctor, swarm_status, sync_swarm_collective
-from spark_intelligence.harness_registry import build_harness_registry
+from spark_intelligence.harness_registry import build_harness_registry, select_harness_recipe
 from spark_intelligence.harness_runtime import (
     build_harness_runtime_snapshot,
     build_harness_task_envelope,
@@ -1655,6 +1655,7 @@ def build_parser() -> argparse.ArgumentParser:
     harness_plan_parser.add_argument("--human-id", help="Optional human id")
     harness_plan_parser.add_argument("--agent-id", help="Optional agent id")
     harness_plan_parser.add_argument("--harness-id", help="Force a specific harness id instead of routing automatically")
+    harness_plan_parser.add_argument("--recipe", help="Use a named harness recipe instead of raw routing")
     harness_plan_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     harness_execute_parser = harness_subparsers.add_parser("execute", help="Execute a harness task envelope through the harness runtime")
     harness_execute_parser.add_argument("task", help="Task description to execute through the selected harness")
@@ -1664,6 +1665,7 @@ def build_parser() -> argparse.ArgumentParser:
     harness_execute_parser.add_argument("--human-id", help="Optional human id")
     harness_execute_parser.add_argument("--agent-id", help="Optional agent id")
     harness_execute_parser.add_argument("--harness-id", help="Force a specific harness id instead of routing automatically")
+    harness_execute_parser.add_argument("--recipe", help="Use a named harness recipe instead of raw routing")
     harness_execute_parser.add_argument(
         "--then-harness-id",
         action="append",
@@ -4746,20 +4748,35 @@ def handle_harness_plan(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
+    recipe_payload = None
+    forced_harness_id = args.harness_id
+    if args.recipe:
+        recipe = select_harness_recipe(
+            config_manager=config_manager,
+            state_db=state_db,
+            recipe_id=args.recipe,
+        )
+        recipe_payload = recipe.to_payload()
+        forced_harness_id = recipe.primary_harness_id
     envelope = build_harness_task_envelope(
         config_manager=config_manager,
         state_db=state_db,
         task=args.task,
-        forced_harness_id=args.harness_id,
+        forced_harness_id=forced_harness_id,
         channel_kind=args.channel_kind,
         session_id=args.session_id,
         human_id=args.human_id,
         agent_id=args.agent_id,
     )
     if args.json:
-        print(json.dumps(envelope.to_payload(), indent=2))
+        payload = envelope.to_payload()
+        if recipe_payload is not None:
+            payload["recipe"] = recipe_payload
+        print(json.dumps(payload, indent=2))
     else:
         lines = ["Spark harness plan"]
+        if recipe_payload is not None:
+            lines.append(f"- recipe: {recipe_payload['recipe_id']}")
         lines.append(f"- harness: {envelope.harness_id}")
         lines.append(f"- owner: {envelope.owner_system}")
         lines.append(f"- backend: {envelope.backend_kind}")
@@ -4780,17 +4797,29 @@ def handle_harness_execute(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
+    recipe_payload = None
+    forced_harness_id = args.harness_id
+    follow_up_harness_ids = [str(item).strip() for item in (args.then_harness_id or []) if str(item).strip()]
+    if args.recipe:
+        recipe = select_harness_recipe(
+            config_manager=config_manager,
+            state_db=state_db,
+            recipe_id=args.recipe,
+        )
+        recipe_payload = recipe.to_payload()
+        forced_harness_id = recipe.primary_harness_id
+        if not follow_up_harness_ids:
+            follow_up_harness_ids = list(recipe.follow_up_harness_ids)
     envelope = build_harness_task_envelope(
         config_manager=config_manager,
         state_db=state_db,
         task=args.task,
-        forced_harness_id=args.harness_id,
+        forced_harness_id=forced_harness_id,
         channel_kind=args.channel_kind,
         session_id=args.session_id,
         human_id=args.human_id,
         agent_id=args.agent_id,
     )
-    follow_up_harness_ids = [str(item).strip() for item in (args.then_harness_id or []) if str(item).strip()]
     if follow_up_harness_ids:
         result = execute_harness_chain(
             config_manager=config_manager,
@@ -4805,9 +4834,14 @@ def handle_harness_execute(args: argparse.Namespace) -> int:
             envelope=envelope,
         )
     if args.json:
-        print(result.to_json())
+        payload = result.to_payload()
+        if recipe_payload is not None:
+            payload["recipe"] = recipe_payload
+        print(json.dumps(payload, indent=2))
     else:
         lines = ["Spark harness execution"]
+        if recipe_payload is not None:
+            lines.append(f"- recipe: {recipe_payload['recipe_id']}")
         lines.append(f"- harness: {result.envelope.harness_id}")
         lines.append(f"- status: {result.status}")
         lines.append(f"- summary: {result.summary}")

@@ -5,6 +5,7 @@ from spark_intelligence.harness_registry import (
     build_harness_registry,
     build_harness_selection,
     looks_like_harness_query,
+    select_harness_recipe,
 )
 
 from tests.test_support import SparkTestCase, create_fake_hook_chip
@@ -29,6 +30,10 @@ class HarnessRegistryTests(SparkTestCase):
         self.assertIn("browser.grounded", harness_ids)
         self.assertIn("voice.io", harness_ids)
         self.assertIn("swarm.escalation", harness_ids)
+        recipe_ids = [recipe["recipe_id"] for recipe in payload["recipes"]]
+        self.assertIn("advisory_voice_reply", recipe_ids)
+        self.assertIn("research_then_swarm", recipe_ids)
+        self.assertIn("browser_then_advisory", recipe_ids)
 
     def test_browser_route_selects_browser_harness(self) -> None:
         create_fake_hook_chip(self.home, chip_key="spark-browser")
@@ -82,3 +87,17 @@ class HarnessRegistryTests(SparkTestCase):
         self.assertTrue(looks_like_harness_query("How would Spark execute this task?"))
         self.assertTrue(looks_like_harness_query("What backend would you use?"))
         self.assertFalse(looks_like_harness_query("Write a shorter reply."))
+
+    def test_select_harness_recipe_returns_expected_chain(self) -> None:
+        create_fake_hook_chip(self.home, chip_key="domain-chip-voice-comms")
+        self.config_manager.set_path("spark.chips.roots", [str(self.home)])
+        self.config_manager.set_path("spark.chips.active_keys", ["domain-chip-voice-comms"])
+
+        recipe = select_harness_recipe(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            recipe_id="advisory_voice_reply",
+        )
+
+        self.assertEqual(recipe.primary_harness_id, "researcher.advisory")
+        self.assertEqual(recipe.follow_up_harness_ids, ["voice.io"])
