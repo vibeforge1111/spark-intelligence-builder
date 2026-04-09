@@ -191,10 +191,10 @@ class AgentIdentityContractTests(SparkTestCase):
             surface="approval_welcome",
         )
 
-        self.assertEqual(runtime_preamble, "Atlas:")
+        self.assertEqual(runtime_preamble, "")
         self.assertEqual(welcome_preamble, "Pairing approved. Atlas is live in this Telegram DM now.")
 
-    def test_apply_telegram_surface_persona_prefixes_deterministic_runtime_reply(self) -> None:
+    def test_apply_telegram_surface_persona_keeps_deterministic_runtime_reply_unprefixed(self) -> None:
         profile = {
             "traits": {
                 "warmth": 0.64,
@@ -213,7 +213,7 @@ class AgentIdentityContractTests(SparkTestCase):
             surface="runtime_command",
         )
 
-        self.assertEqual(styled, "Atlas here. Swarm is ready.\nAuth: configured.")
+        self.assertEqual(styled, "Swarm is ready.\nAuth: configured.")
 
     def test_rename_agent_identity_changes_name_without_changing_agent_id(self) -> None:
         approve_pairing(

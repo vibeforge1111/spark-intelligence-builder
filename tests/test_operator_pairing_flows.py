@@ -621,7 +621,7 @@ class OperatorPairingFlowTests(SparkTestCase):
             )
 
         self.assertTrue(result.ok)
-        self.assertIn("Atlas: Swarm is ready.", str(result.detail["response_text"]))
+        self.assertIn("Swarm is ready.", str(result.detail["response_text"]))
 
     def test_normal_chat_reply_uses_saved_agent_identity_surface_style(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -695,7 +695,7 @@ class OperatorPairingFlowTests(SparkTestCase):
             )
 
         self.assertTrue(result.ok)
-        self.assertEqual(result.detail["response_text"], "Atlas: Here is the grounded answer.")
+        self.assertEqual(result.detail["response_text"], "Here is the grounded answer.")
 
     def test_natural_language_swarm_status_command_returns_live_bridge_summary(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])

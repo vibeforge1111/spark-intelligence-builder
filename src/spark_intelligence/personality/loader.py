@@ -812,12 +812,7 @@ def build_telegram_surface_identity_preamble(
     )
     if not has_saved_persona:
         return ""
-
-    if directness >= 0.65 or warmth <= 0.4:
-        return f"{visible_name}:"
-    if warmth >= 0.6:
-        return f"{visible_name} here."
-    return f"{visible_name}:"
+    return ""
 
 
 def apply_telegram_surface_persona(
