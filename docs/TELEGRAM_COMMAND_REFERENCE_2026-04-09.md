@@ -54,6 +54,7 @@ Natural-language examples:
 - `/style score`
 - `/style examples`
 - `/style compare`
+- `/style before-after <instruction>`
 - `/style test`
 - `/style train <instruction>`
 - `/style feedback <note>`
@@ -67,6 +68,7 @@ Natural-language examples:
 - `Score my style`
 - `Show me my style examples`
 - `Compare my style`
+- `Show me style before and after for be more direct and keep replies short`
 - `Train your style to be more direct and keep replies short`
 - `Be more Claude-like in conversation continuity`
 - `That was too verbose`

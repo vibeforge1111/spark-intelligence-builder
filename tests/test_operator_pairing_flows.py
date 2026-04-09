@@ -3007,6 +3007,51 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Style examples for", result.detail["response_text"])
         self.assertEqual(result.detail["bridge_mode"], "runtime_command")
 
+    def test_style_before_after_command_returns_preview_delta_without_persisting(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11718,
+                user_id="111",
+                username="alice",
+                text="/style before-after be more direct and keep replies short",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Style before/after for", result.detail["response_text"])
+        self.assertIn("Overall:", result.detail["response_text"])
+        self.assertIn("Before:", result.detail["response_text"])
+        self.assertIn("After:", result.detail["response_text"])
+        profile = load_personality_profile(
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            state_db=self.state_db,
+            config_manager=self.config_manager,
+        )
+        self.assertNotEqual(profile["style_labels"]["directness"], "very direct")
+
+    def test_natural_language_style_before_after_command_returns_preview_delta(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11719,
+                user_id="111",
+                username="alice",
+                text="Show me style before and after for be more direct and keep replies short",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Style before/after for", result.detail["response_text"])
+        self.assertEqual(result.detail["bridge_mode"], "runtime_command")
+
     def test_style_test_command_returns_training_probe_prompts(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 

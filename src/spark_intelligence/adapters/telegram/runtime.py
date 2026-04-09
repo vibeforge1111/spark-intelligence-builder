@@ -2520,6 +2520,16 @@ def _parse_style_command(inbound_text: str) -> dict[str, str | None] | None:
         return {"command": "/style examples", "payload": None}
     if lowered in {"/style compare", "style compare"}:
         return {"command": "/style compare", "payload": None}
+    before_after_prefixes = (
+        "/style before-after ",
+        "style before-after ",
+        "/style before after ",
+        "style before after ",
+    )
+    for prefix in before_after_prefixes:
+        if lowered.startswith(prefix):
+            payload = normalized[len(prefix) :].strip()
+            return {"command": "/style before-after", "payload": payload}
     if lowered in {"/style test", "style test"}:
         return {"command": "/style test", "payload": None}
     feedback_prefixes = ("/style feedback ", "style feedback ")
@@ -2632,6 +2642,15 @@ def _match_natural_style_command(inbound_text: str) -> dict[str, str | None] | N
         "show me how you would reply right now",
     }:
         return {"command": "/style examples", "payload": None}
+    for pattern in (
+        r"^(?:show(?:\s+me)?|preview|compare)\s+(?:my\s+)?style\s+before(?:\s+and\s+|\-)?after\s+(?:for|with)\s+(?P<payload>.+)$",
+        r"^(?:show(?:\s+me)?|preview)\s+before(?:\s+and\s+|\-)?after\s+(?:style\s+)?for\s+(?P<payload>.+)$",
+    ):
+        match = re.match(pattern, normalized, flags=re.IGNORECASE)
+        if match:
+            payload = " ".join(str(match.group("payload") or "").strip().split())
+            if payload:
+                return {"command": "/style before-after", "payload": payload}
     if simplified in {
         "compare my style",
         "show me a style comparison",
@@ -2772,6 +2791,7 @@ def _handle_style_command(
                 "`/style score` to grade the current voice against the training rubric, "
                 "`/style examples` to see fixed sample replies in the current voice, "
                 "`/style compare` to preview how the current voice differs from the default baseline, "
+                "`/style before-after <instruction>` to preview a training change before saving it, "
                 "`/style train <instruction>` to save a new style rule, and `/style feedback <note>` after a live test reply.\n"
                 "Next: after training, ask a normal question in this DM to test the visible voice."
             ),
@@ -2810,6 +2830,24 @@ def _handle_style_command(
         return {
             "command": "/style examples",
             "reply_text": _render_style_examples_reply(profile=profile, agent_name=agent_name),
+        }
+    if command == "/style before-after":
+        instruction = str(payload or "").strip()
+        if not instruction:
+            return {
+                "command": "/style before-after",
+                "reply_text": (
+                    "Style before/after needs an instruction.\n"
+                    "Next: send `/style before-after be more direct and keep replies short`."
+                ),
+            }
+        return {
+            "command": "/style before-after",
+            "reply_text": _render_style_before_after_reply(
+                profile=profile,
+                agent_name=agent_name,
+                instruction=instruction,
+            ),
         }
     if command == "/style compare":
         return {
@@ -3170,6 +3208,78 @@ def _render_style_examples_reply(*, profile: dict[str, Any] | None, agent_name: 
         lines.append(f"Sample: {sample}")
     lines.append("Next: if one sample feels off, use `/style feedback <note>`. Use `/style compare` to see baseline drift.")
     return "\n".join(lines)
+
+
+def _render_style_before_after_reply(*, profile: dict[str, Any] | None, agent_name: str | None, instruction: str) -> str:
+    resolved_profile = profile or {}
+    simulated_profile = _simulate_style_profile(resolved_profile, instruction=instruction)
+    name = str(agent_name or resolved_profile.get("agent_persona_name") or "the agent").strip()
+    current_rows = _style_score_rows(resolved_profile)
+    simulated_rows = _style_score_rows(simulated_profile)
+    current_overall = round(sum(score for _, score, _ in current_rows) / max(len(current_rows), 1), 1)
+    simulated_overall = round(sum(score for _, score, _ in simulated_rows) / max(len(simulated_rows), 1), 1)
+    deltas: list[str] = []
+    for (label, current_score, _), (_, next_score, _) in zip(current_rows, simulated_rows):
+        if round(next_score - current_score, 1) != 0:
+            delta = round(next_score - current_score, 1)
+            sign = "+" if delta > 0 else ""
+            deltas.append(f"{label} {current_score}/10 -> {next_score}/10 ({sign}{delta})")
+    current_examples = dict(_style_example_rows(resolved_profile))
+    simulated_examples = dict(_style_example_rows(simulated_profile))
+    applied = _display_style_training_message(_build_style_training_message(instruction))
+    lines = [f"Style before/after for {name}.", f"Instruction: {applied or instruction}."]
+    lines.append(f"Overall: {current_overall}/10 -> {simulated_overall}/10.")
+    if deltas:
+        lines.append("Delta: " + " | ".join(deltas[:4]) + ".")
+    for prompt in (
+        "Give me the answer in two lines and skip filler.",
+        "Ask me one clarifying question, then stop.",
+    ):
+        lines.append(f"Prompt: {prompt}")
+        lines.append(f"Before: {current_examples.get(prompt, '')}")
+        lines.append(f"After: {simulated_examples.get(prompt, '')}")
+    lines.append("Next: if this looks right, use `/style train <instruction>` to save it.")
+    return "\n".join(lines)
+
+
+def _simulate_style_profile(profile: dict[str, Any], *, instruction: str) -> dict[str, Any]:
+    training_message = _build_style_training_message(instruction)
+    simulated: dict[str, Any] = dict(profile or {})
+    next_traits = dict((profile or {}).get("traits") or {})
+    for trait in ("warmth", "directness", "playfulness", "pacing", "assertiveness"):
+        next_traits.setdefault(trait, 0.5)
+    next_rules = [str(rule).strip() for rule in list((profile or {}).get("agent_behavioral_rules") or []) if str(rule).strip()]
+    normalized_lines = [
+        str(line).strip()
+        for line in str(training_message or "").splitlines()
+        if str(line).strip() and str(line).strip().lower() != "your style."
+    ]
+    for line in normalized_lines:
+        if line not in next_rules:
+            next_rules.append(line)
+    lowered = str(training_message or "").lower()
+    if "less verbose" in lowered or "keep replies short" in lowered or "get to the point" in lowered:
+        next_traits["pacing"] = min(1.0, float(next_traits.get("pacing", 0.5)) + 0.2)
+        next_traits["directness"] = min(1.0, float(next_traits.get("directness", 0.5)) + 0.1)
+    if "more direct" in lowered or "stop hedging" in lowered:
+        next_traits["directness"] = min(1.0, float(next_traits.get("directness", 0.5)) + 0.2)
+        next_traits["assertiveness"] = min(1.0, float(next_traits.get("assertiveness", 0.5)) + 0.1)
+    if "more assertive" in lowered:
+        next_traits["assertiveness"] = min(1.0, float(next_traits.get("assertiveness", 0.5)) + 0.2)
+    if "less formal" in lowered or "more human" in lowered or "warmer" in lowered or "friendly" in lowered:
+        next_traits["warmth"] = min(1.0, float(next_traits.get("warmth", 0.5)) + 0.15)
+    if "gentler" in lowered:
+        next_traits["warmth"] = min(1.0, float(next_traits.get("warmth", 0.5)) + 0.15)
+        next_traits["assertiveness"] = max(0.0, float(next_traits.get("assertiveness", 0.5)) - 0.05)
+    if "more serious" in lowered:
+        next_traits["playfulness"] = max(0.0, float(next_traits.get("playfulness", 0.5)) - 0.15)
+    if "slow down" in lowered or "explain more" in lowered:
+        next_traits["pacing"] = max(0.0, float(next_traits.get("pacing", 0.5)) - 0.1)
+    simulated["traits"] = next_traits
+    simulated["agent_behavioral_rules"] = next_rules
+    if normalized_lines and not str(simulated.get("agent_persona_summary") or "").strip():
+        simulated["agent_persona_summary"] = normalized_lines[0]
+    return simulated
 
 
 def _render_style_compare_reply(*, profile: dict[str, Any] | None, agent_name: str | None) -> str:
