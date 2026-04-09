@@ -11,6 +11,8 @@ __pycache__/
 .pytest_cache/
 .idea/
 .vscode/
+# Internal operator-only local notes and bridge/test-harness docs.
+# Use this for features such as the terminal-to-Telegram bridge that must stay removable from public/runtime services.
 .tmp-home/
 .tmp-home-*/
 .tmp-telegram-*.json
