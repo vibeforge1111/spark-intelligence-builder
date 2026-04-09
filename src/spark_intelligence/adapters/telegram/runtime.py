@@ -2590,13 +2590,7 @@ def _handle_style_command(
                     "Reason: this Telegram DM does not have a resolved Builder identity yet."
                 ),
             }
-        training_message = instruction
-        lowered_instruction = instruction.lower()
-        if not any(
-            marker in lowered_instruction
-            for marker in ("your personality", "your style", "agent persona", "your name is", "call you", "rename yourself")
-        ):
-            training_message = f"Your style.\n{instruction}"
+        training_message = _build_style_training_message(instruction)
         mutation = detect_and_persist_agent_persona_preferences(
             agent_id=agent_id,
             human_id=human_id,
@@ -2695,11 +2689,72 @@ def _handle_style_command(
     return {"command": command, "reply_text": "Style command is unavailable right now."}
 
 
+def _build_style_training_message(instruction: str) -> str:
+    normalized = " ".join(str(instruction or "").strip().split())
+    lowered = normalized.lower()
+    if not normalized:
+        return ""
+    if "claude" in lowered or ("continuity" in lowered and "conversation" in lowered):
+        return (
+            "Your style.\n"
+            "Stay anchored to the user's last message instead of resetting the conversation.\n"
+            "Start by acknowledging the user's core point before moving the conversation forward.\n"
+            "Avoid generic opener questions and canned assistant greetings.\n"
+            "Ask at most one specific follow-up question when needed."
+        )
+    if any(token in lowered for token in ("canned", "generic", "scripted", "chatbot")):
+        return (
+            "Your style.\n"
+            "Avoid canned enthusiasm and generic assistant phrasing.\n"
+            "Stay on the user's actual thread instead of restarting the conversation.\n"
+            "Prefer a concrete answer or next step over filler."
+        )
+    if ("follow-up" in lowered or "follow up" in lowered) and any(
+        token in lowered for token in ("grounded", "specific", "better", "question", "questions")
+    ):
+        return (
+            "Your style.\n"
+            "Ask at most one follow-up question when needed.\n"
+            "Ask follow-up questions that are specific to the user's last message.\n"
+            "Do not ask broad check-in questions when a concrete follow-up is available."
+        )
+    if not any(
+        marker in lowered
+        for marker in ("your personality", "your style", "agent persona", "your name is", "call you", "rename yourself")
+    ):
+        return f"Your style.\n{normalized}"
+    return normalized
+
+
 def _build_style_feedback_training_message(*, feedback: str, sentiment: str) -> str:
     normalized = " ".join(str(feedback or "").strip().split())
     lowered = normalized.lower()
     if not normalized:
         return ""
+    if "claude" in lowered or ("continuity" in lowered and "conversation" in lowered):
+        return (
+            "Your style.\n"
+            "Stay anchored to the user's last message instead of resetting the conversation.\n"
+            "Start by acknowledging the user's core point before moving the conversation forward.\n"
+            "Avoid generic opener questions and canned assistant greetings.\n"
+            "Ask at most one specific follow-up question when needed."
+        )
+    if any(token in lowered for token in ("canned", "generic", "scripted", "chatbot")):
+        return (
+            "Your style.\n"
+            "Avoid canned enthusiasm and generic assistant phrasing.\n"
+            "Stay on the user's actual thread instead of restarting the conversation.\n"
+            "Prefer a concrete answer or next step over filler."
+        )
+    if ("follow-up" in lowered or "follow up" in lowered) and any(
+        token in lowered for token in ("grounded", "specific", "better", "question", "questions")
+    ):
+        return (
+            "Your style.\n"
+            "Ask at most one follow-up question when needed.\n"
+            "Ask follow-up questions that are specific to the user's last message.\n"
+            "Do not ask broad check-in questions when a concrete follow-up is available."
+        )
     if sentiment == "positive":
         if "direct" in lowered or "concise" in lowered or "short" in lowered:
             return "Your style.\nStay direct and keep replies short."

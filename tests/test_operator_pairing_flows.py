@@ -2802,6 +2802,38 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(profile["agent_persona_applied"])
         self.assertEqual(profile["style_labels"]["directness"], "very direct")
 
+    def test_style_train_claude_like_continuity_persists_conversation_rules(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11705,
+                user_id="111",
+                username="alice",
+                text="/style train be more Claude-like in conversation continuity",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Saved style update", result.detail["response_text"])
+        self.assertIn("Stay anchored to the user's last message", result.detail["response_text"])
+        profile = load_personality_profile(
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            state_db=self.state_db,
+            config_manager=self.config_manager,
+        )
+        self.assertIn(
+            "Stay anchored to the user's last message instead of resetting the conversation",
+            profile["agent_behavioral_rules"],
+        )
+        self.assertIn(
+            "Avoid generic opener questions and canned assistant greetings",
+            profile["agent_behavioral_rules"],
+        )
+
     def test_style_test_command_returns_training_probe_prompts(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
@@ -2846,6 +2878,34 @@ class OperatorPairingFlowTests(SparkTestCase):
         )
         self.assertEqual(profile["style_labels"]["directness"], "very direct")
         self.assertEqual(profile["style_labels"]["pacing"], "brisk")
+
+    def test_style_feedback_maps_canned_conversation_feedback_into_behavior_rules(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11711,
+                user_id="111",
+                username="alice",
+                text="/style feedback less canned and more grounded follow-up questions",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Saved style feedback", result.detail["response_text"])
+        self.assertIn("Avoid canned enthusiasm and generic assistant phrasing", result.detail["response_text"])
+        profile = load_personality_profile(
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            state_db=self.state_db,
+            config_manager=self.config_manager,
+        )
+        self.assertIn(
+            "Avoid canned enthusiasm and generic assistant phrasing",
+            profile["agent_behavioral_rules"],
+        )
 
     def test_style_history_reports_empty_when_no_saved_mutations_exist(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
