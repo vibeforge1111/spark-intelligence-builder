@@ -51,6 +51,7 @@ Natural-language examples:
 - `/style`
 - `/style status`
 - `/style history`
+- `/style score`
 - `/style compare`
 - `/style test`
 - `/style train <instruction>`
@@ -62,6 +63,7 @@ Natural-language examples:
 
 - `Can you show me my current style?`
 - `What style changes have you saved?`
+- `Score my style`
 - `Compare my style`
 - `Train your style to be more direct and keep replies short`
 - `Be more Claude-like in conversation continuity`

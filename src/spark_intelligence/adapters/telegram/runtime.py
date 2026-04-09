@@ -2514,6 +2514,8 @@ def _parse_style_command(inbound_text: str) -> dict[str, str | None] | None:
         return {"command": "/style status", "payload": None}
     if lowered in {"/style history", "style history"}:
         return {"command": "/style history", "payload": None}
+    if lowered in {"/style score", "style score"}:
+        return {"command": "/style score", "payload": None}
     if lowered in {"/style compare", "style compare"}:
         return {"command": "/style compare", "payload": None}
     if lowered in {"/style test", "style test"}:
@@ -2611,6 +2613,15 @@ def _match_natural_style_command(inbound_text: str) -> dict[str, str | None] | N
         flags=re.IGNORECASE,
     ):
         return {"command": "/style history", "payload": None}
+    if simplified in {
+        "score my style",
+        "show my style score",
+        "show me my style score",
+        "how is my style scoring",
+        "grade my style",
+        "grade my current style",
+    }:
+        return {"command": "/style score", "payload": None}
     if simplified in {
         "compare my style",
         "show me a style comparison",
@@ -2748,6 +2759,7 @@ def _handle_style_command(
             "reply_text": (
                 "Style controls: `/style status` to inspect the current Telegram persona, "
                 "`/style history` to inspect recent saved mutations, "
+                "`/style score` to grade the current voice against the training rubric, "
                 "`/style compare` to preview how the current voice differs from the default baseline, "
                 "`/style train <instruction>` to save a new style rule, and `/style feedback <note>` after a live test reply.\n"
                 "Next: after training, ask a normal question in this DM to test the visible voice."
@@ -2777,6 +2789,11 @@ def _handle_style_command(
                 profile=profile,
                 agent_name=agent_name,
             ),
+        }
+    if command == "/style score":
+        return {
+            "command": "/style score",
+            "reply_text": _render_style_score_reply(profile=profile, agent_name=agent_name),
         }
     if command == "/style compare":
         return {
@@ -3027,7 +3044,7 @@ def _render_style_status_reply(*, profile: dict[str, Any] | None, agent_name: st
         lines.append(f"Traits: {style_summary}.")
     if behavioral_rules:
         lines.append("Rules: " + " | ".join(behavioral_rules[:4]) + ".")
-    lines.append("Next: `/style compare` to preview the current voice, then `/style train <instruction>` to shape it.")
+    lines.append("Next: `/style score` to grade the current voice, then `/style compare` to preview it.")
     return "\n".join(lines)
 
 
@@ -3109,7 +3126,22 @@ def _render_style_test_reply(*, profile: dict[str, Any] | None, agent_name: str 
     lines.append('2. `Critique this plan bluntly and tell me the next step.`')
     lines.append('3. `Search the web for BTC and cite the source.`')
     lines.append('4. `Ask me one clarifying question, then stop.`')
-    lines.append("Next: after each reply, use `/style feedback <note>`, `/style good <note>`, or `/style bad <note>`. Use `/style compare` for a side-by-side preview.")
+    lines.append("Next: after each reply, use `/style feedback <note>`, `/style good <note>`, or `/style bad <note>`. Use `/style score` for the rubric and `/style compare` for a side-by-side preview.")
+    return "\n".join(lines)
+
+
+def _render_style_score_reply(*, profile: dict[str, Any] | None, agent_name: str | None) -> str:
+    resolved_profile = profile or {}
+    name = str(agent_name or resolved_profile.get("agent_persona_name") or "the agent").strip()
+    score_rows = _style_score_rows(resolved_profile)
+    overall = round(sum(score for _, score, _ in score_rows) / max(len(score_rows), 1), 1)
+    lines = [f"Style score for {name}: {overall}/10."]
+    for label, score, rationale in score_rows:
+        lines.append(f"- {label}: {score}/10 - {rationale}")
+    weakest = min(score_rows, key=lambda row: row[1])[0]
+    strongest = max(score_rows, key=lambda row: row[1])[0]
+    lines.append(f"Strongest: {strongest}.")
+    lines.append(f"Next focus: {weakest}. Use `/style feedback <note>` or `/style train <instruction>` to move it.")
     return "\n".join(lines)
 
 
@@ -3131,6 +3163,55 @@ def _render_style_compare_reply(*, profile: dict[str, Any] | None, agent_name: s
         lines.append(f"Current: {current}")
     lines.append("Next: if one of the current examples is off, use `/style feedback <note>` or `/style train <instruction>`.")
     return "\n".join(lines)
+
+
+def _style_score_rows(profile: dict[str, Any]) -> list[tuple[str, float, str]]:
+    traits = profile.get("traits") or {}
+    rules = [str(rule).strip().lower() for rule in list(profile.get("agent_behavioral_rules") or []) if str(rule).strip()]
+    persona_summary = str(profile.get("agent_persona_summary") or "").strip()
+    directness = float(traits.get("directness", 0.5))
+    pacing = float(traits.get("pacing", 0.5))
+    warmth = float(traits.get("warmth", 0.5))
+    assertiveness = float(traits.get("assertiveness", 0.5))
+    continuity = any("anchored to the user's last message" in rule or "stay on the user's actual thread" in rule for rule in rules)
+    avoid_canned = any("avoid canned enthusiasm" in rule or "avoid generic opener questions" in rule for rule in rules)
+    follow_up_specific = any(
+        "specific to the user's last message" in rule or "do not ask broad check-in questions" in rule for rule in rules
+    )
+
+    continuity_score = min(10.0, 5.0 + (3.0 if continuity else 0.0) + (2.0 if avoid_canned else 0.0))
+    filler_score = min(10.0, 4.0 + (2.0 if pacing >= 0.65 else 0.0) + (2.0 if directness >= 0.65 else 0.0) + (2.0 if avoid_canned else 0.0))
+    follow_up_score = min(10.0, 4.0 + (4.0 if follow_up_specific else 0.0) + (1.0 if continuity else 0.0) + (1.0 if directness >= 0.6 else 0.0))
+    directness_score = min(10.0, 4.0 + round(directness * 3.0, 1) + round(assertiveness * 2.0, 1) + (1.0 if pacing >= 0.6 else 0.0))
+    consistency_score = min(10.0, 4.0 + (2.0 if persona_summary else 0.0) + min(3.0, float(len(rules))) + (1.0 if 0.35 <= warmth <= 0.8 else 0.0))
+
+    return [
+        (
+            "Continuity",
+            round(continuity_score, 1),
+            "Stays anchored to the user's actual thread instead of restarting the conversation." if continuity else "Still needs stronger thread continuity rules.",
+        ),
+        (
+            "Anti-filler",
+            round(filler_score, 1),
+            "Pushes toward concise answers and avoids canned filler." if avoid_canned or pacing >= 0.65 else "Still at risk of generic or padded replies.",
+        ),
+        (
+            "Follow-up specificity",
+            round(follow_up_score, 1),
+            "Favors one specific follow-up question when clarification is needed." if follow_up_specific else "Needs stronger follow-up-question constraints.",
+        ),
+        (
+            "Directness",
+            round(directness_score, 1),
+            "Keeps answers clear and decisive." if directness >= 0.65 or assertiveness >= 0.65 else "Could still be more direct and decisive.",
+        ),
+        (
+            "Voice consistency",
+            round(consistency_score, 1),
+            "The saved persona summary and rules are strong enough to stabilize the voice." if persona_summary or rules else "Needs more saved persona detail to keep the voice stable.",
+        ),
+    ]
 
 
 def _style_compare_examples(profile: dict[str, Any]) -> list[tuple[str, str, str]]:
