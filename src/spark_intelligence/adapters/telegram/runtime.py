@@ -3684,13 +3684,21 @@ def _apply_post_approval_welcome(
     agent_id: str | None,
     reply_text: str,
 ) -> str:
+    styled_reply = _apply_saved_telegram_surface_style(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=human_id,
+        agent_id=agent_id,
+        reply_text=reply_text,
+        surface="telegram_chat",
+    )
     welcome_pending = consume_pairing_welcome(
         state_db=state_db,
         channel_id="telegram",
         external_user_id=external_user_id,
     )
     if not welcome_pending:
-        return reply_text
+        return styled_reply
     profile, agent_name = _load_telegram_persona_surface_state(
         config_manager=config_manager,
         state_db=state_db,
@@ -3702,7 +3710,7 @@ def _apply_post_approval_welcome(
         agent_name=agent_name or "Spark Intelligence",
         surface="approval_welcome",
     )
-    return f"{welcome_text}\n\n{reply_text}".strip()
+    return f"{welcome_text}\n\n{styled_reply}".strip()
 
 
 def _pairing_reply_text(default_text: str, *, inbound_text: str) -> str:

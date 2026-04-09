@@ -5,6 +5,7 @@ from unittest.mock import patch
 from spark_intelligence.adapters.telegram.runtime import simulate_telegram_update
 from spark_intelligence.identity.service import (
     approve_pairing,
+    consume_pairing_welcome,
     pairing_summary,
     read_canonical_agent_state,
     record_pairing_context,
@@ -620,6 +621,80 @@ class OperatorPairingFlowTests(SparkTestCase):
 
         self.assertTrue(result.ok)
         self.assertIn("Atlas: Swarm is ready.", str(result.detail["response_text"]))
+
+    def test_normal_chat_reply_uses_saved_agent_identity_surface_style(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+        rename_agent_identity(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+            new_name="Atlas",
+            source_surface="telegram",
+            source_ref="test",
+        )
+        save_agent_persona_profile(
+            agent_id="agent:human:telegram:111",
+            human_id="human:telegram:111",
+            state_db=self.state_db,
+            base_traits={
+                "warmth": 0.62,
+                "directness": 0.83,
+                "playfulness": 0.2,
+                "pacing": 0.66,
+                "assertiveness": 0.74,
+            },
+            persona_name="Atlas",
+            persona_summary="Calm, strategic, very direct, low-fluff.",
+        )
+        self.assertTrue(
+            consume_pairing_welcome(
+                state_db=self.state_db,
+                channel_id="telegram",
+                external_user_id="111",
+            )
+        )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            return_value=ResearcherBridgeResult(
+                request_id="req-normal-chat-persona",
+                reply_text="Here is the grounded answer.",
+                evidence_summary="status=under_supported provider_fallback=direct_http_chat",
+                escalation_hint=None,
+                trace_ref="trace:normal-chat-persona",
+                mode="external_configured",
+                runtime_root="C:/fake-researcher",
+                config_path="C:/fake-researcher/spark-researcher.project.json",
+                attachment_context={},
+                provider_id="custom",
+                provider_auth_profile_id="custom:default",
+                provider_auth_method="api_key_env",
+                provider_model="MiniMax-M2.7",
+                provider_model_family="generic",
+                provider_execution_transport="direct_http",
+                provider_base_url="https://api.minimax.io/v1",
+                provider_source="config+env",
+                routing_decision="provider_fallback_chat",
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=315,
+                    user_id="111",
+                    username="alice",
+                    text="Tell me something useful.",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.detail["response_text"], "Atlas: Here is the grounded answer.")
 
     def test_natural_language_swarm_status_command_returns_live_bridge_summary(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
