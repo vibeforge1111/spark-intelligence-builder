@@ -52,17 +52,25 @@ class HarnessRegistrySnapshot:
     generated_at: str
     workspace_id: str
     contracts: list[HarnessContract]
+    recipes: list[dict[str, Any]]
 
     def to_payload(self) -> dict[str, Any]:
         return {
             "generated_at": self.generated_at,
             "workspace_id": self.workspace_id,
             "contracts": [contract.to_dict() for contract in self.contracts],
+            "recipes": self.recipes,
             "summary": {
                 "contract_count": len(self.contracts),
                 "available_contract_count": len([item for item in self.contracts if item.available]),
                 "degraded_contract_count": len([item for item in self.contracts if item.degraded]),
                 "available_harnesses": [item.harness_id for item in self.contracts if item.available],
+                "recipe_count": len(self.recipes),
+                "available_recipes": [
+                    str(item.get("recipe_id") or "")
+                    for item in self.recipes
+                    if bool(item.get("available"))
+                ],
             },
         }
 
@@ -107,6 +115,28 @@ class HarnessSelectionDecision:
 
     def to_json(self) -> str:
         return json.dumps(self.to_payload(), indent=2)
+
+
+@dataclass(frozen=True)
+class HarnessRecipeSelection:
+    recipe_id: str
+    label: str
+    description: str
+    primary_harness_id: str
+    follow_up_harness_ids: list[str]
+    available: bool
+    limitations: list[str]
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "recipe_id": self.recipe_id,
+            "label": self.label,
+            "description": self.description,
+            "primary_harness_id": self.primary_harness_id,
+            "follow_up_harness_ids": self.follow_up_harness_ids,
+            "available": self.available,
+            "limitations": self.limitations,
+        }
 
 
 def looks_like_harness_query(message: str) -> bool:
@@ -244,10 +274,12 @@ def build_harness_registry(
             system_records=system_records,
         ),
     ]
+    recipes = _build_harness_recipes(contracts)
     return HarnessRegistrySnapshot(
         generated_at=_now_iso(),
         workspace_id=workspace_id,
         contracts=contracts,
+        recipes=recipes,
     )
 
 
@@ -328,6 +360,9 @@ def build_harness_prompt_context(
     available_harnesses = [str(item) for item in (summary.get("available_harnesses") or []) if str(item)]
     if available_harnesses:
         lines.append(f"- available_harnesses={','.join(available_harnesses[:8])}")
+    available_recipes = [str(item) for item in (summary.get("available_recipes") or []) if str(item)]
+    if available_recipes:
+        lines.append(f"- available_recipes={','.join(available_recipes[:8])}")
     limitations = [str(item) for item in (selection.get("limitations") or []) if str(item)]
     if limitations:
         lines.append("[Harness limitations]")
@@ -343,6 +378,34 @@ def build_harness_prompt_context(
         ]
     )
     return "\n".join(lines)
+
+
+def select_harness_recipe(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    recipe_id: str,
+) -> HarnessRecipeSelection:
+    registry = build_harness_registry(config_manager, state_db).to_payload()
+    recipes = {
+        str(recipe.get("recipe_id") or ""): recipe
+        for recipe in (registry.get("recipes") or [])
+        if isinstance(recipe, dict)
+    }
+    normalized_recipe_id = str(recipe_id or "").strip()
+    recipe = recipes.get(normalized_recipe_id)
+    if recipe is None:
+        available = ", ".join(sorted(recipes)) or "none"
+        raise ValueError(f"Unknown harness recipe '{normalized_recipe_id}'. Available recipes: {available}")
+    return HarnessRecipeSelection(
+        recipe_id=str(recipe.get("recipe_id") or ""),
+        label=str(recipe.get("label") or normalized_recipe_id),
+        description=str(recipe.get("description") or ""),
+        primary_harness_id=str(recipe.get("primary_harness_id") or ""),
+        follow_up_harness_ids=[str(item) for item in (recipe.get("follow_up_harness_ids") or []) if str(item)],
+        available=bool(recipe.get("available")),
+        limitations=[str(item) for item in (recipe.get("limitations") or []) if str(item)],
+    )
 
 
 def _build_harness_contract(
@@ -406,6 +469,58 @@ def _select_harness_id(
             return "researcher.advisory"
         return "builder.direct"
     return "builder.direct"
+
+
+def _build_harness_recipes(contracts: list[HarnessContract]) -> list[dict[str, Any]]:
+    contract_map = {contract.harness_id: contract for contract in contracts}
+
+    def recipe_available(primary: str, follow_ups: list[str]) -> bool:
+        ids = [primary, *follow_ups]
+        return all(bool(contract_map.get(item) and contract_map[item].available) for item in ids)
+
+    def recipe_limitations(primary: str, follow_ups: list[str]) -> list[str]:
+        gathered: list[str] = []
+        for harness_id in [primary, *follow_ups]:
+            contract = contract_map.get(harness_id)
+            if contract:
+                gathered.extend(contract.limitations)
+        return _dedupe_preserve_order(gathered)[:6]
+
+    recipe_specs = [
+        {
+            "recipe_id": "advisory_voice_reply",
+            "label": "Advisory Voice Reply",
+            "description": "Run a normal advisory reply through Spark Researcher, then synthesize the final answer through Spark Voice.",
+            "primary_harness_id": "researcher.advisory",
+            "follow_up_harness_ids": ["voice.io"],
+        },
+        {
+            "recipe_id": "research_then_swarm",
+            "label": "Research Then Swarm",
+            "description": "Generate an advisory answer first, then prepare the task for Swarm escalation with a dry-run payload build.",
+            "primary_harness_id": "researcher.advisory",
+            "follow_up_harness_ids": ["swarm.escalation"],
+        },
+        {
+            "recipe_id": "browser_then_advisory",
+            "label": "Browser Then Advisory",
+            "description": "Open a governed browser-grounding step first, then hand the grounded task back into Spark Researcher.",
+            "primary_harness_id": "browser.grounded",
+            "follow_up_harness_ids": ["researcher.advisory"],
+        },
+    ]
+    recipes: list[dict[str, Any]] = []
+    for spec in recipe_specs:
+        primary_harness_id = str(spec["primary_harness_id"])
+        follow_up_harness_ids = [str(item) for item in spec["follow_up_harness_ids"]]
+        recipes.append(
+            {
+                **spec,
+                "available": recipe_available(primary_harness_id, follow_up_harness_ids),
+                "limitations": recipe_limitations(primary_harness_id, follow_up_harness_ids),
+            }
+        )
+    return recipes
 
 
 def _dedupe_preserve_order(items: list[str]) -> list[str]:
