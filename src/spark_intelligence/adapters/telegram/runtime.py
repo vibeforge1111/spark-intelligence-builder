@@ -29,6 +29,7 @@ from spark_intelligence.observability.store import build_text_mutation_facts, cl
 from spark_intelligence.personality import (
     apply_telegram_surface_persona,
     build_telegram_surface_identity_preamble,
+    detect_and_persist_agent_persona_preferences,
     load_personality_profile,
     maybe_handle_agent_persona_onboarding_turn,
 )
@@ -429,69 +430,87 @@ def simulate_telegram_update(
             active_chip_evaluate_used = False
             evidence_summary = None
         else:
-            onboarding_result = maybe_handle_agent_persona_onboarding_turn(
-                human_id=resolution.human_id,
-                agent_id=resolution.agent_id,
-                user_message=normalized.text,
-                state_db=state_db,
-                source_surface="telegram",
-                source_ref=f"sim:{normalized.update_id}",
-                start_if_eligible=pairing_welcome_pending(
-                    state_db=state_db,
-                    channel_id="telegram",
-                    external_user_id=normalized.telegram_user_id,
-                ),
-            )
-            if onboarding_result is not None:
-                outbound_text = _apply_post_approval_welcome(
+            if normalized.message_kind in {"voice", "audio"}:
+                outbound_text = _apply_saved_telegram_surface_style(
                     config_manager=config_manager,
                     state_db=state_db,
-                    external_user_id=normalized.telegram_user_id,
                     human_id=resolution.human_id,
                     agent_id=resolution.agent_id,
-                    reply_text=onboarding_result.reply_text,
+                    reply_text=_render_telegram_voice_not_ready_reply(message_kind=normalized.message_kind),
+                    surface="runtime_command",
                 )
                 trace_ref = None
-                bridge_mode = "agent_onboarding"
+                bridge_mode = "runtime_command"
                 attachment_context = None
-                routing_decision = "agent_onboarding"
+                routing_decision = "voice_not_ready"
                 active_chip_key = None
                 active_chip_task_type = None
                 active_chip_evaluate_used = False
                 evidence_summary = None
             else:
-                bridge_result = build_researcher_reply(
-                    config_manager=config_manager,
-                    state_db=state_db,
-                    request_id=f"sim:{normalized.update_id}",
-                    agent_id=resolution.agent_id,
+                onboarding_result = maybe_handle_agent_persona_onboarding_turn(
                     human_id=resolution.human_id,
-                    session_id=resolution.session_id,
-                    channel_kind="telegram",
+                    agent_id=resolution.agent_id,
                     user_message=normalized.text,
-                )
-                record_researcher_bridge_result(state_db=state_db, result=bridge_result)
-                shaped_bridge_reply = _shape_telegram_bridge_reply(
-                    bridge_result.reply_text,
-                    bridge_mode=bridge_result.mode,
-                    routing_decision=bridge_result.routing_decision,
-                )
-                outbound_text = _apply_post_approval_welcome(
-                    config_manager=config_manager,
                     state_db=state_db,
-                    external_user_id=normalized.telegram_user_id,
-                    human_id=resolution.human_id,
-                    agent_id=resolution.agent_id,
-                    reply_text=shaped_bridge_reply,
+                    source_surface="telegram",
+                    source_ref=f"sim:{normalized.update_id}",
+                    start_if_eligible=pairing_welcome_pending(
+                        state_db=state_db,
+                        channel_id="telegram",
+                        external_user_id=normalized.telegram_user_id,
+                    ),
                 )
-                trace_ref = bridge_result.trace_ref
-                bridge_mode = bridge_result.mode
-                attachment_context = bridge_result.attachment_context
-                routing_decision = bridge_result.routing_decision
-                active_chip_key = bridge_result.active_chip_key
-                active_chip_task_type = bridge_result.active_chip_task_type
-                active_chip_evaluate_used = bridge_result.active_chip_evaluate_used
-                evidence_summary = bridge_result.evidence_summary
+                if onboarding_result is not None:
+                    outbound_text = _apply_post_approval_welcome(
+                        config_manager=config_manager,
+                        state_db=state_db,
+                        external_user_id=normalized.telegram_user_id,
+                        human_id=resolution.human_id,
+                        agent_id=resolution.agent_id,
+                        reply_text=onboarding_result.reply_text,
+                    )
+                    trace_ref = None
+                    bridge_mode = "agent_onboarding"
+                    attachment_context = None
+                    routing_decision = "agent_onboarding"
+                    active_chip_key = None
+                    active_chip_task_type = None
+                    active_chip_evaluate_used = False
+                    evidence_summary = None
+                else:
+                    bridge_result = build_researcher_reply(
+                        config_manager=config_manager,
+                        state_db=state_db,
+                        request_id=f"sim:{normalized.update_id}",
+                        agent_id=resolution.agent_id,
+                        human_id=resolution.human_id,
+                        session_id=resolution.session_id,
+                        channel_kind="telegram",
+                        user_message=normalized.text,
+                    )
+                    record_researcher_bridge_result(state_db=state_db, result=bridge_result)
+                    shaped_bridge_reply = _shape_telegram_bridge_reply(
+                        bridge_result.reply_text,
+                        bridge_mode=bridge_result.mode,
+                        routing_decision=bridge_result.routing_decision,
+                    )
+                    outbound_text = _apply_post_approval_welcome(
+                        config_manager=config_manager,
+                        state_db=state_db,
+                        external_user_id=normalized.telegram_user_id,
+                        human_id=resolution.human_id,
+                        agent_id=resolution.agent_id,
+                        reply_text=shaped_bridge_reply,
+                    )
+                    trace_ref = bridge_result.trace_ref
+                    bridge_mode = bridge_result.mode
+                    attachment_context = bridge_result.attachment_context
+                    routing_decision = bridge_result.routing_decision
+                    active_chip_key = bridge_result.active_chip_key
+                    active_chip_task_type = bridge_result.active_chip_task_type
+                    active_chip_evaluate_used = bridge_result.active_chip_evaluate_used
+                    evidence_summary = bridge_result.evidence_summary
         outbound_text = _apply_think_visibility(
             state_db=state_db,
             external_user_id=normalized.telegram_user_id,
@@ -893,6 +912,68 @@ def poll_telegram_updates_once(
                     "chat_id": normalized.chat_id,
                     "session_id": resolution.session_id,
                     "command": command_result["command"],
+                    "delivery_ok": send_result["ok"],
+                    "delivery_error": send_result["error"],
+                    "guardrail_actions": send_result["guardrail_actions"],
+                    "response_preview": _preview_text(outbound_text),
+                },
+            )
+            continue
+
+        if normalized.message_kind in {"voice", "audio"}:
+            voice_reply = _render_telegram_voice_not_ready_reply(message_kind=normalized.message_kind)
+            outbound_text = _apply_think_visibility(
+                state_db=state_db,
+                external_user_id=normalized.telegram_user_id,
+                text=_apply_saved_telegram_surface_style(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    human_id=resolution.human_id,
+                    agent_id=resolution.agent_id,
+                    reply_text=voice_reply,
+                    surface="runtime_command",
+                ),
+            )
+            send_result = _send_telegram_reply(
+                config_manager=config_manager,
+                state_db=state_db,
+                client=client,
+                chat_id=normalized.chat_id,
+                text=outbound_text,
+                event="telegram_runtime_command_outbound",
+                update_id=normalized.update_id,
+                telegram_user_id=normalized.telegram_user_id,
+                session_id=resolution.session_id,
+                decision=resolution.decision,
+                bridge_mode="runtime_command",
+                routing_decision="voice_not_ready",
+                run_id=run.run_id,
+                request_id=run.request_id,
+                trace_ref=None,
+            )
+            processed_count += 1
+            if send_result["ok"]:
+                sent_count += 1
+            else:
+                failed_send_count += 1
+            close_run(
+                state_db,
+                run_id=run.run_id,
+                status="closed",
+                close_reason="voice_not_ready",
+                summary=f"Telegram {normalized.message_kind} message closed as not yet supported.",
+                facts={"message_kind": normalized.message_kind, "delivery_ok": send_result["ok"]},
+            )
+            append_gateway_trace(
+                config_manager,
+                {
+                    "event": "telegram_runtime_command_processed",
+                    "channel_id": "telegram",
+                    "update_id": normalized.update_id,
+                    "telegram_user_id": normalized.telegram_user_id,
+                    "chat_id": normalized.chat_id,
+                    "session_id": resolution.session_id,
+                    "command": f"/{normalized.message_kind}",
                     "delivery_ok": send_result["ok"],
                     "delivery_error": send_result["error"],
                     "guardrail_actions": send_result["guardrail_actions"],
@@ -1387,6 +1468,21 @@ def _handle_runtime_command(
     normalized = " ".join(str(inbound_text or "").strip().split())
     lowered = normalized.lower()
     natural_swarm_command = _match_natural_swarm_command(normalized)
+    style_command = _parse_style_command(normalized)
+    if style_command is not None:
+        return _handle_style_command(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            agent_id=agent_id,
+            command=style_command["command"],
+            payload=style_command.get("payload"),
+        )
+    if lowered == "/voice":
+        return {
+            "command": "/voice",
+            "reply_text": _render_telegram_voice_status_reply(),
+        }
     if lowered in {"/think", "/think on", "/think off"}:
         if lowered == "/think":
             enabled = _think_enabled_for_user(state_db=state_db, external_user_id=external_user_id)
@@ -1962,6 +2058,173 @@ def _handle_runtime_command(
             ),
         }
     return None
+
+
+def _parse_style_command(inbound_text: str) -> dict[str, str | None] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    lowered = normalized.lower()
+    if lowered in {"/style", "style"}:
+        return {"command": "/style", "payload": None}
+    if lowered in {"/style status", "style status"}:
+        return {"command": "/style status", "payload": None}
+    train_prefixes = ("/style train ", "style train ")
+    for prefix in train_prefixes:
+        if lowered.startswith(prefix):
+            payload = normalized[len(prefix) :].strip()
+            return {"command": "/style train", "payload": payload}
+    return None
+
+
+def _handle_style_command(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str | None,
+    agent_id: str | None,
+    command: str,
+    payload: str | None,
+) -> dict[str, str]:
+    if command == "/style":
+        return {
+            "command": "/style",
+            "reply_text": (
+                "Style controls: `/style status` to inspect the current Telegram persona, "
+                "`/style train <instruction>` to save a new style rule.\n"
+                "Next: after training, ask a normal question in this DM to test the visible voice."
+            ),
+        }
+    profile, agent_name = _load_telegram_persona_surface_state(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=human_id,
+        agent_id=agent_id,
+    )
+    if command == "/style status":
+        return {
+            "command": "/style status",
+            "reply_text": _render_style_status_reply(profile=profile, agent_name=agent_name),
+        }
+    if command == "/style train":
+        instruction = str(payload or "").strip()
+        if not instruction:
+            return {
+                "command": "/style train",
+                "reply_text": (
+                    "Style training needs an instruction.\n"
+                    "Next: send `/style train be more direct and keep replies short`."
+                ),
+            }
+        if not human_id or not agent_id:
+            return {
+                "command": "/style train",
+                "reply_text": (
+                    "Style training is unavailable right now.\n"
+                    "Reason: this Telegram DM does not have a resolved Builder identity yet."
+                ),
+            }
+        training_message = instruction
+        lowered_instruction = instruction.lower()
+        if not any(
+            marker in lowered_instruction
+            for marker in ("your personality", "your style", "agent persona", "your name is", "call you", "rename yourself")
+        ):
+            training_message = f"Your style should be {instruction}"
+        mutation = detect_and_persist_agent_persona_preferences(
+            agent_id=agent_id,
+            human_id=human_id,
+            user_message=training_message,
+            state_db=state_db,
+            source_surface="telegram",
+            source_ref="telegram-style-train",
+        )
+        if mutation is None:
+            return {
+                "command": "/style train",
+                "reply_text": (
+                    "I didn't extract a durable style change from that instruction.\n"
+                    "Next: be explicit, for example `/style train be more direct, keep replies short, and avoid filler`."
+                ),
+            }
+        refreshed_profile, refreshed_agent_name = _load_telegram_persona_surface_state(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            agent_id=agent_id,
+        )
+        return {
+            "command": "/style train",
+            "reply_text": _render_style_training_reply(
+                profile=refreshed_profile,
+                agent_name=refreshed_agent_name,
+                mutation=mutation,
+            ),
+        }
+    return {"command": command, "reply_text": "Style command is unavailable right now."}
+
+
+def _render_style_status_reply(*, profile: dict[str, Any] | None, agent_name: str | None) -> str:
+    resolved_profile = profile or {}
+    name = str(agent_name or resolved_profile.get("agent_persona_name") or "the agent").strip()
+    persona_name = str(resolved_profile.get("agent_persona_name") or "").strip()
+    persona_summary = str(resolved_profile.get("agent_persona_summary") or "").strip()
+    behavioral_rules = [
+        str(rule).strip() for rule in list(resolved_profile.get("agent_behavioral_rules") or []) if str(rule).strip()
+    ]
+    style_labels = resolved_profile.get("style_labels") or {}
+    style_summary = ", ".join(
+        f"{trait}={label}" for trait, label in style_labels.items() if isinstance(label, str) and label.strip()
+    )
+    lines = [f"Style status for {name}."]
+    if persona_name:
+        lines.append(f"Persona: {persona_name}.")
+    if persona_summary:
+        lines.append(f"Summary: {persona_summary}.")
+    if style_summary:
+        lines.append(f"Traits: {style_summary}.")
+    if behavioral_rules:
+        lines.append("Rules: " + " | ".join(behavioral_rules[:4]) + ".")
+    lines.append("Next: `/style train <instruction>` and then ask a normal question here to test the live voice.")
+    return "\n".join(lines)
+
+
+def _render_style_training_reply(
+    *,
+    profile: dict[str, Any] | None,
+    agent_name: str | None,
+    mutation: Any,
+) -> str:
+    resolved_profile = profile or {}
+    name = str(agent_name or getattr(mutation, "agent_name", None) or resolved_profile.get("agent_persona_name") or "the agent").strip()
+    persona_summary = str(resolved_profile.get("agent_persona_summary") or "").strip()
+    behavioral_rules = [
+        str(rule).strip() for rule in list(resolved_profile.get("agent_behavioral_rules") or []) if str(rule).strip()
+    ]
+    lines = [f"Saved style update for {name}."]
+    if getattr(mutation, "agent_name", None):
+        lines.append(f"Visible name: {getattr(mutation, 'agent_name')}.")
+    if persona_summary:
+        lines.append(f"Current summary: {persona_summary}.")
+    if behavioral_rules:
+        lines.append("Current rules: " + " | ".join(behavioral_rules[:4]) + ".")
+    lines.append("Next: ask a normal question in this DM to test the updated voice live.")
+    return "\n".join(lines)
+
+
+def _render_telegram_voice_status_reply() -> str:
+    return (
+        "Voice is not wired into Telegram yet.\n"
+        "Current state: Builder handles text replies, but Telegram voice/audio messages are not transcribed or voiced back yet.\n"
+        "Next: add voice-note ingestion, transcription into the same Telegram runtime, and optional voice reply synthesis."
+    )
+
+
+def _render_telegram_voice_not_ready_reply(*, message_kind: str) -> str:
+    noun = "voice note" if message_kind == "voice" else "audio message"
+    return (
+        f"I received the {noun}, but Telegram voice is not wired yet.\n"
+        "Reason: this runtime does not transcribe Telegram audio into the Builder chat loop yet.\n"
+        "Next: send the instruction as text for now, or finish the Telegram voice pipeline."
+    )
 
 
 def _run_swarm_read_command(

@@ -14,6 +14,7 @@ class NormalizedTelegramUpdate:
     chat_id: str
     chat_type: str
     text: str
+    message_kind: str
     is_dm: bool
 
 
@@ -24,10 +25,20 @@ def normalize_telegram_update(update: dict[str, Any], *, channel_id: str = "tele
 
     chat = message.get("chat") or {}
     sender = message.get("from") or {}
-    text = message.get("text")
-
-    if not isinstance(text, str) or not text.strip():
-        raise ValueError("Telegram update does not contain a text message")
+    text_payload = message.get("text")
+    voice_payload = message.get("voice")
+    audio_payload = message.get("audio")
+    message_kind = "text"
+    if isinstance(text_payload, str) and text_payload.strip():
+        text = text_payload.strip()
+    elif isinstance(voice_payload, dict):
+        text = "[voice message]"
+        message_kind = "voice"
+    elif isinstance(audio_payload, dict):
+        text = "[audio message]"
+        message_kind = "audio"
+    else:
+        raise ValueError("Telegram update does not contain a supported text, voice, or audio message")
 
     update_id = update.get("update_id")
     message_id = message.get("message_id")
@@ -48,6 +59,7 @@ def normalize_telegram_update(update: dict[str, Any], *, channel_id: str = "tele
         telegram_username=sender.get("username"),
         chat_id=str(chat_id),
         chat_type=chat_type,
-        text=text.strip(),
+        text=text,
+        message_kind=message_kind,
         is_dm=is_dm,
     )

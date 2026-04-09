@@ -17,26 +17,34 @@ def make_telegram_update(
     *,
     update_id: int,
     user_id: str,
-    text: str,
+    text: str | None = None,
     username: str | None = None,
     chat_id: str | None = None,
     chat_type: str = "private",
+    voice: dict[str, object] | None = None,
+    audio: dict[str, object] | None = None,
 ) -> dict[str, object]:
     resolved_chat_id = chat_id or user_id
+    message_payload: dict[str, object] = {
+        "message_id": update_id * 10,
+        "chat": {
+            "id": resolved_chat_id,
+            "type": chat_type,
+        },
+        "from": {
+            "id": user_id,
+            "username": username,
+        },
+    }
+    if text is not None:
+        message_payload["text"] = text
+    if voice is not None:
+        message_payload["voice"] = voice
+    if audio is not None:
+        message_payload["audio"] = audio
     return {
         "update_id": update_id,
-        "message": {
-            "message_id": update_id * 10,
-            "text": text,
-            "chat": {
-                "id": resolved_chat_id,
-                "type": chat_type,
-            },
-            "from": {
-                "id": user_id,
-                "username": username,
-            },
-        },
+        "message": message_payload,
     }
 
 

@@ -2733,3 +2733,107 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(processed[0]["active_chip_key"], "startup-yc")
         self.assertEqual(processed[0]["active_chip_task_type"], "diagnostic_questioning")
         self.assertTrue(processed[0]["active_chip_evaluate_used"])
+
+    def test_style_status_command_reports_saved_persona_state(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        rename_agent_identity(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+            new_name="Operator",
+            source_surface="telegram",
+            source_ref="seed-name",
+        )
+        save_agent_persona_profile(
+            agent_id="agent:human:telegram:111",
+            human_id="human:telegram:111",
+            state_db=self.state_db,
+            base_traits={
+                "warmth": 0.5,
+                "directness": 0.8,
+                "playfulness": 0.2,
+                "pacing": 0.7,
+                "assertiveness": 0.7,
+            },
+            persona_name="Founder Operator",
+            persona_summary="Direct, calm, low-fluff.",
+            behavioral_rules=["Keep replies short", "Avoid filler"],
+        )
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=116,
+                user_id="111",
+                username="alice",
+                text="/style status",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Style status for Operator.", result.detail["response_text"])
+        self.assertIn("Persona: Founder Operator.", result.detail["response_text"])
+        self.assertIn("Summary: Direct, calm, low-fluff.", result.detail["response_text"])
+        self.assertIn("Rules: Keep replies short | Avoid filler.", result.detail["response_text"])
+
+    def test_style_train_command_persists_explicit_style_feedback(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=117,
+                user_id="111",
+                username="alice",
+                text="/style train be more direct and keep replies short",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Saved style update", result.detail["response_text"])
+        profile = load_personality_profile(
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            state_db=self.state_db,
+            config_manager=self.config_manager,
+        )
+        self.assertTrue(profile["agent_persona_applied"])
+        self.assertEqual(profile["style_labels"]["directness"], "very direct")
+
+    def test_voice_command_reports_current_telegram_voice_gap(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=118,
+                user_id="111",
+                username="alice",
+                text="/voice",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Voice is not wired into Telegram yet.", result.detail["response_text"])
+        self.assertIn("voice-note ingestion", result.detail["response_text"])
+
+    def test_voice_message_returns_bounded_not_ready_reply(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=119,
+                user_id="111",
+                username="alice",
+                text=None,
+                voice={"file_id": "voice-1", "duration": 3},
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("I received the voice note, but Telegram voice is not wired yet.", result.detail["response_text"])
+        self.assertIn("does not transcribe Telegram audio into the Builder chat loop yet", result.detail["response_text"])
