@@ -6,11 +6,12 @@ from unittest.mock import patch
 
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
 from spark_intelligence.memory import write_profile_fact_to_memory
-from spark_intelligence.observability.store import latest_events_by_type
+from spark_intelligence.observability.store import latest_events_by_type, record_event
 from spark_intelligence.researcher_bridge.advisory import (
     _build_browser_search_context,
     _browser_reply_denies_browsing,
     _build_contextual_task,
+    _load_recent_conversation_context,
     _clean_messaging_reply,
     _normalize_browser_search_query,
     _should_collect_browser_search_context,
@@ -563,6 +564,130 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
 
         self.assertIn("agent_persona=Operator", prompt)
         self.assertNotIn("active_personality=Alice", prompt)
+
+    def test_load_recent_conversation_context_reads_prior_telegram_turns(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="intent_committed",
+            component="telegram_runtime",
+            summary="User message committed.",
+            channel_id="telegram",
+            session_id="sess-1",
+            request_id="req-1",
+            facts={"message_text": "I want this to feel less scripted."},
+        )
+        record_event(
+            self.state_db,
+            event_type="delivery_succeeded",
+            component="telegram_runtime",
+            summary="Reply delivered.",
+            channel_id="telegram",
+            session_id="sess-1",
+            request_id="req-1",
+            reason_code="telegram_bridge_outbound",
+            facts={"delivered_text": "The main issue is continuity, not just tone."},
+        )
+        record_event(
+            self.state_db,
+            event_type="intent_committed",
+            component="telegram_runtime",
+            summary="Current user message committed.",
+            channel_id="telegram",
+            session_id="sess-1",
+            request_id="req-2",
+            facts={"message_text": "Now answer like you remember what I said."},
+        )
+
+        context = _load_recent_conversation_context(
+            state_db=self.state_db,
+            session_id="sess-1",
+            channel_kind="telegram",
+            request_id="req-2",
+        )
+
+        self.assertIn("[Recent conversation]", context)
+        self.assertIn("user: I want this to feel less scripted.", context)
+        self.assertIn("assistant: The main issue is continuity, not just tone.", context)
+        self.assertNotIn("Now answer like you remember what I said.", context)
+
+    def test_build_researcher_reply_includes_recent_telegram_turns_in_provider_prompt(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        connect_exit, _, connect_stderr = self.run_cli(
+            "auth",
+            "connect",
+            "custom",
+            "--home",
+            str(self.home),
+            "--api-key",
+            "test-secret",
+            "--model",
+            "MiniMax-M2.7",
+            "--base-url",
+            "https://api.minimax.io/v1",
+        )
+        self.assertEqual(connect_exit, 0, connect_stderr)
+
+        record_event(
+            self.state_db,
+            event_type="intent_committed",
+            component="telegram_runtime",
+            summary="User message committed.",
+            channel_id="telegram",
+            session_id="sess-telegram",
+            request_id="old-1",
+            facts={"message_text": "I'm trying to make this agent feel more natural and less scripted."},
+        )
+        record_event(
+            self.state_db,
+            event_type="delivery_succeeded",
+            component="telegram_runtime",
+            summary="Reply delivered.",
+            channel_id="telegram",
+            session_id="sess-telegram",
+            request_id="old-1",
+            reason_code="telegram_bridge_outbound",
+            facts={"delivered_text": "The main problem is continuity, not just tone."},
+        )
+
+        captured: dict[str, str] = {}
+
+        def fake_execute_direct_provider_prompt(*, user_prompt, **kwargs):
+            captured["user_prompt"] = user_prompt
+            return {"raw_response": "Stay anchored to the thread."}
+
+        with (
+            patch(
+                "spark_intelligence.researcher_bridge.advisory._build_browser_search_context",
+                return_value={
+                    "context": "[Browser evidence]\nsource_url=https://example.com",
+                    "blocked_reply": None,
+                    "blocked_code": None,
+                    "source_url": "https://example.com",
+                },
+            ),
+            patch(
+                "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+                side_effect=fake_execute_direct_provider_prompt,
+            ),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-current",
+                agent_id="agent:human:telegram:1",
+                human_id="human:telegram:1",
+                session_id="sess-telegram",
+                channel_kind="telegram",
+                user_message="Now answer like you actually remember what I just said.",
+            )
+
+        self.assertEqual(result.mode, "browser_evidence")
+        prompt = captured["user_prompt"]
+        self.assertIn("[Recent conversation]", prompt)
+        self.assertIn("user: I'm trying to make this agent feel more natural and less scripted.", prompt)
+        self.assertIn("assistant: The main problem is continuity, not just tone.", prompt)
+        self.assertIn("[User message]", prompt)
+        self.assertIn("Now answer like you actually remember what I just said.", prompt)
 
     def test_build_researcher_reply_cleans_memo_style_execution_reply_for_telegram(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)

@@ -68,6 +68,7 @@ from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_r
 
 _BROWSER_SEARCH_SUMMARY_MAX_CHARS = 280
 _BROWSER_SEARCH_EXCERPT_MAX_CHARS = 480
+_RECENT_CONVERSATION_TURN_LIMIT = 4
 
 
 @dataclass
@@ -432,6 +433,7 @@ def _render_direct_provider_chat_fallback(
     personality_profile: dict[str, Any] | None = None,
     personality_context_extra: str = "",
     browser_search_context_extra: str = "",
+    recent_conversation_context: str = "",
     run_id: str | None = None,
     request_id: str | None = None,
     trace_ref: str | None = None,
@@ -492,6 +494,7 @@ def _render_direct_provider_chat_fallback(
             personality_profile=personality_profile,
             personality_context_extra=personality_context_extra,
             browser_search_context_extra=browser_search_context_extra,
+            recent_conversation_context=recent_conversation_context,
         ),
         governance=DirectProviderGovernance(
             state_db_path=str(state_db.path),
@@ -1368,6 +1371,7 @@ def _build_contextual_task(
     personality_profile: dict[str, Any] | None = None,
     personality_context_extra: str = "",
     browser_search_context_extra: str = "",
+    recent_conversation_context: str = "",
 ) -> str:
     active_chip_keys = attachment_context.get("active_chip_keys") or []
     pinned_chip_keys = attachment_context.get("pinned_chip_keys") or []
@@ -1389,6 +1393,8 @@ def _build_contextual_task(
                 lines.extend(["[Telegram reply contract]", telegram_persona_contract, ""])
     if personality_context_extra:
         lines.extend([personality_context_extra, ""])
+    if recent_conversation_context:
+        lines.extend([recent_conversation_context, ""])
     if browser_search_context_extra:
         lines.extend([browser_search_context_extra, ""])
     if active_chip_evaluate:
@@ -1424,6 +1430,62 @@ def _build_contextual_task(
         user_message,
         ]
     )
+    return "\n".join(lines)
+
+
+def _load_recent_conversation_context(
+    *,
+    state_db: StateDB,
+    session_id: str,
+    channel_kind: str,
+    request_id: str | None,
+    turn_limit: int = _RECENT_CONVERSATION_TURN_LIMIT,
+) -> str:
+    if not session_id or not channel_kind or turn_limit <= 0:
+        return ""
+
+    transcript: list[tuple[str, str]] = []
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT event_type, request_id, facts_json
+            FROM builder_events
+            WHERE component = 'telegram_runtime'
+              AND channel_id = ?
+              AND session_id = ?
+              AND (
+                    event_type = 'intent_committed'
+                 OR (event_type = 'delivery_succeeded' AND reason_code = 'telegram_bridge_outbound')
+              )
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT ?
+            """,
+            (channel_kind, session_id, max(turn_limit * 4, 12)),
+        ).fetchall()
+
+    for row in reversed(rows):
+        if request_id and str(row["request_id"] or "") == request_id:
+            continue
+        try:
+            facts = json.loads(row["facts_json"] or "{}")
+        except json.JSONDecodeError:
+            facts = {}
+        event_type = str(row["event_type"] or "")
+        if event_type == "intent_committed":
+            message_text = str(facts.get("message_text") or "").strip()
+            if message_text:
+                transcript.append(("user", message_text))
+        elif event_type == "delivery_succeeded":
+            delivered_text = str(facts.get("delivered_text") or "").strip()
+            if delivered_text:
+                transcript.append(("assistant", delivered_text))
+
+    if not transcript:
+        return ""
+
+    lines = ["[Recent conversation]"]
+    for role, text in transcript[-(turn_limit * 2) :]:
+        lines.append(f"{role}: {text}")
     return "\n".join(lines)
 
 
@@ -1811,12 +1873,13 @@ def _run_active_chip_evaluate(
     human_id: str,
     session_id: str,
     user_message: str,
+    conversation_history: str,
     attachment_context: dict[str, object],
     run_id: str | None = None,
 ) -> dict[str, Any] | None:
     payload = {
         "situation": user_message,
-        "conversation_history": "",
+        "conversation_history": conversation_history,
         "channel_kind": channel_kind,
         "request_id": request_id,
         "agent_id": agent_id,
@@ -2331,6 +2394,13 @@ def build_researcher_reply(
             },
         )
 
+    recent_conversation_context = _load_recent_conversation_context(
+        state_db=state_db,
+        session_id=session_id,
+        channel_kind=channel_kind,
+        request_id=request_id,
+    )
+
     active_chip_evaluate = _run_active_chip_evaluate(
         config_manager=config_manager,
         state_db=state_db,
@@ -2340,6 +2410,7 @@ def build_researcher_reply(
         human_id=human_id,
         session_id=session_id,
         user_message=user_message,
+        conversation_history=recent_conversation_context,
         attachment_context=attachment_context,
         run_id=run_id,
     )
@@ -2395,6 +2466,7 @@ def build_researcher_reply(
         personality_profile=personality_profile,
         personality_context_extra=personality_context_extra,
         browser_search_context_extra=browser_search_context_extra,
+        recent_conversation_context=recent_conversation_context,
     )
     active_chip_key = str(active_chip_evaluate.get("chip_key")) if active_chip_evaluate else None
     active_chip_task_type = str(active_chip_evaluate.get("task_type")) if active_chip_evaluate and active_chip_evaluate.get("task_type") else None
@@ -2713,6 +2785,7 @@ def build_researcher_reply(
             personality_profile=personality_profile,
             personality_context_extra=personality_context_extra,
             browser_search_context_extra=browser_search_context_extra,
+            recent_conversation_context=recent_conversation_context,
             run_id=run_id,
             request_id=request_id,
             trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
@@ -2883,6 +2956,7 @@ def build_researcher_reply(
                         personality_profile=personality_profile,
                         personality_context_extra=personality_context_extra,
                         browser_search_context_extra=browser_search_context_extra,
+                        recent_conversation_context=recent_conversation_context,
                         run_id=run_id,
                         request_id=request_id,
                         trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
@@ -3029,6 +3103,7 @@ def build_researcher_reply(
                         personality_profile=personality_profile,
                         personality_context_extra=personality_context_extra,
                         browser_search_context_extra=browser_search_context_extra,
+                        recent_conversation_context=recent_conversation_context,
                         run_id=run_id,
                         request_id=request_id,
                         trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
