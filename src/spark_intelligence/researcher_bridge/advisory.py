@@ -1528,15 +1528,18 @@ def _rewrite_weak_browser_source_capture_reply(text: str) -> str:
         "cannot pull actual content from that search",
         "external source came back empty",
         "external source capture came back empty",
+        "capture returned empty results",
         "returned no extractable data",
         "can't cite meaningful information",
         "cannot cite meaningful information",
     )
     weak_capture_patterns = (
         r"\bi (?:don't|do not) have .* content from the search\b",
+        r"\bi ran the search .* but the actual source content (?:didn't|did not) come through\b",
         r"\bsource content (?:wasn't|was not) captured\b",
         r"\bsearch was performed but the source content (?:wasn't|was not) captured\b",
         r"\bactual (?:page )?content (?:wasn't|was not) captured\b",
+        r"\bactual source content (?:didn't|did not) come through\b",
     )
     if not any(marker in normalized for marker in weak_capture_markers) and not any(
         re.search(pattern, normalized) for pattern in weak_capture_patterns

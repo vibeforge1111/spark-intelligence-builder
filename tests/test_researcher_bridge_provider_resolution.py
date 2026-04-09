@@ -182,6 +182,19 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("rewrite_weak_source_capture_reply", actions)
         self.assertNotIn("actual page content wasn't captured", cleaned)
 
+    def test_sanitize_browser_search_reply_rewrites_empty_capture_results_variant(self) -> None:
+        cleaned, actions = _sanitize_browser_search_reply(
+            (
+                "I ran the search for BTC on DuckDuckGo, but the actual source content didn't come through - "
+                "the capture returned empty results."
+            ),
+            source_url=None,
+        )
+
+        self.assertIn("Web search ran, but source capture failed on the result page.", cleaned)
+        self.assertIn("rewrite_weak_source_capture_reply", actions)
+        self.assertNotIn("capture returned empty results", cleaned)
+
     def test_sanitize_browser_search_reply_strips_internal_search_markup(self) -> None:
         cleaned, actions = _sanitize_browser_search_reply(
             (
