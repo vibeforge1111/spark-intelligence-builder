@@ -1734,12 +1734,15 @@ class OperatorPairingFlowTests(SparkTestCase):
                         "decision": "kept",
                         "baselineScore": 0.75,
                         "candidateScore": 0.78,
+                        "benchmarkRunnerType": "script",
+                        "benchmarkRunnerLabel": "benchmarks/startup-operator.tool_calls.json",
                         "planner": {
-                            "candidateSummary": "Sharpen startup doctrine around explicit operator constraints",
-                            "hypothesis": "Sharper constraints will improve benchmark decision quality.",
+                            "candidateSummary": "Sharpen the startup operator tool script around explicit operator constraints",
+                            "hypothesis": "Sharper tool-call constraints will improve benchmark decision quality.",
                         },
                         "mutationTarget": {
-                            "rationale": "Keep the mutation focused on the path-owned doctrine prompt.",
+                            "path": "benchmarks/startup-operator.tool_calls.json",
+                            "rationale": "Keep the mutation focused on the repo-owned Startup Bench tool script.",
                         },
                     },
                     latest_round_summary_path="C:/tmp/round-summary.json",
@@ -1760,8 +1763,11 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(result.ok)
         self.assertIn("Swarm autoloop finished.", str(result.detail["response_text"]))
         self.assertIn("Session: session-123.", str(result.detail["response_text"]))
-        self.assertIn("Round candidate: Sharpen startup doctrine around explicit operator constraints.", str(result.detail["response_text"]))
-        self.assertIn("Hypothesis: Sharper constraints will improve benchmark decision quality.", str(result.detail["response_text"]))
+        self.assertIn("Stop: requested rounds completed.", str(result.detail["response_text"]))
+        self.assertIn("Benchmark runner: script via benchmarks/startup-operator.tool_calls.json.", str(result.detail["response_text"]))
+        self.assertIn("Mutation target: benchmarks/startup-operator.tool_calls.json.", str(result.detail["response_text"]))
+        self.assertIn("Round candidate: Sharpen the startup operator tool script around explicit operator constraints.", str(result.detail["response_text"]))
+        self.assertIn("Hypothesis: Sharper tool-call constraints will improve benchmark decision quality.", str(result.detail["response_text"]))
         self.assertIn("Round delta: +0.0300 (0.7500 -> 0.7800).", str(result.detail["response_text"]))
         self.assertEqual(autoloop_mock.call_args.kwargs["path_key"], "startup-operator")
         self.assertEqual(autoloop_mock.call_args.kwargs["rounds"], 2)
@@ -1907,9 +1913,9 @@ class OperatorPairingFlowTests(SparkTestCase):
                             {
                                 "ordinal": 3,
                                 "decision": "reverted",
-                                "targetPath": "docs/AUTORESEARCH.md",
+                                "targetPath": "benchmarks/startup-operator.tool_calls.json",
                                 "plannerKind": "spark_researcher_candidate",
-                                "candidateSummary": "Tighten operator loop heuristics",
+                                "candidateSummary": "Tighten startup operator tool-call sequencing",
                             }
                         ],
                     },
@@ -1917,12 +1923,15 @@ class OperatorPairingFlowTests(SparkTestCase):
                         "decision": "reverted",
                         "baselineScore": 0.81,
                         "candidateScore": 0.73,
+                        "benchmarkRunnerType": "script",
+                        "benchmarkRunnerLabel": "benchmarks/startup-operator.tool_calls.json",
                         "planner": {
-                            "candidateSummary": "Tighten operator loop heuristics",
-                            "hypothesis": "Tighter loop heuristics may reduce benchmark drift.",
+                            "candidateSummary": "Tighten startup operator tool-call sequencing",
+                            "hypothesis": "Tighter tool-call sequencing may reduce benchmark drift.",
                         },
                         "mutationTarget": {
-                            "rationale": "Stay inside the current AUTORESEARCH-owned mutation target.",
+                            "path": "benchmarks/startup-operator.tool_calls.json",
+                            "rationale": "Stay inside the repo-owned Startup Bench tool script target.",
                         },
                     },
                     "latest_round_summary_path": "C:/tmp/session-round-summary.json",
@@ -1948,8 +1957,11 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(result.ok)
         self.assertIn("Swarm autoloop session:", str(result.detail["response_text"]))
         self.assertIn("Session: session-777.", str(result.detail["response_text"]))
-        self.assertIn("Latest round: #3 reverted target=docs/AUTORESEARCH.md.", str(result.detail["response_text"]))
-        self.assertIn("Hypothesis: Tighter loop heuristics may reduce benchmark drift.", str(result.detail["response_text"]))
+        self.assertIn("Stop: paused on the no-gain guard.", str(result.detail["response_text"]))
+        self.assertIn("Latest round: #3 reverted target=benchmarks/startup-operator.tool_calls.json.", str(result.detail["response_text"]))
+        self.assertIn("Benchmark runner: script via benchmarks/startup-operator.tool_calls.json.", str(result.detail["response_text"]))
+        self.assertIn("Mutation target: benchmarks/startup-operator.tool_calls.json.", str(result.detail["response_text"]))
+        self.assertIn("Hypothesis: Tighter tool-call sequencing may reduce benchmark drift.", str(result.detail["response_text"]))
         self.assertIn("Round delta: -0.0800 (0.8100 -> 0.7300).", str(result.detail["response_text"]))
         self.assertIn("Interpretation: this mutation did not beat the current benchmarked baseline, so the repo stayed unchanged.", str(result.detail["response_text"]))
         self.assertIn("Autoloop is paused on the no-gain guard.", str(result.detail["response_text"]))

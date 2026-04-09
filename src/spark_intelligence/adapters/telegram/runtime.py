@@ -2141,7 +2141,7 @@ def _render_swarm_bridge_autoloop_reply(result: Any) -> str:
         lines.append(
             f"Decisions: {int(session_summary.get('keptRounds') or 0)} kept, {int(session_summary.get('revertedRounds') or 0)} reverted."
         )
-        lines.append(f"Stop: {str(session_summary.get('stopReason') or 'unknown')}.")
+        lines.append(f"Stop: {_describe_swarm_autoloop_stop_reason(str(session_summary.get('stopReason') or 'unknown'))}.")
         if session_summary.get("plannerStatus"):
             lines.append(f"Planner: {str(session_summary.get('plannerStatus'))}.")
         if session_summary.get("latestPlannerKind"):
@@ -2234,7 +2234,7 @@ def _render_swarm_session_reply(payload: dict[str, Any]) -> str:
         f"Session: {str(session_summary.get('sessionId') or 'unknown')}.",
         f"Rounds: {int(session_summary.get('completedRounds') or 0)} completed / {int(session_summary.get('requestedRoundsTotal') or 0)} requested.",
         f"Decisions: {int(session_summary.get('keptRounds') or 0)} kept, {int(session_summary.get('revertedRounds') or 0)} reverted.",
-        f"Stop: {str(session_summary.get('stopReason') or 'active')}.",
+        f"Stop: {_describe_swarm_autoloop_stop_reason(str(session_summary.get('stopReason') or 'active'))}.",
     ]
     if session_summary.get("plannerStatus"):
         lines.append(f"Planner: {str(session_summary.get('plannerStatus'))}.")
@@ -2279,6 +2279,9 @@ def _render_swarm_latest_round_detail_lines(
         if isinstance(latest_round_summary.get("mutationTarget"), dict)
         else {}
     )
+    benchmark_runner_type = str(latest_round_summary.get("benchmarkRunnerType") or "").strip()
+    benchmark_runner_label = str(latest_round_summary.get("benchmarkRunnerLabel") or "").strip()
+    target_path = str(mutation_target.get("path") or "").strip()
     candidate_summary = str(planner.get("candidateSummary") or "").strip()
     hypothesis = str(planner.get("hypothesis") or "").strip()
     target_rationale = str(mutation_target.get("rationale") or "").strip()
@@ -2286,6 +2289,12 @@ def _render_swarm_latest_round_detail_lines(
     candidate_score = latest_round_summary.get("candidateScore")
     decision = str(latest_round_summary.get("decision") or "").strip() or "unknown"
     lines: list[str] = []
+    if benchmark_runner_type or benchmark_runner_label:
+        lines.append(
+            f"Benchmark runner: {_describe_swarm_benchmark_runner(benchmark_runner_type, benchmark_runner_label)}."
+        )
+    if target_path:
+        lines.append(f"Mutation target: {target_path}.")
     if candidate_summary:
         lines.append(f"Round candidate: {_with_terminal_period(candidate_summary)}")
     if hypothesis:
@@ -2304,6 +2313,28 @@ def _render_swarm_latest_round_detail_lines(
     if latest_round_summary_path:
         lines.append(f"Round artifact: {latest_round_summary_path}.")
     return lines
+
+
+def _describe_swarm_autoloop_stop_reason(reason: str) -> str:
+    normalized = str(reason or "").strip()
+    if not normalized:
+        return "unknown"
+    mapping = {
+        "completed_requested_rounds": "requested rounds completed",
+        "paused_no_gain_streak": "paused on the no-gain guard",
+        "active": "active",
+    }
+    return mapping.get(normalized, normalized.replace("_", " "))
+
+
+def _describe_swarm_benchmark_runner(runner_type: str, runner_label: str) -> str:
+    normalized_type = str(runner_type or "").strip()
+    normalized_label = str(runner_label or "").strip()
+    if normalized_type and normalized_label:
+        return f"{normalized_type} via {normalized_label}"
+    if normalized_label:
+        return normalized_label
+    return normalized_type or "unknown"
 
 
 def _with_terminal_period(text: str) -> str:
