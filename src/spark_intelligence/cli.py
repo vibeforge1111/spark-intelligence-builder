@@ -181,7 +181,15 @@ class SystemStatus:
             lines.append(f"- watchtower: {watchtower.get('top_level_state') or 'unknown'}")
             for key in ("ingress_health", "execution_health", "delivery_health", "scheduler_freshness", "environment_parity"):
                 dimension = (watchtower.get("health_dimensions") or {}).get(key) or {}
-                lines.append(f"- {key}: {dimension.get('state') or 'unknown'}")
+                state = str(dimension.get("state") or "unknown")
+                lines.append(f"- {key}: {state}")
+                if state not in {"healthy", "unknown"}:
+                    detail = str(dimension.get("detail") or "").strip()
+                    if detail:
+                        lines.append(f"- {key} detail: {detail}")
+                    repair_hint = _watchtower_dimension_repair_hint(key, dimension)
+                    if repair_hint:
+                        lines.append(f"- {key} repair: {repair_hint}")
             contradiction_counts = (watchtower.get("contradictions") or {}).get("counts") or {}
             lines.append(
                 f"- contradictions: open={int(contradiction_counts.get('open') or 0)} "
@@ -245,6 +253,20 @@ def _browser_status_repair_hint(browser: dict[str, object]) -> str | None:
         return "Reconnect the Spark Browser extension session, then rerun `spark-intelligence browser status --json`."
     if error_code:
         return "Rerun `spark-intelligence browser status --json` for the full governed browser failure payload."
+    return None
+
+
+def _watchtower_dimension_repair_hint(dimension_key: str, dimension: dict[str, object]) -> str | None:
+    state = str(dimension.get("state") or "").strip()
+    detail = str(dimension.get("detail") or "").strip()
+    if dimension_key == "environment_parity" and state == "parity_broken":
+        return "Align the conflicting runtime roots or config paths, then rerun `spark-intelligence doctor`."
+    if dimension_key == "scheduler_freshness" and state == "stalled":
+        return "Close or repair the stalled background runs, then rerun `spark-intelligence doctor`."
+    if dimension_key == "execution_health" and state == "execution_impaired":
+        return "Inspect missing dispatch proof in `spark-intelligence operator security` before trusting runtime health."
+    if detail:
+        return "Use `spark-intelligence doctor` for the full diagnostic detail."
     return None
 
 

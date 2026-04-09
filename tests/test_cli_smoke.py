@@ -926,6 +926,40 @@ class CliSmokeTests(SparkTestCase):
             status_stdout,
         )
 
+    def test_status_surfaces_watchtower_parity_detail_and_repair_hint(self) -> None:
+        watchtower_snapshot = {
+            "top_level_state": "parity_broken",
+            "health_dimensions": {
+                "ingress_health": {"state": "healthy", "detail": "ok"},
+                "execution_health": {"state": "healthy", "detail": "ok"},
+                "delivery_health": {"state": "healthy", "detail": "ok"},
+                "scheduler_freshness": {"state": "healthy", "detail": "ok"},
+                "environment_parity": {
+                    "state": "parity_broken",
+                    "detail": "doctor_cli:runtime_root=C:/repo-a != swarm_bridge:runtime_root=C:/repo-b",
+                },
+            },
+            "contradictions": {"counts": {"open": 0, "resolved": 0}},
+        }
+
+        with (
+            patch("spark_intelligence.cli.build_watchtower_snapshot", return_value=watchtower_snapshot),
+            patch("spark_intelligence.cli.run_first_active_chip_hook", return_value=None),
+        ):
+            status_exit, status_stdout, status_stderr = self.run_cli("status", "--home", str(self.home))
+
+        self.assertEqual(status_stderr, "")
+        self.assertIn(status_exit, (0, 1))
+        self.assertIn("- environment_parity: parity_broken", status_stdout)
+        self.assertIn(
+            "- environment_parity detail: doctor_cli:runtime_root=C:/repo-a != swarm_bridge:runtime_root=C:/repo-b",
+            status_stdout,
+        )
+        self.assertIn(
+            "- environment_parity repair: Align the conflicting runtime roots or config paths, then rerun `spark-intelligence doctor`.",
+            status_stdout,
+        )
+
     def test_bootstrap_telegram_agent_configures_supported_profile(self) -> None:
         researcher_root = self.home / "spark-researcher"
         researcher_root.mkdir()
