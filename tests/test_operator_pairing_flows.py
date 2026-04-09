@@ -2801,6 +2801,49 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(profile["agent_persona_applied"])
         self.assertEqual(profile["style_labels"]["directness"], "very direct")
 
+    def test_style_feedback_command_maps_common_negative_feedback_into_style_update(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=1171,
+                user_id="111",
+                username="alice",
+                text="/style feedback too verbose",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Saved style feedback", result.detail["response_text"])
+        self.assertIn("less verbose and keep replies short", result.detail["response_text"])
+        profile = load_personality_profile(
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            state_db=self.state_db,
+            config_manager=self.config_manager,
+        )
+        self.assertEqual(profile["style_labels"]["directness"], "very direct")
+        self.assertEqual(profile["style_labels"]["pacing"], "brisk")
+
+    def test_style_bad_requires_feedback_note(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=1172,
+                user_id="111",
+                username="alice",
+                text="/style bad",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Style bad feedback needs a short note.", result.detail["response_text"])
+
     def test_voice_command_reports_current_telegram_voice_gap(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 

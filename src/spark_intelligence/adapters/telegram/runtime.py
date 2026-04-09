@@ -2067,6 +2067,18 @@ def _parse_style_command(inbound_text: str) -> dict[str, str | None] | None:
         return {"command": "/style", "payload": None}
     if lowered in {"/style status", "style status"}:
         return {"command": "/style status", "payload": None}
+    feedback_prefixes = ("/style feedback ", "style feedback ")
+    for prefix in feedback_prefixes:
+        if lowered.startswith(prefix):
+            payload = normalized[len(prefix) :].strip()
+            return {"command": "/style feedback", "payload": payload}
+    for command in ("/style good", "/style bad"):
+        prefix = f"{command} "
+        if lowered == command:
+            return {"command": command, "payload": None}
+        if lowered.startswith(prefix):
+            payload = normalized[len(prefix) :].strip()
+            return {"command": command, "payload": payload}
     train_prefixes = ("/style train ", "style train ")
     for prefix in train_prefixes:
         if lowered.startswith(prefix):
@@ -2089,7 +2101,7 @@ def _handle_style_command(
             "command": "/style",
             "reply_text": (
                 "Style controls: `/style status` to inspect the current Telegram persona, "
-                "`/style train <instruction>` to save a new style rule.\n"
+                "`/style train <instruction>` to save a new style rule, and `/style feedback <note>` after a live test reply.\n"
                 "Next: after training, ask a normal question in this DM to test the visible voice."
             ),
         }
@@ -2157,9 +2169,107 @@ def _handle_style_command(
                 profile=refreshed_profile,
                 agent_name=refreshed_agent_name,
                 mutation=mutation,
+                mode="training",
+                applied_instruction=training_message,
+            ),
+        }
+    if command in {"/style feedback", "/style good", "/style bad"}:
+        feedback = str(payload or "").strip()
+        if command in {"/style good", "/style bad"} and not feedback:
+            tone = "good" if command.endswith("good") else "bad"
+            return {
+                "command": command,
+                "reply_text": (
+                    f"Style {tone} feedback needs a short note.\n"
+                    f"Next: send `{command} too verbose` or `{command} too formal`."
+                ),
+            }
+        if command == "/style feedback" and not feedback:
+            return {
+                "command": "/style feedback",
+                "reply_text": (
+                    "Style feedback needs a short note.\n"
+                    "Next: send `/style feedback too verbose`, `/style feedback too formal`, or `/style feedback more direct`."
+                ),
+            }
+        if not human_id or not agent_id:
+            return {
+                "command": command,
+                "reply_text": (
+                    "Style feedback is unavailable right now.\n"
+                    "Reason: this Telegram DM does not have a resolved Builder identity yet."
+                ),
+            }
+        training_message = _build_style_feedback_training_message(
+            feedback=feedback,
+            sentiment="positive" if command == "/style good" else ("negative" if command == "/style bad" else "neutral"),
+        )
+        mutation = detect_and_persist_agent_persona_preferences(
+            agent_id=agent_id,
+            human_id=human_id,
+            user_message=training_message,
+            state_db=state_db,
+            source_surface="telegram",
+            source_ref="telegram-style-feedback",
+        )
+        if mutation is None:
+            return {
+                "command": command,
+                "reply_text": (
+                    "I didn't extract a durable style change from that feedback.\n"
+                    "Next: be explicit, for example `/style feedback too verbose` or `/style feedback more direct`."
+                ),
+            }
+        refreshed_profile, refreshed_agent_name = _load_telegram_persona_surface_state(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            agent_id=agent_id,
+        )
+        return {
+            "command": command,
+            "reply_text": _render_style_training_reply(
+                profile=refreshed_profile,
+                agent_name=refreshed_agent_name,
+                mutation=mutation,
+                mode="feedback",
+                applied_instruction=training_message,
             ),
         }
     return {"command": command, "reply_text": "Style command is unavailable right now."}
+
+
+def _build_style_feedback_training_message(*, feedback: str, sentiment: str) -> str:
+    normalized = " ".join(str(feedback or "").strip().split())
+    lowered = normalized.lower()
+    if not normalized:
+        return ""
+    if sentiment == "positive":
+        if "direct" in lowered or "concise" in lowered or "short" in lowered:
+            return "Your style should stay direct and keep replies short."
+        if "warm" in lowered or "friendly" in lowered or "human" in lowered:
+            return "Your style should stay warm and friendly."
+        if "calm" in lowered:
+            return "Your style should stay calm and steady."
+    if "too verbose" in lowered or "too long" in lowered or "rambling" in lowered:
+        return "Your style should be less verbose and keep replies short."
+    if "too formal" in lowered or "stiff" in lowered:
+        return "Your style should be less formal and more human."
+    if "too soft" in lowered or "hedging" in lowered or "wishy" in lowered:
+        return "Your style should be more assertive and stop hedging."
+    if "too harsh" in lowered or "too blunt" in lowered or "too cold" in lowered:
+        return "Your style should be gentler and warmer."
+    if "too playful" in lowered:
+        return "Your style should be more serious."
+    if "too dry" in lowered or "robotic" in lowered:
+        return "Your style should be warmer and more human."
+    if "too slow" in lowered:
+        return "Your style should speed it up and get to the point."
+    if "too rushed" in lowered:
+        return "Your style should slow down and explain more."
+    if sentiment == "negative":
+        return f"Your style should be adjusted based on this feedback: {normalized}"
+    return f"Your style should be {normalized}"
 
 
 def _render_style_status_reply(*, profile: dict[str, Any] | None, agent_name: str | None) -> str:
@@ -2192,16 +2302,22 @@ def _render_style_training_reply(
     profile: dict[str, Any] | None,
     agent_name: str | None,
     mutation: Any,
+    mode: str,
+    applied_instruction: str,
 ) -> str:
     resolved_profile = profile or {}
     name = str(agent_name or getattr(mutation, "agent_name", None) or resolved_profile.get("agent_persona_name") or "the agent").strip()
     persona_summary = str(resolved_profile.get("agent_persona_summary") or "").strip()
+    applied_text = str(applied_instruction or "").strip().rstrip(".! ")
     behavioral_rules = [
         str(rule).strip() for rule in list(resolved_profile.get("agent_behavioral_rules") or []) if str(rule).strip()
     ]
-    lines = [f"Saved style update for {name}."]
+    lead = "Saved style feedback" if mode == "feedback" else "Saved style update"
+    lines = [f"{lead} for {name}."]
     if getattr(mutation, "agent_name", None):
         lines.append(f"Visible name: {getattr(mutation, 'agent_name')}.")
+    if applied_text:
+        lines.append(f"Applied: {applied_text}.")
     if persona_summary:
         lines.append(f"Current summary: {persona_summary}.")
     if behavioral_rules:
