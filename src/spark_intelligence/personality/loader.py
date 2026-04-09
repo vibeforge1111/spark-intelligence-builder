@@ -153,6 +153,25 @@ _BEHAVIORAL_RULE_PREFIXES = (
     "do not ",
 )
 
+_TELEGRAM_GENERIC_OPENER_REWRITES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"(?i)(?:^|\s+)(?:and\s+)?what(?:'s| is)\s+on your mind\?(?:\s|$)"),
+        " ",
+    ),
+    (
+        re.compile(r"(?i)(?:^|\s+)(?:and\s+)?what are you working on\?(?:\s|$)"),
+        " ",
+    ),
+    (
+        re.compile(r"(?i)(?:^|\s+)(?:and\s+)?how can i help(?: you)?(?: today)?\?(?:\s|$)"),
+        " ",
+    ),
+)
+
+_TELEGRAM_TRIVIAL_GREETING_RE = re.compile(
+    r"(?i)^(?:hey|hi|hello|hello there|hi there|hey there)[!. ]*$"
+)
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -763,6 +782,15 @@ def build_telegram_persona_reply_contract(profile: dict[str, Any]) -> str:
     elif playfulness <= 0.35:
         parts.append("Do not force humor, banter, or performative enthusiasm.")
 
+    parts.append("Treat Telegram like an ongoing 1:1 conversation, not a canned assistant greeting.")
+    parts.append("Continue from the user's actual message or project context instead of resetting the conversation.")
+    parts.append(
+        "Do not fall back to generic check-in questions like 'What's on your mind?', "
+        "'What are you working on?', or 'How can I help today?' unless the user explicitly asks for an open-ended check-in."
+    )
+    parts.append("When a follow-up helps, ask at most one specific question tied to the user's last message.")
+    parts.append("Prefer a concrete answer, reflection, or next step over filler conversation resets.")
+
     if behavioral_rules:
         rules_text = " ".join(_directive_sentence(rule) for rule in behavioral_rules[:6] if _directive_sentence(rule))
         if rules_text:
@@ -823,7 +851,7 @@ def apply_telegram_surface_persona(
     surface: str = "runtime_command",
 ) -> str:
     """Apply light identity/tone framing to deterministic Telegram replies."""
-    normalized_text = str(reply_text or "").strip()
+    normalized_text = _normalize_telegram_conversation_reply(str(reply_text or ""))
     if not normalized_text:
         return ""
     if surface == "approval_welcome":
@@ -863,6 +891,27 @@ def apply_telegram_surface_persona(
         lines[index] = f"{preamble} {line.strip()}".strip()
         break
     return "\n".join(lines)
+
+
+def _normalize_telegram_conversation_reply(reply_text: str) -> str:
+    normalized = str(reply_text or "").strip()
+    if not normalized:
+        return ""
+
+    for pattern, replacement in _TELEGRAM_GENERIC_OPENER_REWRITES:
+        normalized = pattern.sub(replacement, normalized)
+
+    normalized = re.sub(r"[ \t]{2,}", " ", normalized)
+    normalized = re.sub(r" *\n *", "\n", normalized)
+    normalized = re.sub(r"\n{3,}", "\n\n", normalized)
+    normalized = re.sub(r"\s+([?.!,])", r"\1", normalized)
+    normalized = re.sub(r"([.!?]){2,}", r"\1", normalized)
+    normalized = normalized.strip()
+
+    if _TELEGRAM_TRIVIAL_GREETING_RE.fullmatch(normalized):
+        return "Ready when you are."
+
+    return normalized
 
 
 def load_agent_persona_profile(

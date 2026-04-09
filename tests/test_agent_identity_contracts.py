@@ -402,7 +402,31 @@ class AgentIdentityContractTests(SparkTestCase):
         self.assertIn("Lead with the answer, recommendation, or key split in the first sentence.", contract)
         self.assertIn("Sound human and present, not sterile or robotic.", contract)
         self.assertIn("Do not force humor, banter, or performative enthusiasm.", contract)
+        self.assertIn("Treat Telegram like an ongoing 1:1 conversation", contract)
+        self.assertIn("Do not fall back to generic check-in questions", contract)
+        self.assertIn("ask at most one specific question tied to the user's last message", contract)
         self.assertIn("Honor these saved Telegram reply rules", contract)
+
+    def test_apply_telegram_surface_persona_rewrites_generic_check_in_reply(self) -> None:
+        profile = {
+            "traits": {
+                "warmth": 0.64,
+                "directness": 0.61,
+                "playfulness": 0.18,
+                "pacing": 0.58,
+                "assertiveness": 0.74,
+            },
+            "agent_persona_name": "Atlas",
+        }
+
+        styled = apply_telegram_surface_persona(
+            reply_text="Hey! What's on your mind?",
+            profile=profile,
+            agent_name="Atlas",
+            surface="chat",
+        )
+
+        self.assertEqual(styled, "Ready when you are.")
 
     def test_swarm_link_canonicalizes_local_agent_and_rebinds_active_session(self) -> None:
         self.add_telegram_channel()

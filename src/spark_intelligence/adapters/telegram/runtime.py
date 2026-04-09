@@ -708,6 +708,14 @@ def simulate_telegram_update(
             text=outbound_text,
         )
         outbound_text = _strip_internal_swarm_recommendation(outbound_text)
+        outbound_text = _apply_saved_telegram_surface_style(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=resolution.human_id,
+            agent_id=resolution.agent_id,
+            reply_text=outbound_text,
+            surface="telegram_chat",
+        )
     else:
         trace_ref = None
         bridge_mode = None
@@ -1570,6 +1578,14 @@ def _send_telegram_reply(
         text=text,
     )
     filtered_text = _strip_internal_swarm_recommendation(visible_text)
+    filtered_text = _apply_saved_telegram_surface_style(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=human_id,
+        agent_id=agent_id,
+        reply_text=filtered_text,
+        surface="telegram_chat",
+    )
     guarded = prepare_outbound_text(
         config_manager=config_manager,
         state_db=state_db,

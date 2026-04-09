@@ -474,7 +474,7 @@ class OperatorPairingFlowTests(SparkTestCase):
             )
 
         self.assertTrue(result.ok)
-        self.assertEqual(result.detail["response_text"], "Hey! What's on your mind?")
+        self.assertEqual(result.detail["response_text"], "Ready when you are.")
         self.assertNotIn("Swarm:", str(result.detail["response_text"]))
 
     def test_think_command_toggles_telegram_visibility(self) -> None:
@@ -3436,7 +3436,7 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(result.processed_count, 1)
         self.assertEqual(len(client.sent_audio), 1)
         self.assertEqual(len(client.sent_messages), 0)
-        self.assertIn("Hey, doing well", str(client.sent_audio[0]["caption"]))
+        self.assertEqual(str(client.sent_audio[0]["caption"]), "Hey, doing well -- ready to work.")
 
     def test_voice_message_returns_bounded_transcription_unavailable_reply_for_unsupported_provider(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
