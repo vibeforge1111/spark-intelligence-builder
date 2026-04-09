@@ -36,6 +36,7 @@ from spark_intelligence.memory.profile_facts import (
     detect_profile_fact_observation,
     detect_profile_fact_query,
 )
+from spark_intelligence.mission_control import build_mission_control_prompt_context
 from spark_intelligence.observability.policy import screen_model_visible_text
 from spark_intelligence.llm.direct_provider import (
     DirectProviderGovernance,
@@ -437,6 +438,7 @@ def _is_conversational_fallback_candidate(
 
 def _render_direct_provider_chat_fallback(
     *,
+    config_manager: ConfigManager,
     state_db: StateDB,
     provider: RuntimeProviderResolution,
     user_message: str,
@@ -489,6 +491,11 @@ def _render_direct_provider_chat_fallback(
         state_db=state_db,
         user_message=user_message,
     )
+    mission_control_context = build_mission_control_prompt_context(
+        config_manager=config_manager,
+        state_db=state_db,
+        user_message=user_message,
+    )
     payload = execute_direct_provider_prompt(
         provider=DirectProviderRequest(
             provider_id=provider.provider_id,
@@ -514,6 +521,7 @@ def _render_direct_provider_chat_fallback(
             browser_search_context_extra=browser_search_context_extra,
             recent_conversation_context=recent_conversation_context,
             system_registry_context=system_registry_context,
+            mission_control_context=mission_control_context,
         ),
         governance=DirectProviderGovernance(
             state_db_path=str(state_db.path),
@@ -1392,6 +1400,7 @@ def _build_contextual_task(
     browser_search_context_extra: str = "",
     recent_conversation_context: str = "",
     system_registry_context: str = "",
+    mission_control_context: str = "",
 ) -> str:
     active_chip_keys = attachment_context.get("active_chip_keys") or []
     pinned_chip_keys = attachment_context.get("pinned_chip_keys") or []
@@ -1412,6 +1421,8 @@ def _build_contextual_task(
         lines.extend([attachment_inventory_context, ""])
     if system_registry_context:
         lines.extend([system_registry_context, ""])
+    if mission_control_context:
+        lines.extend([mission_control_context, ""])
     if personality_profile:
         personality_ctx = build_personality_context(personality_profile)
         if personality_ctx:
@@ -2539,6 +2550,11 @@ def build_researcher_reply(
         state_db=state_db,
         user_message=user_message,
     )
+    mission_control_context = build_mission_control_prompt_context(
+        config_manager=config_manager,
+        state_db=state_db,
+        user_message=user_message,
+    )
     contextual_task = _build_contextual_task(
         user_message=user_message,
         channel_kind=channel_kind,
@@ -2549,6 +2565,7 @@ def build_researcher_reply(
         browser_search_context_extra=browser_search_context_extra,
         recent_conversation_context=recent_conversation_context,
         system_registry_context=system_registry_context,
+        mission_control_context=mission_control_context,
     )
     active_chip_key = str(active_chip_evaluate.get("chip_key")) if active_chip_evaluate else None
     active_chip_task_type = str(active_chip_evaluate.get("task_type")) if active_chip_evaluate and active_chip_evaluate.get("task_type") else None
@@ -2858,6 +2875,7 @@ def build_researcher_reply(
         and provider_selection.provider.execution_transport == "direct_http"
     ):
         raw_reply_text = _render_direct_provider_chat_fallback(
+            config_manager=config_manager,
             state_db=state_db,
             provider=provider_selection.provider,
             user_message=user_message,
@@ -3029,6 +3047,7 @@ def build_researcher_reply(
                     and provider_selection.provider.execution_transport == "direct_http"
                 ):
                     raw_reply_text = _render_direct_provider_chat_fallback(
+                        config_manager=config_manager,
                         state_db=state_db,
                         provider=provider_selection.provider,
                         user_message=user_message,
@@ -3176,6 +3195,7 @@ def build_researcher_reply(
                     )
                 ):
                     raw_reply_text = _render_direct_provider_chat_fallback(
+                        config_manager=config_manager,
                         state_db=state_db,
                         provider=provider_selection.provider,
                         user_message=user_message,
