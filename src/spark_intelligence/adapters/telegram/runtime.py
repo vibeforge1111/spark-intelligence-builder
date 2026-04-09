@@ -1037,6 +1037,14 @@ def _send_telegram_reply(
     output_keepability: str | None = None,
     promotion_disposition: str | None = None,
 ) -> dict[str, Any]:
+    if output_keepability is None and event != "telegram_bridge_outbound":
+        output_keepability = "operator_debug_only"
+    if promotion_disposition is None and output_keepability in {
+        "ephemeral_context",
+        "user_preference_ephemeral",
+        "operator_debug_only",
+    }:
+        promotion_disposition = "not_promotable"
     policy = _telegram_security_policy(config_manager)
     visible_text = _apply_think_visibility(
         state_db=state_db,

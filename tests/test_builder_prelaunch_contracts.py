@@ -4,6 +4,7 @@ import json
 from unittest.mock import patch
 
 from spark_intelligence.attachments.snapshot import sync_attachment_snapshot
+from spark_intelligence.adapters.telegram.runtime import _send_telegram_reply
 from spark_intelligence.gateway.guardrails import prepare_outbound_text
 from spark_intelligence.observability.policy import looks_secret_like
 from spark_intelligence.jobs.service import jobs_tick
@@ -1359,6 +1360,34 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
         self.assertFalse(issues["stop_ship_keepability_rules"].ok)
         self.assertIn("raw-vs-mutated text refs", issues["stop_ship_keepability_rules"].detail)
+
+    def test_send_telegram_reply_defaults_runtime_command_to_non_promotable_classification(self) -> None:
+        class _Client:
+            def send_message(self, *, chat_id: str, text: str) -> None:
+                return None
+
+        result = _send_telegram_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            client=_Client(),
+            chat_id="111",
+            text="Runtime command reply.",
+            event="telegram_runtime_command_outbound",
+            update_id=111,
+            telegram_user_id="111",
+            session_id="session:test",
+            decision="allowed",
+            bridge_mode="runtime_command",
+            trace_ref=None,
+        )
+
+        self.assertTrue(result["ok"])
+        events = latest_events_by_type(self.state_db, event_type="delivery_succeeded", limit=10)
+        self.assertTrue(events)
+        facts = events[0]["facts_json"]
+        self.assertEqual(facts["event"], "telegram_runtime_command_outbound")
+        self.assertEqual(facts["keepability"], "operator_debug_only")
+        self.assertEqual(facts["promotion_disposition"], "not_promotable")
 
     def test_record_researcher_bridge_result_sanitizes_failure_runtime_message(self) -> None:
         record_researcher_bridge_result(
