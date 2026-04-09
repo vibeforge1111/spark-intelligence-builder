@@ -212,6 +212,8 @@ def build_capability_router_prompt_context(
 
 
 def _looks_like_browser_task(lowered: str) -> bool:
+    if "http://" in lowered or "https://" in lowered:
+        return True
     signals = (
         "search the web",
         "browse",
