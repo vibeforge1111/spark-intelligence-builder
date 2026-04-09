@@ -921,6 +921,10 @@ class CliSmokeTests(SparkTestCase):
         self.assertIn(status_exit, (0, 1))
         self.assertIn("- browser: failed via spark-browser BROWSER_SESSION_STALE", status_stdout)
         self.assertIn("- browser detail: Live browser session is not currently connected.", status_stdout)
+        self.assertIn(
+            "- browser repair: Reconnect the Spark Browser extension session, then rerun `spark-intelligence browser status --json`.",
+            status_stdout,
+        )
 
     def test_bootstrap_telegram_agent_configures_supported_profile(self) -> None:
         researcher_root = self.home / "spark-researcher"

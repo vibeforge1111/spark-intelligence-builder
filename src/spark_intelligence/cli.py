@@ -159,6 +159,9 @@ class SystemStatus:
                 lines.append(f"- browser: {browser_state} via {chip_key} {error_code}")
                 if browser.get("error_message"):
                     lines.append(f"- browser detail: {browser['error_message']}")
+                repair_hint = _browser_status_repair_hint(browser)
+                if repair_hint:
+                    lines.append(f"- browser repair: {repair_hint}")
         lines.append(
             f"- attachments: {self.payload['attachments']['record_count']} records "
             f"warnings={self.attachment_warning_count}"
@@ -234,6 +237,15 @@ class SystemStatus:
         lines.append(f"- last swarm decision: {(self.payload['swarm'].get('last_decision') or {}).get('mode', 'none')}")
         lines.append(f"- last swarm sync: {(self.payload['swarm'].get('last_sync') or {}).get('mode', 'none')}")
         return "\n".join(lines)
+
+
+def _browser_status_repair_hint(browser: dict[str, object]) -> str | None:
+    error_code = str(browser.get("error_code") or "").strip()
+    if error_code == "BROWSER_SESSION_STALE":
+        return "Reconnect the Spark Browser extension session, then rerun `spark-intelligence browser status --json`."
+    if error_code:
+        return "Rerun `spark-intelligence browser status --json` for the full governed browser failure payload."
+    return None
 
 
 @dataclass
