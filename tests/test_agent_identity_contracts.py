@@ -12,7 +12,9 @@ from spark_intelligence.identity.service import (
     resolve_inbound_dm,
 )
 from spark_intelligence.personality.loader import (
+    apply_telegram_surface_persona,
     build_telegram_persona_reply_contract,
+    build_telegram_surface_identity_preamble,
     build_personality_system_directive,
     build_personality_import_payload,
     detect_and_persist_agent_persona_preferences,
@@ -164,6 +166,53 @@ class AgentIdentityContractTests(SparkTestCase):
         self.assertEqual(result.base_traits["directness"], 0.82)
         self.assertEqual(result.behavioral_rules, ["Push toward execution."])
         self.assertEqual(result.evolver_state["last_signals"]["personality_id"], "founder_operator")
+
+    def test_build_telegram_surface_identity_preamble_uses_agent_name_for_runtime_and_welcome(self) -> None:
+        profile = {
+            "traits": {
+                "warmth": 0.72,
+                "directness": 0.82,
+                "playfulness": 0.2,
+                "pacing": 0.68,
+                "assertiveness": 0.77,
+            },
+            "agent_persona_name": "Atlas",
+        }
+
+        runtime_preamble = build_telegram_surface_identity_preamble(
+            profile=profile,
+            agent_name="Atlas",
+            surface="runtime_command",
+        )
+        welcome_preamble = build_telegram_surface_identity_preamble(
+            profile=profile,
+            agent_name="Atlas",
+            surface="approval_welcome",
+        )
+
+        self.assertEqual(runtime_preamble, "Atlas:")
+        self.assertEqual(welcome_preamble, "Pairing approved. Atlas is live in this Telegram DM now.")
+
+    def test_apply_telegram_surface_persona_prefixes_deterministic_runtime_reply(self) -> None:
+        profile = {
+            "traits": {
+                "warmth": 0.64,
+                "directness": 0.61,
+                "playfulness": 0.18,
+                "pacing": 0.58,
+                "assertiveness": 0.74,
+            },
+            "agent_persona_name": "Atlas",
+        }
+
+        styled = apply_telegram_surface_persona(
+            reply_text="Swarm is ready.\nAuth: configured.",
+            profile=profile,
+            agent_name="Atlas",
+            surface="runtime_command",
+        )
+
+        self.assertEqual(styled, "Atlas here. Swarm is ready.\nAuth: configured.")
 
     def test_rename_agent_identity_changes_name_without_changing_agent_id(self) -> None:
         approve_pairing(

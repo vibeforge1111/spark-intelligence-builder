@@ -21,11 +21,17 @@ from spark_intelligence.gateway.tracing import append_gateway_trace, append_outb
 from spark_intelligence.identity.service import (
     consume_pairing_welcome,
     pairing_welcome_pending,
+    read_canonical_agent_state,
     record_pairing_context,
     resolve_inbound_dm,
 )
 from spark_intelligence.observability.store import build_text_mutation_facts, close_run, open_run, record_event
-from spark_intelligence.personality import maybe_handle_agent_persona_onboarding_turn
+from spark_intelligence.personality import (
+    apply_telegram_surface_persona,
+    build_telegram_surface_identity_preamble,
+    load_personality_profile,
+    maybe_handle_agent_persona_onboarding_turn,
+)
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply, record_researcher_bridge_result
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD
@@ -318,7 +324,14 @@ def simulate_telegram_update(
             agent_id=resolution.agent_id,
         )
         if command_result is not None:
-            outbound_text = command_result["reply_text"]
+            outbound_text = _apply_saved_telegram_surface_style(
+                config_manager=config_manager,
+                state_db=state_db,
+                human_id=resolution.human_id,
+                agent_id=resolution.agent_id,
+                reply_text=command_result["reply_text"],
+                surface="runtime_command",
+            )
             trace_ref = None
             bridge_mode = "runtime_command"
             attachment_context = None
@@ -343,8 +356,11 @@ def simulate_telegram_update(
             )
             if onboarding_result is not None:
                 outbound_text = _apply_post_approval_welcome(
+                    config_manager=config_manager,
                     state_db=state_db,
                     external_user_id=normalized.telegram_user_id,
+                    human_id=resolution.human_id,
+                    agent_id=resolution.agent_id,
                     reply_text=onboarding_result.reply_text,
                 )
                 trace_ref = None
@@ -368,8 +384,11 @@ def simulate_telegram_update(
                 )
                 record_researcher_bridge_result(state_db=state_db, result=bridge_result)
                 outbound_text = _apply_post_approval_welcome(
+                    config_manager=config_manager,
                     state_db=state_db,
                     external_user_id=normalized.telegram_user_id,
+                    human_id=resolution.human_id,
+                    agent_id=resolution.agent_id,
                     reply_text=bridge_result.reply_text,
                 )
                 trace_ref = bridge_result.trace_ref
@@ -704,6 +723,11 @@ def poll_telegram_updates_once(
             state_db=state_db,
             external_user_id=normalized.telegram_user_id,
             inbound_text=normalized.text,
+            run_id=run.run_id,
+            request_id=run.request_id,
+            session_id=resolution.session_id,
+            human_id=resolution.human_id,
+            agent_id=resolution.agent_id,
         )
         if command_result is not None:
             record_event(
@@ -728,7 +752,14 @@ def poll_telegram_updates_once(
             outbound_text = _apply_think_visibility(
                 state_db=state_db,
                 external_user_id=normalized.telegram_user_id,
-                text=command_result["reply_text"],
+                text=_apply_saved_telegram_surface_style(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    human_id=resolution.human_id,
+                    agent_id=resolution.agent_id,
+                    reply_text=command_result["reply_text"],
+                    surface="runtime_command",
+                ),
             )
             send_result = _send_telegram_reply(
                 config_manager=config_manager,
@@ -815,8 +846,11 @@ def poll_telegram_updates_once(
                 state_db=state_db,
                 external_user_id=normalized.telegram_user_id,
                 text=_apply_post_approval_welcome(
+                    config_manager=config_manager,
                     state_db=state_db,
                     external_user_id=normalized.telegram_user_id,
+                    human_id=resolution.human_id,
+                    agent_id=resolution.agent_id,
                     reply_text=onboarding_result.reply_text,
                 ),
             )
@@ -905,8 +939,11 @@ def poll_telegram_updates_once(
         )
         record_researcher_bridge_result(state_db=state_db, result=bridge_result)
         outbound_text = _apply_post_approval_welcome(
+            config_manager=config_manager,
             state_db=state_db,
             external_user_id=normalized.telegram_user_id,
+            human_id=resolution.human_id,
+            agent_id=resolution.agent_id,
             reply_text=bridge_result.reply_text,
         )
         send_result = _send_telegram_reply(
@@ -1190,6 +1227,51 @@ def _preview_text(text: str, *, limit: int = 160) -> str:
     if len(compact) <= limit:
         return compact
     return f"{compact[: limit - 3]}..."
+
+
+def _load_telegram_persona_surface_state(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str | None,
+    agent_id: str | None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    if not human_id:
+        return None, None
+    profile = load_personality_profile(
+        human_id=human_id,
+        agent_id=agent_id,
+        state_db=state_db,
+        config_manager=config_manager,
+    )
+    try:
+        agent_name = read_canonical_agent_state(state_db=state_db, human_id=human_id).agent_name
+    except Exception:
+        agent_name = None
+    return profile, agent_name
+
+
+def _apply_saved_telegram_surface_style(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str | None,
+    agent_id: str | None,
+    reply_text: str,
+    surface: str,
+) -> str:
+    profile, agent_name = _load_telegram_persona_surface_state(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=human_id,
+        agent_id=agent_id,
+    )
+    return apply_telegram_surface_persona(
+        reply_text=reply_text,
+        profile=profile,
+        agent_name=agent_name,
+        surface=surface,
+    )
 
 
 def _handle_runtime_command(
@@ -3451,8 +3533,11 @@ def _strip_internal_swarm_recommendation(text: str) -> str:
 
 def _apply_post_approval_welcome(
     *,
+    config_manager: ConfigManager,
     state_db: StateDB,
     external_user_id: str,
+    human_id: str | None,
+    agent_id: str | None,
     reply_text: str,
 ) -> str:
     welcome_pending = consume_pairing_welcome(
@@ -3462,7 +3547,17 @@ def _apply_post_approval_welcome(
     )
     if not welcome_pending:
         return reply_text
-    welcome_text = "Pairing approved. Spark Intelligence is now active in this Telegram DM."
+    profile, agent_name = _load_telegram_persona_surface_state(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=human_id,
+        agent_id=agent_id,
+    )
+    welcome_text = build_telegram_surface_identity_preamble(
+        profile=profile,
+        agent_name=agent_name or "Spark Intelligence",
+        surface="approval_welcome",
+    )
     return f"{welcome_text}\n\n{reply_text}".strip()
 
 

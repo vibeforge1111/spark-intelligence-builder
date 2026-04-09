@@ -8,10 +8,11 @@ from spark_intelligence.identity.service import (
     pairing_summary,
     read_canonical_agent_state,
     record_pairing_context,
+    rename_agent_identity,
     review_pairings,
 )
 from spark_intelligence.observability.store import recent_resume_richness_guard_records
-from spark_intelligence.personality.loader import load_personality_profile
+from spark_intelligence.personality.loader import load_personality_profile, save_agent_persona_profile
 from spark_intelligence.researcher_bridge.advisory import ResearcherBridgeResult
 
 from tests.test_support import SparkTestCase, make_telegram_update
@@ -183,6 +184,7 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(follow_up.ok)
         self.assertEqual(follow_up.decision, "allowed")
         self.assertIn("Pairing approved.", str(follow_up.detail["response_text"]))
+        self.assertIn("alice is live in this Telegram DM now.", str(follow_up.detail["response_text"]))
 
     def test_first_post_approval_dm_runs_multi_turn_agent_onboarding(self) -> None:
         self.add_telegram_channel()
@@ -243,6 +245,7 @@ class OperatorPairingFlowTests(SparkTestCase):
 
         self.assertTrue(first_turn.ok)
         self.assertIn("Pairing approved.", str(first_turn.detail["response_text"]))
+        self.assertIn("alice is live in this Telegram DM now.", str(first_turn.detail["response_text"]))
         self.assertIn("What should I call your agent?", str(first_turn.detail["response_text"]))
 
         self.assertTrue(second_turn.ok)
@@ -564,6 +567,59 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Swarm is ready.", str(result.detail["response_text"]))
         self.assertIn("Auth: configured.", str(result.detail["response_text"]))
         self.assertIn("Last sync: uploaded.", str(result.detail["response_text"]))
+
+    def test_swarm_status_command_uses_saved_agent_identity_in_runtime_reply(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+        rename_agent_identity(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+            new_name="Atlas",
+            source_surface="telegram",
+            source_ref="test",
+        )
+        save_agent_persona_profile(
+            agent_id="agent:human:telegram:111",
+            human_id="human:telegram:111",
+            state_db=self.state_db,
+            base_traits={
+                "warmth": 0.62,
+                "directness": 0.83,
+                "playfulness": 0.2,
+                "pacing": 0.66,
+                "assertiveness": 0.74,
+            },
+            persona_name="Atlas",
+            persona_summary="Calm, strategic, very direct, low-fluff.",
+        )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.swarm_status",
+            return_value=SimpleNamespace(
+                api_ready=True,
+                auth_state="configured",
+                last_sync={"mode": "uploaded"},
+                last_decision={"mode": "manual_recommended"},
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=314,
+                    user_id="111",
+                    username="alice",
+                    text="/swarm status",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Atlas: Swarm is ready.", str(result.detail["response_text"]))
 
     def test_natural_language_swarm_status_command_returns_live_bridge_summary(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])

@@ -753,6 +753,101 @@ def build_telegram_persona_reply_contract(profile: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
+def build_telegram_surface_identity_preamble(
+    *,
+    profile: dict[str, Any] | None,
+    agent_name: str | None = None,
+    surface: str = "runtime_command",
+) -> str:
+    """Build a short deterministic preamble for Builder-owned Telegram replies."""
+    resolved_profile = profile or {}
+    visible_name = str(
+        agent_name
+        or resolved_profile.get("agent_persona_name")
+        or resolved_profile.get("personality_name")
+        or ""
+    ).strip()
+    if not visible_name:
+        return ""
+
+    traits = resolved_profile.get("traits") or {}
+    warmth = float(traits.get("warmth", 0.5))
+    directness = float(traits.get("directness", 0.5))
+    pacing = float(traits.get("pacing", 0.5))
+
+    if surface == "approval_welcome":
+        if not resolved_profile:
+            return f"Pairing approved. {visible_name} is live in this Telegram DM now."
+        if directness >= 0.65 or pacing >= 0.6 or warmth <= 0.4:
+            return f"Pairing approved. {visible_name} is live in this Telegram DM now."
+        return f"Pairing approved. {visible_name} is here with you in this Telegram DM now."
+
+    has_saved_persona = bool(
+        resolved_profile.get("agent_persona_name")
+        or resolved_profile.get("agent_persona_summary")
+        or resolved_profile.get("agent_persona_applied")
+        or resolved_profile.get("agent_behavioral_rules")
+    )
+    if not has_saved_persona:
+        return ""
+
+    if directness >= 0.65 or warmth <= 0.4:
+        return f"{visible_name}:"
+    if warmth >= 0.6:
+        return f"{visible_name} here."
+    return f"{visible_name}:"
+
+
+def apply_telegram_surface_persona(
+    *,
+    reply_text: str,
+    profile: dict[str, Any] | None,
+    agent_name: str | None = None,
+    surface: str = "runtime_command",
+) -> str:
+    """Apply light identity/tone framing to deterministic Telegram replies."""
+    normalized_text = str(reply_text or "").strip()
+    if not normalized_text:
+        return ""
+    if surface == "approval_welcome":
+        preamble = build_telegram_surface_identity_preamble(
+            profile=profile,
+            agent_name=agent_name,
+            surface=surface,
+        )
+        return preamble or normalized_text
+
+    preamble = build_telegram_surface_identity_preamble(
+        profile=profile,
+        agent_name=agent_name,
+        surface=surface,
+    )
+    if not preamble:
+        return normalized_text
+
+    lowered_text = normalized_text.lower()
+    visible_name = str(
+        agent_name
+        or (profile or {}).get("agent_persona_name")
+        or (profile or {}).get("personality_name")
+        or ""
+    ).strip()
+    if visible_name and (
+        lowered_text.startswith(f"{visible_name.lower()}:")
+        or lowered_text.startswith(f"{visible_name.lower()} here.")
+        or lowered_text.startswith(f"`{visible_name.lower()}`")
+    ):
+        return normalized_text
+
+    lines = normalized_text.splitlines()
+    for index, line in enumerate(lines):
+        if not line.strip():
+            continue
+        lines[index] = f"{preamble} {line.strip()}".strip()
+        break
+    return "\n".join(lines)
+
+
 def load_agent_persona_profile(*, agent_id: str | None, state_db: StateDB | None) -> dict[str, Any]:
     if not agent_id or state_db is None:
         return {}
