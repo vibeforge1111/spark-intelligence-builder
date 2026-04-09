@@ -1335,9 +1335,9 @@ def _handle_runtime_command(
             "command": "/swarm status",
             "reply_text": (
                 f"Swarm is {'ready' if status.api_ready else 'not ready'}.\n"
-                f"Auth: {status.auth_state}.\n"
-                f"Last sync: {(status.last_sync or {}).get('mode', 'none')}.\n"
-                f"Last decision: {(status.last_decision or {}).get('mode', 'none')}."
+                f"Auth is {status.auth_state}, last sync was {(status.last_sync or {}).get('mode', 'none')}, "
+                f"and the last decision was {(status.last_decision or {}).get('mode', 'none')}.\n"
+                "Next: `/swarm sync` or `/swarm collective`."
             ),
         }
     if lowered == "/swarm overview" or natural_swarm_command == ("/swarm overview", None):
@@ -1510,10 +1510,10 @@ def _handle_runtime_command(
         return {
             "command": "/swarm sync",
             "reply_text": (
-                f"Swarm sync {'ok' if result.ok else 'failed'}.\n"
-                f"Mode: {result.mode}.\n"
-                f"Accepted: {'yes' if result.accepted else 'no'}.\n"
-                f"{result.message}"
+                f"Swarm sync {'completed' if result.ok else 'failed'}.\n"
+                f"Mode: {result.mode}. Accepted: {'yes' if result.accepted else 'no'}.\n"
+                f"{result.message}\n"
+                "Next: `/swarm status` to confirm the current bridge state."
             ),
         }
     run_args = _parse_swarm_path_run_command(normalized)
@@ -1952,11 +1952,12 @@ def _render_swarm_overview_reply(payload: dict[str, Any]) -> str:
     repos = attached_repos if isinstance(attached_repos, list) else []
     verified_count = sum(1 for repo in repos if isinstance(repo, dict) and str(repo.get("verificationState") or "") == "verified")
     pending_count = sum(1 for repo in repos if isinstance(repo, dict) and str(repo.get("verificationState") or "") != "verified")
+    workspace = str((session or {}).get("workspaceName") or (session or {}).get("workspaceSlug") or (session or {}).get("workspaceId") or "unknown")
+    agent_name = str((agent or {}).get("name") or (agent or {}).get("id") or "unknown")
     return (
-        "Swarm overview:\n"
-        f"Workspace: {str((session or {}).get('workspaceName') or (session or {}).get('workspaceSlug') or (session or {}).get('workspaceId') or 'unknown')}.\n"
-        f"Agent: {str((agent or {}).get('name') or (agent or {}).get('id') or 'unknown')}.\n"
-        f"Repos: {len(repos)} attached, {verified_count} verified, {pending_count} pending."
+        f"Swarm is attached to {workspace}.\n"
+        f"Agent: {agent_name}. Repos: {len(repos)} attached, {verified_count} verified, {pending_count} pending.\n"
+        "Next: `/swarm status` or `/swarm collective`."
     )
 
 
@@ -1964,11 +1965,12 @@ def _render_swarm_runtime_reply(payload: dict[str, Any]) -> str:
     intelligence = payload.get("intelligencePulse") if isinstance(payload, dict) else {}
     pending_upgrades = (intelligence or {}).get("pendingUpgradeCount") if isinstance(intelligence, dict) else None
     pending_contradictions = (intelligence or {}).get("pendingContradictionCount") if isinstance(intelligence, dict) else None
+    state = str(payload.get("runtimeState") or "unknown")
+    stage = str(payload.get("stageLabel") or payload.get("stageKey") or "unknown")
+    recommendation = str(payload.get("recommendation") or "none")
     lines = [
-        "Swarm runtime pulse:",
-        f"State: {str(payload.get('runtimeState') or 'unknown')}.",
-        f"Stage: {str(payload.get('stageLabel') or payload.get('stageKey') or 'unknown')}.",
-        f"Recommendation: {str(payload.get('recommendation') or 'none')}.",
+        f"Swarm runtime is {state}.",
+        f"Stage: {stage}. Recommendation: {recommendation}.",
     ]
     if payload.get("blocker"):
         lines.append(f"Blocker: {str(payload.get('blocker'))}.")
@@ -1976,6 +1978,7 @@ def _render_swarm_runtime_reply(payload: dict[str, Any]) -> str:
         lines.append(
             f"Pressure: {int(pending_upgrades or 0)} pending upgrades, {int(pending_contradictions or 0)} open contradictions."
         )
+    lines.append("Next: `/swarm issues` if blocked, otherwise `/swarm collective`.")
     return "\n".join(lines)
 
 
@@ -2191,14 +2194,14 @@ def _render_swarm_collective_reply(payload: dict[str, Any]) -> str:
         if isinstance(item, dict) and str(item.get("status") or "") in pending_statuses
     ]
     return (
-        "Swarm collective summary:\n"
-        f"Specializations: {len(specializations) if isinstance(specializations, list) else 0}.\n"
-        f"Paths: {len(paths) if isinstance(paths, list) else 0}.\n"
-        f"Insights: {len(insights) if isinstance(insights, list) else 0}.\n"
+        "Swarm collective has "
+        f"{len(open_contradictions)} open contradiction(s), {len(pending_upgrades)} pending upgrade(s), and "
+        f"{len(inbox_items) if isinstance(inbox_items, list) else 0} inbox item(s).\n"
+        f"Specializations: {len(specializations) if isinstance(specializations, list) else 0}. "
+        f"Paths: {len(paths) if isinstance(paths, list) else 0}. "
+        f"Insights: {len(insights) if isinstance(insights, list) else 0}. "
         f"Masteries: {len(masteries) if isinstance(masteries, list) else 0}.\n"
-        f"Open contradictions: {len(open_contradictions)}.\n"
-        f"Pending upgrades: {len(pending_upgrades)}.\n"
-        f"Inbox items: {len(inbox_items) if isinstance(inbox_items, list) else 0}."
+        "Next: `/swarm upgrades`, `/swarm issues`, or `/swarm inbox`."
     )
 
 
@@ -2222,13 +2225,14 @@ def _render_swarm_paths_reply(payload: dict[str, Any]) -> str:
 def _render_swarm_bridge_run_reply(result: Any) -> str:
     if not getattr(result, "ok", False):
         return _render_swarm_bridge_failure("run", result)
+    path_key = str(getattr(result, "path_key", "") or "unknown")
+    path_label = _humanize_swarm_path_key(path_key)
     artifacts_path = str(getattr(result, "artifacts_path", "") or "").strip() or "unknown"
     payload_path = str(getattr(result, "payload_path", "") or "").strip() or "not written"
     return (
-        "Swarm specialization-path run completed.\n"
-        f"Path: {str(getattr(result, 'path_key', '') or 'unknown')}.\n"
-        f"Artifacts: {artifacts_path}.\n"
-        f"Collective payload: {payload_path}."
+        f"{path_label} run completed.\n"
+        f"Artifacts: {artifacts_path}. Collective payload: {payload_path}.\n"
+        f"Next: `/swarm autoloop {path_key}` or `/swarm session {path_key}`."
     )
 
 

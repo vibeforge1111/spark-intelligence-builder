@@ -565,8 +565,8 @@ class OperatorPairingFlowTests(SparkTestCase):
 
         self.assertTrue(result.ok)
         self.assertIn("Swarm is ready.", str(result.detail["response_text"]))
-        self.assertIn("Auth: configured.", str(result.detail["response_text"]))
-        self.assertIn("Last sync: uploaded.", str(result.detail["response_text"]))
+        self.assertIn("Auth is configured, last sync was uploaded, and the last decision was manual_recommended.", str(result.detail["response_text"]))
+        self.assertIn("Next: `/swarm sync` or `/swarm collective`.", str(result.detail["response_text"]))
 
     def test_swarm_status_command_uses_saved_agent_identity_in_runtime_reply(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -674,7 +674,7 @@ class OperatorPairingFlowTests(SparkTestCase):
             )
 
         self.assertTrue(result.ok)
-        self.assertIn("Swarm overview:", str(result.detail["response_text"]))
+        self.assertIn("Swarm is attached to Vibe Forge Workspace.", str(result.detail["response_text"]))
         self.assertIn("Vibe Forge Workspace", str(result.detail["response_text"]))
         self.assertIn("2 attached, 1 verified, 1 pending", str(result.detail["response_text"]))
 
@@ -834,7 +834,7 @@ class OperatorPairingFlowTests(SparkTestCase):
             )
 
         self.assertTrue(result.ok)
-        self.assertIn("Swarm sync ok.", str(result.detail["response_text"]))
+        self.assertIn("Swarm sync completed.", str(result.detail["response_text"]))
         self.assertIn("Mode: uploaded.", str(result.detail["response_text"]))
         self.assertIn("Accepted: yes.", str(result.detail["response_text"]))
 
@@ -862,7 +862,7 @@ class OperatorPairingFlowTests(SparkTestCase):
             )
 
         self.assertTrue(result.ok)
-        self.assertIn("Swarm sync ok.", str(result.detail["response_text"]))
+        self.assertIn("Swarm sync completed.", str(result.detail["response_text"]))
         self.assertEqual(result.detail["bridge_mode"], "runtime_command")
 
     def test_swarm_specializations_command_returns_recent_specializations(self) -> None:
@@ -1695,9 +1695,9 @@ class OperatorPairingFlowTests(SparkTestCase):
             )
 
         self.assertTrue(result.ok)
-        self.assertIn("Swarm collective summary:", str(result.detail["response_text"]))
-        self.assertIn("Specializations: 1.", str(result.detail["response_text"]))
-        self.assertIn("Pending upgrades: 1.", str(result.detail["response_text"]))
+        self.assertIn("Swarm collective has 1 open contradiction(s), 1 pending upgrade(s), and 1 inbox item(s).", str(result.detail["response_text"]))
+        self.assertIn("Specializations: 1. Paths: 2. Insights: 1. Masteries: 1.", str(result.detail["response_text"]))
+        self.assertIn("Next: `/swarm upgrades`, `/swarm issues`, or `/swarm inbox`.", str(result.detail["response_text"]))
 
     def test_natural_language_swarm_paths_command_lists_attached_paths(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -1752,7 +1752,8 @@ class OperatorPairingFlowTests(SparkTestCase):
             )
 
         self.assertTrue(result.ok)
-        self.assertIn("Swarm specialization-path run completed.", str(result.detail["response_text"]))
+        self.assertIn("Startup Operator run completed.", str(result.detail["response_text"]))
+        self.assertIn("Next: `/swarm autoloop startup-operator` or `/swarm session startup-operator`.", str(result.detail["response_text"]))
         self.assertEqual(run_mock.call_args.kwargs["path_key"], "startup-operator")
 
     def test_natural_language_swarm_autoloop_command_runs_local_loop(self) -> None:
