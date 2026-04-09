@@ -1118,6 +1118,114 @@ def pop_agent_persona_undo_snapshot(
     )
 
 
+def create_agent_persona_savepoint(
+    *,
+    agent_id: str,
+    human_id: str,
+    savepoint_name: str,
+    state_db: StateDB,
+    source_surface: str,
+    source_ref: str | None = None,
+) -> str:
+    storage_agent_id = resolve_builder_persona_agent_id(human_id=human_id) or agent_id
+    current_profile = load_agent_persona_profile(agent_id=storage_agent_id, human_id=human_id, state_db=state_db)
+    base_traits = dict(_DEFAULT_TRAITS)
+    base_traits.update({k: float(v) for k, v in dict(current_profile.get("base_traits") or {}).items() if k in _DEFAULT_TRAITS})
+    savepoint_id = f"agent-persona-savepoint-{uuid4().hex[:12]}"
+    created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    normalized_name = " ".join(str(savepoint_name or "").strip().split())
+    with state_db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO agent_persona_savepoints(
+                savepoint_id, agent_id, human_id, savepoint_name, persona_name, persona_summary, base_traits_json,
+                behavioral_rules_json, provenance_json, source_surface, source_ref, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                savepoint_id,
+                storage_agent_id,
+                human_id,
+                normalized_name,
+                current_profile.get("persona_name"),
+                current_profile.get("persona_summary"),
+                json.dumps(base_traits, sort_keys=True),
+                json.dumps(list(current_profile.get("behavioral_rules") or []), sort_keys=True),
+                json.dumps(dict(current_profile.get("provenance") or {}), sort_keys=True),
+                source_surface,
+                source_ref,
+                created_at,
+            ),
+        )
+        conn.commit()
+    return savepoint_id
+
+
+def list_agent_persona_savepoints(
+    *,
+    agent_id: str,
+    human_id: str,
+    state_db: StateDB,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    storage_agent_id = resolve_builder_persona_agent_id(human_id=human_id) or agent_id
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT savepoint_id, savepoint_name, persona_name, persona_summary, created_at
+            FROM agent_persona_savepoints
+            WHERE agent_id = ? AND human_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (storage_agent_id, human_id, limit),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def restore_agent_persona_savepoint(
+    *,
+    agent_id: str,
+    human_id: str,
+    savepoint_name: str,
+    state_db: StateDB,
+    source_surface: str,
+    source_ref: str | None = None,
+) -> dict[str, Any] | None:
+    storage_agent_id = resolve_builder_persona_agent_id(human_id=human_id) or agent_id
+    normalized_name = " ".join(str(savepoint_name or "").strip().split())
+    with state_db.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT persona_name, persona_summary, base_traits_json, behavioral_rules_json, provenance_json
+            FROM agent_persona_savepoints
+            WHERE agent_id = ? AND human_id = ? AND lower(savepoint_name) = lower(?)
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (storage_agent_id, human_id, normalized_name),
+        ).fetchone()
+    if not row:
+        return None
+    base_traits = json.loads(row["base_traits_json"] or "{}") if row["base_traits_json"] else {}
+    behavioral_rules = json.loads(row["behavioral_rules_json"] or "[]") if row["behavioral_rules_json"] else []
+    provenance = json.loads(row["provenance_json"] or "{}") if row["provenance_json"] else {}
+    return save_agent_persona_profile(
+        agent_id=storage_agent_id,
+        human_id=human_id,
+        state_db=state_db,
+        base_traits={**_DEFAULT_TRAITS, **{k: float(v) for k, v in dict(base_traits).items() if k in _DEFAULT_TRAITS}},
+        persona_name=_read_optional_text(row["persona_name"]),
+        persona_summary=_read_optional_text(row["persona_summary"]),
+        behavioral_rules=behavioral_rules if isinstance(behavioral_rules, list) else [],
+        provenance=provenance if isinstance(provenance, dict) else {},
+        mutation_kind="savepoint_restore",
+        source_surface=source_surface,
+        source_ref=source_ref,
+        push_undo_snapshot=True,
+    )
+
+
 def migrate_legacy_human_personality_to_agent_persona(
     *,
     human_id: str,

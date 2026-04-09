@@ -51,6 +51,9 @@ Natural-language examples:
 - `/style`
 - `/style status`
 - `/style history`
+- `/style savepoints`
+- `/style savepoint <name>`
+- `/style restore <name>`
 - `/style presets`
 - `/style preset <name>`
 - `/style undo`
@@ -68,6 +71,9 @@ Natural-language examples:
 
 - `Can you show me my current style?`
 - `What style changes have you saved?`
+- `What style savepoints do I have?`
+- `Save style savepoint named checkpoint one`
+- `Restore style savepoint named checkpoint one`
 - `What style presets are available?`
 - `Set style preset to claude-like`
 - `Undo the last style change`

@@ -33,11 +33,14 @@ from spark_intelligence.observability.store import build_text_mutation_facts, cl
 from spark_intelligence.personality import (
     apply_telegram_surface_persona,
     build_telegram_surface_identity_preamble,
+    create_agent_persona_savepoint,
     detect_and_persist_agent_persona_preferences,
+    list_agent_persona_savepoints,
     load_personality_profile,
     maybe_handle_agent_persona_onboarding_turn,
     pop_agent_persona_undo_snapshot,
     resolve_builder_persona_agent_id,
+    restore_agent_persona_savepoint,
 )
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply, record_researcher_bridge_result
 from spark_intelligence.state.db import StateDB
@@ -2539,6 +2542,8 @@ def _parse_style_command(inbound_text: str) -> dict[str, str | None] | None:
         return {"command": "/style status", "payload": None}
     if lowered in {"/style history", "style history"}:
         return {"command": "/style history", "payload": None}
+    if lowered in {"/style savepoints", "style savepoints"}:
+        return {"command": "/style savepoints", "payload": None}
     if lowered in {"/style presets", "style presets"}:
         return {"command": "/style presets", "payload": None}
     if lowered in {"/style undo", "style undo", "/style rollback", "style rollback"}:
@@ -2554,6 +2559,16 @@ def _parse_style_command(inbound_text: str) -> dict[str, str | None] | None:
         if lowered.startswith(prefix):
             payload = normalized[len(prefix) :].strip()
             return {"command": "/style preset", "payload": payload}
+    savepoint_prefixes = ("/style savepoint ", "style savepoint ")
+    for prefix in savepoint_prefixes:
+        if lowered.startswith(prefix):
+            payload = normalized[len(prefix) :].strip()
+            return {"command": "/style savepoint", "payload": payload}
+    restore_prefixes = ("/style restore ", "style restore ")
+    for prefix in restore_prefixes:
+        if lowered.startswith(prefix):
+            payload = normalized[len(prefix) :].strip()
+            return {"command": "/style restore", "payload": payload}
     before_after_prefixes = (
         "/style before-after ",
         "style before-after ",
@@ -2654,6 +2669,13 @@ def _match_natural_style_command(inbound_text: str) -> dict[str, str | None] | N
     }:
         return {"command": "/style history", "payload": None}
     if simplified in {
+        "show style savepoints",
+        "show me style savepoints",
+        "what style savepoints do i have",
+        "list style savepoints",
+    }:
+        return {"command": "/style savepoints", "payload": None}
+    if simplified in {
         "show style presets",
         "show me style presets",
         "what style presets are available",
@@ -2669,6 +2691,15 @@ def _match_natural_style_command(inbound_text: str) -> dict[str, str | None] | N
         "undo the last preset",
     }:
         return {"command": "/style undo", "payload": None}
+    for pattern in (
+        r"^(?:save|create)\s+(?:a\s+)?style\s+savepoint(?:\s+(?:called|named))?\s+(?P<payload>.+)$",
+        r"^(?:restore|load)\s+(?:the\s+)?style\s+savepoint(?:\s+(?:called|named))?\s+(?P<payload>.+)$",
+    ):
+        match = re.match(pattern, normalized, flags=re.IGNORECASE)
+        if match:
+            payload = " ".join(str(match.group("payload") or "").strip().split())
+            if payload:
+                return {"command": "/style savepoint" if pattern.startswith("^(?:save|create)") else "/style restore", "payload": payload}
     if re.match(
         r"^(?:please\s+|can you\s+)?(?:show(?:\s+me)?|tell me)\s+(?:my\s+)?style\s+history$",
         simplified,
@@ -2842,11 +2873,14 @@ def _handle_style_command(
             "reply_text": (
                 "Style controls: `/style status` to inspect the current Telegram persona, "
                 "`/style history` to inspect recent saved mutations, "
+                "`/style savepoints` to list named checkpoints, "
                 "`/style presets` to list named conversation presets, "
                 "`/style undo` to revert the last saved style change, "
                 "`/style score` to grade the current voice against the training rubric, "
                 "`/style examples` to see fixed sample replies in the current voice, "
                 "`/style compare` to preview how the current voice differs from the default baseline, "
+                "`/style savepoint <name>` to save the current voice state, "
+                "`/style restore <name>` to restore a named savepoint, "
                 "`/style preset <name>` to apply a named preset, "
                 "`/style before-after <instruction>` to preview a training change before saving it, "
                 "`/style train <instruction>` to save a new style rule, and `/style feedback <note>` after a live test reply.\n"
@@ -2876,6 +2910,18 @@ def _handle_style_command(
                 ),
                 profile=profile,
                 agent_name=agent_name,
+            ),
+        }
+    if command == "/style savepoints":
+        return {
+            "command": "/style savepoints",
+            "reply_text": _render_style_savepoints_reply(
+                rows=_list_style_savepoints(
+                    state_db=state_db,
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    limit=10,
+                ),
             ),
         }
     if command == "/style presets":
@@ -2944,6 +2990,84 @@ def _handle_style_command(
                 profile=profile,
                 agent_name=agent_name,
                 instruction=instruction,
+            ),
+        }
+    if command == "/style savepoint":
+        savepoint_name = " ".join(str(payload or "").strip().split())
+        if not savepoint_name:
+            return {
+                "command": "/style savepoint",
+                "reply_text": (
+                    "Style savepoint needs a name.\n"
+                    "Next: send `/style savepoint claude baseline`."
+                ),
+            }
+        if not human_id or not agent_id:
+            return {
+                "command": "/style savepoint",
+                "reply_text": (
+                    "Style savepoints are unavailable right now.\n"
+                    "Reason: this Telegram DM does not have a resolved Builder identity yet."
+                ),
+            }
+        create_agent_persona_savepoint(
+            agent_id=agent_id,
+            human_id=human_id,
+            savepoint_name=savepoint_name,
+            state_db=state_db,
+            source_surface="telegram",
+            source_ref="telegram-style-savepoint",
+        )
+        return {
+            "command": "/style savepoint",
+            "reply_text": _render_style_savepoint_created_reply(name=savepoint_name),
+        }
+    if command == "/style restore":
+        savepoint_name = " ".join(str(payload or "").strip().split())
+        if not savepoint_name:
+            return {
+                "command": "/style restore",
+                "reply_text": (
+                    "Style restore needs a savepoint name.\n"
+                    "Next: send `/style restore claude baseline`."
+                ),
+            }
+        if not human_id or not agent_id:
+            return {
+                "command": "/style restore",
+                "reply_text": (
+                    "Style restore is unavailable right now.\n"
+                    "Reason: this Telegram DM does not have a resolved Builder identity yet."
+                ),
+            }
+        restored_profile = restore_agent_persona_savepoint(
+            agent_id=agent_id,
+            human_id=human_id,
+            savepoint_name=savepoint_name,
+            state_db=state_db,
+            source_surface="telegram",
+            source_ref="telegram-style-restore",
+        )
+        if restored_profile is None:
+            return {
+                "command": "/style restore",
+                "reply_text": (
+                    "Style savepoint not found.\n"
+                    "Next: use `/style savepoints` to list the available names."
+                ),
+            }
+        refreshed_profile, refreshed_agent_name = _load_telegram_persona_surface_state(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            agent_id=agent_id,
+        )
+        return {
+            "command": "/style restore",
+            "reply_text": _render_style_restore_reply(
+                profile=refreshed_profile,
+                agent_name=refreshed_agent_name,
+                savepoint_name=savepoint_name,
             ),
         }
     if command == "/style preset":
@@ -3276,6 +3400,46 @@ def _render_style_status_reply(*, profile: dict[str, Any] | None, agent_name: st
     return "\n".join(lines)
 
 
+def _render_style_savepoints_reply(*, rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return (
+            "Style savepoints are empty.\n"
+            "Next: use `/style savepoint <name>` to store the current voice state."
+        )
+    lines = ["Style savepoints."]
+    for index, row in enumerate(rows[:10], start=1):
+        name = str(row.get("savepoint_name") or "").strip() or "(unnamed)"
+        summary = str(row.get("persona_summary") or "").strip()
+        created_at = str(row.get("created_at") or "").strip()
+        detail = name
+        if created_at:
+            detail += f" at {created_at}"
+        if summary:
+            detail += f": {summary}"
+        lines.append(f"{index}. {detail}")
+    lines.append("Next: use `/style restore <name>` to restore one, or `/style savepoint <name>` to add another.")
+    return "\n".join(lines)
+
+
+def _render_style_savepoint_created_reply(*, name: str) -> str:
+    normalized_name = " ".join(str(name or "").strip().split())
+    return (
+        f"Saved style savepoint `{normalized_name}`.\n"
+        "Next: use `/style restore <name>` to restore it later, or `/style savepoints` to list all checkpoints."
+    )
+
+
+def _render_style_restore_reply(*, profile: dict[str, Any] | None, agent_name: str | None, savepoint_name: str) -> str:
+    resolved_profile = profile or {}
+    name = str(agent_name or resolved_profile.get("agent_persona_name") or "the agent").strip()
+    persona_summary = str(resolved_profile.get("agent_persona_summary") or "").strip()
+    lines = [f"Restored style savepoint `{savepoint_name}` for {name}."]
+    if persona_summary:
+        lines.append(f"Current summary: {persona_summary}.")
+    lines.append("Next: ask a normal question in this DM to verify the restored voice, or use `/style undo` to roll back the restore.")
+    return "\n".join(lines)
+
+
 def _render_style_presets_reply() -> str:
     lines = ["Style presets available."]
     for key, preset in _STYLE_PRESETS.items():
@@ -3306,6 +3470,24 @@ def _list_recent_style_mutations(
             (resolved_agent_id, limit),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def _list_style_savepoints(
+    *,
+    state_db: StateDB,
+    human_id: str | None,
+    agent_id: str | None,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    resolved_agent_id = resolve_builder_persona_agent_id(human_id=human_id) or str(agent_id or "").strip()
+    if not resolved_agent_id or not human_id:
+        return []
+    return list_agent_persona_savepoints(
+        agent_id=resolved_agent_id,
+        human_id=human_id,
+        state_db=state_db,
+        limit=limit,
+    )
 
 
 def _style_history_event_label(row: dict[str, Any]) -> str:
