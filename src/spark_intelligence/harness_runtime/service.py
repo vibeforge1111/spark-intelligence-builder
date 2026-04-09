@@ -102,31 +102,67 @@ def build_harness_task_envelope(
     config_manager: ConfigManager,
     state_db: StateDB,
     task: str,
+    forced_harness_id: str | None = None,
     channel_kind: str | None = None,
     session_id: str | None = None,
     human_id: str | None = None,
     agent_id: str | None = None,
 ) -> HarnessTaskEnvelope:
-    from spark_intelligence.harness_registry import build_harness_selection
+    from spark_intelligence.harness_registry import build_harness_registry, build_harness_selection
 
-    selection = build_harness_selection(
-        config_manager=config_manager,
-        state_db=state_db,
-        task=task,
-    )
+    normalized_forced_harness_id = str(forced_harness_id or "").strip()
+    if normalized_forced_harness_id:
+        registry = build_harness_registry(config_manager=config_manager, state_db=state_db)
+        contracts = {contract.harness_id: contract for contract in registry.contracts}
+        contract = contracts.get(normalized_forced_harness_id)
+        if contract is None:
+            available = ", ".join(sorted(contracts))
+            raise ValueError(
+                f"Unknown harness id '{normalized_forced_harness_id}'. Available harnesses: {available}"
+            )
+        selection_payload = {
+            "harness_id": contract.harness_id,
+            "owner_system": contract.owner_system,
+            "backend_kind": contract.backend_kind,
+            "session_scope": contract.session_scope,
+            "prompt_strategy": contract.prompt_strategy,
+            "route_mode": "forced_harness",
+            "required_capabilities": list(contract.required_capabilities),
+            "artifacts": list(contract.artifacts),
+            "next_actions": [f"Operator forced harness selection to {contract.harness_id}."],
+            "limitations": list(contract.limitations),
+        }
+    else:
+        selection = build_harness_selection(
+            config_manager=config_manager,
+            state_db=state_db,
+            task=task,
+        )
+        selection_payload = {
+            "harness_id": selection.harness_id,
+            "owner_system": selection.owner_system,
+            "backend_kind": selection.backend_kind,
+            "session_scope": selection.session_scope,
+            "prompt_strategy": selection.prompt_strategy,
+            "route_mode": selection.route_mode,
+            "required_capabilities": list(selection.required_capabilities),
+            "artifacts": list(selection.artifacts),
+            "next_actions": list(selection.next_actions),
+            "limitations": list(selection.limitations),
+        }
     return HarnessTaskEnvelope(
         envelope_id=f"htask:{uuid4().hex[:12]}",
         task=str(task or "").strip(),
-        harness_id=selection.harness_id,
-        owner_system=selection.owner_system,
-        backend_kind=selection.backend_kind,
-        session_scope=selection.session_scope,
-        prompt_strategy=selection.prompt_strategy,
-        route_mode=selection.route_mode,
-        required_capabilities=list(selection.required_capabilities),
-        artifacts_expected=list(selection.artifacts),
-        next_actions=list(selection.next_actions),
-        limitations=list(selection.limitations),
+        harness_id=str(selection_payload["harness_id"]),
+        owner_system=str(selection_payload["owner_system"]),
+        backend_kind=str(selection_payload["backend_kind"]),
+        session_scope=str(selection_payload["session_scope"]),
+        prompt_strategy=str(selection_payload["prompt_strategy"]),
+        route_mode=str(selection_payload["route_mode"]),
+        required_capabilities=list(selection_payload["required_capabilities"]),
+        artifacts_expected=list(selection_payload["artifacts"]),
+        next_actions=list(selection_payload["next_actions"]),
+        limitations=list(selection_payload["limitations"]),
         channel_kind=channel_kind,
         session_id=session_id,
         human_id=human_id,
@@ -183,6 +219,12 @@ def execute_harness_task(
                 }
             }
             status = "prepared"
+        elif envelope.harness_id == "researcher.advisory":
+            artifacts, summary, status = _execute_researcher_advisory_harness(
+                config_manager=config_manager,
+                state_db=state_db,
+                envelope=envelope,
+            )
         elif envelope.harness_id == "browser.grounded":
             artifacts, summary, status = _execute_browser_grounded_harness(
                 config_manager=config_manager,
@@ -340,6 +382,55 @@ def _execute_browser_grounded_harness(
         },
         f"Prepared a governed browser navigate payload for {url}.",
         "prepared",
+    )
+
+
+def _execute_researcher_advisory_harness(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    envelope: HarnessTaskEnvelope,
+) -> tuple[dict[str, Any], str, str]:
+    result = _run_researcher_bridge_reply(
+        config_manager=config_manager,
+        state_db=state_db,
+        envelope=envelope,
+    )
+    artifacts = {
+        "reply_text": result.reply_text,
+        "evidence_summary": result.evidence_summary,
+        "trace_ref": result.trace_ref,
+        "mode": result.mode,
+        "provider_id": result.provider_id,
+        "provider_model": result.provider_model,
+        "provider_transport": result.provider_execution_transport,
+        "routing_decision": result.routing_decision,
+        "active_chip_key": result.active_chip_key,
+    }
+    return (
+        artifacts,
+        "Executed the researcher advisory harness and captured the reply/result trace.",
+        "completed",
+    )
+
+
+def _run_researcher_bridge_reply(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    envelope: HarnessTaskEnvelope,
+):
+    from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
+
+    return build_researcher_reply(
+        config_manager=config_manager,
+        state_db=state_db,
+        request_id=envelope.envelope_id,
+        agent_id=envelope.agent_id or "agent:builder-local",
+        human_id=envelope.human_id or "human:local-operator",
+        session_id=envelope.session_id or f"session:{envelope.envelope_id}",
+        channel_kind=envelope.channel_kind or "cli",
+        user_message=envelope.task,
     )
 
 

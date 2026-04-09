@@ -130,7 +130,11 @@ from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_status, sync_swarm_collective
 from spark_intelligence.harness_registry import build_harness_registry
-from spark_intelligence.harness_runtime import build_harness_runtime_snapshot
+from spark_intelligence.harness_runtime import (
+    build_harness_runtime_snapshot,
+    build_harness_task_envelope,
+    execute_harness_task,
+)
 from spark_intelligence.mission_control import build_mission_control_snapshot
 from spark_intelligence.system_registry import build_system_registry
 
@@ -1622,6 +1626,30 @@ def build_parser() -> argparse.ArgumentParser:
     jobs_tick_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     jobs_list_parser = jobs_subparsers.add_parser("list", help="List known jobs and the latest maintenance result")
     jobs_list_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+
+    harness_parser = subparsers.add_parser("harness", help="Inspect and exercise Spark harness planning and execution")
+    harness_subparsers = harness_parser.add_subparsers(dest="harness_command", required=True)
+    harness_status_parser = harness_subparsers.add_parser("status", help="Show harness registry and recent harness runtime state")
+    harness_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    harness_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    harness_plan_parser = harness_subparsers.add_parser("plan", help="Plan which harness Spark would use for a task")
+    harness_plan_parser.add_argument("task", help="Task description to classify into a harness")
+    harness_plan_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    harness_plan_parser.add_argument("--channel-kind", help="Optional channel kind context")
+    harness_plan_parser.add_argument("--session-id", help="Optional session id")
+    harness_plan_parser.add_argument("--human-id", help="Optional human id")
+    harness_plan_parser.add_argument("--agent-id", help="Optional agent id")
+    harness_plan_parser.add_argument("--harness-id", help="Force a specific harness id instead of routing automatically")
+    harness_plan_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    harness_execute_parser = harness_subparsers.add_parser("execute", help="Execute a harness task envelope through the harness runtime")
+    harness_execute_parser.add_argument("task", help="Task description to execute through the selected harness")
+    harness_execute_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    harness_execute_parser.add_argument("--channel-kind", help="Optional channel kind context")
+    harness_execute_parser.add_argument("--session-id", help="Optional session id")
+    harness_execute_parser.add_argument("--human-id", help="Optional human id")
+    harness_execute_parser.add_argument("--agent-id", help="Optional agent id")
+    harness_execute_parser.add_argument("--harness-id", help="Force a specific harness id instead of routing automatically")
+    harness_execute_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     agent_parser = subparsers.add_parser("agent", help="Inspect agent and workspace state")
     agent_subparsers = agent_parser.add_subparsers(dest="agent_command", required=True)
@@ -4590,6 +4618,103 @@ def handle_jobs_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_harness_status(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    payload = {
+        "harness_registry": build_harness_registry(config_manager, state_db).to_payload(),
+        "harness_runtime": build_harness_runtime_snapshot(config_manager, state_db).to_payload(),
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        registry_summary = payload["harness_registry"]["summary"]
+        runtime_summary = payload["harness_runtime"]["summary"]
+        lines = ["Spark harness status"]
+        lines.append(f"- contracts: {int(registry_summary.get('contract_count') or 0)}")
+        lines.append(f"- available: {int(registry_summary.get('available_contract_count') or 0)}")
+        available_harnesses = registry_summary.get("available_harnesses") or []
+        if available_harnesses:
+            lines.append(f"- harnesses: {', '.join(str(item) for item in available_harnesses[:8])}")
+        lines.append(f"- recent runs: {int(runtime_summary.get('recent_run_count') or 0)}")
+        if runtime_summary.get("last_harness_id"):
+            lines.append(f"- last harness: {runtime_summary['last_harness_id']}")
+        print("\n".join(lines))
+    return 0
+
+
+def handle_harness_plan(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    envelope = build_harness_task_envelope(
+        config_manager=config_manager,
+        state_db=state_db,
+        task=args.task,
+        forced_harness_id=args.harness_id,
+        channel_kind=args.channel_kind,
+        session_id=args.session_id,
+        human_id=args.human_id,
+        agent_id=args.agent_id,
+    )
+    if args.json:
+        print(json.dumps(envelope.to_payload(), indent=2))
+    else:
+        lines = ["Spark harness plan"]
+        lines.append(f"- harness: {envelope.harness_id}")
+        lines.append(f"- owner: {envelope.owner_system}")
+        lines.append(f"- backend: {envelope.backend_kind}")
+        lines.append(f"- session scope: {envelope.session_scope}")
+        lines.append(f"- route mode: {envelope.route_mode}")
+        if envelope.required_capabilities:
+            lines.append(f"- capabilities: {', '.join(envelope.required_capabilities[:8])}")
+        if envelope.artifacts_expected:
+            lines.append(f"- artifacts: {', '.join(envelope.artifacts_expected[:8])}")
+        if envelope.next_actions:
+            lines.extend(f"- next action: {item}" for item in envelope.next_actions[:3])
+        print("\n".join(lines))
+    return 0
+
+
+def handle_harness_execute(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    envelope = build_harness_task_envelope(
+        config_manager=config_manager,
+        state_db=state_db,
+        task=args.task,
+        forced_harness_id=args.harness_id,
+        channel_kind=args.channel_kind,
+        session_id=args.session_id,
+        human_id=args.human_id,
+        agent_id=args.agent_id,
+    )
+    result = execute_harness_task(
+        config_manager=config_manager,
+        state_db=state_db,
+        envelope=envelope,
+    )
+    if args.json:
+        print(result.to_json())
+    else:
+        lines = ["Spark harness execution"]
+        lines.append(f"- harness: {result.envelope.harness_id}")
+        lines.append(f"- status: {result.status}")
+        lines.append(f"- summary: {result.summary}")
+        artifact_keys = sorted(result.artifacts.keys())
+        if artifact_keys:
+            lines.append(f"- artifacts: {', '.join(artifact_keys)}")
+        if result.next_actions:
+            lines.extend(f"- next action: {item}" for item in result.next_actions[:3])
+        print("\n".join(lines))
+    return 0
+
+
 def handle_agent_inspect(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -5530,6 +5655,12 @@ def main(argv: list[str] | None = None) -> int:
         return handle_jobs_tick(args)
     if args.command == "jobs" and args.jobs_command == "list":
         return handle_jobs_list(args)
+    if args.command == "harness" and args.harness_command == "status":
+        return handle_harness_status(args)
+    if args.command == "harness" and args.harness_command == "plan":
+        return handle_harness_plan(args)
+    if args.command == "harness" and args.harness_command == "execute":
+        return handle_harness_execute(args)
     if args.command == "agent" and args.agent_command == "inspect":
         return handle_agent_inspect(args)
     if args.command == "agent" and args.agent_command == "rename":
