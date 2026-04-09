@@ -1038,6 +1038,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             side_effect=fake_direct_provider_prompt,
         ):
             reply = _render_direct_provider_chat_fallback(
+                config_manager=self.config_manager,
                 state_db=self.state_db,
                 provider=provider,
                 user_message="Should we drop agencies entirely?",
@@ -1088,6 +1089,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             side_effect=fake_direct_provider_prompt,
         ):
             reply = _render_direct_provider_chat_fallback(
+                config_manager=self.config_manager,
                 state_db=self.state_db,
                 provider=provider,
                 user_message="How should we answer this founder?",

@@ -45,6 +45,7 @@ from spark_intelligence.memory.profile_facts import (
     detect_profile_fact_observation,
     detect_profile_fact_query,
 )
+from spark_intelligence.mission_control import build_mission_control_prompt_context
 from spark_intelligence.observability.policy import screen_model_visible_text
 from spark_intelligence.llm.direct_provider import (
     DirectProviderGovernance,
@@ -58,6 +59,7 @@ from spark_intelligence.observability.store import (
     record_quarantine,
 )
 from spark_intelligence.observability.store import latest_events_by_type, latest_snapshots_by_surface
+from spark_intelligence.mission_control import build_mission_control_prompt_context
 from spark_intelligence.personality import (
     build_personality_context,
     build_preference_acknowledgment,
@@ -547,6 +549,7 @@ def _is_conversational_fallback_candidate(
 
 def _render_direct_provider_chat_fallback(
     *,
+    config_manager: ConfigManager,
     state_db: StateDB,
     provider: RuntimeProviderResolution,
     user_message: str,
@@ -3277,6 +3280,7 @@ def build_researcher_reply(
         and provider_selection.provider.execution_transport == "direct_http"
     ):
         raw_reply_text = _render_direct_provider_chat_fallback(
+            config_manager=config_manager,
             state_db=state_db,
             provider=provider_selection.provider,
             user_message=user_message,
@@ -3448,6 +3452,7 @@ def build_researcher_reply(
                     and provider_selection.provider.execution_transport == "direct_http"
                 ):
                     raw_reply_text = _render_direct_provider_chat_fallback(
+                        config_manager=config_manager,
                         state_db=state_db,
                         provider=provider_selection.provider,
                         user_message=user_message,
@@ -3609,6 +3614,7 @@ def build_researcher_reply(
                     )
                 ):
                     raw_reply_text = _render_direct_provider_chat_fallback(
+                        config_manager=config_manager,
                         state_db=state_db,
                         provider=provider_selection.provider,
                         user_message=user_message,
