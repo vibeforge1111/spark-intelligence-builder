@@ -2516,6 +2516,8 @@ def _parse_style_command(inbound_text: str) -> dict[str, str | None] | None:
         return {"command": "/style history", "payload": None}
     if lowered in {"/style score", "style score"}:
         return {"command": "/style score", "payload": None}
+    if lowered in {"/style examples", "style examples"}:
+        return {"command": "/style examples", "payload": None}
     if lowered in {"/style compare", "style compare"}:
         return {"command": "/style compare", "payload": None}
     if lowered in {"/style test", "style test"}:
@@ -2622,6 +2624,14 @@ def _match_natural_style_command(inbound_text: str) -> dict[str, str | None] | N
         "grade my current style",
     }:
         return {"command": "/style score", "payload": None}
+    if simplified in {
+        "show my style examples",
+        "show me my style examples",
+        "show style examples",
+        "show me examples of my style",
+        "show me how you would reply right now",
+    }:
+        return {"command": "/style examples", "payload": None}
     if simplified in {
         "compare my style",
         "show me a style comparison",
@@ -2760,6 +2770,7 @@ def _handle_style_command(
                 "Style controls: `/style status` to inspect the current Telegram persona, "
                 "`/style history` to inspect recent saved mutations, "
                 "`/style score` to grade the current voice against the training rubric, "
+                "`/style examples` to see fixed sample replies in the current voice, "
                 "`/style compare` to preview how the current voice differs from the default baseline, "
                 "`/style train <instruction>` to save a new style rule, and `/style feedback <note>` after a live test reply.\n"
                 "Next: after training, ask a normal question in this DM to test the visible voice."
@@ -2794,6 +2805,11 @@ def _handle_style_command(
         return {
             "command": "/style score",
             "reply_text": _render_style_score_reply(profile=profile, agent_name=agent_name),
+        }
+    if command == "/style examples":
+        return {
+            "command": "/style examples",
+            "reply_text": _render_style_examples_reply(profile=profile, agent_name=agent_name),
         }
     if command == "/style compare":
         return {
@@ -3044,7 +3060,7 @@ def _render_style_status_reply(*, profile: dict[str, Any] | None, agent_name: st
         lines.append(f"Traits: {style_summary}.")
     if behavioral_rules:
         lines.append("Rules: " + " | ".join(behavioral_rules[:4]) + ".")
-    lines.append("Next: `/style score` to grade the current voice, then `/style compare` to preview it.")
+    lines.append("Next: `/style score` to grade the current voice, `/style examples` to sample it, then `/style compare` to preview drift from baseline.")
     return "\n".join(lines)
 
 
@@ -3126,7 +3142,7 @@ def _render_style_test_reply(*, profile: dict[str, Any] | None, agent_name: str 
     lines.append('2. `Critique this plan bluntly and tell me the next step.`')
     lines.append('3. `Search the web for BTC and cite the source.`')
     lines.append('4. `Ask me one clarifying question, then stop.`')
-    lines.append("Next: after each reply, use `/style feedback <note>`, `/style good <note>`, or `/style bad <note>`. Use `/style score` for the rubric and `/style compare` for a side-by-side preview.")
+    lines.append("Next: after each reply, use `/style feedback <note>`, `/style good <note>`, or `/style bad <note>`. Use `/style score` for the rubric, `/style examples` for fixed samples, and `/style compare` for a side-by-side preview.")
     return "\n".join(lines)
 
 
@@ -3142,6 +3158,17 @@ def _render_style_score_reply(*, profile: dict[str, Any] | None, agent_name: str
     strongest = max(score_rows, key=lambda row: row[1])[0]
     lines.append(f"Strongest: {strongest}.")
     lines.append(f"Next focus: {weakest}. Use `/style feedback <note>` or `/style train <instruction>` to move it.")
+    return "\n".join(lines)
+
+
+def _render_style_examples_reply(*, profile: dict[str, Any] | None, agent_name: str | None) -> str:
+    resolved_profile = profile or {}
+    name = str(agent_name or resolved_profile.get("agent_persona_name") or "the agent").strip()
+    lines = [f"Style examples for {name}."]
+    for index, (prompt, sample) in enumerate(_style_example_rows(resolved_profile), start=1):
+        lines.append(f"{index}. Prompt: {prompt}")
+        lines.append(f"Sample: {sample}")
+    lines.append("Next: if one sample feels off, use `/style feedback <note>`. Use `/style compare` to see baseline drift.")
     return "\n".join(lines)
 
 
@@ -3163,6 +3190,48 @@ def _render_style_compare_reply(*, profile: dict[str, Any] | None, agent_name: s
         lines.append(f"Current: {current}")
     lines.append("Next: if one of the current examples is off, use `/style feedback <note>` or `/style train <instruction>`.")
     return "\n".join(lines)
+
+
+def _style_example_rows(profile: dict[str, Any]) -> list[tuple[str, str]]:
+    traits = profile.get("traits") or {}
+    rules = [str(rule).strip().lower() for rule in list(profile.get("agent_behavioral_rules") or []) if str(rule).strip()]
+    direct = float(traits.get("directness", 0.5)) >= 0.65
+    brisk = float(traits.get("pacing", 0.5)) >= 0.65
+    warm = float(traits.get("warmth", 0.5)) >= 0.6
+    assertive = float(traits.get("assertiveness", 0.5)) >= 0.65
+    continuity = any("anchored to the user's last message" in rule or "stay on the user's actual thread" in rule for rule in rules)
+    avoid_canned = any("avoid canned enthusiasm" in rule or "avoid generic opener questions" in rule for rule in rules)
+
+    short_answer = "Start with one wedge, validate it fast, then expand."
+    if not direct and not brisk:
+        short_answer = "Start with one wedge, validate it, then expand once it clearly works."
+    elif warm and not assertive:
+        short_answer = "Start with one wedge, prove it works, then expand from there."
+
+    plan_critique = "The plan is too broad right now. Cut to one user, one workflow, and one proof point."
+    if warm and not assertive:
+        plan_critique = "The plan is still too broad right now. Cut to one user, one workflow, and one proof point."
+    elif not direct:
+        plan_critique = "The plan is still broad. Narrow it to one user, one workflow, and one proof point."
+
+    follow_up = "What exact user or workflow is blocked right now?"
+    if warm and continuity:
+        follow_up = "What exact user or workflow feels blocked right now?"
+    elif not direct:
+        follow_up = "What specific user or workflow should we narrow first?"
+
+    browser_answer = "BTC is trading live, but I’d verify the current price on a stronger source page before I state a number."
+    if direct and brisk:
+        browser_answer = "BTC is moving live. I’d verify the number on a stronger source page before I quote it."
+    elif warm and avoid_canned:
+        browser_answer = "BTC is moving live, but I’d verify the current number on a stronger source page before I quote it."
+
+    return [
+        ("Give me the answer in two lines and skip filler.", short_answer),
+        ("Critique this plan bluntly and tell me the next step.", plan_critique),
+        ("Ask me one clarifying question, then stop.", follow_up),
+        ("Search the web for BTC and give me the answer carefully.", browser_answer),
+    ]
 
 
 def _style_score_rows(profile: dict[str, Any]) -> list[tuple[str, float, str]]:

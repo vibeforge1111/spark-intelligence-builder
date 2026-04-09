@@ -117,6 +117,7 @@ spark-intelligence gateway start
 # /style status
 # /style history
 # /style score
+# /style examples
 # /style compare
 # /style test
 # /style train <instruction>
@@ -259,6 +260,7 @@ Live commands verified on the production-shaped home:
 - `/style status`
 - `/style history`
 - `/style score`
+- `/style examples`
 - `/style compare`
 - `/style train <instruction>`
 - `/style feedback <note>`
@@ -321,6 +323,7 @@ The Telegram runtime also accepts bounded natural-language equivalents for those
 - `Can you show me my current style?`
 - `What style changes have you saved?`
 - `Score my style`
+- `Show me my style examples`
 - `Compare my style`
 - `Train your style to be more direct and keep replies short`
 - `Be more Claude-like in conversation continuity`

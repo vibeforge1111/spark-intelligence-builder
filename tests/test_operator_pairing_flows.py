@@ -2970,6 +2970,43 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Style score for", result.detail["response_text"])
         self.assertEqual(result.detail["bridge_mode"], "runtime_command")
 
+    def test_style_examples_command_returns_current_voice_samples(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11713,
+                user_id="111",
+                username="alice",
+                text="/style examples",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Style examples for", result.detail["response_text"])
+        self.assertIn("Sample:", result.detail["response_text"])
+        self.assertIn("Search the web for BTC and give me the answer carefully.", result.detail["response_text"])
+
+    def test_natural_language_style_examples_command_returns_current_voice_samples(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11714,
+                user_id="111",
+                username="alice",
+                text="Show me my style examples",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Style examples for", result.detail["response_text"])
+        self.assertEqual(result.detail["bridge_mode"], "runtime_command")
+
     def test_style_test_command_returns_training_probe_prompts(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
