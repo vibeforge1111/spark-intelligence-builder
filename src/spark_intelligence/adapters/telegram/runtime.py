@@ -2635,9 +2635,23 @@ def _style_feedback_payload_from_natural_message(inbound_text: str) -> str | Non
                     "generic",
                     "scripted",
                     "chatbot",
+                    "polished",
+                    "performative",
+                    "commentary",
+                    "previous",
                 )
             ):
                 return payload
+    for pattern in (
+        r"^(?P<payload>skip meta commentary)$",
+        r"^(?P<payload>give the answer first)$",
+        r"^(?P<payload>answer the immediately previous turn)$",
+        r"^(?P<payload>be less polished)$",
+        r"^(?P<payload>be less performative)$",
+    ):
+        match = re.match(pattern, lowered, flags=re.IGNORECASE)
+        if match:
+            return " ".join(str(match.group("payload") or "").strip().split())
     return None
 
 
@@ -3313,6 +3327,42 @@ def _build_style_training_message(instruction: str) -> str:
     lowered = normalized.lower()
     if not normalized:
         return ""
+    if any(token in lowered for token in ("canned", "generic", "scripted", "chatbot")) and (
+        ("follow-up" in lowered or "follow up" in lowered)
+        and any(token in lowered for token in ("grounded", "specific", "better", "question", "questions"))
+    ):
+        return (
+            "Your style.\n"
+            "Avoid canned enthusiasm and generic assistant phrasing.\n"
+            "Stay on the user's actual thread instead of restarting the conversation.\n"
+            "Avoid generic opener questions and canned assistant greetings.\n"
+            "Ask at most one follow-up question when needed.\n"
+            "Ask follow-up questions that are specific to the user's last message.\n"
+            "Do not ask broad check-in questions when a concrete follow-up is available."
+        )
+    if (
+        ("previous message" in lowered or "previous turn" in lowered or "immediately previous" in lowered)
+        and any(token in lowered for token in ("answer", "use", "refer", "respond"))
+    ):
+        return (
+            "Your style.\n"
+            "When the user asks about the previous message or previous turn, answer the immediately previous visible turn.\n"
+            "Do not broaden the answer into a summary of the whole conversation."
+        )
+    if "meta commentary" in lowered or "meta-commentary" in lowered:
+        return (
+            "Your style.\n"
+            "Give the answer first.\n"
+            "Skip meta commentary about your process, tone, or performance.\n"
+            "Do not add scene-setting phrases before the answer."
+        )
+    if any(token in lowered for token in ("polished", "performative")):
+        return (
+            "Your style.\n"
+            "Be plain and natural.\n"
+            "Avoid polished, performative, or theatrical phrasing.\n"
+            "Prefer direct wording over presentation."
+        )
     if "claude" in lowered or ("continuity" in lowered and "conversation" in lowered):
         return (
             "Your style.\n"
@@ -3350,6 +3400,55 @@ def _build_style_feedback_training_message(*, feedback: str, sentiment: str) -> 
     lowered = normalized.lower()
     if not normalized:
         return ""
+    if any(token in lowered for token in ("canned", "generic", "scripted", "chatbot")) and (
+        ("follow-up" in lowered or "follow up" in lowered)
+        and any(token in lowered for token in ("grounded", "specific", "better", "question", "questions"))
+    ):
+        return (
+            "Your style.\n"
+            "Avoid canned enthusiasm and generic assistant phrasing.\n"
+            "Stay on the user's actual thread instead of restarting the conversation.\n"
+            "Avoid generic opener questions and canned assistant greetings.\n"
+            "Ask at most one follow-up question when needed.\n"
+            "Ask follow-up questions that are specific to the user's last message.\n"
+            "Do not ask broad check-in questions when a concrete follow-up is available."
+        )
+    if (
+        ("previous message" in lowered or "previous turn" in lowered or "immediately previous" in lowered)
+        and any(token in lowered for token in ("answer", "use", "refer", "respond"))
+    ):
+        return (
+            "Your style.\n"
+            "When the user asks about the previous message or previous turn, answer the immediately previous visible turn.\n"
+            "Do not broaden the answer into a summary of the whole conversation."
+        )
+    if "meta commentary" in lowered or "meta-commentary" in lowered:
+        return (
+            "Your style.\n"
+            "Give the answer first.\n"
+            "Skip meta commentary about your process, tone, or performance.\n"
+            "Do not add scene-setting phrases before the answer."
+        )
+    if any(token in lowered for token in ("polished", "performative")):
+        return (
+            "Your style.\n"
+            "Be plain and natural.\n"
+            "Avoid polished, performative, or theatrical phrasing.\n"
+            "Prefer direct wording over presentation."
+        )
+    if "answer first" in lowered or "lead with answers" in lowered or "give the answer first" in lowered:
+        return (
+            "Your style.\n"
+            "Give the answer first.\n"
+            "Prefer direct answers over scene-setting or commentary."
+        )
+    if "canned follow-up" in lowered or "generic follow-up" in lowered or "generic follow up" in lowered:
+        return (
+            "Your style.\n"
+            "Ask at most one follow-up question when needed.\n"
+            "Do not ask canned or generic follow-up questions.\n"
+            "Use a follow-up only when it is specific to the user's last message."
+        )
     if "claude" in lowered or ("continuity" in lowered and "conversation" in lowered):
         return (
             "Your style.\n"

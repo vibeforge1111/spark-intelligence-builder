@@ -3125,6 +3125,91 @@ class OperatorPairingFlowTests(SparkTestCase):
             profile["agent_behavioral_rules"],
         )
 
+    def test_style_feedback_maps_less_polished_and_performative_into_behavior_rules(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=117115,
+                user_id="111",
+                username="alice",
+                text="/style feedback Be less polished and less performative.",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Saved style feedback", result.detail["response_text"])
+        self.assertIn("Avoid polished, performative, or theatrical phrasing", result.detail["response_text"])
+        profile = load_personality_profile(
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            state_db=self.state_db,
+            config_manager=self.config_manager,
+        )
+        self.assertIn(
+            "Avoid polished, performative, or theatrical phrasing",
+            profile["agent_behavioral_rules"],
+        )
+
+    def test_style_feedback_maps_meta_commentary_into_behavior_rules(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=117116,
+                user_id="111",
+                username="alice",
+                text="/style feedback In Telegram DM, give the answer first and skip meta commentary.",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Saved style feedback", result.detail["response_text"])
+        self.assertIn("Skip meta commentary", result.detail["response_text"])
+        profile = load_personality_profile(
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            state_db=self.state_db,
+            config_manager=self.config_manager,
+        )
+        self.assertIn("Give the answer first", profile["agent_behavioral_rules"])
+        self.assertIn(
+            "Skip meta commentary about your process, tone, or performance",
+            profile["agent_behavioral_rules"],
+        )
+
+    def test_style_feedback_maps_previous_turn_instruction_into_behavior_rules(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=117117,
+                user_id="111",
+                username="alice",
+                text="/style feedback When I ask about my previous message, answer the immediately previous turn, not the broader conversation.",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Saved style feedback", result.detail["response_text"])
+        self.assertIn("answer the immediately previous visible turn", result.detail["response_text"])
+        profile = load_personality_profile(
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            state_db=self.state_db,
+            config_manager=self.config_manager,
+        )
+        self.assertIn(
+            "When the user asks about the previous message or previous turn, answer the immediately previous visible turn",
+            profile["agent_behavioral_rules"],
+        )
+
     def test_natural_language_style_feedback_routes_into_saved_style_feedback(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
