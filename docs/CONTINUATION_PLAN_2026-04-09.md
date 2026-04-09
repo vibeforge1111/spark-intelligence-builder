@@ -23,6 +23,9 @@ Verification completed locally:
 - `spark-swarm`: focused bridge tests passed for autoloop, startup-bench adapter, and runtime-context updates
 - `specialization-path-startup-operator`: local hook tests passed
 - real smoke check: `python -m thestartupbench run-script ... benchmarks/startup-operator.tool_calls.json ...` executed successfully against `minimal_0to1_scenario`
+- real Spark Swarm autoloop check: `spark-swarm specialization-path autoloop startup-operator C:\Users\USER\Desktop\specialization-path-startup-operator --plan-only`
+- real Spark Swarm forced round: `spark-swarm specialization-path autoloop startup-operator C:\Users\USER\Desktop\specialization-path-startup-operator --rounds 1 --force`
+- Builder Telegram autoloop/session reply tests now surface script-backed runner details and plain-language stop reasons
 
 ## 3. Current Honest Status
 
@@ -30,23 +33,28 @@ Verification completed locally:
 
 - a real benchmark-consumed mutation seam exists for `startup-operator`
 - the current repo-owned target is executable by Startup Bench
+- the real Spark Swarm autoloop path has now been exercised against the canonical startup-operator repo
+- round summaries now record script-backed execution with `benchmarkRunnerType: script`
+- Builder's Telegram autoloop replies now surface the benchmark runner, mutation target, and clearer stop language
 - prompt-only startup-bench mutation paths remain blocked
 
 ### Not Yet Proved End To End
 
-- live `spark-swarm specialization-path autoloop startup-operator` operation on the canonical repo with the new target
-- live Builder Telegram replies that observe and explain the new runner shape cleanly
+- live Builder-home Telegram and browser health on the canonical operator surface after these changes
+- a real Telegram DM pass that observes and explains the new runner shape cleanly
 - improvement visibility through Builder operator UX
 
 ## 4. Next Execution Order
 
-### Phase 1. Prove The New Seam Through Spark Swarm
+### Phase 1. Re-run The Proven Seam On Demand
 
-Run on the real path repo:
+This is no longer speculative. The seam has already been proven once on April 9, 2026.
 
-- `spark-swarm specialization-path autoloop startup-operator --path C:\Users\USER\Desktop\specialization-path-startup-operator --plan-only`
-- one manual round with `--candidate-file` against the tool-script target
-- one auto-generated round from the startup-operator hook
+When re-running on the real path repo, use:
+
+- `spark-swarm specialization-path autoloop startup-operator C:\Users\USER\Desktop\specialization-path-startup-operator --plan-only`
+- `spark-swarm specialization-path autoloop startup-operator C:\Users\USER\Desktop\specialization-path-startup-operator --rounds 1 --force`
+- if needed later, one manual round with `--candidate-file` against the tool-script target
 
 Confirm:
 
@@ -54,7 +62,7 @@ Confirm:
 - the round summary reports script-backed execution instead of heuristic-baseline-only execution
 - keep vs revert decisions are driven by the executable tool script score
 
-### Phase 2. Re-verify Builder As The Operator Surface
+### Phase 2. Re-verify Builder As The Live Operator Surface
 
 Run on the canonical Builder home:
 
@@ -108,12 +116,12 @@ This should be driven by structured state, not by asking the operator to inspect
 
 ## 6. Bottom Line
 
-The correct place to continue from here is no longer “find a causal seam.”
+The correct place to continue from here is no longer "find a causal seam."
 
 That seam now exists as a repo-owned Startup Bench tool script.
 
 The next work is:
 
-1. prove it through the real Spark Swarm path
-2. expose it clearly through Builder and Telegram
+1. re-run it when needed through the real Spark Swarm path
+2. verify it live through Builder and Telegram
 3. improve reply quality so the operator can understand what changed and what to do next
