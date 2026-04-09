@@ -2866,40 +2866,177 @@ class OperatorPairingFlowTests(SparkTestCase):
     def test_voice_command_reports_current_telegram_voice_gap(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
-        result = simulate_telegram_update(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=118,
-                user_id="111",
-                username="alice",
-                text="/voice",
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            return_value=SimpleNamespace(
+                ok=True,
+                chip_key="domain-chip-voice-comms",
+                stdout="",
+                stderr="",
+                output={
+                    "result": {
+                        "reply_text": (
+                            "Voice chip is ready.\n"
+                            "Current state: transcription is configured via openai using model whisper-1\n"
+                            "Next: send a Telegram voice note and I will route it through this chip."
+                        )
+                    }
+                },
             ),
-        )
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=118,
+                    user_id="111",
+                    username="alice",
+                    text="/voice",
+                ),
+            )
 
         self.assertTrue(result.ok)
-        self.assertIn("Voice is not wired into Telegram yet.", result.detail["response_text"])
-        self.assertIn("voice-note ingestion", result.detail["response_text"])
+        self.assertIn("Voice chip is ready.", result.detail["response_text"])
+        self.assertIn("configured via openai", result.detail["response_text"])
 
     def test_voice_plan_command_returns_concrete_pipeline_steps(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
-        result = simulate_telegram_update(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=1181,
-                user_id="111",
-                username="alice",
-                text="/voice plan",
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            return_value=SimpleNamespace(
+                ok=True,
+                chip_key="domain-chip-voice-comms",
+                stdout="",
+                stderr="",
+                output={
+                    "result": {
+                        "reply_text": (
+                            "Telegram voice plan:\n"
+                            "1. transcribe Telegram voice/audio through `domain-chip-voice-comms`.\n"
+                            "2. route the transcript through the same Builder Telegram runtime and saved persona.\n"
+                            "3. add optional voice reply synthesis as a second hook without bloating Builder.\n"
+                            "Next: attach the chip, validate `voice.status`, then dogfood real Telegram voice notes."
+                        )
+                    }
+                },
             ),
-        )
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=1181,
+                    user_id="111",
+                    username="alice",
+                    text="/voice plan",
+                ),
+            )
 
         self.assertTrue(result.ok)
         self.assertIn("Telegram voice plan:", result.detail["response_text"])
-        self.assertIn("transcribe them into the same Builder Telegram runtime", result.detail["response_text"])
+        self.assertIn("domain-chip-voice-comms", result.detail["response_text"])
 
-    def test_voice_message_returns_bounded_not_ready_reply(self) -> None:
+    def test_voice_message_uses_transcript_as_runtime_command(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        class FakeVoiceClient:
+            def get_file(self, *, file_id: str) -> dict[str, object]:
+                return {"file_path": "voice/file_1.ogg"}
+
+            def download_file(self, *, file_path: str) -> bytes:
+                return b"fake-ogg-bytes"
+
+        def fake_voice_hook(_config_manager, *, hook: str, payload: dict[str, object]):
+            if hook == "voice.transcribe":
+                self.assertEqual(payload["message_kind"], "voice")
+                return SimpleNamespace(
+                    ok=True,
+                    chip_key="domain-chip-voice-comms",
+                    stdout="/voice plan",
+                    stderr="",
+                    output={"result": {"transcript_text": "/voice plan", "provider_id": "openai", "model": "whisper-1"}},
+                )
+            if hook == "voice.plan":
+                return SimpleNamespace(
+                    ok=True,
+                    chip_key="domain-chip-voice-comms",
+                    stdout="voice plan ready",
+                    stderr="",
+                    output={
+                        "result": {
+                            "reply_text": (
+                                "Telegram voice plan:\n"
+                                "1. transcribe Telegram voice/audio through `domain-chip-voice-comms`.\n"
+                                "2. route the transcript through the same Builder Telegram runtime and saved persona.\n"
+                                "3. add optional voice reply synthesis as a second hook without bloating Builder.\n"
+                                "Next: attach the chip, validate `voice.status`, then dogfood real Telegram voice notes."
+                            )
+                        }
+                    },
+                )
+            raise AssertionError(f"Unexpected voice hook: {hook}")
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            side_effect=fake_voice_hook,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=1182,
+                    user_id="111",
+                    username="alice",
+                    text=None,
+                    voice={"file_id": "voice-1", "duration": 3, "mime_type": "audio/ogg"},
+                ),
+                client=FakeVoiceClient(),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.detail["message_kind"], "voice")
+        self.assertEqual(result.detail["transcript_text"], "/voice plan")
+        self.assertIn("Telegram voice plan:", result.detail["response_text"])
+
+    def test_voice_message_returns_bounded_transcription_unavailable_reply_for_unsupported_provider(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        class FakeVoiceClient:
+            def get_file(self, *, file_id: str) -> dict[str, object]:
+                return {"file_path": "voice/file_1.ogg"}
+
+            def download_file(self, *, file_path: str) -> bytes:
+                return b"fake-ogg-bytes"
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_first_chip_hook_supporting",
+            return_value=SimpleNamespace(
+                ok=False,
+                chip_key="domain-chip-voice-comms",
+                stdout="",
+                stderr="",
+                output={"error": "Active provider 'anthropic' does not support direct voice transcription in this runtime."},
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=1183,
+                    user_id="111",
+                    username="alice",
+                    text=None,
+                    voice={"file_id": "voice-2", "duration": 3, "mime_type": "audio/ogg"},
+                ),
+                client=FakeVoiceClient(),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Voice transcription is unavailable right now.", result.detail["response_text"])
+        self.assertIn("Active provider 'anthropic' does not support direct voice transcription", result.detail["response_text"])
+
+    def test_voice_message_returns_bounded_transcription_unavailable_reply_without_bot_token(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
         result = simulate_telegram_update(
@@ -2915,5 +3052,5 @@ class OperatorPairingFlowTests(SparkTestCase):
         )
 
         self.assertTrue(result.ok)
-        self.assertIn("I received the voice note, but Telegram voice is not wired yet.", result.detail["response_text"])
-        self.assertIn("does not transcribe Telegram audio into the Builder chat loop yet", result.detail["response_text"])
+        self.assertIn("Voice transcription is unavailable right now.", result.detail["response_text"])
+        self.assertIn("Telegram bot token is not available", result.detail["response_text"])

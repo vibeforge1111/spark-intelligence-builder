@@ -76,7 +76,6 @@ def execute_direct_provider_prompt(
         f"Provider '{provider.provider_id}' uses unsupported direct execution mode '{provider.api_mode}'."
     )
 
-
 def _execute_chat_completions(
     *,
     provider: DirectProviderRequest,
@@ -158,7 +157,6 @@ def _post_json(url: str, *, headers: dict[str, str], payload: dict[str, object])
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Provider network error: {exc.reason}") from exc
 
-
 def _chat_messages(*, system_prompt: str, user_prompt: str) -> list[dict[str, str]]:
     messages: list[dict[str, str]] = []
     if system_prompt.strip():
@@ -212,7 +210,6 @@ def _extract_anthropic_text(payload: dict[str, object]) -> str:
     if not joined:
         raise RuntimeError("Anthropic response contained no text content.")
     return joined
-
 
 def _join_url(base_url: str, suffix: str) -> str:
     return f"{base_url.rstrip('/')}/{suffix.lstrip('/')}"

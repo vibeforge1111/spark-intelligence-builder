@@ -32,6 +32,19 @@ class TelegramBotApiClient:
         payload = {"chat_id": chat_id, "text": text}
         return self._call("sendMessage", payload)
 
+    def get_file(self, *, file_id: str) -> dict[str, Any]:
+        response = self._call("getFile", {"file_id": file_id})
+        result = response.get("result")
+        if not isinstance(result, dict):
+            raise RuntimeError("Telegram API getFile returned no file metadata.")
+        return result
+
+    def download_file(self, *, file_path: str) -> bytes:
+        url = f"https://api.telegram.org/file/bot{self.token}/{str(file_path).lstrip('/')}"
+        req = request.Request(url, method="GET")
+        with request.urlopen(req, timeout=30) as response:
+            return response.read()
+
     def _call(self, method: str, payload: dict[str, Any] | None) -> dict[str, Any]:
         if self.transport is not None:
             return self.transport(method, payload)

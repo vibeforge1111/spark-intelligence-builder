@@ -15,6 +15,10 @@ class NormalizedTelegramUpdate:
     chat_type: str
     text: str
     message_kind: str
+    media_file_id: str | None
+    media_mime_type: str | None
+    media_duration_seconds: int | None
+    caption_text: str | None
     is_dm: bool
 
 
@@ -50,6 +54,11 @@ def normalize_telegram_update(update: dict[str, Any], *, channel_id: str = "tele
 
     chat_type = str(chat.get("type") or "")
     is_dm = chat_type == "private"
+    media_payload = voice_payload if isinstance(voice_payload, dict) else (audio_payload if isinstance(audio_payload, dict) else {})
+    media_file_id = str(media_payload.get("file_id")).strip() if media_payload.get("file_id") else None
+    media_mime_type = str(media_payload.get("mime_type")).strip() if media_payload.get("mime_type") else None
+    media_duration_seconds = int(media_payload.get("duration")) if media_payload.get("duration") is not None else None
+    caption_text = str(message.get("caption") or "").strip() or None
 
     return NormalizedTelegramUpdate(
         update_id=int(update_id),
@@ -61,5 +70,9 @@ def normalize_telegram_update(update: dict[str, Any], *, channel_id: str = "tele
         chat_type=chat_type,
         text=text,
         message_kind=message_kind,
+        media_file_id=media_file_id,
+        media_mime_type=media_mime_type,
+        media_duration_seconds=media_duration_seconds,
+        caption_text=caption_text,
         is_dm=is_dm,
     )
