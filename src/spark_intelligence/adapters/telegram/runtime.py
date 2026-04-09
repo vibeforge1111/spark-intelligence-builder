@@ -501,6 +501,7 @@ def _prepare_telegram_media_input(
             "reply_text": None,
             "provider_id": str((result or {}).get("provider_id") or "").strip() or None,
             "provider_model": str((result or {}).get("model") or "").strip() or None,
+            "provider_mode": str((result or {}).get("mode") or "").strip() or None,
         }
     except Exception as exc:
         return {
@@ -516,6 +517,22 @@ def _telegram_media_filename(*, normalized: Any, file_path: str) -> str:
     suffix = Path(str(file_path)).suffix or (".ogg" if normalized.message_kind == "voice" else ".mp3")
     stem = "telegram-voice" if normalized.message_kind == "voice" else "telegram-audio"
     return f"{stem}{suffix}"
+
+
+def _build_voice_trace_fields(
+    *,
+    media_input: dict[str, Any] | None,
+    transcript_text: str | None,
+) -> dict[str, Any]:
+    transcript = str(transcript_text or "").strip()
+    return {
+        "voice_transcript_preview": _preview_text(transcript, limit=120) if transcript else None,
+        "voice_transcript_length": len(transcript) if transcript else 0,
+        "voice_transcribe_provider_id": str((media_input or {}).get("provider_id") or "").strip() or None,
+        "voice_transcribe_model": str((media_input or {}).get("provider_model") or "").strip() or None,
+        "voice_transcribe_mode": str((media_input or {}).get("provider_mode") or "").strip() or None,
+        "voice_transcription_error": str((media_input or {}).get("error") or "").strip() or None,
+    }
 
 
 def simulate_telegram_update(
@@ -1058,7 +1075,11 @@ def poll_telegram_updates_once(
                 status="closed",
                 close_reason=str(media_input.get("routing_decision") or "voice_transcription_unavailable"),
                 summary=f"Telegram {normalized.message_kind} message closed after transcription handling.",
-                facts={"message_kind": normalized.message_kind, "delivery_ok": send_result["ok"]},
+                facts={
+                    "message_kind": normalized.message_kind,
+                    "delivery_ok": send_result["ok"],
+                    **_build_voice_trace_fields(media_input=media_input, transcript_text=None),
+                },
             )
             append_gateway_trace(
                 config_manager,
@@ -1074,6 +1095,7 @@ def poll_telegram_updates_once(
                     "delivery_error": send_result["error"],
                     "guardrail_actions": send_result["guardrail_actions"],
                     "response_preview": _preview_text(outbound_text),
+                    **_build_voice_trace_fields(media_input=media_input, transcript_text=None),
                 },
             )
             continue
@@ -1159,7 +1181,11 @@ def poll_telegram_updates_once(
                 status="closed",
                 close_reason="runtime_command",
                 summary=f"Telegram runtime command {command_result['command']} closed.",
-                facts={"command": command_result["command"], "delivery_ok": send_result["ok"]},
+                facts={
+                    "command": command_result["command"],
+                    "delivery_ok": send_result["ok"],
+                    **_build_voice_trace_fields(media_input=media_input, transcript_text=transcript_text),
+                },
             )
             append_gateway_trace(
                 config_manager,
@@ -1175,6 +1201,7 @@ def poll_telegram_updates_once(
                     "delivery_error": send_result["error"],
                     "guardrail_actions": send_result["guardrail_actions"],
                     "response_preview": _preview_text(outbound_text),
+                    **_build_voice_trace_fields(media_input=media_input, transcript_text=transcript_text),
                 },
             )
             continue
@@ -1259,6 +1286,7 @@ def poll_telegram_updates_once(
                     "step": onboarding_result.step,
                     "completed": onboarding_result.completed,
                     "delivery_ok": send_result["ok"],
+                    **_build_voice_trace_fields(media_input=media_input, transcript_text=transcript_text),
                 },
             )
             append_gateway_trace(
@@ -1276,6 +1304,7 @@ def poll_telegram_updates_once(
                     "delivery_error": send_result["error"],
                     "guardrail_actions": send_result["guardrail_actions"],
                     "response_preview": _preview_text(outbound_text),
+                    **_build_voice_trace_fields(media_input=media_input, transcript_text=transcript_text),
                 },
             )
             continue
@@ -1362,6 +1391,7 @@ def poll_telegram_updates_once(
                 "bridge_mode": bridge_result.mode,
                 "routing_decision": bridge_result.routing_decision,
                 "delivery_ok": send_result["ok"],
+                **_build_voice_trace_fields(media_input=media_input, transcript_text=transcript_text),
             },
         )
         trace_refs.append(bridge_result.trace_ref)
@@ -1389,6 +1419,7 @@ def poll_telegram_updates_once(
                 "delivery_ok": send_result["ok"],
                 "delivery_error": send_result["error"],
                 "guardrail_actions": send_result["guardrail_actions"],
+                **_build_voice_trace_fields(media_input=media_input, transcript_text=transcript_text),
             },
         )
 
