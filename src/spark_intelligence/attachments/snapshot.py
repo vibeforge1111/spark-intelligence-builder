@@ -176,9 +176,36 @@ def sync_attachment_snapshot(*, config_manager: ConfigManager, state_db: StateDB
 
 def build_attachment_context(config_manager: ConfigManager) -> dict[str, Any]:
     snapshot = build_attachment_snapshot(config_manager)
+    chip_records = [record for record in snapshot.records if str(record.get("kind") or "") == "chip"]
+    path_records = [record for record in snapshot.records if str(record.get("kind") or "") == "path"]
     return {
         "active_chip_keys": snapshot.active_chip_keys,
         "pinned_chip_keys": snapshot.pinned_chip_keys,
+        "attached_chip_keys": [str(record.get("key") or "") for record in chip_records if str(record.get("key") or "")],
+        "attached_path_keys": [str(record.get("key") or "") for record in path_records if str(record.get("key") or "")],
+        "attached_chip_records": [
+            {
+                "key": str(record.get("key") or ""),
+                "label": str(record.get("label") or ""),
+                "description": str(record.get("description") or ""),
+                "attachment_mode": str(record.get("attachment_mode") or "available"),
+                "capabilities": [str(item) for item in (record.get("capabilities") or []) if str(item)],
+                "hook_names": sorted(str(item) for item in ((record.get("commands") or {}).keys()) if str(item)),
+                "repo_root": str(record.get("repo_root") or ""),
+            }
+            for record in chip_records
+        ],
+        "attached_path_records": [
+            {
+                "key": str(record.get("key") or ""),
+                "label": str(record.get("label") or ""),
+                "attachment_mode": str(record.get("attachment_mode") or "available"),
+                "capabilities": [str(item) for item in (record.get("capabilities") or []) if str(item)],
+                "hook_names": sorted(str(item) for item in ((record.get("commands") or {}).keys()) if str(item)),
+                "repo_root": str(record.get("repo_root") or ""),
+            }
+            for record in path_records
+        ],
         "active_path_key": snapshot.active_path_key,
         "warning_count": len(snapshot.warnings),
         "snapshot_path": snapshot.snapshot_path,

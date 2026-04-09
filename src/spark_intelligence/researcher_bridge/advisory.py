@@ -69,6 +69,28 @@ from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_r
 _BROWSER_SEARCH_SUMMARY_MAX_CHARS = 280
 _BROWSER_SEARCH_EXCERPT_MAX_CHARS = 480
 _RECENT_CONVERSATION_TURN_LIMIT = 4
+_ATTACHMENT_PROMPT_CHIP_LIMIT = 12
+
+_KNOWN_SPARK_SYSTEM_BRIEFS: dict[str, str] = {
+    "Spark Intelligence Builder": (
+        "live runtime owner for adapters like Telegram; owns delivery, operator controls, chip and path attachments, "
+        "saved conversational persona state, and the final visible reply"
+    ),
+    "Spark Researcher": (
+        "main intelligence core behind normal reasoning through the researcher bridge and provider-backed advisory"
+    ),
+    "Spark Swarm": (
+        "deep-work escalation and collective coordination layer; not the default chat loop"
+    ),
+}
+
+_KNOWN_CHIP_ROLE_HINTS: dict[str, str] = {
+    "startup-yc": "Founder/operator doctrine chip for decisive startup guidance when active.",
+    "spark-browser": "Governed browser and search chip for page inspection, browse flows, and source capture.",
+    "spark-personality-chip-labs": "Baseline personality import chip; it seeds Builder, but Builder owns live style state after import.",
+    "spark-swarm": "Swarm bridge and identity/escalation chip for collective or deep-work execution.",
+    "domain-chip-voice-comms": "Speech I/O chip for STT and TTS around the Builder-owned personality.",
+}
 
 
 @dataclass
@@ -1375,14 +1397,27 @@ def _build_contextual_task(
 ) -> str:
     active_chip_keys = attachment_context.get("active_chip_keys") or []
     pinned_chip_keys = attachment_context.get("pinned_chip_keys") or []
+    attached_chip_keys = attachment_context.get("attached_chip_keys") or []
+    attached_path_keys = attachment_context.get("attached_path_keys") or []
     active_path_key = attachment_context.get("active_path_key") or None
     lines = [
         "[Spark Intelligence context]",
         f"active_chip_keys={','.join(str(item) for item in active_chip_keys) if active_chip_keys else 'none'}",
         f"pinned_chip_keys={','.join(str(item) for item in pinned_chip_keys) if pinned_chip_keys else 'none'}",
+        f"attached_chip_keys={','.join(str(item) for item in attached_chip_keys) if attached_chip_keys else 'none'}",
+        f"attached_path_keys={','.join(str(item) for item in attached_path_keys) if attached_path_keys else 'none'}",
         f"active_path_key={active_path_key or 'none'}",
         "",
     ]
+    attachment_inventory_context = _build_attachment_inventory_context(attachment_context=attachment_context)
+    if attachment_inventory_context:
+        lines.extend([attachment_inventory_context, ""])
+    spark_self_knowledge_context = _build_spark_self_knowledge_context(
+        user_message=user_message,
+        attachment_context=attachment_context,
+    )
+    if spark_self_knowledge_context:
+        lines.extend([spark_self_knowledge_context, ""])
     if personality_profile:
         personality_ctx = build_personality_context(personality_profile)
         if personality_ctx:
@@ -1431,6 +1466,81 @@ def _build_contextual_task(
         ]
     )
     return "\n".join(lines)
+
+
+def _build_attachment_inventory_context(*, attachment_context: dict[str, object]) -> str:
+    chip_records = attachment_context.get("attached_chip_records") or []
+    if not isinstance(chip_records, list) or not chip_records:
+        return ""
+    lines = ["[Attached chip inventory]"]
+    for record in chip_records[:_ATTACHMENT_PROMPT_CHIP_LIMIT]:
+        if not isinstance(record, dict):
+            continue
+        key = str(record.get("key") or "").strip()
+        if not key:
+            continue
+        attachment_mode = str(record.get("attachment_mode") or "available").strip() or "available"
+        hook_names = [str(item) for item in (record.get("hook_names") or []) if str(item)]
+        description = str(record.get("description") or "").strip() or _KNOWN_CHIP_ROLE_HINTS.get(key, "")
+        line = f"- {key} mode={attachment_mode}"
+        if hook_names:
+            line += f" hooks={','.join(hook_names[:8])}"
+        if description:
+            line += f" :: {description}"
+        lines.append(line)
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
+def _build_spark_self_knowledge_context(*, user_message: str, attachment_context: dict[str, object]) -> str:
+    lowered = str(user_message or "").strip().lower()
+    if not _looks_like_spark_self_knowledge_query(lowered):
+        return ""
+    lines = ["[Spark platform map]"]
+    for label, detail in _KNOWN_SPARK_SYSTEM_BRIEFS.items():
+        lines.append(f"- {label}: {detail}")
+    chip_records = attachment_context.get("attached_chip_records") or []
+    known_chip_lines: list[str] = []
+    if isinstance(chip_records, list):
+        for record in chip_records:
+            if not isinstance(record, dict):
+                continue
+            key = str(record.get("key") or "").strip()
+            hint = _KNOWN_CHIP_ROLE_HINTS.get(key)
+            if key and hint:
+                known_chip_lines.append(f"- {key}: {hint}")
+    if known_chip_lines:
+        lines.append("[Known attached chip roles]")
+        lines.extend(known_chip_lines[:_ATTACHMENT_PROMPT_CHIP_LIMIT])
+    lines.extend(
+        [
+            "[Reply rule]",
+            "When the user asks about Spark's own systems, chips, adapters, or connections, answer from the Spark platform map and attached inventory above. "
+            "Do not claim missing verified knowledge when this runtime context already answers the question.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _looks_like_spark_self_knowledge_query(lowered_message: str) -> bool:
+    if not lowered_message:
+        return False
+    direct_signals = (
+        "spark swarm",
+        "spark researcher",
+        "spark intelligence builder",
+        "what chips",
+        "which chips",
+        "active chips",
+        "attached chips",
+        "connected chips",
+        "what systems",
+        "what adapters",
+        "what is connected",
+        "around you right now",
+        "know about yourself",
+        "self-awareness",
+    )
+    return any(signal in lowered_message for signal in direct_signals)
 
 
 def _load_recent_conversation_context(

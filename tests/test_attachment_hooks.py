@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from spark_intelligence.attachments.registry import attachment_status
+from spark_intelligence.attachments.snapshot import build_attachment_context
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
 from spark_intelligence.observability.store import latest_events_by_type, record_event
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
@@ -25,6 +26,22 @@ class AttachmentHookTests(SparkTestCase):
 
         self.assertEqual(scan.chip_source, "autodiscovered")
         self.assertTrue(any(record.key == "spark-browser" for record in scan.records))
+
+    def test_build_attachment_context_includes_attached_chip_inventory(self) -> None:
+        browser_root = create_fake_hook_chip(self.home, chip_key="spark-browser")
+        swarm_root = create_fake_hook_chip(self.home, chip_key="spark-swarm")
+        self.config_manager.set_path("spark.chips.roots", [str(browser_root.parent)])
+        self.config_manager.set_path("spark.chips.active_keys", ["spark-browser"])
+        self.config_manager.set_path("spark.chips.pinned_keys", ["spark-browser"])
+
+        context = build_attachment_context(self.config_manager)
+
+        self.assertIn("spark-browser", context["attached_chip_keys"])
+        self.assertIn("spark-swarm", context["attached_chip_keys"])
+        records = {str(record["key"]): record for record in context["attached_chip_records"]}
+        self.assertEqual(records["spark-browser"]["attachment_mode"], "pinned")
+        self.assertEqual(records["spark-swarm"]["attachment_mode"], "available")
+        self.assertIn("evaluate", records["spark-browser"]["hook_names"])
 
     def test_attachments_run_hook_allows_browser_status_hook(self) -> None:
         chip_root = create_fake_hook_chip(self.home, chip_key="spark-browser")

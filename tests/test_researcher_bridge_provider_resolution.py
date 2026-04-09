@@ -565,6 +565,38 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("agent_persona=Operator", prompt)
         self.assertNotIn("active_personality=Alice", prompt)
 
+    def test_build_contextual_task_includes_attached_chip_inventory_for_self_knowledge_queries(self) -> None:
+        prompt = _build_contextual_task(
+            user_message="What chips are active around you right now?",
+            attachment_context={
+                "active_chip_keys": ["startup-yc"],
+                "pinned_chip_keys": ["startup-yc"],
+                "attached_chip_keys": [
+                    "startup-yc",
+                    "spark-browser",
+                    "spark-personality-chip-labs",
+                    "spark-swarm",
+                    "domain-chip-voice-comms",
+                ],
+                "attached_path_keys": ["startup-operator"],
+                "attached_chip_records": [
+                    {"key": "startup-yc", "attachment_mode": "pinned", "hook_names": ["evaluate"], "description": ""},
+                    {"key": "spark-browser", "attachment_mode": "available", "hook_names": ["browser.status"], "description": ""},
+                    {"key": "spark-personality-chip-labs", "attachment_mode": "available", "hook_names": ["personality"], "description": ""},
+                    {"key": "spark-swarm", "attachment_mode": "available", "hook_names": ["identity"], "description": ""},
+                    {"key": "domain-chip-voice-comms", "attachment_mode": "available", "hook_names": ["voice.speak"], "description": ""},
+                ],
+                "active_path_key": "startup-operator",
+            },
+        )
+
+        self.assertIn("attached_chip_keys=startup-yc,spark-browser,spark-personality-chip-labs,spark-swarm,domain-chip-voice-comms", prompt)
+        self.assertIn("[Attached chip inventory]", prompt)
+        self.assertIn("spark-browser mode=available hooks=browser.status", prompt)
+        self.assertIn("[Spark platform map]", prompt)
+        self.assertIn("Spark Researcher: main intelligence core", prompt)
+        self.assertIn("domain-chip-voice-comms: Speech I/O chip", prompt)
+
     def test_load_recent_conversation_context_reads_prior_telegram_turns(self) -> None:
         record_event(
             self.state_db,
