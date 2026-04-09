@@ -42,6 +42,7 @@ class SystemRegistryTests(SparkTestCase):
     def test_build_system_registry_prompt_context_uses_registry_for_self_knowledge(self) -> None:
         create_fake_hook_chip(self.home, chip_key="startup-yc")
         create_fake_hook_chip(self.home, chip_key="spark-browser")
+        create_fake_hook_chip(self.home, chip_key="spark-swarm")
         self.config_manager.set_path("spark.chips.roots", [str(self.home)])
         self.config_manager.set_path("spark.chips.active_keys", ["startup-yc", "spark-browser"])
         self.config_manager.set_path("spark.chips.pinned_keys", ["startup-yc"])
@@ -56,7 +57,12 @@ class SystemRegistryTests(SparkTestCase):
         self.assertIn("Spark Intelligence Builder: status=", prompt_context)
         self.assertIn("[Onboarded contracts]", prompt_context)
         self.assertIn("spark-browser:", prompt_context)
+        self.assertIn("role=Governed browser and search chip for web inspection and source capture.", prompt_context)
         self.assertIn("harnesses=browser.grounded", prompt_context)
+        self.assertIn("[Chip state]", prompt_context)
+        self.assertIn("- pinned=startup-yc", prompt_context)
+        self.assertIn("- active=spark-browser,startup-yc", prompt_context)
+        self.assertIn("- only_attached=spark-swarm", prompt_context)
         self.assertIn("[Current capabilities]", prompt_context)
         self.assertIn("1:1 conversational work through Builder", prompt_context)
 
@@ -64,4 +70,21 @@ class SystemRegistryTests(SparkTestCase):
         self.assertTrue(looks_like_system_registry_query("What can you do right now?"))
         self.assertTrue(looks_like_system_registry_query("What are you connected to?"))
         self.assertTrue(looks_like_system_registry_query("What tools and adapters do you have?"))
+        self.assertTrue(looks_like_system_registry_query("What does spark-browser do for you?"))
         self.assertFalse(looks_like_system_registry_query("Help me write a landing page"))
+
+    def test_build_system_registry_prompt_context_handles_chip_explanation_queries(self) -> None:
+        create_fake_hook_chip(self.home, chip_key="spark-browser")
+        self.config_manager.set_path("spark.chips.roots", [str(self.home)])
+
+        prompt_context = build_system_registry_prompt_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="What does spark-browser do for you?",
+        )
+
+        self.assertIn("[Spark system registry]", prompt_context)
+        self.assertIn("spark-browser:", prompt_context)
+        self.assertIn("role=Governed browser and search chip for web inspection and source capture.", prompt_context)
+        self.assertIn("surfaces=researcher_bridge,cli,telegram", prompt_context)
+        self.assertIn("permissions=browser_session,origin_access", prompt_context)

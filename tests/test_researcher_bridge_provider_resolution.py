@@ -597,6 +597,28 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("Spark Swarm: status=", prompt)
         self.assertIn("[Current capabilities]", prompt)
 
+    def test_build_contextual_task_includes_onboarding_contract_for_chip_explanation_query(self) -> None:
+        create_fake_hook_chip(self.home, chip_key="spark-browser")
+        self.config_manager.set_path("spark.chips.roots", [str(self.home)])
+        attachment_context = build_attachment_context(self.config_manager)
+        system_registry_context = build_system_registry_prompt_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="What does spark-browser do for you?",
+        )
+
+        prompt = _build_contextual_task(
+            user_message="What does spark-browser do for you?",
+            attachment_context=attachment_context,
+            system_registry_context=system_registry_context,
+        )
+
+        self.assertIn("[Spark system registry]", prompt)
+        self.assertIn("[Onboarded contracts]", prompt)
+        self.assertIn("spark-browser:", prompt)
+        self.assertIn("role=Governed browser and search chip for web inspection and source capture.", prompt)
+        self.assertIn("harnesses=browser.grounded", prompt)
+
     def test_load_recent_conversation_context_reads_prior_telegram_turns(self) -> None:
         record_event(
             self.state_db,

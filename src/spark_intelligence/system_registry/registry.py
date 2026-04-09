@@ -135,6 +135,8 @@ def looks_like_system_registry_query(message: str) -> bool:
         "what are you connected to",
         "what is connected",
         "around you right now",
+        "what does",
+        "do for you",
         "know about yourself",
         "self-awareness",
         "surroundings",
@@ -231,9 +233,12 @@ def build_system_registry_prompt_context(
     state_db: StateDB,
     user_message: str,
 ) -> str:
-    if not looks_like_system_registry_query(user_message):
-        return ""
     snapshot = build_system_registry(config_manager, state_db)
+    if not (
+        looks_like_system_registry_query(user_message)
+        or _looks_like_runtime_entity_explanation_query(user_message, snapshot.records)
+    ):
+        return ""
     payload = snapshot.to_payload()
     lines = ["[Spark system registry]"]
     for record in payload["records"]:
@@ -253,6 +258,9 @@ def build_system_registry_prompt_context(
     onboarding_lines = _prompt_onboarding_lines(payload["records"])
     if onboarding_lines:
         lines.extend(onboarding_lines)
+    chip_state_lines = _prompt_chip_state_lines(payload["records"])
+    if chip_state_lines:
+        lines.extend(chip_state_lines)
     capability_lines = payload.get("summary", {}).get("current_capabilities") or []
     if capability_lines:
         lines.append("[Current capabilities]")
@@ -261,6 +269,9 @@ def build_system_registry_prompt_context(
         [
             "[Reply rule]",
             "When the user asks what Spark is, what it is connected to, what it can do, which chips are active, or which system should handle work, answer from this system registry and the attached inventory. Do not claim missing verified knowledge when the runtime registry already answers the question.",
+            "For pinned, active, and only-attached chip questions, keep the three sets disjoint. 'Only attached' excludes anything already pinned or active.",
+            "For chip explanation questions, use the onboarding contract directly: role first, then harnesses, surfaces, permissions, and limitations when relevant.",
+            "Distinguish active runtime systems from merely attached chips. If the topic is Spark Swarm, describe Builder as escalating or handing work off into Swarm unless the runtime explicitly proves direct local ownership.",
         ]
     )
     return "\n".join(lines)
@@ -636,23 +647,93 @@ def _prompt_onboarding_lines(records: list[dict[str, Any]]) -> list[str]:
         onboarding = metadata.get("onboarding") or {}
         if not isinstance(onboarding, dict) or not onboarding:
             continue
+        role = str(onboarding.get("role") or "").strip()
         line = f"- {record['key']}:"
+        if role:
+            line += f" role={role}"
+        section_lines.append(line)
         harnesses = [str(item) for item in (onboarding.get("harnesses") or []) if str(item)]
         surfaces = [str(item) for item in (onboarding.get("surfaces") or []) if str(item)]
         permissions = [str(item) for item in (onboarding.get("permissions") or []) if str(item)]
         example_intents = [str(item) for item in (onboarding.get("example_intents") or []) if str(item)]
+        limitations = [str(item) for item in (onboarding.get("limitations") or []) if str(item)]
         if harnesses:
-            line += f" harnesses={','.join(harnesses[:4])}"
+            section_lines.append(f"  harnesses={','.join(harnesses[:4])}")
         if surfaces:
-            line += f" surfaces={','.join(surfaces[:4])}"
+            section_lines.append(f"  surfaces={','.join(surfaces[:4])}")
         if permissions:
-            line += f" permissions={','.join(permissions[:4])}"
+            section_lines.append(f"  permissions={','.join(permissions[:4])}")
         if example_intents:
-            line += f" intents={'; '.join(example_intents[:2])}"
-        section_lines.append(line)
+            section_lines.append(f"  intents={'; '.join(example_intents[:2])}")
+        if limitations:
+            section_lines.append(f"  limitations={'; '.join(limitations[:2])}")
     if not section_lines:
         return []
     return ["[Onboarded contracts]", *section_lines]
+
+
+def _prompt_chip_state_lines(records: list[dict[str, Any]]) -> list[str]:
+    pinned = sorted(
+        str(record.get("key") or "")
+        for record in records
+        if isinstance(record, dict)
+        and str(record.get("kind") or "") == "chip"
+        and bool(record.get("pinned"))
+        and str(record.get("key") or "")
+    )
+    active = sorted(
+        str(record.get("key") or "")
+        for record in records
+        if isinstance(record, dict)
+        and str(record.get("kind") or "") == "chip"
+        and bool(record.get("active"))
+        and str(record.get("key") or "")
+    )
+    active_set = set(active)
+    pinned_set = set(pinned)
+    attached_only = sorted(
+        str(record.get("key") or "")
+        for record in records
+        if isinstance(record, dict)
+        and str(record.get("kind") or "") == "chip"
+        and bool(record.get("attached"))
+        and str(record.get("key") or "")
+        and str(record.get("key") or "") not in active_set
+        and str(record.get("key") or "") not in pinned_set
+    )
+    if not pinned and not active and not attached_only:
+        return []
+    return [
+        "[Chip state]",
+        f"- pinned={','.join(pinned) if pinned else 'none'}",
+        f"- active={','.join(active) if active else 'none'}",
+        f"- only_attached={','.join(attached_only) if attached_only else 'none'}",
+    ]
+
+
+def _looks_like_runtime_entity_explanation_query(message: str, records: list[SystemRegistryRecord]) -> bool:
+    lowered_message = str(message or "").strip().lower()
+    if not lowered_message:
+        return False
+    intent_signals = (
+        "what does",
+        "what is",
+        "tell me about",
+        "explain",
+        "for you",
+        "what can",
+    )
+    if not any(signal in lowered_message for signal in intent_signals):
+        return False
+    for record in records:
+        candidates = {
+            str(record.key).strip().lower(),
+            str(record.label).strip().lower(),
+        }
+        normalized_candidates = {candidate for candidate in candidates if candidate}
+        if any(candidate and candidate in lowered_message for candidate in normalized_candidates):
+            return True
+    return False
 
 
 def _now_iso() -> str:
