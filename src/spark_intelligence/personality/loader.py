@@ -1183,6 +1183,43 @@ def list_agent_persona_savepoints(
     return [dict(row) for row in rows]
 
 
+def load_agent_persona_savepoint(
+    *,
+    agent_id: str,
+    human_id: str,
+    savepoint_name: str,
+    state_db: StateDB,
+) -> dict[str, Any] | None:
+    storage_agent_id = resolve_builder_persona_agent_id(human_id=human_id) or agent_id
+    normalized_name = " ".join(str(savepoint_name or "").strip().split())
+    with state_db.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT savepoint_id, savepoint_name, persona_name, persona_summary, base_traits_json, behavioral_rules_json, provenance_json, created_at
+            FROM agent_persona_savepoints
+            WHERE agent_id = ? AND human_id = ? AND lower(savepoint_name) = lower(?)
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (storage_agent_id, human_id, normalized_name),
+        ).fetchone()
+    if not row:
+        return None
+    base_traits = json.loads(row["base_traits_json"] or "{}") if row["base_traits_json"] else {}
+    behavioral_rules = json.loads(row["behavioral_rules_json"] or "[]") if row["behavioral_rules_json"] else []
+    provenance = json.loads(row["provenance_json"] or "{}") if row["provenance_json"] else {}
+    return {
+        "savepoint_id": row["savepoint_id"],
+        "savepoint_name": row["savepoint_name"],
+        "persona_name": _read_optional_text(row["persona_name"]),
+        "persona_summary": _read_optional_text(row["persona_summary"]),
+        "base_traits": {**_DEFAULT_TRAITS, **{k: float(v) for k, v in dict(base_traits).items() if k in _DEFAULT_TRAITS}},
+        "behavioral_rules": behavioral_rules if isinstance(behavioral_rules, list) else [],
+        "provenance": provenance if isinstance(provenance, dict) else {},
+        "created_at": row["created_at"],
+    }
+
+
 def restore_agent_persona_savepoint(
     *,
     agent_id: str,

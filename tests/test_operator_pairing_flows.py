@@ -3443,6 +3443,74 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(restore_result.ok)
         self.assertEqual(restore_result.detail["bridge_mode"], "runtime_command")
 
+    def test_style_diff_compares_current_voice_to_named_savepoint(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11735,
+                user_id="111",
+                username="alice",
+                text="/style savepoint baseline one",
+            ),
+        )
+        simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11736,
+                user_id="111",
+                username="alice",
+                text="/style train be more direct and keep replies short",
+            ),
+        )
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11737,
+                user_id="111",
+                username="alice",
+                text="/style diff baseline one",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Style diff for", result.detail["response_text"])
+        self.assertIn("Score delta:", result.detail["response_text"])
+        self.assertIn("Rules then:", result.detail["response_text"])
+        self.assertIn("Rules now:", result.detail["response_text"])
+
+    def test_natural_language_style_diff_routes_runtime_command(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11738,
+                user_id="111",
+                username="alice",
+                text="/style savepoint baseline two",
+            ),
+        )
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11739,
+                user_id="111",
+                username="alice",
+                text="Compare my style to savepoint baseline two",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Style diff for", result.detail["response_text"])
+        self.assertEqual(result.detail["bridge_mode"], "runtime_command")
+
     def test_style_bad_requires_feedback_note(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 

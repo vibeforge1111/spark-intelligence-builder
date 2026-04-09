@@ -35,6 +35,7 @@ from spark_intelligence.personality import (
     build_telegram_surface_identity_preamble,
     create_agent_persona_savepoint,
     detect_and_persist_agent_persona_preferences,
+    load_agent_persona_savepoint,
     list_agent_persona_savepoints,
     load_personality_profile,
     maybe_handle_agent_persona_onboarding_turn,
@@ -2544,6 +2545,11 @@ def _parse_style_command(inbound_text: str) -> dict[str, str | None] | None:
         return {"command": "/style history", "payload": None}
     if lowered in {"/style savepoints", "style savepoints"}:
         return {"command": "/style savepoints", "payload": None}
+    diff_prefixes = ("/style diff ", "style diff ")
+    for prefix in diff_prefixes:
+        if lowered.startswith(prefix):
+            payload = normalized[len(prefix) :].strip()
+            return {"command": "/style diff", "payload": payload}
     if lowered in {"/style presets", "style presets"}:
         return {"command": "/style presets", "payload": None}
     if lowered in {"/style undo", "style undo", "/style rollback", "style rollback"}:
@@ -2675,6 +2681,15 @@ def _match_natural_style_command(inbound_text: str) -> dict[str, str | None] | N
         "list style savepoints",
     }:
         return {"command": "/style savepoints", "payload": None}
+    for pattern in (
+        r"^(?:compare|diff)\s+(?:my\s+)?style\s+(?:to|against|vs)\s+(?:savepoint\s+)?(?P<payload>.+)$",
+        r"^(?:show(?:\s+me)?|preview)\s+style\s+diff\s+(?:for|against|vs)\s+(?P<payload>.+)$",
+    ):
+        match = re.match(pattern, normalized, flags=re.IGNORECASE)
+        if match:
+            payload = " ".join(str(match.group("payload") or "").strip().split())
+            if payload:
+                return {"command": "/style diff", "payload": payload}
     if simplified in {
         "show style presets",
         "show me style presets",
@@ -2874,6 +2889,7 @@ def _handle_style_command(
                 "Style controls: `/style status` to inspect the current Telegram persona, "
                 "`/style history` to inspect recent saved mutations, "
                 "`/style savepoints` to list named checkpoints, "
+                "`/style diff <name>` to compare the current voice against a savepoint, "
                 "`/style presets` to list named conversation presets, "
                 "`/style undo` to revert the last saved style change, "
                 "`/style score` to grade the current voice against the training rubric, "
@@ -2922,6 +2938,46 @@ def _handle_style_command(
                     agent_id=agent_id,
                     limit=10,
                 ),
+            ),
+        }
+    if command == "/style diff":
+        savepoint_name = " ".join(str(payload or "").strip().split())
+        if not savepoint_name:
+            return {
+                "command": "/style diff",
+                "reply_text": (
+                    "Style diff needs a savepoint name.\n"
+                    "Next: send `/style diff claude baseline`."
+                ),
+            }
+        if not human_id or not agent_id:
+            return {
+                "command": "/style diff",
+                "reply_text": (
+                    "Style diff is unavailable right now.\n"
+                    "Reason: this Telegram DM does not have a resolved Builder identity yet."
+                ),
+            }
+        savepoint = load_agent_persona_savepoint(
+            agent_id=agent_id,
+            human_id=human_id,
+            savepoint_name=savepoint_name,
+            state_db=state_db,
+        )
+        if savepoint is None:
+            return {
+                "command": "/style diff",
+                "reply_text": (
+                    "Style savepoint not found.\n"
+                    "Next: use `/style savepoints` to list the available names."
+                ),
+            }
+        return {
+            "command": "/style diff",
+            "reply_text": _render_style_diff_reply(
+                profile=profile,
+                agent_name=agent_name,
+                savepoint=savepoint,
             ),
         }
     if command == "/style presets":
@@ -3418,6 +3474,49 @@ def _render_style_savepoints_reply(*, rows: list[dict[str, Any]]) -> str:
             detail += f": {summary}"
         lines.append(f"{index}. {detail}")
     lines.append("Next: use `/style restore <name>` to restore one, or `/style savepoint <name>` to add another.")
+    return "\n".join(lines)
+
+
+def _render_style_diff_reply(*, profile: dict[str, Any] | None, agent_name: str | None, savepoint: dict[str, Any]) -> str:
+    resolved_profile = profile or {}
+    name = str(agent_name or resolved_profile.get("agent_persona_name") or "the agent").strip()
+    savepoint_name = str(savepoint.get("savepoint_name") or "").strip() or "savepoint"
+    current_score_rows = _style_score_rows(resolved_profile)
+    savepoint_profile = {
+        "agent_persona_summary": savepoint.get("persona_summary"),
+        "agent_behavioral_rules": list(savepoint.get("behavioral_rules") or []),
+        "traits": dict(savepoint.get("base_traits") or {}),
+    }
+    savepoint_score_rows = _style_score_rows(savepoint_profile)
+    current_overall = round(sum(score for _, score, _ in current_score_rows) / max(len(current_score_rows), 1), 1)
+    savepoint_overall = round(sum(score for _, score, _ in savepoint_score_rows) / max(len(savepoint_score_rows), 1), 1)
+    current_summary = str(resolved_profile.get("agent_persona_summary") or "").strip()
+    savepoint_summary = str(savepoint.get("persona_summary") or "").strip()
+    current_rules = [str(rule).strip() for rule in list(resolved_profile.get("agent_behavioral_rules") or []) if str(rule).strip()]
+    savepoint_rules = [str(rule).strip() for rule in list(savepoint.get("behavioral_rules") or []) if str(rule).strip()]
+    current_example = dict(_style_example_rows(resolved_profile)).get("Ask me one clarifying question, then stop.", "")
+    savepoint_example = dict(_style_example_rows(savepoint_profile)).get("Ask me one clarifying question, then stop.", "")
+    deltas: list[str] = []
+    for (label, current_score, _), (_, old_score, _) in zip(current_score_rows, savepoint_score_rows):
+        diff = round(current_score - old_score, 1)
+        if diff:
+            sign = "+" if diff > 0 else ""
+            deltas.append(f"{label} {old_score}/10 -> {current_score}/10 ({sign}{diff})")
+    lines = [f"Style diff for {name} vs savepoint `{savepoint_name}`."]
+    lines.append(f"Overall: {savepoint_overall}/10 -> {current_overall}/10.")
+    if deltas:
+        lines.append("Score delta: " + " | ".join(deltas[:4]) + ".")
+    if savepoint_summary or current_summary:
+        lines.append(f"Summary then: {savepoint_summary or '(none)'}.")
+        lines.append(f"Summary now: {current_summary or '(none)'}.")
+    if savepoint_rules or current_rules:
+        lines.append("Rules then: " + (" | ".join(savepoint_rules[:3]) if savepoint_rules else "(none)") + ".")
+        lines.append("Rules now: " + (" | ".join(current_rules[:3]) if current_rules else "(none)") + ".")
+    if savepoint_example or current_example:
+        lines.append("Prompt: Ask me one clarifying question, then stop.")
+        lines.append(f"Then: {savepoint_example}")
+        lines.append(f"Now: {current_example}")
+    lines.append("Next: use `/style restore <name>` to go back, or `/style undo` to roll back the last change instead.")
     return "\n".join(lines)
 
 

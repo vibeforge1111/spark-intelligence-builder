@@ -119,6 +119,7 @@ spark-intelligence gateway start
 # /style history
 # /style savepoints
 # /style savepoint <name>
+# /style diff <name>
 # /style restore <name>
 # /style presets
 # /style preset <name>
@@ -269,6 +270,7 @@ Live commands verified on the production-shaped home:
 - `/style history`
 - `/style savepoints`
 - `/style savepoint <name>`
+- `/style diff <name>`
 - `/style restore <name>`
 - `/style presets`
 - `/style preset <name>`
@@ -339,6 +341,7 @@ The Telegram runtime also accepts bounded natural-language equivalents for those
 - `What style changes have you saved?`
 - `What style savepoints do I have?`
 - `Save style savepoint named checkpoint one`
+- `Compare my style to savepoint checkpoint one`
 - `Restore style savepoint named checkpoint one`
 - `What style presets are available?`
 - `Set style preset to claude-like`
