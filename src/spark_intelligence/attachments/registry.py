@@ -24,6 +24,7 @@ class AttachmentRecord:
     commands: dict[str, list[str]]
     description: str | None
     frontier: dict[str, Any] | None
+    onboarding: dict[str, Any] | None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -41,6 +42,7 @@ class AttachmentRecord:
             "commands": self.commands,
             "description": self.description,
             "frontier": self.frontier,
+            "onboarding": self.onboarding,
         }
 
 
@@ -192,6 +194,7 @@ def _scan_chip_roots(roots: list[Path], source: str, warnings: list[str]) -> lis
                 commands=_normalize_commands(payload.get("commands")),
                 description=str(payload.get("description") or "").strip() or None,
                 frontier=payload.get("frontier") if isinstance(payload.get("frontier"), dict) else None,
+                onboarding=_normalize_onboarding(payload.get("onboarding")),
             )
         )
     return records
@@ -230,6 +233,7 @@ def _scan_path_roots(roots: list[Path], source: str, warnings: list[str]) -> lis
                 commands=_normalize_commands(hook_manifest.get("commands")),
                 description=None,
                 frontier=hook_manifest.get("frontier") if isinstance(hook_manifest.get("frontier"), dict) else None,
+                onboarding=_normalize_onboarding(hook_manifest.get("onboarding") or payload.get("onboarding")),
             )
         )
     return records
@@ -297,3 +301,21 @@ def _normalize_commands(value: Any) -> dict[str, list[str]]:
         if parts:
             normalized[hook_name] = parts
     return normalized
+
+
+def _normalize_onboarding(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    normalized: dict[str, Any] = {}
+    role = _normalize_optional_string(value.get("role"))
+    if role:
+        normalized["role"] = role
+    for field in ("surfaces", "permissions", "harnesses", "health_checks", "example_intents", "limitations"):
+        items = []
+        for item in value.get(field, []) if isinstance(value.get(field), list) else []:
+            normalized_item = str(item).strip()
+            if normalized_item and normalized_item not in items:
+                items.append(normalized_item)
+        if items:
+            normalized[field] = items
+    return normalized or None

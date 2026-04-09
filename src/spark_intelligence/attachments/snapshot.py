@@ -192,6 +192,7 @@ def build_attachment_context(config_manager: ConfigManager) -> dict[str, Any]:
                 "capabilities": [str(item) for item in (record.get("capabilities") or []) if str(item)],
                 "hook_names": sorted(str(item) for item in ((record.get("commands") or {}).keys()) if str(item)),
                 "repo_root": str(record.get("repo_root") or ""),
+                "onboarding": record.get("onboarding") if isinstance(record.get("onboarding"), dict) else None,
             }
             for record in chip_records
         ],
@@ -203,6 +204,7 @@ def build_attachment_context(config_manager: ConfigManager) -> dict[str, Any]:
                 "capabilities": [str(item) for item in (record.get("capabilities") or []) if str(item)],
                 "hook_names": sorted(str(item) for item in ((record.get("commands") or {}).keys()) if str(item)),
                 "repo_root": str(record.get("repo_root") or ""),
+                "onboarding": record.get("onboarding") if isinstance(record.get("onboarding"), dict) else None,
             }
             for record in path_records
         ],

@@ -31,10 +31,13 @@ class SystemRegistryTests(SparkTestCase):
         self.assertEqual(records["startup-yc"]["kind"], "chip")
         self.assertTrue(records["startup-yc"]["pinned"])
         self.assertEqual(records["spark-browser"]["status"], "active")
+        self.assertEqual(records["spark-browser"]["metadata"]["onboarding"]["harnesses"], ["browser.grounded"])
+        self.assertIn("origin_access", records["spark-browser"]["metadata"]["onboarding"]["permissions"])
         self.assertIn(
             "governed browser search and page inspection",
             payload["summary"]["current_capabilities"],
         )
+        self.assertGreaterEqual(int(payload["summary"]["onboarding_contract_count"]), 1)
 
     def test_build_system_registry_prompt_context_uses_registry_for_self_knowledge(self) -> None:
         create_fake_hook_chip(self.home, chip_key="startup-yc")
@@ -51,6 +54,9 @@ class SystemRegistryTests(SparkTestCase):
 
         self.assertIn("[Spark system registry]", prompt_context)
         self.assertIn("Spark Intelligence Builder: status=", prompt_context)
+        self.assertIn("[Onboarded contracts]", prompt_context)
+        self.assertIn("spark-browser:", prompt_context)
+        self.assertIn("harnesses=browser.grounded", prompt_context)
         self.assertIn("[Current capabilities]", prompt_context)
         self.assertIn("1:1 conversational work through Builder", prompt_context)
 

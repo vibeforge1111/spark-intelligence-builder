@@ -93,6 +93,13 @@ class SystemRegistrySnapshot:
                 "provider_count": len([record for record in self.records if record.kind == "provider"]),
                 "chip_count": len([record for record in self.records if record.kind == "chip"]),
                 "path_count": len([record for record in self.records if record.kind == "path"]),
+                "onboarding_contract_count": len(
+                    [
+                        record
+                        for record in self.records
+                        if record.kind in {"chip", "path"} and isinstance(record.metadata.get("onboarding"), dict)
+                    ]
+                ),
                 "current_capabilities": _derive_current_capabilities(self.records),
             },
         }
@@ -243,6 +250,9 @@ def build_system_registry_prompt_context(
     provider_lines = _prompt_section_lines(payload["records"], kind="provider", title="[Provider backends]")
     if provider_lines:
         lines.extend(provider_lines)
+    onboarding_lines = _prompt_onboarding_lines(payload["records"])
+    if onboarding_lines:
+        lines.extend(onboarding_lines)
     capability_lines = payload.get("summary", {}).get("current_capabilities") or []
     if capability_lines:
         lines.append("[Current capabilities]")
@@ -488,13 +498,25 @@ def _build_chip_records(
         pinned = key in pinned_chip_keys
         mode = str(item.get("attachment_mode") or "available")
         status = "pinned" if pinned else "active" if active else mode
+        onboarding = item.get("onboarding") if isinstance(item.get("onboarding"), dict) else None
+        metadata = {
+            "hook_names": [str(hook) for hook in (item.get("hook_names") or []) if str(hook)],
+            "repo_root": item.get("repo_root"),
+            "attachment_mode": mode,
+        }
+        if onboarding is not None:
+            metadata["onboarding"] = onboarding
         records.append(
             SystemRegistryRecord(
                 record_id=f"chip:{key}",
                 kind="chip",
                 key=key,
                 label=str(item.get("label") or key),
-                role=str(item.get("description") or "").strip() or _KNOWN_CHIP_ROLE_HINTS.get(key, "Attached chip."),
+                role=(
+                    str(onboarding.get("role") or "").strip()
+                    if onboarding is not None and str(onboarding.get("role") or "").strip()
+                    else str(item.get("description") or "").strip() or _KNOWN_CHIP_ROLE_HINTS.get(key, "Attached chip.")
+                ),
                 status=status,
                 attached=True,
                 active=active,
@@ -503,12 +525,8 @@ def _build_chip_records(
                 degraded=False,
                 requires_restart=False,
                 capabilities=[str(cap) for cap in (item.get("capabilities") or []) if str(cap)],
-                limitations=[],
-                metadata={
-                    "hook_names": [str(hook) for hook in (item.get("hook_names") or []) if str(hook)],
-                    "repo_root": item.get("repo_root"),
-                    "attachment_mode": mode,
-                },
+                limitations=[str(entry) for entry in ((onboarding or {}).get("limitations") or []) if str(entry)],
+                metadata=metadata,
             )
         )
     return records
@@ -528,13 +546,25 @@ def _build_path_records(
             continue
         active = key == active_path_key
         mode = str(item.get("attachment_mode") or "available")
+        onboarding = item.get("onboarding") if isinstance(item.get("onboarding"), dict) else None
+        metadata = {
+            "hook_names": [str(hook) for hook in (item.get("hook_names") or []) if str(hook)],
+            "repo_root": item.get("repo_root"),
+            "attachment_mode": mode,
+        }
+        if onboarding is not None:
+            metadata["onboarding"] = onboarding
         records.append(
             SystemRegistryRecord(
                 record_id=f"path:{key}",
                 kind="path",
                 key=key,
                 label=str(item.get("label") or key),
-                role="Attached specialization path.",
+                role=(
+                    str(onboarding.get("role") or "").strip()
+                    if onboarding is not None and str(onboarding.get("role") or "").strip()
+                    else "Attached specialization path."
+                ),
                 status="active" if active else mode,
                 attached=True,
                 active=active,
@@ -543,12 +573,8 @@ def _build_path_records(
                 degraded=False,
                 requires_restart=False,
                 capabilities=[str(cap) for cap in (item.get("capabilities") or []) if str(cap)],
-                limitations=[],
-                metadata={
-                    "hook_names": [str(hook) for hook in (item.get("hook_names") or []) if str(hook)],
-                    "repo_root": item.get("repo_root"),
-                    "attachment_mode": mode,
-                },
+                limitations=[str(entry) for entry in ((onboarding or {}).get("limitations") or []) if str(entry)],
+                metadata=metadata,
             )
         )
     return records
@@ -599,6 +625,34 @@ def _prompt_section_lines(records: list[dict[str, Any]], *, kind: str, title: st
     if not section_lines:
         return []
     return [title, *section_lines]
+
+
+def _prompt_onboarding_lines(records: list[dict[str, Any]]) -> list[str]:
+    section_lines: list[str] = []
+    for record in records:
+        if not isinstance(record, dict) or str(record.get("kind") or "") not in {"chip", "path"}:
+            continue
+        metadata = record.get("metadata") or {}
+        onboarding = metadata.get("onboarding") or {}
+        if not isinstance(onboarding, dict) or not onboarding:
+            continue
+        line = f"- {record['key']}:"
+        harnesses = [str(item) for item in (onboarding.get("harnesses") or []) if str(item)]
+        surfaces = [str(item) for item in (onboarding.get("surfaces") or []) if str(item)]
+        permissions = [str(item) for item in (onboarding.get("permissions") or []) if str(item)]
+        example_intents = [str(item) for item in (onboarding.get("example_intents") or []) if str(item)]
+        if harnesses:
+            line += f" harnesses={','.join(harnesses[:4])}"
+        if surfaces:
+            line += f" surfaces={','.join(surfaces[:4])}"
+        if permissions:
+            line += f" permissions={','.join(permissions[:4])}"
+        if example_intents:
+            line += f" intents={'; '.join(example_intents[:2])}"
+        section_lines.append(line)
+    if not section_lines:
+        return []
+    return ["[Onboarded contracts]", *section_lines]
 
 
 def _now_iso() -> str:

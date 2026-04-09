@@ -42,6 +42,8 @@ class AttachmentHookTests(SparkTestCase):
         self.assertEqual(records["spark-browser"]["attachment_mode"], "pinned")
         self.assertEqual(records["spark-swarm"]["attachment_mode"], "available")
         self.assertIn("evaluate", records["spark-browser"]["hook_names"])
+        self.assertEqual(records["spark-browser"]["onboarding"]["harnesses"], ["browser.grounded"])
+        self.assertIn("origin_access", records["spark-browser"]["onboarding"]["permissions"])
 
     def test_attachments_run_hook_allows_browser_status_hook(self) -> None:
         chip_root = create_fake_hook_chip(self.home, chip_key="spark-browser")
