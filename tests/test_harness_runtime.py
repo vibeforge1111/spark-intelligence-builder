@@ -6,6 +6,7 @@ from unittest.mock import patch
 from spark_intelligence.harness_runtime import (
     build_harness_runtime_snapshot,
     build_harness_task_envelope,
+    execute_harness_chain,
     execute_harness_task,
 )
 
@@ -311,3 +312,74 @@ class HarnessRuntimeTests(SparkTestCase):
         self.assertEqual(result.status, "needs_input")
         self.assertEqual(result.artifacts["swarm_status"]["payload_ready"], False)
         self.assertIn("retry_command", result.artifacts["retry_token"])
+
+    def test_execute_harness_chain_runs_researcher_then_voice(self) -> None:
+        envelope = build_harness_task_envelope(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="What is the difference between Spark Researcher and Builder?",
+            forced_harness_id="researcher.advisory",
+        )
+
+        class FakeResearcherResult:
+            reply_text = "Spark Researcher thinks.\nBuilder delivers."
+            evidence_summary = "status=ok"
+            trace_ref = "trace:test"
+            mode = "external_configured"
+            provider_id = "custom"
+            provider_model = "MiniMax-M2.7"
+            provider_execution_transport = "direct_http"
+            routing_decision = "provider_execution"
+            active_chip_key = None
+
+        def fake_voice_hook(*, hook, payload, **kwargs):
+            if hook == "voice.status":
+                return (
+                    {
+                        "result": {
+                            "ready": True,
+                            "reason": "voice ready",
+                            "reply_text": "Voice chip is ready.",
+                        }
+                    },
+                    "domain-chip-voice-comms",
+                )
+            self.assertEqual(payload["text"], "Spark Researcher thinks.\nBuilder delivers.")
+            return (
+                {
+                    "result": {
+                        "provider_id": "elevenlabs",
+                        "voice_id": "voice-123",
+                        "model_id": "eleven_turbo_v2_5",
+                        "mime_type": "audio/ogg",
+                        "filename": "voice-reply-test.ogg",
+                        "voice_compatible": True,
+                        "audio_base64": "aGVsbG8=",
+                    }
+                },
+                "domain-chip-voice-comms",
+            )
+
+        with (
+            patch(
+                "spark_intelligence.harness_runtime.service._run_researcher_bridge_reply",
+                return_value=FakeResearcherResult(),
+            ),
+            patch(
+                "spark_intelligence.harness_runtime.service._run_voice_hook",
+                side_effect=fake_voice_hook,
+            ),
+        ):
+            result = execute_harness_chain(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                envelope=envelope,
+                follow_up_harness_ids=["voice.io"],
+            )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.chain_status, "completed")
+        self.assertEqual(len(result.chained_results or []), 1)
+        voice_result = (result.chained_results or [])[0]
+        self.assertEqual(voice_result.envelope.harness_id, "voice.io")
+        self.assertEqual(voice_result.status, "completed")

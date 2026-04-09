@@ -17,7 +17,7 @@ from spark_intelligence.state.db import StateDB
 _URL_RE = re.compile(r"https?://[^\s)]+", re.IGNORECASE)
 _VOICE_SPEAK_RE = re.compile(
     r"^(?:say|speak|voice|read(?:\s+this)?|send(?:\s+this)?\s+as\s+voice|reply(?:\s+with)?\s+voice)[:\s-]+(?P<text>.+)$",
-    re.IGNORECASE,
+    re.IGNORECASE | re.DOTALL,
 )
 
 
@@ -69,6 +69,8 @@ class HarnessExecutionResult:
     summary: str
     artifacts: dict[str, Any]
     next_actions: list[str]
+    chain_status: str | None = None
+    chained_results: list["HarnessExecutionResult"] | None = None
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -78,6 +80,8 @@ class HarnessExecutionResult:
             "summary": self.summary,
             "artifacts": self.artifacts,
             "next_actions": self.next_actions,
+            "chain_status": self.chain_status,
+            "chained_results": [item.to_payload() for item in (self.chained_results or [])],
         }
 
     def to_json(self) -> str:
@@ -323,6 +327,65 @@ def execute_harness_task(
             facts={"error": str(exc), "harness_id": envelope.harness_id},
         )
         raise
+
+
+def execute_harness_chain(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    envelope: HarnessTaskEnvelope,
+    follow_up_harness_ids: list[str] | None = None,
+) -> HarnessExecutionResult:
+    primary_result = execute_harness_task(
+        config_manager=config_manager,
+        state_db=state_db,
+        envelope=envelope,
+    )
+    normalized_follow_ups = [str(item or "").strip() for item in (follow_up_harness_ids or []) if str(item or "").strip()]
+    if not normalized_follow_ups:
+        return primary_result
+
+    chained_results: list[HarnessExecutionResult] = []
+    chain_status = "completed"
+    current_result = primary_result
+    for harness_id in normalized_follow_ups:
+        if current_result.status not in {"completed", "prepared"}:
+            chain_status = "blocked"
+            break
+        derived_task = _derive_follow_up_task(
+            current_result=current_result,
+            target_harness_id=harness_id,
+        )
+        next_envelope = build_harness_task_envelope(
+            config_manager=config_manager,
+            state_db=state_db,
+            task=derived_task,
+            forced_harness_id=harness_id,
+            channel_kind=envelope.channel_kind,
+            session_id=envelope.session_id,
+            human_id=envelope.human_id,
+            agent_id=envelope.agent_id,
+        )
+        current_result = execute_harness_task(
+            config_manager=config_manager,
+            state_db=state_db,
+            envelope=next_envelope,
+        )
+        chained_results.append(current_result)
+        if current_result.status not in {"completed", "prepared"}:
+            chain_status = "blocked"
+            break
+
+    return HarnessExecutionResult(
+        envelope=primary_result.envelope,
+        run_id=primary_result.run_id,
+        status=primary_result.status,
+        summary=primary_result.summary,
+        artifacts=primary_result.artifacts,
+        next_actions=primary_result.next_actions,
+        chain_status=chain_status,
+        chained_results=chained_results,
+    )
 
 
 def build_harness_runtime_snapshot(
@@ -782,6 +845,50 @@ def _build_harness_resume_token(
         "harness_id": envelope.harness_id,
         "envelope_id": envelope.envelope_id,
     }
+
+
+def _derive_follow_up_task(
+    *,
+    current_result: HarnessExecutionResult,
+    target_harness_id: str,
+) -> str:
+    normalized_target = str(target_harness_id or "").strip()
+    if normalized_target == "voice.io":
+        reply_text = _extract_reply_text_from_result(current_result)
+        if reply_text:
+            return f"Say: {reply_text}"
+        return f"Say: {current_result.summary}"
+    if normalized_target == "swarm.escalation":
+        reply_text = _extract_reply_text_from_result(current_result)
+        base = [
+            "Coordinate this through Swarm.",
+            f"Original harness: {current_result.envelope.harness_id}",
+            f"Original task: {current_result.envelope.task}",
+        ]
+        if reply_text:
+            base.append(f"Upstream reply: {reply_text}")
+        else:
+            base.append(f"Upstream summary: {current_result.summary}")
+        return "\n".join(base)
+    if normalized_target == "researcher.advisory":
+        reply_text = _extract_reply_text_from_result(current_result)
+        return reply_text or current_result.envelope.task
+    if normalized_target == "builder.direct":
+        reply_text = _extract_reply_text_from_result(current_result)
+        return reply_text or current_result.summary
+    return current_result.envelope.task
+
+
+def _extract_reply_text_from_result(result: HarnessExecutionResult) -> str | None:
+    reply_text = result.artifacts.get("reply_text")
+    if isinstance(reply_text, str) and reply_text.strip():
+        return reply_text.strip()
+    spoken_audio = result.artifacts.get("spoken_audio")
+    if isinstance(spoken_audio, dict):
+        transcript_like = spoken_audio.get("text")
+        if isinstance(transcript_like, str) and transcript_like.strip():
+            return transcript_like.strip()
+    return None
 
 
 def _extract_first_url(text: str) -> str | None:
