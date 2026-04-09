@@ -2497,6 +2497,99 @@ class OperatorPairingFlowTests(SparkTestCase):
             "Next: inspect the researcher runtime, then retry.",
         )
 
+    def test_researcher_secret_boundary_block_is_composed_for_telegram(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            return_value=ResearcherBridgeResult(
+                request_id="req-secret-boundary",
+                reply_text=(
+                    "[Spark Researcher blocked] Sensitive material was detected in model-visible context. "
+                    "I did not send it to the bridge or provider."
+                ),
+                evidence_summary="Pre-model secret boundary blocked bridge execution.",
+                escalation_hint="secret_boundary_violation",
+                trace_ref="trace:secret-boundary",
+                mode="blocked",
+                runtime_root=None,
+                config_path=None,
+                attachment_context={},
+                provider_id=None,
+                provider_auth_profile_id=None,
+                provider_auth_method=None,
+                provider_model=None,
+                provider_model_family=None,
+                provider_execution_transport=None,
+                provider_base_url=None,
+                provider_source=None,
+                routing_decision="secret_boundary_blocked",
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2187,
+                    user_id="111",
+                    username="alice",
+                    text="Research this secret token and its key material.",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            result.detail["response_text"],
+            "Research request was blocked.\n"
+            "Reason: sensitive material was detected in model-visible context.\n"
+            "Next: remove the sensitive material from the request, then retry.",
+        )
+
+    def test_researcher_stub_reply_is_composed_for_telegram(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            return_value=ResearcherBridgeResult(
+                request_id="req-stub",
+                reply_text="[Spark Researcher stub] I received your message in telegram for tg:111: Research this company for me.",
+                evidence_summary="No external Spark Researcher runtime was configured or discovered. active_chips=0 active_path=none",
+                escalation_hint=None,
+                trace_ref="trace:stub",
+                mode="stub",
+                runtime_root=None,
+                config_path=None,
+                attachment_context={},
+                provider_id=None,
+                provider_auth_profile_id=None,
+                provider_auth_method=None,
+                provider_model=None,
+                provider_model_family=None,
+                provider_execution_transport=None,
+                provider_base_url=None,
+                provider_source=None,
+                routing_decision="stub",
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2188,
+                    user_id="111",
+                    username="alice",
+                    text="Research this company for me.",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            result.detail["response_text"],
+            "Researcher is unavailable right now.\n"
+            "Reason: no external Spark Researcher runtime is configured for this workspace.\n"
+            "Next: configure or attach Spark Researcher, then retry.",
+        )
+
     def test_status_and_gateway_traces_surface_bridge_route_and_active_chip(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 

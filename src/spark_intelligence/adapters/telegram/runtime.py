@@ -178,6 +178,14 @@ def _shape_telegram_bridge_reply(reply_text: str, *, bridge_mode: str | None, ro
                 "Next: enable Spark Researcher for this workspace, then retry.",
             ]
         )
+    if route == "secret_boundary_blocked":
+        return "\n".join(
+            [
+                "Research request was blocked.",
+                "Reason: sensitive material was detected in model-visible context.",
+                "Next: remove the sensitive material from the request, then retry.",
+            ]
+        )
     if route == "provider_resolution_failed":
         lines = [
             "Researcher is unavailable right now.",
@@ -196,6 +204,14 @@ def _shape_telegram_bridge_reply(reply_text: str, *, bridge_mode: str | None, ro
             lines.append(f"Detail: {detail}")
         lines.append("Next: inspect the researcher runtime, then retry.")
         return "\n".join(lines)
+    if route == "stub" or mode == "stub":
+        return "\n".join(
+            [
+                "Researcher is unavailable right now.",
+                "Reason: no external Spark Researcher runtime is configured for this workspace.",
+                "Next: configure or attach Spark Researcher, then retry.",
+            ]
+        )
     if mode != "blocked":
         return text
     if route == "browser_permission_required":
