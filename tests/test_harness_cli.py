@@ -256,3 +256,83 @@ class HarnessCliTests(SparkTestCase):
         self.assertEqual(payload["recipe"]["recipe_id"], "advisory_voice_reply")
         self.assertEqual(payload["chain_status"], "completed")
         self.assertEqual(payload["chained_results"][0]["envelope"]["harness_id"], "voice.io")
+
+    def test_harness_plan_auto_selects_recipe_for_voice_advisory_task(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "harness",
+            "plan",
+            "What is the difference between Spark Researcher and Builder? Answer in voice.",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["recipe"]["recipe_id"], "advisory_voice_reply")
+        self.assertEqual(payload["recipe"]["selection_mode"], "auto")
+
+    def test_harness_execute_auto_selects_recipe_for_voice_advisory_task(self) -> None:
+        class FakeResearcherResult:
+            reply_text = "Spark Researcher thinks; Builder delivers."
+            evidence_summary = "status=ok"
+            trace_ref = "trace:test"
+            mode = "external_configured"
+            provider_id = "custom"
+            provider_model = "MiniMax-M2.7"
+            provider_execution_transport = "direct_http"
+            routing_decision = "provider_execution"
+            active_chip_key = None
+
+        def fake_voice_hook(*, hook, payload, **kwargs):
+            if hook == "voice.status":
+                return (
+                    {
+                        "result": {
+                            "ready": True,
+                            "reason": "voice ready",
+                            "reply_text": "Voice chip is ready.",
+                        }
+                    },
+                    "domain-chip-voice-comms",
+                )
+            self.assertIn("Spark Researcher thinks; Builder delivers.", payload["text"])
+            return (
+                {
+                    "result": {
+                        "provider_id": "elevenlabs",
+                        "voice_id": "voice-123",
+                        "model_id": "eleven_turbo_v2_5",
+                        "mime_type": "audio/ogg",
+                        "filename": "voice-reply-test.ogg",
+                        "voice_compatible": True,
+                        "audio_base64": "aGVsbG8=",
+                    }
+                },
+                "domain-chip-voice-comms",
+            )
+
+        with (
+            patch(
+                "spark_intelligence.harness_runtime.service._run_researcher_bridge_reply",
+                return_value=FakeResearcherResult(),
+            ),
+            patch(
+                "spark_intelligence.harness_runtime.service._run_voice_hook",
+                side_effect=fake_voice_hook,
+            ),
+        ):
+            exit_code, stdout, stderr = self.run_cli(
+                "harness",
+                "execute",
+                "What is the difference between Spark Researcher and Builder? Answer in voice.",
+                "--home",
+                str(self.home),
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["recipe"]["recipe_id"], "advisory_voice_reply")
+        self.assertEqual(payload["recipe"]["selection_mode"], "auto")
+        self.assertEqual(payload["chain_status"], "completed")

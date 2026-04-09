@@ -1,4 +1,5 @@
 from spark_intelligence.harness_registry.service import (
+    AutoHarnessRecipeSelection,
     HarnessContract,
     HarnessRecipeSelection,
     HarnessRegistrySnapshot,
@@ -7,10 +8,12 @@ from spark_intelligence.harness_registry.service import (
     build_harness_registry,
     build_harness_selection,
     looks_like_harness_query,
+    select_auto_harness_recipe,
     select_harness_recipe,
 )
 
 __all__ = [
+    "AutoHarnessRecipeSelection",
     "HarnessContract",
     "HarnessRecipeSelection",
     "HarnessRegistrySnapshot",
@@ -19,5 +22,6 @@ __all__ = [
     "build_harness_registry",
     "build_harness_selection",
     "looks_like_harness_query",
+    "select_auto_harness_recipe",
     "select_harness_recipe",
 ]

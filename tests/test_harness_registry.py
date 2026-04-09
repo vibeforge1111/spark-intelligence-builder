@@ -5,6 +5,7 @@ from spark_intelligence.harness_registry import (
     build_harness_registry,
     build_harness_selection,
     looks_like_harness_query,
+    select_auto_harness_recipe,
     select_harness_recipe,
 )
 
@@ -101,3 +102,33 @@ class HarnessRegistryTests(SparkTestCase):
 
         self.assertEqual(recipe.primary_harness_id, "researcher.advisory")
         self.assertEqual(recipe.follow_up_harness_ids, ["voice.io"])
+
+    def test_select_auto_harness_recipe_picks_advisory_voice_reply(self) -> None:
+        create_fake_hook_chip(self.home, chip_key="domain-chip-voice-comms")
+        self.config_manager.set_path("spark.chips.roots", [str(self.home)])
+        self.config_manager.set_path("spark.chips.active_keys", ["domain-chip-voice-comms"])
+
+        recipe = select_auto_harness_recipe(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="What is the difference between Spark Researcher and Builder? Answer in voice.",
+        )
+
+        self.assertIsNotNone(recipe)
+        assert recipe is not None
+        self.assertEqual(recipe.recipe.recipe_id, "advisory_voice_reply")
+
+    def test_select_auto_harness_recipe_picks_research_then_swarm(self) -> None:
+        create_fake_hook_chip(self.home, chip_key="spark-swarm")
+        self.config_manager.set_path("spark.chips.roots", [str(self.home)])
+        self.config_manager.set_path("spark.chips.active_keys", ["spark-swarm"])
+
+        recipe = select_auto_harness_recipe(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="Research this market shift and escalate it to Swarm for multi-agent work.",
+        )
+
+        self.assertIsNotNone(recipe)
+        assert recipe is not None
+        self.assertEqual(recipe.recipe.recipe_id, "research_then_swarm")

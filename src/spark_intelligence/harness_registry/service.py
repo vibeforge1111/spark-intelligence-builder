@@ -139,6 +139,18 @@ class HarnessRecipeSelection:
         }
 
 
+@dataclass(frozen=True)
+class AutoHarnessRecipeSelection:
+    recipe: HarnessRecipeSelection
+    reason: str
+
+    def to_payload(self) -> dict[str, Any]:
+        payload = self.recipe.to_payload()
+        payload["selection_reason"] = self.reason
+        payload["selection_mode"] = "auto"
+        return payload
+
+
 def looks_like_harness_query(message: str) -> bool:
     lowered_message = str(message or "").strip().lower()
     if not lowered_message:
@@ -408,6 +420,46 @@ def select_harness_recipe(
     )
 
 
+def select_auto_harness_recipe(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    task: str,
+) -> AutoHarnessRecipeSelection | None:
+    normalized_task = str(task or "").strip()
+    lowered = normalized_task.lower()
+    if not lowered:
+        return None
+    route_decision = build_harness_selection(
+        config_manager=config_manager,
+        state_db=state_db,
+        task=normalized_task,
+    )
+    if _looks_like_advisory_voice_recipe_task(lowered):
+        recipe = select_harness_recipe(
+            config_manager=config_manager,
+            state_db=state_db,
+            recipe_id="advisory_voice_reply",
+        )
+        if recipe.available:
+            return AutoHarnessRecipeSelection(
+                recipe=recipe,
+                reason="The task asks for a normal advisory answer and spoken delivery, so chain Researcher into Voice.",
+            )
+    if route_decision.route_mode == "swarm_escalation" and _looks_like_research_then_swarm_task(lowered):
+        recipe = select_harness_recipe(
+            config_manager=config_manager,
+            state_db=state_db,
+            recipe_id="research_then_swarm",
+        )
+        if recipe.available:
+            return AutoHarnessRecipeSelection(
+                recipe=recipe,
+                reason="The task asks for reasoning plus Swarm escalation, so chain Researcher into a Swarm dry-run handoff.",
+            )
+    return None
+
+
 def _build_harness_contract(
     *,
     harness_id: str,
@@ -521,6 +573,52 @@ def _build_harness_recipes(contracts: list[HarnessContract]) -> list[dict[str, A
             }
         )
     return recipes
+
+
+def _looks_like_advisory_voice_recipe_task(lowered: str) -> bool:
+    voice_signals = (
+        "reply in voice",
+        "answer in voice",
+        "say it back",
+        "say this back",
+        "say that back",
+        "voice reply",
+        "spoken reply",
+        "read it out loud",
+        "read this out loud",
+        "speak the answer",
+        "answer aloud",
+    )
+    advisory_signals = (
+        "?",
+        "what ",
+        "why ",
+        "how ",
+        "explain",
+        "difference between",
+        "tell me",
+        "give me",
+    )
+    return any(signal in lowered for signal in voice_signals) and any(signal in lowered for signal in advisory_signals)
+
+
+def _looks_like_research_then_swarm_task(lowered: str) -> bool:
+    research_signals = (
+        "research",
+        "investigate",
+        "analyze",
+        "think through",
+        "evaluate",
+        "dig into",
+    )
+    swarm_signals = (
+        "swarm",
+        "delegate",
+        "multi-agent",
+        "parallel",
+        "escalate",
+    )
+    return any(signal in lowered for signal in research_signals) and any(signal in lowered for signal in swarm_signals)
 
 
 def _dedupe_preserve_order(items: list[str]) -> list[str]:

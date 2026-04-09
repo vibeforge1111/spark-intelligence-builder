@@ -130,7 +130,11 @@ from spark_intelligence.researcher_bridge import discover_researcher_runtime_roo
 from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_doctor, swarm_status, sync_swarm_collective
-from spark_intelligence.harness_registry import build_harness_registry, select_harness_recipe
+from spark_intelligence.harness_registry import (
+    build_harness_registry,
+    select_auto_harness_recipe,
+    select_harness_recipe,
+)
 from spark_intelligence.harness_runtime import (
     build_harness_runtime_snapshot,
     build_harness_task_envelope,
@@ -4758,6 +4762,15 @@ def handle_harness_plan(args: argparse.Namespace) -> int:
         )
         recipe_payload = recipe.to_payload()
         forced_harness_id = recipe.primary_harness_id
+    elif not forced_harness_id:
+        auto_recipe = select_auto_harness_recipe(
+            config_manager=config_manager,
+            state_db=state_db,
+            task=args.task,
+        )
+        if auto_recipe is not None:
+            recipe_payload = auto_recipe.to_payload()
+            forced_harness_id = auto_recipe.recipe.primary_harness_id
     envelope = build_harness_task_envelope(
         config_manager=config_manager,
         state_db=state_db,
@@ -4810,6 +4823,17 @@ def handle_harness_execute(args: argparse.Namespace) -> int:
         forced_harness_id = recipe.primary_harness_id
         if not follow_up_harness_ids:
             follow_up_harness_ids = list(recipe.follow_up_harness_ids)
+    elif not forced_harness_id:
+        auto_recipe = select_auto_harness_recipe(
+            config_manager=config_manager,
+            state_db=state_db,
+            task=args.task,
+        )
+        if auto_recipe is not None:
+            recipe_payload = auto_recipe.to_payload()
+            forced_harness_id = auto_recipe.recipe.primary_harness_id
+            if not follow_up_harness_ids:
+                follow_up_harness_ids = list(auto_recipe.recipe.follow_up_harness_ids)
     envelope = build_harness_task_envelope(
         config_manager=config_manager,
         state_db=state_db,
