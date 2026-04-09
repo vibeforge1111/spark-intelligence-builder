@@ -147,6 +147,33 @@ class TelegramPollResult:
         )
 
 
+def _shape_telegram_bridge_reply(reply_text: str, *, bridge_mode: str | None, routing_decision: str | None) -> str:
+    text = str(reply_text or "").strip()
+    mode = str(bridge_mode or "").strip()
+    route = str(routing_decision or "").strip()
+    if mode != "blocked":
+        return text
+    if route == "browser_permission_required":
+        origin_match = re.search(r"host access for (\S+)", text, flags=re.IGNORECASE)
+        origin = str(origin_match.group(1)).rstrip(".,") if origin_match else "the requested site"
+        return "\n".join(
+            [
+                "Web search is blocked right now.",
+                f"Reason: the browser extension does not have site access for {origin}.",
+                f"Next: open the extension popup, grant site access for {origin}, then retry.",
+            ]
+        )
+    if route == "browser_unavailable":
+        return "\n".join(
+            [
+                "Web search is unavailable right now.",
+                "Reason: the live browser session is disconnected.",
+                "Next: reconnect the Spark Browser session, then retry.",
+            ]
+        )
+    return text
+
+
 def build_telegram_runtime_summary(config_manager: ConfigManager, state_db: StateDB) -> TelegramRuntimeSummary:
     config = config_manager.load()
     record = config.get("channels", {}).get("records", {}).get("telegram")
@@ -383,13 +410,18 @@ def simulate_telegram_update(
                     user_message=normalized.text,
                 )
                 record_researcher_bridge_result(state_db=state_db, result=bridge_result)
+                shaped_bridge_reply = _shape_telegram_bridge_reply(
+                    bridge_result.reply_text,
+                    bridge_mode=bridge_result.mode,
+                    routing_decision=bridge_result.routing_decision,
+                )
                 outbound_text = _apply_post_approval_welcome(
                     config_manager=config_manager,
                     state_db=state_db,
                     external_user_id=normalized.telegram_user_id,
                     human_id=resolution.human_id,
                     agent_id=resolution.agent_id,
-                    reply_text=bridge_result.reply_text,
+                    reply_text=shaped_bridge_reply,
                 )
                 trace_ref = bridge_result.trace_ref
                 bridge_mode = bridge_result.mode
@@ -938,13 +970,18 @@ def poll_telegram_updates_once(
             run_id=run.run_id,
         )
         record_researcher_bridge_result(state_db=state_db, result=bridge_result)
+        shaped_bridge_reply = _shape_telegram_bridge_reply(
+            bridge_result.reply_text,
+            bridge_mode=bridge_result.mode,
+            routing_decision=bridge_result.routing_decision,
+        )
         outbound_text = _apply_post_approval_welcome(
             config_manager=config_manager,
             state_db=state_db,
             external_user_id=normalized.telegram_user_id,
             human_id=resolution.human_id,
             agent_id=resolution.agent_id,
-            reply_text=bridge_result.reply_text,
+            reply_text=shaped_bridge_reply,
         )
         send_result = _send_telegram_reply(
             config_manager=config_manager,

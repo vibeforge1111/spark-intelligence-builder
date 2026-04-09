@@ -2215,6 +2215,103 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(result.detail["bridge_mode"], "external_configured")
         bridge_mock.assert_called_once()
 
+    def test_browser_permission_block_reply_is_composed_for_telegram(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            return_value=ResearcherBridgeResult(
+                request_id="req-browser-permission",
+                reply_text=(
+                    "Web search is blocked because the browser extension does not have host access "
+                    "for https://duckduckgo.com. Open the extension popup and grant explicit site "
+                    "access for https://duckduckgo.com, then retry the search."
+                ),
+                evidence_summary="Browser search blocked by missing host permission.",
+                escalation_hint="grant_origin_access",
+                trace_ref="trace:browser-permission",
+                mode="blocked",
+                runtime_root="C:/fake-researcher",
+                config_path="C:/fake-researcher/spark-researcher.project.json",
+                attachment_context={},
+                provider_id="custom",
+                provider_auth_profile_id="custom:default",
+                provider_auth_method="api_key_env",
+                provider_model="MiniMax-M2.7",
+                provider_model_family="generic",
+                provider_execution_transport="direct_http",
+                provider_base_url="https://api.minimax.io/v1",
+                provider_source="config+env",
+                routing_decision="browser_permission_required",
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2181,
+                    user_id="111",
+                    username="alice",
+                    text="Search the web for BTC and cite the source.",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            result.detail["response_text"],
+            "Web search is blocked right now.\n"
+            "Reason: the browser extension does not have site access for https://duckduckgo.com.\n"
+            "Next: open the extension popup, grant site access for https://duckduckgo.com, then retry.",
+        )
+
+    def test_browser_session_block_reply_is_composed_for_telegram(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            return_value=ResearcherBridgeResult(
+                request_id="req-browser-session",
+                reply_text=(
+                    "Web search is currently unavailable because the Spark Browser Extension live session "
+                    "is disconnected. Reload or reconnect the extension, then retry the search."
+                ),
+                evidence_summary="Browser search unavailable because the live browser session is disconnected.",
+                escalation_hint="reconnect_browser_session",
+                trace_ref="trace:browser-session",
+                mode="blocked",
+                runtime_root="C:/fake-researcher",
+                config_path="C:/fake-researcher/spark-researcher.project.json",
+                attachment_context={},
+                provider_id="custom",
+                provider_auth_profile_id="custom:default",
+                provider_auth_method="api_key_env",
+                provider_model="MiniMax-M2.7",
+                provider_model_family="generic",
+                provider_execution_transport="direct_http",
+                provider_base_url="https://api.minimax.io/v1",
+                provider_source="config+env",
+                routing_decision="browser_unavailable",
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2182,
+                    user_id="111",
+                    username="alice",
+                    text="Search the web for BTC and cite the source.",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            result.detail["response_text"],
+            "Web search is unavailable right now.\n"
+            "Reason: the live browser session is disconnected.\n"
+            "Next: reconnect the Spark Browser session, then retry.",
+        )
+
     def test_status_and_gateway_traces_surface_bridge_route_and_active_chip(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
