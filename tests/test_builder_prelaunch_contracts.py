@@ -422,6 +422,36 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
         self.assertFalse(issues["stop_ship_environment_parity"].ok)
 
+    def test_environment_parity_ignores_swarm_bridge_runtime_root_difference(self) -> None:
+        record_environment_snapshot(
+            self.state_db,
+            surface="doctor_cli",
+            summary="cli",
+            provider_id="custom",
+            provider_model="MiniMax-M2.7",
+            provider_base_url="https://api.minimax.io/v1",
+            provider_execution_transport="direct_http",
+            runtime_root="C:/researcher",
+            config_path="C:/researcher/config.json",
+        )
+        record_environment_snapshot(
+            self.state_db,
+            surface="swarm_bridge",
+            summary="swarm",
+            provider_id="custom",
+            provider_model="MiniMax-M2.7",
+            provider_base_url="https://api.minimax.io/v1",
+            provider_execution_transport="direct_http",
+            runtime_root="C:/spark-swarm",
+            config_path="C:/researcher/config.json",
+        )
+
+        issues = {
+            issue.name: issue
+            for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)
+        }
+        self.assertTrue(issues["stop_ship_environment_parity"].ok)
+
     def test_watchtower_snapshot_computes_health_dimensions_from_typed_truth(self) -> None:
         run = open_run(
             self.state_db,

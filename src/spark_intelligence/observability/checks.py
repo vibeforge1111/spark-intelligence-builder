@@ -14,6 +14,7 @@ from spark_intelligence.memory_contracts import (
     normalize_memory_role,
 )
 from spark_intelligence.observability.store import (
+    _environment_snapshot_disagreements,
     events_for_run,
     latest_events_by_type,
     latest_snapshots_by_surface,
@@ -734,23 +735,7 @@ def _environment_parity_issue(state_db: StateDB) -> StopShipIssue:
             detail="Not enough runtime surfaces have emitted environment snapshots yet.",
             severity="high",
         )
-    disagreement: list[str] = []
-    comparable_fields = (
-        "provider_id",
-        "provider_model",
-        "provider_base_url",
-        "provider_execution_transport",
-        "runtime_root",
-        "config_path",
-    )
-    rows = list(snapshots.items())
-    baseline_surface, baseline = rows[0]
-    for surface, snapshot in rows[1:]:
-        for field in comparable_fields:
-            left = baseline.get(field)
-            right = snapshot.get(field)
-            if left and right and left != right:
-                disagreement.append(f"{baseline_surface}:{field}={left} != {surface}:{field}={right}")
+    disagreement = _environment_snapshot_disagreements(snapshots)
     if disagreement:
         return StopShipIssue(
             name="stop_ship_environment_parity",

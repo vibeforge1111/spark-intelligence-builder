@@ -2511,6 +2511,21 @@ def _build_background_freshness_panel(
 
 def _build_environment_parity_panel(state_db: StateDB) -> dict[str, Any]:
     snapshots = latest_snapshots_by_surface(state_db)
+    snapshot_hashes = {
+        surface: str(snapshot.get("config_hash") or "")
+        for surface, snapshot in snapshots.items()
+    }
+    return {
+        "snapshot_hashes": snapshot_hashes,
+        "latest_surfaces": snapshots,
+        "mismatch_fields": _environment_snapshot_disagreements(snapshots),
+        "current_mismatch_count": len(_environment_snapshot_disagreements(snapshots)),
+    }
+
+
+def _environment_snapshot_disagreements(
+    snapshots: dict[str, dict[str, Any]],
+) -> list[str]:
     comparable_fields = (
         "provider_id",
         "provider_model",
@@ -2520,28 +2535,28 @@ def _build_environment_parity_panel(state_db: StateDB) -> dict[str, Any]:
         "config_path",
         "python_executable",
     )
-    snapshot_hashes = {
-        surface: str(snapshot.get("config_hash") or "")
-        for surface, snapshot in snapshots.items()
-    }
     mismatch_fields: list[str] = []
     rows = list(snapshots.items())
-    if rows:
-        baseline_surface, baseline = rows[0]
-        for surface, snapshot in rows[1:]:
-            for field in comparable_fields:
-                left = baseline.get(field)
-                right = snapshot.get(field)
-                if left and right and left != right:
-                    mismatch_fields.append(
-                        f"{baseline_surface}:{field}={left} != {surface}:{field}={right}"
-                    )
-    return {
-        "snapshot_hashes": snapshot_hashes,
-        "latest_surfaces": snapshots,
-        "mismatch_fields": mismatch_fields,
-        "current_mismatch_count": len(mismatch_fields),
-    }
+    if not rows:
+        return mismatch_fields
+    baseline_surface, baseline = rows[0]
+    for surface, snapshot in rows[1:]:
+        for field in comparable_fields:
+            if not _environment_field_should_match(baseline_surface, surface, field):
+                continue
+            left = baseline.get(field)
+            right = snapshot.get(field)
+            if left and right and left != right:
+                mismatch_fields.append(
+                    f"{baseline_surface}:{field}={left} != {surface}:{field}={right}"
+                )
+    return mismatch_fields
+
+
+def _environment_field_should_match(left_surface: str, right_surface: str, field: str) -> bool:
+    if field == "runtime_root" and "swarm_bridge" in {left_surface, right_surface}:
+        return False
+    return True
 
 
 def _build_provenance_and_quarantine_panel(state_db: StateDB) -> dict[str, Any]:
