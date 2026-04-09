@@ -2514,6 +2514,8 @@ def _parse_style_command(inbound_text: str) -> dict[str, str | None] | None:
         return {"command": "/style status", "payload": None}
     if lowered in {"/style history", "style history"}:
         return {"command": "/style history", "payload": None}
+    if lowered in {"/style compare", "style compare"}:
+        return {"command": "/style compare", "payload": None}
     if lowered in {"/style test", "style test"}:
         return {"command": "/style test", "payload": None}
     feedback_prefixes = ("/style feedback ", "style feedback ")
@@ -2609,6 +2611,14 @@ def _match_natural_style_command(inbound_text: str) -> dict[str, str | None] | N
         flags=re.IGNORECASE,
     ):
         return {"command": "/style history", "payload": None}
+    if simplified in {
+        "compare my style",
+        "show me a style comparison",
+        "show my style comparison",
+        "compare my current style",
+        "show me how you would sound right now",
+    }:
+        return {"command": "/style compare", "payload": None}
     for pattern in (
         r"^(?:please\s+|can you\s+)?(?:train|update|adjust|change)\s+(?:your|the)\s+(?:style|voice|personality)\s+(?:to|so (?:it|you)(?:'s| is))\s+(?P<payload>.+)$",
         r"^(?:for future replies[,:\s]+)?(?:be|sound)\s+(?P<payload>more .+|less .+|.+)$",
@@ -2738,6 +2748,7 @@ def _handle_style_command(
             "reply_text": (
                 "Style controls: `/style status` to inspect the current Telegram persona, "
                 "`/style history` to inspect recent saved mutations, "
+                "`/style compare` to preview how the current voice differs from the default baseline, "
                 "`/style train <instruction>` to save a new style rule, and `/style feedback <note>` after a live test reply.\n"
                 "Next: after training, ask a normal question in this DM to test the visible voice."
             ),
@@ -2766,6 +2777,11 @@ def _handle_style_command(
                 profile=profile,
                 agent_name=agent_name,
             ),
+        }
+    if command == "/style compare":
+        return {
+            "command": "/style compare",
+            "reply_text": _render_style_compare_reply(profile=profile, agent_name=agent_name),
         }
     if command == "/style test":
         return {
@@ -3011,7 +3027,7 @@ def _render_style_status_reply(*, profile: dict[str, Any] | None, agent_name: st
         lines.append(f"Traits: {style_summary}.")
     if behavioral_rules:
         lines.append("Rules: " + " | ".join(behavioral_rules[:4]) + ".")
-    lines.append("Next: `/style history` to inspect saved changes, then `/style train <instruction>` to shape the live voice.")
+    lines.append("Next: `/style compare` to preview the current voice, then `/style train <instruction>` to shape it.")
     return "\n".join(lines)
 
 
@@ -3093,8 +3109,77 @@ def _render_style_test_reply(*, profile: dict[str, Any] | None, agent_name: str 
     lines.append('2. `Critique this plan bluntly and tell me the next step.`')
     lines.append('3. `Search the web for BTC and cite the source.`')
     lines.append('4. `Ask me one clarifying question, then stop.`')
-    lines.append("Next: after each reply, use `/style feedback <note>`, `/style good <note>`, or `/style bad <note>`.")
+    lines.append("Next: after each reply, use `/style feedback <note>`, `/style good <note>`, or `/style bad <note>`. Use `/style compare` for a side-by-side preview.")
     return "\n".join(lines)
+
+
+def _render_style_compare_reply(*, profile: dict[str, Any] | None, agent_name: str | None) -> str:
+    resolved_profile = profile or {}
+    name = str(agent_name or resolved_profile.get("agent_persona_name") or "the agent").strip()
+    persona_summary = str(resolved_profile.get("agent_persona_summary") or "").strip()
+    behavioral_rules = [
+        str(rule).strip() for rule in list(resolved_profile.get("agent_behavioral_rules") or []) if str(rule).strip()
+    ]
+    lines = [f"Style compare for {name}."]
+    if persona_summary:
+        lines.append(f"Current voice: {persona_summary}.")
+    if behavioral_rules:
+        lines.append("Saved rules shaping this: " + " | ".join(behavioral_rules[:3]) + ".")
+    for index, (prompt, baseline, current) in enumerate(_style_compare_examples(resolved_profile), start=1):
+        lines.append(f"{index}. Prompt: {prompt}")
+        lines.append(f"Baseline: {baseline}")
+        lines.append(f"Current: {current}")
+    lines.append("Next: if one of the current examples is off, use `/style feedback <note>` or `/style train <instruction>`.")
+    return "\n".join(lines)
+
+
+def _style_compare_examples(profile: dict[str, Any]) -> list[tuple[str, str, str]]:
+    traits = profile.get("traits") or {}
+    rules = [str(rule).strip().lower() for rule in list(profile.get("agent_behavioral_rules") or []) if str(rule).strip()]
+    direct = float(traits.get("directness", 0.5)) >= 0.65
+    brisk = float(traits.get("pacing", 0.5)) >= 0.65
+    warm = float(traits.get("warmth", 0.5)) >= 0.6
+    assertive = float(traits.get("assertiveness", 0.5)) >= 0.65
+    continuity = any("anchored to the user's last message" in rule or "stay on the user's actual thread" in rule for rule in rules)
+    avoid_canned = any("avoid canned enthusiasm" in rule or "avoid generic opener questions" in rule for rule in rules)
+
+    current_short = "Start with one narrow wedge. Prove it works before you expand."
+    if not direct and not brisk:
+        current_short = "Start with one narrow wedge, validate it, then expand once it proves out."
+    elif warm and not assertive:
+        current_short = "Start with one narrow wedge. Prove it works, then expand from there."
+
+    current_critique = "The scope is too broad. Next: cut to one user, one workflow, one proof point."
+    if warm and not assertive:
+        current_critique = "The scope is still too broad. Next: cut to one user, one workflow, one proof point."
+    elif not direct:
+        current_critique = "The scope is still broad. Next: pick one user, one workflow, and one proof point."
+
+    current_follow_up = "What exact user or workflow is blocked right now?"
+    if continuity and avoid_canned:
+        current_follow_up = "What exact user or workflow is blocked right now?"
+    elif warm:
+        current_follow_up = "What specific user or workflow feels blocked right now?"
+    elif not direct:
+        current_follow_up = "What specific user or workflow should we narrow first?"
+
+    return [
+        (
+            "Give me the answer in two lines and skip filler.",
+            "Here’s the short version: start with one narrow wedge and validate it. Then expand only after it works.",
+            current_short,
+        ),
+        (
+            "Critique this plan bluntly and tell me the next step.",
+            "The plan is promising, but the scope is still broad. Next: choose one user, one workflow, and one proof point.",
+            current_critique,
+        ),
+        (
+            "Ask me one clarifying question, then stop.",
+            "What specific user or workflow are you solving for?",
+            current_follow_up,
+        ),
+    ]
 
 
 def _render_style_training_reply(

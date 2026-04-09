@@ -2894,6 +2894,44 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Style status for", result.detail["response_text"])
         self.assertEqual(result.detail["bridge_mode"], "runtime_command")
 
+    def test_style_compare_command_returns_side_by_side_examples(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11707,
+                user_id="111",
+                username="alice",
+                text="/style compare",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Style compare for", result.detail["response_text"])
+        self.assertIn("Baseline:", result.detail["response_text"])
+        self.assertIn("Current:", result.detail["response_text"])
+        self.assertIn("Give me the answer in two lines and skip filler.", result.detail["response_text"])
+
+    def test_natural_language_style_compare_command_returns_side_by_side_examples(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=11708,
+                user_id="111",
+                username="alice",
+                text="Compare my style",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Style compare for", result.detail["response_text"])
+        self.assertEqual(result.detail["bridge_mode"], "runtime_command")
+
     def test_style_test_command_returns_training_probe_prompts(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
