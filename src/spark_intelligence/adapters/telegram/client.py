@@ -61,6 +61,34 @@ class TelegramBotApiClient:
             file_bytes=audio_bytes,
         )
 
+    def send_document(
+        self,
+        *,
+        chat_id: str,
+        document_bytes: bytes,
+        filename: str,
+        caption: str | None = None,
+        mime_type: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "document_bytes": document_bytes,
+            "filename": filename,
+            "mime_type": mime_type or "application/octet-stream",
+        }
+        if caption:
+            payload["caption"] = caption
+        if self.transport is not None:
+            return self.transport("sendDocument", payload)
+        return self._call_multipart(
+            "sendDocument",
+            fields={"chat_id": chat_id, "caption": caption},
+            file_field="document",
+            filename=filename,
+            mime_type=str(payload["mime_type"]),
+            file_bytes=document_bytes,
+        )
+
     def get_file(self, *, file_id: str) -> dict[str, Any]:
         response = self._call("getFile", {"file_id": file_id})
         result = response.get("result")

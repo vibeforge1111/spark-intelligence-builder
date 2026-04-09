@@ -1738,9 +1738,9 @@ def _send_telegram_reply(
     )
     try:
         if voice_payload is not None:
-            client.send_audio(
+            client.send_document(
                 chat_id=chat_id,
-                audio_bytes=voice_payload["audio_bytes"],
+                document_bytes=voice_payload["audio_bytes"],
                 filename=str(voice_payload["filename"]),
                 mime_type=str(voice_payload["mime_type"]),
                 caption=guarded["text"] if len(guarded["text"]) <= 1024 else None,
