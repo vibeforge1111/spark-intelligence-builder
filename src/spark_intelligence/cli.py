@@ -129,6 +129,7 @@ from spark_intelligence.researcher_bridge import discover_researcher_runtime_roo
 from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_status, sync_swarm_collective
+from spark_intelligence.system_registry import build_system_registry
 
 
 @dataclass
@@ -171,6 +172,11 @@ class SystemStatus:
             f"- active chips: {', '.join(self.payload['attachments']['active_chip_keys']) if self.payload['attachments']['active_chip_keys'] else 'none'}"
         )
         lines.append(f"- active path: {self.payload['attachments']['active_path_key'] or 'none'}")
+        registry_summary = (self.payload.get("system_registry") or {}).get("summary") or {}
+        current_capabilities = registry_summary.get("current_capabilities") or []
+        if current_capabilities:
+            lines.append(f"- current capabilities: {len(current_capabilities)}")
+            lines.extend(f"- capability: {item}" for item in current_capabilities[:5])
         lines.append(
             f"- providers: {', '.join(self.payload['gateway']['configured_providers']) if self.payload['gateway']['configured_providers'] else 'none'}"
         )
@@ -2673,6 +2679,7 @@ def handle_status(args: argparse.Namespace) -> int:
     attachments = attachment_status(config_manager)
     browser = _collect_status_browser_payload(config_manager)
     watchtower = build_watchtower_snapshot(state_db)
+    system_registry = build_system_registry(config_manager, state_db)
     active_chip_keys = config_manager.get_path("spark.chips.active_keys", default=[]) or []
     active_path_key = config_manager.get_path("spark.specialization_paths.active_path_key")
     autostart_payload = {
@@ -2694,6 +2701,7 @@ def handle_status(args: argparse.Namespace) -> int:
             "default_gateway_mode": config_manager.get_path("runtime.run.default_gateway_mode"),
             "autostart": autostart_payload,
         },
+        "system_registry": system_registry.to_payload(),
         "attachments": {
             "record_count": len(attachments.records),
             "warning_count": len(attachments.warnings),
