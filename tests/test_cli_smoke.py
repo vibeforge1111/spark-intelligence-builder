@@ -14,7 +14,11 @@ from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import DoctorCheck, DoctorReport
 from spark_intelligence.gateway.discord_webhook import DISCORD_WEBHOOK_PATH, handle_discord_webhook
 from spark_intelligence.gateway.whatsapp_webhook import WHATSAPP_WEBHOOK_PATH, handle_whatsapp_webhook
-from spark_intelligence.identity.service import approve_pairing, read_canonical_agent_state
+from spark_intelligence.identity.service import (
+    approve_pairing,
+    read_canonical_agent_state,
+    rename_agent_identity,
+)
 from spark_intelligence.observability.store import recent_runs, record_event
 from spark_intelligence.personality.loader import detect_and_persist_nl_preferences, record_observation
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
@@ -1828,6 +1832,17 @@ class CliSmokeTests(SparkTestCase):
             external_user_id="111",
             display_name="Alice",
         )
+        # Pairing now creates the agent with an empty agent_name (Finding G
+        # fix in docs/PERSONALITY_PHASE1_AUDIT_2026-04-10.md §11). Give it a
+        # user-defined name before inspecting so the assertion remains
+        # meaningful.
+        rename_agent_identity(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+            new_name="Atlas",
+            source_surface="telegram",
+            source_ref="test-setup",
+        )
 
         exit_code, stdout, stderr = self.run_cli(
             "agent",
@@ -1842,7 +1857,7 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(exit_code, 0, stderr)
         payload = json.loads(stdout)
         self.assertEqual(payload["identity"]["agent_id"], "agent:human:telegram:111")
-        self.assertEqual(payload["identity"]["agent_name"], "Alice")
+        self.assertEqual(payload["identity"]["agent_name"], "Atlas")
         self.assertEqual(payload["identity"]["preferred_source"], "builder_local")
         self.assertEqual(payload["sessions"][0]["session_id"], "session:telegram:dm:111")
 

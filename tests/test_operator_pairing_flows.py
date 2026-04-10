@@ -190,7 +190,10 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(follow_up.ok)
         self.assertEqual(follow_up.decision, "allowed")
         self.assertIn("Pairing approved.", str(follow_up.detail["response_text"]))
-        self.assertIn("alice is live in this Telegram DM now.", str(follow_up.detail["response_text"]))
+        # Finding G fix: agent starts with empty name; onboarding will prompt
+        # for the agent's name. Welcome no longer leaks the human's username.
+        self.assertIn("Let's set up your agent.", str(follow_up.detail["response_text"]))
+        self.assertNotIn("alice is live", str(follow_up.detail["response_text"]))
 
     def test_first_post_approval_dm_runs_multi_turn_agent_onboarding(self) -> None:
         self.add_telegram_channel()
@@ -251,7 +254,10 @@ class OperatorPairingFlowTests(SparkTestCase):
 
         self.assertTrue(first_turn.ok)
         self.assertIn("Pairing approved.", str(first_turn.detail["response_text"]))
-        self.assertIn("alice is live in this Telegram DM now.", str(first_turn.detail["response_text"]))
+        # Finding G fix: welcome no longer embeds the human's username as the
+        # agent identity. Onboarding flow still asks for the agent name next.
+        self.assertIn("Let's set up your agent.", str(first_turn.detail["response_text"]))
+        self.assertNotIn("alice is live", str(first_turn.detail["response_text"]))
         self.assertIn("What should I call your agent?", str(first_turn.detail["response_text"]))
 
         self.assertTrue(second_turn.ok)
