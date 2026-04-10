@@ -298,6 +298,8 @@ Option (ii) is the more principled fix and aligns with the v2 onboarding design'
 
 **Operator decision needed — Q-2:** should Finding G be addressed next, or deferred behind v2 onboarding work?
 
+**Q-2 resolution (2026-04-10, commit `6955ad5`):** Closed via option (i) variant. Rather than raise `ValueError`, `_activate_channel_access` now simply does not forward `display_name` to `resolve_canonical_agent_identity`. The f-string fallback at `approve_pairing:1001` is retained — it is still the correct label for `humans.display_name` and `channel_accounts` (the human's identity surface), but no longer bleeds into `agent_profiles.agent_name`. The architectural split between human and agent display name is effectively achieved for the pairing path: the human name flows into `humans`/`channel_accounts` as before, and the agent starts with an empty `agent_name` that onboarding fills in.
+
 ---
 
 ## 12. Phase 1 completion status (2026-04-10)
@@ -307,10 +309,28 @@ Option (ii) is the more principled fix and aligns with the v2 onboarding design'
 | 1 — Audit | Complete | `e030dc4` |
 | 2 — Remove 5 fallbacks + `has_user_defined_name` | Complete | `d243d1a` |
 | 3 — Onboarding prompt gating | Complete | `84f3bb4` |
-| 4 — Commit in-flight preamble fix | Complete | `d243d1a` (bundled) |
-| 5 — Update / verify tests | Complete (no test breaks; Finding G logged) | (this addendum) |
+| 4 — Commit in-flight preamble fix | Superseded (see §13) | `d243d1a` → reverted in `6955ad5` |
+| 5 — Update / verify tests | Complete | `6955ad5` |
+| 6 — Finding G fix | Complete | `6955ad5` |
 
 **Known follow-ups logged:**
-- Finding G (this doc §11) — `approve_pairing` machine-generated fallback
 - Q-A through Q-H from `PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md` — still awaiting operator decisions for Phase 2 scope
+- `.tmp-home-live-telegram-real` "Operator" seed data disposition (Finding F)
+
+---
+
+## 13. Addendum — `d243d1a` preamble regression and revert (2026-04-10)
+
+**Discovered while running `tests/test_agent_identity_contracts` after Finding G fix.**
+
+The Phase 1 plan step 4 listed an "in-flight preamble fix" which I assumed was a forward-direction patch. In practice it was the **reverse**: the working-tree hunk I bundled into `d243d1a` re-added a runtime_command name-tag path to `build_telegram_surface_identity_preamble` (`return f"{visible_name}:"` etc.) that had been **deliberately removed** in an earlier operator commit:
+
+- `a603026` "Drop Telegram name preambles" (2026-04-09) explicitly set the runtime_command surface to `return ""` and updated the three matching tests (`test_apply_telegram_surface_persona_*`, `test_build_telegram_surface_identity_preamble_uses_agent_name_for_runtime_and_welcome`) to assert the empty-string preamble.
+- `d243d1a` silently reverted that decision by bundling the stale working-tree hunk.
+
+The Finding G commit (`6955ad5`) restores `a603026`'s design: `build_telegram_surface_identity_preamble` returns `""` for all non-`approval_welcome` surfaces, with an explanatory comment referencing both `a603026` and `d243d1a`. The three `test_agent_identity_contracts` tests that asserted the empty preamble now pass again.
+
+**Seventh default-name leak discovered:** while chasing down `test_first_post_approval_dm_runs_multi_turn_agent_onboarding`, I found that `_apply_post_approval_welcome` in `adapters/telegram/runtime.py` had `agent_name=agent_name or "Spark Intelligence"` as a fallback when calling the preamble builder. This was not in the audit's original 5-site list. It has been fixed in `6955ad5` by passing `agent_name` through as-is; the preamble builder handles the empty-name case with a name-free "Pairing approved. Let's set up your agent." welcome.
+
+**Lesson:** When Phase 1 lists an "in-flight fix" to bundle, verify it against `git log` for the affected function before committing. A working-tree diff is not automatically a forward patch; it may be a half-finished revert of a recent operator decision.
 
