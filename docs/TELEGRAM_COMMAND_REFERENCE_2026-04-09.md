@@ -46,6 +46,28 @@ Natural-language examples:
 - `Show me Startup Operator insights in swarm`
 - `Start autoloop for Startup Operator in swarm for 2 rounds`
 
+## Chips
+
+- `/chip`
+- `/chip status [chip_key]`
+- `/chip evaluate <chip_key> [text|key=value ...|json]`
+- `/chip suggest <chip_key> [text|key=value ...|json]`
+- `/chip autoloop <chip_key>`
+
+Examples:
+
+- `/chip status`
+- `/chip status domain-chip-trading-crypto`
+- `/chip evaluate domain-chip-trading-crypto doctrine_id=trend_regime_following strategy_id=ema_pullback_long market_regime=trend timeframe=1h venue=binance asset_universe=BTC paper_gate=strict`
+- `/chip suggest domain-chip-trading-crypto {"limit":2}`
+- `/chip autoloop domain-chip-trading-crypto`
+
+Current behavior:
+
+- direct chip commands execute the chip hook locally through the existing attachment contract
+- direct chip commands do not automatically create Swarm insights, Swarm autoloop sessions, or GitHub delivery records
+- `/chip autoloop <chip_key>` is intentionally explanatory only; true autoloop remains specialization-path-owned through `/swarm autoloop <path_key>`
+
 ## Style
 
 - `/style`
