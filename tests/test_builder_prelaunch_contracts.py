@@ -31,6 +31,7 @@ from spark_intelligence.observability.store import (
     recent_policy_gate_records,
     record_environment_snapshot,
     record_event,
+    repair_missing_memory_lane_records,
 )
 from spark_intelligence.personality.loader import (
     detect_and_persist_nl_preferences,
@@ -685,6 +686,38 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertTrue(panel["lane_labels_present"]["execution_evidence"])
         self.assertTrue(panel["lane_labels_present"]["ops_transcripts"])
         self.assertFalse(panel["lane_labels_present"]["durable_intelligence_memory"])
+
+    def test_repair_missing_memory_lane_records_backfills_classified_bridge_events(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="bridge result that lost lane mirror",
+            request_id="req-memory-repair",
+            trace_ref="trace:req-memory-repair",
+            actor_id="researcher_bridge",
+            facts={
+                "bridge_mode": "external_typed",
+                "routing_decision": "researcher_advisory",
+                "keepability": "ephemeral_context",
+                "promotion_disposition": "not_promotable",
+            },
+        )
+
+        lane_records = recent_memory_lane_records(self.state_db, limit=10)
+        self.assertEqual(len(lane_records), 1)
+        event_id = str(lane_records[0]["event_id"])
+
+        with self.state_db.connect() as conn:
+            conn.execute("DELETE FROM memory_lane_records WHERE event_id = ?", (event_id,))
+            conn.commit()
+
+        repaired = repair_missing_memory_lane_records(self.state_db)
+        self.assertEqual(repaired, 1)
+
+        lane_records = recent_memory_lane_records(self.state_db, limit=10)
+        self.assertEqual(len(lane_records), 1)
+        self.assertEqual(str(lane_records[0]["event_id"]), event_id)
 
     def test_watchtower_session_integrity_panel_tracks_reset_and_resume_surfaces(self) -> None:
         detect_and_persist_nl_preferences(

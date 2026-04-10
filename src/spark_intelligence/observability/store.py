@@ -2460,6 +2460,73 @@ def repair_foreground_browser_hook_failures(state_db: StateDB) -> int:
     return int(cursor.rowcount or 0)
 
 
+def repair_missing_memory_lane_records(state_db: StateDB, *, limit: int = 1000) -> int:
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                be.event_id,
+                be.event_type,
+                be.created_at,
+                be.component,
+                be.run_id,
+                be.request_id,
+                be.trace_ref,
+                be.reason_code,
+                be.provenance_json,
+                be.facts_json
+            FROM builder_events AS be
+            LEFT JOIN memory_lane_records AS mlr
+              ON mlr.event_id = be.event_id
+            WHERE mlr.event_id IS NULL
+              AND (
+                instr(COALESCE(be.facts_json, ''), '"keepability"') > 0
+                OR instr(COALESCE(be.facts_json, ''), '"promotion_disposition"') > 0
+              )
+            ORDER BY be.created_at ASC, be.event_id ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        repaired = 0
+        for row in rows:
+            try:
+                facts = json.loads(row["facts_json"]) if row["facts_json"] else {}
+            except json.JSONDecodeError:
+                facts = {}
+            try:
+                provenance = json.loads(row["provenance_json"]) if row["provenance_json"] else {}
+            except json.JSONDecodeError:
+                provenance = {}
+            if not isinstance(facts, dict):
+                facts = {}
+            if not isinstance(provenance, dict):
+                provenance = {}
+            if not facts.get("keepability") and not facts.get("promotion_disposition"):
+                continue
+            _mirror_memory_lane_event(
+                conn,
+                event_id=str(row["event_id"]),
+                event_type=str(row["event_type"]),
+                recorded_at=str(row["created_at"]),
+                component=str(row["component"]),
+                run_id=str(row["run_id"]) if row["run_id"] is not None else None,
+                request_id=str(row["request_id"]) if row["request_id"] is not None else None,
+                trace_ref=str(row["trace_ref"]) if row["trace_ref"] is not None else None,
+                reason_code=str(row["reason_code"]) if row["reason_code"] is not None else None,
+                facts=facts,
+                provenance=provenance,
+            )
+            lane_row = conn.execute(
+                "SELECT 1 FROM memory_lane_records WHERE event_id = ? LIMIT 1",
+                (str(row["event_id"]),),
+            ).fetchone()
+            if lane_row:
+                repaired += 1
+        conn.commit()
+    return repaired
+
+
 def _artifact_lane_from_keepability(value: str) -> str:
     keepability = str(value or "")
     if keepability == "operator_debug_only":
