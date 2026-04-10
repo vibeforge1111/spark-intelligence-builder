@@ -1006,6 +1006,53 @@ def cancel_agent_onboarding(
     return read_canonical_agent_state(state_db=state_db, human_id=human_id)
 
 
+def set_human_user_address(
+    *,
+    state_db: StateDB,
+    human_id: str,
+    user_address: str | None,
+) -> str | None:
+    """Store or clear the operator's preferred salutation.
+
+    P2-5 of docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md. The v2
+    onboarding state machine asks the operator "How should your agent
+    address you?" and persists the answer here. Downstream reply
+    formatting (see personality.loader.format_address_aware_line, P2-4)
+    reads the stored value on every reply.
+
+    Whitespace-only and None inputs clear the column so the
+    address-aware formatter collapses salutation placeholders cleanly.
+    Returns the normalized value that was actually stored.
+    """
+    normalized: str | None = (user_address or "").strip() or None
+    with state_db.connect() as conn:
+        conn.execute(
+            "UPDATE humans SET user_address = ?, updated_at = CURRENT_TIMESTAMP WHERE human_id = ?",
+            (normalized, human_id),
+        )
+        conn.commit()
+    return normalized
+
+
+def get_human_user_address(
+    *,
+    state_db: StateDB,
+    human_id: str,
+) -> str | None:
+    """Read the operator's stored salutation. Returns None when unset."""
+    with state_db.connect() as conn:
+        row = conn.execute(
+            "SELECT user_address FROM humans WHERE human_id = ? LIMIT 1",
+            (human_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    value = row["user_address"]
+    if value in (None, ""):
+        return None
+    return str(value)
+
+
 def list_agent_rename_history(
     *,
     state_db: StateDB,

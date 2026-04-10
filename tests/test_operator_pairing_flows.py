@@ -241,11 +241,23 @@ class OperatorPairingFlowTests(SparkTestCase):
                     text="Atlas",
                 ),
             )
+            # P2-5: new awaiting_user_address step sits between naming and
+            # persona authoring. The operator chooses a salutation here.
             third_turn = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
                 update_payload=make_telegram_update(
                     update_id=106,
+                    user_id="111",
+                    username="alice",
+                    text="Boss",
+                ),
+            )
+            fourth_turn = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=107,
                     user_id="111",
                     username="alice",
                     text="calm, strategic, very direct, low-fluff",
@@ -262,11 +274,22 @@ class OperatorPairingFlowTests(SparkTestCase):
 
         self.assertTrue(second_turn.ok)
         self.assertIn("Your agent is now `Atlas`", str(second_turn.detail["response_text"]))
-        self.assertIn("describe the personality", str(second_turn.detail["response_text"]))
+        # P2-5: after naming, the state machine asks for the salutation.
+        self.assertIn(
+            "How should your agent address you?",
+            str(second_turn.detail["response_text"]),
+        )
 
         self.assertTrue(third_turn.ok)
-        self.assertIn("Locked in.", str(third_turn.detail["response_text"]))
-        self.assertIn("connect your Spark Swarm agent", str(third_turn.detail["response_text"]))
+        # After supplying "Boss", the state machine acknowledges and moves
+        # to the persona step. The ack line uses format_address_aware_line
+        # so it naturally contains the chosen salutation.
+        self.assertIn("Boss", str(third_turn.detail["response_text"]))
+        self.assertIn("describe the personality", str(third_turn.detail["response_text"]))
+
+        self.assertTrue(fourth_turn.ok)
+        self.assertIn("Locked in.", str(fourth_turn.detail["response_text"]))
+        self.assertIn("connect your Spark Swarm agent", str(fourth_turn.detail["response_text"]))
 
         agent_state = read_canonical_agent_state(
             state_db=self.state_db,
@@ -284,6 +307,92 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertGreater(profile["traits"]["directness"], 0.5)
         self.assertEqual(profile["agent_persona_name"], "Atlas")
         self.assertIn("calm, strategic, very direct, low-fluff", str(profile["agent_persona_summary"]))
+        # The salutation the operator supplied in the third turn must be
+        # persisted on humans.user_address so downstream reply formatting
+        # can use it (P2-4 address-aware formatter).
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT user_address FROM humans WHERE human_id = ?",
+                ("human:telegram:111",),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["user_address"], "Boss")
+
+    def test_onboarding_user_address_skip_clears_column_and_uses_neutral_ack(self) -> None:
+        # P2-5: operator can say `skip` at awaiting_user_address to keep
+        # replies neutral. humans.user_address must stay NULL and the
+        # acknowledgement must not fall back to any default label like
+        # "Operator" (that was Finding F territory).
+        self.add_telegram_channel()
+        simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=203,
+                user_id="111",
+                username="alice",
+                text="/start",
+            ),
+        )
+        exit_code, _, stderr = self.run_cli(
+            "operator",
+            "approve-latest",
+            "telegram",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(exit_code, 0, stderr)
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            side_effect=AssertionError("researcher bridge should not run during onboarding"),
+        ):
+            simulate_telegram_update(  # first DM → awaiting_name
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=204,
+                    user_id="111",
+                    username="alice",
+                    text="hey",
+                ),
+            )
+            simulate_telegram_update(  # name → awaiting_user_address
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=205,
+                    user_id="111",
+                    username="alice",
+                    text="Nova",
+                ),
+            )
+            skip_turn = simulate_telegram_update(  # skip → awaiting_persona
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=206,
+                    user_id="111",
+                    username="alice",
+                    text="skip",
+                ),
+            )
+
+        self.assertTrue(skip_turn.ok)
+        reply = str(skip_turn.detail["response_text"])
+        self.assertIn("no salutation", reply.lower())
+        self.assertIn("describe the personality", reply)
+        # No default label may leak into the skip acknowledgement.
+        self.assertNotIn("Operator", reply)
+        self.assertNotIn("there,", reply)
+
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT user_address FROM humans WHERE human_id = ?",
+                ("human:telegram:111",),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertIsNone(row["user_address"])
 
     def test_revoke_latest_blocks_future_dm_with_revoked_reply(self) -> None:
         self.add_telegram_channel()
