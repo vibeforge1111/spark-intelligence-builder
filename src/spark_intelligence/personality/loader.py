@@ -30,7 +30,11 @@ from typing import Any
 from uuid import uuid4
 
 from spark_intelligence.config.loader import ConfigManager
-from spark_intelligence.identity.service import read_canonical_agent_state, rename_agent_identity
+from spark_intelligence.identity.service import (
+    read_canonical_agent_state,
+    rename_agent_identity,
+    set_human_user_address,
+)
 from spark_intelligence.memory.orchestrator import (
     delete_personality_preferences_from_memory,
     read_personality_preferences_from_memory,
@@ -1433,14 +1437,22 @@ def maybe_handle_agent_persona_onboarding_turn(
             "updated_at": _utc_now_iso(),
         }
         _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
+        if canonical_state.has_user_defined_name:
+            name_prompt = (
+                f"What should I call your agent? Right now it's `{canonical_state.agent_name}`. "
+                "Reply with a new name, or say `keep` to keep the current one."
+            )
+        else:
+            name_prompt = (
+                "What should I call your agent? Reply with a name like `Atlas`, `Nova`, or `Lyra`."
+            )
         return AgentOnboardingTurnResult(
             human_id=human_id,
             agent_id=agent_id,
             step="awaiting_name",
             reply_text=(
-                "No Spark Swarm agent yet? We can create your agent here now and link it later.\n\n"
-                f"What should I call your agent? Right now it's `{canonical_state.agent_name}`.\n"
-                "Reply with the name you want, or say `skip` to keep the current name."
+                "Let's set up your agent. Short conversation: name first, then personality.\n\n"
+                f"{name_prompt}"
             ),
             agent_name=canonical_state.agent_name,
             persona_profile=existing_persona,
@@ -1452,18 +1464,30 @@ def maybe_handle_agent_persona_onboarding_turn(
     lowered = normalized_message.lower()
 
     if step == "awaiting_name":
-        if lowered in {"skip", "skip for now", "keep current name", "keep it", "later"}:
-            onboarding_state["step"] = "awaiting_persona"
+        if lowered in {"keep", "keep it", "keep current name", "keep the current name"}:
+            if not canonical_state.has_user_defined_name:
+                return AgentOnboardingTurnResult(
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    step="awaiting_name",
+                    reply_text=(
+                        "There's no current name to keep yet. Give your agent a name first, "
+                        "something like `Atlas`, `Nova`, or `Lyra`."
+                    ),
+                    agent_name=canonical_state.agent_name,
+                    persona_profile=existing_persona,
+                    completed=False,
+                )
+            onboarding_state["step"] = "awaiting_user_address"
             onboarding_state["updated_at"] = _utc_now_iso()
             _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
             return AgentOnboardingTurnResult(
                 human_id=human_id,
                 agent_id=agent_id,
-                step="awaiting_persona",
+                step="awaiting_user_address",
                 reply_text=(
                     f"Keeping the current name `{canonical_state.agent_name}`.\n\n"
-                    "Now describe the personality you want. "
-                    "For example: `calm, strategic, very direct, low-fluff`."
+                    + _build_user_address_prompt()
                 ),
                 agent_name=canonical_state.agent_name,
                 persona_profile=existing_persona,
@@ -1478,7 +1502,7 @@ def maybe_handle_agent_persona_onboarding_turn(
                 step="awaiting_name",
                 reply_text=(
                     "I need a short agent name first. "
-                    "Reply with something like `Atlas`, `Operator Zero`, or say `skip`."
+                    "Reply with something like `Atlas`, `Nova`, or `Lyra`."
                 ),
                 agent_name=canonical_state.agent_name,
                 persona_profile=existing_persona,
@@ -1492,8 +1516,75 @@ def maybe_handle_agent_persona_onboarding_turn(
             source_surface=source_surface,
             source_ref=source_ref,
         )
-        onboarding_state["step"] = "awaiting_persona"
+        onboarding_state["step"] = "awaiting_user_address"
         onboarding_state["agent_name"] = renamed_state.agent_name
+        onboarding_state["updated_at"] = _utc_now_iso()
+        _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
+        return AgentOnboardingTurnResult(
+            human_id=human_id,
+            agent_id=agent_id,
+            step="awaiting_user_address",
+            reply_text=(
+                f"Saved. Your agent is now `{renamed_state.agent_name}`.\n\n"
+                + _build_user_address_prompt()
+            ),
+            agent_name=renamed_state.agent_name,
+            persona_profile=existing_persona,
+            completed=False,
+        )
+
+    if step == "awaiting_user_address":
+        if lowered in _ONBOARDING_ADDRESS_SKIP_TOKENS or not normalized_message:
+            stored_address = set_human_user_address(
+                state_db=state_db,
+                human_id=human_id,
+                user_address=None,
+            )
+        else:
+            stored_address = set_human_user_address(
+                state_db=state_db,
+                human_id=human_id,
+                user_address=normalized_message,
+            )
+        onboarding_state["step"] = "awaiting_persona_mode"
+        onboarding_state["user_address"] = stored_address
+        onboarding_state["updated_at"] = _utc_now_iso()
+        _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
+        if stored_address:
+            ack = format_address_aware_line(
+                "{salutation}got it — I'll address you as "
+                f"`{stored_address}`.",
+                stored_address,
+            )
+        else:
+            ack = "Got it — no salutation, I'll keep replies neutral."
+        return AgentOnboardingTurnResult(
+            human_id=human_id,
+            agent_id=agent_id,
+            step="awaiting_persona_mode",
+            reply_text=f"{ack}\n\n" + _build_persona_mode_prompt(),
+            agent_name=canonical_state.agent_name,
+            persona_profile=existing_persona,
+            completed=False,
+        )
+
+    if step == "awaiting_persona_mode":
+        persona_mode = _parse_onboarding_persona_mode(lowered)
+        if persona_mode is None:
+            return AgentOnboardingTurnResult(
+                human_id=human_id,
+                agent_id=agent_id,
+                step="awaiting_persona_mode",
+                reply_text=(
+                    "I didn't catch that. Reply with `guided`, `express`, "
+                    "`freestyle`, or the number `1`, `2`, or `3`."
+                ),
+                agent_name=canonical_state.agent_name,
+                persona_profile=existing_persona,
+                completed=False,
+            )
+        onboarding_state["step"] = "awaiting_persona"
+        onboarding_state["persona_mode"] = persona_mode
         onboarding_state["updated_at"] = _utc_now_iso()
         _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
         return AgentOnboardingTurnResult(
@@ -1501,11 +1592,10 @@ def maybe_handle_agent_persona_onboarding_turn(
             agent_id=agent_id,
             step="awaiting_persona",
             reply_text=(
-                f"Saved. Your agent is now `{renamed_state.agent_name}`.\n\n"
                 "Now describe the personality you want. "
                 "You can say something like `calm, strategic, very direct, low-fluff`."
             ),
-            agent_name=renamed_state.agent_name,
+            agent_name=canonical_state.agent_name,
             persona_profile=existing_persona,
             completed=False,
         )
@@ -1982,6 +2072,58 @@ def format_address_aware_line(template: str, user_address: str | None) -> str:
                 formatted = formatted[:i] + ch.upper() + formatted[i + 1 :]
                 break
     return formatted
+
+
+_ONBOARDING_ADDRESS_SKIP_TOKENS: frozenset[str] = frozenset(
+    {
+        "skip",
+        "none",
+        "blank",
+        "no",
+        "nope",
+        "(blank)",
+        "(skip)",
+        "(none)",
+        "no address",
+        "no salutation",
+        "don't",
+        "dont",
+        "nothing",
+    }
+)
+
+
+def _build_user_address_prompt() -> str:
+    return (
+        "How should your agent address you? "
+        "Reply with a name or salutation like `Alice`, `Boss`, or `Captain`. "
+        "Say `skip` to keep replies neutral."
+    )
+
+
+def _build_persona_mode_prompt() -> str:
+    return (
+        "How should we shape your personality?\n"
+        "1. Guided — I ask 5 quick questions\n"
+        "2. Express — pick a preset style\n"
+        "3. Freestyle — describe it in your own words\n\n"
+        "Reply with `guided`, `express`, `freestyle`, or the number `1`, `2`, or `3`."
+    )
+
+
+_ONBOARDING_PERSONA_MODE_TOKENS: dict[str, frozenset[str]] = {
+    "guided": frozenset({"guided", "guide", "questions", "question", "1", "one"}),
+    "express": frozenset({"express", "preset", "presets", "2", "two"}),
+    "freestyle": frozenset({"freestyle", "free", "freeform", "describe", "3", "three"}),
+}
+
+
+def _parse_onboarding_persona_mode(lowered: str) -> str | None:
+    text = " ".join(str(lowered or "").strip().split())
+    for mode, tokens in _ONBOARDING_PERSONA_MODE_TOKENS.items():
+        if text in tokens:
+            return mode
+    return None
 
 
 # ── Personality queries (status, reset) ──
