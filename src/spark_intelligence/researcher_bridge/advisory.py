@@ -33,12 +33,14 @@ from spark_intelligence.capability_router import build_capability_router_prompt_
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.harness_registry import build_harness_prompt_context
 from spark_intelligence.memory import (
+    explain_memory_answer_in_memory,
     inspect_human_memory_in_memory,
     lookup_current_state_in_memory,
     retrieve_memory_evidence_in_memory,
     write_profile_fact_to_memory,
 )
 from spark_intelligence.memory.profile_facts import (
+    build_profile_fact_explanation_answer,
     build_profile_fact_observation_answer,
     build_profile_fact_query_answer,
     build_profile_fact_query_context,
@@ -2788,10 +2790,53 @@ def build_researcher_reply(
         and detected_profile_fact_query.query_kind == "single_fact"
     ):
         memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
+        target_predicate = str(detected_profile_fact_query.predicate or "").strip()
         related_predicates = _profile_fact_query_related_predicates(detected_profile_fact_query.predicate)
         primary_records: list[dict[str, Any]] = []
         related_records: list[dict[str, Any]] = []
-        if related_predicates:
+        if target_predicate == "profile.startup_name":
+            direct_fact_lookup = lookup_current_state_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                subject=memory_subject,
+                predicate="profile.startup_name",
+                actor_id="researcher_bridge",
+            )
+            if not direct_fact_lookup.read_result.abstained and direct_fact_lookup.read_result.records:
+                primary_records = [
+                    record
+                    for record in direct_fact_lookup.read_result.records
+                    if str(record.get("predicate") or "").strip()
+                ]
+            if not primary_records:
+                founder_lookup = lookup_current_state_in_memory(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    subject=memory_subject,
+                    predicate="profile.founder_of",
+                    actor_id="researcher_bridge",
+                )
+                if not founder_lookup.read_result.abstained and founder_lookup.read_result.records:
+                    related_records = [
+                        record
+                        for record in founder_lookup.read_result.records
+                        if str(record.get("predicate") or "").strip()
+                    ]
+            if not primary_records and not related_records:
+                inspection = inspect_human_memory_in_memory(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    human_id=human_id,
+                    actor_id="researcher_bridge",
+                )
+                if not inspection.read_result.abstained and inspection.read_result.records:
+                    for record in inspection.read_result.records:
+                        record_predicate = str(record.get("predicate") or "").strip()
+                        if record_predicate == "profile.startup_name":
+                            primary_records.append(record)
+                        elif record_predicate == "profile.founder_of":
+                            related_records.append(record)
+        elif related_predicates:
             inspection = inspect_human_memory_in_memory(
                 config_manager=config_manager,
                 state_db=state_db,

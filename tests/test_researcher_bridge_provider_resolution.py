@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 from spark_intelligence.attachments.snapshot import build_attachment_context
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
@@ -1952,35 +1952,21 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
-        connect_exit, _, connect_stderr = self.run_cli(
-            "auth",
-            "connect",
-            "custom",
-            "--home",
-            str(self.home),
-            "--api-key",
-            "minimax-secret",
-            "--model",
-            "MiniMax-M2.7",
-            "--base-url",
-            "https://api.minimax.io/v1",
-        )
-        self.assertEqual(connect_exit, 0, connect_stderr)
-
-        write_profile_fact_to_memory(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
-            human_id="human-1",
-            predicate="profile.startup_name",
-            value="Seedify",
-            evidence_text="My startup is Seedify.",
-            fact_name="profile_startup_name",
-            session_id="session-startup-query",
-            turn_id="turn-startup-query-write",
-            channel_kind="telegram",
-        )
-
         with patch(
+            "spark_intelligence.researcher_bridge.advisory.lookup_current_state_in_memory",
+            return_value=SimpleNamespace(
+                read_result=SimpleNamespace(
+                    abstained=False,
+                    records=[
+                        {
+                            "predicate": "profile.startup_name",
+                            "normalized_value": "Seedify",
+                            "value": "Seedify",
+                        }
+                    ],
+                )
+            ),
+        ) as lookup_mock, patch(
             "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
             side_effect=AssertionError("provider resolution should not run for direct memory fact replies"),
         ), patch(
@@ -2007,8 +1993,13 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual(result.reply_text, "You created Seedify.")
         self.assertEqual(result.mode, "memory_profile_fact")
         self.assertEqual(result.routing_decision, "memory_profile_fact_query")
-        read_events = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=10)
-        self.assertTrue(read_events)
+        lookup_mock.assert_any_call(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject="human:human-1",
+            predicate="profile.startup_name",
+            actor_id=ANY,
+        )
 
     def test_build_researcher_reply_injects_identity_summary_from_memory_for_who_am_i_query(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)

@@ -395,6 +395,102 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
     if any(
         phrase in text
         for phrase in (
+            "how do you know",
+            "why do you think",
+            "what makes you think",
+        )
+    ):
+        if any(
+            phrase in text
+            for phrase in (
+                "where i live",
+                "what city i live in",
+                "what city do i live in",
+                "what city am i in",
+                "my city",
+            )
+        ):
+            return ProfileFactQuery(
+                predicate="profile.city",
+                fact_name="profile_city",
+                label="city",
+                query_kind="fact_explanation",
+            )
+        if any(
+            phrase in text
+            for phrase in (
+                "what country i live in",
+                "what country do i live in",
+                "what country am i in",
+                "my country",
+            )
+        ):
+            return ProfileFactQuery(
+                predicate="profile.home_country",
+                fact_name="profile_home_country",
+                label="country",
+                query_kind="fact_explanation",
+            )
+        if any(
+            phrase in text
+            for phrase in (
+                "my startup",
+                "what startup i created",
+                "what is my startup",
+                "what's my startup",
+            )
+        ):
+            return ProfileFactQuery(
+                predicate="profile.startup_name",
+                fact_name="profile_startup_name",
+                label="startup",
+                query_kind="fact_explanation",
+            )
+        if any(
+            phrase in text
+            for phrase in (
+                "what company i founded",
+                "what company did i found",
+                "what have i founded",
+            )
+        ):
+            return ProfileFactQuery(
+                predicate="profile.founder_of",
+                fact_name="profile_founder_of",
+                label="company you founded",
+                query_kind="fact_explanation",
+            )
+        if any(
+            phrase in text
+            for phrase in (
+                "my occupation",
+                "what i do",
+                "what am i",
+            )
+        ):
+            return ProfileFactQuery(
+                predicate="profile.occupation",
+                fact_name="profile_occupation",
+                label="occupation",
+                query_kind="fact_explanation",
+            )
+        if "my name" in text:
+            return ProfileFactQuery(
+                predicate="profile.preferred_name",
+                fact_name="profile_preferred_name",
+                label="name",
+                query_kind="fact_explanation",
+            )
+        if "my timezone" in text:
+            return ProfileFactQuery(
+                predicate="profile.timezone",
+                fact_name="profile_timezone",
+                label="timezone",
+                query_kind="fact_explanation",
+            )
+    if any(
+        phrase in text
+        for phrase in (
             "what name do you have for me",
             "what name do you have saved for me",
             "which name do you have for me",
@@ -559,6 +655,23 @@ def build_profile_fact_query_answer(*, query: ProfileFactQuery, value: str | Non
     if not normalized_value:
         return "I don't currently have that saved."
     return _build_profile_fact_concise_answer(query=query, value=normalized_value)
+
+
+def build_profile_fact_explanation_answer(*, query: ProfileFactQuery, explanation: dict[str, object] | None) -> str:
+    payload = explanation or {}
+    answer_value = str(payload.get("answer") or "").strip() or None
+    if not answer_value and not payload.get("evidence") and not payload.get("events"):
+        return "I don't currently have a supported memory explanation for that."
+    concise_answer = build_profile_fact_query_answer(query=query, value=answer_value)
+    evidence = payload.get("evidence")
+    if isinstance(evidence, list):
+        for item in evidence:
+            if not isinstance(item, dict):
+                continue
+            evidence_text = str(item.get("text") or "").strip()
+            if evidence_text:
+                return f'Because I have a saved memory record from when you said: "{evidence_text}" {concise_answer}'
+    return f"Because I have a saved memory record for that. {concise_answer}"
 
 
 def build_profile_fact_observation_answer(*, observation: ProfileFactObservation) -> str:
