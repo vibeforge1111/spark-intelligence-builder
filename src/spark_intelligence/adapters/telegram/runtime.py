@@ -6000,9 +6000,12 @@ def _apply_post_approval_welcome(
         human_id=human_id,
         agent_id=agent_id,
     )
+    # Pass agent_name as-is (possibly empty). build_telegram_surface_identity_preamble
+    # handles the empty-name case with a name-free welcome under the Phase 1
+    # empty-string sentinel regime.
     welcome_text = build_telegram_surface_identity_preamble(
         profile=profile,
-        agent_name=agent_name or "Spark Intelligence",
+        agent_name=agent_name,
         surface="approval_welcome",
     )
     return f"{welcome_text}\n\n{styled_reply}".strip()

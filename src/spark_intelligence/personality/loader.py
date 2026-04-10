@@ -826,40 +826,31 @@ def build_telegram_surface_identity_preamble(
         or resolved_profile.get("personality_name")
         or ""
     ).strip()
-    if not visible_name:
-        return ""
-
-    traits = resolved_profile.get("traits") or {}
-    warmth = float(traits.get("warmth", 0.5))
-    directness = float(traits.get("directness", 0.5))
-    pacing = float(traits.get("pacing", 0.5))
-    playfulness = float(traits.get("playfulness", 0.5))
 
     if surface == "approval_welcome":
+        # Empty visible_name is the Phase 1 "agent not yet named" state
+        # (docs/PERSONALITY_PHASE1_AUDIT_2026-04-10.md option b). Use a
+        # name-free confirmation; the DM turn that immediately follows this
+        # welcome will prompt the user for the agent's name via onboarding.
+        if not visible_name:
+            return "Pairing approved. Let's set up your agent."
+        traits = resolved_profile.get("traits") or {}
+        warmth = float(traits.get("warmth", 0.5))
+        directness = float(traits.get("directness", 0.5))
+        pacing = float(traits.get("pacing", 0.5))
         if not resolved_profile:
             return f"Pairing approved. {visible_name} is live in this Telegram DM now."
         if directness >= 0.65 or pacing >= 0.6 or warmth <= 0.4:
             return f"Pairing approved. {visible_name} is live in this Telegram DM now."
         return f"Pairing approved. {visible_name} is here with you in this Telegram DM now."
 
-    has_saved_persona = bool(
-        resolved_profile.get("agent_persona_name")
-        or resolved_profile.get("agent_persona_summary")
-        or resolved_profile.get("agent_persona_applied")
-        or resolved_profile.get("agent_behavioral_rules")
-    )
-    if not has_saved_persona:
-        return ""
-
-    # runtime_command surface: short, trait-shaped name tag that
-    # apply_telegram_surface_persona prepends to the first non-empty
-    # line of the reply. Must match one of the dedup patterns in
-    # apply_telegram_surface_persona ("{name}:", "{name} here.").
-    if directness >= 0.65 or pacing >= 0.6 or warmth <= 0.4:
-        return f"{visible_name}:"
-    if warmth >= 0.65 or playfulness >= 0.6:
-        return f"{visible_name} here."
-    return f"{visible_name}:"
+    # Non-welcome surfaces intentionally do not emit a name preamble.
+    # Operator decision in commit a603026 ("Drop Telegram name preambles"):
+    # deterministic Telegram replies should not be prefixed with the agent
+    # name tag. An earlier working-tree revert re-added the name tag logic
+    # and was accidentally committed in d243d1a; this restores a603026's
+    # deliberate design.
+    return ""
 
 
 def apply_telegram_surface_persona(

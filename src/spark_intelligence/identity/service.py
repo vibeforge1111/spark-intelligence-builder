@@ -966,10 +966,16 @@ def _activate_channel_access(
         )
         conn.commit()
 
+    # NOTE: intentionally do NOT pass display_name through to the agent
+    # identity resolution. display_name here is the HUMAN's label (goes into
+    # humans / channel_accounts above), not the agent's chosen name. Leaking
+    # it into agent_name was Finding G of
+    # docs/PERSONALITY_PHASE1_AUDIT_2026-04-10.md. The agent starts with an
+    # empty agent_name and is named via onboarding (see
+    # personality/loader.py:maybe_handle_agent_persona_onboarding_turn).
     agent_state = resolve_canonical_agent_identity(
         state_db=state_db,
         human_id=human_id,
-        display_name=display_name,
     )
     agent_id = agent_state.agent_id
 
