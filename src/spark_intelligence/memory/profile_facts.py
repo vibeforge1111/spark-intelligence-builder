@@ -27,7 +27,7 @@ _SPARK_ROLE_PATTERNS = [
     re.compile(r"\bspark\s+(?:is\s+going\s+to\s+be|will\s+be)\s+an\s+important\s+part\s+of\s+this(?:\s+rebuild)?", re.I),
 ]
 _OCCUPATION_PATTERNS = [
-    re.compile(r"\bi(?:'m| am)\s+an\s+(entrepreneur)(?:[.!?,]|$)", re.I),
+    re.compile(r"\bi(?:'m| am)\s+an\s+(entrepreneur)(?:\s+(?:now|today|currently))?(?:[.!?,]|$)", re.I),
 ]
 _NAME_PATTERNS = [
     re.compile(r"\bmy\s+name\s+is\s+([a-z][a-z\s\-'.`]{0,40})", re.I),
@@ -612,7 +612,12 @@ def _extract_occupation(text: str) -> str | None:
         match = pattern.search(text)
         if not match:
             continue
-        candidate = str(match.group(1) or "").strip().lower()
+        candidate = re.sub(
+            r"\b(?:now|today|currently)\b\s*$",
+            "",
+            str(match.group(1) or "").strip(),
+            flags=re.I,
+        ).strip().lower()
         if candidate:
             return candidate
     return None
@@ -662,7 +667,7 @@ def _normalize_name(raw: str) -> str | None:
     parts = []
     for token in candidate.split():
         lowered = token.lower()
-        if lowered in _STOP_WORDS:
+        if lowered in _STOP_WORDS or lowered in _TEMPORAL_TAIL_WORDS:
             break
         cleaned = re.sub(r"[^A-Za-z'\-]", "", token)
         if not cleaned:

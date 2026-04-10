@@ -168,6 +168,20 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(detected.predicate, "profile.current_mission")
         self.assertEqual(detected.value, "rebuild the company")
 
+    def test_profile_name_detection_strips_temporal_tail_words(self) -> None:
+        detected = detect_profile_fact_observation("My name is Sarah now.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.preferred_name")
+        self.assertEqual(detected.value, "Sarah")
+
+    def test_profile_occupation_detection_accepts_temporal_tail_words(self) -> None:
+        detected = detect_profile_fact_observation("I am an entrepreneur now.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.occupation")
+        self.assertEqual(detected.value, "entrepreneur")
+
     def test_profile_fact_write_does_not_double_prefix_prefixed_human_id(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
