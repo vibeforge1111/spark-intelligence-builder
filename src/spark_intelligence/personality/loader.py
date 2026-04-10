@@ -1583,9 +1583,24 @@ def maybe_handle_agent_persona_onboarding_turn(
                 persona_profile=existing_persona,
                 completed=False,
             )
-        onboarding_state["step"] = "awaiting_persona"
         onboarding_state["persona_mode"] = persona_mode
         onboarding_state["updated_at"] = _utc_now_iso()
+        if persona_mode == "guided":
+            onboarding_state["step"] = "awaiting_persona_guided"
+            onboarding_state["persona_guided_trait_index"] = 0
+            onboarding_state["persona_guided_ratings"] = {}
+            _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
+            first_trait = _ONBOARDING_GUIDED_TRAIT_ORDER[0]
+            return AgentOnboardingTurnResult(
+                human_id=human_id,
+                agent_id=agent_id,
+                step="awaiting_persona_guided",
+                reply_text=_build_guided_trait_question(first_trait, 0),
+                agent_name=canonical_state.agent_name,
+                persona_profile=existing_persona,
+                completed=False,
+            )
+        onboarding_state["step"] = "awaiting_persona"
         _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
         return AgentOnboardingTurnResult(
             human_id=human_id,
@@ -1598,6 +1613,116 @@ def maybe_handle_agent_persona_onboarding_turn(
             agent_name=canonical_state.agent_name,
             persona_profile=existing_persona,
             completed=False,
+        )
+
+    if step == "awaiting_persona_guided":
+        try:
+            current_index = int(onboarding_state.get("persona_guided_trait_index") or 0)
+        except (TypeError, ValueError):
+            current_index = 0
+        raw_ratings = onboarding_state.get("persona_guided_ratings") or {}
+        ratings: dict[str, int] = {}
+        if isinstance(raw_ratings, dict):
+            for key, value in raw_ratings.items():
+                try:
+                    ratings[str(key)] = int(value)
+                except (TypeError, ValueError):
+                    continue
+
+        if current_index < 0 or current_index >= len(_ONBOARDING_GUIDED_TRAIT_ORDER):
+            # Defensive: restart the guided flow if the stored index is bogus.
+            current_index = 0
+            ratings = {}
+            onboarding_state["persona_guided_trait_index"] = 0
+            onboarding_state["persona_guided_ratings"] = {}
+            onboarding_state["updated_at"] = _utc_now_iso()
+            _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
+            return AgentOnboardingTurnResult(
+                human_id=human_id,
+                agent_id=agent_id,
+                step="awaiting_persona_guided",
+                reply_text=_build_guided_trait_question(_ONBOARDING_GUIDED_TRAIT_ORDER[0], 0),
+                agent_name=canonical_state.agent_name,
+                persona_profile=existing_persona,
+                completed=False,
+            )
+
+        current_trait = _ONBOARDING_GUIDED_TRAIT_ORDER[current_index]
+        rating = _parse_onboarding_guided_rating(normalized_message)
+        if rating is None:
+            return AgentOnboardingTurnResult(
+                human_id=human_id,
+                agent_id=agent_id,
+                step="awaiting_persona_guided",
+                reply_text=(
+                    "I need a number from 1 to 5 (or the word `one`, `two`, `three`, `four`, or `five`).\n\n"
+                    + _build_guided_trait_question(current_trait, current_index)
+                ),
+                agent_name=canonical_state.agent_name,
+                persona_profile=existing_persona,
+                completed=False,
+            )
+
+        ratings[current_trait] = rating
+        next_index = current_index + 1
+        if next_index < len(_ONBOARDING_GUIDED_TRAIT_ORDER):
+            onboarding_state["persona_guided_trait_index"] = next_index
+            onboarding_state["persona_guided_ratings"] = ratings
+            onboarding_state["updated_at"] = _utc_now_iso()
+            _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
+            next_trait = _ONBOARDING_GUIDED_TRAIT_ORDER[next_index]
+            return AgentOnboardingTurnResult(
+                human_id=human_id,
+                agent_id=agent_id,
+                step="awaiting_persona_guided",
+                reply_text=_build_guided_trait_question(next_trait, next_index),
+                agent_name=canonical_state.agent_name,
+                persona_profile=existing_persona,
+                completed=False,
+            )
+
+        guided_traits = {
+            trait: _GUIDED_RATING_TO_VALUE[ratings[trait]]
+            for trait in _ONBOARDING_GUIDED_TRAIT_ORDER
+            if trait in ratings
+        }
+        persona_summary = _compact_persona_summary(guided_traits)
+        persona_profile = save_agent_persona_profile(
+            agent_id=agent_id,
+            human_id=human_id,
+            state_db=state_db,
+            base_traits=guided_traits,
+            persona_name=canonical_state.agent_name,
+            persona_summary=persona_summary,
+            provenance={
+                "source_surface": source_surface,
+                "source_ref": source_ref,
+                "onboarding": True,
+                "persona_mode": "guided",
+                "guided_ratings": ratings,
+            },
+            mutation_kind="onboarding_guided",
+            source_surface=source_surface,
+            source_ref=source_ref,
+        )
+        _complete_agent_onboarding_state(
+            human_id=human_id,
+            state_db=state_db,
+            agent_id=agent_id,
+            agent_name=canonical_state.agent_name,
+            persona_summary=persona_profile.get("persona_summary"),
+        )
+        return AgentOnboardingTurnResult(
+            human_id=human_id,
+            agent_id=agent_id,
+            step="completed",
+            reply_text=(
+                f"Locked in. `{canonical_state.agent_name}` is now set up as {persona_profile.get('persona_summary') or 'your saved agent persona'}.\n\n"
+                "You can keep shaping it anytime by saying things like `be more direct`, `be warmer`, or `what's my personality`."
+            ),
+            agent_name=canonical_state.agent_name,
+            persona_profile=persona_profile,
+            completed=True,
         )
 
     if step != "awaiting_persona":
@@ -2124,6 +2249,89 @@ def _parse_onboarding_persona_mode(lowered: str) -> str | None:
         if text in tokens:
             return mode
     return None
+
+
+# P2-7: Guided persona sub-state helpers. The guided flow walks the operator
+# through five ordinal (1-5) trait questions using the anchor phrases from
+# _GUIDED_TRAIT_ANCHORS (P2-3). Each rating maps to a trait value in
+# [0.10, 0.30, 0.50, 0.70, 0.90] and the accumulated ratings become the
+# base_traits passed to save_agent_persona_profile.
+# Source: Q-F decision in docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11.
+_ONBOARDING_GUIDED_TRAIT_ORDER: tuple[str, ...] = (
+    "warmth",
+    "directness",
+    "playfulness",
+    "pacing",
+    "assertiveness",
+)
+
+_GUIDED_RATING_TO_VALUE: dict[int, float] = {
+    1: 0.10,
+    2: 0.30,
+    3: 0.50,
+    4: 0.70,
+    5: 0.90,
+}
+
+_GUIDED_NUMBER_WORDS: dict[str, int] = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+}
+
+_GUIDED_TRAIT_PROMPTS: dict[str, str] = {
+    "warmth": "How warm should your agent feel?",
+    "directness": "How direct should your agent be?",
+    "playfulness": "How playful should your agent sound?",
+    "pacing": "How should your agent pace its replies?",
+    "assertiveness": "How assertive should your agent be?",
+}
+
+
+def _parse_onboarding_guided_rating(text: str) -> int | None:
+    """Parse a 1..5 rating from a user message.
+
+    Accepts plain digits ("3"), digits embedded in a short phrase
+    ("rating 3", "3 please"), and the English words "one" through
+    "five" (case-insensitive). Returns None if no 1..5 rating can be
+    extracted.
+    """
+    compact = " ".join(str(text or "").strip().lower().split())
+    if not compact:
+        return None
+    if compact in {"1", "2", "3", "4", "5"}:
+        return int(compact)
+    tokens = compact.split()
+    for token in tokens:
+        if token.isdigit():
+            value = int(token)
+            if 1 <= value <= 5:
+                return value
+    for word, value in _GUIDED_NUMBER_WORDS.items():
+        if word in tokens:
+            return value
+    return None
+
+
+def _build_guided_trait_question(trait: str, index: int) -> str:
+    """Render the guided persona question for the given trait.
+
+    `index` is 0-based; the "Question N of 5" label uses 1-based
+    numbering. The question body lists the five anchor phrases from
+    _GUIDED_TRAIT_ANCHORS numbered 1..5 and instructs the operator to
+    reply with a number.
+    """
+    prompt = _GUIDED_TRAIT_PROMPTS.get(trait, f"How should `{trait}` feel?")
+    anchors = _GUIDED_TRAIT_ANCHORS.get(trait, {})
+    lines = [f"Question {index + 1} of 5. {prompt}"]
+    for rating in range(1, 6):
+        label = anchors.get(rating, "")
+        lines.append(f"  {rating}. {label}")
+    lines.append("")
+    lines.append("Reply with a number from 1 to 5.")
+    return "\n".join(lines)
 
 
 # ── Personality queries (status, reset) ──
