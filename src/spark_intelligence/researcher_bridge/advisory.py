@@ -2693,6 +2693,15 @@ def build_researcher_reply(
             )
             explanation_payload = founder_explanation.read_result.answer_explanation or {}
             if founder_explanation.read_result.abstained or not founder_explanation.read_result.records:
+                direct_fact_explanation = explain_memory_answer_in_memory(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    subject=memory_subject,
+                    predicate="profile.startup_name",
+                    question=direct_fact_question,
+                    actor_id="researcher_bridge",
+                )
+                explanation_payload = direct_fact_explanation.read_result.answer_explanation or {}
                 direct_fact_read_method = "explain_answer"
             else:
                 direct_fact_read_method = "explain_answer(founder_of)"

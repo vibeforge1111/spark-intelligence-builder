@@ -488,6 +488,21 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
                 label="timezone",
                 query_kind="fact_explanation",
             )
+        if any(
+            phrase in text
+            for phrase in (
+                "what i'm trying to do now",
+                "what i am trying to do now",
+                "my mission right now",
+                "what my mission is right now",
+            )
+        ):
+            return ProfileFactQuery(
+                predicate="profile.current_mission",
+                fact_name="profile_current_mission",
+                label="current mission",
+                query_kind="fact_explanation",
+            )
     if any(
         phrase in text
         for phrase in (

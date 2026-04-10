@@ -612,6 +612,12 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(startup_explanation_query.predicate, "profile.startup_name")
         self.assertEqual(startup_explanation_query.query_kind, "fact_explanation")
 
+        mission_explanation_query = detect_profile_fact_query("How do you know what I'm trying to do now?")
+        self.assertIsNotNone(mission_explanation_query)
+        assert mission_explanation_query is not None
+        self.assertEqual(mission_explanation_query.predicate, "profile.current_mission")
+        self.assertEqual(mission_explanation_query.query_kind, "fact_explanation")
+
     def test_profile_fact_answers_cover_founder_occupation_and_clean_observation_wording(self) -> None:
         founder_query = detect_profile_fact_query("What company did I found?")
         self.assertIsNotNone(founder_query)
