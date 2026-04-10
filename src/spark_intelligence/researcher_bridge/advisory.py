@@ -536,6 +536,173 @@ _FAST_GREETING_PHRASES = frozenset(
 )
 
 
+# ────────────────────────────────────────────────────────────────────
+# Multi-tier intent router (see spark-tui-lab/ROUTING.md and
+# spark-tui-lab/ROUTING_RESEARCH.md for design and field research).
+#
+# Five tiers, each with a different latency budget and context
+# assembly:
+#
+#   Tier 0  instant    — greetings, acknowledgments    (≤2s)
+#   Tier 1  direct     — LLM + personality + memory    (2-5s)
+#   Tier 2  scoped     — one targeted tool call        (deferred, slash-only)
+#   Tier 3  research   — advisory + web + multi-source (15-30s)
+#   Tier 4  agent      — harness runtime               (deferred, slash-only)
+#
+# The heuristic classifier intentionally does only THREE jobs:
+#
+#   1. Catch trivial greetings (Tier 0) via a tight allowlist
+#   2. Catch explicit research needs (Tier 3) via a tight hard-phrase
+#      list + live-data-noun + time-word combo
+#   3. Default everything else to Tier 1 (direct) — the fat middle
+#
+# Tier 2 and Tier 4 are NOT auto-detected. Users enter them by typing
+# a slash command prefix (/scoped, /agent, /architect). This matches
+# the pattern every shipping agent CLI converges on: keyword routing
+# is brittle, so keep the keyword list small and let explicit user
+# prefixes carry the edge cases (per Claude Code / Aider / gptme).
+#
+# Slash-command overrides always win over heuristic classification.
+# ────────────────────────────────────────────────────────────────────
+
+
+# Hard research signals. Any of these → Tier 3 regardless of other
+# factors. Indicates the user genuinely needs live data.
+_RESEARCH_HARD_SIGNALS = (
+    # Time-sensitive language
+    "latest news", "breaking news", "happening right now",
+    "right now", "as of today", "as of now", "as we speak",
+    "this morning", "this evening", "this afternoon",
+    # Live-data entities with implied time sensitivity
+    "current price", "stock price", "exchange rate", "market cap",
+    "score of", "final score", "latest score",
+    # Explicit research verbs as sentence starters (whole-word match)
+    "research ", "look up ", "search for ", "find info on ",
+    "look into ", "investigate ", "dig into ",
+    # Specific named-entity-with-time patterns
+    "weather today", "weather tomorrow",
+)
+
+# Time-word + live-data-noun combo → Tier 3.
+# A single word like 'price' alone isn't enough; 'current BTC price' is.
+_RESEARCH_TIME_WORDS = frozenset({
+    "latest", "today", "tomorrow", "current", "currently",
+    "recent", "recently", "now",
+})
+_RESEARCH_LIVE_DATA_NOUNS = (
+    "price", "news", "market", "rate", "score",
+    "weather", "forecast", "stock", "trending",
+)
+
+
+# Slash-command → tier mapping. Every shipping agent CLI uses slash
+# commands as hard overrides that bypass classification entirely.
+# Aliases match vocabulary from Aider (ask/architect) and generic
+# help convention.
+_TIER_SLASH_COMMANDS = {
+    "/instant": "instant",
+    "/direct": "direct",
+    "/scoped": "scoped",
+    "/research": "research",
+    "/agent": "agent",
+    # Aider vocabulary aliases
+    "/ask": "direct",       # Aider 'ask' = conceptual chat = direct
+    "/architect": "agent",  # Aider 'architect' = plan + execute = agent
+    # Universal help convention → instant tier (self-referential, fast)
+    "/help": "instant",
+}
+
+
+def _classify_intent_tier(user_message: str) -> str:
+    """Classify a chat message into one of: instant, direct, scoped, research, agent.
+
+    Pure heuristic — no LLM call. Does three jobs and nothing else:
+      1. Honor slash-command overrides (hard dispatch)
+      2. Catch trivial greetings (Tier 0)
+      3. Catch hard research signals (Tier 3)
+
+    Everything else defaults to Tier 1 (direct). Tier 2 and Tier 4
+    are only reachable via slash-command override — the classifier
+    does NOT auto-detect 'this is a workspace query' or 'this is a
+    multi-step task' because keyword routing for those boundaries
+    is brittle (per research of Claude Code, Aider, gptme, et al).
+
+    See spark-tui-lab/ROUTING_RESEARCH.md for the field study.
+    """
+    if not user_message:
+        return "direct"
+
+    raw = user_message.strip()
+    lowered = re.sub(r"\s+", " ", raw.lower())
+
+    # 1. Slash-command hard overrides. Strip the command from the
+    #    message and return the mapped tier. The caller is responsible
+    #    for also stripping the command before sending to the LLM.
+    first_word = lowered.split(" ", 1)[0] if lowered else ""
+    if first_word in _TIER_SLASH_COMMANDS:
+        return _TIER_SLASH_COMMANDS[first_word]
+
+    # Shortcut prefixes: '?' = research, '!' = agent. Same pattern as
+    # the full slash commands but one-character for speed.
+    if raw.startswith("?") and not raw.startswith("??"):
+        return "research"
+    if raw.startswith("!") and not raw.startswith("!!"):
+        return "agent"
+
+    # 2. URLs → research (we need to fetch them).
+    if "://" in lowered:
+        return "research"
+
+    # 3. Tier 0: instant greetings (reuses the fast-greeting allowlist).
+    if _is_fast_greeting(user_message):
+        return "instant"
+
+    # 4. Tier 3: hard research signals — phrases that unambiguously
+    #    request live data.
+    for phrase in _RESEARCH_HARD_SIGNALS:
+        if phrase in lowered:
+            return "research"
+
+    # 5. Tier 3: time-word + live-data-noun combo. Both must be present
+    #    and the message must be short enough that it's plausibly a
+    #    live-data query (not a long conceptual discussion that happens
+    #    to use 'current' in passing).
+    if len(lowered) <= 120:
+        tokens = set(lowered.split())
+        if tokens & _RESEARCH_TIME_WORDS:
+            if any(noun in lowered for noun in _RESEARCH_LIVE_DATA_NOUNS):
+                return "research"
+
+    # 6. Default: direct. The fat middle. Conceptual, creative, coding,
+    #    opinion, follow-up — anything that isn't a trivial greeting or
+    #    an obvious research query lands here and gets a fast LLM reply
+    #    with full personality + memory + chip context.
+    return "direct"
+
+
+def _strip_tier_slash_command(user_message: str) -> tuple[str, str | None]:
+    """If the message starts with a known tier slash command, strip it.
+
+    Returns (cleaned_message, slash_command) where slash_command is
+    None if no override was present.
+    """
+    if not user_message:
+        return user_message, None
+    raw = user_message.strip()
+    lowered = raw.lower()
+    first_word = lowered.split(" ", 1)[0] if lowered else ""
+    if first_word in _TIER_SLASH_COMMANDS:
+        # Remove the first word (the slash command) and return the rest
+        remainder = raw.split(None, 1)
+        cleaned = remainder[1] if len(remainder) > 1 else ""
+        return cleaned, first_word
+    if raw.startswith("?") and not raw.startswith("??"):
+        return raw[1:].lstrip(), "?"
+    if raw.startswith("!") and not raw.startswith("!!"):
+        return raw[1:].lstrip(), "!"
+    return user_message, None
+
+
 def _is_fast_greeting(user_message: str) -> bool:
     """True for short trivial greetings where advisory is wasted work.
 
@@ -3890,18 +4057,36 @@ def build_researcher_reply(
                         output_keepability=output_keepability,
                         promotion_disposition=promotion_disposition,
                     )
-                # Fast greeting fast-path: skip the advisory subprocess for
-                # trivial conversational openers like 'hi'. The bridge would
-                # otherwise spawn `python -m spark_intelligence.llm.provider_wrapper`,
-                # discover under_supported, and then call the direct fallback
-                # anyway. Skipping advisory shaves 2-5s on Windows per message.
+                # Multi-tier intent routing (see spark-tui-lab/ROUTING.md
+                # and ROUTING_RESEARCH.md). Phase A handles three tiers
+                # heuristically and two by slash-command override:
+                #   - instant  : greetings, no advisory, minimal context
+                #   - direct   : default, no advisory, full chat context
+                #   - research : advisory + research subprocess path
+                # Tier 2 (scoped) and Tier 4 (agent) are slash-command-only
+                # and fall through to the 'direct' behavior in Phase A.
+                # Phase B/C will wire them to a tool registry and harness
+                # runtime respectively.
+                #
+                # The slash command itself gets stripped from user_message
+                # before advisory/LLM consumption so the LLM doesn't see
+                # '/direct hey' — just 'hey'.
+                tier = _classify_intent_tier(user_message)
+                user_message, _stripped_command = _strip_tier_slash_command(user_message)
+                tier_skips_advisory = tier in ("instant", "direct", "scoped", "agent")
                 if (
                     provider_selection.provider
                     and provider_selection.provider.execution_transport == "direct_http"
                     and routing_policy["conversational_fallback_enabled"]
-                    and _is_fast_greeting(user_message)
+                    and tier_skips_advisory
                 ):
+                    # Fast path: synthesize an under_supported advisory so
+                    # the existing direct-provider fallback code below
+                    # renders the reply without spawning the advisory
+                    # subprocess. Personality, memory, and chip context
+                    # are still assembled later in the function.
                     advisory = _synthesize_skipped_advisory(user_message, request_id)
+                    advisory["epistemic_status"]["clarity"] = f"tier_{tier}"
                     execute_with_research = None  # type: ignore[assignment]
                 else:
                     build_advisory = _import_build_advisory(runtime_root)
@@ -3917,16 +4102,27 @@ def build_researcher_reply(
                 advisory_intent = advisory.get("intent")
                 if isinstance(advisory_intent, dict):
                     advisory_intent["query"] = user_message
-                if (
+                # Tier-aware direct fallback decision. If the tier router
+                # already picked a non-research tier, we use the direct
+                # provider fallback unconditionally (the tier classifier
+                # is the authority). For research tier, we still check
+                # _is_conversational_fallback_candidate — that's the
+                # existing behavior for research queries that turn out
+                # to be simple enough for a direct reply.
+                use_direct_fallback = (
                     provider_selection.provider
                     and provider_selection.provider.execution_transport == "direct_http"
                     and routing_policy["conversational_fallback_enabled"]
-                    and _is_conversational_fallback_candidate(
-                        user_message=user_message,
-                        advisory=advisory,
-                        fallback_max_chars=int(routing_policy["conversational_fallback_max_chars"]),
+                    and (
+                        tier_skips_advisory
+                        or _is_conversational_fallback_candidate(
+                            user_message=user_message,
+                            advisory=advisory,
+                            fallback_max_chars=int(routing_policy["conversational_fallback_max_chars"]),
+                        )
                     )
-                ):
+                )
+                if use_direct_fallback:
                     raw_reply_text = _render_direct_provider_chat_fallback(
                         config_manager=config_manager,
                         state_db=state_db,
