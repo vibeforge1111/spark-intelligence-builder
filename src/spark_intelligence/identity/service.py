@@ -195,11 +195,17 @@ class CanonicalAgentState:
     name_updated_at: str | None = None
     name_source: str | None = None
 
+    @property
+    def has_user_defined_name(self) -> bool:
+        """True when the agent has a real, user-supplied name."""
+        return bool(self.agent_name and self.agent_name.strip())
+
     def to_payload(self) -> dict[str, Any]:
         return {
             "human_id": self.human_id,
             "agent_id": self.agent_id,
             "agent_name": self.agent_name,
+            "has_user_defined_name": self.has_user_defined_name,
             "origin": self.origin,
             "status": self.status,
             "preferred_source": self.preferred_source,
@@ -692,7 +698,7 @@ def read_canonical_agent_state(
     return CanonicalAgentState(
         human_id=str(profile_row["human_id"]),
         agent_id=str(profile_row["agent_id"]),
-        agent_name=str(profile_row["agent_name"] or "Spark Agent"),
+        agent_name=str(profile_row["agent_name"] or ""),
         origin=str(profile_row["origin"] or "builder_local"),
         status=str(link_row["status"] or profile_row["status"] or "active"),
         preferred_source=str(link_row["preferred_source"] or "builder_local"),
@@ -905,6 +911,64 @@ def rename_agent_identity(
                 human_id,
                 state.agent_name,
                 resolved_name,
+                source_surface,
+                source_ref,
+                recorded_at,
+            ),
+        )
+        conn.commit()
+    return read_canonical_agent_state(state_db=state_db, human_id=human_id)
+
+
+def cancel_agent_onboarding(
+    *,
+    state_db: StateDB,
+    human_id: str,
+    source_ref: str | None = None,
+) -> CanonicalAgentState:
+    """Wipe the agent name back to the empty-string sentinel.
+
+    This is the identity-layer half of the Q-E `/cancel` flow
+    (docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11, P2-2 in
+    docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md). The caller is also
+    responsible for clearing the onboarding state blob from
+    runtime_state (see personality.loader._delete_agent_onboarding_state)
+    and for the user-facing cancel reply.
+
+    Unlike rename_agent_identity, this function deliberately permits the
+    empty-string target because Phase 1 uses "" as the sentinel for
+    "no user-defined name yet" (CanonicalAgentState.has_user_defined_name
+    depends on it). Persona profile is left untouched per Q-J default.
+
+    No-op if the agent already has no name.
+    """
+    state = resolve_canonical_agent_identity(state_db=state_db, human_id=human_id)
+    if not state.agent_name:
+        return state
+    rename_id = f"agent-rename-{uuid4().hex[:12]}"
+    recorded_at = _utc_now_iso()
+    source_surface = "onboarding_cancel"
+    with state_db.connect() as conn:
+        conn.execute(
+            """
+            UPDATE agent_profiles
+            SET agent_name = '', name_updated_at = ?, name_source = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE agent_id = ?
+            """,
+            (recorded_at, source_surface, state.agent_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO agent_rename_history(
+                rename_id, agent_id, human_id, old_name, new_name, source_surface, source_ref, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                rename_id,
+                state.agent_id,
+                human_id,
+                state.agent_name,
+                "",
                 source_surface,
                 source_ref,
                 recorded_at,

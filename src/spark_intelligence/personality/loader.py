@@ -72,6 +72,50 @@ _TRAIT_LABELS = {
     "assertiveness": {(0.0, 0.3): "gentle", (0.3, 0.55): "balanced assertiveness", (0.55, 0.75): "assertive", (0.75, 1.01): "very assertive"},
 }
 
+# Anchor phrases shown to the operator during the P2-7 guided onboarding
+# sub-state. Each trait maps five ordinal ratings (1..5) to a short phrase
+# the operator can pick between. These are intentionally not used as
+# trait-value ranges — they're only human-readable anchors for the
+# 1-5 picker. The actual trait delta mapping lives in the P2-7 handler.
+# Source: Q-F decision in docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11.
+_GUIDED_TRAIT_ANCHORS: dict[str, dict[int, str]] = {
+    "warmth": {
+        1: "reserved and formal",
+        2: "mostly reserved",
+        3: "balanced warmth",
+        4: "warm and friendly",
+        5: "very warm, uses your name often",
+    },
+    "directness": {
+        1: "gentle and exploratory",
+        2: "mostly gentle",
+        3: "balanced directness",
+        4: "direct and concise",
+        5: "very direct, skips preamble",
+    },
+    "playfulness": {
+        1: "serious and measured",
+        2: "mostly serious",
+        3: "balanced playfulness",
+        4: "playful and witty",
+        5: "very playful, cracks jokes",
+    },
+    "pacing": {
+        1: "deliberate, explains thoroughly",
+        2: "thoughtful and thorough",
+        3: "balanced pacing",
+        4: "brisk and efficient",
+        5: "rapid, one-line answers",
+    },
+    "assertiveness": {
+        1: "gentle, hedges opinions",
+        2: "measured and polite",
+        3: "balanced assertiveness",
+        4: "assertive and confident",
+        5: "very assertive, states views plainly",
+    },
+}
+
 # ── NL preference patterns (inline fallback) ──
 # These are a minimal subset. The full set lives in personality_engine.nl_traits.
 
@@ -1900,6 +1944,44 @@ def _label_for_trait(trait: str, value: float) -> str:
         if low <= value < high:
             return label
     return "balanced"
+
+
+def format_address_aware_line(template: str, user_address: str | None) -> str:
+    """Format a reply template using the operator's preferred salutation.
+
+    P2-4 of docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md. The v2 onboarding
+    state machine stores an optional salutation on `humans.user_address`
+    (P2-1) and the address-aware formatter is how every v2 reply renders
+    it without falling back to a default label like "Operator".
+
+    Template conventions:
+        {salutation}        — prefix form. Expands to "<Address>, "
+                               when set, or "" otherwise.
+        {salutation_suffix} — suffix form. Expands to ", <Address>"
+                               when set, or "" otherwise.
+
+    On the empty-address path (`user_address` is None, empty, or
+    whitespace), both placeholders collapse to the empty string. When a
+    `{salutation}` placeholder sat at the very start of the template,
+    the helper additionally capitalizes the first alphabetic character
+    of what remains so a template like "{salutation}got it." renders as
+    "Got it." rather than the broken "got it.".
+
+    Q-D decision of docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11.
+    """
+    address = str(user_address or "").strip()
+    prefix = f"{address}, " if address else ""
+    suffix = f", {address}" if address else ""
+    starts_with_salutation = template.startswith("{salutation}")
+    formatted = template.replace("{salutation}", prefix).replace(
+        "{salutation_suffix}", suffix
+    )
+    if not address and starts_with_salutation and formatted:
+        for i, ch in enumerate(formatted):
+            if ch.isalpha():
+                formatted = formatted[:i] + ch.upper() + formatted[i + 1 :]
+                break
+    return formatted
 
 
 # ── Personality queries (status, reset) ──

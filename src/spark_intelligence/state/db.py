@@ -93,6 +93,7 @@ SCHEMA_STATEMENTS = [
     CREATE TABLE IF NOT EXISTS humans (
         human_id TEXT PRIMARY KEY,
         display_name TEXT NOT NULL,
+        user_address TEXT,
         status TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -782,6 +783,7 @@ class StateDB:
             self._ensure_column(conn, "provider_records", "default_auth_profile_id", "TEXT")
             self._ensure_column(conn, "agent_profiles", "name_updated_at", "TEXT")
             self._ensure_column(conn, "agent_profiles", "name_source", "TEXT")
+            self._ensure_column(conn, "humans", "user_address", "TEXT")
             conn.execute("INSERT OR IGNORE INTO schema_info(version) VALUES (1)")
             conn.execute(
                 """

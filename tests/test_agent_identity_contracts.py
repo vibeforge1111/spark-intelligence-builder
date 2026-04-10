@@ -5,6 +5,7 @@ import json
 from spark_intelligence.identity.service import (
     approve_pairing,
     build_spark_swarm_identity_import_payload,
+    cancel_agent_onboarding,
     link_identity_alias,
     link_spark_swarm_agent,
     normalize_spark_swarm_identity_import,
@@ -20,6 +21,7 @@ from spark_intelligence.personality.loader import (
     build_personality_import_payload,
     detect_and_persist_agent_persona_preferences,
     detect_and_persist_nl_preferences,
+    format_address_aware_line,
     load_personality_profile,
     migrate_legacy_human_personality_to_agent_persona,
     normalize_personality_import,
@@ -258,6 +260,138 @@ class AgentIdentityContractTests(SparkTestCase):
         self.assertEqual(row["new_name"], "Atlas")
         self.assertEqual(row["source_surface"], "telegram")
         self.assertEqual(row["source_ref"], "turn-rename")
+
+    def test_cancel_agent_onboarding_wipes_name_and_records_history(self) -> None:
+        # P2-2 (docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md): /cancel during
+        # v2 onboarding resets the agent name to the empty-string sentinel
+        # so the Phase 1 has_user_defined_name gate flips back to False,
+        # while leaving the persona profile intact (Q-J default). The wipe
+        # is recorded in agent_rename_history with new_name="" so the audit
+        # trail stays complete.
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+        rename_agent_identity(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+            new_name="Atlas",
+            source_surface="telegram",
+            source_ref="turn-rename",
+        )
+
+        cancelled = cancel_agent_onboarding(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+            source_ref="onboarding-cancel",
+        )
+
+        self.assertEqual(cancelled.agent_id, "agent:human:telegram:111")
+        self.assertEqual(cancelled.agent_name, "")
+        self.assertFalse(cancelled.has_user_defined_name)
+        # NOTE: filter by source_surface rather than ORDER BY created_at DESC.
+        # _utc_now_iso has seconds-only precision, so the rename and cancel
+        # rows typically share a timestamp and the rename_id tie-break is
+        # random. Querying the cancel row directly makes the test
+        # deterministic regardless of sub-second race.
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT old_name, new_name, source_surface, source_ref
+                FROM agent_rename_history
+                WHERE human_id = ? AND source_surface = 'onboarding_cancel'
+                LIMIT 1
+                """,
+                ("human:telegram:111",),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["old_name"], "Atlas")
+        self.assertEqual(row["new_name"], "")
+        self.assertEqual(row["source_surface"], "onboarding_cancel")
+        self.assertEqual(row["source_ref"], "onboarding-cancel")
+
+    def test_format_address_aware_line_renders_prefix_suffix_and_empty_paths(self) -> None:
+        # P2-4 (docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md): the v2 onboarding
+        # state machine uses format_address_aware_line so a single template
+        # can serve both the "operator set a salutation" and "operator left
+        # it blank" cases per Q-D. The empty path must NOT fall back to any
+        # default label like "Operator" — that was Finding F territory.
+
+        # Prefix form, with address.
+        self.assertEqual(
+            format_address_aware_line("{salutation}got it.", "Boss"),
+            "Boss, got it.",
+        )
+        # Prefix form, empty — capitalizes the following word.
+        self.assertEqual(
+            format_address_aware_line("{salutation}got it.", ""),
+            "Got it.",
+        )
+        # Prefix form, None — same as empty.
+        self.assertEqual(
+            format_address_aware_line("{salutation}got it.", None),
+            "Got it.",
+        )
+        # Prefix form, whitespace-only — treated as empty.
+        self.assertEqual(
+            format_address_aware_line("{salutation}saved.", "   "),
+            "Saved.",
+        )
+        # Suffix form, with address.
+        self.assertEqual(
+            format_address_aware_line("Noted{salutation_suffix}.", "Alice"),
+            "Noted, Alice.",
+        )
+        # Suffix form, empty.
+        self.assertEqual(
+            format_address_aware_line("Noted{salutation_suffix}.", ""),
+            "Noted.",
+        )
+        # Combined prefix + suffix in one template.
+        self.assertEqual(
+            format_address_aware_line(
+                "{salutation}locked in{salutation_suffix}.", "Captain"
+            ),
+            "Captain, locked in, Captain.",
+        )
+        self.assertEqual(
+            format_address_aware_line(
+                "{salutation}locked in{salutation_suffix}.", None
+            ),
+            "Locked in.",
+        )
+        # Templates with no placeholders pass through unchanged.
+        self.assertEqual(
+            format_address_aware_line("No placeholders here.", "Boss"),
+            "No placeholders here.",
+        )
+
+    def test_cancel_agent_onboarding_is_noop_when_name_already_empty(self) -> None:
+        # Under Finding G (Phase 1), approve_pairing leaves agent_name="".
+        # Calling cancel in that state must not spam agent_rename_history
+        # with no-op wipes or flip any timestamps, because the /cancel
+        # handler may defensively call it on any turn.
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+
+        cancelled = cancel_agent_onboarding(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+            source_ref="onboarding-cancel",
+        )
+        self.assertEqual(cancelled.agent_name, "")
+        with self.state_db.connect() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) AS n FROM agent_rename_history WHERE human_id = ?",
+                ("human:telegram:111",),
+            ).fetchone()
+        self.assertEqual(int(count["n"]), 0)
 
     def test_load_personality_profile_merges_agent_base_traits_and_human_overlay(self) -> None:
         approve_pairing(
