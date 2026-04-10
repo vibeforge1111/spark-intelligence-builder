@@ -94,6 +94,7 @@ from spark_intelligence.memory import (
     inspect_memory_sdk_runtime,
     lookup_current_state_in_memory,
     run_memory_sdk_smoke_test,
+    run_telegram_memory_regression,
 )
 from spark_intelligence.personality import (
     build_personality_import_payload,
@@ -1644,6 +1645,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     memory_compile_kb_parser.add_argument("--write", help="Optional output path for the generated KB compile JSON payload")
     memory_compile_kb_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_regression_parser = memory_subparsers.add_parser(
+        "run-telegram-regression",
+        help="Run a broad Telegram memory regression matrix, inspect memory, and compile the KB/wiki bundle",
+    )
+    memory_regression_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_regression_parser.add_argument("--output-dir", help="Regression artifact output directory")
+    memory_regression_parser.add_argument("--user-id", help="Explicit Telegram user id to simulate")
+    memory_regression_parser.add_argument("--username", help="Telegram username to simulate")
+    memory_regression_parser.add_argument("--chat-id", help="Explicit Telegram chat id override")
+    memory_regression_parser.add_argument("--kb-limit", type=int, default=25, help="Maximum Telegram conversations to scan when compiling the KB")
+    memory_regression_parser.add_argument("--validator-root", help="domain-chip-memory repo root used for KB compilation")
+    memory_regression_parser.add_argument("--write", help="Optional output path for the regression summary JSON payload")
+    memory_regression_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_direct_smoke_parser = memory_subparsers.add_parser(
         "direct-smoke",
         help="Run an in-process Spark -> Domain Chip Memory write/read smoke test without changing persisted config",
@@ -4476,6 +4490,26 @@ def handle_memory_compile_telegram_kb(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_memory_run_telegram_regression(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = run_telegram_memory_regression(
+        config_manager=config_manager,
+        state_db=state_db,
+        output_dir=args.output_dir,
+        user_id=args.user_id,
+        username=args.username,
+        chat_id=args.chat_id,
+        kb_limit=args.kb_limit,
+        validator_root=args.validator_root,
+        write_path=args.write,
+    )
+    print(result.to_json() if args.json else result.to_text())
+    return 0
+
+
 def handle_memory_direct_smoke(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -6106,6 +6140,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_memory_export_sdk_maintenance_replay(args)
     if args.command == "memory" and args.memory_command == "compile-telegram-kb":
         return handle_memory_compile_telegram_kb(args)
+    if args.command == "memory" and args.memory_command == "run-telegram-regression":
+        return handle_memory_run_telegram_regression(args)
     if args.command == "memory" and args.memory_command == "direct-smoke":
         return handle_memory_direct_smoke(args)
     if args.command == "config" and args.config_command == "show":
