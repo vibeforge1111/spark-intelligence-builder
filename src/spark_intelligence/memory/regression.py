@@ -295,6 +295,7 @@ def run_telegram_memory_regression(
     resolved_write_path = Path(write_path) if write_path else resolved_output_dir / "telegram-memory-regression.json"
     kb_write_path = resolved_output_dir / "telegram-memory-kb.json"
     regression_summary_markdown_path = resolved_output_dir / "regression-summary.md"
+    regression_cases_json_path = resolved_output_dir / "regression-cases.json"
 
     case_payloads: list[dict[str, Any]] = []
     mismatches: list[dict[str, Any]] = []
@@ -338,6 +339,7 @@ def run_telegram_memory_regression(
                 "kb_output_dir": str(resolved_kb_output_dir),
                 "kb_json": str(kb_write_path),
                 "regression_report_markdown": str(regression_summary_markdown_path),
+                "regression_cases_json": str(regression_cases_json_path),
             },
         }
         resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -395,6 +397,7 @@ def run_telegram_memory_regression(
                     "kb_output_dir": str(resolved_kb_output_dir),
                     "kb_json": str(kb_write_path),
                     "regression_report_markdown": str(regression_summary_markdown_path),
+                    "regression_cases_json": str(regression_cases_json_path),
                 },
             }
             resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -420,6 +423,23 @@ def run_telegram_memory_regression(
             selected_chat_id=selected_chat_id,
             case_payloads=case_payloads,
             mismatches=mismatches,
+            inspection_payload=inspection_payload,
+        ),
+        encoding="utf-8",
+    )
+    regression_cases_json_path.write_text(
+        json.dumps(
+            {
+                "selected_user_id": selected_user_id,
+                "selected_chat_id": selected_chat_id,
+                "human_id": resolved_human_id,
+                "cases": case_payloads,
+                "mismatches": mismatches,
+                "inspection": inspection_payload,
+                **filter_summary,
+                **selection_summary,
+            },
+            indent=2,
         ),
         encoding="utf-8",
     )
@@ -428,7 +448,7 @@ def run_telegram_memory_regression(
         output_dir=resolved_kb_output_dir,
         limit=max(int(kb_limit), 1),
         chat_id=selected_chat_id,
-        repo_sources=[str(regression_summary_markdown_path)],
+        repo_sources=[str(regression_summary_markdown_path), str(regression_cases_json_path)],
         write_path=kb_write_path,
         validator_root=validator_root,
     )
@@ -463,6 +483,7 @@ def run_telegram_memory_regression(
             "kb_output_dir": str(resolved_kb_output_dir),
             "kb_json": str(kb_write_path),
             "regression_report_markdown": str(regression_summary_markdown_path),
+            "regression_cases_json": str(regression_cases_json_path),
         },
     }
     resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -574,9 +595,15 @@ def _build_regression_summary_markdown(
     selected_chat_id: str | None,
     case_payloads: list[dict[str, Any]],
     mismatches: list[dict[str, Any]],
+    inspection_payload: dict[str, Any] | None,
 ) -> str:
     category_counts = _build_category_counts(str(case.get("category") or "unknown") for case in case_payloads)
+    bridge_mode_counts = _build_category_counts(str(case.get("bridge_mode") or "missing") for case in case_payloads)
+    routing_decision_counts = _build_category_counts(
+        str(case.get("routing_decision") or "missing") for case in case_payloads
+    )
     quality_lanes = _build_quality_lanes(category_counts)
+    inspection_records = _inspection_records(inspection_payload)
 
     lines = [
         "# Telegram Memory Regression Summary",
@@ -595,11 +622,62 @@ def _build_regression_summary_markdown(
     lines.extend(
         [
             "",
+            "## Route Coverage",
+            "",
+            "### Bridge Modes",
+            "",
+        ]
+    )
+    for bridge_mode in sorted(bridge_mode_counts):
+        lines.append(f"- `{bridge_mode}`: `{bridge_mode_counts[bridge_mode]}`")
+    lines.extend(
+        [
+            "",
+            "### Routing Decisions",
+            "",
+        ]
+    )
+    for routing_decision in sorted(routing_decision_counts):
+        lines.append(f"- `{routing_decision}`: `{routing_decision_counts[routing_decision]}`")
+    lines.extend(
+        [
+            "",
             "## Quality Lanes",
             "",
             f"- `staleness`: `{'yes' if quality_lanes['staleness'] else 'no'}`",
             f"- `overwrite`: `{'yes' if quality_lanes['overwrite'] else 'no'}`",
             f"- `abstention`: `{'yes' if quality_lanes['abstention'] else 'no'}`",
+            "",
+            "## Current Memory Snapshot",
+            "",
+        ]
+    )
+    if inspection_records:
+        for record in inspection_records[:12]:
+            predicate = str(record.get("predicate") or "unknown")
+            value = str(record.get("normalized_value") or record.get("value") or "").strip() or "missing"
+            lines.append(f"- `{predicate}`: `{value}`")
+    else:
+        lines.append("- No current-state records were available from the inspection step.")
+    lines.extend(
+        [
+            "",
+            "## Recommended Next Actions",
+            "",
+        ]
+    )
+    if mismatches:
+        lines.append("- Fix the mismatched cases before promoting wider runtime memory behavior.")
+    else:
+        lines.append("- Keep this regression bundle as a green baseline and add the next benchmark-style lane.")
+    if not quality_lanes["abstention"]:
+        lines.append("- Add abstention cases before widening memory promotion beyond the current lane.")
+    if not quality_lanes["overwrite"]:
+        lines.append("- Add overwrite cases so newer facts keep winning without regressions.")
+    if not quality_lanes["staleness"]:
+        lines.append("- Add staleness cases to confirm explanation and query routing stay stable over time.")
+    lines.extend(
+        [
             "",
             "## Cases",
             "",
@@ -635,3 +713,15 @@ def _build_category_counts(categories: Any) -> dict[str, int]:
 
 def _build_quality_lanes(category_counts: dict[str, int]) -> dict[str, bool]:
     return {lane: bool(category_counts.get(lane)) for lane in QUALITY_LANE_KEYS}
+
+
+def _inspection_records(inspection_payload: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(inspection_payload, dict):
+        return []
+    read_result = inspection_payload.get("read_result")
+    if not isinstance(read_result, dict):
+        return []
+    records = read_result.get("records")
+    if not isinstance(records, list):
+        return []
+    return [record for record in records if isinstance(record, dict)]

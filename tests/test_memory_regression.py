@@ -140,7 +140,20 @@ class MemoryRegressionTests(SparkTestCase):
             return_value=json.dumps(allowed_payload),
         ), patch(
             "spark_intelligence.memory.regression.inspect_human_memory_in_memory",
-            return_value=SimpleNamespace(to_json=lambda: json.dumps({"records": []})),
+            return_value=SimpleNamespace(
+                to_json=lambda: json.dumps(
+                    {
+                        "read_result": {
+                            "records": [
+                                {
+                                    "predicate": "profile.startup_name",
+                                    "normalized_value": "Seedify",
+                                }
+                            ]
+                        }
+                    }
+                )
+            ),
         ), patch(
             "spark_intelligence.memory.regression.build_telegram_state_knowledge_base",
             return_value=SimpleNamespace(payload=kb_payload),
@@ -155,20 +168,34 @@ class MemoryRegressionTests(SparkTestCase):
 
         kwargs = compile_kb.call_args.kwargs
         repo_sources = kwargs["repo_sources"]
-        self.assertEqual(len(repo_sources), 1)
+        self.assertEqual(len(repo_sources), 2)
         summary_path = Path(repo_sources[0])
         self.assertTrue(summary_path.exists())
         summary_text = summary_path.read_text(encoding="utf-8")
         self.assertIn("# Telegram Memory Regression Summary", summary_text)
         self.assertIn("## Category Coverage", summary_text)
+        self.assertIn("## Route Coverage", summary_text)
         self.assertIn("## Quality Lanes", summary_text)
+        self.assertIn("## Current Memory Snapshot", summary_text)
+        self.assertIn("## Recommended Next Actions", summary_text)
+        self.assertIn("`profile.startup_name`: `Seedify`", summary_text)
         self.assertIn("startup_query_after_founder", summary_text)
         self.assertIn("country_query_after_overwrite", summary_text)
+        cases_json_path = Path(repo_sources[1])
+        self.assertEqual(cases_json_path, output_dir / "regression-cases.json")
+        self.assertTrue(cases_json_path.exists())
+        cases_payload = json.loads(cases_json_path.read_text(encoding="utf-8"))
+        self.assertEqual(cases_payload["selected_user_id"], "12345")
+        self.assertEqual(cases_payload["cases"][0]["case_id"], "name_write")
         self.assertEqual(result.payload["summary"]["category_counts"]["overwrite"], 4)
         self.assertTrue(result.payload["summary"]["quality_lanes"]["overwrite"])
         self.assertEqual(
             Path(result.payload["artifact_paths"]["regression_report_markdown"]),
             summary_path,
+        )
+        self.assertEqual(
+            Path(result.payload["artifact_paths"]["regression_cases_json"]),
+            cases_json_path,
         )
 
     def test_run_telegram_memory_regression_filters_cases_by_category(self) -> None:
