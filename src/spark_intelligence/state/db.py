@@ -160,6 +160,23 @@ SCHEMA_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS identity_aliases (
+        alias_channel        TEXT NOT NULL,
+        alias_external_user  TEXT NOT NULL,
+        primary_channel      TEXT NOT NULL,
+        primary_external_user TEXT NOT NULL,
+        primary_human_id     TEXT NOT NULL,
+        primary_agent_id     TEXT NOT NULL,
+        created_at           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        created_by           TEXT NOT NULL DEFAULT 'system',
+        PRIMARY KEY (alias_channel, alias_external_user)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_identity_aliases_primary_human
+        ON identity_aliases(primary_human_id)
+    """,
+    """
     CREATE TABLE IF NOT EXISTS conversation_surfaces (
         surface_id TEXT PRIMARY KEY,
         channel_id TEXT NOT NULL,
