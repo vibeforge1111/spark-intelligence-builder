@@ -535,6 +535,12 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(identity_query.query_kind, "identity_summary")
         self.assertEqual(identity_query.predicate_prefix, "profile.")
 
+        remember_query = detect_profile_fact_query("What do you remember about me?")
+        self.assertIsNotNone(remember_query)
+        assert remember_query is not None
+        self.assertEqual(remember_query.query_kind, "identity_summary")
+        self.assertEqual(remember_query.predicate_prefix, "profile.")
+
     def test_profile_fact_answers_cover_founder_occupation_and_clean_observation_wording(self) -> None:
         founder_query = detect_profile_fact_query("What company did I found?")
         self.assertIsNotNone(founder_query)
@@ -597,9 +603,20 @@ class MemoryOrchestratorTests(SparkTestCase):
         )
 
         self.assertIn("You're an entrepreneur in Dubai.", answer)
-        self.assertIn("You founded Seedify and Spark Swarm.", answer)
+        self.assertIn("You founded Spark Swarm.", answer)
+        self.assertIn("Your startup is Seedify.", answer)
         self.assertIn("Your current mission is to survive the hack and revive the companies.", answer)
         self.assertIn("Spark will be an important part of the rebuild.", answer)
+
+    def test_build_profile_identity_summary_answer_deduplicates_matching_founder_and_startup(self) -> None:
+        answer = build_profile_identity_summary_answer(
+            records=[
+                {"predicate": "profile.startup_name", "value": "Atlas Labs"},
+                {"predicate": "profile.founder_of", "value": "Atlas Labs"},
+            ]
+        )
+
+        self.assertEqual(answer, "You founded Atlas Labs.")
 
     def test_build_profile_fact_query_context_demands_single_sentence_grounded_answer(self) -> None:
         query = detect_profile_fact_query("What role will Spark play in this?")

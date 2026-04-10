@@ -478,6 +478,9 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
         for phrase in (
             "who am i",
             "what do you know about me",
+            "what do you remember about me",
+            "what do you remember for me",
+            "what do you remember of me",
             "what do you have saved about me",
         )
     ):
@@ -727,19 +730,14 @@ def build_profile_identity_summary_answer(*, records: list[dict[str, str]]) -> s
         else:
             sentences.append(_ensure_sentence(f"You're {' '.join(identity_bits)}"))
 
-    founded_values: list[str] = []
     startup_name = value_by_predicate.get("profile.startup_name")
     founder_of = value_by_predicate.get("profile.founder_of")
-    for candidate in (startup_name, founder_of):
-        if candidate and candidate not in founded_values:
-            founded_values.append(candidate)
-    if founded_values:
-        if len(founded_values) == 1:
-            sentences.append(_ensure_sentence(f"You founded {founded_values[0]}"))
-        elif len(founded_values) == 2:
-            sentences.append(_ensure_sentence(f"You founded {founded_values[0]} and {founded_values[1]}"))
-        else:
-            sentences.append(_ensure_sentence(f"You founded {', '.join(founded_values[:-1])}, and {founded_values[-1]}"))
+    if founder_of:
+        sentences.append(_ensure_sentence(f"You founded {founder_of}"))
+    elif startup_name:
+        sentences.append(_ensure_sentence(f"Your startup is {startup_name}"))
+    if startup_name and founder_of and startup_name != founder_of:
+        sentences.append(_ensure_sentence(f"Your startup is {startup_name}"))
 
     hack_actor = value_by_predicate.get("profile.hack_actor")
     if hack_actor:
