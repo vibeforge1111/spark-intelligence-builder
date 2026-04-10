@@ -5,6 +5,7 @@ import json
 from spark_intelligence.identity.service import (
     approve_pairing,
     build_spark_swarm_identity_import_payload,
+    link_identity_alias,
     link_spark_swarm_agent,
     normalize_spark_swarm_identity_import,
     read_canonical_agent_state,
@@ -549,6 +550,52 @@ class AgentIdentityContractTests(SparkTestCase):
 
         self.assertTrue(resolution.allowed)
         self.assertEqual(resolution.agent_id, "swarm-agent:atlas")
+
+    def test_link_identity_alias_repoints_existing_session_binding_for_alias_surface(self) -> None:
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="tui",
+            external_user_id="local-operator",
+            display_name="Operator",
+        )
+
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT agent_id
+                FROM session_bindings
+                WHERE session_id = ?
+                LIMIT 1
+                """,
+                ("session:tui:dm:local-operator",),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["agent_id"], "agent:human:tui:local-operator")
+
+        alias = link_identity_alias(
+            state_db=self.state_db,
+            primary_channel="telegram",
+            primary_external_user="8319079055",
+            alias_channel="tui",
+            alias_external_user="local-operator",
+            created_by="test-suite",
+        )
+
+        self.assertEqual(alias.primary_human_id, "human:telegram:8319079055")
+        self.assertEqual(alias.primary_agent_id, "agent:human:telegram:8319079055")
+
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT agent_id
+                FROM session_bindings
+                WHERE session_id = ?
+                LIMIT 1
+                """,
+                ("session:tui:dm:local-operator",),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["agent_id"], "agent:human:telegram:8319079055")
 
     def test_swarm_linked_agent_persona_stays_on_builder_local_agent_id(self) -> None:
         approve_pairing(

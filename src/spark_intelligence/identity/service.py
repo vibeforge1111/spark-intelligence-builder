@@ -304,6 +304,10 @@ def link_identity_alias(
     so future lookups don't need to recompute them. If a row already exists
     for this (alias_channel, alias_external_user) it is overwritten.
 
+    Also updates any existing session_bindings for the alias surface to
+    point at the primary agent_id, so a session created before linking
+    immediately starts resolving to the shared agent on the next message.
+
     Idempotent. Returns the resulting IdentityAlias.
     """
     primary_human = _canonical_human_id(primary_channel, primary_external_user)
@@ -326,6 +330,18 @@ def link_identity_alias(
                 primary_agent,
                 created_by,
             ),
+        )
+        # Re-point any existing session_bindings for the alias surface so
+        # in-flight sessions immediately start using the primary agent.
+        conn.execute(
+            """
+            UPDATE session_bindings
+            SET agent_id = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE channel_id = ?
+              AND external_user_id = ?
+              AND agent_id != ?
+            """,
+            (primary_agent, alias_channel, alias_external_user, primary_agent),
         )
         conn.commit()
     return IdentityAlias(

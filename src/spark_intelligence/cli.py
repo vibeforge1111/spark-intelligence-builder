@@ -1653,6 +1653,49 @@ def build_parser() -> argparse.ArgumentParser:
     agent_migrate_persona_parser.add_argument("--force", action="store_true", help="Overwrite an existing agent persona with the migrated legacy state")
     agent_migrate_persona_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
+    identity_parser = subparsers.add_parser(
+        "identity",
+        help="Manage cross-surface identity aliases (one agent across telegram + tui + …)",
+    )
+    identity_subparsers = identity_parser.add_subparsers(dest="identity_command", required=True)
+
+    identity_link_parser = identity_subparsers.add_parser(
+        "link",
+        help="Link one (alias_channel, alias_user) to a primary (channel, user) so they share an agent",
+    )
+    identity_link_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    identity_link_parser.add_argument(
+        "--primary",
+        required=True,
+        help="Primary identity in 'channel:user' form (e.g. telegram:8319079055)",
+    )
+    identity_link_parser.add_argument(
+        "--as",
+        dest="as_",
+        required=True,
+        help="Alias identity in 'channel:user' form (e.g. tui:local-operator)",
+    )
+    identity_link_parser.add_argument("--created-by", default="cli", help="Audit field for who created the link")
+    identity_link_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+
+    identity_unlink_parser = identity_subparsers.add_parser(
+        "unlink",
+        help="Remove an identity alias",
+    )
+    identity_unlink_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    identity_unlink_parser.add_argument(
+        "alias",
+        help="Alias identity in 'channel:user' form (e.g. tui:local-operator)",
+    )
+    identity_unlink_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+
+    identity_list_parser = identity_subparsers.add_parser(
+        "list",
+        help="List all registered identity aliases",
+    )
+    identity_list_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    identity_list_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+
     pairing_parser = subparsers.add_parser("pairings", help="Manage pairings")
     pairing_subparsers = pairing_parser.add_subparsers(dest="pairings_command", required=True)
     pairing_list_parser = pairing_subparsers.add_parser("list", help="List pairings")
@@ -5326,6 +5369,132 @@ def handle_agent_migrate_legacy_personality(args: argparse.Namespace) -> int:
     return 0
 
 
+def _parse_identity_pair(value: str) -> tuple[str, str]:
+    """Parse 'channel:user' into a (channel, user) tuple. Validates non-empty."""
+    if ":" not in value:
+        raise ValueError(
+            f"Identity '{value}' must be in 'channel:user' form (e.g. telegram:8319079055)"
+        )
+    channel, user = value.split(":", 1)
+    channel = channel.strip()
+    user = user.strip()
+    if not channel or not user:
+        raise ValueError(
+            f"Identity '{value}' must have a non-empty channel and user"
+        )
+    return channel, user
+
+
+def handle_identity_link(args: argparse.Namespace) -> int:
+    from spark_intelligence.identity.service import link_identity_alias
+
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+
+    try:
+        primary_channel, primary_user = _parse_identity_pair(args.primary)
+        alias_channel, alias_user = _parse_identity_pair(args.as_)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    alias = link_identity_alias(
+        state_db=state_db,
+        primary_channel=primary_channel,
+        primary_external_user=primary_user,
+        alias_channel=alias_channel,
+        alias_external_user=alias_user,
+        created_by=args.created_by,
+    )
+    payload = {
+        "alias": f"{alias.alias_channel}:{alias.alias_external_user}",
+        "primary": f"{alias.primary_channel}:{alias.primary_external_user}",
+        "primary_human_id": alias.primary_human_id,
+        "primary_agent_id": alias.primary_agent_id,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(
+            f"Linked {payload['alias']} → {payload['primary']}\n"
+            f"  human_id: {alias.primary_human_id}\n"
+            f"  agent_id: {alias.primary_agent_id}"
+        )
+    return 0
+
+
+def handle_identity_unlink(args: argparse.Namespace) -> int:
+    from spark_intelligence.identity.service import unlink_identity_alias
+
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+
+    try:
+        alias_channel, alias_user = _parse_identity_pair(args.alias)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    removed = unlink_identity_alias(
+        state_db=state_db,
+        alias_channel=alias_channel,
+        alias_external_user=alias_user,
+    )
+    payload = {"alias": args.alias, "removed": removed}
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        if removed:
+            print(f"Unlinked {args.alias}")
+        else:
+            print(f"No alias found for {args.alias}")
+    return 0 if removed else 1
+
+
+def handle_identity_list(args: argparse.Namespace) -> int:
+    from spark_intelligence.identity.service import list_identity_aliases
+
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+
+    aliases = list_identity_aliases(state_db)
+
+    if args.json:
+        print(
+            json.dumps(
+                [
+                    {
+                        "alias": f"{a.alias_channel}:{a.alias_external_user}",
+                        "primary": f"{a.primary_channel}:{a.primary_external_user}",
+                        "primary_human_id": a.primary_human_id,
+                        "primary_agent_id": a.primary_agent_id,
+                    }
+                    for a in aliases
+                ],
+                indent=2,
+            )
+        )
+    else:
+        if not aliases:
+            print("No identity aliases registered.")
+        else:
+            print(f"Identity aliases ({len(aliases)}):")
+            for a in aliases:
+                print(
+                    f"  {a.alias_channel}:{a.alias_external_user}"
+                    f"  →  {a.primary_channel}:{a.primary_external_user}"
+                )
+                print(f"      human_id: {a.primary_human_id}")
+                print(f"      agent_id: {a.primary_agent_id}")
+    return 0
+
+
 def handle_pairings_list(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -5550,6 +5719,12 @@ def main(argv: list[str] | None = None) -> int:
         return handle_agent_import_personality(args)
     if args.command == "agent" and args.agent_command == "migrate-legacy-personality":
         return handle_agent_migrate_legacy_personality(args)
+    if args.command == "identity" and args.identity_command == "link":
+        return handle_identity_link(args)
+    if args.command == "identity" and args.identity_command == "unlink":
+        return handle_identity_unlink(args)
+    if args.command == "identity" and args.identity_command == "list":
+        return handle_identity_list(args)
     if args.command == "pairings" and args.pairings_command == "list":
         return handle_pairings_list(args)
     if args.command == "pairings" and args.pairings_command == "approve":
