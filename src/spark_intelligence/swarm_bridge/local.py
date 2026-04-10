@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -67,7 +69,7 @@ def swarm_bridge_run_specialization_path(
         repo_root=repo_root,
         path_key=path_key,
         command=[
-            "python",
+            sys.executable,
             "-m",
             "spark_swarm_bridge.cli",
             "specialization-path",
@@ -89,7 +91,7 @@ def swarm_bridge_autoloop(
 ) -> SwarmBridgeCommandResult:
     repo_root = _resolve_specialization_path_repo_root(config_manager, path_key)
     command = [
-        "python",
+        sys.executable,
         "-m",
         "spark_swarm_bridge.cli",
         "specialization-path",
@@ -121,7 +123,7 @@ def swarm_bridge_execute_rerun_request(
 ) -> SwarmBridgeCommandResult:
     repo_root = _resolve_specialization_path_repo_root(config_manager, path_key) if path_key else None
     command = [
-        "python",
+        sys.executable,
         "-m",
         "spark_swarm_bridge.cli",
         "specialization-path",
@@ -242,7 +244,21 @@ def _run_swarm_bridge_command(
     bridge_cwd = runtime_root / "apps" / "bridge"
     if not bridge_cwd.exists():
         raise RuntimeError(f"Spark Swarm bridge runtime is missing at {bridge_cwd}")
-    execution = run_governed_command(command=command, cwd=bridge_cwd)
+    bridge_src = bridge_cwd / "src"
+    env = dict(os.environ)
+    existing_pythonpath = str(env.get("PYTHONPATH") or "").strip()
+    pythonpath_entries = [str(bridge_src)] if bridge_src.exists() else []
+    if existing_pythonpath:
+        pythonpath_entries.append(existing_pythonpath)
+    if pythonpath_entries:
+        env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
+    env["SPARK_SWARM_STATE_DIR"] = str((runtime_root / ".state").resolve())
+    researcher_repo = (runtime_root.parent / "spark-researcher").resolve()
+    if researcher_repo.exists():
+        env["SPARK_RESEARCHER_REPO"] = str(researcher_repo)
+    if repo_root is not None and path_key:
+        env[_specialization_repo_env_var(path_key)] = str(repo_root.resolve())
+    execution = run_governed_command(command=command, cwd=bridge_cwd, env=env)
     session_id = _extract_session_id(execution.stdout)
     session_summary = None
     session_summary_path = None
@@ -300,6 +316,11 @@ def _resolve_swarm_runtime_root(config_manager: ConfigManager) -> Path:
     if candidate.exists():
         return candidate
     raise RuntimeError("Spark Swarm runtime root is not configured.")
+
+
+def _specialization_repo_env_var(path_key: str) -> str:
+    normalized = str(path_key or "").strip().upper().replace("-", "_")
+    return f"SPARK_SWARM_SPECIALIZATION_PATH_{normalized}_REPO"
 
 
 def _resolve_specialization_path_repo_root(config_manager: ConfigManager, path_key: str | None) -> Path:

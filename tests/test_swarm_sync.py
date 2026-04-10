@@ -16,6 +16,7 @@ from spark_intelligence.swarm_bridge.sync import (
     _record_swarm_sync_state,
     _record_swarm_failure_state,
     evaluate_swarm_escalation,
+    swarm_doctor,
     swarm_status,
     sync_swarm_collective,
 )
@@ -261,6 +262,163 @@ class SwarmSyncTests(SparkTestCase):
         self.assertEqual(status.refresh_token_env, "SPARK_SWARM_REFRESH_TOKEN")
         self.assertEqual(status.auth_client_key_env, "SPARK_SWARM_AUTH_CLIENT_KEY")
         self.assertTrue(status.access_token_expires_at)
+
+    def test_swarm_status_marks_payload_ready_from_active_specialization_collective(self) -> None:
+        path_root = self.home / "specialization-path-trading-crypto"
+        payload_path = path_root / ".spark-swarm" / "collective-sync.json"
+        payload_path.parent.mkdir(parents=True)
+        payload_path.write_text(
+            json.dumps(
+                {
+                    "agentId": "agent:trading-crypto",
+                    "emittedAt": "2026-04-10T12:00:00+00:00",
+                    "runtimeSource": {"kind": "specialization_path"},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with patch(
+            "spark_intelligence.swarm_bridge.sync.build_attachment_context",
+            return_value={
+                "active_chip_keys": [],
+                "pinned_chip_keys": [],
+                "attached_chip_keys": [],
+                "attached_path_keys": ["trading-crypto"],
+                "attached_chip_records": [],
+                "attached_path_records": [
+                    {
+                        "key": "trading-crypto",
+                        "label": "Trading Crypto",
+                        "repo_root": str(path_root),
+                    }
+                ],
+                "active_path_key": "trading-crypto",
+                "warning_count": 0,
+                "snapshot_path": "attachments.snapshot.json",
+            },
+        ):
+            status = swarm_status(self.config_manager, self.state_db)
+
+        self.assertTrue(status.payload_ready)
+        self.assertFalse(status.researcher_ready)
+
+    def test_swarm_doctor_reports_active_specialization_path_contract(self) -> None:
+        path_root = self.home / "specialization-path-trading-crypto"
+        manifest_path = path_root / "specialization-path.json"
+        scenario_path = path_root / "benchmarks" / "scenarios" / "trend-ema-btceth-4h.json"
+        mutation_target_path = path_root / "benchmarks" / "trading-crypto-candidate.json"
+        payload_path = path_root / ".spark-swarm" / "collective-sync.json"
+        scenario_path.parent.mkdir(parents=True, exist_ok=True)
+        mutation_target_path.parent.mkdir(parents=True, exist_ok=True)
+        payload_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "benchmarkProfile": {"defaultScenario": "trend-ema-btceth-4h"},
+                    "templates": [{"id": "candidate", "destination": "benchmarks/trading-crypto-candidate.json"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        scenario_path.write_text("{}", encoding="utf-8")
+        mutation_target_path.write_text("{}", encoding="utf-8")
+        payload_path.write_text(
+            json.dumps(
+                {
+                    "agentId": "agent:trading-crypto",
+                    "emittedAt": "2026-04-10T12:00:00+00:00",
+                    "runtimeSource": {"kind": "specialization_path"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.config_manager.set_path("spark.swarm.api_url", "https://api-production-6ea6.up.railway.app")
+        self.config_manager.set_path("spark.swarm.workspace_id", "ws_123")
+        self.config_manager.set_path("spark.swarm.access_token_env", "SPARK_SWARM_ACCESS_TOKEN")
+        self.config_manager.upsert_env_secret("SPARK_SWARM_ACCESS_TOKEN", self._make_jwt(expires_in_seconds=3600))
+
+        with patch(
+            "spark_intelligence.swarm_bridge.sync.build_attachment_context",
+            return_value={
+                "active_chip_keys": [],
+                "pinned_chip_keys": [],
+                "attached_chip_keys": [],
+                "attached_path_keys": ["trading-crypto"],
+                "attached_chip_records": [],
+                "attached_path_records": [
+                    {
+                        "key": "trading-crypto",
+                        "label": "Trading Crypto",
+                        "repo_root": str(path_root),
+                    }
+                ],
+                "active_path_key": "trading-crypto",
+                "warning_count": 0,
+                "snapshot_path": "attachments.snapshot.json",
+            },
+        ):
+            report = swarm_doctor(self.config_manager, self.state_db)
+
+        self.assertEqual(report.auth_source, "workspace_env")
+        self.assertEqual(report.payload_source, "specialization_path")
+        self.assertEqual(report.active_path_repo_root, str(path_root))
+        self.assertEqual(report.scenario_path, str(scenario_path))
+        self.assertEqual(report.mutation_target_path, str(mutation_target_path))
+        self.assertEqual(report.expected_bridge_repo_env, "SPARK_SWARM_SPECIALIZATION_PATH_TRADING_CRYPTO_REPO")
+        self.assertEqual(report.blockers, [])
+
+    def test_sync_uses_active_specialization_collective_without_researcher_runtime(self) -> None:
+        path_root = self.home / "specialization-path-trading-crypto"
+        payload_path = path_root / ".spark-swarm" / "collective-sync.json"
+        payload_path.parent.mkdir(parents=True)
+        payload_path.write_text(
+            json.dumps(
+                {
+                    "agentId": "agent:trading-crypto",
+                    "emittedAt": "2026-04-10T12:00:00+00:00",
+                    "runtimeSource": {"kind": "specialization_path"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.config_manager.set_path("spark.swarm.api_url", "https://api-production-6ea6.up.railway.app")
+        self.config_manager.set_path("spark.swarm.workspace_id", "ws_123")
+        self.config_manager.set_path("spark.swarm.access_token_env", "SPARK_SWARM_ACCESS_TOKEN")
+        self.config_manager.upsert_env_secret("SPARK_SWARM_ACCESS_TOKEN", self._make_jwt(expires_in_seconds=3600))
+
+        with patch(
+            "spark_intelligence.swarm_bridge.sync.build_attachment_context",
+            return_value={
+                "active_chip_keys": [],
+                "pinned_chip_keys": [],
+                "attached_chip_keys": [],
+                "attached_path_keys": ["trading-crypto"],
+                "attached_chip_records": [],
+                "attached_path_records": [
+                    {
+                        "key": "trading-crypto",
+                        "label": "Trading Crypto",
+                        "repo_root": str(path_root),
+                    }
+                ],
+                "active_path_key": "trading-crypto",
+                "warning_count": 0,
+                "snapshot_path": "attachments.snapshot.json",
+            },
+        ), patch(
+            "spark_intelligence.swarm_bridge.sync._build_collective_payload",
+            side_effect=AssertionError("researcher payload should not be built"),
+        ), patch(
+            "spark_intelligence.swarm_bridge.sync._post_collective_payload",
+            return_value={"accepted": True},
+        ) as post_mock:
+            result = sync_swarm_collective(config_manager=self.config_manager, state_db=self.state_db, dry_run=False)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.payload_path, str(payload_path))
+        self.assertEqual(post_mock.call_args.kwargs["payload"]["agentId"], "agent:trading-crypto")
+        self.assertEqual(post_mock.call_args.kwargs["payload"]["workspaceId"], "ws_123")
 
     def test_sync_refreshes_expired_access_token_before_upload(self) -> None:
         researcher_root = self.home / "spark-researcher"

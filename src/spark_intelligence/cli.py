@@ -129,7 +129,7 @@ from spark_intelligence.ops import (
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
 from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.state.db import StateDB
-from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_status, sync_swarm_collective
+from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_doctor, swarm_status, sync_swarm_collective
 from spark_intelligence.harness_registry import (
     build_harness_registry,
     select_auto_harness_recipe,
@@ -1656,6 +1656,9 @@ def build_parser() -> argparse.ArgumentParser:
     swarm_status_parser = swarm_subparsers.add_parser("status", help="Show Spark Swarm bridge readiness")
     swarm_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     swarm_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    swarm_doctor_parser = swarm_subparsers.add_parser("doctor", help="Diagnose Spark Swarm Telegram and specialization-path readiness")
+    swarm_doctor_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    swarm_doctor_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     swarm_configure_parser = swarm_subparsers.add_parser("configure", help="Configure Spark Swarm API settings")
     swarm_configure_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     swarm_configure_parser.add_argument("--api-url", help="Base URL for the Spark Swarm API")
@@ -4543,6 +4546,16 @@ def handle_swarm_status(args: argparse.Namespace) -> int:
     return 0 if status.payload_ready else 1
 
 
+def handle_swarm_doctor(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    report = swarm_doctor(config_manager, state_db)
+    print(report.to_json() if args.json else report.to_text())
+    return 0 if not report.blockers else 1
+
+
 def handle_swarm_configure(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
@@ -5886,6 +5899,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_config_unset(args)
     if args.command == "swarm" and args.swarm_command == "status":
         return handle_swarm_status(args)
+    if args.command == "swarm" and args.swarm_command == "doctor":
+        return handle_swarm_doctor(args)
     if args.command == "swarm" and args.swarm_command == "configure":
         return handle_swarm_configure(args)
     if args.command == "swarm" and args.swarm_command == "sync":
