@@ -388,6 +388,56 @@ def _researcher_routing_policy(config_manager: ConfigManager) -> dict[str, Any]:
     }
 
 
+_FAST_GREETING_PHRASES = frozenset(
+    {
+        "hi", "hey", "hello", "yo", "sup",
+        "what's up", "whats up",
+        "how are you", "how are you doing",
+        "how's it going", "hows it going",
+        "good morning", "good afternoon", "good evening",
+        "thanks", "thank you", "ty",
+        "ok", "okay", "cool", "nice", "got it",
+    }
+)
+
+
+def _is_fast_greeting(user_message: str) -> bool:
+    """True for short trivial greetings where advisory is wasted work.
+
+    The advisory subprocess is the slowest part of every reply, especially
+    on Windows where Python cold-start is 500ms-1s. For 'hi', running
+    advisory only to discover that we should use the conversational
+    fallback is a multi-second waste.
+    """
+    if not user_message:
+        return False
+    lowered = re.sub(r"\s+", " ", user_message.strip().lower()).rstrip("!.?")
+    if not lowered or len(lowered) > 60:
+        return False
+    if any(char.isdigit() for char in lowered):
+        return False
+    return lowered in _FAST_GREETING_PHRASES
+
+
+def _synthesize_skipped_advisory(user_message: str, request_id: str) -> dict[str, Any]:
+    """Fake advisory that triggers the conversational fallback path."""
+    return {
+        "guidance": [],
+        "boundaries": [],
+        "packets": [],
+        "packet_ids": [],
+        "epistemic_status": {
+            "status": "under_supported",
+            "clarity": "skipped_for_greeting",
+            "recommended_actions": [],
+        },
+        "trace_id": f"fast-greeting-{request_id}",
+        "trace_path": "",
+        "intent": {"query": user_message},
+        "original_user_message": user_message,
+    }
+
+
 def _is_conversational_fallback_candidate(
     *,
     user_message: str,
@@ -3477,15 +3527,29 @@ def build_researcher_reply(
                         output_keepability=output_keepability,
                         promotion_disposition=promotion_disposition,
                     )
-                build_advisory = _import_build_advisory(runtime_root)
-                execute_with_research = _import_execute_with_research(runtime_root)
-                advisory = build_advisory(
-                    config_path,
-                    contextual_task,
-                    model=provider_selection.model_family,
-                    limit=3,
-                    domain=None,
-                )
+                # Fast greeting fast-path: skip the advisory subprocess for
+                # trivial conversational openers like 'hi'. The bridge would
+                # otherwise spawn `python -m spark_intelligence.llm.provider_wrapper`,
+                # discover under_supported, and then call the direct fallback
+                # anyway. Skipping advisory shaves 2-5s on Windows per message.
+                if (
+                    provider_selection.provider
+                    and provider_selection.provider.execution_transport == "direct_http"
+                    and routing_policy["conversational_fallback_enabled"]
+                    and _is_fast_greeting(user_message)
+                ):
+                    advisory = _synthesize_skipped_advisory(user_message, request_id)
+                    execute_with_research = None  # type: ignore[assignment]
+                else:
+                    build_advisory = _import_build_advisory(runtime_root)
+                    execute_with_research = _import_execute_with_research(runtime_root)
+                    advisory = build_advisory(
+                        config_path,
+                        contextual_task,
+                        model=provider_selection.model_family,
+                        limit=3,
+                        domain=None,
+                    )
                 advisory["original_user_message"] = user_message
                 advisory_intent = advisory.get("intent")
                 if isinstance(advisory_intent, dict):
