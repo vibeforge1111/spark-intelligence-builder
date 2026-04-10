@@ -24,6 +24,10 @@ from spark_intelligence.memory.sdk_maintenance import (
     export_sdk_maintenance_replay,
     run_sdk_maintenance_report,
 )
+from spark_intelligence.memory.knowledge_base import (
+    TelegramStateKnowledgeBaseResult,
+    build_telegram_state_knowledge_base,
+)
 from spark_intelligence.memory.shadow_replay import (
     ShadowReplayBatchExportResult,
     ShadowReplayExportResult,
@@ -47,8 +51,10 @@ __all__ = [
     "SdkMaintenanceExportResult",
     "ShadowReplayBatchExportResult",
     "ShadowReplayExportResult",
+    "TelegramStateKnowledgeBaseResult",
     "build_sdk_maintenance_payload",
     "build_shadow_replay_payload",
+    "build_telegram_state_knowledge_base",
     "delete_personality_preferences_from_memory",
     "explain_memory_answer_in_memory",
     "export_sdk_maintenance_replay",

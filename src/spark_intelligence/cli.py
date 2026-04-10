@@ -86,6 +86,7 @@ from spark_intelligence.identity.service import (
 )
 from spark_intelligence.jobs.service import jobs_list, jobs_tick
 from spark_intelligence.memory import (
+    build_telegram_state_knowledge_base,
     export_sdk_maintenance_replay,
     export_shadow_replay,
     export_shadow_replay_batch,
@@ -1625,6 +1626,24 @@ def build_parser() -> argparse.ArgumentParser:
     memory_maintenance_parser.add_argument("--run-report", action="store_true", help="Run run-sdk-maintenance-report after export")
     memory_maintenance_parser.add_argument("--report-write", help="Optional output path for the generated SDK maintenance report JSON")
     memory_maintenance_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_compile_kb_parser = memory_subparsers.add_parser(
+        "compile-telegram-kb",
+        help="Compile a Spark KB/wiki vault directly from Builder Telegram state.db events",
+    )
+    memory_compile_kb_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_compile_kb_parser.add_argument("--output-dir", help="Knowledge-base output directory")
+    memory_compile_kb_parser.add_argument("--limit", type=int, default=25, help="Maximum Telegram conversations to scan from Builder state.db")
+    memory_compile_kb_parser.add_argument("--chat-id", help="Restrict the compile to one Telegram chat id")
+    memory_compile_kb_parser.add_argument("--validator-root", help="domain-chip-memory repo root used for KB compilation")
+    memory_compile_kb_parser.add_argument("--repo-source", action="append", default=[], help="Additional repo source file to include in the KB")
+    memory_compile_kb_parser.add_argument(
+        "--repo-source-manifest",
+        action="append",
+        default=[],
+        help="Manifest file listing repo sources to include in the KB",
+    )
+    memory_compile_kb_parser.add_argument("--write", help="Optional output path for the generated KB compile JSON payload")
+    memory_compile_kb_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_direct_smoke_parser = memory_subparsers.add_parser(
         "direct-smoke",
         help="Run an in-process Spark -> Domain Chip Memory write/read smoke test without changing persisted config",
@@ -4428,6 +4447,35 @@ def handle_memory_export_sdk_maintenance_replay(args: argparse.Namespace) -> int
     return 0
 
 
+def handle_memory_compile_telegram_kb(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    result = build_telegram_state_knowledge_base(
+        config_manager=config_manager,
+        output_dir=args.output_dir,
+        limit=args.limit,
+        chat_id=args.chat_id,
+        repo_sources=args.repo_source,
+        repo_source_manifest_files=args.repo_source_manifest,
+        write_path=args.write,
+        validator_root=args.validator_root,
+    )
+    print(result.to_json() if args.json else result.to_text())
+    payload = result.payload if isinstance(result.payload, dict) else {}
+    if payload.get("errors"):
+        return 1
+    summary = payload.get("summary") if isinstance(payload, dict) else None
+    if isinstance(summary, dict) and not summary.get("kb_valid", False):
+        return 1
+    health_report = payload.get("health_report") if isinstance(payload, dict) else None
+    if isinstance(health_report, dict):
+        if health_report.get("errors"):
+            return 1
+        if health_report.get("valid") is False:
+            return 1
+    return 0
+
+
 def handle_memory_direct_smoke(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -6056,6 +6104,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_memory_export_shadow_replay_batch(args)
     if args.command == "memory" and args.memory_command == "export-sdk-maintenance-replay":
         return handle_memory_export_sdk_maintenance_replay(args)
+    if args.command == "memory" and args.memory_command == "compile-telegram-kb":
+        return handle_memory_compile_telegram_kb(args)
     if args.command == "memory" and args.memory_command == "direct-smoke":
         return handle_memory_direct_smoke(args)
     if args.command == "config" and args.config_command == "show":
