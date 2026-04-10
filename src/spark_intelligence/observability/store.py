@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -332,59 +333,6 @@ def record_event(
                 _json_or_none(normalized_facts),
             ),
         )
-        conn.execute(
-            """
-            INSERT INTO event_log(
-                event_id,
-                event_type,
-                recorded_at,
-                workspace_id,
-                trace_ref,
-                request_id,
-                run_id,
-                session_id,
-                surface_kind,
-                channel_kind,
-                actor_kind,
-                actor_id,
-                status,
-                severity,
-                payload_json
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                event_id,
-                event_type,
-                recorded_at,
-                None,
-                trace_ref,
-                request_id,
-                run_id,
-                session_id,
-                component,
-                channel_id,
-                _derive_actor_kind(component=component, actor_id=actor_id, provenance=normalized_provenance),
-                actor_id,
-                status,
-                severity,
-                json.dumps(
-                    {
-                        "summary": summary,
-                        "truth_kind": truth_kind,
-                        "target_surface": target_surface,
-                        "component": component,
-                        "evidence_lane": evidence_lane,
-                        "reason_code": reason_code,
-                        "provenance": normalized_provenance,
-                        "facts": normalized_facts,
-                    },
-                    sort_keys=True,
-                    ensure_ascii=True,
-                    default=str,
-                ),
-            ),
-        )
         _mirror_delivery_event(
             conn,
             event_id=event_id,
@@ -436,6 +384,33 @@ def record_event(
             provenance=normalized_provenance,
         )
         conn.commit()
+    try:
+        with state_db.connect() as legacy_conn:
+            _record_legacy_event_log_entry(
+                legacy_conn,
+                event_id=event_id,
+                event_type=event_type,
+                recorded_at=recorded_at,
+                trace_ref=trace_ref,
+                request_id=request_id,
+                run_id=run_id,
+                session_id=session_id,
+                component=component,
+                channel_id=channel_id,
+                actor_id=actor_id,
+                status=status,
+                severity=severity,
+                summary=summary,
+                truth_kind=truth_kind,
+                target_surface=target_surface,
+                evidence_lane=evidence_lane,
+                reason_code=reason_code,
+                provenance=normalized_provenance,
+                facts=normalized_facts,
+            )
+    except sqlite3.DatabaseError:
+        # Keep the typed builder ledger authoritative even if the legacy mirror is degraded.
+        pass
     _record_follow_on_policy_block_if_needed(
         state_db,
         event_id=event_id,
@@ -469,6 +444,84 @@ def record_event(
         facts=normalized_facts,
     )
     return event_id
+
+
+def _record_legacy_event_log_entry(
+    conn: sqlite3.Connection,
+    *,
+    event_id: str,
+    event_type: str,
+    recorded_at: str,
+    trace_ref: str | None,
+    request_id: str | None,
+    run_id: str | None,
+    session_id: str | None,
+    component: str,
+    channel_id: str | None,
+    actor_id: str | None,
+    status: str,
+    severity: str,
+    summary: str,
+    truth_kind: str,
+    target_surface: str,
+    evidence_lane: str,
+    reason_code: str | None,
+    provenance: dict[str, Any],
+    facts: dict[str, Any],
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO event_log(
+            event_id,
+            event_type,
+            recorded_at,
+            workspace_id,
+            trace_ref,
+            request_id,
+            run_id,
+            session_id,
+            surface_kind,
+            channel_kind,
+            actor_kind,
+            actor_id,
+            status,
+            severity,
+            payload_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            event_id,
+            event_type,
+            recorded_at,
+            None,
+            trace_ref,
+            request_id,
+            run_id,
+            session_id,
+            component,
+            channel_id,
+            _derive_actor_kind(component=component, actor_id=actor_id, provenance=provenance),
+            actor_id,
+            status,
+            severity,
+            json.dumps(
+                {
+                    "summary": summary,
+                    "truth_kind": truth_kind,
+                    "target_surface": target_surface,
+                    "component": component,
+                    "evidence_lane": evidence_lane,
+                    "reason_code": reason_code,
+                    "provenance": provenance,
+                    "facts": facts,
+                },
+                sort_keys=True,
+                ensure_ascii=True,
+                default=str,
+            ),
+        ),
+    )
 
 
 def record_policy_gate_block(

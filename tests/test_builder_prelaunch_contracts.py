@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from unittest.mock import patch
 
 from spark_intelligence.attachments.snapshot import sync_attachment_snapshot
@@ -121,6 +122,45 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(counts["delivery_registry"], 1)
         self.assertGreaterEqual(counts["config_mutation_log"], 1)
         self.assertEqual(counts["provenance_mutation_log"], 1)
+
+    def test_record_event_keeps_primary_builder_ledger_when_legacy_event_log_is_degraded(self) -> None:
+        with patch(
+            "spark_intelligence.observability.store._record_legacy_event_log_entry",
+            side_effect=sqlite3.DatabaseError("database disk image is malformed"),
+        ):
+            event_id = record_event(
+                self.state_db,
+                event_type="memory_read_requested",
+                component="memory_cli",
+                summary="memory lookup attempted",
+                actor_id="test",
+                facts={"predicate": "profile.spark_role"},
+            )
+
+        with self.state_db.connect() as conn:
+            builder_row = conn.execute(
+                """
+                SELECT event_id, event_type, component
+                FROM builder_events
+                WHERE event_id = ?
+                """,
+                (event_id,),
+            ).fetchone()
+            event_log_count = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*) AS c
+                    FROM event_log
+                    WHERE event_id = ?
+                    """,
+                    (event_id,),
+                ).fetchone()["c"]
+            )
+
+        self.assertIsNotNone(builder_row)
+        self.assertEqual(builder_row["event_type"], "memory_read_requested")
+        self.assertEqual(builder_row["component"], "memory_cli")
+        self.assertEqual(event_log_count, 0)
 
     def test_secret_policy_detects_common_secret_families(self) -> None:
         self.assertTrue(looks_secret_like("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl"))
