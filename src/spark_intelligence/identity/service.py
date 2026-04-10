@@ -948,6 +948,64 @@ def rename_agent_identity(
     return read_canonical_agent_state(state_db=state_db, human_id=human_id)
 
 
+def cancel_agent_onboarding(
+    *,
+    state_db: StateDB,
+    human_id: str,
+    source_ref: str | None = None,
+) -> CanonicalAgentState:
+    """Wipe the agent name back to the empty-string sentinel.
+
+    This is the identity-layer half of the Q-E `/cancel` flow
+    (docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11, P2-2 in
+    docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md). The caller is also
+    responsible for clearing the onboarding state blob from
+    runtime_state (see personality.loader._delete_agent_onboarding_state)
+    and for the user-facing cancel reply.
+
+    Unlike rename_agent_identity, this function deliberately permits the
+    empty-string target because Phase 1 uses "" as the sentinel for
+    "no user-defined name yet" (CanonicalAgentState.has_user_defined_name
+    depends on it). Persona profile is left untouched per Q-J default.
+
+    No-op if the agent already has no name.
+    """
+    state = resolve_canonical_agent_identity(state_db=state_db, human_id=human_id)
+    if not state.agent_name:
+        return state
+    rename_id = f"agent-rename-{uuid4().hex[:12]}"
+    recorded_at = _utc_now_iso()
+    source_surface = "onboarding_cancel"
+    with state_db.connect() as conn:
+        conn.execute(
+            """
+            UPDATE agent_profiles
+            SET agent_name = '', name_updated_at = ?, name_source = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE agent_id = ?
+            """,
+            (recorded_at, source_surface, state.agent_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO agent_rename_history(
+                rename_id, agent_id, human_id, old_name, new_name, source_surface, source_ref, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                rename_id,
+                state.agent_id,
+                human_id,
+                state.agent_name,
+                "",
+                source_surface,
+                source_ref,
+                recorded_at,
+            ),
+        )
+        conn.commit()
+    return read_canonical_agent_state(state_db=state_db, human_id=human_id)
+
+
 def list_agent_rename_history(
     *,
     state_db: StateDB,

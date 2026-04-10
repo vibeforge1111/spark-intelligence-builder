@@ -1,6 +1,7 @@
 from spark_intelligence.identity.service import (
     agent_inspect,
     approve_pairing,
+    cancel_agent_onboarding,
     hold_pairing,
     inspect_canonical_agent,
     link_spark_swarm_agent,
@@ -17,6 +18,7 @@ from spark_intelligence.identity.service import (
 __all__ = [
     "agent_inspect",
     "approve_pairing",
+    "cancel_agent_onboarding",
     "hold_pairing",
     "inspect_canonical_agent",
     "link_spark_swarm_agent",
