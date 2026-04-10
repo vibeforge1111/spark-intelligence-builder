@@ -1638,6 +1638,34 @@ def _looks_like_spark_self_knowledge_query(lowered_message: str) -> bool:
     return looks_like_system_registry_query(lowered_message)
 
 
+def _build_spark_self_knowledge_context(
+    *,
+    user_message: str,
+    attachment_context: dict[str, object],
+) -> str:
+    lowered_message = str(user_message or "").strip().lower()
+    if not lowered_message or not _looks_like_spark_self_knowledge_query(lowered_message):
+        return ""
+
+    active_chip_keys = [str(item) for item in (attachment_context.get("active_chip_keys") or []) if str(item)]
+    pinned_chip_keys = [str(item) for item in (attachment_context.get("pinned_chip_keys") or []) if str(item)]
+    attached_chip_keys = [str(item) for item in (attachment_context.get("attached_chip_keys") or []) if str(item)]
+    attached_path_keys = [str(item) for item in (attachment_context.get("attached_path_keys") or []) if str(item)]
+    active_path_key = str(attachment_context.get("active_path_key") or "").strip()
+
+    lines = ["[Spark self-knowledge]"]
+    lines.append(f"- active_chips: {', '.join(active_chip_keys) if active_chip_keys else 'none'}")
+    lines.append(f"- pinned_chips: {', '.join(pinned_chip_keys) if pinned_chip_keys else 'none'}")
+    lines.append(f"- attached_chips: {', '.join(attached_chip_keys) if attached_chip_keys else 'none'}")
+    lines.append(f"- active_path: {active_path_key or 'none'}")
+    if attached_path_keys:
+        lines.append(f"- attached_paths: {', '.join(attached_path_keys)}")
+    lines.append(
+        "- Treat this as Spark-owned runtime context about currently attached tools and paths, not as user memory."
+    )
+    return "\n".join(lines)
+
+
 def _load_recent_conversation_context(
     *,
     state_db: StateDB,
