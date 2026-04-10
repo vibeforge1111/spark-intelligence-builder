@@ -142,8 +142,7 @@ def _resolve_repo_source_inputs(
     resolved_repo_source_manifest_files = [
         str(item) for item in (repo_source_manifest_files or []) if str(item).strip()
     ]
-    if resolved_repo_sources or resolved_repo_source_manifest_files:
-        return resolved_repo_sources, resolved_repo_source_manifest_files
-    if DEFAULT_BUILDER_KB_REPO_SOURCE_MANIFEST.exists():
-        resolved_repo_source_manifest_files.append(str(DEFAULT_BUILDER_KB_REPO_SOURCE_MANIFEST))
+    default_manifest = str(DEFAULT_BUILDER_KB_REPO_SOURCE_MANIFEST)
+    if DEFAULT_BUILDER_KB_REPO_SOURCE_MANIFEST.exists() and default_manifest not in resolved_repo_source_manifest_files:
+        resolved_repo_source_manifest_files.append(default_manifest)
     return resolved_repo_sources, resolved_repo_source_manifest_files

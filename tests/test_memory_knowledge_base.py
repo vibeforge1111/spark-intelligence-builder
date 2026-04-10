@@ -67,6 +67,8 @@ class TelegramStateKnowledgeBaseTests(SparkTestCase):
                 "README.md",
                 "--repo-source-manifest",
                 "repo-sources.json",
+                "--repo-source-manifest",
+                str(Path(__file__).resolve().parents[1] / "docs" / "manifests" / "spark_memory_kb_repo_sources.json"),
                 "--write",
                 str(write_path),
             ],
@@ -133,6 +135,65 @@ class TelegramStateKnowledgeBaseTests(SparkTestCase):
                 "12",
                 "--chat-id",
                 "12345",
+                "--repo-source-manifest",
+                str(default_manifest),
+            ],
+            cwd=str(self.home),
+        )
+
+    def test_build_telegram_state_knowledge_base_keeps_default_manifest_when_explicit_repo_source_is_added(self) -> None:
+        output_dir = self.home / "artifacts" / "spark-memory-kb"
+        default_manifest = self.home / "docs" / "manifests" / "spark_memory_kb_repo_sources.json"
+        default_manifest.parent.mkdir(parents=True, exist_ok=True)
+        default_manifest.write_text('{"repo_sources":["../../README.md"]}', encoding="utf-8")
+
+        with patch(
+            "spark_intelligence.memory.knowledge_base.DEFAULT_BUILDER_KB_REPO_SOURCE_MANIFEST",
+            default_manifest,
+        ), patch(
+            "spark_intelligence.memory.knowledge_base.run_governed_command",
+            return_value=SimpleNamespace(
+                exit_code=0,
+                stdout=json.dumps(
+                    {
+                        "builder_home": str(self.home),
+                        "summary": {
+                            "selected_chat_id": "12345",
+                            "conversation_count": 1,
+                            "accepted_writes": 2,
+                            "rejected_writes": 0,
+                            "skipped_turns": 0,
+                            "kb_valid": True,
+                        },
+                        "health_report": {"valid": True, "errors": []},
+                    }
+                ),
+                stderr="",
+            ),
+        ) as governed:
+            build_telegram_state_knowledge_base(
+                config_manager=self.config_manager,
+                output_dir=output_dir,
+                limit=12,
+                chat_id="12345",
+                repo_sources=["regression-summary.md"],
+                validator_root=self.home,
+            )
+
+        governed.assert_called_once_with(
+            command=[
+                sys.executable,
+                "-m",
+                "domain_chip_memory.cli",
+                "run-spark-builder-state-telegram-intake",
+                str(self.home),
+                str(output_dir),
+                "--limit",
+                "12",
+                "--chat-id",
+                "12345",
+                "--repo-source",
+                "regression-summary.md",
                 "--repo-source-manifest",
                 str(default_manifest),
             ],
