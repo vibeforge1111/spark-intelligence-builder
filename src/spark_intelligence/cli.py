@@ -95,6 +95,7 @@ from spark_intelligence.memory import (
     inspect_memory_sdk_runtime,
     lookup_current_state_in_memory,
     run_memory_sdk_smoke_test,
+    run_telegram_memory_architecture_soak,
     run_telegram_memory_regression,
 )
 from spark_intelligence.personality import (
@@ -1669,6 +1670,23 @@ def build_parser() -> argparse.ArgumentParser:
     memory_architecture_benchmark_parser.add_argument("--output-dir", help="Benchmark artifact output directory")
     memory_architecture_benchmark_parser.add_argument("--validator-root", help="domain-chip-memory repo root used for architecture benchmarking")
     memory_architecture_benchmark_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_architecture_soak_parser = memory_subparsers.add_parser(
+        "soak-architectures",
+        help="Run the live Telegram regression repeatedly and aggregate three-way architecture comparison results",
+    )
+    memory_architecture_soak_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_architecture_soak_parser.add_argument("--output-dir", help="Soak artifact output directory")
+    memory_architecture_soak_parser.add_argument("--runs", type=int, default=50, help="Number of full live regression runs to execute")
+    memory_architecture_soak_parser.add_argument("--sleep-seconds", type=float, default=0.0, help="Optional delay between runs")
+    memory_architecture_soak_parser.add_argument("--user-id", help="Explicit Telegram user id to simulate")
+    memory_architecture_soak_parser.add_argument("--username", help="Telegram username to simulate")
+    memory_architecture_soak_parser.add_argument("--chat-id", help="Explicit Telegram chat id override")
+    memory_architecture_soak_parser.add_argument("--case-id", action="append", default=[], help="Restrict the soak to one or more case ids")
+    memory_architecture_soak_parser.add_argument("--category", action="append", default=[], help="Restrict the soak to one or more case categories")
+    memory_architecture_soak_parser.add_argument("--kb-limit", type=int, default=25, help="Maximum Telegram conversations to scan when compiling the KB")
+    memory_architecture_soak_parser.add_argument("--validator-root", help="domain-chip-memory repo root used for KB compilation")
+    memory_architecture_soak_parser.add_argument("--write", help="Optional output path for the soak summary JSON payload")
+    memory_architecture_soak_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_direct_smoke_parser = memory_subparsers.add_parser(
         "direct-smoke",
         help="Run an in-process Spark -> Domain Chip Memory write/read smoke test without changing persisted config",
@@ -4536,6 +4554,34 @@ def handle_memory_benchmark_architectures(args: argparse.Namespace) -> int:
     return 1 if payload.get("errors") else 0
 
 
+def handle_memory_soak_architectures(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = run_telegram_memory_architecture_soak(
+        config_manager=config_manager,
+        state_db=state_db,
+        output_dir=args.output_dir,
+        runs=args.runs,
+        sleep_seconds=args.sleep_seconds,
+        user_id=args.user_id,
+        username=args.username,
+        chat_id=args.chat_id,
+        kb_limit=args.kb_limit,
+        validator_root=args.validator_root,
+        write_path=args.write,
+        case_ids=args.case_id,
+        categories=args.category,
+    )
+    print(result.to_json() if args.json else result.to_text())
+    payload = result.payload if isinstance(result.payload, dict) else {}
+    summary = payload.get("summary") if isinstance(payload, dict) else {}
+    if payload.get("errors"):
+        return 1
+    return 0 if int(summary.get("completed_runs") or 0) > 0 else 1
+
+
 def handle_memory_direct_smoke(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -6170,6 +6216,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_memory_run_telegram_regression(args)
     if args.command == "memory" and args.memory_command == "benchmark-architectures":
         return handle_memory_benchmark_architectures(args)
+    if args.command == "memory" and args.memory_command == "soak-architectures":
+        return handle_memory_soak_architectures(args)
     if args.command == "memory" and args.memory_command == "direct-smoke":
         return handle_memory_direct_smoke(args)
     if args.command == "config" and args.config_command == "show":
