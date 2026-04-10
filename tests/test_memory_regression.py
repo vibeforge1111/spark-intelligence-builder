@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from spark_intelligence.memory import TelegramMemoryRegressionResult
+from spark_intelligence.memory import TelegramMemoryRegressionResult, run_telegram_memory_regression
 
 from tests.test_support import SparkTestCase
 
@@ -62,3 +62,39 @@ class MemoryRegressionTests(SparkTestCase):
         self.assertEqual(kwargs["kb_limit"], 12)
         self.assertEqual(kwargs["validator_root"], "C:/validator")
         self.assertEqual(kwargs["write_path"], str(write_path))
+
+    def test_run_telegram_memory_regression_blocks_fast_when_user_is_not_paired(self) -> None:
+        output_dir = self.home / "artifacts" / "telegram-memory-regression-blocked"
+        unauthorized_payload = {
+            "message": "My name is Sarah.",
+            "user_id": "22345",
+            "chat_id": "22345",
+            "result": {
+                "ok": False,
+                "decision": "pending_pairing",
+                "detail": {
+                    "response_text": "Unauthorized DM. Pairing approval is required before this agent will respond.",
+                },
+            },
+        }
+
+        with patch(
+            "spark_intelligence.gateway.runtime.gateway_ask_telegram",
+            return_value=json.dumps(unauthorized_payload),
+        ) as ask_telegram, patch(
+            "spark_intelligence.memory.regression.build_telegram_state_knowledge_base",
+        ) as compile_kb:
+            result = run_telegram_memory_regression(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                output_dir=output_dir,
+                user_id="22345",
+                chat_id="22345",
+            )
+
+        payload = result.payload
+        self.assertEqual(payload["summary"]["status"], "blocked_precondition")
+        self.assertIn("pending_pairing", payload["summary"]["blocked_reason"])
+        self.assertEqual(len(payload["cases"]), 1)
+        ask_telegram.assert_called_once()
+        compile_kb.assert_not_called()

@@ -198,6 +198,7 @@ class TelegramMemoryRegressionResult:
         lines = ["Spark memory Telegram regression"]
         lines.append(f"- output_dir: {self.output_dir}")
         if isinstance(summary, dict):
+            lines.append(f"- status: {summary.get('status') or 'unknown'}")
             lines.append(f"- cases: {summary.get('case_count', 0)}")
             lines.append(f"- matched: {summary.get('matched_case_count', 0)}")
             lines.append(f"- mismatched: {summary.get('mismatched_case_count', 0)}")
@@ -212,6 +213,9 @@ class TelegramMemoryRegressionResult:
                 f"- kb_evidence_hits: "
                 f"{summary.get('kb_evidence_hits', 0)}/{summary.get('kb_evidence_total', 0)}"
             )
+            blocked_reason = str(summary.get("blocked_reason") or "").strip()
+            if blocked_reason:
+                lines.append(f"- blocked_reason: {blocked_reason}")
         mismatches = self.payload.get("mismatches") if isinstance(self.payload, dict) else None
         if isinstance(mismatches, list) and mismatches:
             lines.append("- mismatch_cases: " + ", ".join(str(item.get("case_id") or "unknown") for item in mismatches[:8]))
@@ -265,6 +269,37 @@ def run_telegram_memory_regression(
             elif selected_user_id:
                 selected_chat_id = selected_user_id
         case_result = _build_case_result(case=case, payload=gateway_payload)
+        if case_result.get("decision") != "allowed":
+            blocked_reason = _blocked_reason_for_case(case_result)
+            payload = {
+                "summary": {
+                    "status": "blocked_precondition",
+                    "case_count": len(DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES),
+                    "matched_case_count": 0,
+                    "mismatched_case_count": 0,
+                    "selected_user_id": selected_user_id,
+                    "selected_chat_id": selected_chat_id,
+                    "human_id": f"human:telegram:{selected_user_id}" if selected_user_id else None,
+                    "kb_has_probe_coverage": False,
+                    "kb_issue_labels": [],
+                    "kb_current_state_hits": 0,
+                    "kb_current_state_total": 0,
+                    "kb_evidence_hits": 0,
+                    "kb_evidence_total": 0,
+                    "blocked_reason": blocked_reason,
+                },
+                "cases": [case_result],
+                "mismatches": [],
+                "inspection": None,
+                "kb_compile": None,
+                "artifact_paths": {
+                    "summary_json": str(resolved_write_path),
+                    "kb_output_dir": str(resolved_kb_output_dir),
+                    "kb_json": str(kb_write_path),
+                },
+            }
+            resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            return TelegramMemoryRegressionResult(output_dir=resolved_output_dir, payload=payload)
         case_payloads.append(case_result)
         if not case_result.get("matched_expectations", True):
             mismatches.append(case_result)
@@ -292,6 +327,7 @@ def run_telegram_memory_regression(
     current_probe = _probe_row(kb_payload, "current_state")
     evidence_probe = _probe_row(kb_payload, "evidence")
     summary = {
+        "status": "ok",
         "case_count": len(case_payloads),
         "matched_case_count": len(case_payloads) - len(mismatches),
         "mismatched_case_count": len(mismatches),
@@ -380,3 +416,12 @@ def _probe_row(payload: dict[str, Any], probe_type: str) -> dict[str, Any]:
         if isinstance(row, dict) and str(row.get("probe_type") or "").strip() == probe_type:
             return row
     return {}
+
+
+def _blocked_reason_for_case(case_result: dict[str, Any]) -> str:
+    decision = str(case_result.get("decision") or "").strip()
+    response_text = str(case_result.get("response_text") or "").strip()
+    case_id = str(case_result.get("case_id") or "").strip() or "unknown_case"
+    if response_text:
+        return f"{case_id}:{decision}:{response_text}"
+    return f"{case_id}:{decision}"
