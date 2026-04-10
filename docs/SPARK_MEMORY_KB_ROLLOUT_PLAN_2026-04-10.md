@@ -80,8 +80,12 @@ Current implementation target:
   - occupation write + query
   - city write + explanation
   - startup write + explanation
+  - founder write + query
   - mission write + explanation
+  - timezone write + query
+  - country write + query
   - identity summary
+  - stable abstention on an unwritten fact lane
   - overwrite/update case for city
 - summary should score:
   - expected bridge mode

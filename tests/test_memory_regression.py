@@ -15,8 +15,8 @@ class MemoryRegressionTests(SparkTestCase):
         write_path = output_dir / "summary.json"
         payload = {
             "summary": {
-                "case_count": 13,
-                "matched_case_count": 13,
+                "case_count": 20,
+                "matched_case_count": 20,
                 "mismatched_case_count": 0,
                 "selected_user_id": "12345",
                 "selected_chat_id": "12345",
@@ -53,7 +53,7 @@ class MemoryRegressionTests(SparkTestCase):
             )
 
         self.assertEqual(exit_code, 0, stderr)
-        self.assertEqual(json.loads(stdout)["summary"]["case_count"], 13)
+        self.assertEqual(json.loads(stdout)["summary"]["case_count"], 20)
         kwargs = run_regression.call_args.kwargs
         self.assertEqual(kwargs["config_manager"].paths.home, Path(self.home))
         self.assertEqual(kwargs["output_dir"], str(output_dir))
