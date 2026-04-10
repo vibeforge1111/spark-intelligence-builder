@@ -199,3 +199,45 @@ Schema finding is the headline: **`agent_profiles.agent_name` is `NOT NULL`**, s
 My recommendation is **option c**: schema unchanged, no migration, agent-creation gated on a user-provided name, `read_canonical_agent_state` handles the "no row yet" case, 5 fallbacks removed. This is the cleanest semantically and the safest operationally (no live schema change on a database that's had recent corruption issues).
 
 Audit status: **complete.** Phase 1 Step 2 is blocked on Q-1.
+
+---
+
+## Addendum 2026-04-10 — Q-1 revision after full code read
+
+**Original recommendation:** option (c) — require name-before-create, `read_canonical_agent_state` returns `CanonicalAgentState | None`, 17 call sites updated.
+
+**Revised recommendation after reading the full context:** **option (b)** — empty-string sentinel, `CanonicalAgentState.agent_name` stays `str`, new `has_user_defined_name` property as the user-facing gate.
+
+**Why the revision:**
+1. `read_canonical_agent_state` is entangled with `resolve_canonical_agent_identity` — lines 504 and 517 of the original call it when the link or profile row is missing, acting as a create-if-missing shortcut. `rename_agent_identity` also depends on this shortcut (line 718 calls resolve with no display_name during onboarding). Decoupling read from create would cascade into `rename_agent_identity` and every onboarding touchpoint, a much larger surgery than the audit estimated.
+2. Empty-string sentinel is **already half-present** in the codebase — `resolve_canonical_agent_identity` line 453 (original) has: `elif ... and not str(profile_row["agent_name"] or "").strip() and resolved_name:` — meaning the code already treats empty-string as "unset" in at least one repair path. This precedent reduces the semantic-drift risk I cited in the original audit.
+3. `build_telegram_surface_identity_preamble` **already has an empty-name guard** at lines 829-830 (`if not visible_name: return ""`) and a no-saved-persona guard at line 851. Both mean the preamble is already safe under the new empty-name regime without any preamble-side edits.
+4. The user-facing contract — *"agents should have a name always that the user defines"* — is satisfied by gating all user-facing output on `has_user_defined_name`. The DB-level representation ("" vs NULL) is an implementation detail the operator doesn't see.
+
+**What changed:**
+- `CanonicalAgentState.agent_name` stays `str` (not `str | None`)
+- `read_canonical_agent_state` still auto-creates (still calls `resolve_canonical_agent_identity` on missing rows)
+- New rows are created with `agent_name = ""` when no `display_name` is provided
+- New property `CanonicalAgentState.has_user_defined_name` returns True iff the name is a real, non-whitespace string
+- `to_payload()` exposes `has_user_defined_name` so JSON-surface callers can gate too
+- 5 `"Spark Agent"` literals removed:
+  - line 379 (resolve create path): empty-string passthrough
+  - line 531 (read_canonical_agent_state): empty-string passthrough
+  - line 557 (link_spark_swarm_agent): **strict raise** — external system must propagate a user-defined name
+  - line 612 (link_spark_swarm_agent INSERT): coalesce to `incoming_name` (which is guaranteed non-empty by the raise above)
+  - line 860 (normalize_spark_swarm_identity_import): **strict raise** — import boundary must propagate a user-defined name
+- `tests/test_support.py:129` fake swarm helper: empty-string passthrough (matches real hook contract)
+
+**What did NOT change:**
+- `read_canonical_agent_state` signature
+- `resolve_canonical_agent_identity` signature
+- `rename_agent_identity` — still works because it UPDATEs the agent_name field regardless of prior value
+- The 17 call sites of `read_canonical_agent_state` — none needed updates because `agent_name` is still `str`, just can be empty
+- Schema — no migration required
+
+**Trade-off honestly stated:**
+- Option (b) is marginally more fragile than option (c) because an empty-string sentinel is easier to forget to check than a `None`. The `has_user_defined_name` property is the mitigation — future readers can grep for it to find every user-facing gate.
+- Phase 1 Steps 3 (onboarding flow) and 5 (tests) still need to land for the "user must define a name before the agent speaks" contract to be fully enforced. Right now, a user with no saved persona would see no name tag (preamble returns ""), which is better than seeing "Spark Agent" — but not as guided as a first-run onboarding nudge. Step 3 handles that.
+
+**What this addendum supersedes:** the "Phase 1 revised plan" in §8 above (all three Q-1 branches). The actual shipped plan is option (b) as described here. §8 is kept for historical context.
+

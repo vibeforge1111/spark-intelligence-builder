@@ -126,7 +126,11 @@ def main() -> int:
     elif args.hook == "identity":
         human_id = str(payload.get("human_id") or "human:unknown")
         current_identity = payload.get("current_identity") or {}
-        current_name = str(current_identity.get("agent_name") or "Spark Agent").strip() or "Spark Agent"
+        # Fake swarm runtime used for tests. Under the no-default-name rule
+        # the real swarm hook must return a non-empty agent_name; this fake
+        # mirrors that by propagating whatever name the test provided (empty
+        # strings trigger the real hook's validation error downstream).
+        current_name = str(current_identity.get("agent_name") or "").strip()
         suffix = human_id.split(":")[-1]
         result = {
             "returncode": 0,

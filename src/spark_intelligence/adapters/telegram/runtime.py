@@ -70,6 +70,7 @@ from spark_intelligence.swarm_bridge import (
     swarm_review_mastery,
     swarm_set_evolution_mode,
     swarm_sync_upgrade_delivery_status,
+    swarm_doctor,
     swarm_status,
     sync_swarm_collective,
 )
@@ -2055,7 +2056,7 @@ def _handle_runtime_command(
             "command": "/swarm",
             "reply_text": (
                 "Swarm commands: `/swarm status`, `/swarm overview`, `/swarm live`, `/swarm runtime`, "
-                "`/swarm specializations`, `/swarm insights`, `/swarm masteries`, `/swarm upgrades`, `/swarm issues`, `/swarm inbox`, `/swarm collective`, `/swarm sync`, "
+                "`/swarm doctor`, `/swarm specializations`, `/swarm insights`, `/swarm masteries`, `/swarm upgrades`, `/swarm issues`, `/swarm inbox`, `/swarm collective`, `/swarm sync`, "
                 "`/swarm paths`, `/swarm run <path_key>`, `/swarm autoloop <path_key> [rounds <n>]`, "
                 "`/swarm continue <path_key> [session <id>] [rounds <n>]`, `/swarm sessions <path_key>`, "
                 "`/swarm session <path_key> [latest|<session_id>]`, `/swarm rerun [path_key]`, "
@@ -2063,6 +2064,12 @@ def _handle_runtime_command(
                 "`/swarm mode <specialization_id> <observe_only|review_required|checked_auto_merge|trusted_auto_apply>`, "
                 "`/swarm deliver <upgrade_id>`, and `/swarm sync-delivery <upgrade_id>`."
             ),
+        }
+    if lowered == "/swarm doctor" or natural_swarm_command == ("/swarm doctor", None):
+        report = swarm_doctor(config_manager, state_db)
+        return {
+            "command": "/swarm doctor",
+            "reply_text": _render_swarm_doctor_reply(report),
         }
     if lowered == "/swarm status" or natural_swarm_command == ("/swarm status", None):
         status = swarm_status(config_manager, state_db)
@@ -4296,6 +4303,24 @@ def _render_swarm_overview_reply(payload: dict[str, Any]) -> str:
     )
 
 
+def _render_swarm_doctor_reply(report: Any) -> str:
+    blockers = list(getattr(report, "blockers", []) or [])
+    recommendations = list(getattr(report, "recommendations", []) or [])
+    next_step = recommendations[0] if recommendations else "No next action suggested."
+    lines = [
+        f"Swarm doctor: {'blocked' if blockers else 'ready'}.",
+        f"Auth source: {getattr(report, 'auth_source', 'unknown')}. Payload source: {getattr(report, 'payload_source', 'missing')}.",
+        f"Active path: {getattr(report, 'active_path_key', None) or 'none'}. Repo: {getattr(report, 'active_path_repo_root', None) or 'missing'}.",
+        f"Scenario: {getattr(report, 'scenario_path', None) or 'missing'}. Mutation target: {getattr(report, 'mutation_target_path', None) or 'missing'}.",
+    ]
+    if blockers:
+        lines.append(f"Blocker: {blockers[0]}")
+    else:
+        lines.append("No blockers detected.")
+    lines.append(f"Next: {next_step}")
+    return "\n".join(lines)
+
+
 def _render_swarm_runtime_reply(payload: dict[str, Any]) -> str:
     intelligence = payload.get("intelligencePulse") if isinstance(payload, dict) else {}
     pending_upgrades = (intelligence or {}).get("pendingUpgradeCount") if isinstance(intelligence, dict) else None
@@ -4909,6 +4934,17 @@ def _match_natural_swarm_command(inbound_text: str) -> tuple[str, str | None] | 
         "what can swarm do",
     }:
         return ("/swarm", None)
+
+    if simplified in {
+        "swarm doctor",
+        "show swarm doctor",
+        "show me swarm doctor",
+        "run swarm doctor",
+        "check swarm doctor",
+        "diagnose swarm",
+        "diagnose spark swarm",
+    }:
+        return ("/swarm doctor", None)
 
     if simplified in {
         "swarm status",

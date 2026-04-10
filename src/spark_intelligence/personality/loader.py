@@ -833,6 +833,7 @@ def build_telegram_surface_identity_preamble(
     warmth = float(traits.get("warmth", 0.5))
     directness = float(traits.get("directness", 0.5))
     pacing = float(traits.get("pacing", 0.5))
+    playfulness = float(traits.get("playfulness", 0.5))
 
     if surface == "approval_welcome":
         if not resolved_profile:
@@ -849,7 +850,16 @@ def build_telegram_surface_identity_preamble(
     )
     if not has_saved_persona:
         return ""
-    return ""
+
+    # runtime_command surface: short, trait-shaped name tag that
+    # apply_telegram_surface_persona prepends to the first non-empty
+    # line of the reply. Must match one of the dedup patterns in
+    # apply_telegram_surface_persona ("{name}:", "{name} here.").
+    if directness >= 0.65 or pacing >= 0.6 or warmth <= 0.4:
+        return f"{visible_name}:"
+    if warmth >= 0.65 or playfulness >= 0.6:
+        return f"{visible_name} here."
+    return f"{visible_name}:"
 
 
 def apply_telegram_surface_persona(

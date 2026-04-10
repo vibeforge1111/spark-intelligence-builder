@@ -195,11 +195,24 @@ class CanonicalAgentState:
     name_updated_at: str | None = None
     name_source: str | None = None
 
+    @property
+    def has_user_defined_name(self) -> bool:
+        """True when the agent has a real, user-supplied name.
+
+        An empty or whitespace-only agent_name means the row exists but the
+        user has not yet named the agent (via onboarding, rename, or Spark
+        Swarm import). Callers that produce user-facing output MUST gate on
+        this before emitting the name — otherwise the reply would look like
+        a "Spark Agent" default leaked through.
+        """
+        return bool(self.agent_name and self.agent_name.strip())
+
     def to_payload(self) -> dict[str, Any]:
         return {
             "human_id": self.human_id,
             "agent_id": self.agent_id,
             "agent_name": self.agent_name,
+            "has_user_defined_name": self.has_user_defined_name,
             "origin": self.origin,
             "status": self.status,
             "preferred_source": self.preferred_source,
@@ -376,7 +389,12 @@ def resolve_canonical_agent_identity(
     display_name: str | None = None,
 ) -> CanonicalAgentState:
     local_agent_id = _canonical_agent_id(human_id)
-    resolved_name = (display_name or "").strip() or "Spark Agent"
+    # NOTE: No default-name fallback here. If display_name is empty, the row
+    # is created with an empty agent_name and CanonicalAgentState.has_user_defined_name
+    # will be False. Callers that need a user-facing name must gate on that
+    # property and route the user through onboarding (see
+    # docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md).
+    resolved_name = (display_name or "").strip()
 
     with state_db.connect() as conn:
         link_row = conn.execute(
@@ -528,7 +546,10 @@ def read_canonical_agent_state(
     return CanonicalAgentState(
         human_id=str(profile_row["human_id"]),
         agent_id=str(profile_row["agent_id"]),
-        agent_name=str(profile_row["agent_name"] or "Spark Agent"),
+        # No "Spark Agent" fallback: an empty name here is the signal that
+        # the user has not yet named this agent. Readers should check
+        # has_user_defined_name before producing user-facing output.
+        agent_name=str(profile_row["agent_name"] or ""),
         origin=str(profile_row["origin"] or "builder_local"),
         status=str(link_row["status"] or profile_row["status"] or "active"),
         preferred_source=str(link_row["preferred_source"] or "builder_local"),
@@ -554,7 +575,15 @@ def link_spark_swarm_agent(
     if not swarm_agent_id.strip():
         raise ValueError("Spark Swarm agent_id must not be empty.")
     local_agent_id = _canonical_agent_id(human_id)
-    incoming_name = agent_name.strip() or "Spark Agent"
+    # Strict contract: Spark Swarm must hand us a user-defined agent_name.
+    # Under the "no default agent names" rule, silently substituting
+    # "Spark Agent" would leak a default-name into a linked-swarm identity.
+    incoming_name = agent_name.strip()
+    if not incoming_name:
+        raise ValueError(
+            "link_spark_swarm_agent requires a non-empty agent_name; Spark Swarm "
+            "must propagate the user-defined name from the swarm side."
+        )
     incoming_confirmed_at = confirmed_at or _utc_now_iso()
     existing = resolve_canonical_agent_identity(state_db=state_db, human_id=human_id)
     metadata_json = json.dumps(metadata, sort_keys=True) if metadata else None
@@ -609,7 +638,12 @@ def link_spark_swarm_agent(
             (
                 swarm_agent_id,
                 human_id,
-                chosen_name or "Spark Agent",
+                # No "Spark Agent" fallback. incoming_name is guaranteed
+                # non-empty by the raise above; chosen_name may fall back
+                # to current_name (which can be empty under the
+                # no-default-name rule) so we coalesce to incoming_name
+                # rather than inventing a default.
+                chosen_name or incoming_name,
                 swarm_agent_id,
                 metadata_json,
                 chosen_confirmed_at or incoming_confirmed_at,
@@ -857,7 +891,15 @@ def normalize_spark_swarm_identity_import(
     if not swarm_agent_id:
         raise ValueError("Spark Swarm identity hook must return a non-empty swarm_agent_id.")
 
-    agent_name = str(result.get("agent_name") or result.get("display_name") or "").strip() or "Spark Agent"
+    # Strict contract: Spark Swarm must propagate the user-defined name.
+    # Silently inventing "Spark Agent" would leak a default through an
+    # external-system import boundary.
+    agent_name = str(result.get("agent_name") or result.get("display_name") or "").strip()
+    if not agent_name:
+        raise ValueError(
+            "Spark Swarm identity hook must return a non-empty agent_name "
+            "(or display_name). Spark agents require a user-defined name."
+        )
     confirmed_at = str(result.get("confirmed_at") or "").strip() or None
     metadata = result.get("metadata")
     if metadata is None:
