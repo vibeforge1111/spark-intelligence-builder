@@ -48,6 +48,8 @@ class HarnessCliTests(SparkTestCase):
                 "Draft a direct answer for this operator question.",
                 "--home",
                 str(self.home),
+                "--harness-id",
+                "researcher.advisory",
                 "--json",
             )
 
@@ -55,7 +57,7 @@ class HarnessCliTests(SparkTestCase):
         payload = json.loads(stdout)
         self.assertEqual(payload["status"], "completed")
         self.assertEqual(payload["envelope"]["harness_id"], "researcher.advisory")
-        self.assertEqual(payload["artifacts"]["reply_text"], "Here is the answer.")
+        self.assertEqual(payload["artifacts"]["visible_reply"], "Here is the answer.")
 
     def test_harness_execute_respects_forced_harness_id(self) -> None:
         class FakeResult:
@@ -88,7 +90,7 @@ class HarnessCliTests(SparkTestCase):
         payload = json.loads(stdout)
         self.assertEqual(payload["envelope"]["harness_id"], "researcher.advisory")
         self.assertEqual(payload["envelope"]["route_mode"], "forced_harness")
-        self.assertEqual(payload["artifacts"]["reply_text"], "Forced harness reply.")
+        self.assertEqual(payload["artifacts"]["visible_reply"], "Forced harness reply.")
 
     def test_harness_status_returns_registry_and_runtime_payload(self) -> None:
         exit_code, stdout, stderr = self.run_cli(

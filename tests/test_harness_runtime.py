@@ -110,6 +110,7 @@ class HarnessRuntimeTests(SparkTestCase):
             config_manager=self.config_manager,
             state_db=self.state_db,
             task="Draft a direct answer for this operator question.",
+            forced_harness_id="researcher.advisory",
             channel_kind="telegram",
             session_id="session-r",
             human_id="human-r",
@@ -127,7 +128,7 @@ class HarnessRuntimeTests(SparkTestCase):
             )
 
         self.assertEqual(result.status, "completed")
-        self.assertEqual(result.artifacts["reply_text"], "Here is the answer.")
+        self.assertEqual(result.artifacts["visible_reply"], "Here is the answer.")
         self.assertEqual(result.artifacts["trace_ref"], "trace:test")
         bridge_mock.assert_called_once()
 

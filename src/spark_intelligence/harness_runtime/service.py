@@ -480,7 +480,7 @@ def _execute_researcher_advisory_harness(
         envelope=envelope,
     )
     artifacts = {
-        "reply_text": result.reply_text,
+        "visible_reply": str(getattr(result, "reply_text", "") or ""),
         "evidence_summary": result.evidence_summary,
         "trace_ref": result.trace_ref,
         "mode": result.mode,
@@ -880,6 +880,9 @@ def _derive_follow_up_task(
 
 
 def _extract_reply_text_from_result(result: HarnessExecutionResult) -> str | None:
+    visible_reply = result.artifacts.get("visible_reply")
+    if isinstance(visible_reply, str) and visible_reply.strip():
+        return visible_reply.strip()
     reply_text = result.artifacts.get("reply_text")
     if isinstance(reply_text, str) and reply_text.strip():
         return reply_text.strip()

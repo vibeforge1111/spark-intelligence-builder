@@ -217,7 +217,7 @@ def build_harness_registry(
             prompt_strategy="ephemeral_contextual_task_through_researcher_bridge",
             toolsets=["provider_advisory", "reasoning", "conversation_support"],
             required_capabilities=["provider_advisory", "reasoning", "conversation_support"],
-            artifacts=["reply_text", "trace_ref", "evidence_summary"],
+            artifacts=["visible_reply", "trace_ref", "evidence_summary"],
             retry_policy="retry_on_provider_resolution_or_transport_failure",
             approval_mode="operator_governed",
             limitations=[
