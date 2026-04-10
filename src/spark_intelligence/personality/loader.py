@@ -72,6 +72,50 @@ _TRAIT_LABELS = {
     "assertiveness": {(0.0, 0.3): "gentle", (0.3, 0.55): "balanced assertiveness", (0.55, 0.75): "assertive", (0.75, 1.01): "very assertive"},
 }
 
+# Anchor phrases shown to the operator during the P2-7 guided onboarding
+# sub-state. Each trait maps five ordinal ratings (1..5) to a short phrase
+# the operator can pick between. These are intentionally not used as
+# trait-value ranges — they're only human-readable anchors for the
+# 1-5 picker. The actual trait delta mapping lives in the P2-7 handler.
+# Source: Q-F decision in docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11.
+_GUIDED_TRAIT_ANCHORS: dict[str, dict[int, str]] = {
+    "warmth": {
+        1: "reserved and formal",
+        2: "mostly reserved",
+        3: "balanced warmth",
+        4: "warm and friendly",
+        5: "very warm, uses your name often",
+    },
+    "directness": {
+        1: "gentle and exploratory",
+        2: "mostly gentle",
+        3: "balanced directness",
+        4: "direct and concise",
+        5: "very direct, skips preamble",
+    },
+    "playfulness": {
+        1: "serious and measured",
+        2: "mostly serious",
+        3: "balanced playfulness",
+        4: "playful and witty",
+        5: "very playful, cracks jokes",
+    },
+    "pacing": {
+        1: "deliberate, explains thoroughly",
+        2: "thoughtful and thorough",
+        3: "balanced pacing",
+        4: "brisk and efficient",
+        5: "rapid, one-line answers",
+    },
+    "assertiveness": {
+        1: "gentle, hedges opinions",
+        2: "measured and polite",
+        3: "balanced assertiveness",
+        4: "assertive and confident",
+        5: "very assertive, states views plainly",
+    },
+}
+
 # ── NL preference patterns (inline fallback) ──
 # These are a minimal subset. The full set lives in personality_engine.nl_traits.
 
