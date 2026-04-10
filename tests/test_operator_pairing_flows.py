@@ -988,6 +988,123 @@ class OperatorPairingFlowTests(SparkTestCase):
         provenance = json.loads(str(row["provenance_json"]))
         self.assertEqual(provenance.get("express_preset"), "claude-like")
 
+    def test_onboarding_cancel_wipes_state_and_resets_agent_name_at_any_step(self) -> None:
+        """P2-11: `/cancel` is honored at every onboarding step.
+
+        Q-E of docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md \u00a711:
+        `/cancel` wipes BOTH the in-progress onboarding state AND the
+        saved agent name (back to the empty-string sentinel). The persona
+        profile is left untouched per Q-J. The pairing row stays active,
+        so the user can restart onboarding by saying `hi` again.
+        """
+        self.add_telegram_channel()
+        simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=900,
+                user_id="111",
+                username="alice",
+                text="/start",
+            ),
+        )
+        exit_code, _, stderr = self.run_cli(
+            "operator",
+            "approve-latest",
+            "telegram",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(exit_code, 0, stderr)
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            side_effect=AssertionError("researcher bridge should not run during onboarding"),
+        ):
+            # Walk into awaiting_persona_mode so /cancel fires mid-flow,
+            # not just at the very first prompt.
+            welcome_turn = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=901, user_id="111", username="alice", text="hey"
+                ),
+            )
+            simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=902, user_id="111", username="alice", text="Atlas"
+                ),
+            )
+            simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=903, user_id="111", username="alice", text="Boss"
+                ),
+            )
+
+            # Confirm we are pinned at awaiting_persona_mode before /cancel.
+            with self.state_db.connect() as conn:
+                pre_blob_row = conn.execute(
+                    "SELECT value FROM runtime_state WHERE state_key = ?",
+                    ("agent_onboarding:human:telegram:111",),
+                ).fetchone()
+            pre_blob = json.loads(str(pre_blob_row["value"]))
+            self.assertEqual(pre_blob["step"], "awaiting_persona_mode")
+
+            cancel_turn = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=904, user_id="111", username="alice", text="/cancel"
+                ),
+            )
+
+        # P2-11: welcome card should advertise the /cancel escape hatch.
+        self.assertTrue(welcome_turn.ok)
+        welcome_text = str(welcome_turn.detail["response_text"])
+        self.assertIn("/cancel", welcome_text)
+
+        # The cancel reply itself must confirm the wipe.
+        self.assertTrue(cancel_turn.ok)
+        cancel_text = str(cancel_turn.detail["response_text"])
+        self.assertIn("Onboarding cancelled", cancel_text)
+        self.assertIn("cleared the agent name", cancel_text)
+
+        # The in-progress onboarding state blob should be gone entirely.
+        with self.state_db.connect() as conn:
+            blob_row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ?",
+                ("agent_onboarding:human:telegram:111",),
+            ).fetchone()
+        self.assertIsNone(blob_row)
+
+        # The saved agent name should be back to the empty-string sentinel.
+        agent_state = read_canonical_agent_state(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+        )
+        self.assertEqual(agent_state.agent_name, "")
+        self.assertFalse(agent_state.has_user_defined_name)
+
+        # A rename-history row should record the cancel with the
+        # onboarding_cancel source surface.
+        with self.state_db.connect() as conn:
+            history_rows = conn.execute(
+                "SELECT old_name, new_name, source_surface FROM agent_rename_history "
+                "WHERE human_id = ? ORDER BY created_at DESC",
+                ("human:telegram:111",),
+            ).fetchall()
+        self.assertTrue(
+            any(
+                row["new_name"] == "" and row["source_surface"] == "onboarding_cancel"
+                for row in history_rows
+            ),
+            f"expected onboarding_cancel rename history row, got: {list(history_rows)}",
+        )
+
     def test_onboarding_guardrails_ack_change_branch_stays_pinned_then_accepts(self) -> None:
         """P2-10: `change` soft-reprompts without advancing; `ok` completes.
 

@@ -31,6 +31,7 @@ from uuid import uuid4
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.identity.service import (
+    cancel_agent_onboarding,
     read_canonical_agent_state,
     rename_agent_identity,
     set_human_user_address,
@@ -1451,7 +1452,8 @@ def maybe_handle_agent_persona_onboarding_turn(
             agent_id=agent_id,
             step="awaiting_name",
             reply_text=(
-                "Let's set up your agent. Short conversation: name first, then personality.\n\n"
+                "Let's set up your agent. Short conversation: name first, then personality.\n"
+                "You can say `/cancel` at any time to stop and reset.\n\n"
                 f"{name_prompt}"
             ),
             agent_name=canonical_state.agent_name,
@@ -1462,6 +1464,30 @@ def maybe_handle_agent_persona_onboarding_turn(
     step = str(onboarding_state.get("step") or "awaiting_name")
     normalized_message = " ".join(str(user_message or "").strip().split())
     lowered = normalized_message.lower()
+
+    # P2-11: /cancel escape hatch. Q-E of the v2 design doc
+    # (docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11)
+    # decided that /cancel wipes BOTH the in-progress onboarding
+    # state blob AND the saved agent name (back to the empty-string
+    # sentinel), while leaving the persona profile untouched per
+    # Q-J. The caller-facing reply confirms the wipe and points
+    # toward restarting from pairing on the next DM.
+    if lowered in _ONBOARDING_CANCEL_TOKENS:
+        _delete_agent_onboarding_state(human_id=human_id, state_db=state_db)
+        cancelled_state = cancel_agent_onboarding(
+            state_db=state_db,
+            human_id=human_id,
+            source_ref=source_ref,
+        )
+        return AgentOnboardingTurnResult(
+            human_id=human_id,
+            agent_id=agent_id,
+            step="cancelled",
+            reply_text=_build_onboarding_cancelled_reply_text(),
+            agent_name=cancelled_state.agent_name,
+            persona_profile=existing_persona,
+            completed=True,
+        )
 
     if step == "awaiting_name":
         if lowered in {"keep", "keep it", "keep current name", "keep the current name"}:
@@ -2675,6 +2701,31 @@ def _build_onboarding_completion_recap_text(
         "Recommended later: connect your Spark Swarm agent so Builder can "
         "link the external identity too.\n\n"
         "Ready when you are."
+    )
+
+
+_ONBOARDING_CANCEL_TOKENS: frozenset[str] = frozenset(
+    {
+        "/cancel",
+        "/quit",
+        "/stop",
+    }
+)
+
+
+def _build_onboarding_cancelled_reply_text() -> str:
+    """Render the reply for the P2-11 /cancel escape hatch.
+
+    Q-E of docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11:
+    /cancel wipes BOTH the in-progress onboarding state AND the
+    saved agent name back to the empty-string sentinel. The persona
+    profile is left untouched per Q-J default.
+    """
+    return (
+        "Onboarding cancelled. I cleared the agent name and stopped the setup "
+        "conversation.\n\n"
+        "Your pairing is still active — say `hi` any time to start over. "
+        "Any existing personality traits you had before stay as-is."
     )
 
 
