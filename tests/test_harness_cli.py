@@ -3,11 +3,17 @@ from __future__ import annotations
 import json
 from unittest.mock import patch
 
-from tests.test_support import SparkTestCase, create_fake_hook_chip
+from tests.test_support import SparkTestCase, create_fake_hook_chip, create_fake_researcher_runtime
 
 
 class HarnessCliTests(SparkTestCase):
+    def _enable_fake_researcher(self) -> None:
+        runtime_root = create_fake_researcher_runtime(self.home)
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.researcher.runtime_root", str(runtime_root))
+
     def test_harness_plan_reports_browser_harness_for_url_task(self) -> None:
+        self._enable_fake_researcher()
         create_fake_hook_chip(self.home, chip_key="spark-browser")
         self.config_manager.set_path("spark.chips.roots", [str(self.home)])
         self.config_manager.set_path("spark.chips.active_keys", ["spark-browser"])
@@ -27,6 +33,7 @@ class HarnessCliTests(SparkTestCase):
         self.assertEqual(payload["backend_kind"], "browser_bridge")
 
     def test_harness_execute_runs_researcher_advisory_runner(self) -> None:
+        self._enable_fake_researcher()
         class FakeResult:
             reply_text = "Here is the answer."
             evidence_summary = "status=ok"
@@ -58,6 +65,7 @@ class HarnessCliTests(SparkTestCase):
         self.assertEqual(payload["artifacts"]["reply_text"], "Here is the answer.")
 
     def test_harness_execute_respects_forced_harness_id(self) -> None:
+        self._enable_fake_researcher()
         class FakeResult:
             reply_text = "Forced harness reply."
             evidence_summary = "status=ok"
@@ -105,6 +113,10 @@ class HarnessCliTests(SparkTestCase):
         self.assertIn("harness_runtime", payload)
 
     def test_harness_execute_supports_follow_up_harness_chain(self) -> None:
+        self._enable_fake_researcher()
+        create_fake_hook_chip(self.home, chip_key="domain-chip-voice-comms")
+        self.config_manager.set_path("spark.chips.roots", [str(self.home)])
+        self.config_manager.set_path("spark.chips.active_keys", ["domain-chip-voice-comms"])
         class FakeResearcherResult:
             reply_text = "Spark Researcher thinks; Builder delivers."
             evidence_summary = "status=ok"
@@ -174,6 +186,10 @@ class HarnessCliTests(SparkTestCase):
         self.assertEqual(payload["chained_results"][0]["envelope"]["harness_id"], "voice.io")
 
     def test_harness_plan_supports_named_recipe(self) -> None:
+        self._enable_fake_researcher()
+        create_fake_hook_chip(self.home, chip_key="domain-chip-voice-comms")
+        self.config_manager.set_path("spark.chips.roots", [str(self.home)])
+        self.config_manager.set_path("spark.chips.active_keys", ["domain-chip-voice-comms"])
         exit_code, stdout, stderr = self.run_cli(
             "harness",
             "plan",
@@ -191,6 +207,10 @@ class HarnessCliTests(SparkTestCase):
         self.assertEqual(payload["recipe"]["recipe_id"], "advisory_voice_reply")
 
     def test_harness_execute_supports_named_recipe(self) -> None:
+        self._enable_fake_researcher()
+        create_fake_hook_chip(self.home, chip_key="domain-chip-voice-comms")
+        self.config_manager.set_path("spark.chips.roots", [str(self.home)])
+        self.config_manager.set_path("spark.chips.active_keys", ["domain-chip-voice-comms"])
         class FakeResearcherResult:
             reply_text = "Spark Researcher thinks; Builder delivers."
             evidence_summary = "status=ok"
@@ -258,6 +278,10 @@ class HarnessCliTests(SparkTestCase):
         self.assertEqual(payload["chained_results"][0]["envelope"]["harness_id"], "voice.io")
 
     def test_harness_plan_auto_selects_recipe_for_voice_advisory_task(self) -> None:
+        self._enable_fake_researcher()
+        create_fake_hook_chip(self.home, chip_key="domain-chip-voice-comms")
+        self.config_manager.set_path("spark.chips.roots", [str(self.home)])
+        self.config_manager.set_path("spark.chips.active_keys", ["domain-chip-voice-comms"])
         exit_code, stdout, stderr = self.run_cli(
             "harness",
             "plan",
@@ -273,6 +297,10 @@ class HarnessCliTests(SparkTestCase):
         self.assertEqual(payload["recipe"]["selection_mode"], "auto")
 
     def test_harness_execute_auto_selects_recipe_for_voice_advisory_task(self) -> None:
+        self._enable_fake_researcher()
+        create_fake_hook_chip(self.home, chip_key="domain-chip-voice-comms")
+        self.config_manager.set_path("spark.chips.roots", [str(self.home)])
+        self.config_manager.set_path("spark.chips.active_keys", ["domain-chip-voice-comms"])
         class FakeResearcherResult:
             reply_text = "Spark Researcher thinks; Builder delivers."
             evidence_summary = "status=ok"

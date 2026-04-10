@@ -9,11 +9,17 @@ from spark_intelligence.harness_registry import (
     select_harness_recipe,
 )
 
-from tests.test_support import SparkTestCase, create_fake_hook_chip
+from tests.test_support import SparkTestCase, create_fake_hook_chip, create_fake_researcher_runtime
 
 
 class HarnessRegistryTests(SparkTestCase):
+    def _enable_fake_researcher(self) -> None:
+        runtime_root = create_fake_researcher_runtime(self.home)
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.researcher.runtime_root", str(runtime_root))
+
     def test_harness_registry_exposes_expected_contracts(self) -> None:
+        self._enable_fake_researcher()
         create_fake_hook_chip(self.home, chip_key="spark-browser")
         create_fake_hook_chip(self.home, chip_key="domain-chip-voice-comms")
         create_fake_hook_chip(self.home, chip_key="spark-swarm")
@@ -37,6 +43,7 @@ class HarnessRegistryTests(SparkTestCase):
         self.assertIn("browser_then_advisory", recipe_ids)
 
     def test_browser_route_selects_browser_harness(self) -> None:
+        self._enable_fake_researcher()
         create_fake_hook_chip(self.home, chip_key="spark-browser")
         self.config_manager.set_path("spark.chips.roots", [str(self.home)])
         self.config_manager.set_path("spark.chips.active_keys", ["spark-browser"])
@@ -52,6 +59,7 @@ class HarnessRegistryTests(SparkTestCase):
         self.assertIn("web_search", selection.required_capabilities)
 
     def test_swarm_disabled_request_holds_local_on_researcher_harness(self) -> None:
+        self._enable_fake_researcher()
         create_fake_hook_chip(self.home, chip_key="spark-swarm")
         self.config_manager.set_path("spark.chips.roots", [str(self.home)])
         self.config_manager.set_path("spark.chips.active_keys", ["spark-swarm"])
@@ -68,6 +76,7 @@ class HarnessRegistryTests(SparkTestCase):
         self.assertIn("Keep the task on the primary runtime", selection.reason)
 
     def test_harness_prompt_context_describes_execution_contract(self) -> None:
+        self._enable_fake_researcher()
         create_fake_hook_chip(self.home, chip_key="domain-chip-voice-comms")
         self.config_manager.set_path("spark.chips.roots", [str(self.home)])
         self.config_manager.set_path("spark.chips.active_keys", ["domain-chip-voice-comms"])
@@ -90,6 +99,7 @@ class HarnessRegistryTests(SparkTestCase):
         self.assertFalse(looks_like_harness_query("Write a shorter reply."))
 
     def test_select_harness_recipe_returns_expected_chain(self) -> None:
+        self._enable_fake_researcher()
         create_fake_hook_chip(self.home, chip_key="domain-chip-voice-comms")
         self.config_manager.set_path("spark.chips.roots", [str(self.home)])
         self.config_manager.set_path("spark.chips.active_keys", ["domain-chip-voice-comms"])
@@ -104,6 +114,7 @@ class HarnessRegistryTests(SparkTestCase):
         self.assertEqual(recipe.follow_up_harness_ids, ["voice.io"])
 
     def test_select_auto_harness_recipe_picks_advisory_voice_reply(self) -> None:
+        self._enable_fake_researcher()
         create_fake_hook_chip(self.home, chip_key="domain-chip-voice-comms")
         self.config_manager.set_path("spark.chips.roots", [str(self.home)])
         self.config_manager.set_path("spark.chips.active_keys", ["domain-chip-voice-comms"])
@@ -118,10 +129,12 @@ class HarnessRegistryTests(SparkTestCase):
         assert recipe is not None
         self.assertEqual(recipe.recipe.recipe_id, "advisory_voice_reply")
 
-    def test_select_auto_harness_recipe_picks_research_then_swarm(self) -> None:
+    def test_select_auto_harness_recipe_returns_none_when_swarm_payload_is_not_ready(self) -> None:
+        self._enable_fake_researcher()
         create_fake_hook_chip(self.home, chip_key="spark-swarm")
         self.config_manager.set_path("spark.chips.roots", [str(self.home)])
         self.config_manager.set_path("spark.chips.active_keys", ["spark-swarm"])
+        self.config_manager.set_path("spark.swarm.enabled", True)
 
         recipe = select_auto_harness_recipe(
             config_manager=self.config_manager,
@@ -129,6 +142,4 @@ class HarnessRegistryTests(SparkTestCase):
             task="Research this market shift and escalate it to Swarm for multi-agent work.",
         )
 
-        self.assertIsNotNone(recipe)
-        assert recipe is not None
-        self.assertEqual(recipe.recipe.recipe_id, "research_then_swarm")
+        self.assertIsNone(recipe)

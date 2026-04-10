@@ -10,11 +10,17 @@ from spark_intelligence.harness_runtime import (
     execute_harness_task,
 )
 
-from tests.test_support import SparkTestCase, create_fake_hook_chip
+from tests.test_support import SparkTestCase, create_fake_hook_chip, create_fake_researcher_runtime
 
 
 class HarnessRuntimeTests(SparkTestCase):
+    def _enable_fake_researcher(self) -> None:
+        runtime_root = create_fake_researcher_runtime(self.home)
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.researcher.runtime_root", str(runtime_root))
+
     def test_build_harness_task_envelope_uses_router_selection(self) -> None:
+        self._enable_fake_researcher()
         create_fake_hook_chip(self.home, chip_key="spark-browser")
         self.config_manager.set_path("spark.chips.roots", [str(self.home)])
         self.config_manager.set_path("spark.chips.active_keys", ["spark-browser"])
@@ -54,6 +60,7 @@ class HarnessRuntimeTests(SparkTestCase):
         self.assertEqual(snapshot.summary["last_harness_id"], "builder.direct")
 
     def test_execute_browser_grounded_harness_prepares_navigate_payload_for_url(self) -> None:
+        self._enable_fake_researcher()
         create_fake_hook_chip(self.home, chip_key="spark-browser")
         self.config_manager.set_path("spark.chips.roots", [str(self.home)])
         self.config_manager.set_path("spark.chips.active_keys", ["spark-browser"])
@@ -75,6 +82,7 @@ class HarnessRuntimeTests(SparkTestCase):
         self.assertEqual((payload.get("arguments") or {}).get("url"), "https://example.com")
 
     def test_execute_browser_grounded_harness_requires_url_for_first_runner(self) -> None:
+        self._enable_fake_researcher()
         create_fake_hook_chip(self.home, chip_key="spark-browser")
         self.config_manager.set_path("spark.chips.roots", [str(self.home)])
         self.config_manager.set_path("spark.chips.active_keys", ["spark-browser"])
@@ -95,6 +103,7 @@ class HarnessRuntimeTests(SparkTestCase):
         self.assertIn("needs_input", result.artifacts)
 
     def test_execute_researcher_advisory_harness_runs_bridge(self) -> None:
+        self._enable_fake_researcher()
         class FakeResult:
             reply_text = "Here is the answer."
             evidence_summary = "status=ok"
@@ -132,6 +141,7 @@ class HarnessRuntimeTests(SparkTestCase):
         bridge_mock.assert_called_once()
 
     def test_build_harness_task_envelope_allows_forced_harness_override(self) -> None:
+        self._enable_fake_researcher()
         envelope = build_harness_task_envelope(
             config_manager=self.config_manager,
             state_db=self.state_db,

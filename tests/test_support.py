@@ -561,6 +561,43 @@ if __name__ == "__main__":
     return repo_root
 
 
+def create_fake_researcher_runtime(root: Path) -> Path:
+    runtime_root = root / "spark-researcher"
+    package_root = runtime_root / "src" / "spark_researcher"
+    package_root.mkdir(parents=True, exist_ok=True)
+    (package_root / "__init__.py").write_text("", encoding="utf-8")
+    (package_root / "advisory.py").write_text(
+        (
+            "from __future__ import annotations\n\n"
+            "def build_advisory(*args, **kwargs):\n"
+            "    return {\n"
+            "        'guidance': ['Fake researcher advisory guidance.'],\n"
+            "        'epistemic_status': {'status': 'ok', 'packet_stability': {'status': 'stable'}},\n"
+            "        'selected_packet_ids': [],\n"
+            "        'trace_id': 'trace:fake-researcher',\n"
+            "    }\n"
+        ),
+        encoding="utf-8",
+    )
+    (package_root / "research.py").write_text(
+        (
+            "from __future__ import annotations\n\n"
+            "def execute_with_research(*args, **kwargs):\n"
+            "    return {\n"
+            "        'decision': 'completed',\n"
+            "        'reply_text': 'Fake researcher execution reply.',\n"
+            "        'trace_path': 'trace:fake-researcher',\n"
+            "    }\n"
+        ),
+        encoding="utf-8",
+    )
+    (runtime_root / "spark-researcher.project.json").write_text(
+        json.dumps({"name": "fake-spark-researcher"}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return runtime_root
+
+
 class SparkTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self._tempdir = tempfile.TemporaryDirectory()
