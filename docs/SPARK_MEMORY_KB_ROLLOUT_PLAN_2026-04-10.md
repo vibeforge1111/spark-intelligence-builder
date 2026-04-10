@@ -97,10 +97,11 @@ Acceptance:
 - One command can reproduce the end-to-end memory benchmark loop from Builder.
 
 ### Phase 4: KB Enrichment
-Status: planned
+Status: in progress
 
 - Promote successful retrieval and explanation outputs into richer filed outputs.
 - Add more source pages from Builder runtime artifacts and selected repo manifests.
+- Default Builder KB compiles now include a checked-in repo-source manifest so the wiki carries baseline Builder context, not only runtime memory artifacts.
 - Extend synthesis pages beyond the default runtime overview and timeline.
 
 Acceptance:
@@ -121,4 +122,4 @@ Acceptance:
 1. Land the Builder Telegram regression runner and commit it.
 2. Run the full matrix against a real Builder home and save the bundle.
 3. Expand from profile-only routes into abstention, contradiction, and non-profile memory lanes.
-4. Start the KB enrichment pass for repo-source and filed-output pages.
+4. Expand the default repo-source manifest and synthesis pages now that manifest-backed repo context is wired into Builder KB compiles.
