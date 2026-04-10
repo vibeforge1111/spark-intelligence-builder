@@ -2112,6 +2112,49 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual((read_events[0]["facts_json"] or {}).get("subject"), "human:human-1")
         self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate_prefix"), "")
 
+    def test_build_researcher_reply_answers_single_fact_mission_query_directly_from_memory(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        write_profile_fact_to_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human-1",
+            predicate="profile.current_mission",
+            value="survive the hack and revive the companies",
+            evidence_text="I am trying to survive the hack and revive the companies.",
+            fact_name="profile_current_mission",
+            session_id="session-mission-query",
+            turn_id="turn-mission-query-write",
+            channel_kind="telegram",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for direct memory fact replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for direct memory fact replies"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-mission-query-direct",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-mission-query",
+                channel_kind="telegram",
+                user_message="What am I trying to do now?",
+            )
+
+        self.assertEqual(result.reply_text, "Right now you're trying to survive the hack and revive the companies.")
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+        read_events = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=10)
+        self.assertTrue(read_events)
+        self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate"), "profile.current_mission")
+
     def test_build_researcher_reply_appends_swarm_recommendation_for_explicit_delegation(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         connect_exit, _, connect_stderr = self.run_cli(

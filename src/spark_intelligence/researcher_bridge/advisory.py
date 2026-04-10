@@ -38,6 +38,7 @@ from spark_intelligence.memory import (
     write_profile_fact_to_memory,
 )
 from spark_intelligence.memory.profile_facts import (
+    build_profile_fact_query_answer,
     build_profile_fact_query_context,
     build_profile_identity_summary_context,
     detect_profile_fact_observation,
@@ -2269,6 +2270,39 @@ def build_researcher_reply(
     observation_record = None
     detected_profile_fact = None
     detected_profile_fact_query = None
+
+    def _log_personality_step_failure(step: str, exc: Exception) -> None:
+        """Emit a structured event when a personality step fails.
+
+        The personality pipeline must never break the bridge, so every
+        step is wrapped in try/except. Silent swallowing made it
+        impossible to tell *why* personality didn't apply — this helper
+        records a warning-level event so operators can diagnose.
+        """
+        try:
+            record_event(
+                state_db,
+                event_type="personality_step_failed",
+                component="researcher_bridge",
+                summary=f"Personality step '{step}' raised; continuing without it.",
+                run_id=run_id,
+                request_id=request_id,
+                channel_id=channel_kind,
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
+                actor_id="researcher_bridge",
+                reason_code=f"personality_{step}_failed",
+                facts={
+                    "step": step,
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                },
+                severity="warning",
+            )
+        except Exception:
+            pass
+
     try:
         personality_profile = load_personality_profile(
             human_id=human_id,
@@ -2276,8 +2310,8 @@ def build_researcher_reply(
             state_db=state_db,
             config_manager=config_manager,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        _log_personality_step_failure("load_profile", exc)
 
     # Check for personality queries (status, reset) before NL detection
     try:
@@ -2302,8 +2336,8 @@ def build_researcher_reply(
                     state_db=state_db,
                     config_manager=config_manager,
                 )
-    except Exception:
-        pass
+    except Exception as exc:
+        _log_personality_step_failure("detect_query", exc)
 
     agent_persona_mutation = None
     if not personality_context_extra:
@@ -2324,8 +2358,8 @@ def build_researcher_reply(
                     state_db=state_db,
                     config_manager=config_manager,
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            _log_personality_step_failure("detect_agent_persona", exc)
 
     if not personality_context_extra and config_manager.get_path("spark.memory.enabled", default=False):
         try:
@@ -2364,8 +2398,8 @@ def build_researcher_reply(
                         query=detected_profile_fact_query,
                         value=fact_value,
                     )
-        except Exception:
-            pass
+        except Exception as exc:
+            _log_personality_step_failure("profile_fact_query", exc)
 
     # Detect NL personality preferences and persist per-user deltas
     nl_pref_enabled = config_manager.get_path("spark.personality.nl_preference_detection", default=True)
@@ -2391,8 +2425,8 @@ def build_researcher_reply(
                     state_db=state_db,
                     config_manager=config_manager,
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            _log_personality_step_failure("detect_nl_preferences", exc)
 
     if not personality_context_extra:
         try:
@@ -2410,14 +2444,14 @@ def build_researcher_reply(
                     turn_id=request_id,
                     channel_kind=channel_kind,
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            _log_personality_step_failure("profile_fact_observation", exc)
 
     # Periodically trigger self-evolution based on accumulated observations
     try:
         evolved_deltas = maybe_evolve_traits(human_id=human_id, state_db=state_db)
-    except Exception:
-        pass
+    except Exception as exc:
+        _log_personality_step_failure("evolve_traits", exc)
 
     # Record observation for self-evolution (runs on every message)
     try:
@@ -2428,8 +2462,8 @@ def build_researcher_reply(
                 traits_active=personality_profile["traits"],
                 state_db=state_db,
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        _log_personality_step_failure("record_observation", exc)
 
     if (
         personality_profile
@@ -2692,6 +2726,83 @@ def build_researcher_reply(
             config_path=None,
             attachment_context=attachment_context,
             routing_decision="secret_boundary_blocked",
+            active_chip_key=active_chip_key,
+            active_chip_task_type=active_chip_task_type,
+            active_chip_evaluate_used=active_chip_evaluate_used,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+    if (
+        detected_profile_fact_query is not None
+        and detected_profile_fact_query.query_kind == "single_fact"
+    ):
+        memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
+        direct_fact_lookup = lookup_current_state_in_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            subject=memory_subject,
+            predicate=str(detected_profile_fact_query.predicate or ""),
+            actor_id="researcher_bridge",
+        )
+        direct_fact_value = None
+        if not direct_fact_lookup.read_result.abstained and direct_fact_lookup.read_result.records:
+            direct_fact_value = str(direct_fact_lookup.read_result.records[0].get("value") or "").strip() or None
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_profile_fact",
+            routing_decision="memory_profile_fact_query",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = build_profile_fact_query_answer(
+            query=detected_profile_fact_query,
+            value=direct_fact_value,
+        )
+        evidence_summary = (
+            "status=memory_profile_fact "
+            f"predicate={detected_profile_fact_query.predicate or 'unknown'} "
+            f"value_found={'yes' if direct_fact_value else 'no'}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered a single-fact profile query directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_profile_fact_query",
+            facts=_bridge_event_facts(
+                routing_decision="memory_profile_fact_query",
+                bridge_mode="memory_profile_fact",
+                evidence_summary=evidence_summary,
+                active_chip_key=active_chip_key,
+                active_chip_task_type=active_chip_task_type,
+                active_chip_evaluate_used=active_chip_evaluate_used,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "fact_name": detected_profile_fact_query.fact_name,
+                    "predicate": detected_profile_fact_query.predicate,
+                    "label": detected_profile_fact_query.label,
+                    "value_found": bool(direct_fact_value),
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_profile_fact",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_profile_fact_query",
             active_chip_key=active_chip_key,
             active_chip_task_type=active_chip_task_type,
             active_chip_evaluate_used=active_chip_evaluate_used,

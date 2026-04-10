@@ -279,7 +279,7 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
 def build_profile_fact_query_context(*, query: ProfileFactQuery, value: str | None) -> str:
     label = query.label
     if value:
-        concise_answer = _build_profile_fact_concise_answer(query=query, value=value)
+        concise_answer = build_profile_fact_query_answer(query=query, value=value)
         return (
             "[Memory action: PROFILE_FACT_STATUS]\n"
             f"The user is asking about their saved {label}. "
@@ -294,6 +294,13 @@ def build_profile_fact_query_context(*, query: ProfileFactQuery, value: str | No
         "Answer in one sentence only. Do not pretend you know. "
         "Say you do not currently have that saved and invite the user to tell you if they want."
     )
+
+
+def build_profile_fact_query_answer(*, query: ProfileFactQuery, value: str | None) -> str:
+    normalized_value = str(value or "").strip()
+    if not normalized_value:
+        return "I don't currently have that saved."
+    return _build_profile_fact_concise_answer(query=query, value=normalized_value)
 
 
 def _build_profile_fact_concise_answer(*, query: ProfileFactQuery, value: str) -> str:
