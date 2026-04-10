@@ -5,6 +5,7 @@ import json
 from spark_intelligence.identity.service import (
     approve_pairing,
     build_spark_swarm_identity_import_payload,
+    cancel_agent_onboarding,
     link_identity_alias,
     link_spark_swarm_agent,
     normalize_spark_swarm_identity_import,
@@ -258,6 +259,78 @@ class AgentIdentityContractTests(SparkTestCase):
         self.assertEqual(row["new_name"], "Atlas")
         self.assertEqual(row["source_surface"], "telegram")
         self.assertEqual(row["source_ref"], "turn-rename")
+
+    def test_cancel_agent_onboarding_wipes_name_and_records_history(self) -> None:
+        # P2-2 (docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md): /cancel during
+        # v2 onboarding resets the agent name to the empty-string sentinel
+        # so the Phase 1 has_user_defined_name gate flips back to False,
+        # while leaving the persona profile intact (Q-J default). The wipe
+        # is recorded in agent_rename_history with new_name="" so the audit
+        # trail stays complete.
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+        rename_agent_identity(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+            new_name="Atlas",
+            source_surface="telegram",
+            source_ref="turn-rename",
+        )
+
+        cancelled = cancel_agent_onboarding(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+            source_ref="onboarding-cancel",
+        )
+
+        self.assertEqual(cancelled.agent_id, "agent:human:telegram:111")
+        self.assertEqual(cancelled.agent_name, "")
+        self.assertFalse(cancelled.has_user_defined_name)
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT old_name, new_name, source_surface, source_ref
+                FROM agent_rename_history
+                WHERE human_id = ?
+                ORDER BY created_at DESC, rename_id DESC
+                LIMIT 1
+                """,
+                ("human:telegram:111",),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["old_name"], "Atlas")
+        self.assertEqual(row["new_name"], "")
+        self.assertEqual(row["source_surface"], "onboarding_cancel")
+        self.assertEqual(row["source_ref"], "onboarding-cancel")
+
+    def test_cancel_agent_onboarding_is_noop_when_name_already_empty(self) -> None:
+        # Under Finding G (Phase 1), approve_pairing leaves agent_name="".
+        # Calling cancel in that state must not spam agent_rename_history
+        # with no-op wipes or flip any timestamps, because the /cancel
+        # handler may defensively call it on any turn.
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+
+        cancelled = cancel_agent_onboarding(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+            source_ref="onboarding-cancel",
+        )
+        self.assertEqual(cancelled.agent_name, "")
+        with self.state_db.connect() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) AS n FROM agent_rename_history WHERE human_id = ?",
+                ("human:telegram:111",),
+            ).fetchone()
+        self.assertEqual(int(count["n"]), 0)
 
     def test_load_personality_profile_merges_agent_base_traits_and_human_overlay(self) -> None:
         approve_pairing(
