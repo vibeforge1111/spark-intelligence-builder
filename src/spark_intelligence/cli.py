@@ -625,6 +625,47 @@ class MemoryHumanInspection:
         return "\n".join(lines)
 
 
+@dataclass
+class MemoryRegressionScore:
+    payload: dict[str, object]
+
+    def to_json(self) -> str:
+        return json.dumps(self.payload, indent=2)
+
+    def to_text(self) -> str:
+        runtime = self.payload.get("runtime") or {}
+        lines = ["Spark memory regression score"]
+        lines.append(f"- pack_id: {self.payload.get('pack_id') or 'unknown'}")
+        lines.append(f"- title: {self.payload.get('title') or 'unknown'}")
+        lines.append(f"- human_id: {self.payload.get('human_id') or 'unknown'}")
+        lines.append(
+            f"- configured module: {runtime.get('configured_module') or 'unknown'} "
+            f"ready={'yes' if runtime.get('ready') else 'no'}"
+        )
+        lines.append(
+            f"- score: matched={self.payload.get('matched_count', 0)}/"
+            f"{self.payload.get('fact_count', 0)} "
+            f"missing={self.payload.get('missing_count', 0)} "
+            f"mismatched={self.payload.get('mismatched_count', 0)}"
+        )
+        fact_results = self.payload.get("fact_results") or []
+        if fact_results:
+            lines.append("- fact results:")
+            for row in fact_results:
+                if not isinstance(row, dict):
+                    continue
+                lines.append(
+                    f"  - {row.get('predicate')}: {row.get('status')} "
+                    f"expected={row.get('expected_value')} actual={row.get('actual_value')}"
+                )
+        probes = self.payload.get("probe_questions") or []
+        if probes:
+            lines.append("- recall probes:")
+            for probe in probes:
+                lines.append(f"  - {probe}")
+        return "\n".join(lines)
+
+
 def _swarm_last_failure_payload(swarm) -> dict[str, object]:
     payload = getattr(swarm, "last_failure", None)
     return payload if isinstance(payload, dict) else {}
@@ -2072,6 +2113,8 @@ def handle_uninstall_autostart(args: argparse.Namespace) -> int:
 def handle_doctor(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
     report = run_doctor(config_manager, state_db)
     if args.json:
         print(report.to_json())
@@ -2949,6 +2992,8 @@ def handle_gateway_start(args: argparse.Namespace) -> int:
 def handle_gateway_status(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
     status = gateway_status(config_manager, state_db)
     if args.json:
         print(status.to_json())

@@ -9,6 +9,26 @@ _CITY_PATTERNS = [
     re.compile(r"\bi\s+live\s+in\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
     re.compile(r"\bi(?:'m| am)\s+in\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
 ]
+_STARTUP_PATTERNS = [
+    re.compile(r"\bmy\s+startup\s+is\s+([A-Za-z][A-Za-z0-9\s\-'`.&_]{1,60})", re.I),
+    re.compile(r"\bi\s+created\s+a\s+startup\s+called\s+([A-Za-z][A-Za-z0-9\s\-'`.&_]{1,60})", re.I),
+]
+_FOUNDER_PATTERNS = [
+    re.compile(r"\bi(?:'m| am)\s+the\s+founder\s+of\s+([A-Za-z][A-Za-z0-9\s\-'`.&_]{1,60})", re.I),
+]
+_HACK_PATTERNS = [
+    re.compile(r"\bwe\s+were\s+hacked\s+by\s+([A-Za-z][A-Za-z0-9\s\-'`.&_]{1,60})", re.I),
+]
+_MISSION_PATTERNS = [
+    re.compile(r"\bi(?:'m| am)\s+trying\s+to\s+([A-Za-z][A-Za-z0-9\s\-'`.&,]{3,120})", re.I),
+    re.compile(r"\bi(?:'m| am)\s+(rebuilding\s+after\s+the\s+hack|reviving\s+the\s+companies)(?:[.!?,]|$)", re.I),
+]
+_SPARK_ROLE_PATTERNS = [
+    re.compile(r"\bspark\s+(?:is\s+going\s+to\s+be|will\s+be)\s+an\s+important\s+part\s+of\s+this(?:\s+rebuild)?", re.I),
+]
+_OCCUPATION_PATTERNS = [
+    re.compile(r"\bi(?:'m| am)\s+an\s+(entrepreneur)(?:[.!?,]|$)", re.I),
+]
 _NAME_PATTERNS = [
     re.compile(r"\bmy\s+name\s+is\s+([a-z][a-z\s\-'.`]{0,40})", re.I),
     re.compile(r"\bcall\s+me\s+([a-z][a-z\s\-'.`]{0,40})", re.I),
@@ -38,9 +58,11 @@ class ProfileFactObservation:
 
 @dataclass(frozen=True)
 class ProfileFactQuery:
-    predicate: str
+    predicate: str | None
     fact_name: str
     label: str
+    query_kind: str = "single_fact"
+    predicate_prefix: str | None = None
 
 
 def detect_profile_fact_observation(user_message: str) -> ProfileFactObservation | None:
@@ -74,6 +96,60 @@ def detect_profile_fact_observation(user_message: str) -> ProfileFactObservation
             evidence_text=text,
             fact_name="profile_timezone",
         )
+    occupation = _extract_occupation(text)
+    if occupation:
+        return ProfileFactObservation(
+            predicate="profile.occupation",
+            value=occupation,
+            operation="update",
+            evidence_text=text,
+            fact_name="profile_occupation",
+        )
+    startup = _extract_startup(text)
+    if startup:
+        return ProfileFactObservation(
+            predicate="profile.startup_name",
+            value=startup,
+            operation="update",
+            evidence_text=text,
+            fact_name="profile_startup_name",
+        )
+    founder_of = _extract_founder_of(text)
+    if founder_of:
+        return ProfileFactObservation(
+            predicate="profile.founder_of",
+            value=founder_of,
+            operation="update",
+            evidence_text=text,
+            fact_name="profile_founder_of",
+        )
+    hack_actor = _extract_hack_actor(text)
+    if hack_actor:
+        return ProfileFactObservation(
+            predicate="profile.hack_actor",
+            value=hack_actor,
+            operation="update",
+            evidence_text=text,
+            fact_name="profile_hack_actor",
+        )
+    current_mission = _extract_current_mission(text)
+    if current_mission:
+        return ProfileFactObservation(
+            predicate="profile.current_mission",
+            value=current_mission,
+            operation="update",
+            evidence_text=text,
+            fact_name="profile_current_mission",
+        )
+    spark_role = _extract_spark_role(text)
+    if spark_role:
+        return ProfileFactObservation(
+            predicate="profile.spark_role",
+            value=spark_role,
+            operation="update",
+            evidence_text=text,
+            fact_name="profile_spark_role",
+        )
     city = _extract_city(text)
     if not city:
         return None
@@ -104,6 +180,66 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
     if any(
         phrase in text
         for phrase in (
+            "what startup did i create",
+            "what startup do you have for me",
+            "what startup do you have saved for me",
+            "what is my startup",
+            "what's my startup",
+        )
+    ):
+        return ProfileFactQuery(predicate="profile.startup_name", fact_name="profile_startup_name", label="startup")
+    if any(
+        phrase in text
+        for phrase in (
+            "what happened to us",
+            "who hacked us",
+            "who hacked me",
+            "who hacked the company",
+        )
+    ):
+        return ProfileFactQuery(predicate="profile.hack_actor", fact_name="profile_hack_actor", label="hack actor")
+    if any(
+        phrase in text
+        for phrase in (
+            "what am i trying to do now",
+            "what am i doing now",
+            "what is my mission right now",
+            "what's my mission right now",
+        )
+    ):
+        return ProfileFactQuery(
+            predicate="profile.current_mission",
+            fact_name="profile_current_mission",
+            label="current mission",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what role will spark play in this",
+            "what role will spark play",
+            "how will spark help",
+            "what will spark do in this",
+        )
+    ):
+        return ProfileFactQuery(predicate="profile.spark_role", fact_name="profile_spark_role", label="spark role")
+    if any(
+        phrase in text
+        for phrase in (
+            "who am i",
+            "what do you know about me",
+            "what do you have saved about me",
+        )
+    ):
+        return ProfileFactQuery(
+            predicate=None,
+            predicate_prefix="profile.",
+            fact_name="profile_identity_summary",
+            label="identity summary",
+            query_kind="identity_summary",
+        )
+    if any(
+        phrase in text
+        for phrase in (
             "what country do you have for me",
             "what country do you have saved for me",
             "which country do you have for me",
@@ -128,7 +264,9 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
         for phrase in (
             "where do i live",
             "what city do i live in",
+            "which city do i live in",
             "what city am i in",
+            "which city am i in",
             "what city do you have for me",
             "what city do you have saved for me",
             "which city do you have for me",
@@ -139,18 +277,69 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
 
 
 def build_profile_fact_query_context(*, query: ProfileFactQuery, value: str | None) -> str:
+    label = query.label
     if value:
         return (
             "[Memory action: PROFILE_FACT_STATUS]\n"
-            f"The user is asking about their saved {query.label}. "
-            f"Memory-backed current-state fact: {query.label}: {value}.\n"
+            f"The user is asking about their saved {label}. "
+            f"Memory-backed current-state fact: {label}: {value}.\n"
             "Answer naturally and briefly using that fact."
         )
     return (
         "[Memory action: PROFILE_FACT_STATUS_MISSING]\n"
-        f"The user is asking about their saved {query.label}, but no memory-backed current-state fact is available.\n"
+        f"The user is asking about their saved {label}, but no memory-backed current-state fact is available.\n"
         "Do not pretend you know. Say you do not currently have that saved and invite the user to tell you if they want."
     )
+
+
+def build_profile_identity_summary_context(*, records: list[dict[str, str]]) -> str:
+    preferred_order = [
+        "profile.preferred_name",
+        "profile.occupation",
+        "profile.startup_name",
+        "profile.founder_of",
+        "profile.hack_actor",
+        "profile.current_mission",
+        "profile.spark_role",
+        "profile.city",
+        "profile.home_country",
+        "profile.timezone",
+    ]
+    label_map = {
+        "profile.preferred_name": "name",
+        "profile.occupation": "occupation",
+        "profile.startup_name": "startup",
+        "profile.founder_of": "founder of",
+        "profile.hack_actor": "hacked by",
+        "profile.current_mission": "current mission",
+        "profile.spark_role": "Spark role",
+        "profile.city": "city",
+        "profile.home_country": "country",
+        "profile.timezone": "timezone",
+    }
+    value_by_predicate: dict[str, str] = {}
+    for record in records:
+        predicate = str(record.get("predicate") or "").strip()
+        value = str(record.get("value") or "").strip()
+        if predicate and value and predicate not in value_by_predicate:
+            value_by_predicate[predicate] = value
+    lines = [
+        "[Memory action: PROFILE_IDENTITY_SUMMARY]",
+        "The user is asking who they are or what you remember about them.",
+    ]
+    summary_rows = [
+        f"- {label_map[predicate]}: {value_by_predicate[predicate]}"
+        for predicate in preferred_order
+        if predicate in value_by_predicate
+    ]
+    if summary_rows:
+        lines.append("Memory-backed facts:")
+        lines.extend(summary_rows)
+        lines.append("Answer naturally using only these saved facts and do not invent anything beyond them.")
+        return "\n".join(lines)
+    lines.append("No memory-backed identity facts are available.")
+    lines.append("Do not pretend you know. Say you do not currently have that saved and invite the user to tell you.")
+    return "\n".join(lines)
 
 
 def _extract_city(text: str) -> str | None:
@@ -159,6 +348,68 @@ def _extract_city(text: str) -> str | None:
         if not match:
             continue
         candidate = _normalize_city(match.group(1))
+        if candidate:
+            return candidate
+    return None
+
+
+def _extract_startup(text: str) -> str | None:
+    for pattern in _STARTUP_PATTERNS:
+        match = pattern.search(text)
+        if not match:
+            continue
+        candidate = _normalize_entity_name(match.group(1))
+        if candidate:
+            return candidate
+    return None
+
+
+def _extract_founder_of(text: str) -> str | None:
+    for pattern in _FOUNDER_PATTERNS:
+        match = pattern.search(text)
+        if not match:
+            continue
+        candidate = _normalize_entity_name(match.group(1))
+        if candidate:
+            return candidate
+    return None
+
+
+def _extract_hack_actor(text: str) -> str | None:
+    for pattern in _HACK_PATTERNS:
+        match = pattern.search(text)
+        if not match:
+            continue
+        candidate = _normalize_place(match.group(1))
+        if candidate:
+            return candidate
+    return None
+
+
+def _extract_current_mission(text: str) -> str | None:
+    for pattern in _MISSION_PATTERNS:
+        match = pattern.search(text)
+        if not match:
+            continue
+        candidate = re.split(r"[.!?]", str(match.group(1) or ""), maxsplit=1)[0].strip(" '\"`")
+        if candidate:
+            return candidate.lower()
+    return None
+
+
+def _extract_spark_role(text: str) -> str | None:
+    for pattern in _SPARK_ROLE_PATTERNS:
+        if pattern.search(text):
+            return "important part of the rebuild"
+    return None
+
+
+def _extract_occupation(text: str) -> str | None:
+    for pattern in _OCCUPATION_PATTERNS:
+        match = pattern.search(text)
+        if not match:
+            continue
+        candidate = str(match.group(1) or "").strip().lower()
         if candidate:
             return candidate
     return None
@@ -253,6 +504,34 @@ def _normalize_place(raw: str) -> str | None:
             normalized.append(token)
         else:
             normalized.append(lowered[0].upper() + lowered[1:])
+    return " ".join(normalized)
+
+
+def _normalize_entity_name(raw: str) -> str | None:
+    candidate = re.split(r"[.!?,;:\n]", str(raw or ""), maxsplit=1)[0].strip(" '\"`")
+    if not candidate:
+        return None
+    parts = []
+    for token in candidate.split():
+        lowered = token.lower()
+        if lowered in _STOP_WORDS:
+            break
+        cleaned = re.sub(r"[^A-Za-z0-9'\-&_.]", "", token)
+        if not cleaned:
+            continue
+        parts.append(cleaned)
+        if len(parts) >= 6:
+            break
+    if not parts:
+        return None
+    normalized = []
+    for token in parts:
+        if token.isupper() and len(token) <= 5:
+            normalized.append(token)
+        elif any(char.isupper() for char in token[1:]):
+            normalized.append(token)
+        else:
+            normalized.append(token[0].upper() + token[1:])
     return " ".join(normalized)
 
 

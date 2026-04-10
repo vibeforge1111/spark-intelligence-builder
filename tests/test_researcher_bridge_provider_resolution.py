@@ -1902,6 +1902,216 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertTrue(read_events)
         self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate"), "profile.preferred_name")
 
+    def test_build_researcher_reply_injects_memory_backed_startup_for_startup_query(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        connect_exit, _, connect_stderr = self.run_cli(
+            "auth",
+            "connect",
+            "custom",
+            "--home",
+            str(self.home),
+            "--api-key",
+            "minimax-secret",
+            "--model",
+            "MiniMax-M2.7",
+            "--base-url",
+            "https://api.minimax.io/v1",
+        )
+        self.assertEqual(connect_exit, 0, connect_stderr)
+
+        write_profile_fact_to_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human-1",
+            predicate="profile.startup_name",
+            value="Seedify",
+            evidence_text="My startup is Seedify.",
+            fact_name="profile_startup_name",
+            session_id="session-startup-query",
+            turn_id="turn-startup-query-write",
+            channel_kind="telegram",
+        )
+
+        runtime_root = self.home / "fake-researcher"
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        config_path = runtime_root / "spark-researcher.project.json"
+        config_path.write_text("{}", encoding="utf-8")
+        captured: dict[str, object] = {}
+
+        def fake_build_advisory(path: Path, task: str, *, model: str = "generic", limit: int = 4, domain: str | None = None):
+            return {
+                "guidance": [],
+                "epistemic_status": {
+                    "status": "under_supported",
+                    "packet_stability": {"status": "no_belief_packets"},
+                },
+                "selected_packet_ids": [],
+                "trace_path": "trace:startup-query",
+            }
+
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
+            captured["user_prompt"] = user_prompt
+            return {"raw_response": "Your startup is Seedify."}
+
+        def fail_execute_with_research(*args, **kwargs):
+            raise AssertionError("execute_with_research should not run for direct conversational fallback")
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
+            return_value=(runtime_root, "configured"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
+            return_value=config_path,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_build_advisory",
+            return_value=fake_build_advisory,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_execute_with_research",
+            return_value=fail_execute_with_research,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=fake_direct_provider_prompt,
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-startup-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-startup-query",
+                channel_kind="telegram",
+                user_message="What startup did I create?",
+            )
+
+        self.assertEqual(result.reply_text, "Your startup is Seedify.")
+        self.assertIn("[Memory action: PROFILE_FACT_STATUS]", str(captured["user_prompt"]))
+        self.assertIn("startup: Seedify", str(captured["user_prompt"]))
+        read_events = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=10)
+        self.assertTrue(read_events)
+        self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate"), "profile.startup_name")
+
+    def test_build_researcher_reply_injects_identity_summary_from_memory_for_who_am_i_query(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        connect_exit, _, connect_stderr = self.run_cli(
+            "auth",
+            "connect",
+            "custom",
+            "--home",
+            str(self.home),
+            "--api-key",
+            "minimax-secret",
+            "--model",
+            "MiniMax-M2.7",
+            "--base-url",
+            "https://api.minimax.io/v1",
+        )
+        self.assertEqual(connect_exit, 0, connect_stderr)
+
+        write_profile_fact_to_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human-1",
+            predicate="profile.occupation",
+            value="entrepreneur",
+            evidence_text="I am an entrepreneur.",
+            fact_name="profile_occupation",
+            session_id="session-identity-query",
+            turn_id="turn-identity-query-write-1",
+            channel_kind="telegram",
+        )
+        write_profile_fact_to_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human-1",
+            predicate="profile.startup_name",
+            value="Seedify",
+            evidence_text="My startup is Seedify.",
+            fact_name="profile_startup_name",
+            session_id="session-identity-query",
+            turn_id="turn-identity-query-write-2",
+            channel_kind="telegram",
+        )
+        write_profile_fact_to_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human-1",
+            predicate="profile.current_mission",
+            value="survive the hack and revive the companies",
+            evidence_text="I am trying to survive the hack and revive the companies.",
+            fact_name="profile_current_mission",
+            session_id="session-identity-query",
+            turn_id="turn-identity-query-write-3",
+            channel_kind="telegram",
+        )
+
+        runtime_root = self.home / "fake-researcher"
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        config_path = runtime_root / "spark-researcher.project.json"
+        config_path.write_text("{}", encoding="utf-8")
+        captured: dict[str, object] = {}
+
+        def fake_build_advisory(path: Path, task: str, *, model: str = "generic", limit: int = 4, domain: str | None = None):
+            return {
+                "guidance": [],
+                "epistemic_status": {
+                    "status": "under_supported",
+                    "packet_stability": {"status": "no_belief_packets"},
+                },
+                "selected_packet_ids": [],
+                "trace_path": "trace:identity-query",
+            }
+
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
+            captured["user_prompt"] = user_prompt
+            return {"raw_response": "You're an entrepreneur building Seedify and trying to revive the companies."}
+
+        def fail_execute_with_research(*args, **kwargs):
+            raise AssertionError("execute_with_research should not run for direct conversational fallback")
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
+            return_value=(runtime_root, "configured"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
+            return_value=config_path,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_build_advisory",
+            return_value=fake_build_advisory,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_execute_with_research",
+            return_value=fail_execute_with_research,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=fake_direct_provider_prompt,
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-identity-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-identity-query",
+                channel_kind="telegram",
+                user_message="Who am I?",
+            )
+
+        self.assertEqual(
+            result.reply_text,
+            "You're an entrepreneur building Seedify and trying to revive the companies.",
+        )
+        self.assertIn("[Memory action: PROFILE_IDENTITY_SUMMARY]", str(captured["user_prompt"]))
+        self.assertIn("- occupation: entrepreneur", str(captured["user_prompt"]))
+        self.assertIn("- startup: Seedify", str(captured["user_prompt"]))
+        self.assertIn("- current mission: survive the hack and revive the companies", str(captured["user_prompt"]))
+        read_events = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=10)
+        self.assertTrue(read_events)
+        self.assertEqual((read_events[0]["facts_json"] or {}).get("subject"), "human:human-1")
+        self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate_prefix"), "")
+
     def test_build_researcher_reply_appends_swarm_recommendation_for_explicit_delegation(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         connect_exit, _, connect_stderr = self.run_cli(
@@ -2280,6 +2490,14 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         ), patch(
             "spark_intelligence.researcher_bridge.advisory._import_execute_with_research",
             return_value=fake_execute_with_research,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._build_browser_search_context",
+            return_value={
+                "context": "",
+                "blocked_reply": None,
+                "blocked_code": None,
+                "source_url": None,
+            },
         ):
             result = build_researcher_reply(
                 config_manager=self.config_manager,

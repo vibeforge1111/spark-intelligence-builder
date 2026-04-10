@@ -272,6 +272,9 @@ def build_system_registry_prompt_context(
             "For pinned, active, and only-attached chip questions, keep the three sets disjoint. 'Only attached' excludes anything already pinned or active.",
             "For chip explanation questions, use the onboarding contract directly: role first, then harnesses, surfaces, permissions, and limitations when relevant.",
             "Distinguish active runtime systems from merely attached chips. If the topic is Spark Swarm, describe Builder as escalating or handing work off into Swarm unless the runtime explicitly proves direct local ownership.",
+            "Use exact runtime names for core systems: Spark Intelligence Builder, Spark Researcher, Spark Swarm, Spark Browser, Spark Voice, Spark Memory.",
+            "Do not collapse Spark Memory the system into an attached memory chip. Distinguish the core memory system from any attached memory-domain chip unless the user asks about that chip specifically.",
+            "When the user asks for an exact inventory, enumerate the exact runtime lists. Only summarize attached-but-not-active chips when the user asked generally rather than exactly.",
         ]
     )
     return "\n".join(lines)

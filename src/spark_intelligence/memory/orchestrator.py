@@ -591,6 +591,24 @@ def lookup_current_state_in_memory(
         },
     )
     read_result = _normalize_read_result(raw=raw, method="get_current_state", shadow_only=False)
+    if not read_result.records:
+        legacy_subject = _legacy_double_prefixed_human_subject(subject)
+        if legacy_subject is not None:
+            legacy_raw = _call_sdk_method(
+                client,
+                "get_current_state",
+                {
+                    "subject": legacy_subject,
+                    "predicate": predicate,
+                    "session_id": f"memory-lookup:{actor_id}",
+                    "turn_id": f"{actor_id}:lookup",
+                    "timestamp": _now_iso(),
+                    "metadata": {"source_surface": "memory_cli_lookup_legacy_fallback"},
+                },
+            )
+            legacy_result = _normalize_read_result(raw=legacy_raw, method="get_current_state", shadow_only=False)
+            if legacy_result.records:
+                read_result = legacy_result
     _record_memory_read_event(
         state_db=state_db,
         result=read_result,
@@ -619,7 +637,7 @@ def inspect_human_memory_in_memory(
     module_name = str(sdk_module or config_manager.get_path("spark.memory.sdk_module", default=DEFAULT_SDK_MODULE) or DEFAULT_SDK_MODULE)
     runtime = inspect_memory_sdk_runtime(config_manager=config_manager, sdk_module=module_name)
     client = _load_sdk_client_for_module(module_name=module_name, home_path=config_manager.paths.home)
-    subject = f"human:{human_id}"
+    subject = _memory_subject_for_human(human_id)
     if client is None:
         read_result = MemoryReadResult(
             status="abstained",
@@ -671,6 +689,24 @@ def inspect_human_memory_in_memory(
         },
     )
     read_result = _normalize_read_result(raw=raw, method="get_current_state", shadow_only=False)
+    if not read_result.records:
+        legacy_subject = _legacy_double_prefixed_human_subject(subject)
+        if legacy_subject is not None:
+            legacy_raw = _call_sdk_method(
+                client,
+                "get_current_state",
+                {
+                    "subject": legacy_subject,
+                    "predicate_prefix": "",
+                    "session_id": f"memory-inspect:{actor_id}",
+                    "turn_id": f"{actor_id}:inspect-human",
+                    "timestamp": _now_iso(),
+                    "metadata": {"source_surface": "memory_cli_inspect_human_legacy_fallback"},
+                },
+            )
+            legacy_result = _normalize_read_result(raw=legacy_raw, method="get_current_state", shadow_only=False)
+            if legacy_result.records:
+                read_result = legacy_result
     _record_memory_read_event(
         state_db=state_db,
         result=read_result,
@@ -831,8 +867,9 @@ def write_profile_fact_to_memory(
             actor_id=actor_id,
         )
         return result
+    subject = _memory_subject_for_human(human_id)
     observation = {
-        "subject": f"human:{human_id}",
+        "subject": subject,
         "predicate": predicate,
         "value": value,
         "operation": "update",
@@ -853,7 +890,7 @@ def write_profile_fact_to_memory(
         "write_observation",
         {
             "operation": "update",
-            "subject": f"human:{human_id}",
+            "subject": subject,
             "predicate": predicate,
             "value": value,
             "text": evidence_text,
@@ -920,8 +957,9 @@ def read_personality_preferences_from_memory(
             actor_id=actor_id,
         )
         return result
+    subject = _memory_subject_for_human(human_id)
     payload = {
-        "subject": f"human:{human_id}",
+        "subject": subject,
         "predicate_prefix": PREFERENCE_PREDICATE_PREFIX,
         "session_id": session_id,
         "turn_id": turn_id,
@@ -946,6 +984,19 @@ def read_personality_preferences_from_memory(
         method="get_current_state",
         shadow_only=_memory_shadow_mode(config_manager),
     )
+    if not result.records:
+        legacy_subject = _legacy_double_prefixed_human_subject(subject)
+        if legacy_subject is not None:
+            legacy_payload = dict(payload)
+            legacy_payload["subject"] = legacy_subject
+            legacy_raw = _call_sdk_method(client, "get_current_state", legacy_payload)
+            legacy_result = _normalize_read_result(
+                raw=legacy_raw,
+                method="get_current_state",
+                shadow_only=_memory_shadow_mode(config_manager),
+            )
+            if legacy_result.records:
+                result = legacy_result
     _record_memory_read_event(
         state_db=state_db,
         result=result,
@@ -1009,10 +1060,11 @@ def _write_personality_observations(
     provenance: list[dict[str, Any]] = []
     retrieval_trace: dict[str, Any] | None = None
     first_reason: str | None = None
+    subject = _memory_subject_for_human(human_id)
     for trait, value in trait_values.items():
         payload = {
             "operation": "update" if operation != "delete" else "delete",
-            "subject": f"human:{human_id}",
+            "subject": subject,
             "predicate": f"{PREFERENCE_PREDICATE_PREFIX}{trait}",
             "value": None if operation == "delete" else value,
             "memory_role": "current_state",
@@ -1180,6 +1232,20 @@ def _memory_write_text(payload: dict[str, Any]) -> str:
 def _optional_string(value: Any) -> str | None:
     text = str(value or "").strip()
     return text or None
+
+
+def _memory_subject_for_human(human_id: str) -> str:
+    text = _optional_string(human_id)
+    if not text:
+        return "human:unknown"
+    return text if text.startswith("human:") else f"human:{text}"
+
+
+def _legacy_double_prefixed_human_subject(subject: str) -> str | None:
+    text = _optional_string(subject)
+    if not text or not text.startswith("human:") or text.startswith("human:human:"):
+        return None
+    return f"human:{text}"
 
 
 def _human_id_from_subject(subject: str) -> str | None:
@@ -1527,9 +1593,10 @@ def _record_memory_write_requested(
     turn_id: str | None,
     actor_id: str,
 ) -> None:
+    subject = _memory_subject_for_human(human_id)
     observations = [
         {
-            "subject": f"human:{human_id}",
+            "subject": subject,
             "predicate": f"{PREFERENCE_PREDICATE_PREFIX}{trait}",
             "value": trait_values[trait],
             "operation": operation,
@@ -1550,7 +1617,7 @@ def _record_memory_write_requested(
             "operation": operation,
             "method": "write_observation",
             "memory_role": "current_state",
-            "subject": f"human:{human_id}",
+            "subject": subject,
             "predicate_count": len(trait_values),
             "predicates": [f"{PREFERENCE_PREDICATE_PREFIX}{trait}" for trait in sorted(trait_values)],
             "observations": observations,
@@ -1569,6 +1636,7 @@ def _record_memory_write_requested_observations(
     turn_id: str | None,
     actor_id: str,
 ) -> None:
+    subject = _memory_subject_for_human(human_id)
     record_event(
         state_db,
         event_type="memory_write_requested",
@@ -1582,7 +1650,7 @@ def _record_memory_write_requested_observations(
             "operation": operation,
             "method": "write_observation",
             "memory_role": "current_state",
-            "subject": f"human:{human_id}",
+            "subject": subject,
             "predicate_count": len(observations),
             "predicates": [str(item.get("predicate") or "") for item in observations if item.get("predicate")],
             "observations": observations,
@@ -1642,7 +1710,7 @@ def _record_memory_read_requested(
         session_id=session_id,
         human_id=human_id,
         actor_id=actor_id,
-        facts={"method": method, "memory_role": "current_state", "subject": f"human:{human_id}"},
+        facts={"method": method, "memory_role": "current_state", "subject": _memory_subject_for_human(human_id)},
         provenance={"memory_role": "current_state"},
     )
 

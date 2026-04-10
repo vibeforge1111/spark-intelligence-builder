@@ -32,9 +32,14 @@ from spark_intelligence.browser.service import (
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.capability_router import build_capability_router_prompt_context
 from spark_intelligence.harness_registry import build_harness_prompt_context
-from spark_intelligence.memory import lookup_current_state_in_memory, write_profile_fact_to_memory
+from spark_intelligence.memory import (
+    inspect_human_memory_in_memory,
+    lookup_current_state_in_memory,
+    write_profile_fact_to_memory,
+)
 from spark_intelligence.memory.profile_facts import (
     build_profile_fact_query_context,
+    build_profile_identity_summary_context,
     detect_profile_fact_observation,
     detect_profile_fact_query,
 )
@@ -234,7 +239,7 @@ def discover_researcher_runtime_root(config_manager: ConfigManager) -> tuple[Pat
     config = config_manager.load()
     configured_root = config.get("spark", {}).get("researcher", {}).get("runtime_root")
     if configured_root:
-        path = Path(str(configured_root)).expanduser()
+        path = config_manager.normalize_runtime_path(configured_root)
         return (path if path.exists() else None, "configured")
 
     autodetect = Path.home() / "Desktop" / "spark-researcher"
@@ -247,7 +252,7 @@ def resolve_researcher_config_path(config_manager: ConfigManager, runtime_root: 
     config = config_manager.load()
     configured_path = config.get("spark", {}).get("researcher", {}).get("config_path")
     if configured_path:
-        return Path(str(configured_path)).expanduser()
+        return config_manager.normalize_runtime_path(configured_path) or Path(str(configured_path)).expanduser()
     return runtime_root / "spark-researcher.project.json"
 
 
@@ -2326,20 +2331,39 @@ def build_researcher_reply(
         try:
             detected_profile_fact_query = detect_profile_fact_query(user_message)
             if detected_profile_fact_query is not None:
-                profile_fact_lookup = lookup_current_state_in_memory(
-                    config_manager=config_manager,
-                    state_db=state_db,
-                    subject=f"human:{human_id}",
-                    predicate=detected_profile_fact_query.predicate,
-                    actor_id="researcher_bridge",
-                )
-                fact_value = None
-                if not profile_fact_lookup.read_result.abstained and profile_fact_lookup.read_result.records:
-                    fact_value = str(profile_fact_lookup.read_result.records[0].get("value") or "").strip() or None
-                personality_context_extra = build_profile_fact_query_context(
-                    query=detected_profile_fact_query,
-                    value=fact_value,
-                )
+                if detected_profile_fact_query.query_kind == "identity_summary":
+                    profile_fact_inspection = inspect_human_memory_in_memory(
+                        config_manager=config_manager,
+                        state_db=state_db,
+                        human_id=human_id,
+                        actor_id="researcher_bridge",
+                    )
+                    records = []
+                    if not profile_fact_inspection.read_result.abstained and profile_fact_inspection.read_result.records:
+                        records = [
+                            record
+                            for record in profile_fact_inspection.read_result.records
+                            if str(record.get("predicate") or "").startswith(
+                                str(detected_profile_fact_query.predicate_prefix or "")
+                            )
+                        ]
+                    personality_context_extra = build_profile_identity_summary_context(records=records)
+                else:
+                    memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
+                    profile_fact_lookup = lookup_current_state_in_memory(
+                        config_manager=config_manager,
+                        state_db=state_db,
+                        subject=memory_subject,
+                        predicate=str(detected_profile_fact_query.predicate or ""),
+                        actor_id="researcher_bridge",
+                    )
+                    fact_value = None
+                    if not profile_fact_lookup.read_result.abstained and profile_fact_lookup.read_result.records:
+                        fact_value = str(profile_fact_lookup.read_result.records[0].get("value") or "").strip() or None
+                    personality_context_extra = build_profile_fact_query_context(
+                        query=detected_profile_fact_query,
+                        value=fact_value,
+                    )
         except Exception:
             pass
 

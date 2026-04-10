@@ -65,6 +65,8 @@ class SystemRegistryTests(SparkTestCase):
         self.assertIn("- only_attached=spark-swarm", prompt_context)
         self.assertIn("[Current capabilities]", prompt_context)
         self.assertIn("1:1 conversational work through Builder", prompt_context)
+        self.assertIn("Use exact runtime names for core systems", prompt_context)
+        self.assertIn("Do not collapse Spark Memory the system into an attached memory chip", prompt_context)
 
     def test_system_registry_query_detection_covers_capability_and_surroundings_questions(self) -> None:
         self.assertTrue(looks_like_system_registry_query("What can you do right now?"))
