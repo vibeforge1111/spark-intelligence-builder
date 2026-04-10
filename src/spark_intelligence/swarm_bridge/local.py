@@ -307,7 +307,9 @@ def _run_swarm_bridge_command(
 def _resolve_swarm_runtime_root(config_manager: ConfigManager) -> Path:
     configured = config_manager.get_path("spark.swarm.runtime_root")
     if configured:
-        candidate = Path(str(configured)).expanduser().resolve()
+        candidate = config_manager.normalize_runtime_path(configured)
+        if candidate is not None:
+            candidate = candidate.resolve()
         if candidate.exists():
             return candidate
     candidate = (Path.home() / "Desktop" / "spark-swarm").resolve()
