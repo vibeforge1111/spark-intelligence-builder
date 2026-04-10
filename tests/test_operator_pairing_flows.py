@@ -1333,6 +1333,306 @@ class OperatorPairingFlowTests(SparkTestCase):
         )
         self.assertEqual(agent_state.agent_name, "Atlas")
 
+    def test_runtime_existing_user_with_persona_sees_reonboard_offer_after_welcome_consumed(self) -> None:
+        """P2-13: existing-user reonboard offer fires through the runtime.
+
+        Wires the P2-12 `awaiting_reonboard_consent` state into the
+        Telegram runtime. After pairing welcome has been consumed, an
+        existing user with a saved persona profile should still see the
+        one-tap skip offer on their next DM, and replying `yes` should
+        transition the state machine back to `awaiting_name` so they can
+        re-run the short v2 setup conversation. Neither turn should
+        reach the researcher bridge.
+
+        P2-13 of docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md; Q-H of
+        docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md \u00a711.
+        """
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+        rename_agent_identity(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+            new_name="Atlas",
+            source_surface="telegram",
+            source_ref="seed-name",
+        )
+        save_agent_persona_profile(
+            agent_id="agent:human:telegram:111",
+            human_id="human:telegram:111",
+            state_db=self.state_db,
+            base_traits={
+                "warmth": 0.62,
+                "directness": 0.83,
+                "playfulness": 0.2,
+                "pacing": 0.66,
+                "assertiveness": 0.74,
+            },
+            persona_name="Atlas",
+            persona_summary="Calm, strategic, very direct, low-fluff.",
+        )
+        # Consume the pairing welcome so the old
+        # `start_if_eligible=pairing_welcome_pending(...)` gate is no
+        # longer True for this user. P2-13's new gate
+        # (`agent_has_reonboard_candidate`) should still fire.
+        self.assertTrue(
+            consume_pairing_welcome(
+                state_db=self.state_db,
+                channel_id="telegram",
+                external_user_id="111",
+            )
+        )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            side_effect=AssertionError(
+                "researcher bridge should not run during reonboard offer"
+            ),
+        ):
+            offer_result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=1300,
+                    user_id="111",
+                    username="alice",
+                    text="hey atlas",
+                ),
+            )
+            yes_result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=1301,
+                    user_id="111",
+                    username="alice",
+                    text="yes",
+                ),
+            )
+
+        self.assertTrue(offer_result.ok)
+        offer_text = str(offer_result.detail["response_text"])
+        self.assertIn("re-run setup", offer_text)
+        self.assertIn("Atlas", offer_text)
+        self.assertIn("`yes`", offer_text)
+
+        self.assertTrue(yes_result.ok)
+        yes_text = str(yes_result.detail["response_text"])
+        self.assertIn("Restarting setup", yes_text)
+        self.assertIn("keep", yes_text)
+        self.assertIn("/cancel", yes_text)
+
+        # The in-progress blob should now sit at awaiting_name, ready
+        # for the rename turn.
+        with self.state_db.connect() as conn:
+            blob_row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ?",
+                ("agent_onboarding:human:telegram:111",),
+            ).fetchone()
+        self.assertIsNotNone(blob_row)
+        blob = json.loads(str(blob_row["value"]))
+        self.assertEqual(blob["status"], "active")
+        self.assertEqual(blob["step"], "awaiting_name")
+
+        # The saved persona profile should still be untouched by the
+        # offer and the yes acceptance.
+        persona_after = load_agent_persona_profile(
+            agent_id="agent:human:telegram:111",
+            human_id="human:telegram:111",
+            state_db=self.state_db,
+        )
+        self.assertEqual(persona_after.get("persona_name"), "Atlas")
+        self.assertAlmostEqual(persona_after["base_traits"]["directness"], 0.83)
+
+    def test_runtime_existing_user_reonboard_skip_passes_through_to_researcher_bridge(self) -> None:
+        """P2-13: skip reply on the reonboard offer falls through to the bridge.
+
+        After the runtime raises the one-tap skip offer, the user can
+        reply with anything other than an explicit yes token to keep
+        their existing persona. That reply should NOT be intercepted by
+        the onboarding state machine — it must fall through to the
+        researcher bridge so the normal DM response path handles it.
+        The saved persona profile and agent name stay untouched and the
+        onboarding state is marked `completed` so the offer never
+        re-shows.
+
+        P2-13 of docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md; Q-H of
+        docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md \u00a711.
+        """
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+        rename_agent_identity(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+            new_name="Atlas",
+            source_surface="telegram",
+            source_ref="seed-name",
+        )
+        save_agent_persona_profile(
+            agent_id="agent:human:telegram:111",
+            human_id="human:telegram:111",
+            state_db=self.state_db,
+            base_traits={
+                "warmth": 0.62,
+                "directness": 0.83,
+                "playfulness": 0.2,
+                "pacing": 0.66,
+                "assertiveness": 0.74,
+            },
+            persona_name="Atlas",
+            persona_summary="Calm, strategic, very direct, low-fluff.",
+        )
+        self.assertTrue(
+            consume_pairing_welcome(
+                state_db=self.state_db,
+                channel_id="telegram",
+                external_user_id="111",
+            )
+        )
+
+        # First turn: offer card, no researcher bridge.
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            side_effect=AssertionError(
+                "researcher bridge should not run during reonboard offer"
+            ),
+        ):
+            offer_result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=1400,
+                    user_id="111",
+                    username="alice",
+                    text="hey",
+                ),
+            )
+        self.assertTrue(offer_result.ok)
+        self.assertIn(
+            "re-run setup",
+            str(offer_result.detail["response_text"]),
+        )
+
+        # Second turn: any non-yes reply falls through to the
+        # researcher bridge. The bridge's reply text is what the user
+        # actually sees.
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            return_value=ResearcherBridgeResult(
+                request_id="req-reonboard-skip",
+                reply_text="Here is the grounded answer.",
+                evidence_summary="status=under_supported",
+                escalation_hint=None,
+                trace_ref="trace:reonboard-skip",
+                mode="external_configured",
+                runtime_root="C:/fake-researcher",
+                config_path="C:/fake-researcher/spark-researcher.project.json",
+                attachment_context={},
+                provider_id="custom",
+                provider_auth_profile_id="custom:default",
+                provider_auth_method="api_key_env",
+                provider_model="MiniMax-M2.7",
+                provider_model_family="generic",
+                provider_execution_transport="direct_http",
+                provider_base_url="https://api.minimax.io/v1",
+                provider_source="config+env",
+                routing_decision="provider_fallback_chat",
+            ),
+        ) as bridge_patch:
+            skip_result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=1401,
+                    user_id="111",
+                    username="alice",
+                    text="nah just chat with me",
+                ),
+            )
+            self.assertEqual(bridge_patch.call_count, 1)
+
+        self.assertTrue(skip_result.ok)
+        self.assertEqual(
+            skip_result.detail["response_text"],
+            "Here is the grounded answer.",
+        )
+
+        # The onboarding blob should be marked completed so the offer
+        # never re-shows for this user.
+        with self.state_db.connect() as conn:
+            blob_row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ?",
+                ("agent_onboarding:human:telegram:111",),
+            ).fetchone()
+        self.assertIsNotNone(blob_row)
+        blob = json.loads(str(blob_row["value"]))
+        self.assertEqual(blob["status"], "completed")
+
+        # A follow-up DM should go straight to the bridge: the state
+        # blob is completed, so `agent_has_reonboard_candidate` is
+        # False and the entry gate short-circuits.
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            return_value=ResearcherBridgeResult(
+                request_id="req-reonboard-followup",
+                reply_text="Another grounded answer.",
+                evidence_summary="status=under_supported",
+                escalation_hint=None,
+                trace_ref="trace:reonboard-followup",
+                mode="external_configured",
+                runtime_root="C:/fake-researcher",
+                config_path="C:/fake-researcher/spark-researcher.project.json",
+                attachment_context={},
+                provider_id="custom",
+                provider_auth_profile_id="custom:default",
+                provider_auth_method="api_key_env",
+                provider_model="MiniMax-M2.7",
+                provider_model_family="generic",
+                provider_execution_transport="direct_http",
+                provider_base_url="https://api.minimax.io/v1",
+                provider_source="config+env",
+                routing_decision="provider_fallback_chat",
+            ),
+        ) as followup_patch:
+            followup_result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=1402,
+                    user_id="111",
+                    username="alice",
+                    text="another question",
+                ),
+            )
+            self.assertEqual(followup_patch.call_count, 1)
+        self.assertTrue(followup_result.ok)
+        self.assertEqual(
+            followup_result.detail["response_text"],
+            "Another grounded answer.",
+        )
+
+        # Saved persona and agent name both untouched.
+        persona_after = load_agent_persona_profile(
+            agent_id="agent:human:telegram:111",
+            human_id="human:telegram:111",
+            state_db=self.state_db,
+        )
+        self.assertEqual(persona_after.get("persona_name"), "Atlas")
+        agent_state = read_canonical_agent_state(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+        )
+        self.assertEqual(agent_state.agent_name, "Atlas")
+
     def test_onboarding_guardrails_ack_change_branch_stays_pinned_then_accepts(self) -> None:
         """P2-10: `change` soft-reprompts without advancing; `ok` completes.
 
@@ -1909,6 +2209,32 @@ class OperatorPairingFlowTests(SparkTestCase):
                 external_user_id="111",
             )
         )
+        # P2-13: mark the onboarding state `completed` so the new
+        # `agent_has_reonboard_candidate` entry gate short-circuits and
+        # this test still exercises the normal chat path, not the
+        # one-tap skip offer. Simulates an existing user who has
+        # already dismissed or completed the reonboard flow.
+        with self.state_db.connect() as conn:
+            conn.execute(
+                "INSERT INTO runtime_state(state_key, value) VALUES (?, ?) "
+                "ON CONFLICT(state_key) DO UPDATE SET value=excluded.value",
+                (
+                    "agent_onboarding:human:telegram:111",
+                    json.dumps(
+                        {
+                            "status": "completed",
+                            "step": "completed",
+                            "agent_id": "agent:human:telegram:111",
+                            "agent_name": "Atlas",
+                            "persona_summary": "Calm, strategic, very direct, low-fluff.",
+                            "completed_at": "2026-04-01T00:00:00+00:00",
+                            "updated_at": "2026-04-01T00:00:00+00:00",
+                        },
+                        sort_keys=True,
+                    ),
+                ),
+            )
+            conn.commit()
 
         with patch(
             "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",

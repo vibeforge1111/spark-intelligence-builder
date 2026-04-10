@@ -39,6 +39,7 @@ from spark_intelligence.identity.service import (
 )
 from spark_intelligence.observability.store import build_text_mutation_facts, close_run, open_run, record_event
 from spark_intelligence.personality import (
+    agent_has_reonboard_candidate,
     apply_telegram_surface_persona,
     build_telegram_surface_identity_preamble,
     create_agent_persona_savepoint,
@@ -678,6 +679,22 @@ def simulate_telegram_update(
             active_chip_evaluate_used = False
             evidence_summary = None
         else:
+            # P2-13: enter the v2 onboarding state machine whenever the
+            # pairing welcome is still pending (fresh pair, existing
+            # behavior) OR whenever the user already has a saved persona
+            # profile but no in-progress onboarding state blob. The
+            # second branch powers the P2-12 one-tap skip offer for
+            # existing users. Q-H of
+            # docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11.
+            onboarding_eligible = pairing_welcome_pending(
+                state_db=state_db,
+                channel_id="telegram",
+                external_user_id=normalized.telegram_user_id,
+            ) or agent_has_reonboard_candidate(
+                human_id=resolution.human_id,
+                agent_id=resolution.agent_id,
+                state_db=state_db,
+            )
             onboarding_result = maybe_handle_agent_persona_onboarding_turn(
                 human_id=resolution.human_id,
                 agent_id=resolution.agent_id,
@@ -685,11 +702,7 @@ def simulate_telegram_update(
                 state_db=state_db,
                 source_surface="telegram",
                 source_ref=f"sim:{normalized.update_id}",
-                start_if_eligible=pairing_welcome_pending(
-                    state_db=state_db,
-                    channel_id="telegram",
-                    external_user_id=normalized.telegram_user_id,
-                ),
+                start_if_eligible=onboarding_eligible,
             )
             if onboarding_result is not None:
                 outbound_text = _apply_post_approval_welcome(
@@ -1254,6 +1267,22 @@ def poll_telegram_updates_once(
             )
             continue
 
+        # P2-13: enter the v2 onboarding state machine whenever the
+        # pairing welcome is still pending (fresh pair, existing
+        # behavior) OR whenever the user already has a saved persona
+        # profile but no in-progress onboarding state blob. The second
+        # branch powers the P2-12 one-tap skip offer for existing
+        # users. Q-H of
+        # docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11.
+        onboarding_eligible = pairing_welcome_pending(
+            state_db=state_db,
+            channel_id="telegram",
+            external_user_id=normalized.telegram_user_id,
+        ) or agent_has_reonboard_candidate(
+            human_id=resolution.human_id,
+            agent_id=resolution.agent_id,
+            state_db=state_db,
+        )
         onboarding_result = maybe_handle_agent_persona_onboarding_turn(
             human_id=resolution.human_id,
             agent_id=resolution.agent_id,
@@ -1261,11 +1290,7 @@ def poll_telegram_updates_once(
             state_db=state_db,
             source_surface="telegram",
             source_ref=run.request_id,
-            start_if_eligible=pairing_welcome_pending(
-                state_db=state_db,
-                channel_id="telegram",
-                external_user_id=normalized.telegram_user_id,
-            ),
+            start_if_eligible=onboarding_eligible,
         )
         if onboarding_result is not None:
             record_event(

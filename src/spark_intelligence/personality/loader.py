@@ -1405,6 +1405,42 @@ def migrate_legacy_human_personality_to_agent_persona(
     )
 
 
+def agent_has_reonboard_candidate(
+    *,
+    human_id: str,
+    agent_id: str,
+    state_db: StateDB,
+) -> bool:
+    """Return True if the caller should start the P2-12 reonboard offer.
+
+    P2-13 of docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md. The Telegram
+    runtime uses this helper as an entry gate so existing users with
+    a saved persona profile but no in-progress onboarding state blob
+    still get the P2-12 one-tap skip offer on their next DM — not
+    only freshly-paired users whose pairing welcome is still pending.
+
+    Returns True only when BOTH of the following hold:
+
+    1. There is no existing onboarding state blob for this human
+       (so we never re-fire the offer once the user has interacted
+       with the state machine at all).
+    2. There is a saved persona profile for this agent/human pair
+       (so genuinely new pairings still flow through the standard
+       `awaiting_name` entry, not the reonboard offer).
+    """
+    if not human_id or not agent_id or state_db is None:
+        return False
+    onboarding_state = _load_agent_onboarding_state(
+        human_id=human_id, state_db=state_db
+    )
+    if onboarding_state:
+        return False
+    existing_persona = load_agent_persona_profile(
+        agent_id=agent_id, human_id=human_id, state_db=state_db
+    )
+    return bool(existing_persona)
+
+
 def maybe_handle_agent_persona_onboarding_turn(
     *,
     human_id: str,
