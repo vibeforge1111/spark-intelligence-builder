@@ -261,6 +261,15 @@ class OperatorPairingFlowTests(SparkTestCase):
                     text="freestyle",
                 ),
             )
+            # P2-9: after picking "freestyle", the state should be the renamed
+            # awaiting_persona_freestyle step (previously named awaiting_persona).
+            with self.state_db.connect() as conn:
+                freestyle_blob_row = conn.execute(
+                    "SELECT value FROM runtime_state WHERE state_key = ?",
+                    ("agent_onboarding:human:telegram:111",),
+                ).fetchone()
+            freestyle_blob = json.loads(str(freestyle_blob_row["value"]))
+            self.assertEqual(freestyle_blob["step"], "awaiting_persona_freestyle")
             fifth_turn = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,

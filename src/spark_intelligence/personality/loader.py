@@ -1612,12 +1612,12 @@ def maybe_handle_agent_persona_onboarding_turn(
                 persona_profile=existing_persona,
                 completed=False,
             )
-        onboarding_state["step"] = "awaiting_persona"
+        onboarding_state["step"] = "awaiting_persona_freestyle"
         _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
         return AgentOnboardingTurnResult(
             human_id=human_id,
             agent_id=agent_id,
-            step="awaiting_persona",
+            step="awaiting_persona_freestyle",
             reply_text=(
                 "Now describe the personality you want. "
                 "You can say something like `calm, strategic, very direct, low-fluff`."
@@ -1798,7 +1798,7 @@ def maybe_handle_agent_persona_onboarding_turn(
             completed=True,
         )
 
-    if step != "awaiting_persona":
+    if step != "awaiting_persona_freestyle":
         _delete_agent_onboarding_state(human_id=human_id, state_db=state_db)
         return None
 
