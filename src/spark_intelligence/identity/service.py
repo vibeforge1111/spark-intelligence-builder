@@ -244,6 +244,154 @@ def _canonical_agent_id(human_id: str) -> str:
     return f"agent:{human_id}"
 
 
+# ────────────────────────────────────────────────────────────────────
+# Identity aliasing — one primary identity across multiple channels.
+#
+# When a user wants to talk to the same Spark from multiple surfaces
+# (Telegram + TUI + Discord + …) without each surface spawning its
+# own agent, we register an *alias*: a row in identity_aliases that
+# maps a (channel, external_user) pair to a primary (channel, user)'s
+# canonical human_id and agent_id.
+#
+# Resolution: when resolve_inbound_dm is asked about an aliased user,
+# it returns the *primary* human_id and agent_id (so personality and
+# memory are shared) but keeps the *alias* session_id (so conversation
+# threads stay independent).
+# ────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class IdentityAlias:
+    """A row in identity_aliases."""
+
+    alias_channel: str
+    alias_external_user: str
+    primary_channel: str
+    primary_external_user: str
+    primary_human_id: str
+    primary_agent_id: str
+
+
+def _resolve_alias(
+    state_db: StateDB,
+    channel_id: str,
+    external_user_id: str,
+) -> IdentityAlias | None:
+    """Look up the alias row for a (channel, user) — None if not aliased."""
+    with state_db.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT alias_channel, alias_external_user,
+                   primary_channel, primary_external_user,
+                   primary_human_id, primary_agent_id
+            FROM identity_aliases
+            WHERE alias_channel = ? AND alias_external_user = ?
+            LIMIT 1
+            """,
+            (channel_id, external_user_id),
+        ).fetchone()
+    if row is None:
+        return None
+    return IdentityAlias(
+        alias_channel=str(row["alias_channel"]),
+        alias_external_user=str(row["alias_external_user"]),
+        primary_channel=str(row["primary_channel"]),
+        primary_external_user=str(row["primary_external_user"]),
+        primary_human_id=str(row["primary_human_id"]),
+        primary_agent_id=str(row["primary_agent_id"]),
+    )
+
+
+def link_identity_alias(
+    *,
+    state_db: StateDB,
+    primary_channel: str,
+    primary_external_user: str,
+    alias_channel: str,
+    alias_external_user: str,
+    created_by: str = "system",
+) -> IdentityAlias:
+    """Make (alias_channel, alias_user) resolve to (primary_channel, primary_user)'s identity.
+
+    The primary's canonical human_id and agent_id are stored in the alias row
+    so future lookups don't need to recompute them. If a row already exists
+    for this (alias_channel, alias_external_user) it is overwritten.
+
+    Idempotent. Returns the resulting IdentityAlias.
+    """
+    primary_human = _canonical_human_id(primary_channel, primary_external_user)
+    primary_agent = _canonical_agent_id(primary_human)
+    with state_db.connect() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO identity_aliases
+                (alias_channel, alias_external_user,
+                 primary_channel, primary_external_user,
+                 primary_human_id, primary_agent_id, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                alias_channel,
+                alias_external_user,
+                primary_channel,
+                primary_external_user,
+                primary_human,
+                primary_agent,
+                created_by,
+            ),
+        )
+        conn.commit()
+    return IdentityAlias(
+        alias_channel=alias_channel,
+        alias_external_user=alias_external_user,
+        primary_channel=primary_channel,
+        primary_external_user=primary_external_user,
+        primary_human_id=primary_human,
+        primary_agent_id=primary_agent,
+    )
+
+
+def unlink_identity_alias(
+    *,
+    state_db: StateDB,
+    alias_channel: str,
+    alias_external_user: str,
+) -> bool:
+    """Remove an alias. Returns True if a row was deleted."""
+    with state_db.connect() as conn:
+        cur = conn.execute(
+            "DELETE FROM identity_aliases WHERE alias_channel = ? AND alias_external_user = ?",
+            (alias_channel, alias_external_user),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def list_identity_aliases(state_db: StateDB) -> list[IdentityAlias]:
+    """All registered aliases — for `spark identity list` and inspection."""
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT alias_channel, alias_external_user,
+                   primary_channel, primary_external_user,
+                   primary_human_id, primary_agent_id
+            FROM identity_aliases
+            ORDER BY primary_human_id, alias_channel, alias_external_user
+            """
+        ).fetchall()
+    return [
+        IdentityAlias(
+            alias_channel=str(r["alias_channel"]),
+            alias_external_user=str(r["alias_external_user"]),
+            primary_channel=str(r["primary_channel"]),
+            primary_external_user=str(r["primary_external_user"]),
+            primary_human_id=str(r["primary_human_id"]),
+            primary_agent_id=str(r["primary_agent_id"]),
+        )
+        for r in rows
+    ]
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -926,7 +1074,19 @@ def _activate_channel_access(
     external_user_id: str,
     display_name: str,
 ) -> tuple[str, str, str]:
-    human_id = _canonical_human_id(channel_id, external_user_id)
+    # Identity aliasing: if (channel, user) is registered as an alias for
+    # a primary identity, the human_id we use for the humans / bindings /
+    # session_binding rows is the *primary's* human_id, not the canonical
+    # per-channel one. This is what makes personality and memory shared
+    # across surfaces — they all key off the same human_id.
+    #
+    # The session_id stays per-channel so independent threads remain
+    # independent.
+    alias = _resolve_alias(state_db, channel_id, external_user_id)
+    if alias is not None:
+        human_id = alias.primary_human_id
+    else:
+        human_id = _canonical_human_id(channel_id, external_user_id)
     account_id = _canonical_channel_account_id(channel_id, external_user_id)
     surface_id = _canonical_surface_id(channel_id, external_user_id)
     session_id = _canonical_session_id(channel_id, external_user_id)
@@ -1055,7 +1215,17 @@ def resolve_inbound_dm(
     display_name: str,
 ) -> InboundResolution:
     session_id = _canonical_session_id(channel_id, external_user_id)
-    human_id = _canonical_human_id(channel_id, external_user_id)
+
+    # Identity aliasing: if this (channel, user) is registered as an alias
+    # for a primary identity, use the primary's human_id (and indirectly
+    # the primary's agent_id via the session_binding row that
+    # _activate_channel_access creates). The session_id stays per-channel
+    # so independent threads remain independent.
+    alias = _resolve_alias(state_db, channel_id, external_user_id)
+    if alias is not None:
+        human_id = alias.primary_human_id
+    else:
+        human_id = _canonical_human_id(channel_id, external_user_id)
 
     with state_db.connect() as conn:
         channel_row = conn.execute(
