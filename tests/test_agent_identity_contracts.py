@@ -894,12 +894,17 @@ class AgentIdentityContractTests(SparkTestCase):
             source_ref="turn-old",
         )
 
+        # rename_agent_identity stamps the rename with `_utc_now_iso()` (i.e.
+        # "now" at test time). To exercise the "swarm confirmation is fresher
+        # than the builder rename" path, the swarm's confirmed_at must be
+        # strictly later than the rename's timestamp. A far-future timestamp
+        # guarantees this regardless of wall-clock drift on the test host.
         linked = link_spark_swarm_agent(
             state_db=self.state_db,
             human_id="human:telegram:111",
             swarm_agent_id="swarm-agent:atlas",
             agent_name="Swarm Prime",
-            confirmed_at="2026-03-29T00:00:00+00:00",
+            confirmed_at="2099-01-01T00:00:00+00:00",
             metadata={"workspace_id": "ws-test"},
         )
 
