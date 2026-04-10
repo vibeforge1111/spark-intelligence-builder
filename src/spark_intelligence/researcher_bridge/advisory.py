@@ -244,6 +244,19 @@ def _partition_profile_fact_records(
     return primary_records, related_records_out
 
 
+def _profile_fact_explanation_has_content(payload: dict[str, Any] | None) -> bool:
+    data = payload or {}
+    if str(data.get("answer") or "").strip():
+        return True
+    evidence = data.get("evidence")
+    if isinstance(evidence, list) and any(isinstance(item, dict) and str(item.get("text") or "").strip() for item in evidence):
+        return True
+    events = data.get("events")
+    if isinstance(events, list) and any(item for item in events):
+        return True
+    return False
+
+
 @dataclass
 class ResearcherBridgeStatus:
     enabled: bool
@@ -2784,46 +2797,24 @@ def build_researcher_reply(
         direct_fact_read_method = "explain_answer"
         explanation_payload: dict[str, Any] = {}
         related_predicates = _profile_fact_query_related_predicates(detected_profile_fact_query.predicate)
-        if str(detected_profile_fact_query.predicate or "") == "profile.startup_name":
-            direct_fact_explanation = explain_memory_answer_in_memory(
-                config_manager=config_manager,
-                state_db=state_db,
-                subject=memory_subject,
-                predicate="profile.startup_name",
-                question=direct_fact_question,
-                actor_id="researcher_bridge",
-            )
-            explanation_payload = direct_fact_explanation.read_result.answer_explanation or {}
-            if direct_fact_explanation.read_result.abstained or not direct_fact_explanation.read_result.records:
-                founder_explanation = explain_memory_answer_in_memory(
-                    config_manager=config_manager,
-                    state_db=state_db,
-                    subject=memory_subject,
-                    predicate="profile.founder_of",
-                    question=direct_fact_question,
-                    actor_id="researcher_bridge",
-                )
-                explanation_payload = founder_explanation.read_result.answer_explanation or {}
-                if not founder_explanation.read_result.abstained and founder_explanation.read_result.records:
-                    direct_fact_read_method = "explain_answer(founder_of)"
-        else:
-            direct_fact_explanation = explain_memory_answer_in_memory(
-                config_manager=config_manager,
-                state_db=state_db,
-                subject=memory_subject,
-                predicate=str(detected_profile_fact_query.predicate or ""),
-                question=direct_fact_question,
-                actor_id="researcher_bridge",
-            )
-            explanation_payload = direct_fact_explanation.read_result.answer_explanation or {}
+        explanation_related_predicates: tuple[str, ...] = ()
+        direct_fact_explanation = explain_memory_answer_in_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            subject=memory_subject,
+            predicate=str(detected_profile_fact_query.predicate or ""),
+            question=direct_fact_question,
+            actor_id="researcher_bridge",
+        )
+        explanation_payload = direct_fact_explanation.read_result.answer_explanation or {}
 
-        if not explanation_payload:
+        if not _profile_fact_explanation_has_content(explanation_payload):
             primary_records, related_records = _inspect_profile_fact_records(
                 config_manager=config_manager,
                 state_db=state_db,
                 human_id=human_id,
                 predicate=detected_profile_fact_query.predicate,
-                related_predicates=related_predicates,
+                related_predicates=explanation_related_predicates,
                 actor_id="researcher_bridge",
             )
             fallback_answer = _select_profile_fact_query_value(
@@ -2836,6 +2827,38 @@ def build_researcher_reply(
                 direct_fact_read_method = (
                     "inspect_current_state(+related)" if related_records else "inspect_current_state"
                 )
+        if not _profile_fact_explanation_has_content(explanation_payload):
+            evidence_lookup = retrieve_memory_evidence_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                query=direct_fact_question,
+                subject=memory_subject,
+                limit=6,
+                actor_id="researcher_bridge",
+            )
+            if not evidence_lookup.read_result.abstained and evidence_lookup.read_result.records:
+                primary_records, related_records = _partition_profile_fact_records(
+                    records=evidence_lookup.read_result.records,
+                    predicate=detected_profile_fact_query.predicate,
+                    related_predicates=explanation_related_predicates,
+                )
+                fallback_answer = _select_profile_fact_query_value(
+                    predicate=detected_profile_fact_query.predicate,
+                    primary_records=primary_records,
+                    related_records=related_records,
+                )
+                if fallback_answer:
+                    evidence_items = []
+                    for record in [*primary_records, *related_records]:
+                        evidence_text = str(record.get("text") or "").strip()
+                        if evidence_text:
+                            evidence_items.append({"text": evidence_text})
+                    explanation_payload = {"answer": fallback_answer}
+                    if evidence_items:
+                        explanation_payload["evidence"] = evidence_items[:1]
+                    direct_fact_read_method = (
+                        "retrieve_evidence(+related)" if related_records else "retrieve_evidence"
+                    )
 
         output_keepability, promotion_disposition = _bridge_output_classification(
             mode="memory_profile_fact_explanation",

@@ -472,9 +472,12 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIsNotNone(blob_row)
         blob = json.loads(str(blob_row["value"]))
         self.assertEqual(blob["persona_mode"], "express")
-        self.assertEqual(blob["step"], "awaiting_persona")
+        # P2-8: picking "express" now transitions to awaiting_persona_express
+        # and replies with the preset catalog instead of falling through to
+        # the freestyle describe-your-personality prompt.
+        self.assertEqual(blob["step"], "awaiting_persona_express")
         self.assertTrue(mode_turn.ok)
-        self.assertIn("describe the personality", str(mode_turn.detail["response_text"]))
+        self.assertIn("Pick a preset", str(mode_turn.detail["response_text"]))
 
     def test_onboarding_guided_mode_walks_five_questions_and_saves_profile(self) -> None:
         self.add_telegram_channel()
@@ -689,6 +692,192 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(blob["step"], "awaiting_persona_guided")
         self.assertEqual(blob.get("persona_guided_trait_index"), 0)
         self.assertEqual(blob.get("persona_guided_ratings") or {}, {})
+
+    def test_onboarding_express_mode_saves_preset_traits_and_completes(self) -> None:
+        self.add_telegram_channel()
+        simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=600,
+                user_id="111",
+                username="alice",
+                text="/start",
+            ),
+        )
+        exit_code, _, stderr = self.run_cli(
+            "operator",
+            "approve-latest",
+            "telegram",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(exit_code, 0, stderr)
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            side_effect=AssertionError("researcher bridge should not run during onboarding"),
+        ):
+            simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=601, user_id="111", username="alice", text="hey"
+                ),
+            )
+            simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=602, user_id="111", username="alice", text="Nova"
+                ),
+            )
+            simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=603, user_id="111", username="alice", text="Boss"
+                ),
+            )
+            catalog_turn = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=604, user_id="111", username="alice", text="express"
+                ),
+            )
+            completion_turn = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=605, user_id="111", username="alice", text="warm"
+                ),
+            )
+
+        # Picking "express" should return the preset catalog.
+        self.assertTrue(catalog_turn.ok)
+        catalog_text = str(catalog_turn.detail["response_text"])
+        self.assertIn("Pick a preset", catalog_text)
+        self.assertIn("operator", catalog_text)
+        self.assertIn("claude-like", catalog_text)
+        self.assertIn("concise", catalog_text)
+        self.assertIn("warm", catalog_text)
+
+        # Selecting "warm" should complete onboarding with the preset's traits.
+        self.assertTrue(completion_turn.ok)
+        completion_text = str(completion_turn.detail["response_text"])
+        self.assertIn("Locked in", completion_text)
+        self.assertIn("Warm", completion_text)
+        self.assertIn("Nova", completion_text)
+
+        # The onboarding blob should be marked completed.
+        with self.state_db.connect() as conn:
+            blob_row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ?",
+                ("agent_onboarding:human:telegram:111",),
+            ).fetchone()
+        self.assertIsNotNone(blob_row)
+        blob = json.loads(str(blob_row["value"]))
+        self.assertEqual(blob["step"], "completed")
+        self.assertEqual(blob["status"], "completed")
+
+        # The persona profile should reflect the "warm" preset trait vector
+        # and provenance should record persona_mode=express and the chosen key.
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT base_traits_json, provenance_json "
+                "FROM agent_persona_profiles ORDER BY updated_at DESC LIMIT 1"
+            ).fetchone()
+        self.assertIsNotNone(row)
+        base_traits = json.loads(str(row["base_traits_json"]))
+        self.assertAlmostEqual(base_traits["warmth"], 0.85, places=2)
+        self.assertAlmostEqual(base_traits["directness"], 0.50, places=2)
+        self.assertAlmostEqual(base_traits["playfulness"], 0.60, places=2)
+        self.assertAlmostEqual(base_traits["pacing"], 0.40, places=2)
+        self.assertAlmostEqual(base_traits["assertiveness"], 0.45, places=2)
+        provenance = json.loads(str(row["provenance_json"]))
+        self.assertEqual(provenance.get("persona_mode"), "express")
+        self.assertEqual(provenance.get("express_preset"), "warm")
+
+    def test_onboarding_express_reprompts_on_unknown_preset_then_recovers(self) -> None:
+        self.add_telegram_channel()
+        simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=700,
+                user_id="111",
+                username="alice",
+                text="/start",
+            ),
+        )
+        exit_code, _, stderr = self.run_cli(
+            "operator",
+            "approve-latest",
+            "telegram",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(exit_code, 0, stderr)
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            side_effect=AssertionError("researcher bridge should not run during onboarding"),
+        ):
+            for update_id, text in (
+                (701, "hey"),
+                (702, "Nova"),
+                (703, "skip"),
+                (704, "express"),
+            ):
+                simulate_telegram_update(
+                    config_manager=self.config_manager,
+                    state_db=self.state_db,
+                    update_payload=make_telegram_update(
+                        update_id=update_id, user_id="111", username="alice", text=text
+                    ),
+                )
+            unknown_turn = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=705, user_id="111", username="alice", text="pancakes"
+                ),
+            )
+
+            # Unknown reply should re-prompt with the catalog and leave the
+            # state pinned at awaiting_persona_express.
+            self.assertTrue(unknown_turn.ok)
+            reply = str(unknown_turn.detail["response_text"])
+            self.assertIn("didn't catch that preset", reply)
+            self.assertIn("Pick a preset", reply)
+            with self.state_db.connect() as conn:
+                blob_row = conn.execute(
+                    "SELECT value FROM runtime_state WHERE state_key = ?",
+                    ("agent_onboarding:human:telegram:111",),
+                ).fetchone()
+            blob = json.loads(str(blob_row["value"]))
+            self.assertEqual(blob["step"], "awaiting_persona_express")
+
+            recovery_turn = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=706, user_id="111", username="alice", text="2"
+                ),
+            )
+
+        # Recovery via the numeric choice "2" should pick the second preset
+        # (claude-like) and complete onboarding.
+        self.assertTrue(recovery_turn.ok)
+        self.assertIn("Locked in", str(recovery_turn.detail["response_text"]))
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT provenance_json FROM agent_persona_profiles "
+                "ORDER BY updated_at DESC LIMIT 1"
+            ).fetchone()
+        provenance = json.loads(str(row["provenance_json"]))
+        self.assertEqual(provenance.get("express_preset"), "claude-like")
 
     def test_revoke_latest_blocks_future_dm_with_revoked_reply(self) -> None:
         self.add_telegram_channel()

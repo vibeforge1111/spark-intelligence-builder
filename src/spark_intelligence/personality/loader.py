@@ -1600,6 +1600,18 @@ def maybe_handle_agent_persona_onboarding_turn(
                 persona_profile=existing_persona,
                 completed=False,
             )
+        if persona_mode == "express":
+            onboarding_state["step"] = "awaiting_persona_express"
+            _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
+            return AgentOnboardingTurnResult(
+                human_id=human_id,
+                agent_id=agent_id,
+                step="awaiting_persona_express",
+                reply_text=_build_persona_express_catalog_text(),
+                agent_name=canonical_state.agent_name,
+                persona_profile=existing_persona,
+                completed=False,
+            )
         onboarding_state["step"] = "awaiting_persona"
         _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
         return AgentOnboardingTurnResult(
@@ -1718,6 +1730,67 @@ def maybe_handle_agent_persona_onboarding_turn(
             step="completed",
             reply_text=(
                 f"Locked in. `{canonical_state.agent_name}` is now set up as {persona_profile.get('persona_summary') or 'your saved agent persona'}.\n\n"
+                "You can keep shaping it anytime by saying things like `be more direct`, `be warmer`, or `what's my personality`."
+            ),
+            agent_name=canonical_state.agent_name,
+            persona_profile=persona_profile,
+            completed=True,
+        )
+
+    if step == "awaiting_persona_express":
+        preset_key = _parse_onboarding_persona_express_choice(normalized_message)
+        if preset_key is None:
+            return AgentOnboardingTurnResult(
+                human_id=human_id,
+                agent_id=agent_id,
+                step="awaiting_persona_express",
+                reply_text=(
+                    "I didn't catch that preset. Reply with the name or number.\n\n"
+                    + _build_persona_express_catalog_text()
+                ),
+                agent_name=canonical_state.agent_name,
+                persona_profile=existing_persona,
+                completed=False,
+            )
+        preset = _ONBOARDING_EXPRESS_PRESETS[preset_key]
+        preset_traits = {
+            str(trait): float(value)
+            for trait, value in (preset.get("base_traits") or {}).items()
+        }
+        persona_summary = _compact_persona_summary(preset_traits)
+        persona_profile = save_agent_persona_profile(
+            agent_id=agent_id,
+            human_id=human_id,
+            state_db=state_db,
+            base_traits=preset_traits,
+            persona_name=canonical_state.agent_name,
+            persona_summary=persona_summary,
+            provenance={
+                "source_surface": source_surface,
+                "source_ref": source_ref,
+                "onboarding": True,
+                "persona_mode": "express",
+                "express_preset": preset_key,
+            },
+            mutation_kind="onboarding_express",
+            source_surface=source_surface,
+            source_ref=source_ref,
+        )
+        _complete_agent_onboarding_state(
+            human_id=human_id,
+            state_db=state_db,
+            agent_id=agent_id,
+            agent_name=canonical_state.agent_name,
+            persona_summary=persona_profile.get("persona_summary"),
+        )
+        label = str(preset.get("label") or preset_key)
+        return AgentOnboardingTurnResult(
+            human_id=human_id,
+            agent_id=agent_id,
+            step="completed",
+            reply_text=(
+                f"Locked in. `{canonical_state.agent_name}` is set to the `{label}` preset "
+                f"\u2014 {persona_profile.get('persona_summary') or 'a saved agent persona'}.\n\n"
                 "You can keep shaping it anytime by saying things like `be more direct`, `be warmer`, or `what's my personality`."
             ),
             agent_name=canonical_state.agent_name,
@@ -2074,12 +2147,65 @@ def _extract_onboarding_descriptor_deltas(text: str) -> dict[str, float]:
     return deltas
 
 
+_ONBOARDING_NAME_STOPWORDS = frozenset(
+    {
+        # Pronouns / articles
+        "i", "me", "my", "mine", "we", "us", "our", "ours", "you", "your",
+        "yours", "it", "its", "he", "she", "they", "them", "their", "a",
+        "an", "the", "this", "that", "these", "those",
+        # Auxiliaries / copulas
+        "am", "is", "are", "was", "were", "be", "been", "being", "have",
+        "has", "had", "do", "does", "did", "will", "would", "can", "could",
+        "should", "might", "may", "must", "shall",
+        # Common verbs that appear in sentences about agents
+        "want", "need", "think", "know", "like", "love", "hate", "see",
+        "say", "said", "get", "got", "make", "made", "take", "took",
+        "call", "called", "name", "named", "use", "using", "actually",
+        "really", "maybe", "kind", "sort",
+        # Spark-specific words that would be odd as an agent name
+        "spark", "swarm", "agent", "bot", "assistant", "terminal",
+        # Conjunctions / prepositions
+        "and", "or", "but", "so", "because", "if", "then", "for",
+        "of", "in", "on", "at", "to", "from", "with", "by", "as",
+        "about", "into", "out",
+        # Question words
+        "what", "who", "where", "when", "why", "how",
+        # Onboarding hesitation
+        "hmm", "hmmm", "idk", "dunno", "tbh", "ok", "okay", "sure",
+        "yes", "yeah", "yep", "nope", "no",
+    }
+)
+
+
 def _extract_onboarding_agent_name(text: str) -> str | None:
+    """Extract a candidate agent name from a free-text onboarding reply.
+
+    Conservative by design: rejects anything that looks like a sentence
+    rather than a name. Historical bug: this accepted any 2-40 char
+    alphanumeric string, so a message like 'we actually have a spark
+    swarm agent' got captured as the agent's literal name. Now we
+    require 1 or 2 tokens and reject any response containing common
+    English function words. The explicit naming path
+    (`_extract_agent_name`) still handles 'call me X' / 'my name is X'
+    patterns separately, so users who phrase their answer naturally
+    still get their name picked up.
+    """
     compact = " ".join(str(text or "").strip().split()).strip("\"'")
     if not compact or compact.startswith("/"):
         return None
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _-]{1,39}", compact):
         return None
+
+    tokens = compact.split()
+    if not tokens or len(tokens) > 2:
+        return None
+
+    # Reject if any token is a common function word / stopword — those
+    # are signals the user is answering in a sentence, not naming.
+    for token in tokens:
+        if token.lower() in _ONBOARDING_NAME_STOPWORDS:
+            return None
+
     return compact
 
 
@@ -2332,6 +2458,126 @@ def _build_guided_trait_question(trait: str, index: int) -> str:
     lines.append("")
     lines.append("Reply with a number from 1 to 5.")
     return "\n".join(lines)
+
+
+# P2-8: Express persona sub-state presets. Each preset maps to a trait
+# vector that becomes the base_traits passed to save_agent_persona_profile
+# on completion. Labels/descriptions mirror the style preset catalog
+# exposed by `/style preset` in the Telegram runtime (operator,
+# claude-like, concise, warm) so the "pick a preset" onboarding path uses
+# the same named identities the operator will see later in conversation.
+# Source: P2-8 in docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md.
+_ONBOARDING_EXPRESS_PRESET_ORDER: tuple[str, ...] = (
+    "operator",
+    "claude-like",
+    "concise",
+    "warm",
+)
+
+_ONBOARDING_EXPRESS_PRESETS: dict[str, dict[str, object]] = {
+    "operator": {
+        "label": "Operator",
+        "description": "Direct, grounded, and concrete. Prefers next steps over filler.",
+        "base_traits": {
+            "warmth": 0.40,
+            "directness": 0.85,
+            "playfulness": 0.25,
+            "pacing": 0.70,
+            "assertiveness": 0.80,
+        },
+    },
+    "claude-like": {
+        "label": "Claude-like",
+        "description": "Strong continuity, grounded follow-ups, low canned phrasing.",
+        "base_traits": {
+            "warmth": 0.65,
+            "directness": 0.55,
+            "playfulness": 0.45,
+            "pacing": 0.50,
+            "assertiveness": 0.55,
+        },
+    },
+    "concise": {
+        "label": "Concise",
+        "description": "Short answers, brisk pacing, low filler.",
+        "base_traits": {
+            "warmth": 0.45,
+            "directness": 0.80,
+            "playfulness": 0.30,
+            "pacing": 0.75,
+            "assertiveness": 0.65,
+        },
+    },
+    "warm": {
+        "label": "Warm",
+        "description": "Friendly and human, calm without losing structure.",
+        "base_traits": {
+            "warmth": 0.85,
+            "directness": 0.50,
+            "playfulness": 0.60,
+            "pacing": 0.40,
+            "assertiveness": 0.45,
+        },
+    },
+}
+
+_EXPRESS_NUMBER_WORDS: dict[str, int] = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+}
+
+
+def _build_persona_express_catalog_text() -> str:
+    """Render the express-preset catalog for awaiting_persona_express."""
+    lines = ["Pick a preset by number or name."]
+    for index, key in enumerate(_ONBOARDING_EXPRESS_PRESET_ORDER, start=1):
+        preset = _ONBOARDING_EXPRESS_PRESETS[key]
+        label = str(preset.get("label") or key)
+        description = str(preset.get("description") or "")
+        lines.append(f"  {index}. `{key}` \u2014 {label}: {description}")
+    lines.append("")
+    lines.append("Reply with the name (for example `warm`) or the number.")
+    return "\n".join(lines)
+
+
+def _parse_onboarding_persona_express_choice(text: str) -> str | None:
+    """Match a user's express-preset choice against the catalog.
+
+    Accepts the canonical preset key ("warm"), the preset label
+    case-insensitive ("Warm"), a 1..4 digit, or the words "one".."four".
+    Returns the canonical preset key (e.g. "warm") or None when no match
+    can be made.
+    """
+    compact = " ".join(str(text or "").strip().lower().split())
+    if not compact:
+        return None
+    if compact in _ONBOARDING_EXPRESS_PRESETS:
+        return compact
+    for key, preset in _ONBOARDING_EXPRESS_PRESETS.items():
+        label = str(preset.get("label") or "").strip().lower()
+        if label and compact == label:
+            return key
+    if compact in {"1", "2", "3", "4"}:
+        return _ONBOARDING_EXPRESS_PRESET_ORDER[int(compact) - 1]
+    tokens = compact.split()
+    for token in tokens:
+        if token.isdigit():
+            value = int(token)
+            if 1 <= value <= len(_ONBOARDING_EXPRESS_PRESET_ORDER):
+                return _ONBOARDING_EXPRESS_PRESET_ORDER[value - 1]
+    for word, value in _EXPRESS_NUMBER_WORDS.items():
+        if word in tokens:
+            return _ONBOARDING_EXPRESS_PRESET_ORDER[value - 1]
+    for key, preset in _ONBOARDING_EXPRESS_PRESETS.items():
+        key_lc = key.lower()
+        label_lc = str(preset.get("label") or "").strip().lower()
+        if key_lc and key_lc in tokens:
+            return key
+        if label_lc and label_lc in tokens:
+            return key
+    return None
 
 
 # ── Personality queries (status, reset) ──
