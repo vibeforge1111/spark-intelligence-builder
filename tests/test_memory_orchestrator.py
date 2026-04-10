@@ -1064,6 +1064,204 @@ class MemoryOrchestratorTests(SparkTestCase):
         historical_probe = next(probe for probe in conversation["probes"] if probe["probe_type"] == "historical_state")
         self.assertEqual(historical_probe["expected_value"], 0.35)
 
+    def test_shadow_replay_payload_supports_bridge_native_memory_turns(self) -> None:
+        with self.state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-bridge-write-req",
+                    "memory_write_requested",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "sim:write-1",
+                    "session-bridge",
+                    "telegram:test",
+                    "researcher_bridge",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Memory write requested.",
+                    "2026-04-10T11:45:07Z",
+                    json.dumps(
+                        {
+                            "memory_role": "current_state",
+                            "method": "write_observation",
+                            "observations": [
+                                {
+                                    "subject": "human:telegram:test",
+                                    "predicate": "profile.startup_name",
+                                    "value": "Seedify",
+                                    "operation": "update",
+                                    "memory_role": "current_state",
+                                    "text": "My startup is Seedify.",
+                                }
+                            ],
+                        }
+                    ),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-bridge-write-ok",
+                    "memory_write_succeeded",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "sim:write-1",
+                    "session-bridge",
+                    "telegram:test",
+                    "researcher_bridge",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Memory write succeeded.",
+                    "2026-04-10T11:45:07Z",
+                    json.dumps({"accepted_count": 1, "rejected_count": 0, "skipped_count": 0}),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-bridge-write-result",
+                    "tool_result_received",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "researcher_bridge",
+                    "sim:write-1",
+                    "session-bridge",
+                    "telegram:test",
+                    "researcher_bridge",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Researcher bridge acknowledged a profile fact update directly from memory.",
+                    "2026-04-10T11:45:07Z",
+                    json.dumps(
+                        {
+                            "bridge_mode": "memory_profile_fact_update",
+                            "routing_decision": "memory_profile_fact_observation",
+                            "fact_name": "profile_startup_name",
+                            "predicate": "profile.startup_name",
+                            "value": "Seedify",
+                            "operation": "update",
+                            "keepability": "ephemeral_context",
+                            "promotion_disposition": "not_promotable",
+                        }
+                    ),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-bridge-query-influence",
+                    "plugin_or_chip_influence_recorded",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "researcher_bridge",
+                    "sim:query-1",
+                    "session-bridge",
+                    "telegram:test",
+                    "researcher_bridge",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Personality influence was recorded before bridge execution.",
+                    "2026-04-10T11:45:08Z",
+                    json.dumps(
+                        {
+                            "detected_profile_fact_query": {
+                                "fact_name": "profile_startup_name",
+                                "label": "startup",
+                                "predicate": "profile.startup_name",
+                            }
+                        }
+                    ),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-bridge-query-result",
+                    "tool_result_received",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "researcher_bridge",
+                    "sim:query-1",
+                    "session-bridge",
+                    "telegram:test",
+                    "researcher_bridge",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Researcher bridge answered a single-fact profile query directly from memory.",
+                    "2026-04-10T11:45:08Z",
+                    json.dumps(
+                        {
+                            "bridge_mode": "memory_profile_fact",
+                            "routing_decision": "memory_profile_fact_query",
+                            "fact_name": "profile_startup_name",
+                            "predicate": "profile.startup_name",
+                            "label": "startup",
+                            "value_found": True,
+                            "keepability": "ephemeral_context",
+                            "promotion_disposition": "not_promotable",
+                        }
+                    ),
+                ),
+            )
+            conn.commit()
+
+        payload = build_shadow_replay_payload(
+            state_db=self.state_db,
+            conversation_limit=10,
+            event_limit=100,
+        )
+
+        self.assertEqual(len(payload["conversations"]), 1)
+        conversation = payload["conversations"][0]
+        self.assertEqual(conversation["conversation_id"], "session-bridge")
+        self.assertEqual(len(conversation["turns"]), 4)
+        self.assertEqual(
+            [turn["content"] for turn in conversation["turns"]],
+            [
+                "My startup is Seedify.",
+                "I'll remember you created Seedify.",
+                "What is my startup?",
+                "You created Seedify.",
+            ],
+        )
+        self.assertEqual(conversation["turns"][0]["metadata"]["memory_kind"], "observation")
+        self.assertEqual(conversation["turns"][0]["metadata"]["predicate"], "profile.startup_name")
+        probe_types = {probe["probe_type"] for probe in conversation["probes"]}
+        self.assertEqual(probe_types, {"current_state", "evidence"})
+
     def test_shadow_replay_delete_probes_skip_current_and_target_pre_delete_history(self) -> None:
         with self.state_db.connect() as conn:
             events = [

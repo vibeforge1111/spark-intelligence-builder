@@ -9,6 +9,13 @@ from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.execution import run_governed_command
+from spark_intelligence.memory.profile_facts import (
+    ProfileFactObservation,
+    ProfileFactQuery,
+    build_profile_fact_observation_answer,
+    build_profile_fact_query_answer,
+    build_profile_identity_summary_answer,
+)
 from spark_intelligence.memory_contracts import memory_contract_reason, normalize_memory_role
 from spark_intelligence.state.db import StateDB
 
@@ -251,7 +258,7 @@ def build_shadow_replay_payload(
     conversations: dict[str, dict[str, Any]] = {}
     for row in turn_rows:
         conversation_id = _conversation_id(row)
-        content = _turn_content(row)
+        content = _turn_content(row, histories=histories)
         if not content:
             continue
         conversation = conversations.setdefault(
@@ -264,7 +271,7 @@ def build_shadow_replay_payload(
                 "_request_keys": set(),
             },
         )
-        conversation["turns"].append(_build_turn(row, observations_by_session))
+        conversation["turns"].append(_build_turn(row, observations_by_session, histories))
         if row.get("request_id"):
             conversation["_request_keys"].add((str(row.get("session_id") or ""), str(row.get("request_id") or "")))
         _merge_conversation_metadata(conversation["metadata"], row)
@@ -414,7 +421,7 @@ def _default_output_path(config_manager: ConfigManager) -> Path:
 
 def _load_turn_rows(*, state_db: StateDB, event_limit: int) -> list[dict[str, Any]]:
     with state_db.connect() as conn:
-        rows = conn.execute(
+        native_rows = conn.execute(
             """
             SELECT *
             FROM (
@@ -441,7 +448,224 @@ def _load_turn_rows(*, state_db: StateDB, event_limit: int) -> list[dict[str, An
             """,
             (max(event_limit, 1),),
         ).fetchall()
-    return [_normalize_event_row(row) for row in rows]
+        bridge_rows = conn.execute(
+            """
+            SELECT *
+            FROM (
+                SELECT
+                    rowid AS row_order,
+                    event_id,
+                    event_type,
+                    created_at,
+                    run_id,
+                    request_id,
+                    trace_ref,
+                    channel_id,
+                    session_id,
+                    human_id,
+                    component,
+                    facts_json,
+                    provenance_json
+                FROM builder_events
+                WHERE event_type IN ('memory_write_requested', 'plugin_or_chip_influence_recorded', 'tool_result_received')
+                ORDER BY created_at DESC, event_id DESC
+                LIMIT ?
+            )
+            ORDER BY created_at ASC, row_order ASC
+            """,
+            (max(event_limit * 4, event_limit, 1),),
+        ).fetchall()
+    normalized_native_rows = [_normalize_event_row(row) for row in native_rows]
+    normalized_rows = normalized_native_rows + _normalize_bridge_turn_rows(
+        rows=bridge_rows,
+        native_rows=normalized_native_rows,
+    )
+    normalized_rows.sort(
+        key=lambda row: (
+            _normalized_timestamp(row.get("created_at")) or str(row.get("created_at") or ""),
+            int(row.get("row_order") or 0),
+            str(row.get("event_id") or ""),
+        )
+    )
+    return normalized_rows[-max(event_limit, 1) :]
+
+
+def _normalize_bridge_turn_rows(
+    *,
+    rows: list[Any],
+    native_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    native_roles_by_key: dict[tuple[str, str], set[str]] = {}
+    for row in native_rows:
+        key = _turn_key(row)
+        if not key[0] or not key[1]:
+            continue
+        native_roles_by_key.setdefault(key, set()).add(_turn_role_for_event_type(str(row.get("event_type") or "")))
+
+    grouped_rows: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for row in rows:
+        normalized = _normalize_event_row(row)
+        key = _turn_key(normalized)
+        if not key[0] or not key[1]:
+            continue
+        grouped_rows.setdefault(key, []).append(normalized)
+
+    output: list[dict[str, Any]] = []
+    for key, group in grouped_rows.items():
+        native_roles = native_roles_by_key.get(key, set())
+        assistant_row = None if "assistant" in native_roles else _build_bridge_assistant_turn(group)
+        if assistant_row is None and "assistant" not in native_roles:
+            continue
+        user_row = None if "user" in native_roles else _build_bridge_user_turn(group)
+        if user_row is not None:
+            output.append(user_row)
+        if assistant_row is not None:
+            output.append(assistant_row)
+    return output
+
+
+def _turn_key(row: dict[str, Any]) -> tuple[str, str]:
+    return (str(row.get("session_id") or ""), str(row.get("request_id") or ""))
+
+
+def _turn_role_for_event_type(event_type: str) -> str:
+    return "user" if event_type == "intent_committed" else "assistant"
+
+
+def _build_bridge_user_turn(group: list[dict[str, Any]]) -> dict[str, Any] | None:
+    memory_write_row = next((row for row in group if row.get("event_type") == "memory_write_requested"), None)
+    if memory_write_row is not None:
+        text = _bridge_observation_text(memory_write_row.get("facts_json") or {})
+        if text:
+            return _synthetic_turn_row(
+                source_row=memory_write_row,
+                group=group,
+                event_type="intent_committed",
+                facts_json={"message_text": text},
+            )
+
+    influence_row = next((row for row in group if row.get("event_type") == "plugin_or_chip_influence_recorded"), None)
+    if influence_row is None:
+        return None
+    query = _bridge_query_from_influence(influence_row.get("facts_json") or {})
+    if query is None:
+        return None
+    return _synthetic_turn_row(
+        source_row=influence_row,
+        group=group,
+        event_type="intent_committed",
+        facts_json={"message_text": _bridge_query_message(query)},
+    )
+
+
+def _build_bridge_assistant_turn(group: list[dict[str, Any]]) -> dict[str, Any] | None:
+    tool_result_row = next((row for row in group if row.get("event_type") == "tool_result_received"), None)
+    if tool_result_row is None:
+        return None
+    facts = tool_result_row.get("facts_json") or {}
+    routing_decision = str(facts.get("routing_decision") or "").strip()
+    bridge_mode = str(facts.get("bridge_mode") or "").strip()
+    supported_modes = {
+        "memory_profile_fact_update",
+        "memory_profile_fact",
+        "memory_profile_identity",
+    }
+    supported_routes = {
+        "memory_profile_fact_observation",
+        "memory_profile_fact_query",
+        "memory_profile_identity_summary",
+    }
+    if bridge_mode not in supported_modes and routing_decision not in supported_routes:
+        return None
+    return _synthetic_turn_row(
+        source_row=tool_result_row,
+        group=group,
+        event_type="delivery_succeeded",
+        facts_json=facts,
+    )
+
+
+def _synthetic_turn_row(
+    *,
+    source_row: dict[str, Any],
+    group: list[dict[str, Any]],
+    event_type: str,
+    facts_json: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "event_id": str(source_row.get("event_id") or ""),
+        "row_order": int(source_row.get("row_order") or 0),
+        "event_type": event_type,
+        "source_event_type": str(source_row.get("event_type") or event_type),
+        "created_at": str(source_row.get("created_at") or ""),
+        "run_id": _first_group_field(group, "run_id"),
+        "request_id": _first_group_field(group, "request_id"),
+        "trace_ref": _first_group_field(group, "trace_ref"),
+        "channel_id": _first_group_field(group, "channel_id"),
+        "session_id": _first_group_field(group, "session_id"),
+        "human_id": _first_group_field(group, "human_id"),
+        "component": str(source_row.get("component") or ""),
+        "facts_json": dict(facts_json),
+        "provenance_json": dict(source_row.get("provenance_json") or {}),
+    }
+
+
+def _first_group_field(group: list[dict[str, Any]], field: str) -> str | None:
+    for row in group:
+        value = row.get(field)
+        if value not in (None, ""):
+            return str(value)
+    return None
+
+
+def _bridge_observation_text(facts: dict[str, Any]) -> str:
+    observations = facts.get("observations")
+    if not isinstance(observations, list):
+        return ""
+    for item in observations:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _bridge_query_from_influence(facts: dict[str, Any]) -> ProfileFactQuery | None:
+    payload = facts.get("detected_profile_fact_query")
+    if not isinstance(payload, dict):
+        return None
+    fact_name = str(payload.get("fact_name") or "").strip()
+    label = str(payload.get("label") or "").strip()
+    predicate = str(payload.get("predicate") or "").strip() or None
+    if not fact_name or not label:
+        return None
+    query_kind = "identity_summary" if fact_name == "profile_identity_summary" else "single_fact"
+    predicate_prefix = "profile." if query_kind == "identity_summary" else None
+    return ProfileFactQuery(
+        predicate=predicate,
+        fact_name=fact_name,
+        label=label,
+        query_kind=query_kind,
+        predicate_prefix=predicate_prefix,
+    )
+
+
+def _bridge_query_message(query: ProfileFactQuery) -> str:
+    canonical_messages = {
+        "profile_preferred_name": "What is my name?",
+        "profile_startup_name": "What is my startup?",
+        "profile_hack_actor": "Who hacked us?",
+        "profile_current_mission": "What is my mission right now?",
+        "profile_founder_of": "What company did I found?",
+        "profile_occupation": "What do I do?",
+        "profile_spark_role": "What role will Spark play in this?",
+        "profile_identity_summary": "Who am I?",
+        "profile_home_country": "What country do I live in?",
+        "profile_timezone": "What is my timezone?",
+        "profile_city": "Where do I live?",
+    }
+    return canonical_messages.get(query.fact_name, f"What is my {query.label}?")
 
 
 def _load_accepted_observations(*, state_db: StateDB, event_limit: int) -> list[dict[str, Any]]:
@@ -536,13 +760,14 @@ def _build_observation_histories(observations: list[dict[str, Any]]) -> dict[tup
 def _build_turn(
     row: dict[str, Any],
     observations_by_session: dict[str, list[dict[str, Any]]],
+    histories: dict[tuple[str, str], list[dict[str, Any]]],
 ) -> dict[str, Any]:
     facts = row.get("facts_json") or {}
     role = "user" if row.get("event_type") == "intent_committed" else "assistant"
     turn: dict[str, Any] = {
         "message_id": _message_id(row),
         "role": role,
-        "content": _turn_content(row),
+        "content": _turn_content(row, histories=histories),
         "timestamp": _normalized_timestamp(row.get("created_at")),
     }
     metadata = {
@@ -552,6 +777,7 @@ def _build_turn(
         "request_id": row.get("request_id"),
         "trace_ref": row.get("trace_ref"),
         "source_event_id": row.get("event_id"),
+        "source_event_type": row.get("source_event_type"),
     }
     if role == "assistant":
         metadata["keepability"] = facts.get("keepability")
@@ -645,6 +871,121 @@ def _build_conversation_probes(
             continue
         probes.append(historical_probe)
     return probes
+
+
+def _bridge_reply_text(
+    row: dict[str, Any],
+    *,
+    histories: dict[tuple[str, str], list[dict[str, Any]]],
+) -> str:
+    facts = row.get("facts_json") or {}
+    bridge_mode = str(facts.get("bridge_mode") or "").strip()
+    routing_decision = str(facts.get("routing_decision") or "").strip()
+
+    if bridge_mode == "memory_profile_fact_update" or routing_decision == "memory_profile_fact_observation":
+        observation = ProfileFactObservation(
+            predicate=str(facts.get("predicate") or ""),
+            value=str(facts.get("value") or ""),
+            operation=str(facts.get("operation") or "update"),
+            evidence_text="",
+            fact_name=str(facts.get("fact_name") or ""),
+        )
+        return build_profile_fact_observation_answer(observation=observation)
+
+    if bridge_mode == "memory_profile_fact" or routing_decision == "memory_profile_fact_query":
+        query = ProfileFactQuery(
+            predicate=str(facts.get("predicate") or "").strip() or None,
+            fact_name=str(facts.get("fact_name") or "").strip(),
+            label=str(facts.get("label") or "fact").strip() or "fact",
+        )
+        value = _current_state_value_as_of(
+            subject=_memory_subject_for_row(row),
+            predicate=str(query.predicate or ""),
+            as_of=row.get("created_at"),
+            histories=histories,
+        )
+        return build_profile_fact_query_answer(query=query, value=str(value) if value is not None else None)
+
+    if bridge_mode == "memory_profile_identity" or routing_decision == "memory_profile_identity_summary":
+        records = _current_state_records_as_of(
+            subject=_memory_subject_for_row(row),
+            predicate_prefix=str(facts.get("predicate_prefix") or "profile.").strip() or "profile.",
+            as_of=row.get("created_at"),
+            histories=histories,
+        )
+        return build_profile_identity_summary_answer(records=records)
+
+    return str(facts.get("delivered_text") or "").strip()
+
+
+def _memory_subject_for_row(row: dict[str, Any]) -> str:
+    human_id = str(row.get("human_id") or "").strip()
+    if not human_id:
+        return ""
+    return human_id if human_id.startswith("human:") else f"human:{human_id}"
+
+
+def _current_state_value_as_of(
+    *,
+    subject: str,
+    predicate: str,
+    as_of: Any,
+    histories: dict[tuple[str, str], list[dict[str, Any]]],
+) -> Any:
+    if not subject or not predicate:
+        return None
+    latest = _latest_observation_as_of(
+        history=histories.get((subject, predicate)) or [],
+        as_of=as_of,
+    )
+    if latest is None:
+        return None
+    if str(latest.get("operation") or "").strip().lower() == "delete":
+        return None
+    return latest.get("value")
+
+
+def _current_state_records_as_of(
+    *,
+    subject: str,
+    predicate_prefix: str,
+    as_of: Any,
+    histories: dict[tuple[str, str], list[dict[str, Any]]],
+) -> list[dict[str, str]]:
+    records: list[dict[str, str]] = []
+    if not subject:
+        return records
+    for (candidate_subject, predicate), history in histories.items():
+        if candidate_subject != subject or not predicate.startswith(predicate_prefix):
+            continue
+        latest = _latest_observation_as_of(history=history, as_of=as_of)
+        if latest is None:
+            continue
+        if str(latest.get("operation") or "").strip().lower() == "delete":
+            continue
+        value = latest.get("value")
+        if value in (None, ""):
+            continue
+        records.append({"predicate": predicate, "value": str(value)})
+    records.sort(key=lambda item: str(item.get("predicate") or ""))
+    return records
+
+
+def _latest_observation_as_of(*, history: list[dict[str, Any]], as_of: Any) -> dict[str, Any] | None:
+    target_key = _observation_sort_key(timestamp=as_of, request_id="~")
+    latest: dict[str, Any] | None = None
+    for item in history:
+        if _observation_sort_key(timestamp=item.get("timestamp"), request_id=item.get("request_id")) > target_key:
+            break
+        latest = item
+    return latest
+
+
+def _observation_sort_key(*, timestamp: Any, request_id: Any) -> tuple[str, str]:
+    return (
+        _normalized_timestamp(timestamp) or str(timestamp or ""),
+        str(request_id or ""),
+    )
 
 
 def _memory_kind_for_observation(observation: dict[str, Any]) -> str:
@@ -745,10 +1086,16 @@ def _merge_conversation_metadata(metadata: dict[str, Any], row: dict[str, Any]) 
             metadata[key].append(value)
 
 
-def _turn_content(row: dict[str, Any]) -> str:
+def _turn_content(
+    row: dict[str, Any],
+    *,
+    histories: dict[tuple[str, str], list[dict[str, Any]]],
+) -> str:
     facts = row.get("facts_json") or {}
     if row.get("event_type") == "intent_committed":
         return str(facts.get("message_text") or "").strip()
+    if str(row.get("source_event_type") or "") == "tool_result_received":
+        return _bridge_reply_text(row, histories=histories)
     return str(facts.get("delivered_text") or "").strip()
 
 
@@ -770,6 +1117,7 @@ def _normalize_event_row(row: Any) -> dict[str, Any]:
         "event_id": str(row["event_id"]),
         "row_order": int(row["row_order"]),
         "event_type": str(row["event_type"]),
+        "source_event_type": str(row["event_type"]),
         "created_at": str(row["created_at"]),
         "run_id": str(row["run_id"]) if row["run_id"] else None,
         "request_id": str(row["request_id"]) if row["request_id"] else None,

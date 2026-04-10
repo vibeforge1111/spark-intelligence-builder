@@ -730,6 +730,129 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(exported["conversations"][0]["conversation_id"], "session-cli")
         self.assertEqual(exported["conversations"][0]["turns"][0]["content"], "I moved to Dubai.")
 
+    def test_memory_export_shadow_replay_supports_bridge_native_turns(self) -> None:
+        with self.state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-cli-bridge-write-req",
+                    "memory_write_requested",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "sim:cli-write-1",
+                    "session-cli-bridge",
+                    "telegram:test",
+                    "researcher_bridge",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Memory write requested.",
+                    "2026-04-10T11:45:07Z",
+                    json.dumps(
+                        {
+                            "observations": [
+                                {
+                                    "subject": "human:telegram:test",
+                                    "predicate": "profile.city",
+                                    "value": "Dubai",
+                                    "operation": "update",
+                                    "memory_role": "current_state",
+                                    "text": "I live in Dubai.",
+                                }
+                            ]
+                        }
+                    ),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-cli-bridge-write-ok",
+                    "memory_write_succeeded",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "sim:cli-write-1",
+                    "session-cli-bridge",
+                    "telegram:test",
+                    "researcher_bridge",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Memory write succeeded.",
+                    "2026-04-10T11:45:07Z",
+                    json.dumps({"accepted_count": 1}),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-cli-bridge-write-result",
+                    "tool_result_received",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "researcher_bridge",
+                    "sim:cli-write-1",
+                    "session-cli-bridge",
+                    "telegram:test",
+                    "researcher_bridge",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Researcher bridge acknowledged a profile fact update directly from memory.",
+                    "2026-04-10T11:45:07Z",
+                    json.dumps(
+                        {
+                            "bridge_mode": "memory_profile_fact_update",
+                            "routing_decision": "memory_profile_fact_observation",
+                            "fact_name": "profile_city",
+                            "predicate": "profile.city",
+                            "value": "Dubai",
+                            "operation": "update",
+                        }
+                    ),
+                ),
+            )
+            conn.commit()
+
+        output_path = self.home / "artifacts" / "shadow-replay-bridge.json"
+        exit_code, stdout, stderr = self.run_cli(
+            "memory",
+            "export-shadow-replay",
+            "--home",
+            str(self.home),
+            "--write",
+            str(output_path),
+            "--skip-validate",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["conversation_count"], 1)
+        self.assertEqual(payload["turn_count"], 2)
+        exported = json.loads(output_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            [turn["content"] for turn in exported["conversations"][0]["turns"]],
+            ["I live in Dubai.", "I'll remember you live in Dubai."],
+        )
+
     def test_memory_export_shadow_replay_batch_writes_contract_shaped_directory(self) -> None:
         with self.state_db.connect() as conn:
             for index in range(1, 3):
