@@ -183,6 +183,14 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         expected_response_contains=("UAE",),
     ),
     TelegramMemoryRegressionCase(
+        case_id="country_explanation",
+        category="explanation",
+        message="How do you know my country?",
+        expected_bridge_mode="memory_profile_fact_explanation",
+        expected_routing_decision="memory_profile_fact_explanation",
+        expected_response_contains=("saved memory record", "UAE"),
+    ),
+    TelegramMemoryRegressionCase(
         case_id="identity_summary",
         category="identity",
         message="What do you know about me?",
@@ -197,6 +205,22 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         expected_bridge_mode="memory_profile_fact_update",
         expected_routing_decision="memory_profile_fact_observation",
         expected_response_contains=("Abu Dhabi",),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="country_overwrite",
+        category="overwrite",
+        message="I moved to Canada.",
+        expected_bridge_mode="memory_profile_fact_update",
+        expected_routing_decision="memory_profile_fact_observation",
+        expected_response_contains=("Canada",),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="country_query_after_overwrite",
+        category="overwrite",
+        message="What country do you have for me?",
+        expected_bridge_mode="memory_profile_fact",
+        expected_routing_decision="memory_profile_fact_query",
+        expected_response_contains=("Canada",),
     ),
     TelegramMemoryRegressionCase(
         case_id="city_query_after_overwrite",
@@ -471,6 +495,11 @@ def _build_regression_summary_markdown(
     case_payloads: list[dict[str, Any]],
     mismatches: list[dict[str, Any]],
 ) -> str:
+    category_counts: dict[str, int] = {}
+    for case in case_payloads:
+        category = str(case.get("category") or "unknown")
+        category_counts[category] = category_counts.get(category, 0) + 1
+
     lines = [
         "# Telegram Memory Regression Summary",
         "",
@@ -480,9 +509,24 @@ def _build_regression_summary_markdown(
         f"- Matched cases: `{len(case_payloads) - len(mismatches)}`",
         f"- Mismatched cases: `{len(mismatches)}`",
         "",
-        "## Cases",
+        "## Category Coverage",
         "",
     ]
+    for category in sorted(category_counts):
+        lines.append(f"- `{category}`: `{category_counts[category]}`")
+    lines.extend(
+        [
+            "",
+            "## Quality Lanes",
+            "",
+            f"- `staleness`: `{'yes' if category_counts.get('staleness') else 'no'}`",
+            f"- `overwrite`: `{'yes' if category_counts.get('overwrite') else 'no'}`",
+            f"- `abstention`: `{'yes' if category_counts.get('abstention') else 'no'}`",
+            "",
+            "## Cases",
+            "",
+        ]
+    )
     for case in case_payloads:
         case_id = str(case.get("case_id") or "unknown")
         category = str(case.get("category") or "unknown")

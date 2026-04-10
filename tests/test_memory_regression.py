@@ -154,7 +154,10 @@ class MemoryRegressionTests(SparkTestCase):
         self.assertTrue(summary_path.exists())
         summary_text = summary_path.read_text(encoding="utf-8")
         self.assertIn("# Telegram Memory Regression Summary", summary_text)
+        self.assertIn("## Category Coverage", summary_text)
+        self.assertIn("## Quality Lanes", summary_text)
         self.assertIn("startup_query_after_founder", summary_text)
+        self.assertIn("country_query_after_overwrite", summary_text)
         self.assertEqual(
             Path(result.payload["artifact_paths"]["regression_report_markdown"]),
             summary_path,
