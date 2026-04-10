@@ -265,6 +265,31 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(detected.predicate, "profile.city")
         self.assertEqual(detected.value, "Dubai")
 
+    def test_profile_country_detection_normalizes_explicit_country_aliases_with_the(self) -> None:
+        from_us = detect_profile_fact_observation("I'm from the US.")
+        self.assertIsNotNone(from_us)
+        assert from_us is not None
+        self.assertEqual(from_us.predicate, "profile.home_country")
+        self.assertEqual(from_us.value, "United States")
+
+        based_in_us = detect_profile_fact_observation("I'm based in the US.")
+        self.assertIsNotNone(based_in_us)
+        assert based_in_us is not None
+        self.assertEqual(based_in_us.predicate, "profile.home_country")
+        self.assertEqual(based_in_us.value, "United States")
+
+        based_out_uk = detect_profile_fact_observation("I'm based out of the UK.")
+        self.assertIsNotNone(based_out_uk)
+        assert based_out_uk is not None
+        self.assertEqual(based_out_uk.predicate, "profile.home_country")
+        self.assertEqual(based_out_uk.value, "United Kingdom")
+
+        from_uae = detect_profile_fact_observation("I'm from the UAE.")
+        self.assertIsNotNone(from_uae)
+        assert from_uae is not None
+        self.assertEqual(from_uae.predicate, "profile.home_country")
+        self.assertEqual(from_uae.value, "UAE")
+
     def test_profile_founder_detection_accepts_founded_phrasing(self) -> None:
         detected = detect_profile_fact_observation("I founded Atlas Labs.")
         self.assertIsNotNone(detected)

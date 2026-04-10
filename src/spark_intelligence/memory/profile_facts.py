@@ -863,7 +863,7 @@ def _extract_country(text: str) -> str | None:
         match = pattern.search(text)
         if not match:
             continue
-        candidate = _normalize_place(match.group(1))
+        candidate = _normalize_country_name(match.group(1)) or _normalize_place(match.group(1))
         if candidate:
             return candidate
     for pattern in _COUNTRY_IN_PATTERNS:
