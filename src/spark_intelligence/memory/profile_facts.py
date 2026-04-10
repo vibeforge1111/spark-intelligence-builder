@@ -243,6 +243,10 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
             "what country do you have for me",
             "what country do you have saved for me",
             "which country do you have for me",
+            "what country do i live in",
+            "which country do i live in",
+            "what country am i in",
+            "which country am i in",
             "what's my country",
             "what is my country",
         )

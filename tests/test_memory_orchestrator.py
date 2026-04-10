@@ -327,6 +327,12 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(city_query.predicate, "profile.city")
         self.assertEqual(city_query.query_kind, "single_fact")
 
+        country_query = detect_profile_fact_query("What country do I live in?")
+        self.assertIsNotNone(country_query)
+        assert country_query is not None
+        self.assertEqual(country_query.predicate, "profile.home_country")
+        self.assertEqual(country_query.query_kind, "single_fact")
+
         startup_query = detect_profile_fact_query("What startup did I create?")
         self.assertIsNotNone(startup_query)
         assert startup_query is not None
