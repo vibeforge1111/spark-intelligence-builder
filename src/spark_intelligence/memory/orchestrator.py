@@ -253,6 +253,51 @@ class MemoryAnswerExplanationResult:
         return "\n".join(lines)
 
 
+@dataclass(frozen=True)
+class MemoryRetrievalQueryResult:
+    sdk_module: str
+    method: str
+    query: str
+    subject: str | None
+    predicate: str | None
+    limit: int
+    runtime: dict[str, Any]
+    read_result: MemoryReadResult
+    shadow_only_eval: bool = True
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "sdk_module": self.sdk_module,
+                "method": self.method,
+                "query": self.query,
+                "subject": self.subject,
+                "predicate": self.predicate,
+                "limit": self.limit,
+                "runtime": self.runtime,
+                "shadow_only_eval": self.shadow_only_eval,
+                "read_result": MemorySdkSmokeResult._read_payload(self.read_result),
+            },
+            indent=2,
+        )
+
+    def to_text(self) -> str:
+        lines = [f"Spark memory {self.method} retrieval"]
+        lines.append(f"- sdk_module: {self.sdk_module}")
+        lines.append(f"- query: {self.query}")
+        lines.append(f"- subject: {self.subject or 'none'}")
+        lines.append(f"- predicate: {self.predicate or 'none'}")
+        lines.append(f"- limit: {self.limit}")
+        lines.append(f"- ready: {'yes' if self.runtime.get('ready') else 'no'}")
+        lines.append(
+            f"- {self.method}: status={self.read_result.status} records={len(self.read_result.records)} "
+            f"abstained={'yes' if self.read_result.abstained else 'no'}"
+        )
+        if self.read_result.reason:
+            lines.append(f"- reason: {self.read_result.reason}")
+        return "\n".join(lines)
+
+
 class _DomainChipMemoryClientAdapter:
     def __init__(self, sdk: Any, module: ModuleType, *, persistence_path: Path | None = None) -> None:
         self._sdk = sdk
@@ -820,6 +865,54 @@ def explain_memory_answer_in_memory(
         question=question,
         runtime=runtime,
         read_result=read_result,
+    )
+
+
+def retrieve_memory_evidence_in_memory(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    query: str,
+    subject: str | None = None,
+    predicate: str | None = None,
+    limit: int = 5,
+    sdk_module: str | None = None,
+    actor_id: str = "memory_cli",
+) -> MemoryRetrievalQueryResult:
+    return _retrieve_memory_query_in_memory(
+        config_manager=config_manager,
+        state_db=state_db,
+        method="retrieve_evidence",
+        query=query,
+        subject=subject,
+        predicate=predicate,
+        limit=limit,
+        sdk_module=sdk_module,
+        actor_id=actor_id,
+    )
+
+
+def retrieve_memory_events_in_memory(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    query: str,
+    subject: str | None = None,
+    predicate: str | None = None,
+    limit: int = 5,
+    sdk_module: str | None = None,
+    actor_id: str = "memory_cli",
+) -> MemoryRetrievalQueryResult:
+    return _retrieve_memory_query_in_memory(
+        config_manager=config_manager,
+        state_db=state_db,
+        method="retrieve_events",
+        query=query,
+        subject=subject,
+        predicate=predicate,
+        limit=limit,
+        sdk_module=sdk_module,
+        actor_id=actor_id,
     )
 
 
@@ -1649,6 +1742,100 @@ def _disabled_read_result(reason: str = "memory_disabled") -> MemoryReadResult:
         abstained=True,
         reason=reason,
         shadow_only=False,
+    )
+
+
+def _retrieve_memory_query_in_memory(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    method: str,
+    query: str,
+    subject: str | None,
+    predicate: str | None,
+    limit: int,
+    sdk_module: str | None,
+    actor_id: str,
+) -> MemoryRetrievalQueryResult:
+    module_name = str(sdk_module or config_manager.get_path("spark.memory.sdk_module", default=DEFAULT_SDK_MODULE) or DEFAULT_SDK_MODULE)
+    runtime = inspect_memory_sdk_runtime(config_manager=config_manager, sdk_module=module_name)
+    client = _load_sdk_client_for_module(module_name=module_name, home_path=config_manager.paths.home)
+    normalized_query = str(query or "").strip()
+    normalized_subject = _optional_string(subject)
+    normalized_predicate = _optional_string(predicate)
+    if client is None:
+        read_result = MemoryReadResult(
+            status="abstained",
+            method=method,
+            memory_role="current_state",
+            records=[],
+            provenance=[],
+            retrieval_trace=None,
+            answer_explanation=None,
+            abstained=True,
+            reason="sdk_unavailable",
+            shadow_only=False,
+        )
+        _record_memory_read_event(
+            state_db=state_db,
+            result=read_result,
+            human_id=_human_id_from_subject(normalized_subject or ""),
+            session_id=f"memory-retrieval:{actor_id}",
+            turn_id=f"{actor_id}:{method}",
+            actor_id=actor_id,
+        )
+        return MemoryRetrievalQueryResult(
+            sdk_module=module_name,
+            method=method,
+            query=normalized_query,
+            subject=normalized_subject,
+            predicate=normalized_predicate,
+            limit=limit,
+            runtime=runtime,
+            read_result=read_result,
+        )
+    _record_memory_read_requested_subject(
+        state_db=state_db,
+        method=method,
+        subject=normalized_subject or "",
+        predicate=normalized_predicate,
+        query=normalized_query,
+        session_id=f"memory-retrieval:{actor_id}",
+        turn_id=f"{actor_id}:{method}",
+        actor_id=actor_id,
+    )
+    raw = _call_sdk_method(
+        client,
+        method,
+        {
+            "query": normalized_query,
+            "subject": normalized_subject,
+            "predicate": normalized_predicate,
+            "limit": limit,
+            "session_id": f"memory-retrieval:{actor_id}",
+            "turn_id": f"{actor_id}:{method}",
+            "timestamp": _now_iso(),
+            "metadata": {"source_surface": f"memory_cli_{method}"},
+        },
+    )
+    read_result = _normalize_read_result(raw=raw, method=method, shadow_only=False)
+    _record_memory_read_event(
+        state_db=state_db,
+        result=read_result,
+        human_id=_human_id_from_subject(normalized_subject or ""),
+        session_id=f"memory-retrieval:{actor_id}",
+        turn_id=f"{actor_id}:{method}",
+        actor_id=actor_id,
+    )
+    return MemoryRetrievalQueryResult(
+        sdk_module=module_name,
+        method=method,
+        query=normalized_query,
+        subject=normalized_subject,
+        predicate=normalized_predicate,
+        limit=limit,
+        runtime=runtime,
+        read_result=read_result,
     )
 
 
