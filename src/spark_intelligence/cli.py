@@ -625,6 +625,47 @@ class MemoryHumanInspection:
         return "\n".join(lines)
 
 
+@dataclass
+class MemoryRegressionScore:
+    payload: dict[str, object]
+
+    def to_json(self) -> str:
+        return json.dumps(self.payload, indent=2)
+
+    def to_text(self) -> str:
+        runtime = self.payload.get("runtime") or {}
+        lines = ["Spark memory regression score"]
+        lines.append(f"- pack_id: {self.payload.get('pack_id') or 'unknown'}")
+        lines.append(f"- title: {self.payload.get('title') or 'unknown'}")
+        lines.append(f"- human_id: {self.payload.get('human_id') or 'unknown'}")
+        lines.append(
+            f"- configured module: {runtime.get('configured_module') or 'unknown'} "
+            f"ready={'yes' if runtime.get('ready') else 'no'}"
+        )
+        lines.append(
+            f"- score: matched={self.payload.get('matched_count', 0)}/"
+            f"{self.payload.get('fact_count', 0)} "
+            f"missing={self.payload.get('missing_count', 0)} "
+            f"mismatched={self.payload.get('mismatched_count', 0)}"
+        )
+        fact_results = self.payload.get("fact_results") or []
+        if fact_results:
+            lines.append("- fact results:")
+            for row in fact_results:
+                if not isinstance(row, dict):
+                    continue
+                lines.append(
+                    f"  - {row.get('predicate')}: {row.get('status')} "
+                    f"expected={row.get('expected_value')} actual={row.get('actual_value')}"
+                )
+        probes = self.payload.get("probe_questions") or []
+        if probes:
+            lines.append("- recall probes:")
+            for probe in probes:
+                lines.append(f"  - {probe}")
+        return "\n".join(lines)
+
+
 def _swarm_last_failure_payload(swarm) -> dict[str, object]:
     payload = getattr(swarm, "last_failure", None)
     return payload if isinstance(payload, dict) else {}
@@ -1048,6 +1089,24 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser = subparsers.add_parser("status", help="Show unified runtime, bridge, and attachment state")
     status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+
+    mission_parser = subparsers.add_parser("mission", help="Inspect mission control and task-specific operator plans")
+    mission_subparsers = mission_parser.add_subparsers(dest="mission_command", required=True)
+    mission_status_parser = mission_subparsers.add_parser(
+        "status",
+        help="Show the current mission-control snapshot",
+    )
+    mission_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    mission_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    mission_plan_parser = mission_subparsers.add_parser(
+        "plan",
+        help="Show the selected system, harness, recipe, and blockers for one task",
+    )
+    mission_plan_parser.add_argument("task", help="Task description to plan against mission control")
+    mission_plan_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    mission_plan_parser.add_argument("--harness-id", help="Force a specific harness id")
+    mission_plan_parser.add_argument("--recipe", help="Force a named harness recipe")
+    mission_plan_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     connect_parser = subparsers.add_parser("connect", help="Inspect phased system-connection progress")
     connect_subparsers = connect_parser.add_subparsers(dest="connect_command", required=True)
@@ -2100,6 +2159,8 @@ def handle_uninstall_autostart(args: argparse.Namespace) -> int:
 def handle_doctor(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
     report = run_doctor(config_manager, state_db)
     if args.json:
         print(report.to_json())
@@ -2977,6 +3038,8 @@ def handle_gateway_start(args: argparse.Namespace) -> int:
 def handle_gateway_status(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
     status = gateway_status(config_manager, state_db)
     if args.json:
         print(status.to_json())
@@ -4882,6 +4945,65 @@ def handle_harness_execute(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_mission_status(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    snapshot = build_mission_control_snapshot(config_manager, state_db)
+    if args.json:
+        print(snapshot.to_json())
+    else:
+        payload = snapshot.to_payload()
+        summary = payload.get("summary") or {}
+        lines = ["Spark mission status"]
+        lines.append(f"- state: {summary.get('top_level_state') or 'unknown'}")
+        if summary.get("current_focus"):
+            lines.append(f"- focus: {summary['current_focus']}")
+        active_systems = [str(item) for item in (summary.get("active_systems") or []) if str(item)]
+        if active_systems:
+            lines.append(f"- active systems: {', '.join(active_systems[:6])}")
+        degraded_surfaces = [str(item) for item in (summary.get("degraded_surfaces") or []) if str(item)]
+        if degraded_surfaces:
+            lines.append(f"- degraded surfaces: {', '.join(degraded_surfaces[:6])}")
+        next_actions = [str(item) for item in (summary.get("recommended_actions") or []) if str(item)]
+        lines.extend(f"- next action: {item}" for item in next_actions[:3])
+        print("\n".join(lines))
+    return 0
+
+
+def handle_mission_plan(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    plan = build_mission_control_plan(
+        config_manager=config_manager,
+        state_db=state_db,
+        task=args.task,
+        forced_harness_id=args.harness_id,
+        forced_recipe_id=args.recipe,
+    )
+    if args.json:
+        print(plan.to_json())
+    else:
+        payload = plan.to_payload()
+        summary = payload.get("summary") or {}
+        lines = ["Spark mission plan"]
+        lines.append(f"- state: {summary.get('top_level_state') or 'unknown'}")
+        lines.append(f"- system: {summary.get('selected_system') or 'unknown'}")
+        lines.append(f"- harness: {summary.get('selected_harness') or 'unknown'}")
+        if summary.get("selected_recipe"):
+            lines.append(f"- recipe: {summary['selected_recipe']}")
+        lines.append(f"- selection mode: {summary.get('selection_mode') or 'unknown'}")
+        if summary.get("current_focus"):
+            lines.append(f"- focus: {summary['current_focus']}")
+        blockers = [str(item) for item in (summary.get("blockers") or []) if str(item)]
+        lines.extend(f"- blocker: {item}" for item in blockers[:4])
+        next_actions = [str(item) for item in (summary.get("next_actions") or []) if str(item)]
+        lines.extend(f"- next action: {item}" for item in next_actions[:4])
+        print("\n".join(lines))
+    return 0
 def handle_agent_inspect(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -5808,6 +5930,10 @@ def main(argv: list[str] | None = None) -> int:
         return handle_doctor(args)
     if args.command == "status":
         return handle_status(args)
+    if args.command == "mission" and args.mission_command == "status":
+        return handle_mission_status(args)
+    if args.command == "mission" and args.mission_command == "plan":
+        return handle_mission_plan(args)
     if args.command == "connect" and args.connect_command == "status":
         return handle_connect_status(args)
     if args.command == "connect" and args.connect_command == "route-policy":
