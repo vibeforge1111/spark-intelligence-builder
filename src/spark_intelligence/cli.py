@@ -86,6 +86,7 @@ from spark_intelligence.identity.service import (
 )
 from spark_intelligence.jobs.service import jobs_list, jobs_tick
 from spark_intelligence.memory import (
+    benchmark_memory_architectures,
     build_telegram_state_knowledge_base,
     export_sdk_maintenance_replay,
     export_shadow_replay,
@@ -1660,6 +1661,14 @@ def build_parser() -> argparse.ArgumentParser:
     memory_regression_parser.add_argument("--validator-root", help="domain-chip-memory repo root used for KB compilation")
     memory_regression_parser.add_argument("--write", help="Optional output path for the regression summary JSON payload")
     memory_regression_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_architecture_benchmark_parser = memory_subparsers.add_parser(
+        "benchmark-architectures",
+        help="Benchmark Builder's memory substrate against the domain-chip-memory ProductMemory architecture variants",
+    )
+    memory_architecture_benchmark_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_architecture_benchmark_parser.add_argument("--output-dir", help="Benchmark artifact output directory")
+    memory_architecture_benchmark_parser.add_argument("--validator-root", help="domain-chip-memory repo root used for architecture benchmarking")
+    memory_architecture_benchmark_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_direct_smoke_parser = memory_subparsers.add_parser(
         "direct-smoke",
         help="Run an in-process Spark -> Domain Chip Memory write/read smoke test without changing persisted config",
@@ -4514,6 +4523,19 @@ def handle_memory_run_telegram_regression(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_memory_benchmark_architectures(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    result = benchmark_memory_architectures(
+        config_manager=config_manager,
+        output_dir=args.output_dir,
+        validator_root=args.validator_root,
+    )
+    print(result.to_json() if args.json else result.to_text())
+    payload = result.payload if isinstance(result.payload, dict) else {}
+    return 1 if payload.get("errors") else 0
+
+
 def handle_memory_direct_smoke(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -6146,6 +6168,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_memory_compile_telegram_kb(args)
     if args.command == "memory" and args.memory_command == "run-telegram-regression":
         return handle_memory_run_telegram_regression(args)
+    if args.command == "memory" and args.memory_command == "benchmark-architectures":
+        return handle_memory_benchmark_architectures(args)
     if args.command == "memory" and args.memory_command == "direct-smoke":
         return handle_memory_direct_smoke(args)
     if args.command == "config" and args.config_command == "show":

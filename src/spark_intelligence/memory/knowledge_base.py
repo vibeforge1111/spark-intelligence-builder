@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -60,6 +61,7 @@ def build_telegram_state_knowledge_base(
     validator_root: str | Path | None = None,
 ) -> TelegramStateKnowledgeBaseResult:
     resolved_output_dir = Path(output_dir) if output_dir else _default_output_dir(config_manager)
+    _prepare_output_dir(resolved_output_dir)
     resolved_repo_sources, resolved_repo_source_manifest_files = _resolve_repo_source_inputs(
         repo_sources=repo_sources,
         repo_source_manifest_files=repo_source_manifest_files,
@@ -133,16 +135,66 @@ def _default_output_dir(config_manager: ConfigManager) -> Path:
     return config_manager.paths.home / "artifacts" / "spark-memory-kb"
 
 
+def _prepare_output_dir(output_dir: Path) -> None:
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+
 def _resolve_repo_source_inputs(
     *,
     repo_sources: list[str] | None,
     repo_source_manifest_files: list[str] | None,
 ) -> tuple[list[str], list[str]]:
-    resolved_repo_sources = [str(item) for item in (repo_sources or []) if str(item).strip()]
-    resolved_repo_source_manifest_files = [
-        str(item) for item in (repo_source_manifest_files or []) if str(item).strip()
-    ]
-    default_manifest = str(DEFAULT_BUILDER_KB_REPO_SOURCE_MANIFEST)
-    if DEFAULT_BUILDER_KB_REPO_SOURCE_MANIFEST.exists() and default_manifest not in resolved_repo_source_manifest_files:
-        resolved_repo_source_manifest_files.append(default_manifest)
-    return resolved_repo_sources, resolved_repo_source_manifest_files
+    repo_root = Path(__file__).resolve().parents[3]
+    manifest_paths = [Path(str(item)) for item in (repo_source_manifest_files or []) if str(item).strip()]
+    if DEFAULT_BUILDER_KB_REPO_SOURCE_MANIFEST.exists():
+        manifest_paths.append(DEFAULT_BUILDER_KB_REPO_SOURCE_MANIFEST)
+
+    seen: set[str] = set()
+    resolved_repo_sources: list[str] = []
+    for item in repo_sources or []:
+        candidate = _normalize_repo_source_path(str(item), base_dir=repo_root)
+        if not candidate:
+            continue
+        key = str(Path(candidate)).casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        resolved_repo_sources.append(candidate)
+
+    for manifest_path in manifest_paths:
+        for item in _read_repo_source_manifest(manifest_path):
+            candidate = _normalize_repo_source_path(item, base_dir=manifest_path.parent)
+            if not candidate:
+                continue
+            key = str(Path(candidate)).casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            resolved_repo_sources.append(candidate)
+
+    return resolved_repo_sources, []
+
+
+def _read_repo_source_manifest(manifest_path: Path) -> list[str]:
+    if not manifest_path.exists():
+        return []
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    items = payload.get("repo_sources") if isinstance(payload, dict) else None
+    if not isinstance(items, list):
+        return []
+    return [str(item) for item in items if str(item).strip()]
+
+
+def _normalize_repo_source_path(raw_value: str, *, base_dir: Path) -> str | None:
+    value = raw_value.strip()
+    if not value:
+        return None
+    candidate = Path(value)
+    if not candidate.is_absolute():
+        candidate = (base_dir / candidate).resolve(strict=False)
+    return str(candidate)

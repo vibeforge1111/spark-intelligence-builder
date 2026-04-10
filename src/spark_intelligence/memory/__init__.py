@@ -28,6 +28,10 @@ from spark_intelligence.memory.knowledge_base import (
     TelegramStateKnowledgeBaseResult,
     build_telegram_state_knowledge_base,
 )
+from spark_intelligence.memory.architecture_benchmark import (
+    MemoryArchitectureBenchmarkResult,
+    benchmark_memory_architectures,
+)
 from spark_intelligence.memory.regression import (
     TelegramMemoryRegressionResult,
     run_telegram_memory_regression,
@@ -47,6 +51,7 @@ from spark_intelligence.memory.shadow_replay import (
 __all__ = [
     "HumanMemoryInspectionResult",
     "MemoryAnswerExplanationResult",
+    "MemoryArchitectureBenchmarkResult",
     "MemoryCurrentStateLookupResult",
     "MemoryReadResult",
     "MemoryRetrievalQueryResult",
@@ -57,6 +62,7 @@ __all__ = [
     "ShadowReplayExportResult",
     "TelegramStateKnowledgeBaseResult",
     "TelegramMemoryRegressionResult",
+    "benchmark_memory_architectures",
     "build_sdk_maintenance_payload",
     "build_shadow_replay_payload",
     "build_telegram_state_knowledge_base",

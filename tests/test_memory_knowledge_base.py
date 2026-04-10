@@ -12,9 +12,38 @@ from tests.test_support import SparkTestCase
 
 
 class TelegramStateKnowledgeBaseTests(SparkTestCase):
+    def test_build_telegram_state_knowledge_base_clears_stale_output_files_before_compile(self) -> None:
+        output_dir = self.home / "artifacts" / "spark-memory-kb"
+        stale_file = output_dir / "raw" / "repos" / "99-orphan.md"
+        stale_file.parent.mkdir(parents=True, exist_ok=True)
+        stale_file.write_text("stale", encoding="utf-8")
+
+        with patch(
+            "spark_intelligence.memory.knowledge_base.run_governed_command",
+            return_value=SimpleNamespace(
+                exit_code=0,
+                stdout=json.dumps(
+                    {
+                        "builder_home": str(self.home),
+                        "summary": {"kb_valid": True},
+                        "health_report": {"valid": True, "errors": []},
+                    }
+                ),
+                stderr="",
+            ),
+        ):
+            build_telegram_state_knowledge_base(
+                config_manager=self.config_manager,
+                output_dir=output_dir,
+                validator_root=self.home,
+            )
+
+        self.assertFalse(stale_file.exists())
+
     def test_build_telegram_state_knowledge_base_invokes_domain_chip_memory_cli(self) -> None:
         output_dir = self.home / "artifacts" / "spark-memory-kb"
         write_path = self.home / "artifacts" / "spark-memory-kb.json"
+        repo_root = Path(__file__).resolve().parents[1]
 
         with patch(
             "spark_intelligence.memory.knowledge_base.run_governed_command",
@@ -64,11 +93,13 @@ class TelegramStateKnowledgeBaseTests(SparkTestCase):
                 "--chat-id",
                 "12345",
                 "--repo-source",
-                "README.md",
-                "--repo-source-manifest",
-                "repo-sources.json",
-                "--repo-source-manifest",
-                str(Path(__file__).resolve().parents[1] / "docs" / "manifests" / "spark_memory_kb_repo_sources.json"),
+                str((repo_root / "README.md").resolve()),
+                "--repo-source",
+                str((repo_root / "docs" / "MEMORY_EXECUTION_PLAN_2026-04-10.md").resolve()),
+                "--repo-source",
+                str((repo_root / "docs" / "SPARK_MEMORY_KB_ROLLOUT_PLAN_2026-04-10.md").resolve()),
+                "--repo-source",
+                str((repo_root / "docs" / "MEMORY_TELEGRAM_HANDOFF_2026-04-10.md").resolve()),
                 "--write",
                 str(write_path),
             ],
@@ -135,13 +166,13 @@ class TelegramStateKnowledgeBaseTests(SparkTestCase):
                 "12",
                 "--chat-id",
                 "12345",
-                "--repo-source-manifest",
-                str(default_manifest),
+                "--repo-source",
+                str((self.home / "README.md").resolve()),
             ],
             cwd=str(self.home),
         )
 
-    def test_build_telegram_state_knowledge_base_keeps_default_manifest_when_explicit_repo_source_is_added(self) -> None:
+    def test_build_telegram_state_knowledge_base_expands_default_manifest_when_explicit_repo_source_is_added(self) -> None:
         output_dir = self.home / "artifacts" / "spark-memory-kb"
         default_manifest = self.home / "docs" / "manifests" / "spark_memory_kb_repo_sources.json"
         default_manifest.parent.mkdir(parents=True, exist_ok=True)
@@ -193,9 +224,9 @@ class TelegramStateKnowledgeBaseTests(SparkTestCase):
                 "--chat-id",
                 "12345",
                 "--repo-source",
-                "regression-summary.md",
-                "--repo-source-manifest",
-                str(default_manifest),
+                str((Path(__file__).resolve().parents[1] / "regression-summary.md").resolve()),
+                "--repo-source",
+                str((self.home / "README.md").resolve()),
             ],
             cwd=str(self.home),
         )

@@ -7,6 +7,7 @@ from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.identity.service import approve_pairing
+from spark_intelligence.memory.architecture_benchmark import benchmark_memory_architectures
 from spark_intelligence.memory.knowledge_base import build_telegram_state_knowledge_base
 from spark_intelligence.memory.orchestrator import inspect_human_memory_in_memory
 from spark_intelligence.state.db import StateDB
@@ -340,6 +341,7 @@ def run_telegram_memory_regression(
     kb_write_path = resolved_output_dir / "telegram-memory-kb.json"
     regression_summary_markdown_path = resolved_output_dir / "regression-summary.md"
     regression_cases_json_path = resolved_output_dir / "regression-cases.json"
+    architecture_benchmark_output_dir = resolved_output_dir / "architecture-benchmark"
 
     case_payloads: list[dict[str, Any]] = []
     mismatches: list[dict[str, Any]] = []
@@ -498,12 +500,26 @@ def run_telegram_memory_regression(
         ),
         encoding="utf-8",
     )
+    architecture_benchmark_result = benchmark_memory_architectures(
+        config_manager=config_manager,
+        output_dir=architecture_benchmark_output_dir,
+        validator_root=validator_root,
+    )
+    architecture_benchmark_payload = architecture_benchmark_result.payload
+    architecture_summary_path = (
+        (architecture_benchmark_payload.get("artifact_paths") or {}).get("summary_markdown")
+        if isinstance(architecture_benchmark_payload, dict)
+        else None
+    )
+    repo_sources = [str(regression_summary_markdown_path), str(regression_cases_json_path)]
+    if architecture_summary_path:
+        repo_sources.append(str(architecture_summary_path))
     kb_result = build_telegram_state_knowledge_base(
         config_manager=config_manager,
         output_dir=resolved_kb_output_dir,
         limit=max(int(kb_limit), 1),
         chat_id=selected_chat_id,
-        repo_sources=[str(regression_summary_markdown_path), str(regression_cases_json_path)],
+        repo_sources=repo_sources,
         write_path=kb_write_path,
         validator_root=validator_root,
     )
@@ -518,6 +534,30 @@ def run_telegram_memory_regression(
         "selected_user_id": selected_user_id,
         "selected_chat_id": selected_chat_id,
         "human_id": resolved_human_id,
+        "architecture_runtime_sdk_class": _nested_get(
+            architecture_benchmark_payload,
+            "summary",
+            "runtime_sdk_class",
+            default=None,
+        ),
+        "architecture_documented_frontier": _nested_get(
+            architecture_benchmark_payload,
+            "summary",
+            "documented_frontier_architecture",
+            default=None,
+        ),
+        "architecture_runtime_matches_documented_frontier": _nested_get(
+            architecture_benchmark_payload,
+            "summary",
+            "runtime_matches_documented_frontier",
+            default=False,
+        ),
+        "architecture_product_memory_leaders": _nested_get(
+            architecture_benchmark_payload,
+            "summary",
+            "product_memory_leader_names",
+            default=[],
+        ),
         "kb_has_probe_coverage": _nested_get(kb_payload, "failure_taxonomy", "summary", "has_probe_coverage", default=False),
         "kb_issue_labels": _nested_get(kb_payload, "failure_taxonomy", "summary", "issue_labels", default=[]),
         "kb_current_state_hits": current_probe.get("hits", 0),
@@ -532,6 +572,7 @@ def run_telegram_memory_regression(
         "cases": case_payloads,
         "mismatches": mismatches,
         "inspection": inspection_payload,
+        "architecture_benchmark": architecture_benchmark_payload,
         "kb_compile": kb_payload,
         "artifact_paths": {
             "summary_json": str(resolved_write_path),
@@ -539,6 +580,8 @@ def run_telegram_memory_regression(
             "kb_json": str(kb_write_path),
             "regression_report_markdown": str(regression_summary_markdown_path),
             "regression_cases_json": str(regression_cases_json_path),
+            "architecture_benchmark_dir": str(architecture_benchmark_output_dir),
+            "architecture_benchmark_markdown": str(architecture_summary_path) if architecture_summary_path else None,
         },
     }
     resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")

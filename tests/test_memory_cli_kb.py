@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from spark_intelligence.memory import TelegramStateKnowledgeBaseResult
@@ -63,3 +64,44 @@ class MemoryCliKnowledgeBaseTests(SparkTestCase):
         self.assertEqual(kwargs["repo_source_manifest_files"], ["repo-sources.json"])
         self.assertEqual(kwargs["write_path"], str(write_path))
         self.assertIsNone(kwargs["validator_root"])
+
+    def test_memory_benchmark_architectures_dispatches_runner(self) -> None:
+        output_dir = self.home / "artifacts" / "memory-architecture-benchmark"
+        payload = {
+            "summary": {
+                "runtime_sdk_class": "SparkMemorySDK",
+                "documented_frontier_architecture": "summary_synthesis_memory",
+                "runtime_matches_documented_frontier": False,
+                "product_memory_leader_names": [
+                    "observational_temporal_memory",
+                    "dual_store_event_calendar_hybrid",
+                ],
+            },
+            "artifact_paths": {
+                "summary_markdown": str(output_dir / "memory-architecture-benchmark.md"),
+            },
+            "errors": [],
+        }
+
+        with patch(
+            "spark_intelligence.cli.benchmark_memory_architectures",
+            return_value=SimpleNamespace(payload=payload, to_json=lambda: json.dumps(payload), to_text=lambda: "ok"),
+        ) as run_benchmark:
+            exit_code, stdout, stderr = self.run_cli(
+                "memory",
+                "benchmark-architectures",
+                "--home",
+                str(self.home),
+                "--output-dir",
+                str(output_dir),
+                "--validator-root",
+                "C:/validator",
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertEqual(json.loads(stdout)["summary"]["runtime_sdk_class"], "SparkMemorySDK")
+        kwargs = run_benchmark.call_args.kwargs
+        self.assertEqual(kwargs["config_manager"].paths.home, Path(self.home))
+        self.assertEqual(kwargs["output_dir"], str(output_dir))
+        self.assertEqual(kwargs["validator_root"], "C:/validator")

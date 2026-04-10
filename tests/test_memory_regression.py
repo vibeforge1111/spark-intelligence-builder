@@ -12,6 +12,28 @@ from tests.test_support import SparkTestCase
 
 
 class MemoryRegressionTests(SparkTestCase):
+    @staticmethod
+    def _benchmark_payload(output_dir: Path) -> dict[str, object]:
+        benchmark_dir = output_dir / "architecture-benchmark"
+        benchmark_markdown = benchmark_dir / "memory-architecture-benchmark.md"
+        benchmark_dir.mkdir(parents=True, exist_ok=True)
+        benchmark_markdown.write_text("# Memory Architecture Benchmark Summary\n", encoding="utf-8")
+        return {
+            "summary": {
+                "runtime_sdk_class": "SparkMemorySDK",
+                "documented_frontier_architecture": "summary_synthesis_memory",
+                "runtime_matches_documented_frontier": False,
+                "product_memory_leader_names": [
+                    "observational_temporal_memory",
+                    "dual_store_event_calendar_hybrid",
+                ],
+            },
+            "artifact_paths": {
+                "summary_markdown": str(benchmark_markdown),
+            },
+            "errors": [],
+        }
+
     def test_memory_run_telegram_regression_dispatches_runner(self) -> None:
         output_dir = self.home / "artifacts" / "telegram-memory-regression"
         write_path = output_dir / "summary.json"
@@ -157,7 +179,10 @@ class MemoryRegressionTests(SparkTestCase):
         ), patch(
             "spark_intelligence.memory.regression.build_telegram_state_knowledge_base",
             return_value=SimpleNamespace(payload=kb_payload),
-        ) as compile_kb:
+        ) as compile_kb, patch(
+            "spark_intelligence.memory.regression.benchmark_memory_architectures",
+            return_value=SimpleNamespace(payload=self._benchmark_payload(output_dir)),
+        ) as run_benchmark:
             result = run_telegram_memory_regression(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
@@ -167,8 +192,9 @@ class MemoryRegressionTests(SparkTestCase):
             )
 
         kwargs = compile_kb.call_args.kwargs
+        self.assertTrue(run_benchmark.called)
         repo_sources = kwargs["repo_sources"]
-        self.assertEqual(len(repo_sources), 2)
+        self.assertEqual(len(repo_sources), 3)
         summary_path = Path(repo_sources[0])
         self.assertTrue(summary_path.exists())
         summary_text = summary_path.read_text(encoding="utf-8")
@@ -184,11 +210,25 @@ class MemoryRegressionTests(SparkTestCase):
         cases_json_path = Path(repo_sources[1])
         self.assertEqual(cases_json_path, output_dir / "regression-cases.json")
         self.assertTrue(cases_json_path.exists())
+        benchmark_markdown_path = Path(repo_sources[2])
+        self.assertEqual(
+            benchmark_markdown_path,
+            output_dir / "architecture-benchmark" / "memory-architecture-benchmark.md",
+        )
         cases_payload = json.loads(cases_json_path.read_text(encoding="utf-8"))
         self.assertEqual(cases_payload["selected_user_id"], "12345")
         self.assertEqual(cases_payload["cases"][0]["case_id"], "name_write")
         self.assertEqual(result.payload["summary"]["category_counts"]["overwrite"], 4)
         self.assertTrue(result.payload["summary"]["quality_lanes"]["overwrite"])
+        self.assertEqual(
+            result.payload["summary"]["architecture_documented_frontier"],
+            "summary_synthesis_memory",
+        )
+        self.assertFalse(result.payload["summary"]["architecture_runtime_matches_documented_frontier"])
+        self.assertEqual(
+            result.payload["summary"]["architecture_product_memory_leaders"],
+            ["observational_temporal_memory", "dual_store_event_calendar_hybrid"],
+        )
         self.assertEqual(
             Path(result.payload["artifact_paths"]["regression_report_markdown"]),
             summary_path,
@@ -196,6 +236,10 @@ class MemoryRegressionTests(SparkTestCase):
         self.assertEqual(
             Path(result.payload["artifact_paths"]["regression_cases_json"]),
             cases_json_path,
+        )
+        self.assertEqual(
+            Path(result.payload["artifact_paths"]["architecture_benchmark_markdown"]),
+            benchmark_markdown_path,
         )
 
     def test_run_telegram_memory_regression_filters_cases_by_category(self) -> None:
@@ -237,6 +281,9 @@ class MemoryRegressionTests(SparkTestCase):
         ), patch(
             "spark_intelligence.memory.regression.build_telegram_state_knowledge_base",
             return_value=SimpleNamespace(payload=kb_payload),
+        ), patch(
+            "spark_intelligence.memory.regression.benchmark_memory_architectures",
+            return_value=SimpleNamespace(payload=self._benchmark_payload(output_dir)),
         ):
             result = run_telegram_memory_regression(
                 config_manager=self.config_manager,
@@ -306,6 +353,9 @@ class MemoryRegressionTests(SparkTestCase):
         ), patch(
             "spark_intelligence.memory.regression.build_telegram_state_knowledge_base",
             return_value=SimpleNamespace(payload=kb_payload),
+        ), patch(
+            "spark_intelligence.memory.regression.benchmark_memory_architectures",
+            return_value=SimpleNamespace(payload=self._benchmark_payload(output_dir)),
         ):
             result = run_telegram_memory_regression(
                 config_manager=self.config_manager,
