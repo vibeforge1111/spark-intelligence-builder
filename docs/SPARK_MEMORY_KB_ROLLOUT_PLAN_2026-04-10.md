@@ -20,13 +20,16 @@ What the latest live probe showed:
 - Skipped turns: `0`
 - Current-state pages generated: name, occupation, city, startup, mission
 - KB health: valid
+- Probe coverage after the `2026-04-10` state-db adapter fix: `has_probe_coverage = true`
+- Current-state probes on the live Builder replay: `10/10`
+- Evidence probes on the live Builder replay: `10/10`
 
 ## Diagnosis
 
 The main issue is coverage and calibration, not a broken substrate.
 
 What still needs work:
-- We are not yet exporting enough retrieval probes, so the KB failure taxonomy still reports a `probe_coverage_gap`.
+- We have fixed Builder-state retrieval probe export for the profile fact, explanation, and identity paths.
 - We have strong fact/query/explanation behavior for profile memory, but not yet a broad regression matrix across identity summary, evidence retrieval, contradiction handling, and non-profile memory lanes.
 - The KB compile path is now available in Builder, but the broader benchmark loop is still manual.
 
@@ -40,7 +43,7 @@ Status: done
 - Confirm generated vault contains correct current-state and evidence pages.
 
 ### Phase 2: Retrieval Probe Coverage
-Status: next
+Status: done
 
 - Export explicit shadow probes for:
   - fact lookup
@@ -54,7 +57,7 @@ Acceptance:
 - Failure taxonomy reflects real retrieval quality instead of write-only coverage.
 
 ### Phase 3: Automated Telegram Memory Regression Runner
-Status: next
+Status: in progress
 
 - Add a Builder command that runs a fixed Telegram memory matrix against a probe home.
 - Cover:
@@ -69,6 +72,22 @@ Status: next
   - memory inspect output
   - compiled KB vault
   - summary JSON
+
+Current implementation target:
+- `spark-intelligence memory run-telegram-regression`
+- default matrix should cover:
+  - name write + query
+  - occupation write + query
+  - city write + explanation
+  - startup write + explanation
+  - mission write + explanation
+  - identity summary
+  - overwrite/update case for city
+- summary should score:
+  - expected bridge mode
+  - expected routing decision
+  - expected response substrings
+  - KB probe coverage totals
 
 Acceptance:
 - One command can reproduce the end-to-end memory benchmark loop from Builder.
@@ -95,6 +114,7 @@ Acceptance:
 
 ## Immediate Next Steps
 
-1. Add retrieval probe export for fact, explanation, and identity flows.
-2. Add one Builder command to run the Telegram memory regression matrix and compile the KB vault.
-3. Re-run the live probe and require non-empty probe coverage in the failure taxonomy.
+1. Land the Builder Telegram regression runner and commit it.
+2. Run the full matrix against a real Builder home and save the bundle.
+3. Expand from profile-only routes into abstention, contradiction, and non-profile memory lanes.
+4. Start the KB enrichment pass for repo-source and filed-output pages.
