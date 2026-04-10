@@ -17,6 +17,7 @@ This handoff covers Spark Builder memory capture and `domain-chip-memory` replay
 - `623d842` `Normalize explicit country aliases`
 - `a0edbb5` `Improve identity summary memory retrieval`
 - `e7839f2` `Prefer latest values in identity summaries`
+- `c6b3ce5` `Soften mixed geography identity summaries`
 
 ### `domain-chip-memory`
 
@@ -64,6 +65,7 @@ Builder identity-summary retrieval now:
 - keeps startup and founder semantics separate in the summary answer
 - prefers the latest saved value for each predicate instead of the oldest one
 - includes country as a separate sentence even when city is also present
+- uses a neutral country sentence when both city and country are present, to avoid claiming an inconsistent combined base
 
 That means a saved `profile.startup_name=Seedify` plus `profile.founder_of=Spark Swarm` now renders as:
 
@@ -100,6 +102,7 @@ Validated live:
 - `Who am I?` -> identity summary from memory
 - `What do you remember about me?` -> identity summary from memory
 - mixed-state identity summary now reflects latest saved founder and country values instead of stale ones
+- mixed city-plus-country summaries now render country as `Your country is ...` instead of `You're based in ...`
 
 ## Tests Added
 
@@ -146,5 +149,5 @@ Domain replay outputs created during this pass:
 ## Best Next Continuation
 
 1. Decide whether travel-style utterances such as `I'm in Paris right now` should always stay city-only or whether there should be stronger residence-versus-location language separation.
-2. Review whether identity summary should distinguish “current base” versus “saved country” more explicitly when the saved city and country disagree.
+2. Decide whether the system should try to reconcile city-country pairs semantically, or whether neutral saved-fact wording is the right long-term policy.
 3. Continue from Telegram memory retrieval into KB-side summarization quality and answer selection, now that the main direct memory-query paths are materially stronger.
