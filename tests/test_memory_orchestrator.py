@@ -139,6 +139,230 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(observations[0]["predicate"], "profile.city")
         self.assertEqual(observations[0]["value"], "Dubai")
 
+    def test_profile_city_detection_strips_temporal_tail_words(self) -> None:
+        detected = detect_profile_fact_observation("I live in Abu Dhabi now.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.city")
+        self.assertEqual(detected.value, "Abu Dhabi")
+
+    def test_profile_startup_detection_strips_temporal_tail_words(self) -> None:
+        detected = detect_profile_fact_observation("My startup is Atlas Labs now.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.startup_name")
+        self.assertEqual(detected.value, "Atlas Labs")
+
+    def test_profile_startup_detection_accepts_run_phrasing(self) -> None:
+        detected = detect_profile_fact_observation("I run Atlas Labs.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.startup_name")
+        self.assertEqual(detected.value, "Atlas Labs")
+
+    def test_profile_startup_detection_accepts_reverse_startup_phrasing(self) -> None:
+        detected = detect_profile_fact_observation("Atlas Labs is my startup.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.startup_name")
+        self.assertEqual(detected.value, "Atlas Labs")
+
+    def test_profile_current_mission_detection_strips_temporal_tail_words(self) -> None:
+        detected = detect_profile_fact_observation("I am trying to rebuild the company now.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.current_mission")
+        self.assertEqual(detected.value, "rebuild the company")
+
+    def test_profile_name_detection_strips_temporal_tail_words(self) -> None:
+        detected = detect_profile_fact_observation("My name is Sarah now.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.preferred_name")
+        self.assertEqual(detected.value, "Sarah")
+
+    def test_profile_occupation_detection_accepts_temporal_tail_words(self) -> None:
+        detected = detect_profile_fact_observation("I am an entrepreneur now.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.occupation")
+        self.assertEqual(detected.value, "entrepreneur")
+
+    def test_profile_country_detection_accepts_based_in_phrasing(self) -> None:
+        detected = detect_profile_fact_observation("I'm based in Canada now.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.home_country")
+        self.assertEqual(detected.value, "Canada")
+
+    def test_profile_country_detection_accepts_based_out_of_phrasing(self) -> None:
+        detected = detect_profile_fact_observation("I'm based out of Canada.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.home_country")
+        self.assertEqual(detected.value, "Canada")
+
+    def test_profile_founder_detection_accepts_founded_phrasing(self) -> None:
+        detected = detect_profile_fact_observation("I founded Atlas Labs.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.founder_of")
+        self.assertEqual(detected.value, "Atlas Labs")
+
+    def test_profile_founder_detection_accepts_started_built_and_launched_phrasing(self) -> None:
+        started = detect_profile_fact_observation("I started Atlas Labs.")
+        self.assertIsNotNone(started)
+        assert started is not None
+        self.assertEqual(started.predicate, "profile.founder_of")
+        self.assertEqual(started.value, "Atlas Labs")
+
+        built = detect_profile_fact_observation("I built Atlas Labs.")
+        self.assertIsNotNone(built)
+        assert built is not None
+        self.assertEqual(built.predicate, "profile.founder_of")
+        self.assertEqual(built.value, "Atlas Labs")
+
+        launched = detect_profile_fact_observation("I launched Atlas Labs.")
+        self.assertIsNotNone(launched)
+        assert launched is not None
+        self.assertEqual(launched.predicate, "profile.founder_of")
+        self.assertEqual(launched.value, "Atlas Labs")
+
+    def test_profile_founder_detection_accepts_founded_startup_called_phrasing(self) -> None:
+        detected = detect_profile_fact_observation("I founded a startup called Atlas Labs.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.founder_of")
+        self.assertEqual(detected.value, "Atlas Labs")
+
+    def test_profile_fact_write_does_not_double_prefix_prefixed_human_id(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            result = write_profile_fact_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:telegram:8319079055",
+                predicate="profile.startup_name",
+                value="Seedify",
+                evidence_text="My startup is Seedify.",
+                fact_name="profile_startup_name",
+                session_id="session:prefixed-human-id",
+                turn_id="turn:prefixed-human-id",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        self.assertEqual(len(fake_client.observation_calls), 1)
+        call = fake_client.observation_calls[0]
+        self.assertEqual(call["subject"], "human:telegram:8319079055")
+
+    def test_inspect_human_memory_uses_legacy_double_prefixed_fallback_for_prefixed_human_id(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        class _LegacyFallbackMemoryClient:
+            def __init__(self) -> None:
+                self.current_state_calls: list[dict[str, object]] = []
+
+            def get_current_state(self, **payload):
+                self.current_state_calls.append(payload)
+                subject = str(payload.get("subject") or "")
+                if subject == "human:telegram:8319079055":
+                    return {
+                        "status": "not_found",
+                        "memory_role": "unknown",
+                        "records": [],
+                        "provenance": [],
+                        "retrieval_trace": {"trace_id": "mem-trace-primary"},
+                    }
+                if subject == "human:human:telegram:8319079055":
+                    return {
+                        "status": "supported",
+                        "memory_role": "current_state",
+                        "records": [
+                            {
+                                "subject": subject,
+                                "predicate": "profile.startup_name",
+                                "value": "Seedify",
+                            }
+                        ],
+                        "provenance": [{"memory_role": "current_state", "source": "fake_sdk"}],
+                        "retrieval_trace": {"trace_id": "mem-trace-legacy"},
+                    }
+                raise AssertionError(f"unexpected subject {subject}")
+
+        fake_client = _LegacyFallbackMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client):
+            result = inspect_human_memory_in_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:telegram:8319079055",
+                sdk_module="domain_chip_memory",
+            )
+
+        self.assertFalse(result.read_result.abstained)
+        self.assertTrue(result.read_result.records)
+        self.assertEqual(result.read_result.records[0]["predicate"], "profile.startup_name")
+        self.assertEqual(
+            [str(call.get("subject") or "") for call in fake_client.current_state_calls],
+            ["human:telegram:8319079055", "human:human:telegram:8319079055"],
+        )
+
+    def test_lookup_current_state_uses_legacy_double_prefixed_fallback_for_prefixed_subject(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        class _LegacyLookupMemoryClient:
+            def __init__(self) -> None:
+                self.current_state_calls: list[dict[str, object]] = []
+
+            def get_current_state(self, **payload):
+                self.current_state_calls.append(payload)
+                subject = str(payload.get("subject") or "")
+                if subject == "human:telegram:8319079055":
+                    return {
+                        "status": "not_found",
+                        "memory_role": "unknown",
+                        "records": [],
+                        "provenance": [],
+                        "retrieval_trace": {"trace_id": "mem-trace-primary"},
+                    }
+                if subject == "human:human:telegram:8319079055":
+                    return {
+                        "status": "supported",
+                        "memory_role": "current_state",
+                        "records": [
+                            {
+                                "subject": subject,
+                                "predicate": "profile.startup_name",
+                                "value": "Seedify",
+                            }
+                        ],
+                        "provenance": [{"memory_role": "current_state", "source": "fake_sdk"}],
+                        "retrieval_trace": {"trace_id": "mem-trace-legacy"},
+                    }
+                raise AssertionError(f"unexpected subject {subject}")
+
+        fake_client = _LegacyLookupMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client):
+            result = lookup_current_state_in_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                subject="human:telegram:8319079055",
+                predicate="profile.startup_name",
+                sdk_module="domain_chip_memory",
+            )
+
+        self.assertFalse(result.read_result.abstained)
+        self.assertTrue(result.read_result.records)
+        self.assertEqual(result.read_result.records[0]["predicate"], "profile.startup_name")
+        self.assertEqual(
+            [str(call.get("subject") or "") for call in fake_client.current_state_calls],
+            ["human:telegram:8319079055", "human:human:telegram:8319079055"],
+        )
     def test_profile_timezone_detection_normalizes_structured_fact(self) -> None:
         detected = detect_profile_fact_observation("My timezone is Asia/Dubai.")
         self.assertIsNotNone(detected)

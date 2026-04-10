@@ -30,6 +30,7 @@ from spark_intelligence.observability.store import (
     recent_policy_gate_records,
     record_environment_snapshot,
     record_event,
+    repair_missing_memory_lane_records,
 )
 from spark_intelligence.personality.loader import (
     detect_and_persist_nl_preferences,
@@ -646,6 +647,38 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertTrue(panel["lane_labels_present"]["ops_transcripts"])
         self.assertFalse(panel["lane_labels_present"]["durable_intelligence_memory"])
 
+    def test_repair_missing_memory_lane_records_backfills_classified_bridge_events(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="bridge result that lost lane mirror",
+            request_id="req-memory-repair",
+            trace_ref="trace:req-memory-repair",
+            actor_id="researcher_bridge",
+            facts={
+                "bridge_mode": "external_typed",
+                "routing_decision": "researcher_advisory",
+                "keepability": "ephemeral_context",
+                "promotion_disposition": "not_promotable",
+            },
+        )
+
+        lane_records = recent_memory_lane_records(self.state_db, limit=10)
+        self.assertEqual(len(lane_records), 1)
+        event_id = str(lane_records[0]["event_id"])
+
+        with self.state_db.connect() as conn:
+            conn.execute("DELETE FROM memory_lane_records WHERE event_id = ?", (event_id,))
+            conn.commit()
+
+        repaired = repair_missing_memory_lane_records(self.state_db)
+        self.assertEqual(repaired, 1)
+
+        lane_records = recent_memory_lane_records(self.state_db, limit=10)
+        self.assertEqual(len(lane_records), 1)
+        self.assertEqual(str(lane_records[0]["event_id"]), event_id)
+
     def test_watchtower_session_integrity_panel_tracks_reset_and_resume_surfaces(self) -> None:
         detect_and_persist_nl_preferences(
             human_id="human:test",
@@ -889,6 +922,36 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertTrue(events)
         facts = events[0]["facts_json"]
         self.assertEqual(facts["keepability"], "ephemeral_context")
+
+    def test_environment_parity_accepts_windows_and_wsl_paths_for_same_runtime(self) -> None:
+        record_environment_snapshot(
+            self.state_db,
+            surface="doctor_cli",
+            summary="doctor",
+            runtime_root=r"C:\Users\USER\Desktop\spark-researcher",
+            config_path=r"C:\Users\USER\Desktop\spark-researcher\spark-researcher.project.json",
+        )
+        record_environment_snapshot(
+            self.state_db,
+            surface="researcher_bridge",
+            summary="bridge",
+            runtime_root="/mnt/c/Users/USER/Desktop/spark-researcher",
+            config_path="/mnt/c/Users/USER/Desktop/spark-researcher/spark-researcher.project.json",
+        )
+        record_environment_snapshot(
+            self.state_db,
+            surface="swarm_bridge",
+            summary="swarm",
+            runtime_root="/mnt/c/Users/USER/Desktop/spark-swarm",
+            config_path=r"C:\Users\USER\Desktop\spark-researcher\spark-researcher.project.json",
+        )
+
+        issues = {
+            issue.name: issue
+            for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)
+        }
+
+        self.assertTrue(issues["stop_ship_environment_parity"].ok)
 
     def test_build_researcher_reply_records_chip_hook_result_classification(self) -> None:
         self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
@@ -1262,6 +1325,35 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         issues = {issue.name: issue for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)}
         self.assertFalse(issues["stop_ship_runtime_state_authority"].ok)
         self.assertIn("attachments", issues["stop_ship_runtime_state_authority"].detail)
+
+    def test_stop_ship_checks_fail_closed_when_sqlite_event_queries_error(self) -> None:
+        with patch(
+            "spark_intelligence.observability.checks._runtime_state_authority_issue",
+            side_effect=sqlite3.OperationalError("disk I/O error"),
+        ):
+            issues = {
+                issue.name: issue
+                for issue in evaluate_stop_ship_issues(
+                    config_manager=self.config_manager,
+                    state_db=self.state_db,
+                )
+            }
+
+        self.assertFalse(issues["stop_ship_runtime_state_authority"].ok)
+        self.assertIn("SQLite error", issues["stop_ship_runtime_state_authority"].detail)
+        self.assertIn("disk I/O error", issues["stop_ship_runtime_state_authority"].detail)
+
+    def test_watchtower_snapshot_degrades_panel_when_memory_lane_query_errors(self) -> None:
+        with patch(
+            "spark_intelligence.observability.store.recent_memory_lane_records",
+            side_effect=sqlite3.DatabaseError("database disk image is malformed"),
+        ):
+            snapshot = build_watchtower_snapshot(self.state_db)
+
+        panel = snapshot["panels"]["memory_lane_hygiene"]
+        self.assertEqual(panel["status"], "degraded")
+        self.assertEqual(panel["panel"], "memory_lane_hygiene")
+        self.assertIn("database disk image is malformed", panel["error"])
 
     def test_stop_ship_flags_ungoverned_external_execution_entry_points(self) -> None:
         with patch(

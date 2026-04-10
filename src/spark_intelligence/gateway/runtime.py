@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import time
 import json
 import urllib.error
 from dataclasses import dataclass
@@ -391,6 +393,82 @@ def gateway_simulate_telegram_update(
     return result.to_json() if as_json else result.to_text()
 
 
+def gateway_ask_telegram(
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    *,
+    message: str,
+    user_id: str | None = None,
+    username: str | None = None,
+    chat_id: str | None = None,
+    as_json: bool = False,
+) -> str:
+    if not _telegram_terminal_bridge_enabled(config_manager):
+        raise ValueError(
+            "The terminal-to-Telegram bridge is disabled. "
+            "This operator-only feature must be enabled locally via "
+            "'operator.experimental.telegram_terminal_bridge_enabled'."
+        )
+    normalized_message = str(message or "").strip()
+    if not normalized_message:
+        raise ValueError("Telegram ask needs a non-empty message.")
+    resolved_user_id = _resolve_gateway_telegram_user_id(
+        config_manager=config_manager,
+        user_id=user_id,
+    )
+    resolved_username = str(username or "operator").strip() or "operator"
+    resolved_chat_id = str(chat_id or resolved_user_id).strip() or resolved_user_id
+    update_payload: dict[str, Any] = {
+        "update_id": _synthetic_telegram_update_id(),
+        "message": {
+            "message_id": _synthetic_telegram_message_id(),
+            "chat": {
+                "id": resolved_chat_id,
+                "type": "private",
+            },
+            "from": {
+                "id": resolved_user_id,
+                "username": resolved_username,
+            },
+            "text": normalized_message,
+        },
+    }
+    result = simulate_telegram_update(
+        config_manager=config_manager,
+        state_db=state_db,
+        update_payload=update_payload,
+    )
+    if as_json:
+        return json.dumps(
+            {
+                "message": normalized_message,
+                "user_id": resolved_user_id,
+                "username": resolved_username,
+                "chat_id": resolved_chat_id,
+                "result": {
+                    "ok": result.ok,
+                    "decision": result.decision,
+                    "detail": result.detail,
+                },
+            },
+            indent=2,
+        )
+    lines = ["Telegram direct ask"]
+    lines.append(f"- user: {resolved_user_id}")
+    lines.append(f"- decision: {result.decision}")
+    bridge_mode = str(result.detail.get("bridge_mode") or "").strip()
+    if bridge_mode:
+        lines.append(f"- mode: {bridge_mode}")
+    routing_decision = str(result.detail.get("routing_decision") or "").strip()
+    if routing_decision:
+        lines.append(f"- route: {routing_decision}")
+    trace_ref = str(result.detail.get("trace_ref") or "").strip()
+    if trace_ref:
+        lines.append(f"- trace_ref: {trace_ref}")
+    lines.extend(["", str(result.detail.get("response_text") or "").strip()])
+    return "\n".join(lines).strip()
+
+
 def gateway_simulate_discord_message(
     config_manager: ConfigManager,
     state_db: StateDB,
@@ -531,6 +609,77 @@ def _filter_log_records(
             if needle in str(record.get("response_preview") or record.get("failure_message") or "").lower()
         ]
     return filtered
+
+
+def _resolve_gateway_telegram_user_id(
+    *,
+    config_manager: ConfigManager,
+    user_id: str | None,
+) -> str:
+    normalized_user_id = str(user_id or "").strip()
+    if normalized_user_id:
+        return normalized_user_id
+    recent_user = _latest_gateway_telegram_user_id(config_manager)
+    if recent_user:
+        return recent_user
+    config = config_manager.load()
+    channel_records = config.get("channels", {}).get("records", {})
+    telegram_record = channel_records.get("telegram") if isinstance(channel_records, dict) else None
+    allowed_users = [
+        str(item).strip()
+        for item in ((telegram_record or {}).get("allowed_users") or [])
+        if str(item).strip()
+    ]
+    deduped_allowed_users: list[str] = []
+    for item in allowed_users:
+        if item not in deduped_allowed_users:
+            deduped_allowed_users.append(item)
+    if len(deduped_allowed_users) == 1:
+        return deduped_allowed_users[0]
+    if not deduped_allowed_users:
+        raise ValueError("No Telegram user id was provided and the workspace has no configured allowed Telegram users.")
+    raise ValueError(
+        "No Telegram user id was provided and the workspace has multiple possible Telegram users. "
+        "Pass --user-id to target one explicitly."
+    )
+
+
+def _telegram_terminal_bridge_enabled(config_manager: ConfigManager) -> bool:
+    env_flag = str(os.environ.get("SPARK_OPERATOR_TELEGRAM_BRIDGE_ENABLED") or "").strip().lower()
+    if env_flag in {"1", "true", "yes", "on"}:
+        return True
+    config = config_manager.load()
+    operator_config = config.get("operator", {})
+    if not isinstance(operator_config, dict):
+        return False
+    experimental_config = operator_config.get("experimental", {})
+    if not isinstance(experimental_config, dict):
+        return False
+    return bool(experimental_config.get("telegram_terminal_bridge_enabled"))
+
+
+def _latest_gateway_telegram_user_id(config_manager: ConfigManager) -> str | None:
+    for record in read_gateway_traces(config_manager, limit=20):
+        if _record_channel_id(record) != "telegram":
+            continue
+        user_ref = _record_user_ref(record)
+        if user_ref != "unknown":
+            return user_ref
+    for record in read_outbound_audit(config_manager, limit=20):
+        if _record_channel_id(record) != "telegram":
+            continue
+        user_ref = _record_user_ref(record)
+        if user_ref != "unknown":
+            return user_ref
+    return None
+
+
+def _synthetic_telegram_update_id() -> int:
+    return int(time.time() * 1_000_000)
+
+
+def _synthetic_telegram_message_id() -> int:
+    return int(time.time() * 10_000_000) % 2_000_000_000
 
 
 def _record_channel_id(record: dict[str, Any]) -> str:

@@ -244,6 +244,8 @@ spark-intelligence gateway outbound --limit 20
 spark-intelligence gateway outbound --channel-id telegram --delivery failed
 ```
 
+There is also an internal operator-only terminal-to-Telegram bridge for probing the Telegram runtime directly from the CLI, but it should remain disabled by default and should not be treated as a normal end-user surface.
+
 Production ingress ownership rule:
 
 - only one runtime may long-poll one Telegram bot token at a time

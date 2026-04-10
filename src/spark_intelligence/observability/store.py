@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
+import sqlite3
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -1319,24 +1322,68 @@ def build_watchtower_snapshot(
         "health_facts": health_facts,
         "health_dimensions": dimensions,
         "top_level_state": _derive_watchtower_top_level_state(dimensions),
-        "contradictions": _build_contradiction_panel(state_db),
+        "contradictions": _safe_watchtower_panel(
+            "contradictions",
+            lambda: _build_contradiction_panel(state_db),
+        ),
         "panels": {
-            "config_authority": _build_config_authority_panel(state_db),
+            "config_authority": _safe_watchtower_panel(
+                "config_authority",
+                lambda: _build_config_authority_panel(state_db),
+            ),
             "execution_lineage": execution_panel,
             "delivery_truth": delivery_panel,
             "background_freshness": background_panel,
             "environment_parity": environment_panel,
-            "provenance_and_quarantine": _build_provenance_and_quarantine_panel(state_db),
-            "memory_lane_hygiene": _build_memory_lane_hygiene_panel(state_db),
-            "agent_identity": _build_agent_identity_panel(state_db),
-            "personality": _build_personality_panel(state_db),
-            "session_integrity": _build_session_integrity_panel(state_db),
-            "observer_incidents": _build_observer_incident_panel(state_db),
-            "observer_packets": _build_observer_packet_panel(state_db),
-            "observer_handoffs": _build_observer_handoff_panel(state_db),
-            "memory_shadow": _build_memory_shadow_panel(state_db),
+            "provenance_and_quarantine": _safe_watchtower_panel(
+                "provenance_and_quarantine",
+                lambda: _build_provenance_and_quarantine_panel(state_db),
+            ),
+            "memory_lane_hygiene": _safe_watchtower_panel(
+                "memory_lane_hygiene",
+                lambda: _build_memory_lane_hygiene_panel(state_db),
+            ),
+            "agent_identity": _safe_watchtower_panel(
+                "agent_identity",
+                lambda: _build_agent_identity_panel(state_db),
+            ),
+            "personality": _safe_watchtower_panel(
+                "personality",
+                lambda: _build_personality_panel(state_db),
+            ),
+            "session_integrity": _safe_watchtower_panel(
+                "session_integrity",
+                lambda: _build_session_integrity_panel(state_db),
+            ),
+            "observer_incidents": _safe_watchtower_panel(
+                "observer_incidents",
+                lambda: _build_observer_incident_panel(state_db),
+            ),
+            "observer_packets": _safe_watchtower_panel(
+                "observer_packets",
+                lambda: _build_observer_packet_panel(state_db),
+            ),
+            "observer_handoffs": _safe_watchtower_panel(
+                "observer_handoffs",
+                lambda: _build_observer_handoff_panel(state_db),
+            ),
+            "memory_shadow": _safe_watchtower_panel(
+                "memory_shadow",
+                lambda: _build_memory_shadow_panel(state_db),
+            ),
         },
     }
+
+
+def _safe_watchtower_panel(panel_name: str, factory: Any) -> dict[str, Any]:
+    try:
+        return factory()
+    except sqlite3.Error as exc:
+        return {
+            "status": "degraded",
+            "panel": panel_name,
+            "error": f"SQLite error while building watchtower panel: {exc}",
+        }
 
 
 def summarize_payload(payload: Any) -> dict[str, Any]:
@@ -2324,6 +2371,73 @@ def repair_foreground_browser_hook_failures(state_db: StateDB) -> int:
     return int(cursor.rowcount or 0)
 
 
+def repair_missing_memory_lane_records(state_db: StateDB, *, limit: int = 1000) -> int:
+    with state_db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                be.event_id,
+                be.event_type,
+                be.created_at,
+                be.component,
+                be.run_id,
+                be.request_id,
+                be.trace_ref,
+                be.reason_code,
+                be.provenance_json,
+                be.facts_json
+            FROM builder_events AS be
+            LEFT JOIN memory_lane_records AS mlr
+              ON mlr.event_id = be.event_id
+            WHERE mlr.event_id IS NULL
+              AND (
+                instr(COALESCE(be.facts_json, ''), '"keepability"') > 0
+                OR instr(COALESCE(be.facts_json, ''), '"promotion_disposition"') > 0
+              )
+            ORDER BY be.created_at ASC, be.event_id ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        repaired = 0
+        for row in rows:
+            try:
+                facts = json.loads(row["facts_json"]) if row["facts_json"] else {}
+            except json.JSONDecodeError:
+                facts = {}
+            try:
+                provenance = json.loads(row["provenance_json"]) if row["provenance_json"] else {}
+            except json.JSONDecodeError:
+                provenance = {}
+            if not isinstance(facts, dict):
+                facts = {}
+            if not isinstance(provenance, dict):
+                provenance = {}
+            if not facts.get("keepability") and not facts.get("promotion_disposition"):
+                continue
+            _mirror_memory_lane_event(
+                conn,
+                event_id=str(row["event_id"]),
+                event_type=str(row["event_type"]),
+                recorded_at=str(row["created_at"]),
+                component=str(row["component"]),
+                run_id=str(row["run_id"]) if row["run_id"] is not None else None,
+                request_id=str(row["request_id"]) if row["request_id"] is not None else None,
+                trace_ref=str(row["trace_ref"]) if row["trace_ref"] is not None else None,
+                reason_code=str(row["reason_code"]) if row["reason_code"] is not None else None,
+                facts=facts,
+                provenance=provenance,
+            )
+            lane_row = conn.execute(
+                "SELECT 1 FROM memory_lane_records WHERE event_id = ? LIMIT 1",
+                (str(row["event_id"]),),
+            ).fetchone()
+            if lane_row:
+                repaired += 1
+        conn.commit()
+    return repaired
+
+
 def _artifact_lane_from_keepability(value: str) -> str:
     keepability = str(value or "")
     if keepability == "operator_debug_only":
@@ -2631,8 +2745,8 @@ def _environment_snapshot_disagreements(
         for field in comparable_fields:
             if not _environment_field_should_match(baseline_surface, surface, field):
                 continue
-            left = baseline.get(field)
-            right = snapshot.get(field)
+            left = _normalize_environment_snapshot_field(field, baseline.get(field))
+            right = _normalize_environment_snapshot_field(field, snapshot.get(field))
             if left and right and left != right:
                 mismatch_fields.append(
                     f"{baseline_surface}:{field}={left} != {surface}:{field}={right}"
@@ -2640,7 +2754,28 @@ def _environment_snapshot_disagreements(
     return mismatch_fields
 
 
+def _normalize_environment_snapshot_field(field: str, value: Any) -> Any:
+    normalized = str(value).strip() if value is not None else None
+    if not normalized:
+        return value
+    if field not in {"runtime_root", "config_path", "python_executable"}:
+        return normalized
+    translated = _translate_windows_path_for_posix(normalized)
+    return translated or normalized
+
+
+def _translate_windows_path_for_posix(value: str) -> str | None:
+    match = re.match(r"^([A-Za-z]):[\\/](.*)$", value)
+    if not match or os.name == "nt":
+        return None
+    drive = match.group(1).lower()
+    remainder = match.group(2).replace("\\", "/")
+    return str(Path("/mnt") / drive / remainder)
+
+
 def _environment_field_should_match(left_surface: str, right_surface: str, field: str) -> bool:
+    if field == "python_executable":
+        return False
     if field == "runtime_root" and "swarm_bridge" in {left_surface, right_surface}:
         return False
     return True

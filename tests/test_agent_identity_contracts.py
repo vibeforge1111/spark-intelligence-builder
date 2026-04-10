@@ -45,7 +45,10 @@ class AgentIdentityContractTests(SparkTestCase):
         )
 
         self.assertEqual(state.agent_id, "agent:human:telegram:111")
-        self.assertEqual(state.agent_name, "Alice")
+        # After Finding G fix: the agent is created with an empty name on
+        # pairing. The user supplies a name via onboarding / rename_agent_identity.
+        self.assertEqual(state.agent_name, "")
+        self.assertFalse(state.has_user_defined_name)
         self.assertEqual(state.preferred_source, "builder_local")
         self.assertEqual(state.status, "active")
         self.assertEqual(state.alias_agent_ids, [])
@@ -101,9 +104,12 @@ class AgentIdentityContractTests(SparkTestCase):
             external_user_id="111",
             display_name="Alice",
         )
-        agent_state = read_canonical_agent_state(
+        agent_state = rename_agent_identity(
             state_db=self.state_db,
             human_id="human:telegram:111",
+            new_name="Atlas",
+            source_surface="telegram",
+            source_ref="test-setup",
         )
         save_agent_persona_profile(
             agent_id=agent_state.agent_id,
@@ -125,7 +131,7 @@ class AgentIdentityContractTests(SparkTestCase):
         self.assertEqual(payload["hook"], "personality")
         self.assertEqual(payload["human_id"], "human:telegram:111")
         self.assertEqual(payload["agent_id"], agent_state.agent_id)
-        self.assertEqual(payload["identity"]["agent_name"], "Alice")
+        self.assertEqual(payload["identity"]["agent_name"], "Atlas")
         self.assertEqual(payload["current_agent_persona"]["persona_name"], "Atlas")
 
     def test_normalize_personality_import_validates_expected_result_shape(self) -> None:
@@ -245,7 +251,9 @@ class AgentIdentityContractTests(SparkTestCase):
                 ("human:telegram:111",),
             ).fetchone()
         self.assertIsNotNone(row)
-        self.assertEqual(row["old_name"], "Alice")
+        # Under Finding G fix: approve_pairing creates the agent with an
+        # empty name, so the first rename records old_name as empty string.
+        self.assertEqual(row["old_name"], "")
         self.assertEqual(row["new_name"], "Atlas")
         self.assertEqual(row["source_surface"], "telegram")
         self.assertEqual(row["source_ref"], "turn-rename")

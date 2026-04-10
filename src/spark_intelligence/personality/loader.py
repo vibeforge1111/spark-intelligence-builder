@@ -826,29 +826,20 @@ def build_telegram_surface_identity_preamble(
         or resolved_profile.get("personality_name")
         or ""
     ).strip()
-    if not visible_name:
-        return ""
-
-    traits = resolved_profile.get("traits") or {}
-    warmth = float(traits.get("warmth", 0.5))
-    directness = float(traits.get("directness", 0.5))
-    pacing = float(traits.get("pacing", 0.5))
 
     if surface == "approval_welcome":
+        if not visible_name:
+            return "Pairing approved. Let's set up your agent."
+        traits = resolved_profile.get("traits") or {}
+        warmth = float(traits.get("warmth", 0.5))
+        directness = float(traits.get("directness", 0.5))
+        pacing = float(traits.get("pacing", 0.5))
         if not resolved_profile:
             return f"Pairing approved. {visible_name} is live in this Telegram DM now."
         if directness >= 0.65 or pacing >= 0.6 or warmth <= 0.4:
             return f"Pairing approved. {visible_name} is live in this Telegram DM now."
         return f"Pairing approved. {visible_name} is here with you in this Telegram DM now."
 
-    has_saved_persona = bool(
-        resolved_profile.get("agent_persona_name")
-        or resolved_profile.get("agent_persona_summary")
-        or resolved_profile.get("agent_persona_applied")
-        or resolved_profile.get("agent_behavioral_rules")
-    )
-    if not has_saved_persona:
-        return ""
     return ""
 
 
