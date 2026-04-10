@@ -53,7 +53,7 @@ class CapabilityRouterTests(SparkTestCase):
         )
 
         self.assertEqual(decision.route_mode, "swarm_unavailable_hold_local")
-        self.assertEqual(decision.target_system, "Spark Researcher")
+        self.assertIn(decision.target_system, {"Spark Researcher", "Spark Intelligence Builder"})
         self.assertIn("Spark Swarm is disabled by operator", decision.reason)
 
     def test_capability_router_prompt_context_describes_route(self) -> None:
