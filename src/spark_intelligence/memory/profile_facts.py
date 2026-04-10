@@ -279,17 +279,55 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
 def build_profile_fact_query_context(*, query: ProfileFactQuery, value: str | None) -> str:
     label = query.label
     if value:
+        concise_answer = _build_profile_fact_concise_answer(query=query, value=value)
         return (
             "[Memory action: PROFILE_FACT_STATUS]\n"
             f"The user is asking about their saved {label}. "
             f"Memory-backed current-state fact: {label}: {value}.\n"
-            "Answer naturally and briefly using that fact."
+            f"Expected concise answer: {concise_answer}\n"
+            "Answer in one sentence only. Use the saved fact directly. "
+            "Do not add broader narrative, strategy, backstory, or follow-up questions."
         )
     return (
         "[Memory action: PROFILE_FACT_STATUS_MISSING]\n"
         f"The user is asking about their saved {label}, but no memory-backed current-state fact is available.\n"
-        "Do not pretend you know. Say you do not currently have that saved and invite the user to tell you if they want."
+        "Answer in one sentence only. Do not pretend you know. "
+        "Say you do not currently have that saved and invite the user to tell you if they want."
     )
+
+
+def _build_profile_fact_concise_answer(*, query: ProfileFactQuery, value: str) -> str:
+    normalized_value = str(value or "").strip()
+    if not normalized_value:
+        return "I do not currently have that saved."
+
+    predicate = str(query.predicate or "").strip()
+    if predicate == "profile.preferred_name":
+        return _ensure_sentence(f"Your name is {normalized_value}")
+    if predicate == "profile.startup_name":
+        return _ensure_sentence(f"You created {normalized_value}")
+    if predicate == "profile.hack_actor":
+        return _ensure_sentence(f"The hack actor was {normalized_value}")
+    if predicate == "profile.current_mission":
+        return _ensure_sentence(f"Right now you're trying to {normalized_value}")
+    if predicate == "profile.spark_role":
+        return _ensure_sentence(f"Spark will be {normalized_value}")
+    if predicate == "profile.home_country":
+        return _ensure_sentence(f"Your country is {normalized_value}")
+    if predicate == "profile.timezone":
+        return _ensure_sentence(f"Your timezone is {normalized_value}")
+    if predicate == "profile.city":
+        return _ensure_sentence(f"You live in {normalized_value}")
+    return _ensure_sentence(f"Your saved {query.label} is {normalized_value}")
+
+
+def _ensure_sentence(text: str) -> str:
+    normalized = " ".join(str(text or "").strip().split())
+    if not normalized:
+        return ""
+    if normalized[-1] in ".!?":
+        return normalized
+    return f"{normalized}."
 
 
 def build_profile_identity_summary_context(*, records: list[dict[str, str]]) -> str:

@@ -16,6 +16,7 @@ from spark_intelligence.memory import (
     write_profile_fact_to_memory,
 )
 from spark_intelligence.memory.profile_facts import (
+    build_profile_fact_query_context,
     build_profile_identity_summary_context,
     detect_profile_fact_observation,
     detect_profile_fact_query,
@@ -350,6 +351,21 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertIn("- occupation: entrepreneur", context)
         self.assertIn("- startup: Seedify", context)
         self.assertIn("- current mission: revive the companies", context)
+
+    def test_build_profile_fact_query_context_demands_single_sentence_grounded_answer(self) -> None:
+        query = detect_profile_fact_query("What role will Spark play in this?")
+        self.assertIsNotNone(query)
+        assert query is not None
+
+        context = build_profile_fact_query_context(
+            query=query,
+            value="important part of the rebuild",
+        )
+
+        self.assertIn("[Memory action: PROFILE_FACT_STATUS]", context)
+        self.assertIn("Expected concise answer: Spark will be important part of the rebuild.", context)
+        self.assertIn("Answer in one sentence only.", context)
+        self.assertIn("Do not add broader narrative", context)
 
     def test_memory_sdk_smoke_test_runs_real_domain_chip_roundtrip(self) -> None:
         result = run_memory_sdk_smoke_test(
