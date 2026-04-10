@@ -1362,6 +1362,18 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(panel["panel"], "memory_lane_hygiene")
         self.assertIn("database disk image is malformed", panel["error"])
 
+    def test_watchtower_snapshot_degrades_top_level_when_health_fact_query_errors(self) -> None:
+        with patch(
+            "spark_intelligence.observability.store._compute_health_facts",
+            side_effect=sqlite3.DatabaseError("database disk image is malformed"),
+        ):
+            snapshot = build_watchtower_snapshot(self.state_db)
+
+        self.assertEqual(snapshot["top_level_state"], "degraded")
+        self.assertEqual(snapshot["health_dimensions"]["ingress_health"]["state"], "degraded")
+        self.assertIn("database disk image is malformed", snapshot["health_dimensions"]["ingress_health"]["detail"])
+        self.assertEqual(snapshot["panels"]["watchtower_unavailable"]["status"], "degraded")
+
     def test_stop_ship_flags_ungoverned_external_execution_entry_points(self) -> None:
         with patch(
             "spark_intelligence.observability.checks._find_source_pattern_paths",

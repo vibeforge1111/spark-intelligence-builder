@@ -1351,78 +1351,115 @@ def build_watchtower_snapshot(
     *,
     background_stale_seconds: int = WATCHTOWER_BACKGROUND_STALE_SECONDS,
 ) -> dict[str, Any]:
-    health_facts = _compute_health_facts(state_db)
-    execution_panel = _build_execution_lineage_panel(state_db)
-    delivery_panel = _build_delivery_truth_panel(state_db, health_facts=health_facts)
-    background_panel = _build_background_freshness_panel(
-        state_db,
-        health_facts=health_facts,
-        background_stale_seconds=background_stale_seconds,
-    )
-    environment_panel = _build_environment_parity_panel(state_db)
-    dimensions = {
-        "ingress_health": _build_ingress_health_dimension(health_facts=health_facts),
-        "execution_health": _build_execution_health_dimension(execution_panel=execution_panel),
-        "delivery_health": _build_delivery_health_dimension(
-            delivery_panel=delivery_panel,
+    try:
+        health_facts = _compute_health_facts(state_db)
+        execution_panel = _build_execution_lineage_panel(state_db)
+        delivery_panel = _build_delivery_truth_panel(state_db, health_facts=health_facts)
+        background_panel = _build_background_freshness_panel(
+            state_db,
             health_facts=health_facts,
-        ),
-        "scheduler_freshness": _build_scheduler_freshness_dimension(background_panel=background_panel),
-        "environment_parity": _build_environment_parity_dimension(environment_panel=environment_panel),
+            background_stale_seconds=background_stale_seconds,
+        )
+        environment_panel = _build_environment_parity_panel(state_db)
+        dimensions = {
+            "ingress_health": _build_ingress_health_dimension(health_facts=health_facts),
+            "execution_health": _build_execution_health_dimension(execution_panel=execution_panel),
+            "delivery_health": _build_delivery_health_dimension(
+                delivery_panel=delivery_panel,
+                health_facts=health_facts,
+            ),
+            "scheduler_freshness": _build_scheduler_freshness_dimension(background_panel=background_panel),
+            "environment_parity": _build_environment_parity_dimension(environment_panel=environment_panel),
+        }
+        return {
+            "health_facts": health_facts,
+            "health_dimensions": dimensions,
+            "top_level_state": _derive_watchtower_top_level_state(dimensions),
+            "contradictions": _safe_watchtower_panel(
+                "contradictions",
+                lambda: _build_contradiction_panel(state_db),
+            ),
+            "panels": {
+                "config_authority": _safe_watchtower_panel(
+                    "config_authority",
+                    lambda: _build_config_authority_panel(state_db),
+                ),
+                "execution_lineage": execution_panel,
+                "delivery_truth": delivery_panel,
+                "background_freshness": background_panel,
+                "environment_parity": environment_panel,
+                "provenance_and_quarantine": _safe_watchtower_panel(
+                    "provenance_and_quarantine",
+                    lambda: _build_provenance_and_quarantine_panel(state_db),
+                ),
+                "memory_lane_hygiene": _safe_watchtower_panel(
+                    "memory_lane_hygiene",
+                    lambda: _build_memory_lane_hygiene_panel(state_db),
+                ),
+                "agent_identity": _safe_watchtower_panel(
+                    "agent_identity",
+                    lambda: _build_agent_identity_panel(state_db),
+                ),
+                "personality": _safe_watchtower_panel(
+                    "personality",
+                    lambda: _build_personality_panel(state_db),
+                ),
+                "session_integrity": _safe_watchtower_panel(
+                    "session_integrity",
+                    lambda: _build_session_integrity_panel(state_db),
+                ),
+                "observer_incidents": _safe_watchtower_panel(
+                    "observer_incidents",
+                    lambda: _build_observer_incident_panel(state_db),
+                ),
+                "observer_packets": _safe_watchtower_panel(
+                    "observer_packets",
+                    lambda: _build_observer_packet_panel(state_db),
+                ),
+                "observer_handoffs": _safe_watchtower_panel(
+                    "observer_handoffs",
+                    lambda: _build_observer_handoff_panel(state_db),
+                ),
+                "memory_shadow": _safe_watchtower_panel(
+                    "memory_shadow",
+                    lambda: _build_memory_shadow_panel(state_db),
+                ),
+            },
+        }
+    except sqlite3.Error as exc:
+        return _degraded_watchtower_snapshot(error=f"SQLite error while building watchtower snapshot: {exc}")
+
+
+def _degraded_watchtower_snapshot(*, error: str) -> dict[str, Any]:
+    dimensions = {
+        key: {
+            "state": "degraded",
+            "detail": error,
+        }
+        for key in (
+            "ingress_health",
+            "execution_health",
+            "delivery_health",
+            "scheduler_freshness",
+            "environment_parity",
+        )
     }
     return {
-        "health_facts": health_facts,
+        "health_facts": {},
         "health_dimensions": dimensions,
-        "top_level_state": _derive_watchtower_top_level_state(dimensions),
-        "contradictions": _safe_watchtower_panel(
-            "contradictions",
-            lambda: _build_contradiction_panel(state_db),
-        ),
+        "top_level_state": "degraded",
+        "contradictions": {
+            "status": "degraded",
+            "panel": "contradictions",
+            "error": error,
+            "counts": {"open": 0, "resolved": 0},
+        },
         "panels": {
-            "config_authority": _safe_watchtower_panel(
-                "config_authority",
-                lambda: _build_config_authority_panel(state_db),
-            ),
-            "execution_lineage": execution_panel,
-            "delivery_truth": delivery_panel,
-            "background_freshness": background_panel,
-            "environment_parity": environment_panel,
-            "provenance_and_quarantine": _safe_watchtower_panel(
-                "provenance_and_quarantine",
-                lambda: _build_provenance_and_quarantine_panel(state_db),
-            ),
-            "memory_lane_hygiene": _safe_watchtower_panel(
-                "memory_lane_hygiene",
-                lambda: _build_memory_lane_hygiene_panel(state_db),
-            ),
-            "agent_identity": _safe_watchtower_panel(
-                "agent_identity",
-                lambda: _build_agent_identity_panel(state_db),
-            ),
-            "personality": _safe_watchtower_panel(
-                "personality",
-                lambda: _build_personality_panel(state_db),
-            ),
-            "session_integrity": _safe_watchtower_panel(
-                "session_integrity",
-                lambda: _build_session_integrity_panel(state_db),
-            ),
-            "observer_incidents": _safe_watchtower_panel(
-                "observer_incidents",
-                lambda: _build_observer_incident_panel(state_db),
-            ),
-            "observer_packets": _safe_watchtower_panel(
-                "observer_packets",
-                lambda: _build_observer_packet_panel(state_db),
-            ),
-            "observer_handoffs": _safe_watchtower_panel(
-                "observer_handoffs",
-                lambda: _build_observer_handoff_panel(state_db),
-            ),
-            "memory_shadow": _safe_watchtower_panel(
-                "memory_shadow",
-                lambda: _build_memory_shadow_panel(state_db),
-            ),
+            "watchtower_unavailable": {
+                "status": "degraded",
+                "panel": "watchtower_unavailable",
+                "error": error,
+            }
         },
     }
 

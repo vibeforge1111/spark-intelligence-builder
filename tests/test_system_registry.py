@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sqlite3
+from unittest.mock import patch
+
 from spark_intelligence.system_registry import (
     build_system_registry,
     build_system_registry_prompt_context,
@@ -90,3 +93,16 @@ class SystemRegistryTests(SparkTestCase):
         self.assertIn("role=Governed browser and search chip for web inspection and source capture.", prompt_context)
         self.assertIn("surfaces=researcher_bridge,cli,telegram", prompt_context)
         self.assertIn("permissions=browser_session,origin_access", prompt_context)
+
+    def test_build_system_registry_prompt_context_degrades_closed_on_sqlite_fault(self) -> None:
+        with patch(
+            "spark_intelligence.system_registry.registry.build_system_registry",
+            side_effect=sqlite3.DatabaseError("database disk image is malformed"),
+        ):
+            prompt_context = build_system_registry_prompt_context(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                user_message="What are you connected to right now?",
+            )
+
+        self.assertEqual(prompt_context, "")

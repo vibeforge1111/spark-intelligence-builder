@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -233,7 +234,10 @@ def build_system_registry_prompt_context(
     state_db: StateDB,
     user_message: str,
 ) -> str:
-    snapshot = build_system_registry(config_manager, state_db)
+    try:
+        snapshot = build_system_registry(config_manager, state_db)
+    except sqlite3.Error:
+        return ""
     if not (
         looks_like_system_registry_query(user_message)
         or _looks_like_runtime_entity_explanation_query(user_message, snapshot.records)
