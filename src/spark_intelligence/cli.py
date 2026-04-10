@@ -147,7 +147,7 @@ from spark_intelligence.harness_runtime import (
     execute_harness_chain,
     execute_harness_task,
 )
-from spark_intelligence.mission_control import build_mission_control_snapshot
+from spark_intelligence.mission_control import build_mission_control_plan, build_mission_control_snapshot
 from spark_intelligence.system_registry import build_system_registry
 
 

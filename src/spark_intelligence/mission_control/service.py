@@ -37,6 +37,27 @@ class MissionControlSnapshot:
         return json.dumps(self.to_payload(), indent=2)
 
 
+@dataclass(frozen=True)
+class MissionControlPlan:
+    generated_at: str
+    workspace_id: str
+    task: str
+    summary: dict[str, Any]
+    details: dict[str, Any]
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "generated_at": self.generated_at,
+            "workspace_id": self.workspace_id,
+            "task": self.task,
+            "summary": self.summary,
+            "details": self.details,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_payload(), indent=2)
+
+
 def looks_like_mission_control_query(message: str) -> bool:
     lowered_message = str(message or "").strip().lower()
     if not lowered_message:
@@ -231,6 +252,133 @@ def build_mission_control_snapshot(config_manager: ConfigManager, state_db: Stat
         workspace_id=workspace_id,
         summary=summary,
         panels=panels,
+    )
+
+
+def build_mission_control_plan(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    task: str,
+    forced_harness_id: str | None = None,
+    forced_recipe_id: str | None = None,
+) -> MissionControlPlan:
+    from spark_intelligence.capability_router import build_capability_route_decision
+    from spark_intelligence.harness_registry import (
+        build_harness_selection,
+        select_auto_harness_recipe,
+        select_harness_recipe,
+    )
+
+    normalized_task = str(task or "").strip()
+    snapshot = build_mission_control_snapshot(config_manager, state_db).to_payload()
+    summary = snapshot.get("summary") or {}
+    route = build_capability_route_decision(
+        config_manager=config_manager,
+        state_db=state_db,
+        task=normalized_task,
+    ).to_payload()
+
+    recipe_payload = None
+    selection_mode = "route_only"
+    effective_harness_id = str(forced_harness_id or "").strip() or None
+    harness_route_mode_override = None
+    harness_reason_override = None
+    harness_next_action_override = None
+    if forced_recipe_id:
+        recipe_payload = select_harness_recipe(
+            config_manager=config_manager,
+            state_db=state_db,
+            recipe_id=forced_recipe_id,
+        ).to_payload()
+        effective_harness_id = str(recipe_payload.get("primary_harness_id") or "").strip() or effective_harness_id
+        selection_mode = "explicit_recipe"
+        harness_route_mode_override = "recipe_primary_harness"
+        harness_reason_override = (
+            f"Recipe {recipe_payload.get('recipe_id') or 'unknown'} starts with {effective_harness_id}."
+        )
+        harness_next_action_override = "Run the recipe's primary harness unless a degraded surface blocks execution."
+    elif effective_harness_id:
+        selection_mode = "explicit_harness"
+        harness_route_mode_override = "forced_harness"
+        harness_reason_override = f"Operator forced the harness to {effective_harness_id}."
+        harness_next_action_override = "Run the forced harness unless a degraded surface blocks execution."
+    else:
+        auto_recipe = select_auto_harness_recipe(
+            config_manager=config_manager,
+            state_db=state_db,
+            task=normalized_task,
+        )
+        if auto_recipe is not None:
+            recipe_payload = auto_recipe.to_payload()
+            effective_harness_id = str(auto_recipe.recipe.primary_harness_id or "").strip() or None
+            selection_mode = "auto_recipe"
+            harness_route_mode_override = "auto_recipe_primary_harness"
+            harness_reason_override = (
+                f"Auto-selected recipe {auto_recipe.recipe.recipe_id} starts with {effective_harness_id}."
+            )
+            harness_next_action_override = "Run the recipe's primary harness unless a degraded surface blocks execution."
+
+    harness = build_harness_selection(
+        config_manager=config_manager,
+        state_db=state_db,
+        task=normalized_task,
+    ).to_payload()
+    if effective_harness_id and effective_harness_id != str(harness.get("harness_id") or ""):
+        harness = _build_harness_selection_override(
+            config_manager=config_manager,
+            state_db=state_db,
+            task=normalized_task,
+            harness_id=effective_harness_id,
+            route_mode=harness_route_mode_override or "forced_harness",
+            reason=harness_reason_override or f"Operator forced the harness to {effective_harness_id}.",
+            next_action=(
+                harness_next_action_override
+                or "Run the forced harness unless a degraded surface blocks execution."
+            ),
+        )
+
+    degraded_surfaces = [str(item) for item in (summary.get("degraded_surfaces") or []) if str(item)]
+    blockers = _derive_plan_blockers(
+        route=route,
+        harness=harness,
+        recipe=recipe_payload,
+        degraded_surfaces=degraded_surfaces,
+    )
+    next_actions = _derive_plan_next_actions(
+        mission_summary=summary,
+        route=route,
+        harness=harness,
+        recipe=recipe_payload,
+        blockers=blockers,
+    )
+    selected_system = str(harness.get("owner_system") or route.get("target_system") or "")
+    plan_summary = {
+        "top_level_state": summary.get("top_level_state") or "unknown",
+        "current_focus": summary.get("current_focus") or "",
+        "selected_system": selected_system,
+        "route_target_system": route.get("target_system") or "",
+        "selected_harness": harness.get("harness_id") or "",
+        "selected_recipe": (recipe_payload or {}).get("recipe_id") or None,
+        "selection_mode": selection_mode,
+        "blockers": blockers,
+        "degraded_surfaces": degraded_surfaces,
+        "next_actions": next_actions,
+    }
+    plan_details = {
+        "route": route,
+        "harness": harness,
+        "recipe": recipe_payload,
+        "active_channels": list(summary.get("active_channels") or []),
+        "active_loops": list(summary.get("active_loops") or []),
+        "current_capabilities": list(summary.get("current_capabilities") or []),
+    }
+    return MissionControlPlan(
+        generated_at=_now_iso(),
+        workspace_id=str(snapshot.get("workspace_id") or config_manager.get_path("workspace.id", default="default")),
+        task=normalized_task,
+        summary=plan_summary,
+        details=plan_details,
     )
 
 
@@ -443,6 +591,99 @@ def _derive_top_level_state(
     if degraded_surfaces:
         return "attention"
     return "healthy"
+
+
+def _build_harness_selection_override(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    task: str,
+    harness_id: str,
+    route_mode: str,
+    reason: str,
+    next_action: str,
+) -> dict[str, Any]:
+    from spark_intelligence.harness_registry import build_harness_registry
+
+    registry = build_harness_registry(config_manager, state_db).to_payload()
+    contracts = {
+        str(contract.get("harness_id") or ""): contract
+        for contract in (registry.get("contracts") or [])
+        if isinstance(contract, dict)
+    }
+    normalized_harness_id = str(harness_id or "").strip()
+    contract = contracts.get(normalized_harness_id)
+    if contract is None:
+        available = ", ".join(sorted(contracts)) or "none"
+        raise ValueError(f"Unknown harness '{normalized_harness_id}'. Available harnesses: {available}")
+    return {
+        "task": str(task or "").strip(),
+        "harness_id": normalized_harness_id,
+        "label": str(contract.get("label") or normalized_harness_id),
+        "owner_system": str(contract.get("owner_system") or ""),
+        "backend_kind": str(contract.get("backend_kind") or "unknown"),
+        "session_scope": str(contract.get("session_scope") or "unknown"),
+        "prompt_strategy": str(contract.get("prompt_strategy") or "unknown"),
+        "toolsets": [str(item) for item in (contract.get("toolsets") or []) if str(item)],
+        "required_capabilities": [str(item) for item in (contract.get("required_capabilities") or []) if str(item)],
+        "artifacts": [str(item) for item in (contract.get("artifacts") or []) if str(item)],
+        "route_mode": str(route_mode or "override_harness"),
+        "reason": str(reason or f"Use harness {normalized_harness_id}."),
+        "next_actions": [str(next_action or "Run the selected harness unless a degraded surface blocks execution.")],
+        "limitations": [str(item) for item in (contract.get("limitations") or []) if str(item)],
+    }
+
+
+def _derive_plan_blockers(
+    *,
+    route: dict[str, Any],
+    harness: dict[str, Any],
+    recipe: dict[str, Any] | None,
+    degraded_surfaces: list[str],
+) -> list[str]:
+    blockers: list[str] = []
+    availability = route.get("availability") or {}
+    route_mode = str(route.get("route_mode") or "")
+    if route_mode == "browser_grounded" and not bool(availability.get("browser")):
+        blockers.append("Spark Browser is not currently available.")
+    if route_mode == "voice_io" and not bool(availability.get("voice")):
+        blockers.append("Spark Voice is not currently available.")
+    if route_mode == "researcher_advisory" and not bool(availability.get("researcher")):
+        blockers.append("Spark Researcher is not currently available.")
+    if route_mode == "swarm_escalation" and not bool(availability.get("swarm")):
+        blockers.append("Spark Swarm is not currently available.")
+    if "degraded" in str(route_mode):
+        blockers.append(str(route.get("reason") or "The preferred route is degraded."))
+    limitations = [str(item) for item in (harness.get("limitations") or []) if str(item)]
+    if recipe is not None and not bool(recipe.get("available")):
+        blockers.append(f"Recipe {recipe.get('recipe_id') or 'unknown'} is not currently available.")
+    blockers.extend(item for item in degraded_surfaces if item)
+    blockers.extend(limitations[:2] if route_mode == "swarm_escalation" else [])
+    return _dedupe_preserve_order(blockers)[:8]
+
+
+def _derive_plan_next_actions(
+    *,
+    mission_summary: dict[str, Any],
+    route: dict[str, Any],
+    harness: dict[str, Any],
+    recipe: dict[str, Any] | None,
+    blockers: list[str],
+) -> list[str]:
+    actions: list[str] = []
+    if recipe is not None:
+        if recipe.get("selection_mode") == "auto":
+            actions.append(
+                f"Proceed with auto-selected recipe {recipe.get('recipe_id') or 'unknown'} unless the operator overrides it."
+            )
+        else:
+            actions.append(f"Proceed with recipe {recipe.get('recipe_id') or 'unknown'}.")
+    actions.extend(str(item) for item in (route.get("next_actions") or []) if str(item))
+    actions.extend(str(item) for item in (harness.get("next_actions") or []) if str(item))
+    actions.extend(str(item) for item in (mission_summary.get("recommended_actions") or []) if str(item))
+    if blockers:
+        actions.append("Repair the blocking runtime surface before dispatching execution.")
+    return _dedupe_preserve_order(actions)[:6]
 
 
 def _dedupe_preserve_order(items: list[str]) -> list[str]:
