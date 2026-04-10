@@ -21,6 +21,7 @@ from spark_intelligence.personality.loader import (
     build_personality_import_payload,
     detect_and_persist_agent_persona_preferences,
     detect_and_persist_nl_preferences,
+    format_address_aware_line,
     load_personality_profile,
     migrate_legacy_human_personality_to_agent_persona,
     normalize_personality_import,
@@ -290,13 +291,17 @@ class AgentIdentityContractTests(SparkTestCase):
         self.assertEqual(cancelled.agent_id, "agent:human:telegram:111")
         self.assertEqual(cancelled.agent_name, "")
         self.assertFalse(cancelled.has_user_defined_name)
+        # NOTE: filter by source_surface rather than ORDER BY created_at DESC.
+        # _utc_now_iso has seconds-only precision, so the rename and cancel
+        # rows typically share a timestamp and the rename_id tie-break is
+        # random. Querying the cancel row directly makes the test
+        # deterministic regardless of sub-second race.
         with self.state_db.connect() as conn:
             row = conn.execute(
                 """
                 SELECT old_name, new_name, source_surface, source_ref
                 FROM agent_rename_history
-                WHERE human_id = ?
-                ORDER BY created_at DESC, rename_id DESC
+                WHERE human_id = ? AND source_surface = 'onboarding_cancel'
                 LIMIT 1
                 """,
                 ("human:telegram:111",),
@@ -306,6 +311,62 @@ class AgentIdentityContractTests(SparkTestCase):
         self.assertEqual(row["new_name"], "")
         self.assertEqual(row["source_surface"], "onboarding_cancel")
         self.assertEqual(row["source_ref"], "onboarding-cancel")
+
+    def test_format_address_aware_line_renders_prefix_suffix_and_empty_paths(self) -> None:
+        # P2-4 (docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md): the v2 onboarding
+        # state machine uses format_address_aware_line so a single template
+        # can serve both the "operator set a salutation" and "operator left
+        # it blank" cases per Q-D. The empty path must NOT fall back to any
+        # default label like "Operator" — that was Finding F territory.
+
+        # Prefix form, with address.
+        self.assertEqual(
+            format_address_aware_line("{salutation}got it.", "Boss"),
+            "Boss, got it.",
+        )
+        # Prefix form, empty — capitalizes the following word.
+        self.assertEqual(
+            format_address_aware_line("{salutation}got it.", ""),
+            "Got it.",
+        )
+        # Prefix form, None — same as empty.
+        self.assertEqual(
+            format_address_aware_line("{salutation}got it.", None),
+            "Got it.",
+        )
+        # Prefix form, whitespace-only — treated as empty.
+        self.assertEqual(
+            format_address_aware_line("{salutation}saved.", "   "),
+            "Saved.",
+        )
+        # Suffix form, with address.
+        self.assertEqual(
+            format_address_aware_line("Noted{salutation_suffix}.", "Alice"),
+            "Noted, Alice.",
+        )
+        # Suffix form, empty.
+        self.assertEqual(
+            format_address_aware_line("Noted{salutation_suffix}.", ""),
+            "Noted.",
+        )
+        # Combined prefix + suffix in one template.
+        self.assertEqual(
+            format_address_aware_line(
+                "{salutation}locked in{salutation_suffix}.", "Captain"
+            ),
+            "Captain, locked in, Captain.",
+        )
+        self.assertEqual(
+            format_address_aware_line(
+                "{salutation}locked in{salutation_suffix}.", None
+            ),
+            "Locked in.",
+        )
+        # Templates with no placeholders pass through unchanged.
+        self.assertEqual(
+            format_address_aware_line("No placeholders here.", "Boss"),
+            "No placeholders here.",
+        )
 
     def test_cancel_agent_onboarding_is_noop_when_name_already_empty(self) -> None:
         # Under Finding G (Phase 1), approve_pairing leaves agent_name="".

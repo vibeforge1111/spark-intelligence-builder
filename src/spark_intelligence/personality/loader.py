@@ -1946,6 +1946,44 @@ def _label_for_trait(trait: str, value: float) -> str:
     return "balanced"
 
 
+def format_address_aware_line(template: str, user_address: str | None) -> str:
+    """Format a reply template using the operator's preferred salutation.
+
+    P2-4 of docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md. The v2 onboarding
+    state machine stores an optional salutation on `humans.user_address`
+    (P2-1) and the address-aware formatter is how every v2 reply renders
+    it without falling back to a default label like "Operator".
+
+    Template conventions:
+        {salutation}        — prefix form. Expands to "<Address>, "
+                               when set, or "" otherwise.
+        {salutation_suffix} — suffix form. Expands to ", <Address>"
+                               when set, or "" otherwise.
+
+    On the empty-address path (`user_address` is None, empty, or
+    whitespace), both placeholders collapse to the empty string. When a
+    `{salutation}` placeholder sat at the very start of the template,
+    the helper additionally capitalizes the first alphabetic character
+    of what remains so a template like "{salutation}got it." renders as
+    "Got it." rather than the broken "got it.".
+
+    Q-D decision of docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11.
+    """
+    address = str(user_address or "").strip()
+    prefix = f"{address}, " if address else ""
+    suffix = f", {address}" if address else ""
+    starts_with_salutation = template.startswith("{salutation}")
+    formatted = template.replace("{salutation}", prefix).replace(
+        "{salutation_suffix}", suffix
+    )
+    if not address and starts_with_salutation and formatted:
+        for i, ch in enumerate(formatted):
+            if ch.isalpha():
+                formatted = formatted[:i] + ch.upper() + formatted[i + 1 :]
+                break
+    return formatted
+
+
 # ── Personality queries (status, reset) ──
 
 _QUERY_STATUS_PATTERNS = [
