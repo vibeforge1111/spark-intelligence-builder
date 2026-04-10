@@ -65,8 +65,11 @@ class MemoryArchitectureSoakTests(SparkTestCase):
                 runs=2,
             )
 
+        summary_path = self.home / "artifacts" / "architecture-soak" / "telegram-memory-architecture-soak.json"
+        self.assertTrue(summary_path.exists())
         self.assertEqual(result.payload["summary"]["completed_runs"], 2)
         self.assertEqual(result.payload["summary"]["failed_runs"], 0)
+        self.assertEqual(result.payload["summary"]["status"], "completed")
         self.assertEqual(
             set(result.payload["summary"]["recommended_top_two"]),
             {"summary_synthesis_memory", "dual_store_event_calendar_hybrid"},

@@ -130,9 +130,39 @@ def run_telegram_memory_architecture_soak(
                     "error": f"{type(exc).__name__}:{exc}",
                 }
             )
+        payload = _build_soak_payload(
+            requested_runs=requested_runs,
+            baseline_aggregate=baseline_aggregate,
+            run_payloads=run_payloads,
+            errors=errors,
+            resolved_write_path=resolved_write_path,
+            status="running" if index < requested_runs else "completed",
+        )
+        resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         if sleep_seconds > 0 and index < requested_runs:
             time.sleep(float(sleep_seconds))
 
+    payload = _build_soak_payload(
+        requested_runs=requested_runs,
+        baseline_aggregate=baseline_aggregate,
+        run_payloads=run_payloads,
+        errors=errors,
+        resolved_write_path=resolved_write_path,
+        status="completed",
+    )
+    resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return TelegramArchitectureSoakResult(output_dir=resolved_output_dir, payload=payload)
+
+
+def _build_soak_payload(
+    *,
+    requested_runs: int,
+    baseline_aggregate: dict[str, dict[str, Any]],
+    run_payloads: list[dict[str, Any]],
+    errors: list[str],
+    resolved_write_path: Path,
+    status: str,
+) -> dict[str, Any]:
     aggregate_rows = []
     for item in baseline_aggregate.values():
         run_count = int(item.get("run_count") or 0)
@@ -164,13 +194,14 @@ def run_telegram_memory_architecture_soak(
         if float(row.get("aggregate_accuracy") or 0.0) == best_accuracy
     ]
     summary = {
+        "status": status,
         "requested_runs": requested_runs,
         "completed_runs": sum(1 for run in run_payloads if not run.get("error")),
         "failed_runs": sum(1 for run in run_payloads if run.get("error")),
         "overall_leader_names": overall_leader_names,
         "recommended_top_two": [row["baseline_name"] for row in aggregate_rows[:2]],
     }
-    payload = {
+    return {
         "summary": summary,
         "aggregate_results": aggregate_rows,
         "runs": run_payloads,
@@ -179,5 +210,3 @@ def run_telegram_memory_architecture_soak(
             "summary_json": str(resolved_write_path),
         },
     }
-    resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    return TelegramArchitectureSoakResult(output_dir=resolved_output_dir, payload=payload)
