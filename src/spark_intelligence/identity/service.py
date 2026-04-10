@@ -899,6 +899,22 @@ def rename_agent_identity(
             """,
             (resolved_name, recorded_at, source_surface, state.agent_id),
         )
+        # Keep the persona profile's display name in sync with the
+        # canonical agent_profiles row. Without this update the two
+        # tables drift: rename hits agent_profiles but persona_profiles
+        # keeps whatever was written during onboarding, so downstream
+        # readers that still look at persona_name (TUI welcome banner,
+        # some logging paths) display the stale value. The UPDATE only
+        # runs if a persona profile row exists for this agent — agents
+        # without an onboarded persona stay untouched.
+        conn.execute(
+            """
+            UPDATE agent_persona_profiles
+            SET persona_name = ?, updated_at = ?
+            WHERE agent_id = ?
+            """,
+            (resolved_name, recorded_at, state.agent_id),
+        )
         conn.execute(
             """
             INSERT INTO agent_rename_history(
