@@ -49,6 +49,9 @@ _COUNTRY_PATTERNS = [
 _COUNTRY_IN_PATTERNS = [
     re.compile(r"\bi(?:'m| am)\s+in\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
 ]
+_COUNTRY_LIVE_PATTERNS = [
+    re.compile(r"\bi\s+live\s+in\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
+]
 _COUNTRY_MOVE_PATTERNS = [
     re.compile(r"\bi\s+moved\s+to\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
 ]
@@ -870,6 +873,13 @@ def _extract_country(text: str) -> str | None:
         candidate = _normalize_country_name(match.group(1))
         if candidate:
             return candidate
+    for pattern in _COUNTRY_LIVE_PATTERNS:
+        match = pattern.search(text)
+        if not match:
+            continue
+        candidate = _normalize_country_name(match.group(1))
+        if candidate:
+            return candidate
     for pattern in _COUNTRY_MOVE_PATTERNS:
         match = pattern.search(text)
         if not match:
@@ -954,7 +964,13 @@ def _normalize_country_name(raw: str) -> str | None:
     candidate = _normalize_place(raw)
     if not candidate:
         return None
-    return _KNOWN_COUNTRY_NAMES.get(candidate.lower())
+    lowered = candidate.lower()
+    normalized = _KNOWN_COUNTRY_NAMES.get(lowered)
+    if normalized:
+        return normalized
+    if lowered.startswith("the "):
+        return _KNOWN_COUNTRY_NAMES.get(lowered[4:].strip())
+    return None
 
 
 def _normalize_entity_name(raw: str) -> str | None:
