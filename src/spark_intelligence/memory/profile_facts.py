@@ -31,7 +31,10 @@ _MISSION_PATTERNS = [
     re.compile(r"\bi(?:'m| am)\s+(rebuilding\s+after\s+the\s+hack|reviving\s+the\s+companies)(?:[.!?,]|$)", re.I),
 ]
 _SPARK_ROLE_PATTERNS = [
-    re.compile(r"\bspark\s+(?:is\s+going\s+to\s+be|will\s+be)\s+an\s+important\s+part\s+of\s+this(?:\s+rebuild)?", re.I),
+    re.compile(
+        r"\bspark\s+(?:is\s+going\s+to\s+be|will\s+be)\s+(?:an\s+)?important\s+part\s+of\s+(?:this\s+|the\s+)?rebuild(?:[.!?,]|$)",
+        re.I,
+    ),
 ]
 _OCCUPATION_PATTERNS = [
     re.compile(r"\bi(?:'m| am)\s+an\s+(entrepreneur)(?:\s+(?:now|today|currently))?(?:[.!?,]|$)", re.I),
@@ -294,6 +297,8 @@ def detect_profile_fact_observation(user_message: str) -> ProfileFactObservation
     text = str(user_message or "").strip()
     if not text:
         return None
+    if "?" in text and detect_profile_fact_query(text) is not None:
+        return None
     preferred_name = _extract_name(text)
     if preferred_name:
         return ProfileFactObservation(
@@ -486,6 +491,22 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
                 predicate="profile.timezone",
                 fact_name="profile_timezone",
                 label="timezone",
+                query_kind="fact_explanation",
+            )
+        if any(
+            phrase in text
+            for phrase in (
+                "what i'm trying to do now",
+                "what i am trying to do now",
+                "my mission right now",
+                "what i'm doing now",
+                "what i am doing now",
+            )
+        ):
+            return ProfileFactQuery(
+                predicate="profile.current_mission",
+                fact_name="profile_current_mission",
+                label="current mission",
                 query_kind="fact_explanation",
             )
     if any(

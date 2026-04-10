@@ -567,13 +567,24 @@ class MemoryOrchestratorTests(SparkTestCase):
         )
 
         spark_role_observation = detect_profile_fact_observation(
-            "Spark will be an important part of this rebuild."
+            "Spark will be an important part of the rebuild."
         )
         self.assertIsNotNone(spark_role_observation)
         assert spark_role_observation is not None
         self.assertEqual(
             build_profile_fact_observation_answer(observation=spark_role_observation),
             "I'll remember Spark will be an important part of the rebuild.",
+        )
+
+        mission_explanation_query = detect_profile_fact_query(
+            "How do you know what I'm trying to do now?"
+        )
+        self.assertIsNotNone(mission_explanation_query)
+        assert mission_explanation_query is not None
+        self.assertEqual(mission_explanation_query.predicate, "profile.current_mission")
+        self.assertEqual(mission_explanation_query.query_kind, "fact_explanation")
+        self.assertIsNone(
+            detect_profile_fact_observation("How do you know what I'm trying to do now?")
         )
 
     def test_build_profile_identity_summary_context_lists_saved_facts(self) -> None:

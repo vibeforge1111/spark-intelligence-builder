@@ -149,6 +149,15 @@ def _profile_fact_record_turn_key(record: dict[str, Any]) -> str:
     return ""
 
 
+def _profile_fact_record_value(record: dict[str, Any]) -> str:
+    return str(
+        record.get("value")
+        or record.get("normalized_value")
+        or record.get("answer")
+        or ""
+    ).strip()
+
+
 def _select_profile_fact_query_value(
     *,
     predicate: str | None,
@@ -158,7 +167,7 @@ def _select_profile_fact_query_value(
     target_predicate = str(predicate or "").strip()
     candidates: list[tuple[datetime, str, int, str]] = []
     for record in [*related_records, *primary_records]:
-        value = str(record.get("value") or "").strip()
+        value = _profile_fact_record_value(record)
         if not value:
             continue
         record_predicate = str(record.get("predicate") or "").strip()
@@ -174,6 +183,65 @@ def _select_profile_fact_query_value(
         return None
     candidates.sort()
     return candidates[-1][3]
+
+
+def _inspect_profile_fact_records(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str,
+    predicate: str | None,
+    related_predicates: tuple[str, ...] = (),
+    actor_id: str = "researcher_bridge",
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    target_predicate = str(predicate or "").strip()
+    relevant_predicates = {
+        target_predicate,
+        *(str(item or "").strip() for item in related_predicates),
+    }
+    relevant_predicates.discard("")
+    if not target_predicate or not relevant_predicates:
+        return [], []
+    inspection = inspect_human_memory_in_memory(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=human_id,
+        actor_id=actor_id,
+    )
+    if inspection.read_result.abstained or not inspection.read_result.records:
+        return [], []
+    return _partition_profile_fact_records(
+        records=inspection.read_result.records,
+        predicate=predicate,
+        related_predicates=related_predicates,
+    )
+
+
+def _partition_profile_fact_records(
+    *,
+    records: list[dict[str, Any]],
+    predicate: str | None,
+    related_predicates: tuple[str, ...] = (),
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    target_predicate = str(predicate or "").strip()
+    relevant_predicates = {
+        target_predicate,
+        *(str(item or "").strip() for item in related_predicates),
+    }
+    relevant_predicates.discard("")
+    if not target_predicate or not relevant_predicates:
+        return [], []
+    primary_records: list[dict[str, Any]] = []
+    related_records_out: list[dict[str, Any]] = []
+    for record in records:
+        record_predicate = str(record.get("predicate") or "").strip()
+        if record_predicate not in relevant_predicates:
+            continue
+        if record_predicate == target_predicate:
+            primary_records.append(record)
+        else:
+            related_records_out.append(record)
+    return primary_records, related_records_out
 
 
 @dataclass
@@ -2715,6 +2783,7 @@ def build_researcher_reply(
         direct_fact_question = str(user_message or "").strip() or f"How do you know my {detected_profile_fact_query.label}?"
         direct_fact_read_method = "explain_answer"
         explanation_payload: dict[str, Any] = {}
+        related_predicates = _profile_fact_query_related_predicates(detected_profile_fact_query.predicate)
         if str(detected_profile_fact_query.predicate or "") == "profile.startup_name":
             direct_fact_explanation = explain_memory_answer_in_memory(
                 config_manager=config_manager,
@@ -2747,6 +2816,26 @@ def build_researcher_reply(
                 actor_id="researcher_bridge",
             )
             explanation_payload = direct_fact_explanation.read_result.answer_explanation or {}
+
+        if not explanation_payload:
+            primary_records, related_records = _inspect_profile_fact_records(
+                config_manager=config_manager,
+                state_db=state_db,
+                human_id=human_id,
+                predicate=detected_profile_fact_query.predicate,
+                related_predicates=related_predicates,
+                actor_id="researcher_bridge",
+            )
+            fallback_answer = _select_profile_fact_query_value(
+                predicate=detected_profile_fact_query.predicate,
+                primary_records=primary_records,
+                related_records=related_records,
+            )
+            if fallback_answer:
+                explanation_payload = {"answer": fallback_answer}
+                direct_fact_read_method = (
+                    "inspect_current_state(+related)" if related_records else "inspect_current_state"
+                )
 
         output_keepability, promotion_disposition = _bridge_output_classification(
             mode="memory_profile_fact_explanation",
@@ -2834,7 +2923,7 @@ def build_researcher_reply(
                 primary_records = [
                     record
                     for record in direct_fact_lookup.read_result.records
-                    if str(record.get("predicate") or "").strip()
+                    if _profile_fact_record_value(record)
                 ]
             if not primary_records:
                 founder_lookup = lookup_current_state_in_memory(
@@ -2848,42 +2937,26 @@ def build_researcher_reply(
                     related_records = [
                         record
                         for record in founder_lookup.read_result.records
-                        if str(record.get("predicate") or "").strip()
+                        if _profile_fact_record_value(record)
                     ]
             if not primary_records and not related_records:
-                inspection = inspect_human_memory_in_memory(
+                primary_records, related_records = _inspect_profile_fact_records(
                     config_manager=config_manager,
                     state_db=state_db,
                     human_id=human_id,
+                    predicate=detected_profile_fact_query.predicate,
+                    related_predicates=related_predicates,
                     actor_id="researcher_bridge",
                 )
-                if not inspection.read_result.abstained and inspection.read_result.records:
-                    for record in inspection.read_result.records:
-                        record_predicate = str(record.get("predicate") or "").strip()
-                        if record_predicate == "profile.startup_name":
-                            primary_records.append(record)
-                        elif record_predicate == "profile.founder_of":
-                            related_records.append(record)
         elif related_predicates:
-            inspection = inspect_human_memory_in_memory(
+            primary_records, related_records = _inspect_profile_fact_records(
                 config_manager=config_manager,
                 state_db=state_db,
                 human_id=human_id,
+                predicate=detected_profile_fact_query.predicate,
+                related_predicates=related_predicates,
                 actor_id="researcher_bridge",
             )
-            if not inspection.read_result.abstained and inspection.read_result.records:
-                relevant_predicates = {
-                    str(detected_profile_fact_query.predicate or "").strip(),
-                    *related_predicates,
-                }
-                for record in inspection.read_result.records:
-                    record_predicate = str(record.get("predicate") or "").strip()
-                    if record_predicate not in relevant_predicates:
-                        continue
-                    if record_predicate == str(detected_profile_fact_query.predicate or "").strip():
-                        primary_records.append(record)
-                    else:
-                        related_records.append(record)
         else:
             direct_fact_lookup = lookup_current_state_in_memory(
                 config_manager=config_manager,
@@ -2896,8 +2969,31 @@ def build_researcher_reply(
                 primary_records = [
                     record
                     for record in direct_fact_lookup.read_result.records
-                    if str(record.get("predicate") or "").strip()
+                    if _profile_fact_record_value(record)
                 ]
+            if not primary_records:
+                primary_records, related_records = _inspect_profile_fact_records(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    human_id=human_id,
+                    predicate=detected_profile_fact_query.predicate,
+                    actor_id="researcher_bridge",
+                )
+        if not primary_records and not related_records:
+            evidence_lookup = retrieve_memory_evidence_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                query=str(user_message or "").strip() or f"What is my {detected_profile_fact_query.label}?",
+                subject=memory_subject,
+                limit=6,
+                actor_id="researcher_bridge",
+            )
+            if not evidence_lookup.read_result.abstained and evidence_lookup.read_result.records:
+                primary_records, related_records = _partition_profile_fact_records(
+                    records=evidence_lookup.read_result.records,
+                    predicate=detected_profile_fact_query.predicate,
+                    related_predicates=related_predicates,
+                )
         direct_fact_value = _select_profile_fact_query_value(
             predicate=detected_profile_fact_query.predicate,
             primary_records=primary_records,
