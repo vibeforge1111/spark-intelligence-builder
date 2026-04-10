@@ -280,6 +280,27 @@ class OperatorPairingFlowTests(SparkTestCase):
                     text="calm, strategic, very direct, low-fluff",
                 ),
             )
+            # P2-10: after the persona freestyle description, the onboarding
+            # state must pause at awaiting_guardrails_ack and surface the
+            # commitments card. Any non-`change` reply is treated as
+            # acceptance per Q-C of the v2 design.
+            with self.state_db.connect() as conn:
+                guardrails_blob_row = conn.execute(
+                    "SELECT value FROM runtime_state WHERE state_key = ?",
+                    ("agent_onboarding:human:telegram:111",),
+                ).fetchone()
+            guardrails_blob = json.loads(str(guardrails_blob_row["value"]))
+            self.assertEqual(guardrails_blob["step"], "awaiting_guardrails_ack")
+            sixth_turn = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=109,
+                    user_id="111",
+                    username="alice",
+                    text="ok",
+                ),
+            )
 
         self.assertTrue(first_turn.ok)
         self.assertIn("Pairing approved.", str(first_turn.detail["response_text"]))
@@ -303,9 +324,25 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(fourth_turn.ok)
         self.assertIn("describe the personality", str(fourth_turn.detail["response_text"]))
 
+        # P2-10: persona description now returns the guardrails card and the
+        # final recap moves to the follow-up ack turn.
         self.assertTrue(fifth_turn.ok)
-        self.assertIn("Locked in.", str(fifth_turn.detail["response_text"]))
-        self.assertIn("connect your Spark Swarm agent", str(fifth_turn.detail["response_text"]))
+        fifth_text = str(fifth_turn.detail["response_text"])
+        self.assertIn("commits to", fifth_text)
+        self.assertIn("No glazing", fifth_text)
+        self.assertIn("Reply `ok`", fifth_text)
+
+        self.assertTrue(sixth_turn.ok)
+        sixth_text = str(sixth_turn.detail["response_text"])
+        self.assertIn("Locked in.", sixth_text)
+        self.assertIn("Here's the recap", sixth_text)
+        self.assertIn("Atlas", sixth_text)
+        self.assertIn("Boss", sixth_text)
+        self.assertIn(
+            "anti-glazing, better-way surfacing, honest failure reporting",
+            sixth_text,
+        )
+        self.assertIn("connect your Spark Swarm agent", sixth_text)
 
         agent_state = read_canonical_agent_state(
             state_db=self.state_db,
@@ -576,6 +613,22 @@ class OperatorPairingFlowTests(SparkTestCase):
                     update_id=409, user_id="111", username="alice", text="5"
                 ),
             )
+            # P2-10: guided persona now lands on the guardrails_ack card
+            # rather than jumping straight to completed.
+            with self.state_db.connect() as conn:
+                guided_ack_blob_row = conn.execute(
+                    "SELECT value FROM runtime_state WHERE state_key = ?",
+                    ("agent_onboarding:human:telegram:111",),
+                ).fetchone()
+            guided_ack_blob = json.loads(str(guided_ack_blob_row["value"]))
+            self.assertEqual(guided_ack_blob["step"], "awaiting_guardrails_ack")
+            ack_turn = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=410, user_id="111", username="alice", text="ok"
+                ),
+            )
 
         # Mode picker should have returned the first guided question.
         self.assertTrue(first_question_turn.ok)
@@ -595,13 +648,20 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Question 5 of 5", str(q5_turn.detail["response_text"]))
         self.assertIn("How assertive", str(q5_turn.detail["response_text"]))
 
-        # Final turn should complete onboarding with a saved persona profile.
+        # P2-10: the last guided rating now surfaces the guardrails card, and
+        # the final recap lives on the follow-up ack turn.
         self.assertTrue(completion_turn.ok)
         completion_text = str(completion_turn.detail["response_text"])
-        self.assertIn("Locked in", completion_text)
-        self.assertIn("Nova", completion_text)
+        self.assertIn("commits to", completion_text)
+        self.assertIn("No glazing", completion_text)
 
-        # The onboarding blob should be marked completed.
+        self.assertTrue(ack_turn.ok)
+        ack_text = str(ack_turn.detail["response_text"])
+        self.assertIn("Locked in", ack_text)
+        self.assertIn("Nova", ack_text)
+        self.assertIn("Here's the recap", ack_text)
+
+        # The onboarding blob should be marked completed after the ack turn.
         with self.state_db.connect() as conn:
             blob_row = conn.execute(
                 "SELECT value FROM runtime_state WHERE state_key = ?",
@@ -762,6 +822,23 @@ class OperatorPairingFlowTests(SparkTestCase):
                     update_id=605, user_id="111", username="alice", text="warm"
                 ),
             )
+            # P2-10: the express preset pick now transitions to the
+            # guardrails_ack card and the recap moves to the follow-up turn.
+            with self.state_db.connect() as conn:
+                express_ack_blob_row = conn.execute(
+                    "SELECT value FROM runtime_state WHERE state_key = ?",
+                    ("agent_onboarding:human:telegram:111",),
+                ).fetchone()
+            express_ack_blob = json.loads(str(express_ack_blob_row["value"]))
+            self.assertEqual(express_ack_blob["step"], "awaiting_guardrails_ack")
+            self.assertEqual(express_ack_blob.get("express_preset_label"), "Warm")
+            ack_turn = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=606, user_id="111", username="alice", text="ok"
+                ),
+            )
 
         # Picking "express" should return the preset catalog.
         self.assertTrue(catalog_turn.ok)
@@ -772,14 +849,22 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("concise", catalog_text)
         self.assertIn("warm", catalog_text)
 
-        # Selecting "warm" should complete onboarding with the preset's traits.
+        # P2-10: selecting "warm" now surfaces the guardrails card rather
+        # than jumping straight to the completion recap.
         self.assertTrue(completion_turn.ok)
         completion_text = str(completion_turn.detail["response_text"])
-        self.assertIn("Locked in", completion_text)
-        self.assertIn("Warm", completion_text)
-        self.assertIn("Nova", completion_text)
+        self.assertIn("commits to", completion_text)
+        self.assertIn("No glazing", completion_text)
+        self.assertIn("Reply `ok`", completion_text)
 
-        # The onboarding blob should be marked completed.
+        # The ack turn produces the final "Locked in" recap.
+        self.assertTrue(ack_turn.ok)
+        ack_text = str(ack_turn.detail["response_text"])
+        self.assertIn("Locked in", ack_text)
+        self.assertIn("Nova", ack_text)
+        self.assertIn("Here's the recap", ack_text)
+
+        # The onboarding blob should be marked completed after the ack turn.
         with self.state_db.connect() as conn:
             blob_row = conn.execute(
                 "SELECT value FROM runtime_state WHERE state_key = ?",
@@ -875,11 +960,26 @@ class OperatorPairingFlowTests(SparkTestCase):
                     update_id=706, user_id="111", username="alice", text="2"
                 ),
             )
+            # P2-10: recovery via a valid preset now surfaces the guardrails
+            # card instead of completing directly. Land the recap via an ack
+            # turn before exiting the patched researcher-bridge block.
+            ack_turn = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=707, user_id="111", username="alice", text="ok"
+                ),
+            )
 
         # Recovery via the numeric choice "2" should pick the second preset
-        # (claude-like) and complete onboarding.
+        # (claude-like) and queue the guardrails card.
         self.assertTrue(recovery_turn.ok)
-        self.assertIn("Locked in", str(recovery_turn.detail["response_text"]))
+        recovery_text = str(recovery_turn.detail["response_text"])
+        self.assertIn("commits to", recovery_text)
+        self.assertIn("No glazing", recovery_text)
+        # The ack turn then produces the "Locked in" recap.
+        self.assertTrue(ack_turn.ok)
+        self.assertIn("Locked in", str(ack_turn.detail["response_text"]))
         with self.state_db.connect() as conn:
             row = conn.execute(
                 "SELECT provenance_json FROM agent_persona_profiles "
@@ -887,6 +987,116 @@ class OperatorPairingFlowTests(SparkTestCase):
             ).fetchone()
         provenance = json.loads(str(row["provenance_json"]))
         self.assertEqual(provenance.get("express_preset"), "claude-like")
+
+    def test_onboarding_guardrails_ack_change_branch_stays_pinned_then_accepts(self) -> None:
+        """P2-10: `change` soft-reprompts without advancing; `ok` completes.
+
+        Verifies Q-C ("show but don't gate") behavior on the guardrails ack
+        state: any reply other than `change`/`adjust` (including the literal
+        word `ok`) is treated as acceptance, while `change` leaves the state
+        pinned at awaiting_guardrails_ack and returns a pointer toward the
+        NL preference path.
+        """
+        self.add_telegram_channel()
+        simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=800,
+                user_id="111",
+                username="alice",
+                text="/start",
+            ),
+        )
+        exit_code, _, stderr = self.run_cli(
+            "operator",
+            "approve-latest",
+            "telegram",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(exit_code, 0, stderr)
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            side_effect=AssertionError("researcher bridge should not run during onboarding"),
+        ):
+            # Walk through to the guardrails ack card via the express path.
+            for update_id, text in (
+                (801, "hey"),
+                (802, "Nova"),
+                (803, "Boss"),
+                (804, "express"),
+                (805, "operator"),
+            ):
+                simulate_telegram_update(
+                    config_manager=self.config_manager,
+                    state_db=self.state_db,
+                    update_payload=make_telegram_update(
+                        update_id=update_id, user_id="111", username="alice", text=text
+                    ),
+                )
+
+            # The preset pick should have pinned the state to the guardrails
+            # card. Replying "change" should soft-reprompt without advancing.
+            with self.state_db.connect() as conn:
+                pre_blob_row = conn.execute(
+                    "SELECT value FROM runtime_state WHERE state_key = ?",
+                    ("agent_onboarding:human:telegram:111",),
+                ).fetchone()
+            pre_blob = json.loads(str(pre_blob_row["value"]))
+            self.assertEqual(pre_blob["step"], "awaiting_guardrails_ack")
+
+            change_turn = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=806, user_id="111", username="alice", text="change"
+                ),
+            )
+            # The state should still be pinned at awaiting_guardrails_ack
+            # after the "change" reply.
+            with self.state_db.connect() as conn:
+                mid_blob_row = conn.execute(
+                    "SELECT value FROM runtime_state WHERE state_key = ?",
+                    ("agent_onboarding:human:telegram:111",),
+                ).fetchone()
+            mid_blob = json.loads(str(mid_blob_row["value"]))
+            self.assertEqual(mid_blob["step"], "awaiting_guardrails_ack")
+
+            accept_turn = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=807, user_id="111", username="alice", text="ok"
+                ),
+            )
+
+        self.assertTrue(change_turn.ok)
+        change_reply = str(change_turn.detail["response_text"])
+        self.assertIn("ok", change_reply.lower())
+        self.assertIn("be gentler", change_reply)
+        self.assertIn("be more direct", change_reply)
+
+        self.assertTrue(accept_turn.ok)
+        accept_reply = str(accept_turn.detail["response_text"])
+        self.assertIn("Locked in", accept_reply)
+        self.assertIn("Here's the recap", accept_reply)
+        self.assertIn("Nova", accept_reply)
+        self.assertIn("Boss", accept_reply)
+        self.assertIn(
+            "anti-glazing, better-way surfacing, honest failure reporting",
+            accept_reply,
+        )
+
+        with self.state_db.connect() as conn:
+            final_blob_row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ?",
+                ("agent_onboarding:human:telegram:111",),
+            ).fetchone()
+        final_blob = json.loads(str(final_blob_row["value"]))
+        self.assertEqual(final_blob["step"], "completed")
+        self.assertEqual(final_blob["status"], "completed")
 
     def test_revoke_latest_blocks_future_dm_with_revoked_reply(self) -> None:
         self.add_telegram_channel()

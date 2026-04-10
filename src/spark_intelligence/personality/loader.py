@@ -1717,24 +1717,22 @@ def maybe_handle_agent_persona_onboarding_turn(
             source_surface=source_surface,
             source_ref=source_ref,
         )
-        _complete_agent_onboarding_state(
-            human_id=human_id,
-            state_db=state_db,
-            agent_id=agent_id,
-            agent_name=canonical_state.agent_name,
-            persona_summary=persona_profile.get("persona_summary"),
+        onboarding_state["step"] = "awaiting_guardrails_ack"
+        onboarding_state["agent_id"] = agent_id
+        onboarding_state["agent_name"] = canonical_state.agent_name
+        onboarding_state["persona_summary"] = persona_profile.get("persona_summary")
+        onboarding_state["updated_at"] = _utc_now_iso()
+        _save_agent_onboarding_state(
+            human_id=human_id, payload=onboarding_state, state_db=state_db
         )
         return AgentOnboardingTurnResult(
             human_id=human_id,
             agent_id=agent_id,
-            step="completed",
-            reply_text=(
-                f"Locked in. `{canonical_state.agent_name}` is now set up as {persona_profile.get('persona_summary') or 'your saved agent persona'}.\n\n"
-                "You can keep shaping it anytime by saying things like `be more direct`, `be warmer`, or `what's my personality`."
-            ),
+            step="awaiting_guardrails_ack",
+            reply_text=_build_guardrails_ack_card_text(canonical_state.agent_name),
             agent_name=canonical_state.agent_name,
             persona_profile=persona_profile,
-            completed=True,
+            completed=False,
         )
 
     if step == "awaiting_persona_express":
@@ -1776,25 +1774,74 @@ def maybe_handle_agent_persona_onboarding_turn(
             source_surface=source_surface,
             source_ref=source_ref,
         )
+        label = str(preset.get("label") or preset_key)
+        onboarding_state["step"] = "awaiting_guardrails_ack"
+        onboarding_state["agent_id"] = agent_id
+        onboarding_state["agent_name"] = canonical_state.agent_name
+        onboarding_state["persona_summary"] = persona_profile.get("persona_summary")
+        onboarding_state["express_preset_label"] = label
+        onboarding_state["updated_at"] = _utc_now_iso()
+        _save_agent_onboarding_state(
+            human_id=human_id, payload=onboarding_state, state_db=state_db
+        )
+        return AgentOnboardingTurnResult(
+            human_id=human_id,
+            agent_id=agent_id,
+            step="awaiting_guardrails_ack",
+            reply_text=_build_guardrails_ack_card_text(canonical_state.agent_name),
+            agent_name=canonical_state.agent_name,
+            persona_profile=persona_profile,
+            completed=False,
+        )
+
+    if step == "awaiting_guardrails_ack":
+        # P2-10: Show-but-don't-gate guardrails card (Q-C decision,
+        # docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11).
+        # Silence / any non-`change` reply is treated as acceptance and
+        # moves onboarding to the completed terminal state. The `change`
+        # / `adjust` branch stays pinned to awaiting_guardrails_ack and
+        # surfaces a short pointer toward the NL preference path, which
+        # will land in a later P2 step.
+        if lowered in {"change", "adjust", "edit", "modify"}:
+            return AgentOnboardingTurnResult(
+                human_id=human_id,
+                agent_id=agent_id,
+                step="awaiting_guardrails_ack",
+                reply_text=(
+                    "No problem. Reply `ok` to keep the commitments as-is, or say "
+                    "things like `be gentler` / `be more direct` any time after "
+                    "onboarding to shape tone."
+                ),
+                agent_name=canonical_state.agent_name,
+                persona_profile=existing_persona,
+                completed=False,
+            )
+        stored_persona_summary = onboarding_state.get("persona_summary")
+        stored_user_address = onboarding_state.get("user_address")
         _complete_agent_onboarding_state(
             human_id=human_id,
             state_db=state_db,
             agent_id=agent_id,
             agent_name=canonical_state.agent_name,
-            persona_summary=persona_profile.get("persona_summary"),
+            persona_summary=(
+                str(stored_persona_summary) if stored_persona_summary else None
+            ),
         )
-        label = str(preset.get("label") or preset_key)
         return AgentOnboardingTurnResult(
             human_id=human_id,
             agent_id=agent_id,
             step="completed",
-            reply_text=(
-                f"Locked in. `{canonical_state.agent_name}` is set to the `{label}` preset "
-                f"\u2014 {persona_profile.get('persona_summary') or 'a saved agent persona'}.\n\n"
-                "You can keep shaping it anytime by saying things like `be more direct`, `be warmer`, or `what's my personality`."
+            reply_text=_build_onboarding_completion_recap_text(
+                agent_name=canonical_state.agent_name,
+                user_address=(
+                    str(stored_user_address) if stored_user_address else None
+                ),
+                persona_summary=(
+                    str(stored_persona_summary) if stored_persona_summary else None
+                ),
             ),
             agent_name=canonical_state.agent_name,
-            persona_profile=persona_profile,
+            persona_profile=existing_persona,
             completed=True,
         )
 
@@ -1804,25 +1851,26 @@ def maybe_handle_agent_persona_onboarding_turn(
 
     if lowered in {"skip", "skip for now", "later", "use default"}:
         completed_profile = existing_persona or {}
-        _complete_agent_onboarding_state(
-            human_id=human_id,
-            state_db=state_db,
-            agent_id=agent_id,
-            agent_name=canonical_state.agent_name,
-            persona_summary=(completed_profile.get("persona_summary") if completed_profile else None),
+        onboarding_state["step"] = "awaiting_guardrails_ack"
+        onboarding_state["agent_id"] = agent_id
+        onboarding_state["agent_name"] = canonical_state.agent_name
+        onboarding_state["persona_summary"] = (
+            completed_profile.get("persona_summary") if completed_profile else None
+        )
+        onboarding_state["persona_mode"] = onboarding_state.get("persona_mode") or "freestyle"
+        onboarding_state["persona_skip"] = True
+        onboarding_state["updated_at"] = _utc_now_iso()
+        _save_agent_onboarding_state(
+            human_id=human_id, payload=onboarding_state, state_db=state_db
         )
         return AgentOnboardingTurnResult(
             human_id=human_id,
             agent_id=agent_id,
-            step="completed",
-            reply_text=(
-                f"Onboarding complete. `{canonical_state.agent_name}` will keep the current balanced personality for now.\n\n"
-                "You can shape it anytime by saying things like `be more direct`, `be warmer`, or `what's my personality`.\n"
-                "Recommended later: connect your Spark Swarm agent so Builder can link the external identity too."
-            ),
+            step="awaiting_guardrails_ack",
+            reply_text=_build_guardrails_ack_card_text(canonical_state.agent_name),
             agent_name=canonical_state.agent_name,
             persona_profile=completed_profile,
-            completed=True,
+            completed=False,
         )
 
     base_traits = dict(existing_persona.get("base_traits") or _DEFAULT_TRAITS)
@@ -1851,25 +1899,22 @@ def maybe_handle_agent_persona_onboarding_turn(
         source_surface=source_surface,
         source_ref=source_ref,
     )
-    _complete_agent_onboarding_state(
-        human_id=human_id,
-        state_db=state_db,
-        agent_id=agent_id,
-        agent_name=canonical_state.agent_name,
-        persona_summary=persona_profile.get("persona_summary"),
+    onboarding_state["step"] = "awaiting_guardrails_ack"
+    onboarding_state["agent_id"] = agent_id
+    onboarding_state["agent_name"] = canonical_state.agent_name
+    onboarding_state["persona_summary"] = persona_profile.get("persona_summary")
+    onboarding_state["updated_at"] = _utc_now_iso()
+    _save_agent_onboarding_state(
+        human_id=human_id, payload=onboarding_state, state_db=state_db
     )
     return AgentOnboardingTurnResult(
         human_id=human_id,
         agent_id=agent_id,
-        step="completed",
-        reply_text=(
-            f"Locked in. `{canonical_state.agent_name}` is now set up as {persona_profile.get('persona_summary') or 'your saved agent persona'}.\n\n"
-            "You can keep shaping it anytime by saying things like `be more direct`, `be warmer`, or `what's my personality`.\n"
-            "Recommended later: connect your Spark Swarm agent so Builder can link the external identity too."
-        ),
+        step="awaiting_guardrails_ack",
+        reply_text=_build_guardrails_ack_card_text(canonical_state.agent_name),
         agent_name=canonical_state.agent_name,
         persona_profile=persona_profile,
-        completed=True,
+        completed=False,
     )
 
 
@@ -2578,6 +2623,59 @@ def _parse_onboarding_persona_express_choice(text: str) -> str | None:
         if label_lc and label_lc in tokens:
             return key
     return None
+
+
+def _build_guardrails_ack_card_text(agent_name: str) -> str:
+    """Render the awaiting_guardrails_ack card (P2-10, Q-C/Q-G).
+
+    Q-C decision: Show but don't gate — the user may reply `ok` (or
+    anything that is not `change`) to accept, and the card is shown
+    uniformly across guided/express/freestyle modes per Q-G.
+    See docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11.
+    """
+    name = f"`{agent_name}`"
+    return (
+        f"One more thing. Here's what {name} commits to:\n\n"
+        f"  1. No glazing. {name} won't say 'great idea!' unless it's "
+        "actually a great idea — and will say so when it isn't.\n"
+        "  2. Better-way surfacing. If there's a clearly better approach, "
+        f"{name} will say so, not just go along.\n"
+        "  3. Honest failure reporting. If something isn't working, "
+        f"{name} will tell you, not pretend.\n\n"
+        "Reply `ok` to accept, or `change` to adjust. You can always "
+        "say `be gentler` or `be more direct` later."
+    )
+
+
+def _build_onboarding_completion_recap_text(
+    *,
+    agent_name: str,
+    user_address: str | None,
+    persona_summary: str | None,
+) -> str:
+    """Render the final recap shown when onboarding transitions to completed.
+
+    P2-10 of docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md. The recap is the
+    single terminal reply for every v2 onboarding path — guided, express,
+    freestyle authoring, and the freestyle skip branch.
+    """
+    address_line = user_address.strip() if user_address else "(no salutation)"
+    personality_line = persona_summary or "balanced"
+    name = f"`{agent_name}`"
+    return (
+        "Locked in. Here's the recap:\n\n"
+        f"  Agent:        {agent_name}\n"
+        f"  Calls you:    {address_line}\n"
+        f"  Personality:  {personality_line}\n"
+        "  Commitments:  anti-glazing, better-way surfacing, honest failure reporting\n\n"
+        f"You can shape {name}'s personality any time:\n"
+        "  - `be more direct`, `be warmer`, `slow down`, `be playful`\n"
+        "  - `what's my personality` to see current traits\n"
+        "  - `reset personality` to go back to balanced\n\n"
+        "Recommended later: connect your Spark Swarm agent so Builder can "
+        "link the external identity too.\n\n"
+        "Ready when you are."
+    )
 
 
 # ── Personality queries (status, reset) ──
