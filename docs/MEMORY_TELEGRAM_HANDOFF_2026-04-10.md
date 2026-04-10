@@ -14,6 +14,8 @@ This handoff covers Spark Builder memory capture and `domain-chip-memory` replay
 - `8d16147` `Recognize in-country Telegram memory phrasing`
 - `9b73db9` `Recognize moved-to country memory phrasing`
 - `b8fd8b1` `Recognize live-in country memory phrasing`
+- `623d842` `Normalize explicit country aliases`
+- `a0edbb5` `Improve identity summary memory retrieval`
 
 ### `domain-chip-memory`
 
@@ -51,6 +53,22 @@ Builder now correctly separates:
 
 The leading-`the` normalization now also helps explicit country forms like `the US` and `the UK`.
 
+### Identity-summary retrieval
+
+Builder identity-summary retrieval now:
+
+- recognizes `Who am I?`
+- recognizes `What do you know about me?`
+- recognizes `What do you remember about me?`
+- keeps startup and founder semantics separate in the summary answer
+
+That means a saved `profile.startup_name=Seedify` plus `profile.founder_of=Spark Swarm` now renders as:
+
+- `You founded Spark Swarm.`
+- `Your startup is Seedify.`
+
+instead of the incorrect merged phrasing `You founded Seedify and Spark Swarm.`
+
 ### Desktop replay alignment
 
 `domain-chip-memory` builder-state replay now:
@@ -75,6 +93,9 @@ Validated live:
 - `I moved to Dubai.` -> `I'll remember you live in Dubai.`
 - `I live in Canada.` -> `I'll remember your country is Canada.`
 - `I live in the US.` -> `I'll remember your country is United States.`
+- `I'm from the US.` -> `I'll remember your country is United States.`
+- `Who am I?` -> identity summary from memory
+- `What do you remember about me?` -> identity summary from memory
 
 ## Tests Added
 
@@ -90,6 +111,9 @@ In [tests/test_memory_orchestrator.py](C:/Users/USER/Desktop/spark-intelligence-
 - `I live in UAE.` alias regression
 - `I live in the US.` alias regression
 - `I live in Dubai.` city regression
+- explicit `the US` / `the UK` / `the UAE` normalization regressions
+- identity-summary retrieval wording regression for mixed startup plus founder facts
+- `What do you remember about me?` identity-summary query regression
 
 ### Domain replay
 
@@ -116,6 +140,6 @@ Domain replay outputs created during this pass:
 
 ## Best Next Continuation
 
-1. Add one more extractor pass for `I'm from the US.` / `I'm based in the US.` / `I'm based out of the UK.` to make sure the new leading-`the` normalization is fully covered by tests, not just incidentally supported.
-2. Decide whether travel-style utterances such as `I'm in Paris right now` should always stay city-only or whether there should be stronger residence-vs-location language separation.
-3. If memory capture is considered good enough, shift effort from capture into retrieval and summarization quality on the KB side.
+1. Decide whether travel-style utterances such as `I'm in Paris right now` should always stay city-only or whether there should be stronger residence-versus-location language separation.
+2. Review whether identity summaries should include both city and country when both are saved, or whether omitting country when city is present is still the right compact behavior.
+3. Continue from retrieval into KB-side summarization quality and answer selection, now that the main Telegram capture and direct memory-query paths are in much better shape.
