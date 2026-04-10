@@ -58,8 +58,6 @@ This repo currently includes:
 - [docs/SPARK_RESEARCHER_INTEGRATION_CONTRACT_V1.md](./docs/SPARK_RESEARCHER_INTEGRATION_CONTRACT_V1.md)
 - [docs/SPARK_SWARM_ESCALATION_CONTRACT_V1.md](./docs/SPARK_SWARM_ESCALATION_CONTRACT_V1.md)
 - [docs/DOMAIN_CHIP_ATTACHMENT_CONTRACT_V1.md](./docs/DOMAIN_CHIP_ATTACHMENT_CONTRACT_V1.md)
-- [docs/SPECIALIZATION_PATH_RUNTIME_CONTRACT_V1.md](./docs/SPECIALIZATION_PATH_RUNTIME_CONTRACT_V1.md)
-- [docs/SWARM_AGENT_OPERABILITY_CONTRACT_V1.md](./docs/SWARM_AGENT_OPERABILITY_CONTRACT_V1.md)
 - [docs/IMPLEMENTATION_READINESS_AUDIT_2026-03-25.md](./docs/IMPLEMENTATION_READINESS_AUDIT_2026-03-25.md)
 - [docs/IMPLEMENTATION_PLAN_V1.md](./docs/IMPLEMENTATION_PLAN_V1.md)
 - [docs/IMPLEMENTATION_STATUS_2026-03-26.md](./docs/IMPLEMENTATION_STATUS_2026-03-26.md)
@@ -68,8 +66,7 @@ This repo currently includes:
 - [docs/STATUS_HANDOFF_2026-04-09.md](./docs/STATUS_HANDOFF_2026-04-09.md)
 - [docs/TELEGRAM_COMMUNICATION_AND_EVOLUTION_PLAN_2026-04-09.md](./docs/TELEGRAM_COMMUNICATION_AND_EVOLUTION_PLAN_2026-04-09.md)
 - [docs/CONTINUATION_PLAN_2026-04-09.md](./docs/CONTINUATION_PLAN_2026-04-09.md)
-- [docs/TELEGRAM_SWARM_SPECIALIZATION_PATH_RUNBOOK_2026-04-10.md](./docs/TELEGRAM_SWARM_SPECIALIZATION_PATH_RUNBOOK_2026-04-10.md)
-- [docs/TELEGRAM_SWARM_ONBOARDING_BACKLOG_2026-04-10.md](./docs/TELEGRAM_SWARM_ONBOARDING_BACKLOG_2026-04-10.md)
+- [docs/SPARK_SYSTEM_REGISTRY_AND_MISSION_CONTROL_PLAN_2026-04-09.md](./docs/SPARK_SYSTEM_REGISTRY_AND_MISSION_CONTROL_PLAN_2026-04-09.md)
 
 Key repo skills:
 
@@ -143,9 +140,13 @@ spark-intelligence gateway start
 # /voice reply on
 # /voice reply off
 # /voice speak <text>
+# /chip
+# /chip status [chip_key]
+# /chip evaluate <chip_key> [text|key=value ...|json]
+# /chip suggest <chip_key> [text|key=value ...|json]
+# /chip autoloop <chip_key>
 # /swarm
 # /swarm status
-# /swarm doctor
 # /swarm overview
 # /swarm live
 # /swarm runtime
@@ -314,6 +315,7 @@ Current operator checkpoint:
 - `startup-operator` autoloop control is live, but real score-improving Startup Bench autoloops are intentionally blocked until the benchmark can consume repo-owned mutations
 - the current tomorrow handoff is documented in [docs/STATUS_HANDOFF_2026-04-09.md](./docs/STATUS_HANDOFF_2026-04-09.md)
 - the focused next-step plan for communication quality and visible agent evolution is documented in [docs/TELEGRAM_COMMUNICATION_AND_EVOLUTION_PLAN_2026-04-09.md](./docs/TELEGRAM_COMMUNICATION_AND_EVOLUTION_PLAN_2026-04-09.md)
+- the Telegram plus specialization-path onboarding and troubleshooting runbook is documented in [docs/TELEGRAM_SWARM_SPECIALIZATION_PATH_RUNBOOK_2026-04-10.md](./docs/TELEGRAM_SWARM_SPECIALIZATION_PATH_RUNBOOK_2026-04-10.md)
 
 Local Swarm bridge commands now available through Builder Telegram:
 
