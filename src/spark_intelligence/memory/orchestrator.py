@@ -1134,6 +1134,7 @@ def write_profile_fact_to_memory(
                 "source_surface": "researcher_bridge",
                 "fact_name": fact_name,
                 "normalized_value": value,
+                "evidence_text": evidence_text,
             },
         },
     )

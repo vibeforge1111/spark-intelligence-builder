@@ -756,6 +756,29 @@ class MemoryOrchestratorTests(SparkTestCase):
             'Because I have a saved memory record from when you said: "I moved to Dubai." You live in Dubai.',
         )
 
+    def test_build_profile_fact_explanation_answer_prefers_original_evidence_text_metadata(self) -> None:
+        query = detect_profile_fact_query("How do you know where I live?")
+        self.assertIsNotNone(query)
+        assert query is not None
+
+        answer = build_profile_fact_explanation_answer(
+            query=query,
+            explanation={
+                "answer": "Dubai",
+                "evidence": [
+                    {
+                        "text": "human:telegram:12345 profile.city Dubai",
+                        "metadata": {"evidence_text": "I moved to Dubai."},
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(
+            answer,
+            'Because I have a saved memory record from when you said: "I moved to Dubai." You live in Dubai.',
+        )
+
     def test_build_profile_fact_explanation_answer_preserves_uncertainty_without_supported_explanation(self) -> None:
         query = detect_profile_fact_query("How do you know where I live?")
         self.assertIsNotNone(query)

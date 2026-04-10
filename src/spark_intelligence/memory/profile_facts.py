@@ -668,7 +668,13 @@ def build_profile_fact_explanation_answer(*, query: ProfileFactQuery, explanatio
         for item in evidence:
             if not isinstance(item, dict):
                 continue
-            evidence_text = str(item.get("text") or "").strip()
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            evidence_text = str(
+                metadata.get("evidence_text")
+                or metadata.get("source_text")
+                or item.get("text")
+                or ""
+            ).strip()
             if evidence_text:
                 return f'Because I have a saved memory record from when you said: "{evidence_text}" {concise_answer}'
     return f"Because I have a saved memory record for that. {concise_answer}"
