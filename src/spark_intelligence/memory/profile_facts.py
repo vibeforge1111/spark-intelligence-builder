@@ -307,6 +307,32 @@ def build_profile_fact_query_answer(*, query: ProfileFactQuery, value: str | Non
     return _build_profile_fact_concise_answer(query=query, value=normalized_value)
 
 
+def build_profile_fact_observation_answer(*, observation: ProfileFactObservation) -> str:
+    predicate = str(observation.predicate or "").strip()
+    value = str(observation.value or "").strip()
+    if not predicate or not value:
+        return "I'll remember that."
+    if predicate == "profile.preferred_name":
+        return _ensure_sentence(f"I'll remember your name is {value}")
+    if predicate == "profile.startup_name":
+        return _ensure_sentence(f"I'll remember you created {value}")
+    if predicate == "profile.founder_of":
+        return _ensure_sentence(f"I'll remember you founded {value}")
+    if predicate == "profile.hack_actor":
+        return _ensure_sentence(f"I'll remember the hack actor was {value}")
+    if predicate == "profile.current_mission":
+        return _ensure_sentence(f"I'll remember your current mission is to {value}")
+    if predicate == "profile.spark_role":
+        return _ensure_sentence(f"I'll remember {_spark_role_sentence(value).lower()}")
+    if predicate == "profile.home_country":
+        return _ensure_sentence(f"I'll remember your country is {value}")
+    if predicate == "profile.timezone":
+        return _ensure_sentence(f"I'll remember your timezone is {value}")
+    if predicate == "profile.city":
+        return _ensure_sentence(f"I'll remember you live in {value}")
+    return _ensure_sentence(f"I'll remember your {observation.fact_name.replace('profile_', '').replace('_', ' ')} is {value}")
+
+
 def _build_profile_fact_concise_answer(*, query: ProfileFactQuery, value: str) -> str:
     normalized_value = str(value or "").strip()
     if not normalized_value:
