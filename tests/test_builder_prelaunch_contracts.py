@@ -217,6 +217,47 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIsNotNone(row)
         self.assertEqual(row["status"], "rejected")
 
+    def test_humans_table_exposes_nullable_user_address_column(self) -> None:
+        # P2-1 (docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md): the v2 onboarding
+        # state machine stores the operator's preferred salutation on
+        # humans.user_address. The column must exist on fresh databases,
+        # must be NULL by default, and must accept round-trip updates.
+        with self.state_db.connect() as conn:
+            columns = {
+                str(row["name"]): row
+                for row in conn.execute("PRAGMA table_info(humans)").fetchall()
+            }
+            self.assertIn("user_address", columns)
+            self.assertEqual(str(columns["user_address"]["type"]).upper(), "TEXT")
+            self.assertEqual(int(columns["user_address"]["notnull"]), 0)
+
+            conn.execute(
+                """
+                INSERT INTO humans(human_id, display_name, status)
+                VALUES (?, ?, 'active')
+                """,
+                ("human:user-address-test", "Alice"),
+            )
+            conn.commit()
+
+            row = conn.execute(
+                "SELECT user_address FROM humans WHERE human_id = ?",
+                ("human:user-address-test",),
+            ).fetchone()
+            self.assertIsNone(row["user_address"])
+
+            conn.execute(
+                "UPDATE humans SET user_address = ? WHERE human_id = ?",
+                ("boss", "human:user-address-test"),
+            )
+            conn.commit()
+
+            row = conn.execute(
+                "SELECT user_address FROM humans WHERE human_id = ?",
+                ("human:user-address-test",),
+            ).fetchone()
+            self.assertEqual(row["user_address"], "boss")
+
     def test_watchtower_agent_identity_panel_counts_swarm_links_and_aliases(self) -> None:
         with self.state_db.connect() as conn:
             conn.execute(
