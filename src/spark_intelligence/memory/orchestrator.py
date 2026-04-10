@@ -208,6 +208,51 @@ class HumanMemoryInspectionResult:
         return "\n".join(lines)
 
 
+@dataclass(frozen=True)
+class MemoryAnswerExplanationResult:
+    sdk_module: str
+    subject: str
+    predicate: str
+    question: str
+    runtime: dict[str, Any]
+    read_result: MemoryReadResult
+    shadow_only_eval: bool = True
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "sdk_module": self.sdk_module,
+                "subject": self.subject,
+                "predicate": self.predicate,
+                "question": self.question,
+                "runtime": self.runtime,
+                "shadow_only_eval": self.shadow_only_eval,
+                "read_result": MemorySdkSmokeResult._read_payload(self.read_result),
+            },
+            indent=2,
+        )
+
+    def to_text(self) -> str:
+        lines = ["Spark memory answer explanation"]
+        lines.append(f"- sdk_module: {self.sdk_module}")
+        lines.append(f"- subject: {self.subject}")
+        lines.append(f"- predicate: {self.predicate}")
+        lines.append(f"- question: {self.question}")
+        lines.append(f"- ready: {'yes' if self.runtime.get('ready') else 'no'}")
+        lines.append(
+            f"- explain_answer: status={self.read_result.status} records={len(self.read_result.records)} "
+            f"abstained={'yes' if self.read_result.abstained else 'no'}"
+        )
+        if self.read_result.records:
+            lines.append(f"- answer: {self.read_result.records[0].get('answer')}")
+        explanation = self.read_result.answer_explanation or {}
+        if explanation.get("explanation"):
+            lines.append(f"- explanation: {explanation.get('explanation')}")
+        if self.read_result.reason:
+            lines.append(f"- reason: {self.read_result.reason}")
+        return "\n".join(lines)
+
+
 class _DomainChipMemoryClientAdapter:
     def __init__(self, sdk: Any, module: ModuleType, *, persistence_path: Path | None = None) -> None:
         self._sdk = sdk
@@ -683,6 +728,96 @@ def inspect_human_memory_in_memory(
         sdk_module=module_name,
         human_id=human_id,
         subject=subject,
+        runtime=runtime,
+        read_result=read_result,
+    )
+
+
+def explain_memory_answer_in_memory(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    subject: str,
+    predicate: str,
+    question: str,
+    sdk_module: str | None = None,
+    actor_id: str = "memory_cli",
+    as_of: str | None = None,
+    evidence_limit: int = 3,
+    event_limit: int = 3,
+) -> MemoryAnswerExplanationResult:
+    module_name = str(sdk_module or config_manager.get_path("spark.memory.sdk_module", default=DEFAULT_SDK_MODULE) or DEFAULT_SDK_MODULE)
+    runtime = inspect_memory_sdk_runtime(config_manager=config_manager, sdk_module=module_name)
+    client = _load_sdk_client_for_module(module_name=module_name, home_path=config_manager.paths.home)
+    if client is None:
+        read_result = MemoryReadResult(
+            status="abstained",
+            method="explain_answer",
+            memory_role="current_state",
+            records=[],
+            provenance=[],
+            retrieval_trace=None,
+            answer_explanation=None,
+            abstained=True,
+            reason="sdk_unavailable",
+            shadow_only=False,
+        )
+        _record_memory_read_event(
+            state_db=state_db,
+            result=read_result,
+            human_id=_human_id_from_subject(subject),
+            session_id=f"memory-explain:{actor_id}",
+            turn_id=f"{actor_id}:explain-answer",
+            actor_id=actor_id,
+        )
+        return MemoryAnswerExplanationResult(
+            sdk_module=module_name,
+            subject=subject,
+            predicate=predicate,
+            question=question,
+            runtime=runtime,
+            read_result=read_result,
+        )
+    _record_memory_read_requested_subject(
+        state_db=state_db,
+        method="explain_answer",
+        subject=subject,
+        predicate=predicate,
+        query=question,
+        session_id=f"memory-explain:{actor_id}",
+        turn_id=f"{actor_id}:explain-answer",
+        actor_id=actor_id,
+    )
+    raw = _call_sdk_method(
+        client,
+        "explain_answer",
+        {
+            "question": question,
+            "subject": subject,
+            "predicate": predicate,
+            "as_of": as_of,
+            "evidence_limit": evidence_limit,
+            "event_limit": event_limit,
+            "session_id": f"memory-explain:{actor_id}",
+            "turn_id": f"{actor_id}:explain-answer",
+            "timestamp": _now_iso(),
+            "metadata": {"source_surface": "memory_cli_explain_answer"},
+        },
+    )
+    read_result = _normalize_read_result(raw=raw, method="explain_answer", shadow_only=False)
+    _record_memory_read_event(
+        state_db=state_db,
+        result=read_result,
+        human_id=_human_id_from_subject(subject),
+        session_id=f"memory-explain:{actor_id}",
+        turn_id=f"{actor_id}:explain-answer",
+        actor_id=actor_id,
+    )
+    return MemoryAnswerExplanationResult(
+        sdk_module=module_name,
+        subject=subject,
+        predicate=predicate,
+        question=question,
         runtime=runtime,
         read_result=read_result,
     )
@@ -1653,6 +1788,7 @@ def _record_memory_read_requested_subject(
     method: str,
     subject: str,
     predicate: str | None,
+    query: str | None = None,
     predicate_prefix: str | None = None,
     session_id: str | None,
     turn_id: str | None,
@@ -1661,13 +1797,15 @@ def _record_memory_read_requested_subject(
     facts = {"method": method, "memory_role": "current_state", "subject": subject}
     if predicate is not None:
         facts["predicate"] = predicate
+    if query is not None:
+        facts["query"] = query
     if predicate_prefix is not None:
         facts["predicate_prefix"] = predicate_prefix
     record_event(
         state_db,
         event_type="memory_read_requested",
         component="memory_orchestrator",
-        summary="Spark memory current-state lookup requested.",
+        summary="Spark memory read requested.",
         request_id=turn_id,
         session_id=session_id,
         human_id=_human_id_from_subject(subject),
