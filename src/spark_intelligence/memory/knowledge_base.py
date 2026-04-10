@@ -11,6 +11,9 @@ from spark_intelligence.execution import run_governed_command
 
 
 DEFAULT_VALIDATOR_ROOT = Path.home() / "Desktop" / "domain-chip-memory"
+DEFAULT_BUILDER_KB_REPO_SOURCE_MANIFEST = (
+    Path(__file__).resolve().parents[3] / "docs" / "manifests" / "spark_memory_kb_repo_sources.json"
+)
 
 
 @dataclass(frozen=True)
@@ -57,6 +60,10 @@ def build_telegram_state_knowledge_base(
     validator_root: str | Path | None = None,
 ) -> TelegramStateKnowledgeBaseResult:
     resolved_output_dir = Path(output_dir) if output_dir else _default_output_dir(config_manager)
+    resolved_repo_sources, resolved_repo_source_manifest_files = _resolve_repo_source_inputs(
+        repo_sources=repo_sources,
+        repo_source_manifest_files=repo_source_manifest_files,
+    )
     command_args = [
         str(config_manager.paths.home),
         str(resolved_output_dir),
@@ -65,9 +72,9 @@ def build_telegram_state_knowledge_base(
     ]
     if chat_id:
         command_args.extend(["--chat-id", str(chat_id)])
-    for repo_source in repo_sources or []:
+    for repo_source in resolved_repo_sources:
         command_args.extend(["--repo-source", str(repo_source)])
-    for manifest in repo_source_manifest_files or []:
+    for manifest in resolved_repo_source_manifest_files:
         command_args.extend(["--repo-source-manifest", str(manifest)])
     if write_path:
         command_args.extend(["--write", str(Path(write_path))])
@@ -124,3 +131,19 @@ def _run_domain_chip_memory_cli(
 
 def _default_output_dir(config_manager: ConfigManager) -> Path:
     return config_manager.paths.home / "artifacts" / "spark-memory-kb"
+
+
+def _resolve_repo_source_inputs(
+    *,
+    repo_sources: list[str] | None,
+    repo_source_manifest_files: list[str] | None,
+) -> tuple[list[str], list[str]]:
+    resolved_repo_sources = [str(item) for item in (repo_sources or []) if str(item).strip()]
+    resolved_repo_source_manifest_files = [
+        str(item) for item in (repo_source_manifest_files or []) if str(item).strip()
+    ]
+    if resolved_repo_sources or resolved_repo_source_manifest_files:
+        return resolved_repo_sources, resolved_repo_source_manifest_files
+    if DEFAULT_BUILDER_KB_REPO_SOURCE_MANIFEST.exists():
+        resolved_repo_source_manifest_files.append(str(DEFAULT_BUILDER_KB_REPO_SOURCE_MANIFEST))
+    return resolved_repo_sources, resolved_repo_source_manifest_files
