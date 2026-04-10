@@ -99,11 +99,12 @@ Current implementation target:
   - mismatch breakdown by case
 
 Latest validated regression on recovered Telegram home:
-- `23/23` matched
+- `26/26` matched
 - `kb_has_probe_coverage = true`
-- `kb_current_state_hits = 54/54`
-- `kb_evidence_hits = 54/54`
+- `kb_current_state_hits = 84/84`
+- `kb_evidence_hits = 84/84`
 - KB now includes a repo-source page for the regression summary markdown emitted by the runner
+- The regression runner now emits machine-readable `category_counts`, `quality_lanes`, and supports targeted `--category` / `--case-id` runs for benchmark-style slices
 
 Acceptance:
 - One command can reproduce the end-to-end memory benchmark loop from Builder.
@@ -135,3 +136,4 @@ Acceptance:
 2. Run the full matrix against a real Builder home and save the bundle.
 3. Expand from profile-only routes into abstention, contradiction, and non-profile memory lanes.
 4. Expand the default repo-source manifest and synthesis pages now that manifest-backed repo context is wired into Builder KB compiles.
+5. Promote the structured execution plan into the default KB repo-source manifest so the wiki carries the current implementation roadmap alongside runtime artifacts.
