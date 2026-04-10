@@ -145,14 +145,14 @@ def run_telegram_memory_architecture_soak(
                         baseline_name,
                         _new_aggregate_row(baseline_name),
                     ),
-                    row=row.get("live_integration_overall"),
+                    row=row,
                     is_leader=baseline_name in leader_names,
                 )
                 _update_pack_aggregate(
                     pack_aggregate=pack_aggregate,
                     run_spec=run_spec,
                     baseline_name=baseline_name,
-                    row=row.get("live_integration_overall"),
+                    row=row,
                     is_leader=baseline_name in leader_names,
                 )
                 _update_category_aggregate(
@@ -265,6 +265,18 @@ def _new_aggregate_row(name: str) -> dict[str, Any]:
         "matched": 0,
         "total": 0,
         "accuracy_sum": 0.0,
+        "trust_matched": 0,
+        "trust_total": 0,
+        "trust_accuracy_sum": 0.0,
+        "grounding_matched": 0,
+        "grounding_total": 0,
+        "grounding_accuracy_sum": 0.0,
+        "abstention_matched": 0,
+        "abstention_total": 0,
+        "abstention_accuracy_sum": 0.0,
+        "forbidden_clean": 0,
+        "forbidden_total": 0,
+        "forbidden_accuracy_sum": 0.0,
     }
 
 
@@ -275,10 +287,28 @@ def _update_aggregate(
     is_leader: bool,
 ) -> None:
     overall = row if isinstance(row, dict) else {}
+    live_overall = overall.get("live_integration_overall") if isinstance(overall.get("live_integration_overall"), dict) else overall
     aggregate["run_count"] += 1
-    aggregate["matched"] += int(overall.get("matched") or 0)
-    aggregate["total"] += int(overall.get("total") or 0)
-    aggregate["accuracy_sum"] += float(overall.get("accuracy") or 0.0)
+    aggregate["matched"] += int(live_overall.get("matched") or 0)
+    aggregate["total"] += int(live_overall.get("total") or 0)
+    aggregate["accuracy_sum"] += float(live_overall.get("accuracy") or 0.0)
+    if isinstance(row, dict):
+        trust = row.get("trustworthiness_overall") or {}
+        grounding = row.get("grounding_overall") or {}
+        abstention = row.get("abstention_overall") or {}
+        forbidden = row.get("forbidden_memory_overall") or {}
+        aggregate["trust_matched"] += int(trust.get("matched") or 0)
+        aggregate["trust_total"] += int(trust.get("total") or 0)
+        aggregate["trust_accuracy_sum"] += float(trust.get("accuracy") or 0.0)
+        aggregate["grounding_matched"] += int(grounding.get("matched") or 0)
+        aggregate["grounding_total"] += int(grounding.get("total") or 0)
+        aggregate["grounding_accuracy_sum"] += float(grounding.get("accuracy") or 0.0)
+        aggregate["abstention_matched"] += int(abstention.get("matched") or 0)
+        aggregate["abstention_total"] += int(abstention.get("total") or 0)
+        aggregate["abstention_accuracy_sum"] += float(abstention.get("accuracy") or 0.0)
+        aggregate["forbidden_clean"] += int(forbidden.get("clean") or 0)
+        aggregate["forbidden_total"] += int(forbidden.get("total") or 0)
+        aggregate["forbidden_accuracy_sum"] += float(forbidden.get("accuracy") or 0.0)
     if is_leader:
         aggregate["leader_run_count"] += 1
 
@@ -342,11 +372,15 @@ def _build_soak_payload(
     )
     category_results = _build_category_results(category_aggregate)
     best_accuracy = float(aggregate_rows[0].get("aggregate_accuracy") or 0.0) if aggregate_rows else 0.0
-    overall_leader_names = [
-        row["baseline_name"]
-        for row in aggregate_rows
-        if float(row.get("aggregate_accuracy") or 0.0) == best_accuracy
-    ]
+    overall_leader_names = (
+        [
+            row["baseline_name"]
+            for row in aggregate_rows
+            if float(row.get("aggregate_accuracy") or 0.0) == best_accuracy
+        ]
+        if best_accuracy > 0.0
+        else []
+    )
     covered_categories = sorted(
         {
             str(category)
@@ -390,6 +424,14 @@ def _finalize_aggregate_rows(baseline_aggregate: dict[str, dict[str, Any]]) -> l
         run_count = int(item.get("run_count") or 0)
         total = int(item.get("total") or 0)
         matched = int(item.get("matched") or 0)
+        trust_total = int(item.get("trust_total") or 0)
+        trust_matched = int(item.get("trust_matched") or 0)
+        grounding_total = int(item.get("grounding_total") or 0)
+        grounding_matched = int(item.get("grounding_matched") or 0)
+        abstention_total = int(item.get("abstention_total") or 0)
+        abstention_matched = int(item.get("abstention_matched") or 0)
+        forbidden_total = int(item.get("forbidden_total") or 0)
+        forbidden_clean = int(item.get("forbidden_clean") or 0)
         rows.append(
             {
                 "baseline_name": item["baseline_name"],
@@ -399,11 +441,31 @@ def _finalize_aggregate_rows(baseline_aggregate: dict[str, dict[str, Any]]) -> l
                 "total": total,
                 "aggregate_accuracy": (matched / total) if total else 0.0,
                 "mean_run_accuracy": (float(item.get("accuracy_sum") or 0.0) / run_count) if run_count else 0.0,
+                "trustworthiness_accuracy": (trust_matched / trust_total) if trust_total else 0.0,
+                "mean_trustworthiness_accuracy": (
+                    float(item.get("trust_accuracy_sum") or 0.0) / run_count
+                ) if run_count else 0.0,
+                "grounding_accuracy": (grounding_matched / grounding_total) if grounding_total else 0.0,
+                "mean_grounding_accuracy": (
+                    float(item.get("grounding_accuracy_sum") or 0.0) / run_count
+                ) if run_count else 0.0,
+                "abstention_accuracy": (abstention_matched / abstention_total) if abstention_total else 0.0,
+                "mean_abstention_accuracy": (
+                    float(item.get("abstention_accuracy_sum") or 0.0) / run_count
+                ) if run_count else 0.0,
+                "forbidden_clean_accuracy": (forbidden_clean / forbidden_total) if forbidden_total else 0.0,
+                "mean_forbidden_clean_accuracy": (
+                    float(item.get("forbidden_accuracy_sum") or 0.0) / run_count
+                ) if run_count else 0.0,
             }
         )
     rows.sort(
         key=lambda row: (
             float(row.get("aggregate_accuracy") or 0.0),
+            float(row.get("trustworthiness_accuracy") or 0.0),
+            float(row.get("grounding_accuracy") or 0.0),
+            float(row.get("abstention_accuracy") or 0.0),
+            float(row.get("forbidden_clean_accuracy") or 0.0),
             int(row.get("leader_run_count") or 0),
             float(row.get("mean_run_accuracy") or 0.0),
         ),
@@ -427,11 +489,15 @@ def _build_pack_results(
         rows.append(
             {
                 **pack,
-                "leader_names": [
-                    row["baseline_name"]
-                    for row in aggregate_rows
-                    if float(row.get("aggregate_accuracy") or 0.0) == best_accuracy
-                ],
+                "leader_names": (
+                    [
+                        row["baseline_name"]
+                        for row in aggregate_rows
+                        if float(row.get("aggregate_accuracy") or 0.0) == best_accuracy
+                    ]
+                    if best_accuracy > 0.0
+                    else []
+                ),
                 "recommended_top_two": [row["baseline_name"] for row in aggregate_rows[:2]],
                 "baseline_results": aggregate_rows,
             }
@@ -449,11 +515,15 @@ def _build_category_results(
         rows.append(
             {
                 "category": category_name,
-                "leader_names": [
-                    row["baseline_name"]
-                    for row in aggregate_rows
-                    if float(row.get("aggregate_accuracy") or 0.0) == best_accuracy
-                ],
+                "leader_names": (
+                    [
+                        row["baseline_name"]
+                        for row in aggregate_rows
+                        if float(row.get("aggregate_accuracy") or 0.0) == best_accuracy
+                    ]
+                    if best_accuracy > 0.0
+                    else []
+                ),
                 "baseline_results": aggregate_rows,
             }
         )

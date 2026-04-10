@@ -367,6 +367,8 @@ def _leader_rows(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     if not rows:
         return []
     best_accuracy = max(_safe_accuracy((row.get("live_integration_overall") or {}).get("accuracy")) for row in rows)
+    if best_accuracy <= 0.0:
+        return []
     leaders = [
         row
         for row in rows
@@ -386,7 +388,10 @@ def _leader_rows(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _assessment_text(*, leader_rows: Sequence[dict[str, Any]], current_runtime_sdk_class: str) -> str:
     if not leader_rows:
-        return "No comparable live regression cases were available, so there is no runtime recommendation yet."
+        return (
+            "No architecture achieved a positive live signal on the comparable cases, "
+            "so there is no runtime recommendation yet."
+        )
     leader_names = [row["baseline_name"] for row in leader_rows]
     if current_runtime_sdk_class in leader_names:
         return (

@@ -194,3 +194,44 @@ class MemoryArchitectureSoakTests(SparkTestCase):
             result.payload["benchmark_pack_results"][0]["leader_names"],
             ["summary_synthesis_memory"],
         )
+
+    def test_run_telegram_memory_architecture_soak_treats_zero_accuracy_categories_as_unresolved(self) -> None:
+        payload = {
+            "summary": {"matched_case_count": 4, "mismatched_case_count": 0},
+            "architecture_live_comparison": {
+                "summary": {"leader_names": []},
+                "baseline_results": [
+                    {
+                        "baseline_name": "observational_temporal_memory",
+                        "live_integration_overall": {"matched": 0, "total": 2, "accuracy": 0.0},
+                        "live_by_category": [{"category": "abstention", "matched": 0, "total": 2, "accuracy": 0.0}],
+                    },
+                    {
+                        "baseline_name": "dual_store_event_calendar_hybrid",
+                        "live_integration_overall": {"matched": 0, "total": 2, "accuracy": 0.0},
+                        "live_by_category": [{"category": "abstention", "matched": 0, "total": 2, "accuracy": 0.0}],
+                    },
+                    {
+                        "baseline_name": "summary_synthesis_memory",
+                        "live_integration_overall": {"matched": 0, "total": 2, "accuracy": 0.0},
+                        "live_by_category": [{"category": "abstention", "matched": 0, "total": 2, "accuracy": 0.0}],
+                    },
+                ],
+            },
+        }
+
+        with patch(
+            "spark_intelligence.memory.architecture_soak.run_telegram_memory_regression",
+            return_value=SimpleNamespace(payload=payload),
+        ):
+            result = run_telegram_memory_architecture_soak(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                output_dir=self.home / "artifacts" / "architecture-soak-zero",
+                runs=1,
+                case_ids=["spark_role_abstention"],
+            )
+
+        self.assertEqual(result.payload["summary"]["overall_leader_names"], [])
+        self.assertEqual(result.payload["category_results"][0]["leader_names"], [])
+        self.assertEqual(result.payload["benchmark_pack_results"][0]["leader_names"], [])
