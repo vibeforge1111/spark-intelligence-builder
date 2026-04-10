@@ -36,6 +36,7 @@ from spark_intelligence.memory import (
     explain_memory_answer_in_memory,
     inspect_human_memory_in_memory,
     lookup_current_state_in_memory,
+    retrieve_memory_evidence_in_memory,
     write_profile_fact_to_memory,
 )
 from spark_intelligence.memory.profile_facts import (
@@ -2677,19 +2678,35 @@ def build_researcher_reply(
         and detected_profile_fact_query.query_kind == "single_fact"
     ):
         memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
-        direct_fact_explanation = explain_memory_answer_in_memory(
-            config_manager=config_manager,
-            state_db=state_db,
-            subject=memory_subject,
-            predicate=str(detected_profile_fact_query.predicate or ""),
-            question=str(user_message or "").strip() or f"What is my {detected_profile_fact_query.label}?",
-            actor_id="researcher_bridge",
-        )
+        direct_fact_question = str(user_message or "").strip() or f"What is my {detected_profile_fact_query.label}?"
         direct_fact_value = None
         direct_fact_read_method = "explain_answer"
-        explanation_payload = direct_fact_explanation.read_result.answer_explanation or {}
-        if not direct_fact_explanation.read_result.abstained and direct_fact_explanation.read_result.records:
-            direct_fact_value = str(direct_fact_explanation.read_result.records[0].get("answer") or "").strip() or None
+        explanation_payload: dict[str, Any] = {}
+        if str(detected_profile_fact_query.predicate or "") == "profile.startup_name":
+            founder_explanation = explain_memory_answer_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                subject=memory_subject,
+                predicate="profile.founder_of",
+                question=direct_fact_question,
+                actor_id="researcher_bridge",
+            )
+            explanation_payload = founder_explanation.read_result.answer_explanation or {}
+            if not founder_explanation.read_result.abstained and founder_explanation.read_result.records:
+                direct_fact_value = str(founder_explanation.read_result.records[0].get("answer") or "").strip() or None
+                direct_fact_read_method = "explain_answer(founder_of)"
+        if direct_fact_value is None:
+            direct_fact_explanation = explain_memory_answer_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                subject=memory_subject,
+                predicate=str(detected_profile_fact_query.predicate or ""),
+                question=direct_fact_question,
+                actor_id="researcher_bridge",
+            )
+            explanation_payload = direct_fact_explanation.read_result.answer_explanation or {}
+            if not direct_fact_explanation.read_result.abstained and direct_fact_explanation.read_result.records:
+                direct_fact_value = str(direct_fact_explanation.read_result.records[0].get("answer") or "").strip() or None
         if direct_fact_value is None:
             direct_fact_lookup = lookup_current_state_in_memory(
                 config_manager=config_manager,
@@ -2771,6 +2788,7 @@ def build_researcher_reply(
         detected_profile_fact_query is not None
         and detected_profile_fact_query.query_kind == "identity_summary"
     ):
+        memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
         direct_identity_inspection = inspect_human_memory_in_memory(
             config_manager=config_manager,
             state_db=state_db,
@@ -2786,15 +2804,39 @@ def build_researcher_reply(
                     str(detected_profile_fact_query.predicate_prefix or "")
                 )
             ]
+        identity_evidence = retrieve_memory_evidence_in_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            query=str(user_message or "").strip() or "What do you remember about me?",
+            subject=memory_subject,
+            limit=8,
+            actor_id="researcher_bridge",
+        )
+        identity_evidence_records = []
+        if not identity_evidence.read_result.abstained and identity_evidence.read_result.records:
+            identity_evidence_records = [
+                record
+                for record in identity_evidence.read_result.records
+                if str(record.get("predicate") or "").startswith(
+                    str(detected_profile_fact_query.predicate_prefix or "")
+                )
+                and str(record.get("value") or "").strip()
+            ]
+        combined_identity_records = [
+            *identity_evidence_records,
+            *direct_identity_records,
+        ]
         output_keepability, promotion_disposition = _bridge_output_classification(
             mode="memory_profile_identity",
             routing_decision="memory_profile_identity_summary",
         )
         trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
-        reply_text = build_profile_identity_summary_answer(records=direct_identity_records)
+        reply_text = build_profile_identity_summary_answer(records=combined_identity_records)
         evidence_summary = (
             "status=memory_profile_identity "
-            f"record_count={len(direct_identity_records)}"
+            f"record_count={len(combined_identity_records)} "
+            f"inspection_records={len(direct_identity_records)} "
+            f"evidence_records={len(identity_evidence_records)}"
         )
         record_event(
             state_db,
@@ -2822,7 +2864,10 @@ def build_researcher_reply(
                 extra={
                     "fact_name": detected_profile_fact_query.fact_name,
                     "predicate_prefix": detected_profile_fact_query.predicate_prefix,
-                    "record_count": len(direct_identity_records),
+                    "record_count": len(combined_identity_records),
+                    "inspection_record_count": len(direct_identity_records),
+                    "evidence_record_count": len(identity_evidence_records),
+                    "read_method": "get_current_state+retrieve_evidence",
                 },
             ),
         )

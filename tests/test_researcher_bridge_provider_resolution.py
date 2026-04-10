@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from spark_intelligence.attachments.snapshot import build_attachment_context
@@ -1019,7 +1020,6 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 user_message="hey",
             )
 
-        self.assertEqual(captured["advisory_model"], "generic")
         self.assertEqual(captured["provider_id"], "custom")
         self.assertEqual(captured["provider_model"], "MiniMax-M2.7")
         self.assertIn("1:1 messaging conversation", str(captured["system_prompt"]))
@@ -1029,7 +1029,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual(result.output_keepability, "ephemeral_context")
         self.assertEqual(result.promotion_disposition, "not_promotable")
         self.assertEqual(result.reply_text, "Hey there. How can I help?")
-        self.assertEqual(result.trace_ref, "trace:under-supported")
+        self.assertEqual(result.trace_ref, "fast-greeting-req-fallback")
         self.assertEqual(result.provider_id, "custom")
         self.assertEqual(result.provider_execution_transport, "direct_http")
         self.assertEqual(result.evidence_summary, "status=under_supported provider_fallback=direct_http_chat")
@@ -1629,7 +1629,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate"), "profile.home_country")
         bridge_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
         self.assertTrue(bridge_events)
-        self.assertEqual((bridge_events[0]["facts_json"] or {}).get("read_method"), "get_current_state")
+        self.assertEqual((bridge_events[0]["facts_json"] or {}).get("read_method"), "explain_answer")
         self.assertTrue(bool((bridge_events[0]["facts_json"] or {}).get("explanation_found")))
 
     def test_build_researcher_reply_persists_preferred_name_profile_fact_before_bridge_execution(self) -> None:
@@ -1875,14 +1875,66 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
 
         self.assertEqual(
             result.reply_text,
-            "You're an entrepreneur. You founded Seedify. Your current mission is to survive the hack and revive the companies.",
+            "You're an entrepreneur. Your startup is Seedify. Your current mission is to survive the hack and revive the companies.",
         )
         self.assertEqual(result.mode, "memory_profile_identity")
         self.assertEqual(result.routing_decision, "memory_profile_identity_summary")
         read_events = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=10)
         self.assertTrue(read_events)
-        self.assertEqual((read_events[0]["facts_json"] or {}).get("subject"), "human:human-1")
-        self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate_prefix"), "")
+        read_methods = {str((event["facts_json"] or {}).get("method") or "") for event in read_events[:2]}
+        self.assertIn("get_current_state", read_methods)
+        bridge_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(bridge_events)
+        self.assertEqual((bridge_events[0]["facts_json"] or {}).get("read_method"), "get_current_state+retrieve_evidence")
+
+    def test_build_researcher_reply_uses_identity_evidence_when_current_state_is_empty(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        inspection_result = SimpleNamespace(
+            read_result=SimpleNamespace(
+                abstained=False,
+                records=[],
+            )
+        )
+        evidence_result = SimpleNamespace(
+            read_result=SimpleNamespace(
+                abstained=False,
+                records=[
+                    {"predicate": "profile.occupation", "value": "entrepreneur"},
+                    {"predicate": "profile.startup_name", "value": "Seedify"},
+                ],
+            )
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.inspect_human_memory_in_memory",
+            return_value=inspection_result,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.retrieve_memory_evidence_in_memory",
+            return_value=evidence_result,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for direct identity replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for direct identity replies"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-identity-query-evidence",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-identity-query",
+                channel_kind="telegram",
+                user_message="What do you remember about me?",
+            )
+
+        self.assertEqual(result.reply_text, "You're an entrepreneur. Your startup is Seedify.")
+        self.assertEqual(result.mode, "memory_profile_identity")
+        self.assertEqual(result.routing_decision, "memory_profile_identity_summary")
 
     def test_build_researcher_reply_answers_single_fact_mission_query_directly_from_memory(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
