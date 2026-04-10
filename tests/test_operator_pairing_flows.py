@@ -18,7 +18,12 @@ from spark_intelligence.identity.service import (
     review_pairings,
 )
 from spark_intelligence.observability.store import recent_resume_richness_guard_records
-from spark_intelligence.personality.loader import load_personality_profile, save_agent_persona_profile
+from spark_intelligence.personality.loader import (
+    load_agent_persona_profile,
+    load_personality_profile,
+    maybe_handle_agent_persona_onboarding_turn,
+    save_agent_persona_profile,
+)
 from spark_intelligence.researcher_bridge.advisory import ResearcherBridgeResult
 
 from tests.test_support import SparkTestCase, make_telegram_update
@@ -1104,6 +1109,229 @@ class OperatorPairingFlowTests(SparkTestCase):
             ),
             f"expected onboarding_cancel rename history row, got: {list(history_rows)}",
         )
+
+    def test_onboarding_reonboard_consent_yes_restarts_setup_for_existing_user(self) -> None:
+        """P2-12: existing users with a saved persona see a one-tap skip offer.
+
+        Q-H of docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md \u00a711:
+        existing users with a saved persona get a one-tap skip offer
+        instead of being silently bypassed. Replying `yes` transitions the
+        state machine back to `awaiting_name` so the user can re-run the
+        short v2 setup conversation.
+        """
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+        rename_agent_identity(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+            new_name="Atlas",
+            source_surface="telegram",
+            source_ref="seed-name",
+        )
+        save_agent_persona_profile(
+            agent_id="agent:human:telegram:111",
+            human_id="human:telegram:111",
+            state_db=self.state_db,
+            base_traits={
+                "warmth": 0.62,
+                "directness": 0.83,
+                "playfulness": 0.2,
+                "pacing": 0.66,
+                "assertiveness": 0.74,
+            },
+            persona_name="Atlas",
+            persona_summary="Calm, strategic, very direct, low-fluff.",
+        )
+
+        # First turn: no in-progress onboarding state but existing persona
+        # plus start_if_eligible=True should return the reonboard-consent
+        # offer card and create the new awaiting_reonboard_consent state.
+        offer_turn = maybe_handle_agent_persona_onboarding_turn(
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            user_message="hey",
+            state_db=self.state_db,
+            source_surface="telegram",
+            source_ref="test-reonboard-offer",
+            start_if_eligible=True,
+        )
+        self.assertIsNotNone(offer_turn)
+        assert offer_turn is not None  # for type-checker
+        self.assertEqual(offer_turn.step, "awaiting_reonboard_consent")
+        self.assertFalse(offer_turn.completed)
+        self.assertIn("re-run setup", offer_turn.reply_text)
+        self.assertIn("Atlas", offer_turn.reply_text)
+        self.assertIn("`yes`", offer_turn.reply_text)
+
+        with self.state_db.connect() as conn:
+            offer_blob_row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ?",
+                ("agent_onboarding:human:telegram:111",),
+            ).fetchone()
+        self.assertIsNotNone(offer_blob_row)
+        offer_blob = json.loads(str(offer_blob_row["value"]))
+        self.assertEqual(offer_blob["status"], "active")
+        self.assertEqual(offer_blob["step"], "awaiting_reonboard_consent")
+
+        # Second turn: `yes` accepts the offer and transitions to awaiting_name.
+        yes_turn = maybe_handle_agent_persona_onboarding_turn(
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            user_message="yes",
+            state_db=self.state_db,
+            source_surface="telegram",
+            source_ref="test-reonboard-yes",
+            start_if_eligible=False,
+        )
+        self.assertIsNotNone(yes_turn)
+        assert yes_turn is not None  # for type-checker
+        self.assertEqual(yes_turn.step, "awaiting_name")
+        self.assertFalse(yes_turn.completed)
+        self.assertIn("Restarting setup", yes_turn.reply_text)
+        self.assertIn("/cancel", yes_turn.reply_text)
+        # Should offer to keep the existing name since one is already saved.
+        self.assertIn("Atlas", yes_turn.reply_text)
+        self.assertIn("keep", yes_turn.reply_text)
+
+        with self.state_db.connect() as conn:
+            yes_blob_row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ?",
+                ("agent_onboarding:human:telegram:111",),
+            ).fetchone()
+        self.assertIsNotNone(yes_blob_row)
+        yes_blob = json.loads(str(yes_blob_row["value"]))
+        self.assertEqual(yes_blob["status"], "active")
+        self.assertEqual(yes_blob["step"], "awaiting_name")
+
+        # The saved persona profile should be untouched through the offer
+        # and the yes acceptance (persona only changes after the user
+        # actually completes the v2 conversation again).
+        persona_after = load_agent_persona_profile(
+            agent_id="agent:human:telegram:111",
+            human_id="human:telegram:111",
+            state_db=self.state_db,
+        )
+        self.assertEqual(persona_after.get("persona_name"), "Atlas")
+        self.assertEqual(
+            persona_after.get("persona_summary"),
+            "Calm, strategic, very direct, low-fluff.",
+        )
+        self.assertAlmostEqual(persona_after["base_traits"]["directness"], 0.83)
+
+    def test_onboarding_reonboard_consent_skip_closes_offer_and_preserves_persona(self) -> None:
+        """P2-12: any reply other than yes closes the offer without touching persona.
+
+        Q-H of docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md \u00a711:
+        the one-tap skip offer defaults to 'keep things as they are'. After
+        the user replies with anything other than an explicit yes token,
+        the onboarding state is marked completed (so the offer never
+        re-shows) and the handler returns None so the normal reply path
+        handles the message. The saved persona profile is untouched.
+        """
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+        rename_agent_identity(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+            new_name="Atlas",
+            source_surface="telegram",
+            source_ref="seed-name",
+        )
+        save_agent_persona_profile(
+            agent_id="agent:human:telegram:111",
+            human_id="human:telegram:111",
+            state_db=self.state_db,
+            base_traits={
+                "warmth": 0.62,
+                "directness": 0.83,
+                "playfulness": 0.2,
+                "pacing": 0.66,
+                "assertiveness": 0.74,
+            },
+            persona_name="Atlas",
+            persona_summary="Calm, strategic, very direct, low-fluff.",
+        )
+
+        # First turn creates the offer state.
+        offer_turn = maybe_handle_agent_persona_onboarding_turn(
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            user_message="hey",
+            state_db=self.state_db,
+            source_surface="telegram",
+            source_ref="test-reonboard-skip-offer",
+            start_if_eligible=True,
+        )
+        self.assertIsNotNone(offer_turn)
+        assert offer_turn is not None  # for type-checker
+        self.assertEqual(offer_turn.step, "awaiting_reonboard_consent")
+
+        # Second turn: a non-yes reply closes out the offer and returns None
+        # so the researcher bridge handles the message normally.
+        skip_turn = maybe_handle_agent_persona_onboarding_turn(
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            user_message="what's the weather",
+            state_db=self.state_db,
+            source_surface="telegram",
+            source_ref="test-reonboard-skip",
+            start_if_eligible=False,
+        )
+        self.assertIsNone(skip_turn)
+
+        # The state blob should exist but be marked completed so the offer
+        # never re-shows for this user.
+        with self.state_db.connect() as conn:
+            skip_blob_row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ?",
+                ("agent_onboarding:human:telegram:111",),
+            ).fetchone()
+        self.assertIsNotNone(skip_blob_row)
+        skip_blob = json.loads(str(skip_blob_row["value"]))
+        self.assertEqual(skip_blob["status"], "completed")
+
+        # A subsequent eligible call must NOT re-offer the card: the state
+        # is completed so the handler short-circuits.
+        follow_up_turn = maybe_handle_agent_persona_onboarding_turn(
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            user_message="hi again",
+            state_db=self.state_db,
+            source_surface="telegram",
+            source_ref="test-reonboard-followup",
+            start_if_eligible=True,
+        )
+        self.assertIsNone(follow_up_turn)
+
+        # The saved persona profile should be untouched by the skip path.
+        persona_after = load_agent_persona_profile(
+            agent_id="agent:human:telegram:111",
+            human_id="human:telegram:111",
+            state_db=self.state_db,
+        )
+        self.assertEqual(persona_after.get("persona_name"), "Atlas")
+        self.assertEqual(
+            persona_after.get("persona_summary"),
+            "Calm, strategic, very direct, low-fluff.",
+        )
+        self.assertAlmostEqual(persona_after["base_traits"]["directness"], 0.83)
+
+        # The saved agent name should also be untouched.
+        agent_state = read_canonical_agent_state(
+            state_db=self.state_db,
+            human_id="human:telegram:111",
+        )
+        self.assertEqual(agent_state.agent_name, "Atlas")
 
     def test_onboarding_guardrails_ack_change_branch_stays_pinned_then_accepts(self) -> None:
         """P2-10: `change` soft-reprompts without advancing; `ok` completes.

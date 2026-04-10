@@ -1428,8 +1428,35 @@ def maybe_handle_agent_persona_onboarding_turn(
         return None
 
     if not onboarding_state:
-        if not start_if_eligible or existing_persona:
+        if not start_if_eligible:
             return None
+        if existing_persona:
+            # P2-12: existing users with a saved persona see a
+            # one-tap skip offer instead of being silently skipped
+            # (Q-H of docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md
+            # §11). Any reply other than yes closes out the
+            # offer without touching the persona profile.
+            onboarding_state = {
+                "status": "active",
+                "step": "awaiting_reonboard_consent",
+                "agent_id": agent_id,
+                "started_at": _utc_now_iso(),
+                "updated_at": _utc_now_iso(),
+            }
+            _save_agent_onboarding_state(
+                human_id=human_id, payload=onboarding_state, state_db=state_db
+            )
+            return AgentOnboardingTurnResult(
+                human_id=human_id,
+                agent_id=agent_id,
+                step="awaiting_reonboard_consent",
+                reply_text=_build_reonboard_consent_offer_text(
+                    canonical_state.agent_name
+                ),
+                agent_name=canonical_state.agent_name,
+                persona_profile=existing_persona,
+                completed=False,
+            )
         onboarding_state = {
             "status": "active",
             "step": "awaiting_name",
@@ -1488,6 +1515,57 @@ def maybe_handle_agent_persona_onboarding_turn(
             persona_profile=existing_persona,
             completed=True,
         )
+
+    if step == "awaiting_reonboard_consent":
+        # P2-12: one-tap skip offer for existing users with a saved
+        # persona. Accept only explicit opt-ins; anything else closes
+        # out the state (status=completed) so the offer never nags
+        # again, and returns None so the researcher bridge handles
+        # the original message normally.
+        if lowered in _REONBOARD_CONSENT_YES_TOKENS:
+            onboarding_state["step"] = "awaiting_name"
+            onboarding_state["updated_at"] = _utc_now_iso()
+            _save_agent_onboarding_state(
+                human_id=human_id, payload=onboarding_state, state_db=state_db
+            )
+            if canonical_state.has_user_defined_name:
+                name_prompt = (
+                    f"What should I call your agent? Right now it's "
+                    f"`{canonical_state.agent_name}`. Reply with a new name, "
+                    "or say `keep` to keep the current one."
+                )
+            else:
+                name_prompt = (
+                    "What should I call your agent? Reply with a name like "
+                    "`Atlas`, `Nova`, or `Lyra`."
+                )
+            return AgentOnboardingTurnResult(
+                human_id=human_id,
+                agent_id=agent_id,
+                step="awaiting_name",
+                reply_text=(
+                    "Restarting setup. Short conversation: name first, then "
+                    "personality.\n"
+                    "You can say `/cancel` at any time to stop and reset.\n\n"
+                    f"{name_prompt}"
+                ),
+                agent_name=canonical_state.agent_name,
+                persona_profile=existing_persona,
+                completed=False,
+            )
+        # Skip / silence path: close out the offer without touching
+        # the persona profile and let the normal reply path handle
+        # the user's message.
+        _complete_agent_onboarding_state(
+            human_id=human_id,
+            state_db=state_db,
+            agent_id=agent_id,
+            agent_name=canonical_state.agent_name,
+            persona_summary=(
+                existing_persona.get("persona_summary") if existing_persona else None
+            ),
+        )
+        return None
 
     if step == "awaiting_name":
         if lowered in {"keep", "keep it", "keep current name", "keep the current name"}:
@@ -2726,6 +2804,42 @@ def _build_onboarding_cancelled_reply_text() -> str:
         "conversation.\n\n"
         "Your pairing is still active — say `hi` any time to start over. "
         "Any existing personality traits you had before stay as-is."
+    )
+
+
+_REONBOARD_CONSENT_YES_TOKENS: frozenset[str] = frozenset(
+    {
+        "yes",
+        "y",
+        "yeah",
+        "yep",
+        "yup",
+        "sure",
+        "restart",
+        "redo",
+        "re-run",
+        "rerun",
+    }
+)
+
+
+def _build_reonboard_consent_offer_text(agent_name: str) -> str:
+    """Render the P2-12 awaiting_reonboard_consent offer card.
+
+    Q-H of docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md §11:
+    existing users with a saved persona get a one-tap skip offer
+    instead of being silently bypassed. Any reply other than `yes`
+    (or a close variant) is treated as "keep things as they are".
+    """
+    if agent_name:
+        name_label = f"`{agent_name}`"
+    else:
+        name_label = "your agent"
+    return (
+        f"Want to re-run setup for {name_label}? Your current personality "
+        "stays put unless you say `yes`.\n\n"
+        "Reply `yes` to start the short setup conversation, or anything "
+        "else to keep things as they are."
     )
 
 
