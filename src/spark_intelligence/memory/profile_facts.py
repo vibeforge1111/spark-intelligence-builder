@@ -49,6 +49,9 @@ _COUNTRY_PATTERNS = [
 _COUNTRY_IN_PATTERNS = [
     re.compile(r"\bi(?:'m| am)\s+in\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
 ]
+_COUNTRY_MOVE_PATTERNS = [
+    re.compile(r"\bi\s+moved\s+to\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
+]
 _TIMEZONE_PATTERNS = [
     re.compile(r"\bmy\s+timezone\s+is\s+([A-Za-z_]+/[A-Za-z_]+(?:/[A-Za-z_]+)?)", re.I),
     re.compile(r"\bi(?:'m| am)\s+in\s+timezone\s+([A-Za-z_]+/[A-Za-z_]+(?:/[A-Za-z_]+)?)", re.I),
@@ -861,6 +864,13 @@ def _extract_country(text: str) -> str | None:
         if candidate:
             return candidate
     for pattern in _COUNTRY_IN_PATTERNS:
+        match = pattern.search(text)
+        if not match:
+            continue
+        candidate = _normalize_country_name(match.group(1))
+        if candidate:
+            return candidate
+    for pattern in _COUNTRY_MOVE_PATTERNS:
         match = pattern.search(text)
         if not match:
             continue

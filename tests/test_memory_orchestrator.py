@@ -224,6 +224,20 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(detected.predicate, "profile.city")
         self.assertEqual(detected.value, "Abu Dhabi")
 
+    def test_profile_country_detection_accepts_moved_to_country_phrasing(self) -> None:
+        detected = detect_profile_fact_observation("I moved to Canada.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.home_country")
+        self.assertEqual(detected.value, "Canada")
+
+    def test_profile_city_detection_keeps_moved_to_city_phrasing(self) -> None:
+        detected = detect_profile_fact_observation("I moved to Dubai.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.city")
+        self.assertEqual(detected.value, "Dubai")
+
     def test_profile_founder_detection_accepts_founded_phrasing(self) -> None:
         detected = detect_profile_fact_observation("I founded Atlas Labs.")
         self.assertIsNotNone(detected)
