@@ -998,6 +998,40 @@ def list_agent_rename_history(
     return [dict(row) for row in rows]
 
 
+def set_human_user_address(
+    *,
+    state_db: StateDB,
+    human_id: str,
+    user_address: str | None,
+) -> str | None:
+    normalized: str | None = (user_address or "").strip() or None
+    with state_db.connect() as conn:
+        conn.execute(
+            "UPDATE humans SET user_address = ?, updated_at = CURRENT_TIMESTAMP WHERE human_id = ?",
+            (normalized, human_id),
+        )
+        conn.commit()
+    return normalized
+
+
+def get_human_user_address(
+    *,
+    state_db: StateDB,
+    human_id: str,
+) -> str | None:
+    with state_db.connect() as conn:
+        row = conn.execute(
+            "SELECT user_address FROM humans WHERE human_id = ? LIMIT 1",
+            (human_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    value = row["user_address"]
+    if value in (None, ""):
+        return None
+    return str(value)
+
+
 def inspect_canonical_agent(
     *,
     state_db: StateDB,
