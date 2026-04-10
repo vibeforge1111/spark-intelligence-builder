@@ -2129,20 +2129,21 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        write_profile_fact_to_memory(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
-            human_id="human-1",
-            predicate="profile.current_mission",
-            value="survive the hack and revive the companies",
-            evidence_text="I am trying to survive the hack and revive the companies.",
-            fact_name="profile_current_mission",
-            session_id="session-mission-query",
-            turn_id="turn-mission-query-write",
-            channel_kind="telegram",
-        )
-
         with patch(
+            "spark_intelligence.researcher_bridge.advisory.lookup_current_state_in_memory",
+            return_value=SimpleNamespace(
+                read_result=SimpleNamespace(
+                    abstained=False,
+                    records=[
+                        {
+                            "predicate": "profile.current_mission",
+                            "normalized_value": "survive the hack and revive the companies",
+                            "value": "survive the hack and revive the companies",
+                        }
+                    ],
+                )
+            ),
+        ) as lookup_mock, patch(
             "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
             side_effect=AssertionError("provider resolution should not run for direct memory fact replies"),
         ), patch(
@@ -2163,9 +2164,109 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual(result.reply_text, "Right now you're trying to survive the hack and revive the companies.")
         self.assertEqual(result.mode, "memory_profile_fact")
         self.assertEqual(result.routing_decision, "memory_profile_fact_query")
-        read_events = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=10)
-        self.assertTrue(read_events)
-        self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate"), "profile.current_mission")
+        lookup_mock.assert_any_call(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject="human:human-1",
+            predicate="profile.current_mission",
+            actor_id=ANY,
+        )
+
+    def test_build_researcher_reply_answers_hack_actor_query_directly_from_memory(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.lookup_current_state_in_memory",
+            return_value=SimpleNamespace(
+                read_result=SimpleNamespace(
+                    abstained=False,
+                    records=[
+                        {
+                            "predicate": "profile.hack_actor",
+                            "normalized_value": "North Korea",
+                            "value": "North Korea",
+                        }
+                    ],
+                )
+            ),
+        ) as lookup_mock, patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for direct memory fact replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for direct memory fact replies"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-hack-actor-query-direct",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-hack-actor-query",
+                channel_kind="telegram",
+                user_message="Who hacked us?",
+            )
+
+        self.assertEqual(result.reply_text, "The hack actor was North Korea.")
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+        lookup_mock.assert_any_call(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject="human:human-1",
+            predicate="profile.hack_actor",
+            actor_id=ANY,
+        )
+
+    def test_build_researcher_reply_answers_spark_role_query_directly_from_memory(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.lookup_current_state_in_memory",
+            return_value=SimpleNamespace(
+                read_result=SimpleNamespace(
+                    abstained=False,
+                    records=[
+                        {
+                            "predicate": "profile.spark_role",
+                            "normalized_value": "important part of the rebuild",
+                            "value": "important part of the rebuild",
+                        }
+                    ],
+                )
+            ),
+        ) as lookup_mock, patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for direct memory fact replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for direct memory fact replies"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-spark-role-query-direct",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-spark-role-query",
+                channel_kind="telegram",
+                user_message="What role will Spark play in this?",
+            )
+
+        self.assertEqual(result.reply_text, "Spark will be an important part of the rebuild.")
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+        lookup_mock.assert_any_call(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject="human:human-1",
+            predicate="profile.spark_role",
+            actor_id=ANY,
+        )
 
     def test_build_researcher_reply_answers_founder_query_directly_from_memory(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
