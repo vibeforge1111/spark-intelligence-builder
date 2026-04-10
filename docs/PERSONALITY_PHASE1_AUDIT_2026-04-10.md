@@ -241,3 +241,76 @@ Audit status: **complete.** Phase 1 Step 2 is blocked on Q-1.
 
 **What this addendum supersedes:** the "Phase 1 revised plan" in §8 above (all three Q-1 branches). The actual shipped plan is option (b) as described here. §8 is kept for historical context.
 
+---
+
+## 11. Finding G (discovered during Phase 1 Step 5) — 6th default-name leak in `approve_pairing`
+
+While sweeping tests for broken assertions after the Phase 1 Step 2 edits, I grepped for other places that might fall back to a machine-generated agent name and found a **sixth leak** that the original audit missed:
+
+`src/spark_intelligence/identity/service.py:1001`:
+
+```python
+def approve_pairing(
+    *,
+    state_db: StateDB,
+    channel_id: str,
+    external_user_id: str,
+    display_name: str | None = None,
+    ...
+) -> str:
+    ...
+    resolved_name = display_name or f"{channel_id} user {external_user_id}"
+    human_id, _, _ = _activate_channel_access(
+        state_db=state_db,
+        channel_id=channel_id,
+        external_user_id=external_user_id,
+        display_name=resolved_name,
+    )
+```
+
+**The chain:**
+
+1. `approve_pairing(..., display_name=None)` — called by CLI / Telegram operator pairing approval when no explicit display_name is provided
+2. Line 1001 synthesises `resolved_name = "telegram user 1234567890"` (machine-generated)
+3. Line 1006 passes this as `display_name` to `_activate_channel_access`
+4. `_activate_channel_access` line 972 passes the same `display_name` to `resolve_canonical_agent_identity(display_name=display_name)`
+5. Inside `resolve_canonical_agent_identity`, the Phase 1 Step 2 edit at line 379 now does `resolved_name = (display_name or "").strip()` — so `"telegram user 1234567890"` survives as the agent_name and is inserted into `agent_profiles.agent_name`
+6. Result: the new agent has `agent_name = "telegram user 1234567890"`, which satisfies the `has_user_defined_name` property (it is a non-whitespace string), so all user-facing gates would treat it as a legitimate user-defined name even though it is a machine-synthesised fallback
+
+**Why this is a smell but not a crisis:**
+
+- It only fires when `approve_pairing` is called without an explicit `display_name`. Every test in `test_agent_identity_contracts.py` and `test_operator_pairing_flows.py` passes `display_name` explicitly, so no tests break.
+- The Telegram `/approve` operator path typically resolves a display name from the Telegram user profile before calling `approve_pairing`, so in practice the synthesised fallback rarely fires.
+- The deeper architectural issue is that `approve_pairing` overloads **the human's display_name** as **the agent's display_name**. These are conceptually different: one is "what we call the human" and the other is "what the user names their agent". Fixing this properly means splitting them into two parameters, which is a surgical refactor across the pairing path.
+
+**Scope decision:** I am **not fixing Finding G in Phase 1.** Reasons:
+
+1. The operator's "go" signal was on the audit's original Phase 1 plan, which listed 5 src fallback sites. Finding G is a 6th site discovered after the plan was approved. Fixing it is scope-creep without explicit authorisation.
+2. The fix requires an architectural split (human display_name vs agent display_name) that touches the pairing flow, the CLI, the Telegram approval path, and likely several tests. This is a Phase 2 or Phase 3 concern, not a Phase 1 hotfix.
+3. The current Phase 1 regime (5 fallbacks removed, `has_user_defined_name` gate, empty-string sentinel) **reduces** the blast radius of Finding G: previously, if no display_name was propagated, the agent would silently become `"Spark Agent"` (totally indistinguishable from other agents). Now, the fallback is the machine-generated `"telegram user 1234567890"` form, which is at least uniquely identifiable per-pair and visibly wrong in operator logs.
+
+**Recommended follow-up (Phase 1.5 or Phase 2):**
+
+- Either (i) remove the f-string fallback at line 1001 and raise a `ValueError` when `approve_pairing` is called without a display_name, requiring callers to resolve a display_name from the platform first, OR
+- (ii) split `approve_pairing`'s `display_name` parameter into `human_display_name` (goes into `humans.display_name` only) and `agent_display_name` (goes into `resolve_canonical_agent_identity` only, defaulting to empty-string for the new Phase 1 regime), with the agent_display_name flowing through onboarding as an empty canonical state that triggers the name prompt on first DM.
+
+Option (ii) is the more principled fix and aligns with the v2 onboarding design's "name-required" philosophy. Option (i) is a faster stopgap.
+
+**Operator decision needed — Q-2:** should Finding G be addressed next, or deferred behind v2 onboarding work?
+
+---
+
+## 12. Phase 1 completion status (2026-04-10)
+
+| Step | Status | Commit |
+|------|--------|--------|
+| 1 — Audit | Complete | `e030dc4` |
+| 2 — Remove 5 fallbacks + `has_user_defined_name` | Complete | `d243d1a` |
+| 3 — Onboarding prompt gating | Complete | `84f3bb4` |
+| 4 — Commit in-flight preamble fix | Complete | `d243d1a` (bundled) |
+| 5 — Update / verify tests | Complete (no test breaks; Finding G logged) | (this addendum) |
+
+**Known follow-ups logged:**
+- Finding G (this doc §11) — `approve_pairing` machine-generated fallback
+- Q-A through Q-H from `PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md` — still awaiting operator decisions for Phase 2 scope
+
