@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -75,28 +76,58 @@ def evaluate_stop_ship_issues(
     state_db: StateDB,
     emit_contradictions: bool = False,
 ) -> list[StopShipIssue]:
-    issues = [
-        _config_audit_issue(state_db),
-        _intent_execution_issue(state_db),
-        _delivery_truth_issue(state_db),
-        _background_closure_issue(state_db),
-        _runtime_state_authority_issue(state_db),
-        _reset_integrity_issue(state_db),
-        _plugin_provenance_issue(config_manager=config_manager, state_db=state_db),
-        _provenance_ledger_issue(state_db),
-        _unlabeled_provenance_quarantine_issue(state_db),
-        _secret_boundary_issue(state_db),
-        _keepability_issue(state_db),
-        _bridge_residue_persistence_issue(state_db),
-        _memory_contract_issue(state_db),
-        _environment_parity_issue(state_db),
-        _daemon_reentry_issue(config_manager=config_manager),
-        _external_execution_governance_issue(),
-        _bridge_output_governance_issue(),
+    issue_factories = [
+        ("stop_ship_config_mutation_audit", lambda: _config_audit_issue(state_db)),
+        ("stop_ship_intent_without_proof", lambda: _intent_execution_issue(state_db)),
+        ("stop_ship_delivery_truth", lambda: _delivery_truth_issue(state_db)),
+        ("stop_ship_background_closure", lambda: _background_closure_issue(state_db)),
+        ("stop_ship_runtime_state_authority", lambda: _runtime_state_authority_issue(state_db)),
+        ("stop_ship_reset_integrity", lambda: _reset_integrity_issue(state_db)),
+        (
+            "stop_ship_plugin_provenance",
+            lambda: _plugin_provenance_issue(config_manager=config_manager, state_db=state_db),
+        ),
+        ("stop_ship_provenance_ledger", lambda: _provenance_ledger_issue(state_db)),
+        (
+            "stop_ship_unlabeled_provenance_quarantine",
+            lambda: _unlabeled_provenance_quarantine_issue(state_db),
+        ),
+        ("stop_ship_secret_boundary", lambda: _secret_boundary_issue(state_db)),
+        ("stop_ship_keepability_rules", lambda: _keepability_issue(state_db)),
+        ("stop_ship_bridge_residue_persistence", lambda: _bridge_residue_persistence_issue(state_db)),
+        ("stop_ship_memory_contract", lambda: _memory_contract_issue(state_db)),
+        ("stop_ship_environment_parity", lambda: _environment_parity_issue(state_db)),
+        ("stop_ship_daemon_reentry", lambda: _daemon_reentry_issue(config_manager=config_manager)),
+        ("stop_ship_external_execution_governance", _external_execution_governance_issue),
+        ("stop_ship_bridge_output_governance", _bridge_output_governance_issue),
     ]
+    issues = [_evaluate_issue(factory_name, factory) for factory_name, factory in issue_factories]
     if emit_contradictions:
-        _reconcile_stop_ship_contradictions(state_db=state_db, issues=issues)
+        try:
+            _reconcile_stop_ship_contradictions(state_db=state_db, issues=issues)
+        except sqlite3.Error:
+            pass
     return issues
+
+
+def _evaluate_issue(name: str, factory: Any) -> StopShipIssue:
+    try:
+        issue = factory()
+    except sqlite3.Error as exc:
+        return StopShipIssue(
+            name=name,
+            ok=False,
+            detail=f"Stop-ship check unavailable due to SQLite error: {exc}",
+            severity="high",
+        )
+    if issue.name != name:
+        return StopShipIssue(
+            name=name,
+            ok=False,
+            detail=f"Stop-ship check returned mismatched issue name {issue.name!r}.",
+            severity="high",
+        )
+    return issue
 
 
 def _reconcile_stop_ship_contradictions(*, state_db: StateDB, issues: list[StopShipIssue]) -> None:
