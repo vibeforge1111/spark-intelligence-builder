@@ -16,6 +16,7 @@ from spark_intelligence.memory import (
     write_profile_fact_to_memory,
 )
 from spark_intelligence.memory.profile_facts import (
+    build_profile_identity_summary_answer,
     build_profile_fact_query_context,
     build_profile_identity_summary_context,
     detect_profile_fact_observation,
@@ -352,6 +353,23 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertIn("- startup: Seedify", context)
         self.assertIn("- current mission: revive the companies", context)
 
+    def test_build_profile_identity_summary_answer_compacts_saved_facts(self) -> None:
+        answer = build_profile_identity_summary_answer(
+            records=[
+                {"predicate": "profile.occupation", "value": "entrepreneur"},
+                {"predicate": "profile.city", "value": "Dubai"},
+                {"predicate": "profile.startup_name", "value": "Seedify"},
+                {"predicate": "profile.founder_of", "value": "Spark Swarm"},
+                {"predicate": "profile.current_mission", "value": "survive the hack and revive the companies"},
+                {"predicate": "profile.spark_role", "value": "important part of the rebuild"},
+            ]
+        )
+
+        self.assertIn("You're an entrepreneur in Dubai.", answer)
+        self.assertIn("You founded Seedify and Spark Swarm.", answer)
+        self.assertIn("Your current mission is to survive the hack and revive the companies.", answer)
+        self.assertIn("Spark will be an important part of the rebuild.", answer)
+
     def test_build_profile_fact_query_context_demands_single_sentence_grounded_answer(self) -> None:
         query = detect_profile_fact_query("What role will Spark play in this?")
         self.assertIsNotNone(query)
@@ -363,7 +381,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         )
 
         self.assertIn("[Memory action: PROFILE_FACT_STATUS]", context)
-        self.assertIn("Expected concise answer: Spark will be important part of the rebuild.", context)
+        self.assertIn("Expected concise answer: Spark will be an important part of the rebuild.", context)
         self.assertIn("Answer in one sentence only.", context)
         self.assertIn("Do not add broader narrative", context)
 

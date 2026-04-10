@@ -40,6 +40,7 @@ from spark_intelligence.memory import (
 from spark_intelligence.memory.profile_facts import (
     build_profile_fact_query_answer,
     build_profile_fact_query_context,
+    build_profile_identity_summary_answer,
     build_profile_identity_summary_context,
     detect_profile_fact_observation,
     detect_profile_fact_query,
@@ -2803,6 +2804,82 @@ def build_researcher_reply(
             config_path=None,
             attachment_context=attachment_context,
             routing_decision="memory_profile_fact_query",
+            active_chip_key=active_chip_key,
+            active_chip_task_type=active_chip_task_type,
+            active_chip_evaluate_used=active_chip_evaluate_used,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+    if (
+        detected_profile_fact_query is not None
+        and detected_profile_fact_query.query_kind == "identity_summary"
+    ):
+        direct_identity_inspection = inspect_human_memory_in_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            actor_id="researcher_bridge",
+        )
+        direct_identity_records = []
+        if not direct_identity_inspection.read_result.abstained and direct_identity_inspection.read_result.records:
+            direct_identity_records = [
+                record
+                for record in direct_identity_inspection.read_result.records
+                if str(record.get("predicate") or "").startswith(
+                    str(detected_profile_fact_query.predicate_prefix or "")
+                )
+            ]
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_profile_identity",
+            routing_decision="memory_profile_identity_summary",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = build_profile_identity_summary_answer(records=direct_identity_records)
+        evidence_summary = (
+            "status=memory_profile_identity "
+            f"record_count={len(direct_identity_records)}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered an identity summary query directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_profile_identity_summary",
+            facts=_bridge_event_facts(
+                routing_decision="memory_profile_identity_summary",
+                bridge_mode="memory_profile_identity",
+                evidence_summary=evidence_summary,
+                active_chip_key=active_chip_key,
+                active_chip_task_type=active_chip_task_type,
+                active_chip_evaluate_used=active_chip_evaluate_used,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "fact_name": detected_profile_fact_query.fact_name,
+                    "predicate_prefix": detected_profile_fact_query.predicate_prefix,
+                    "record_count": len(direct_identity_records),
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_profile_identity",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_profile_identity_summary",
             active_chip_key=active_chip_key,
             active_chip_task_type=active_chip_task_type,
             active_chip_evaluate_used=active_chip_evaluate_used,

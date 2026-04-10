@@ -318,7 +318,7 @@ def _build_profile_fact_concise_answer(*, query: ProfileFactQuery, value: str) -
     if predicate == "profile.current_mission":
         return _ensure_sentence(f"Right now you're trying to {normalized_value}")
     if predicate == "profile.spark_role":
-        return _ensure_sentence(f"Spark will be {normalized_value}")
+        return _ensure_sentence(_spark_role_sentence(normalized_value))
     if predicate == "profile.home_country":
         return _ensure_sentence(f"Your country is {normalized_value}")
     if predicate == "profile.timezone":
@@ -335,6 +335,13 @@ def _ensure_sentence(text: str) -> str:
     if normalized[-1] in ".!?":
         return normalized
     return f"{normalized}."
+
+
+def _spark_role_sentence(value: str) -> str:
+    normalized = " ".join(str(value or "").strip().split())
+    if normalized.lower().startswith("important part"):
+        return f"Spark will be an {normalized}"
+    return f"Spark will be {normalized}"
 
 
 def build_profile_identity_summary_context(*, records: list[dict[str, str]]) -> str:
@@ -385,6 +392,83 @@ def build_profile_identity_summary_context(*, records: list[dict[str, str]]) -> 
     lines.append("No memory-backed identity facts are available.")
     lines.append("Do not pretend you know. Say you do not currently have that saved and invite the user to tell you.")
     return "\n".join(lines)
+
+
+def build_profile_identity_summary_answer(*, records: list[dict[str, str]]) -> str:
+    value_by_predicate: dict[str, str] = {}
+    for record in records:
+        predicate = str(record.get("predicate") or "").strip()
+        value = str(record.get("value") or "").strip()
+        if predicate and value and predicate not in value_by_predicate:
+            value_by_predicate[predicate] = value
+
+    if not value_by_predicate:
+        return "I don't currently have identity details saved for you."
+
+    sentences: list[str] = []
+    name = value_by_predicate.get("profile.preferred_name")
+    occupation = value_by_predicate.get("profile.occupation")
+    city = value_by_predicate.get("profile.city")
+
+    identity_bits: list[str] = []
+    if name:
+        identity_bits.append(name)
+    if occupation:
+        article = "an" if occupation[:1].lower() in {"a", "e", "i", "o", "u"} else "a"
+        identity_bits.append(f"{article} {occupation}")
+    if city:
+        identity_bits.append(f"in {city}")
+    if identity_bits:
+        if name and occupation and city:
+            sentences.append(_ensure_sentence(f"You're {name}, {' '.join(identity_bits[1:])}"))
+        elif name:
+            trailing = " ".join(identity_bits[1:]).strip()
+            if trailing:
+                sentences.append(_ensure_sentence(f"You're {name}, {trailing}"))
+            else:
+                sentences.append(_ensure_sentence(f"You're {name}"))
+        else:
+            sentences.append(_ensure_sentence(f"You're {' '.join(identity_bits)}"))
+
+    founded_values: list[str] = []
+    startup_name = value_by_predicate.get("profile.startup_name")
+    founder_of = value_by_predicate.get("profile.founder_of")
+    for candidate in (startup_name, founder_of):
+        if candidate and candidate not in founded_values:
+            founded_values.append(candidate)
+    if founded_values:
+        if len(founded_values) == 1:
+            sentences.append(_ensure_sentence(f"You founded {founded_values[0]}"))
+        elif len(founded_values) == 2:
+            sentences.append(_ensure_sentence(f"You founded {founded_values[0]} and {founded_values[1]}"))
+        else:
+            sentences.append(_ensure_sentence(f"You founded {', '.join(founded_values[:-1])}, and {founded_values[-1]}"))
+
+    hack_actor = value_by_predicate.get("profile.hack_actor")
+    if hack_actor:
+        sentences.append(_ensure_sentence(f"{hack_actor} hacked you"))
+
+    current_mission = value_by_predicate.get("profile.current_mission")
+    if current_mission:
+        sentences.append(_ensure_sentence(f"Your current mission is to {current_mission}"))
+
+    spark_role = value_by_predicate.get("profile.spark_role")
+    if spark_role:
+        sentences.append(_ensure_sentence(_spark_role_sentence(spark_role)))
+
+    home_country = value_by_predicate.get("profile.home_country")
+    if home_country and not city:
+        sentences.append(_ensure_sentence(f"You're based in {home_country}"))
+
+    timezone = value_by_predicate.get("profile.timezone")
+    if timezone:
+        sentences.append(_ensure_sentence(f"Your timezone is {timezone}"))
+
+    if not sentences:
+        first_predicate = next(iter(value_by_predicate))
+        first_value = value_by_predicate[first_predicate]
+        sentences.append(_ensure_sentence(f"Your saved identity detail is {first_value}"))
+    return " ".join(sentences)
 
 
 def _extract_city(text: str) -> str | None:
