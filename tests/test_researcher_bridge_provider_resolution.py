@@ -1271,6 +1271,59 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual((bridge_events[0]["facts_json"] or {}).get("read_method"), "explain_answer")
         self.assertTrue(bool((bridge_events[0]["facts_json"] or {}).get("explanation_found")))
 
+    def test_build_researcher_reply_answers_profile_fact_explanation_directly_from_memory(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        explanation_result = SimpleNamespace(
+            read_result=SimpleNamespace(
+                abstained=False,
+                records=[{"answer": "Dubai"}],
+                answer_explanation={
+                    "answer": "Dubai",
+                    "evidence": [{"text": "I moved to Dubai."}],
+                },
+            )
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.explain_memory_answer_in_memory",
+            return_value=explanation_result,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for direct memory explanation replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for direct memory explanation replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._load_recent_conversation_context",
+            side_effect=AssertionError("recent conversation context should not run for direct memory explanation replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.build_system_registry_prompt_context",
+            side_effect=AssertionError("system registry context should not run for direct memory explanation replies"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-city-explanation-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-city-explanation-query",
+                channel_kind="telegram",
+                user_message="How do you know where I live?",
+            )
+
+        self.assertEqual(
+            result.reply_text,
+            'Because I have a saved memory record from when you said: "I moved to Dubai." You live in Dubai.',
+        )
+        self.assertEqual(result.mode, "memory_profile_fact_explanation")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_explanation")
+        bridge_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(bridge_events)
+        self.assertEqual((bridge_events[0]["facts_json"] or {}).get("read_method"), "explain_answer")
+        self.assertTrue(bool((bridge_events[0]["facts_json"] or {}).get("explanation_found")))
+
     def test_build_researcher_reply_preserves_uncertainty_for_missing_city_query_fact(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)

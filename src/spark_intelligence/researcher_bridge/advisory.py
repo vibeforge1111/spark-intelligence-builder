@@ -40,6 +40,7 @@ from spark_intelligence.memory import (
     write_profile_fact_to_memory,
 )
 from spark_intelligence.memory.profile_facts import (
+    build_profile_fact_explanation_answer,
     build_profile_fact_observation_answer,
     build_profile_fact_query_answer,
     build_profile_fact_query_context,
@@ -2666,6 +2667,104 @@ def build_researcher_reply(
             config_path=None,
             attachment_context=attachment_context,
             routing_decision="memory_profile_fact_observation",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+
+    if (
+        detected_profile_fact_query is not None
+        and detected_profile_fact_query.query_kind == "fact_explanation"
+    ):
+        memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
+        direct_fact_question = str(user_message or "").strip() or f"How do you know my {detected_profile_fact_query.label}?"
+        direct_fact_read_method = "explain_answer"
+        explanation_payload: dict[str, Any] = {}
+        if str(detected_profile_fact_query.predicate or "") == "profile.startup_name":
+            founder_explanation = explain_memory_answer_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                subject=memory_subject,
+                predicate="profile.founder_of",
+                question=direct_fact_question,
+                actor_id="researcher_bridge",
+            )
+            explanation_payload = founder_explanation.read_result.answer_explanation or {}
+            if founder_explanation.read_result.abstained or not founder_explanation.read_result.records:
+                direct_fact_read_method = "explain_answer"
+            else:
+                direct_fact_read_method = "explain_answer(founder_of)"
+        else:
+            direct_fact_explanation = explain_memory_answer_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                subject=memory_subject,
+                predicate=str(detected_profile_fact_query.predicate or ""),
+                question=direct_fact_question,
+                actor_id="researcher_bridge",
+            )
+            explanation_payload = direct_fact_explanation.read_result.answer_explanation or {}
+
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_profile_fact_explanation",
+            routing_decision="memory_profile_fact_explanation",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = build_profile_fact_explanation_answer(
+            query=detected_profile_fact_query,
+            explanation=explanation_payload,
+        )
+        evidence_summary = (
+            "status=memory_profile_fact_explanation "
+            f"predicate={detected_profile_fact_query.predicate or 'unknown'} "
+            f"explanation_found={'yes' if bool(explanation_payload) else 'no'} "
+            f"read_method={direct_fact_read_method}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered a profile fact explanation query directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_profile_fact_explanation",
+            facts=_bridge_event_facts(
+                routing_decision="memory_profile_fact_explanation",
+                bridge_mode="memory_profile_fact_explanation",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "fact_name": detected_profile_fact_query.fact_name,
+                    "predicate": detected_profile_fact_query.predicate,
+                    "label": detected_profile_fact_query.label,
+                    "read_method": direct_fact_read_method,
+                    "explanation_found": bool(explanation_payload),
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_profile_fact_explanation",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_profile_fact_explanation",
             active_chip_key=None,
             active_chip_task_type=None,
             active_chip_evaluate_used=False,

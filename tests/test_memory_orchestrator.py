@@ -19,6 +19,7 @@ from spark_intelligence.memory import (
     write_profile_fact_to_memory,
 )
 from spark_intelligence.memory.profile_facts import (
+    build_profile_fact_explanation_answer,
     build_profile_fact_observation_answer,
     build_profile_fact_query_answer,
     build_profile_identity_summary_answer,
@@ -599,6 +600,18 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(remember_query.query_kind, "identity_summary")
         self.assertEqual(remember_query.predicate_prefix, "profile.")
 
+        city_explanation_query = detect_profile_fact_query("How do you know where I live?")
+        self.assertIsNotNone(city_explanation_query)
+        assert city_explanation_query is not None
+        self.assertEqual(city_explanation_query.predicate, "profile.city")
+        self.assertEqual(city_explanation_query.query_kind, "fact_explanation")
+
+        startup_explanation_query = detect_profile_fact_query("Why do you think you know my startup?")
+        self.assertIsNotNone(startup_explanation_query)
+        assert startup_explanation_query is not None
+        self.assertEqual(startup_explanation_query.predicate, "profile.startup_name")
+        self.assertEqual(startup_explanation_query.query_kind, "fact_explanation")
+
     def test_profile_fact_answers_cover_founder_occupation_and_clean_observation_wording(self) -> None:
         founder_query = detect_profile_fact_query("What company did I found?")
         self.assertIsNotNone(founder_query)
@@ -724,6 +737,36 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertIn("Expected concise answer: Spark will be an important part of the rebuild.", context)
         self.assertIn("Answer in one sentence only.", context)
         self.assertIn("Do not add broader narrative", context)
+
+    def test_build_profile_fact_explanation_answer_uses_saved_evidence_text(self) -> None:
+        query = detect_profile_fact_query("How do you know where I live?")
+        self.assertIsNotNone(query)
+        assert query is not None
+
+        answer = build_profile_fact_explanation_answer(
+            query=query,
+            explanation={
+                "answer": "Dubai",
+                "evidence": [{"text": "I moved to Dubai."}],
+            },
+        )
+
+        self.assertEqual(
+            answer,
+            'Because I have a saved memory record from when you said: "I moved to Dubai." You live in Dubai.',
+        )
+
+    def test_build_profile_fact_explanation_answer_preserves_uncertainty_without_supported_explanation(self) -> None:
+        query = detect_profile_fact_query("How do you know where I live?")
+        self.assertIsNotNone(query)
+        assert query is not None
+
+        answer = build_profile_fact_explanation_answer(
+            query=query,
+            explanation=None,
+        )
+
+        self.assertEqual(answer, "I don't currently have a supported memory explanation for that.")
 
     def test_memory_sdk_smoke_test_runs_real_domain_chip_roundtrip(self) -> None:
         result = run_memory_sdk_smoke_test(
