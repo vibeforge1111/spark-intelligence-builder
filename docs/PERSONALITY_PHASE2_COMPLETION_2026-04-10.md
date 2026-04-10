@@ -64,7 +64,8 @@ All eight locked decisions from §11 of `PERSONALITY_ONBOARDING_V2_DESIGN_2026-0
 | Q-G: Show guardrails uniformly across all 3 persona modes | P2-10 | All three persona completion blocks transition to `awaiting_guardrails_ack` before `completed` |
 | Q-H: Run once for everyone, one-tap skip | P2-12, P2-13 | `awaiting_reonboard_consent` + `agent_has_reonboard_candidate` entry gate |
 
-Deferred follow-ups Q-I / Q-J / Q-K are **not** implemented (per the plan's non-goals).
+Deferred follow-ups Q-I / Q-J / Q-K were reviewed post-Phase 2; see the "Follow-ups"
+section below for resolution. All three closed without additional code changes.
 
 ## Findings and deviations
 
@@ -110,7 +111,8 @@ The plan's non-goals were all respected:
   `canonical_state.external_system == "spark_swarm"` guard at the top of
   `maybe_handle_agent_persona_onboarding_turn`.
 - No new traits beyond the existing 5 (warmth, directness, playfulness, pacing, assertiveness).
-- Q-I / Q-J / Q-K remain deferred.
+- Q-I / Q-J / Q-K: reviewed post-Phase 2 and resolved without further code changes
+  (see Follow-ups section).
 
 ## Test coverage summary
 
@@ -131,15 +133,43 @@ green on `62e15fe`. Key additions per step:
 No tests were disabled or skipped. No flakes observed across the ~20 full-suite runs during
 Phase 2.
 
-## Follow-ups (out of scope for Phase 2)
+## Follow-ups (reviewed 2026-04-10)
 
-The plan explicitly defers these to future phases:
+The design doc's §11 (`docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md:399-401`)
+recorded three deferred questions opened by the Q-A..Q-H locked decisions. All three were
+reviewed post-Phase 2 and closed without additional code changes:
 
-1. **Q-I**: surfacing persona provenance to users (e.g. "set via guided mode on 2026-04-11").
-2. **Q-J non-default**: letting `/cancel` also wipe the persona profile.
-3. **Q-K**: exposing the v2 state machine to surfaces other than Telegram.
+1. **Q-I** — Should `awaiting_user_address` offer an explicit "don't address me by name"
+   option, or does leaving it blank cover that?
+   **Resolution: already handled by Q-D + P2-5.** The `skip`/empty path at
+   `awaiting_user_address` stores NULL, and Q-D's `format_address_aware_line` helper
+   strips the salutation entirely when the address is NULL. No new tokens or prompt
+   changes required.
 
-The release-branch plan doc (`docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md` on
-`release/personality-decision-provenance-2026-04-10`, PR #12) should be updated to mark
-P2-7..P2-14 complete with the SHAs listed in the table above as part of that PR's merge flow.
-This completion report will live on `main` regardless of when PR #12 merges.
+2. **Q-J** — When `/cancel` wipes the agent name, do we also wipe
+   `agent_persona_profiles` (rules, traits, summary), or just the name + onboarding state?
+   **Resolution: keep the current default.** P2-2's `cancel_agent_onboarding` and
+   P2-11's `/cancel` gate already implement the "name + onboarding state only" wipe. The
+   persona profile survives `/cancel`, matching the design doc's "user can `/cancel` to
+   rename but keep the vibe" principle. No code change.
+
+3. **Q-K** — For the Q-H reonboard offer, how is "has a saved persona" detected?
+   **Resolution: resolved during Phase 2 by P2-13.** The `agent_has_reonboard_candidate`
+   helper calls `load_agent_persona_profile` and returns `bool(existing_persona)`,
+   selecting "a persona row exists for the agent" as the detection method.
+
+### Correction note
+
+An earlier revision of this completion report (commit `8673ad7`) listed Q-I and Q-K with
+incorrect text — Q-I was described as "surfacing persona provenance to users" and Q-K
+as "exposing the v2 state machine to surfaces other than Telegram". Both were author
+errors; the canonical text is in §11 of `docs/PERSONALITY_ONBOARDING_V2_DESIGN_2026-04-10.md`.
+Q-J was correctly described. This revision corrects the record.
+
+### Plan doc status
+
+The plan doc (`docs/PERSONALITY_PHASE2_PLAN_2026-04-10.md`) was imported to `main` via
+cherry-pick `faeb641` (from the release branch's `a74aebc`) and normalized to LF in
+`f92a598`. PR #12 was closed manually on GitHub after the cherry-pick landed, since the
+cherry-pick SHAs diverge from the release-branch SHAs and GitHub does not auto-close in
+that case. Both the plan doc and this completion report now live on `main`.
