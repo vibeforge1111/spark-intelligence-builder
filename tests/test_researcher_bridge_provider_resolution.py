@@ -1437,6 +1437,70 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertTrue(bridge_events)
         self.assertEqual((bridge_events[0]["facts_json"] or {}).get("read_method"), "explain_answer")
 
+    def test_build_researcher_reply_prefers_exact_startup_explanation_over_founder_fallback(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        startup_result = SimpleNamespace(
+            read_result=SimpleNamespace(
+                abstained=False,
+                records=[{"answer": "Seedify"}],
+                answer_explanation={
+                    "answer": "Seedify",
+                    "evidence": [{"text": "My startup is Seedify."}],
+                },
+            )
+        )
+        founder_result = SimpleNamespace(
+            read_result=SimpleNamespace(
+                abstained=False,
+                records=[{"answer": "Spark Swarm"}],
+                answer_explanation={
+                    "answer": "Spark Swarm",
+                    "evidence": [{"text": "I am the founder of Spark Swarm."}],
+                },
+            )
+        )
+
+        def _explain_side_effect(*, predicate: str, **kwargs):
+            if predicate == "profile.startup_name":
+                return startup_result
+            if predicate == "profile.founder_of":
+                return founder_result
+            raise AssertionError(f"unexpected predicate {predicate}")
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.explain_memory_answer_in_memory",
+            side_effect=_explain_side_effect,
+        ) as explain_memory, patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for direct memory explanation replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for direct memory explanation replies"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-startup-explanation-prefer-exact",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-startup-explanation-prefer-exact",
+                channel_kind="telegram",
+                user_message="How do you know my startup?",
+            )
+
+        self.assertEqual(
+            result.reply_text,
+            'Because I have a saved memory record from when you said: "My startup is Seedify." You created Seedify.',
+        )
+        self.assertEqual(explain_memory.call_count, 1)
+        self.assertEqual(explain_memory.call_args.kwargs["predicate"], "profile.startup_name")
+        bridge_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(bridge_events)
+        self.assertEqual((bridge_events[0]["facts_json"] or {}).get("read_method"), "explain_answer")
+
     def test_build_researcher_reply_preserves_uncertainty_for_missing_city_query_fact(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)

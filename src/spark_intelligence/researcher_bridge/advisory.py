@@ -2683,28 +2683,27 @@ def build_researcher_reply(
         direct_fact_read_method = "explain_answer"
         explanation_payload: dict[str, Any] = {}
         if str(detected_profile_fact_query.predicate or "") == "profile.startup_name":
-            founder_explanation = explain_memory_answer_in_memory(
+            direct_fact_explanation = explain_memory_answer_in_memory(
                 config_manager=config_manager,
                 state_db=state_db,
                 subject=memory_subject,
-                predicate="profile.founder_of",
+                predicate="profile.startup_name",
                 question=direct_fact_question,
                 actor_id="researcher_bridge",
             )
-            explanation_payload = founder_explanation.read_result.answer_explanation or {}
-            if founder_explanation.read_result.abstained or not founder_explanation.read_result.records:
-                direct_fact_explanation = explain_memory_answer_in_memory(
+            explanation_payload = direct_fact_explanation.read_result.answer_explanation or {}
+            if direct_fact_explanation.read_result.abstained or not direct_fact_explanation.read_result.records:
+                founder_explanation = explain_memory_answer_in_memory(
                     config_manager=config_manager,
                     state_db=state_db,
                     subject=memory_subject,
-                    predicate="profile.startup_name",
+                    predicate="profile.founder_of",
                     question=direct_fact_question,
                     actor_id="researcher_bridge",
                 )
-                explanation_payload = direct_fact_explanation.read_result.answer_explanation or {}
-                direct_fact_read_method = "explain_answer"
-            else:
-                direct_fact_read_method = "explain_answer(founder_of)"
+                explanation_payload = founder_explanation.read_result.answer_explanation or {}
+                if not founder_explanation.read_result.abstained and founder_explanation.read_result.records:
+                    direct_fact_read_method = "explain_answer(founder_of)"
         else:
             direct_fact_explanation = explain_memory_answer_in_memory(
                 config_manager=config_manager,
