@@ -332,6 +332,7 @@ def run_telegram_memory_regression(
     write_path: str | Path | None = None,
     case_ids: list[str] | None = None,
     categories: list[str] | None = None,
+    cases: list[TelegramMemoryRegressionCase] | tuple[TelegramMemoryRegressionCase, ...] | None = None,
 ) -> TelegramMemoryRegressionResult:
     from spark_intelligence.gateway.runtime import gateway_ask_telegram
 
@@ -351,7 +352,11 @@ def run_telegram_memory_regression(
     selected_chat_id = str(chat_id or "").strip() or None
     requested_case_ids = [str(item).strip() for item in (case_ids or []) if str(item).strip()]
     requested_categories = [str(item).strip() for item in (categories or []) if str(item).strip()]
-    selected_cases = _select_regression_cases(case_ids=requested_case_ids, categories=requested_categories)
+    selected_cases = _select_regression_cases(
+        case_ids=requested_case_ids,
+        categories=requested_categories,
+        cases_source=cases,
+    )
     selection_summary = _selection_summary(selected_cases)
     filter_summary = {
         "requested_case_ids": requested_case_ids,
@@ -674,13 +679,15 @@ def _select_regression_cases(
     *,
     case_ids: list[str] | None,
     categories: list[str] | None,
+    cases_source: list[TelegramMemoryRegressionCase] | tuple[TelegramMemoryRegressionCase, ...] | None = None,
 ) -> tuple[TelegramMemoryRegressionCase, ...]:
     requested_case_ids = {str(item).strip() for item in (case_ids or []) if str(item).strip()}
     requested_categories = {str(item).strip() for item in (categories or []) if str(item).strip()}
+    available_cases = tuple(cases_source or DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES)
     if not requested_case_ids and not requested_categories:
-        return DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES
+        return available_cases
     selected: list[TelegramMemoryRegressionCase] = []
-    for case in DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES:
+    for case in available_cases:
         if requested_case_ids and case.case_id not in requested_case_ids:
             continue
         if requested_categories and case.category not in requested_categories:

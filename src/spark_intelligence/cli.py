@@ -1672,11 +1672,11 @@ def build_parser() -> argparse.ArgumentParser:
     memory_architecture_benchmark_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_architecture_soak_parser = memory_subparsers.add_parser(
         "soak-architectures",
-        help="Run the live Telegram regression repeatedly and aggregate three-way architecture comparison results",
+        help="Run a rotating Telegram benchmark-pack suite and aggregate three-way architecture comparison results",
     )
     memory_architecture_soak_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     memory_architecture_soak_parser.add_argument("--output-dir", help="Soak artifact output directory")
-    memory_architecture_soak_parser.add_argument("--runs", type=int, default=50, help="Number of full live regression runs to execute")
+    memory_architecture_soak_parser.add_argument("--runs", type=int, default=50, help="Number of benchmark-pack runs to execute")
     memory_architecture_soak_parser.add_argument("--sleep-seconds", type=float, default=0.0, help="Optional delay between runs")
     memory_architecture_soak_parser.add_argument("--user-id", help="Explicit Telegram user id to simulate")
     memory_architecture_soak_parser.add_argument("--username", help="Telegram username to simulate")
