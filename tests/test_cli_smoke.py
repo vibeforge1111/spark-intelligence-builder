@@ -3015,6 +3015,21 @@ class CliSmokeTests(SparkTestCase):
         self.assertIn("Doctor status: degraded", doctor_stdout)
         self.assertIn("[fail] telegram-runtime: poll_failures=1", doctor_stdout)
 
+    def test_doctor_degrades_when_state_integrity_check_fails(self) -> None:
+        with patch(
+            "spark_intelligence.doctor.checks._sqlite_integrity_health",
+            return_value=(False, "database disk image is malformed"),
+        ):
+            doctor_exit, doctor_stdout, doctor_stderr = self.run_cli(
+                "doctor",
+                "--home",
+                str(self.home),
+            )
+
+        self.assertEqual(doctor_exit, 1, doctor_stderr)
+        self.assertIn("Doctor status: degraded", doctor_stdout)
+        self.assertIn("[fail] state-integrity: database disk image is malformed", doctor_stdout)
+
     def test_gateway_status_is_not_ready_when_telegram_is_configured_without_provider(self) -> None:
         self.add_telegram_channel()
 

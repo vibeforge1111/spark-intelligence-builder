@@ -70,6 +70,17 @@ class DoctorReport:
         ]
 
 
+def _sqlite_integrity_health(state_db: StateDB) -> tuple[bool, str]:
+    with state_db.connect() as conn:
+        rows = conn.execute("PRAGMA quick_check").fetchall()
+    normalized_rows = [str(row[0]).strip() for row in rows if row and str(row[0]).strip()]
+    if not normalized_rows:
+        return False, "quick_check returned no result"
+    if normalized_rows == ["ok"]:
+        return True, "quick_check ok"
+    return False, "; ".join(normalized_rows)
+
+
 def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport:
     checks: list[DoctorCheck] = []
     paths = config_manager.paths
@@ -107,6 +118,12 @@ def run_doctor(config_manager: ConfigManager, state_db: StateDB) -> DoctorReport
         checks.append(DoctorCheck("state-schema", True, "schema initialized"))
     except sqlite3.Error as exc:
         checks.append(DoctorCheck("state-schema", False, str(exc)))
+
+    try:
+        integrity_ok, integrity_detail = _sqlite_integrity_health(state_db)
+        checks.append(DoctorCheck("state-integrity", integrity_ok, integrity_detail))
+    except sqlite3.Error as exc:
+        checks.append(DoctorCheck("state-integrity", False, str(exc)))
 
     try:
         with state_db.connect() as conn:
