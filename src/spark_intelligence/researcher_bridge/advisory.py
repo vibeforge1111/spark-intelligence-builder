@@ -30,9 +30,17 @@ from spark_intelligence.browser.service import (
     build_browser_tab_wait_payload,
 )
 from spark_intelligence.config.loader import ConfigManager
-from spark_intelligence.memory import lookup_current_state_in_memory, write_profile_fact_to_memory
+from spark_intelligence.memory import (
+    inspect_human_memory_in_memory,
+    lookup_current_state_in_memory,
+    retrieve_memory_evidence_in_memory,
+    write_profile_fact_to_memory,
+)
 from spark_intelligence.memory.profile_facts import (
+    build_profile_fact_observation_answer,
+    build_profile_fact_query_answer,
     build_profile_fact_query_context,
+    build_profile_identity_summary_answer,
     detect_profile_fact_observation,
     detect_profile_fact_query,
 )
@@ -118,6 +126,57 @@ class ResearcherBridgeResult:
     active_chip_evaluate_used: bool = False
     output_keepability: str = "ephemeral_context"
     promotion_disposition: str = "not_promotable"
+
+
+def _profile_fact_query_related_predicates(predicate: str | None) -> tuple[str, ...]:
+    normalized = str(predicate or "").strip()
+    if normalized == "profile.startup_name":
+        return ("profile.founder_of",)
+    return ()
+
+
+def _profile_fact_record_timestamp(record: dict[str, Any]) -> datetime:
+    raw = str(record.get("timestamp") or "").strip()
+    if not raw:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _profile_fact_record_turn_key(record: dict[str, Any]) -> str:
+    turn_ids = record.get("turn_ids")
+    if isinstance(turn_ids, list) and turn_ids:
+        return str(turn_ids[-1] or "").strip()
+    return ""
+
+
+def _select_profile_fact_query_value(
+    *,
+    predicate: str | None,
+    primary_records: list[dict[str, Any]],
+    related_records: list[dict[str, Any]],
+) -> str | None:
+    target_predicate = str(predicate or "").strip()
+    candidates: list[tuple[datetime, str, int, str]] = []
+    for record in [*related_records, *primary_records]:
+        value = str(record.get("value") or "").strip()
+        if not value:
+            continue
+        record_predicate = str(record.get("predicate") or "").strip()
+        candidates.append(
+            (
+                _profile_fact_record_timestamp(record),
+                _profile_fact_record_turn_key(record),
+                1 if record_predicate == target_predicate else 0,
+                value,
+            )
+        )
+    if not candidates:
+        return None
+    candidates.sort()
+    return candidates[-1][3]
 
 
 @dataclass
@@ -2574,6 +2633,279 @@ def build_researcher_reply(
             },
         )
 
+    if detected_profile_fact is not None:
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_profile_fact_update",
+            routing_decision="memory_profile_fact_observation",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = build_profile_fact_observation_answer(observation=detected_profile_fact)
+        evidence_summary = (
+            "status=memory_profile_fact_update "
+            f"predicate={detected_profile_fact.predicate or 'unknown'}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge acknowledged a profile fact update directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_profile_fact_observation",
+            facts=_bridge_event_facts(
+                routing_decision="memory_profile_fact_observation",
+                bridge_mode="memory_profile_fact_update",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "fact_name": detected_profile_fact.fact_name,
+                    "predicate": detected_profile_fact.predicate,
+                    "value": detected_profile_fact.value,
+                    "operation": detected_profile_fact.operation,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_profile_fact_update",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_profile_fact_observation",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+
+    if (
+        detected_profile_fact_query is not None
+        and detected_profile_fact_query.query_kind == "single_fact"
+    ):
+        memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
+        related_predicates = _profile_fact_query_related_predicates(detected_profile_fact_query.predicate)
+        primary_records: list[dict[str, Any]] = []
+        related_records: list[dict[str, Any]] = []
+        if related_predicates:
+            inspection = inspect_human_memory_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                human_id=human_id,
+                actor_id="researcher_bridge",
+            )
+            if not inspection.read_result.abstained and inspection.read_result.records:
+                relevant_predicates = {
+                    str(detected_profile_fact_query.predicate or "").strip(),
+                    *related_predicates,
+                }
+                for record in inspection.read_result.records:
+                    record_predicate = str(record.get("predicate") or "").strip()
+                    if record_predicate not in relevant_predicates:
+                        continue
+                    if record_predicate == str(detected_profile_fact_query.predicate or "").strip():
+                        primary_records.append(record)
+                    else:
+                        related_records.append(record)
+        else:
+            direct_fact_lookup = lookup_current_state_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                subject=memory_subject,
+                predicate=str(detected_profile_fact_query.predicate or ""),
+                actor_id="researcher_bridge",
+            )
+            if not direct_fact_lookup.read_result.abstained and direct_fact_lookup.read_result.records:
+                primary_records = [
+                    record
+                    for record in direct_fact_lookup.read_result.records
+                    if str(record.get("predicate") or "").strip()
+                ]
+        direct_fact_value = _select_profile_fact_query_value(
+            predicate=detected_profile_fact_query.predicate,
+            primary_records=primary_records,
+            related_records=related_records,
+        )
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_profile_fact",
+            routing_decision="memory_profile_fact_query",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = build_profile_fact_query_answer(
+            query=detected_profile_fact_query,
+            value=direct_fact_value,
+        )
+        evidence_summary = (
+            "status=memory_profile_fact "
+            f"predicate={detected_profile_fact_query.predicate or 'unknown'} "
+            f"value_found={'yes' if direct_fact_value else 'no'}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered a single-fact profile query directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_profile_fact_query",
+            facts=_bridge_event_facts(
+                routing_decision="memory_profile_fact_query",
+                bridge_mode="memory_profile_fact",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "fact_name": detected_profile_fact_query.fact_name,
+                    "predicate": detected_profile_fact_query.predicate,
+                    "label": detected_profile_fact_query.label,
+                    "value_found": bool(direct_fact_value),
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_profile_fact",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_profile_fact_query",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+    if (
+        detected_profile_fact_query is not None
+        and detected_profile_fact_query.query_kind == "identity_summary"
+    ):
+        memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
+        direct_identity_inspection = inspect_human_memory_in_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            actor_id="researcher_bridge",
+        )
+        direct_identity_records = []
+        if not direct_identity_inspection.read_result.abstained and direct_identity_inspection.read_result.records:
+            direct_identity_records = [
+                record
+                for record in direct_identity_inspection.read_result.records
+                if str(record.get("predicate") or "").startswith(
+                    str(detected_profile_fact_query.predicate_prefix or "")
+                )
+            ]
+        identity_evidence = retrieve_memory_evidence_in_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            query=str(user_message or "").strip() or "What do you remember about me?",
+            subject=memory_subject,
+            limit=8,
+            actor_id="researcher_bridge",
+        )
+        identity_evidence_records = []
+        if not identity_evidence.read_result.abstained and identity_evidence.read_result.records:
+            identity_evidence_records = [
+                record
+                for record in identity_evidence.read_result.records
+                if str(record.get("predicate") or "").startswith(
+                    str(detected_profile_fact_query.predicate_prefix or "")
+                )
+                and str(record.get("value") or "").strip()
+            ]
+        combined_identity_records = [
+            *identity_evidence_records,
+            *direct_identity_records,
+        ]
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_profile_identity",
+            routing_decision="memory_profile_identity_summary",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = build_profile_identity_summary_answer(records=combined_identity_records)
+        evidence_summary = (
+            "status=memory_profile_identity "
+            f"record_count={len(combined_identity_records)} "
+            f"inspection_records={len(direct_identity_records)} "
+            f"evidence_records={len(identity_evidence_records)}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered an identity summary query directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_profile_identity_summary",
+            facts=_bridge_event_facts(
+                routing_decision="memory_profile_identity_summary",
+                bridge_mode="memory_profile_identity",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "fact_name": detected_profile_fact_query.fact_name,
+                    "predicate_prefix": detected_profile_fact_query.predicate_prefix,
+                    "record_count": len(combined_identity_records),
+                    "inspection_record_count": len(direct_identity_records),
+                    "evidence_record_count": len(identity_evidence_records),
+                    "read_method": "get_current_state+retrieve_evidence",
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_profile_identity",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_profile_identity_summary",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
     recent_conversation_context = _load_recent_conversation_context(
         state_db=state_db,
         session_id=session_id,

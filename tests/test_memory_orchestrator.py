@@ -9,10 +9,13 @@ from spark_intelligence.memory import orchestrator as memory_orchestrator
 from spark_intelligence.memory import (
     build_sdk_maintenance_payload,
     build_shadow_replay_payload,
+    explain_memory_answer_in_memory,
     export_shadow_replay_batch,
     inspect_human_memory_in_memory,
     lookup_current_state_in_memory,
     run_memory_sdk_smoke_test,
+    retrieve_memory_evidence_in_memory,
+    retrieve_memory_events_in_memory,
     write_profile_fact_to_memory,
 )
 from spark_intelligence.memory.profile_facts import detect_profile_fact_observation
@@ -34,6 +37,9 @@ class _FakeMemoryClient:
     def __init__(self) -> None:
         self.observation_calls: list[dict[str, object]] = []
         self.current_state_calls: list[dict[str, object]] = []
+        self.explain_answer_calls: list[dict[str, object]] = []
+        self.retrieve_evidence_calls: list[dict[str, object]] = []
+        self.retrieve_events_calls: list[dict[str, object]] = []
 
     def write_observation(self, **payload):
         self.observation_calls.append(payload)
@@ -59,6 +65,58 @@ class _FakeMemoryClient:
             "provenance": [{"memory_role": "current_state", "source": "fake_sdk"}],
             "retrieval_trace": {"trace_id": "mem-trace-read"},
             "answer_explanation": {"method": "get_current_state"},
+        }
+
+    def explain_answer(self, **payload):
+        self.explain_answer_calls.append(payload)
+        return {
+            "status": "supported",
+            "memory_role": "current_state",
+            "records": [{"answer": "Dubai"}],
+            "provenance": [{"memory_role": "current_state", "source": "fake_sdk"}],
+            "retrieval_trace": {"trace_id": "mem-trace-explain"},
+            "answer_explanation": {
+                "answer": "Dubai",
+                "explanation": "Resolved profile.city for human:test to Dubai from current_state.",
+                "evidence": [{"memory_role": "current_state", "predicate": "profile.city", "value": "Dubai"}],
+                "events": [{"memory_role": "event", "predicate": "profile.city", "value": "Dubai"}],
+            },
+        }
+
+    def retrieve_evidence(self, **payload):
+        self.retrieve_evidence_calls.append(payload)
+        return {
+            "status": "supported",
+            "memory_role": "current_state",
+            "records": [
+                {
+                    "memory_role": "current_state",
+                    "subject": payload.get("subject"),
+                    "predicate": payload.get("predicate"),
+                    "value": "Dubai",
+                    "text": "I moved to Dubai.",
+                }
+            ],
+            "provenance": [{"memory_role": "current_state", "source": "fake_sdk"}],
+            "retrieval_trace": {"trace_id": "mem-trace-evidence"},
+        }
+
+    def retrieve_events(self, **payload):
+        self.retrieve_events_calls.append(payload)
+        return {
+            "status": "supported",
+            "memory_role": "event",
+            "records": [
+                {
+                    "memory_role": "event",
+                    "subject": payload.get("subject"),
+                    "predicate": payload.get("predicate"),
+                    "value": "Dubai",
+                    "text": "user said they moved to Dubai",
+                }
+            ],
+            "provenance": [{"memory_role": "event", "source": "fake_sdk"}],
+            "retrieval_trace": {"trace_id": "mem-trace-events"},
         }
 
 
@@ -431,6 +489,101 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertTrue(result.read_result.records)
         self.assertEqual(result.read_result.records[0]["predicate"], "system.memory.lookup")
         self.assertEqual(result.read_result.records[0]["value"], "ok")
+
+    def test_explain_memory_answer_in_memory_returns_answer_explanation_payload(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client):
+            result = explain_memory_answer_in_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                subject="human:test",
+                predicate="profile.city",
+                question="Where do I live?",
+                sdk_module="domain_chip_memory",
+            )
+
+        self.assertFalse(result.read_result.abstained)
+        self.assertEqual(result.read_result.records[0]["answer"], "Dubai")
+        self.assertEqual(result.read_result.answer_explanation["answer"], "Dubai")
+        self.assertIn("Resolved profile.city", result.read_result.answer_explanation["explanation"])
+        self.assertEqual(fake_client.explain_answer_calls[0]["question"], "Where do I live?")
+        read_events = latest_events_by_type(self.state_db, event_type="memory_read_succeeded", limit=10)
+        self.assertTrue(read_events)
+        self.assertEqual((read_events[0]["facts_json"] or {}).get("method"), "explain_answer")
+
+    def test_explain_memory_answer_in_memory_reads_back_domain_chip_explanation(self) -> None:
+        run_memory_sdk_smoke_test(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            sdk_module="domain_chip_memory",
+            subject="human:explain:test",
+            predicate="system.memory.explain",
+            value="ok",
+            cleanup=False,
+        )
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+
+        result = explain_memory_answer_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject="human:explain:test",
+            predicate="system.memory.explain",
+            question="What do you know about system.memory.explain?",
+            sdk_module="domain_chip_memory",
+        )
+
+        self.assertFalse(result.read_result.abstained)
+        self.assertEqual(result.read_result.records[0]["answer"], "ok")
+        self.assertIsNotNone(result.read_result.answer_explanation)
+        self.assertEqual(result.read_result.answer_explanation["answer"], "ok")
+        self.assertTrue(result.read_result.answer_explanation["evidence"])
+
+    def test_retrieve_memory_evidence_in_memory_returns_matching_records(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client):
+            result = retrieve_memory_evidence_in_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                query="Where do I live?",
+                subject="human:test",
+                predicate="profile.city",
+                sdk_module="domain_chip_memory",
+            )
+
+        self.assertFalse(result.read_result.abstained)
+        self.assertEqual(result.read_result.records[0]["value"], "Dubai")
+        self.assertEqual(fake_client.retrieve_evidence_calls[0]["query"], "Where do I live?")
+        read_events = latest_events_by_type(self.state_db, event_type="memory_read_succeeded", limit=10)
+        self.assertTrue(read_events)
+        self.assertEqual((read_events[0]["facts_json"] or {}).get("method"), "retrieve_evidence")
+
+    def test_retrieve_memory_events_in_memory_returns_matching_records(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client):
+            result = retrieve_memory_events_in_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                query="Where do I live?",
+                subject="human:test",
+                predicate="profile.city",
+                sdk_module="domain_chip_memory",
+            )
+
+        self.assertFalse(result.read_result.abstained)
+        self.assertEqual(result.read_result.records[0]["memory_role"], "event")
+        self.assertEqual(fake_client.retrieve_events_calls[0]["query"], "Where do I live?")
+        read_events = latest_events_by_type(self.state_db, event_type="memory_read_succeeded", limit=10)
+        self.assertTrue(read_events)
+        self.assertEqual((read_events[0]["facts_json"] or {}).get("method"), "retrieve_events")
 
     def test_lookup_current_state_in_memory_rehydrates_domain_chip_state_after_cache_clear(self) -> None:
         run_memory_sdk_smoke_test(
