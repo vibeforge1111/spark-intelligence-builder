@@ -29,6 +29,7 @@ from spark_intelligence.browser.service import (
     build_browser_status_payload,
     build_browser_tab_wait_payload,
 )
+from spark_intelligence.capability_router import build_capability_router_prompt_context
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.memory import (
     inspect_human_memory_in_memory,
@@ -44,6 +45,7 @@ from spark_intelligence.memory.profile_facts import (
     detect_profile_fact_observation,
     detect_profile_fact_query,
 )
+from spark_intelligence.mission_control import build_mission_control_prompt_context
 from spark_intelligence.observability.policy import screen_model_visible_text
 from spark_intelligence.llm.direct_provider import (
     DirectProviderGovernance,
@@ -57,6 +59,7 @@ from spark_intelligence.observability.store import (
     record_quarantine,
 )
 from spark_intelligence.observability.store import latest_events_by_type, latest_snapshots_by_surface
+from spark_intelligence.mission_control import build_mission_control_prompt_context
 from spark_intelligence.personality import (
     build_personality_context,
     build_preference_acknowledgment,
@@ -73,24 +76,15 @@ from spark_intelligence.personality.loader import (
 )
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_runtime_state
+from spark_intelligence.system_registry import (
+    build_system_registry_prompt_context,
+    looks_like_system_registry_query,
+)
 
 _BROWSER_SEARCH_SUMMARY_MAX_CHARS = 280
 _BROWSER_SEARCH_EXCERPT_MAX_CHARS = 480
 _RECENT_CONVERSATION_TURN_LIMIT = 4
 _ATTACHMENT_PROMPT_CHIP_LIMIT = 12
-
-_KNOWN_SPARK_SYSTEM_BRIEFS: dict[str, str] = {
-    "Spark Intelligence Builder": (
-        "live runtime owner for adapters like Telegram; owns delivery, operator controls, chip and path attachments, "
-        "saved conversational persona state, and the final visible reply"
-    ),
-    "Spark Researcher": (
-        "main intelligence core behind normal reasoning through the researcher bridge and provider-backed advisory"
-    ),
-    "Spark Swarm": (
-        "deep-work escalation and collective coordination layer; not the default chat loop"
-    ),
-}
 
 _KNOWN_CHIP_ROLE_HINTS: dict[str, str] = {
     "startup-yc": "Founder/operator doctrine chip for decisive startup guidance when active.",
@@ -555,6 +549,7 @@ def _is_conversational_fallback_candidate(
 
 def _render_direct_provider_chat_fallback(
     *,
+    config_manager: ConfigManager,
     state_db: StateDB,
     provider: RuntimeProviderResolution,
     user_message: str,
@@ -602,6 +597,21 @@ def _render_direct_provider_chat_fallback(
             telegram_persona_contract = build_telegram_persona_reply_contract(personality_profile)
             if telegram_persona_contract:
                 base_system_prompt = f"{base_system_prompt} {telegram_persona_contract}"
+    system_registry_context = build_system_registry_prompt_context(
+        config_manager=config_manager,
+        state_db=state_db,
+        user_message=user_message,
+    )
+    mission_control_context = build_mission_control_prompt_context(
+        config_manager=config_manager,
+        state_db=state_db,
+        user_message=user_message,
+    )
+    capability_router_context = build_capability_router_prompt_context(
+        config_manager=config_manager,
+        state_db=state_db,
+        user_message=user_message,
+    )
     payload = execute_direct_provider_prompt(
         provider=DirectProviderRequest(
             provider_id=provider.provider_id,
@@ -626,6 +636,9 @@ def _render_direct_provider_chat_fallback(
             personality_context_extra=personality_context_extra,
             browser_search_context_extra=browser_search_context_extra,
             recent_conversation_context=recent_conversation_context,
+            system_registry_context=system_registry_context,
+            mission_control_context=mission_control_context,
+            capability_router_context=capability_router_context,
         ),
         governance=DirectProviderGovernance(
             state_db_path=str(state_db.path),
@@ -1503,6 +1516,9 @@ def _build_contextual_task(
     personality_context_extra: str = "",
     browser_search_context_extra: str = "",
     recent_conversation_context: str = "",
+    system_registry_context: str = "",
+    mission_control_context: str = "",
+    capability_router_context: str = "",
 ) -> str:
     active_chip_keys = attachment_context.get("active_chip_keys") or []
     pinned_chip_keys = attachment_context.get("pinned_chip_keys") or []
@@ -1527,6 +1543,12 @@ def _build_contextual_task(
     )
     if spark_self_knowledge_context:
         lines.extend([spark_self_knowledge_context, ""])
+    if system_registry_context:
+        lines.extend([system_registry_context, ""])
+    if mission_control_context:
+        lines.extend([mission_control_context, ""])
+    if capability_router_context:
+        lines.extend([capability_router_context, ""])
     if personality_profile:
         personality_ctx = build_personality_context(personality_profile)
         if personality_ctx:
@@ -1600,56 +1622,8 @@ def _build_attachment_inventory_context(*, attachment_context: dict[str, object]
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
-def _build_spark_self_knowledge_context(*, user_message: str, attachment_context: dict[str, object]) -> str:
-    lowered = str(user_message or "").strip().lower()
-    if not _looks_like_spark_self_knowledge_query(lowered):
-        return ""
-    lines = ["[Spark platform map]"]
-    for label, detail in _KNOWN_SPARK_SYSTEM_BRIEFS.items():
-        lines.append(f"- {label}: {detail}")
-    chip_records = attachment_context.get("attached_chip_records") or []
-    known_chip_lines: list[str] = []
-    if isinstance(chip_records, list):
-        for record in chip_records:
-            if not isinstance(record, dict):
-                continue
-            key = str(record.get("key") or "").strip()
-            hint = _KNOWN_CHIP_ROLE_HINTS.get(key)
-            if key and hint:
-                known_chip_lines.append(f"- {key}: {hint}")
-    if known_chip_lines:
-        lines.append("[Known attached chip roles]")
-        lines.extend(known_chip_lines[:_ATTACHMENT_PROMPT_CHIP_LIMIT])
-    lines.extend(
-        [
-            "[Reply rule]",
-            "When the user asks about Spark's own systems, chips, adapters, or connections, answer from the Spark platform map and attached inventory above. "
-            "Do not claim missing verified knowledge when this runtime context already answers the question.",
-        ]
-    )
-    return "\n".join(lines)
-
-
 def _looks_like_spark_self_knowledge_query(lowered_message: str) -> bool:
-    if not lowered_message:
-        return False
-    direct_signals = (
-        "spark swarm",
-        "spark researcher",
-        "spark intelligence builder",
-        "what chips",
-        "which chips",
-        "active chips",
-        "attached chips",
-        "connected chips",
-        "what systems",
-        "what adapters",
-        "what is connected",
-        "around you right now",
-        "know about yourself",
-        "self-awareness",
-    )
-    return any(signal in lowered_message for signal in direct_signals)
+    return looks_like_system_registry_query(lowered_message)
 
 
 def _load_recent_conversation_context(
@@ -2970,6 +2944,21 @@ def build_researcher_reply(
     browser_search_source_url = str(browser_search_support.get("source_url") or "") or None
     if browser_search_source_url and _is_search_engine_url(browser_search_source_url):
         browser_search_source_url = None
+    system_registry_context = build_system_registry_prompt_context(
+        config_manager=config_manager,
+        state_db=state_db,
+        user_message=user_message,
+    )
+    mission_control_context = build_mission_control_prompt_context(
+        config_manager=config_manager,
+        state_db=state_db,
+        user_message=user_message,
+    )
+    capability_router_context = build_capability_router_prompt_context(
+        config_manager=config_manager,
+        state_db=state_db,
+        user_message=user_message,
+    )
     contextual_task = _build_contextual_task(
         user_message=user_message,
         channel_kind=channel_kind,
@@ -2979,6 +2968,9 @@ def build_researcher_reply(
         personality_context_extra=personality_context_extra,
         browser_search_context_extra=browser_search_context_extra,
         recent_conversation_context=recent_conversation_context,
+        system_registry_context=system_registry_context,
+        mission_control_context=mission_control_context,
+        capability_router_context=capability_router_context,
     )
     active_chip_key = str(active_chip_evaluate.get("chip_key")) if active_chip_evaluate else None
     active_chip_task_type = str(active_chip_evaluate.get("task_type")) if active_chip_evaluate and active_chip_evaluate.get("task_type") else None
@@ -3288,6 +3280,7 @@ def build_researcher_reply(
         and provider_selection.provider.execution_transport == "direct_http"
     ):
         raw_reply_text = _render_direct_provider_chat_fallback(
+            config_manager=config_manager,
             state_db=state_db,
             provider=provider_selection.provider,
             user_message=user_message,
@@ -3459,6 +3452,7 @@ def build_researcher_reply(
                     and provider_selection.provider.execution_transport == "direct_http"
                 ):
                     raw_reply_text = _render_direct_provider_chat_fallback(
+                        config_manager=config_manager,
                         state_db=state_db,
                         provider=provider_selection.provider,
                         user_message=user_message,
@@ -3620,6 +3614,7 @@ def build_researcher_reply(
                     )
                 ):
                     raw_reply_text = _render_direct_provider_chat_fallback(
+                        config_manager=config_manager,
                         state_db=state_db,
                         provider=provider_selection.provider,
                         user_message=user_message,
