@@ -31,6 +31,7 @@ from spark_intelligence.browser.service import (
 )
 from spark_intelligence.capability_router import build_capability_router_prompt_context
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.harness_registry import build_harness_prompt_context
 from spark_intelligence.memory import (
     inspect_human_memory_in_memory,
     lookup_current_state_in_memory,
@@ -612,6 +613,11 @@ def _render_direct_provider_chat_fallback(
         state_db=state_db,
         user_message=user_message,
     )
+    harness_context = build_harness_prompt_context(
+        config_manager=config_manager,
+        state_db=state_db,
+        user_message=user_message,
+    )
     payload = execute_direct_provider_prompt(
         provider=DirectProviderRequest(
             provider_id=provider.provider_id,
@@ -639,6 +645,7 @@ def _render_direct_provider_chat_fallback(
             system_registry_context=system_registry_context,
             mission_control_context=mission_control_context,
             capability_router_context=capability_router_context,
+            harness_context=harness_context,
         ),
         governance=DirectProviderGovernance(
             state_db_path=str(state_db.path),
@@ -1519,6 +1526,7 @@ def _build_contextual_task(
     system_registry_context: str = "",
     mission_control_context: str = "",
     capability_router_context: str = "",
+    harness_context: str = "",
 ) -> str:
     active_chip_keys = attachment_context.get("active_chip_keys") or []
     pinned_chip_keys = attachment_context.get("pinned_chip_keys") or []
@@ -1549,6 +1557,8 @@ def _build_contextual_task(
         lines.extend([mission_control_context, ""])
     if capability_router_context:
         lines.extend([capability_router_context, ""])
+    if harness_context:
+        lines.extend([harness_context, ""])
     if personality_profile:
         personality_ctx = build_personality_context(personality_profile)
         if personality_ctx:
@@ -2959,6 +2969,11 @@ def build_researcher_reply(
         state_db=state_db,
         user_message=user_message,
     )
+    harness_context = build_harness_prompt_context(
+        config_manager=config_manager,
+        state_db=state_db,
+        user_message=user_message,
+    )
     contextual_task = _build_contextual_task(
         user_message=user_message,
         channel_kind=channel_kind,
@@ -2971,6 +2986,7 @@ def build_researcher_reply(
         system_registry_context=system_registry_context,
         mission_control_context=mission_control_context,
         capability_router_context=capability_router_context,
+        harness_context=harness_context,
     )
     active_chip_key = str(active_chip_evaluate.get("chip_key")) if active_chip_evaluate else None
     active_chip_task_type = str(active_chip_evaluate.get("task_type")) if active_chip_evaluate and active_chip_evaluate.get("task_type") else None
