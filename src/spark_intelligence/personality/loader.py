@@ -1408,14 +1408,25 @@ def maybe_handle_agent_persona_onboarding_turn(
             "updated_at": _utc_now_iso(),
         }
         _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
+        # Under the no-default-name rule, canonical_state.agent_name may be
+        # empty until the user names the agent. Only echo the "right now it's X"
+        # hint when there's actually a user-defined name to echo.
+        if canonical_state.has_user_defined_name:
+            name_prompt = (
+                f"What should I call your agent? Right now it's `{canonical_state.agent_name}`. "
+                "Reply with a new name, or say `keep` to keep the current one."
+            )
+        else:
+            name_prompt = (
+                "What should I call your agent? Reply with a name like `Atlas`, `Nova`, or `Lyra`."
+            )
         return AgentOnboardingTurnResult(
             human_id=human_id,
             agent_id=agent_id,
             step="awaiting_name",
             reply_text=(
-                "No Spark Swarm agent yet? We can create your agent here now and link it later.\n\n"
-                f"What should I call your agent? Right now it's `{canonical_state.agent_name}`.\n"
-                "Reply with the name you want, or say `skip` to keep the current name."
+                "Let's set up your agent. Short conversation: name first, then personality.\n\n"
+                f"{name_prompt}"
             ),
             agent_name=canonical_state.agent_name,
             persona_profile=existing_persona,
@@ -1427,7 +1438,24 @@ def maybe_handle_agent_persona_onboarding_turn(
     lowered = normalized_message.lower()
 
     if step == "awaiting_name":
-        if lowered in {"skip", "skip for now", "keep current name", "keep it", "later"}:
+        # "keep" is only honored when the agent already has a user-defined
+        # name to preserve. Under the no-default-name rule, a user with an
+        # empty agent_name MUST provide a real name — they can't skip past
+        # the naming step into a "Spark Agent"-shaped default.
+        if lowered in {"keep", "keep it", "keep current name", "keep the current name"}:
+            if not canonical_state.has_user_defined_name:
+                return AgentOnboardingTurnResult(
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    step="awaiting_name",
+                    reply_text=(
+                        "There's no current name to keep yet. Give your agent a name first — "
+                        "something like `Atlas`, `Nova`, or `Lyra`."
+                    ),
+                    agent_name=canonical_state.agent_name,
+                    persona_profile=existing_persona,
+                    completed=False,
+                )
             onboarding_state["step"] = "awaiting_persona"
             onboarding_state["updated_at"] = _utc_now_iso()
             _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
@@ -1453,7 +1481,7 @@ def maybe_handle_agent_persona_onboarding_turn(
                 step="awaiting_name",
                 reply_text=(
                     "I need a short agent name first. "
-                    "Reply with something like `Atlas`, `Operator Zero`, or say `skip`."
+                    "Reply with something like `Atlas`, `Nova`, or `Lyra`."
                 ),
                 agent_name=canonical_state.agent_name,
                 persona_profile=existing_persona,
