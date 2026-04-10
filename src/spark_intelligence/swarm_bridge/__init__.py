@@ -8,12 +8,14 @@ from spark_intelligence.swarm_bridge.local import (
     swarm_bridge_run_specialization_path,
 )
 from spark_intelligence.swarm_bridge.sync import (
+    SwarmDoctorReport,
     SwarmDecisionResult,
     SwarmStatus,
     SwarmSyncResult,
     evaluate_swarm_escalation,
     swarm_absorb_insight,
     swarm_deliver_upgrade,
+    swarm_doctor,
     swarm_read_collective_snapshot,
     swarm_read_evolution_inbox,
     swarm_read_insights,
@@ -34,6 +36,7 @@ from spark_intelligence.swarm_bridge.sync import (
 __all__ = [
     "SwarmBridgeCommandResult",
     "SwarmDecisionResult",
+    "SwarmDoctorReport",
     "SwarmStatus",
     "SwarmSyncResult",
     "evaluate_swarm_escalation",
@@ -45,6 +48,7 @@ __all__ = [
     "swarm_bridge_run_specialization_path",
     "swarm_absorb_insight",
     "swarm_deliver_upgrade",
+    "swarm_doctor",
     "swarm_read_collective_snapshot",
     "swarm_read_evolution_inbox",
     "swarm_read_insights",

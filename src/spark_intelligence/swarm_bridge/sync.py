@@ -201,6 +201,49 @@ class SwarmDecisionResult:
 
 
 @dataclass
+class SwarmDoctorReport:
+    auth_source: str
+    payload_source: str
+    active_path_key: str | None
+    active_path_repo_root: str | None
+    scenario_path: str | None
+    mutation_target_path: str | None
+    blockers: list[str]
+    recommendations: list[str]
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "auth_source": self.auth_source,
+                "payload_source": self.payload_source,
+                "active_path_key": self.active_path_key,
+                "active_path_repo_root": self.active_path_repo_root,
+                "scenario_path": self.scenario_path,
+                "mutation_target_path": self.mutation_target_path,
+                "blockers": self.blockers,
+                "recommendations": self.recommendations,
+            },
+            indent=2,
+        )
+
+    def to_text(self) -> str:
+        lines = [
+            f"Swarm doctor auth_source: {self.auth_source}",
+            f"- payload_source: {self.payload_source}",
+            f"- active_path_key: {self.active_path_key or 'none'}",
+            f"- active_path_repo_root: {self.active_path_repo_root or 'missing'}",
+            f"- scenario_path: {self.scenario_path or 'missing'}",
+            f"- mutation_target_path: {self.mutation_target_path or 'missing'}",
+            f"- blockers: {len(self.blockers)}",
+        ]
+        if self.blockers:
+            lines.append(f"- first_blocker: {self.blockers[0]}")
+        if self.recommendations:
+            lines.append(f"- next: {self.recommendations[0]}")
+        return "\n".join(lines)
+
+
+@dataclass
 class SwarmSession:
     access_token_env: str | None
     access_token: str | None
@@ -256,6 +299,42 @@ def swarm_read_specializations(config_manager: ConfigManager, state_db: StateDB)
         route_path="api/workspaces/{workspace_id}/specializations",
     )
     return payload if isinstance(payload, list) else []
+
+
+def swarm_doctor(config_manager: ConfigManager, state_db: StateDB) -> SwarmDoctorReport:
+    status = swarm_status(config_manager, state_db)
+    attachment_context = status.attachment_context if isinstance(status.attachment_context, dict) else {}
+    active_path_key = str(attachment_context.get("active_path_key") or "").strip() or None
+    active_path_repo_root = _resolve_active_path_repo_root(attachment_context)
+    auth_source = _resolve_swarm_auth_source(config_manager, status.access_token_env)
+    payload_source = "researcher" if status.researcher_ready else ("collective_payload" if status.payload_ready else "missing")
+    blockers: list[str] = []
+    if not status.enabled:
+        blockers.append("Spark Swarm is disabled in this workspace config.")
+    if not status.api_url:
+        blockers.append("Swarm API URL is not configured.")
+    if not status.workspace_id:
+        blockers.append("Swarm workspace id is not configured.")
+    if auth_source in {"unconfigured", "missing_from_workspace_env"}:
+        blockers.append("Swarm access token is not available in the workspace environment.")
+    if active_path_key and not active_path_repo_root:
+        blockers.append(f"Active specialization path `{active_path_key}` does not resolve to a repo root.")
+    recommendations = _build_swarm_doctor_recommendations(
+        status=status,
+        auth_source=auth_source,
+        active_path_key=active_path_key,
+        payload_source=payload_source,
+    )
+    return SwarmDoctorReport(
+        auth_source=auth_source,
+        payload_source=payload_source,
+        active_path_key=active_path_key,
+        active_path_repo_root=active_path_repo_root,
+        scenario_path=None,
+        mutation_target_path=None,
+        blockers=blockers,
+        recommendations=recommendations,
+    )
 
 
 def swarm_read_insights(config_manager: ConfigManager, state_db: StateDB) -> list[dict[str, Any]]:
@@ -1578,6 +1657,56 @@ def _normalize_collective_payload(payload: dict[str, Any]) -> bool:
     if _normalize_contradictions(payload):
         changed = True
     return changed
+
+
+def _resolve_active_path_repo_root(attachment_context: dict[str, Any]) -> str | None:
+    active_path_key = str(attachment_context.get("active_path_key") or "").strip()
+    if not active_path_key:
+        return None
+    for record in list(attachment_context.get("attached_path_records") or []):
+        if not isinstance(record, dict):
+            continue
+        if str(record.get("key") or "").strip() == active_path_key:
+            repo_root = str(record.get("repo_root") or "").strip()
+            return repo_root or None
+    return None
+
+
+def _resolve_swarm_auth_source(config_manager: ConfigManager, env_ref: str | None) -> str:
+    if not env_ref:
+        return "unconfigured"
+    workspace_env = config_manager.read_env_map()
+    if str(workspace_env.get(env_ref) or "").strip():
+        return "workspace_env"
+    if str(os.environ.get(env_ref) or "").strip():
+        return "process_env_only"
+    return "missing_from_workspace_env"
+
+
+def _build_swarm_doctor_recommendations(
+    *,
+    status: SwarmStatus,
+    auth_source: str,
+    active_path_key: str | None,
+    payload_source: str,
+) -> list[str]:
+    recommendations: list[str] = []
+    if not status.enabled:
+        recommendations.append("Re-enable Spark Swarm in workspace config before using Swarm Telegram commands.")
+    if not status.api_url or not status.workspace_id:
+        recommendations.append("Configure the Swarm API URL and workspace id for this workspace.")
+    if auth_source in {"unconfigured", "missing_from_workspace_env"}:
+        recommendations.append("Store the Swarm access token in the workspace .env and point config at that key.")
+    elif auth_source == "process_env_only":
+        recommendations.append("Copy the Swarm access token into the workspace .env so Telegram and local runs share auth.")
+    if payload_source == "missing":
+        if active_path_key:
+            recommendations.append(f"Run `/swarm autoloop {active_path_key}` to generate a fresh collective payload.")
+        else:
+            recommendations.append("Prepare either a researcher runtime or an active specialization path before syncing.")
+    elif status.api_ready:
+        recommendations.append("Run `/swarm sync` to upload the latest collective payload.")
+    return recommendations
 
 
 def _normalize_runtime_source(payload: dict[str, Any]) -> bool:

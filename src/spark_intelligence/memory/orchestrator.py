@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -596,10 +597,9 @@ def inspect_memory_sdk_runtime(
         "client_kind": None,
         "reason": None,
     }
-    try:
-        module = importlib.import_module(module_name)
-    except Exception as exc:
-        payload["reason"] = f"import_failed:{type(exc).__name__}"
+    module = _import_sdk_module(module_name)
+    if module is None:
+        payload["reason"] = "import_failed:ModuleNotFoundError"
         return payload
     payload["resolved_module"] = module.__name__
     if hasattr(module, "SparkMemorySDK"):
@@ -1352,9 +1352,8 @@ def _load_sdk_client_for_module(*, module_name: str, home_path: Any) -> Any | No
     cache_key = (module_name, str(home_path))
     if cache_key in _SDK_CLIENT_CACHE:
         return _SDK_CLIENT_CACHE[cache_key]
-    try:
-        module = importlib.import_module(module_name)
-    except Exception:
+    module = _import_sdk_module(module_name)
+    if module is None:
         return None
     if hasattr(module, "SparkMemorySDK"):
         sdk_factory = getattr(module, "SparkMemorySDK")
@@ -1388,6 +1387,32 @@ def _call_sdk_method(client: Any, method_name: str, payload: dict[str, Any]) -> 
     if isinstance(result, dict):
         return result
     return {"status": "accepted", "result": result}
+
+
+def _import_sdk_module(module_name: str) -> ModuleType | None:
+    try:
+        return importlib.import_module(module_name)
+    except Exception:
+        pass
+    for candidate in _sdk_module_fallback_paths(module_name):
+        candidate_text = str(candidate)
+        if candidate_text not in sys.path:
+            sys.path.insert(0, candidate_text)
+        try:
+            return importlib.import_module(module_name)
+        except Exception:
+            continue
+    return None
+
+
+def _sdk_module_fallback_paths(module_name: str) -> list[Path]:
+    if str(module_name).strip() != DEFAULT_SDK_MODULE:
+        return []
+    repo_root = Path(__file__).resolve().parents[3]
+    candidates = [
+        repo_root.parent / "domain-chip-memory" / "src",
+    ]
+    return [path for path in candidates if path.exists()]
 
 
 def _supports_domain_chip_memory_adapter(module: ModuleType) -> bool:
