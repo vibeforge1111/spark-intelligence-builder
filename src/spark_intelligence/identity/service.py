@@ -195,11 +195,17 @@ class CanonicalAgentState:
     name_updated_at: str | None = None
     name_source: str | None = None
 
+    @property
+    def has_user_defined_name(self) -> bool:
+        """True when the agent has a real, user-supplied name."""
+        return bool(self.agent_name and self.agent_name.strip())
+
     def to_payload(self) -> dict[str, Any]:
         return {
             "human_id": self.human_id,
             "agent_id": self.agent_id,
             "agent_name": self.agent_name,
+            "has_user_defined_name": self.has_user_defined_name,
             "origin": self.origin,
             "status": self.status,
             "preferred_source": self.preferred_source,
@@ -692,7 +698,7 @@ def read_canonical_agent_state(
     return CanonicalAgentState(
         human_id=str(profile_row["human_id"]),
         agent_id=str(profile_row["agent_id"]),
-        agent_name=str(profile_row["agent_name"] or "Spark Agent"),
+        agent_name=str(profile_row["agent_name"] or ""),
         origin=str(profile_row["origin"] or "builder_local"),
         status=str(link_row["status"] or profile_row["status"] or "active"),
         preferred_source=str(link_row["preferred_source"] or "builder_local"),
