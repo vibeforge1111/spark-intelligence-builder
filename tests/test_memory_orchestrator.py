@@ -590,6 +590,38 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertIn("- startup: Seedify", context)
         self.assertIn("- current mission: revive the companies", context)
 
+    def test_build_profile_identity_summary_prefers_latest_values_per_predicate(self) -> None:
+        context = build_profile_identity_summary_context(
+            records=[
+                {"predicate": "profile.home_country", "value": "UAE"},
+                {"predicate": "profile.home_country", "value": "Canada"},
+                {"predicate": "profile.founder_of", "value": "Spark Swarm"},
+                {"predicate": "profile.founder_of", "value": "Atlas Labs"},
+            ]
+        )
+
+        self.assertIn("- country: Canada", context)
+        self.assertIn("- founder of: Atlas Labs", context)
+        self.assertNotIn("- country: UAE", context)
+        self.assertNotIn("- founder of: Spark Swarm", context)
+
+        answer = build_profile_identity_summary_answer(
+            records=[
+                {"predicate": "profile.home_country", "value": "UAE"},
+                {"predicate": "profile.home_country", "value": "Canada"},
+                {"predicate": "profile.startup_name", "value": "Seedify"},
+                {"predicate": "profile.startup_name", "value": "Atlas Labs"},
+                {"predicate": "profile.founder_of", "value": "Spark Swarm"},
+                {"predicate": "profile.founder_of", "value": "Atlas Labs"},
+            ]
+        )
+
+        self.assertIn("You founded Atlas Labs.", answer)
+        self.assertIn("You're based in Canada.", answer)
+        self.assertNotIn("Spark Swarm", answer)
+        self.assertNotIn("Seedify", answer)
+        self.assertNotIn("UAE", answer)
+
     def test_build_profile_identity_summary_answer_compacts_saved_facts(self) -> None:
         answer = build_profile_identity_summary_answer(
             records=[
@@ -597,6 +629,7 @@ class MemoryOrchestratorTests(SparkTestCase):
                 {"predicate": "profile.city", "value": "Dubai"},
                 {"predicate": "profile.startup_name", "value": "Seedify"},
                 {"predicate": "profile.founder_of", "value": "Spark Swarm"},
+                {"predicate": "profile.home_country", "value": "UAE"},
                 {"predicate": "profile.current_mission", "value": "survive the hack and revive the companies"},
                 {"predicate": "profile.spark_role", "value": "important part of the rebuild"},
             ]
@@ -605,6 +638,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertIn("You're an entrepreneur in Dubai.", answer)
         self.assertIn("You founded Spark Swarm.", answer)
         self.assertIn("Your startup is Seedify.", answer)
+        self.assertIn("You're based in UAE.", answer)
         self.assertIn("Your current mission is to survive the hack and revive the companies.", answer)
         self.assertIn("Spark will be an important part of the rebuild.", answer)
 

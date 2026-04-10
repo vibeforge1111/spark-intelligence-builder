@@ -674,7 +674,7 @@ def build_profile_identity_summary_context(*, records: list[dict[str, str]]) -> 
     for record in records:
         predicate = str(record.get("predicate") or "").strip()
         value = str(record.get("value") or "").strip()
-        if predicate and value and predicate not in value_by_predicate:
+        if predicate and value:
             value_by_predicate[predicate] = value
     lines = [
         "[Memory action: PROFILE_IDENTITY_SUMMARY]",
@@ -700,7 +700,7 @@ def build_profile_identity_summary_answer(*, records: list[dict[str, str]]) -> s
     for record in records:
         predicate = str(record.get("predicate") or "").strip()
         value = str(record.get("value") or "").strip()
-        if predicate and value and predicate not in value_by_predicate:
+        if predicate and value:
             value_by_predicate[predicate] = value
 
     if not value_by_predicate:
@@ -752,7 +752,7 @@ def build_profile_identity_summary_answer(*, records: list[dict[str, str]]) -> s
         sentences.append(_ensure_sentence(_spark_role_sentence(spark_role)))
 
     home_country = value_by_predicate.get("profile.home_country")
-    if home_country and not city:
+    if home_country:
         sentences.append(_ensure_sentence(f"You're based in {home_country}"))
 
     timezone = value_by_predicate.get("profile.timezone")
