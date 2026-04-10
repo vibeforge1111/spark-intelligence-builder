@@ -253,11 +253,23 @@ class OperatorPairingFlowTests(SparkTestCase):
                     text="Boss",
                 ),
             )
+            # P2-6: after supplying the salutation, the state machine asks
+            # the operator to pick a persona mode (guided/express/freestyle).
             fourth_turn = simulate_telegram_update(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
                 update_payload=make_telegram_update(
                     update_id=107,
+                    user_id="111",
+                    username="alice",
+                    text="freestyle",
+                ),
+            )
+            fifth_turn = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=108,
                     user_id="111",
                     username="alice",
                     text="calm, strategic, very direct, low-fluff",
@@ -281,15 +293,30 @@ class OperatorPairingFlowTests(SparkTestCase):
         )
 
         self.assertTrue(third_turn.ok)
-        # After supplying "Boss", the state machine acknowledges and moves
-        # to the persona step. The ack line uses format_address_aware_line
-        # so it naturally contains the chosen salutation.
+        # P2-6: after the salutation, the state machine presents the mode
+        # picker. The ack line includes the chosen salutation via
+        # format_address_aware_line.
         self.assertIn("Boss", str(third_turn.detail["response_text"]))
-        self.assertIn("describe the personality", str(third_turn.detail["response_text"]))
+        self.assertIn(
+            "How should we shape your personality?",
+            str(third_turn.detail["response_text"]),
+        )
+        self.assertIn("Guided", str(third_turn.detail["response_text"]))
+        self.assertIn("Express", str(third_turn.detail["response_text"]))
+        self.assertIn("Freestyle", str(third_turn.detail["response_text"]))
 
         self.assertTrue(fourth_turn.ok)
-        self.assertIn("Locked in.", str(fourth_turn.detail["response_text"]))
-        self.assertIn("connect your Spark Swarm agent", str(fourth_turn.detail["response_text"]))
+        # After picking freestyle, the state machine transitions to the
+        # freestyle authoring state (v1 handler, under P2-6 all three
+        # modes still land here).
+        self.assertIn(
+            "describe the personality",
+            str(fourth_turn.detail["response_text"]),
+        )
+
+        self.assertTrue(fifth_turn.ok)
+        self.assertIn("Locked in.", str(fifth_turn.detail["response_text"]))
+        self.assertIn("connect your Spark Swarm agent", str(fifth_turn.detail["response_text"]))
 
         agent_state = read_canonical_agent_state(
             state_db=self.state_db,
@@ -381,7 +408,9 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(skip_turn.ok)
         reply = str(skip_turn.detail["response_text"])
         self.assertIn("no salutation", reply.lower())
-        self.assertIn("describe the personality", reply)
+        # P2-6: after the user_address skip, the machine transitions to the
+        # mode picker (not directly to freestyle authoring).
+        self.assertIn("How should we shape your personality?", reply)
         # No default label may leak into the skip acknowledgement.
         self.assertNotIn("Operator", reply)
         self.assertNotIn("there,", reply)
@@ -393,6 +422,99 @@ class OperatorPairingFlowTests(SparkTestCase):
             ).fetchone()
         self.assertIsNotNone(row)
         self.assertIsNone(row["user_address"])
+
+    def test_onboarding_persona_mode_reprompts_on_invalid_and_tags_choice(self) -> None:
+        # P2-6: invalid replies at awaiting_persona_mode must reprompt,
+        # not silently drop the user back into the wrong state. Each of
+        # the three valid choices tags the JSON blob with the mode so
+        # later commits (P2-7 guided, P2-8 express) can intercept.
+        self.add_telegram_channel()
+        simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=303,
+                user_id="111",
+                username="alice",
+                text="/start",
+            ),
+        )
+        exit_code, _, stderr = self.run_cli(
+            "operator",
+            "approve-latest",
+            "telegram",
+            "--home",
+            str(self.home),
+        )
+        self.assertEqual(exit_code, 0, stderr)
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            side_effect=AssertionError("researcher bridge should not run during onboarding"),
+        ):
+            simulate_telegram_update(  # first DM → awaiting_name
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=304, user_id="111", username="alice", text="hey"
+                ),
+            )
+            simulate_telegram_update(  # name → awaiting_user_address
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=305, user_id="111", username="alice", text="Nova"
+                ),
+            )
+            simulate_telegram_update(  # address → awaiting_persona_mode
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=306, user_id="111", username="alice", text="skip"
+                ),
+            )
+            invalid_turn = simulate_telegram_update(  # invalid mode → reprompt
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=307,
+                    user_id="111",
+                    username="alice",
+                    text="maybe something in between",
+                ),
+            )
+            mode_turn = simulate_telegram_update(  # express → awaiting_persona
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=308, user_id="111", username="alice", text="express"
+                ),
+            )
+
+        self.assertTrue(invalid_turn.ok)
+        invalid_reply = str(invalid_turn.detail["response_text"])
+        self.assertIn("I didn't catch that", invalid_reply)
+        self.assertIn("guided", invalid_reply)
+        self.assertIn("express", invalid_reply)
+        self.assertIn("freestyle", invalid_reply)
+
+        # The persona_mode tag must be persisted on the onboarding JSON blob
+        # so P2-7 / P2-8 can intercept when they land.
+        with self.state_db.connect() as conn:
+            blob_row = conn.execute(
+                "SELECT value FROM runtime_state WHERE state_key = ?",
+                ("agent_onboarding:human:telegram:111",),
+            ).fetchone()
+        self.assertIsNotNone(blob_row)
+        blob = json.loads(str(blob_row["value"]))
+        self.assertEqual(blob["persona_mode"], "express")
+        # Under P2-6, all three modes land in awaiting_persona (v1 freestyle).
+        self.assertEqual(blob["step"], "awaiting_persona")
+        self.assertTrue(mode_turn.ok)
+        self.assertIn(
+            "describe the personality",
+            str(mode_turn.detail["response_text"]),
+        )
 
     def test_revoke_latest_blocks_future_dm_with_revoked_reply(self) -> None:
         self.add_telegram_channel()

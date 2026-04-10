@@ -1569,7 +1569,7 @@ def maybe_handle_agent_persona_onboarding_turn(
                 human_id=human_id,
                 user_address=normalized_message,
             )
-        onboarding_state["step"] = "awaiting_persona"
+        onboarding_state["step"] = "awaiting_persona_mode"
         onboarding_state["user_address"] = stored_address
         onboarding_state["updated_at"] = _utc_now_iso()
         _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
@@ -1584,9 +1584,43 @@ def maybe_handle_agent_persona_onboarding_turn(
         return AgentOnboardingTurnResult(
             human_id=human_id,
             agent_id=agent_id,
+            step="awaiting_persona_mode",
+            reply_text=f"{ack}\n\n" + _build_persona_mode_prompt(),
+            agent_name=canonical_state.agent_name,
+            persona_profile=existing_persona,
+            completed=False,
+        )
+
+    if step == "awaiting_persona_mode":
+        # P2-6: the operator picks between guided, express, and freestyle.
+        # The sub-state handlers for guided (P2-7) and express (P2-8) land
+        # in later commits. Until then, all three choices store their mode
+        # tag on the onboarding blob and fall through to the existing
+        # v1 freestyle flow at `awaiting_persona`. P2-7/P2-8 will intercept
+        # based on persona_mode before the v1 handler runs.
+        persona_mode = _parse_onboarding_persona_mode(lowered)
+        if persona_mode is None:
+            return AgentOnboardingTurnResult(
+                human_id=human_id,
+                agent_id=agent_id,
+                step="awaiting_persona_mode",
+                reply_text=(
+                    "I didn't catch that. Reply with `guided`, `express`, "
+                    "`freestyle`, or the number `1`, `2`, or `3`."
+                ),
+                agent_name=canonical_state.agent_name,
+                persona_profile=existing_persona,
+                completed=False,
+            )
+        onboarding_state["step"] = "awaiting_persona"
+        onboarding_state["persona_mode"] = persona_mode
+        onboarding_state["updated_at"] = _utc_now_iso()
+        _save_agent_onboarding_state(human_id=human_id, payload=onboarding_state, state_db=state_db)
+        return AgentOnboardingTurnResult(
+            human_id=human_id,
+            agent_id=agent_id,
             step="awaiting_persona",
             reply_text=(
-                f"{ack}\n\n"
                 "Now describe the personality you want. "
                 "You can say something like `calm, strategic, very direct, low-fluff`."
             ),
@@ -1987,6 +2021,39 @@ def _build_user_address_prompt() -> str:
         "Reply with a name or salutation like `Alice`, `Boss`, or `Captain`. "
         "Say `skip` to keep replies neutral."
     )
+
+
+def _build_persona_mode_prompt() -> str:
+    """Shared prompt text for the P2-6 awaiting_persona_mode state."""
+    return (
+        "How should we shape your personality?\n"
+        "1. Guided — I ask 5 quick questions\n"
+        "2. Express — pick a preset style\n"
+        "3. Freestyle — describe it in your own words\n\n"
+        "Reply with `guided`, `express`, `freestyle`, or the number `1`, `2`, or `3`."
+    )
+
+
+# Token sets that map operator replies at awaiting_persona_mode to one of
+# the three sub-states. Kept narrow and explicit — a fuzzy NL parser would
+# introduce mode-confusion risk during the single moment the operator is
+# picking their onboarding flavor.
+_ONBOARDING_PERSONA_MODE_TOKENS: dict[str, frozenset[str]] = {
+    "guided": frozenset({"guided", "guide", "questions", "question", "1", "one"}),
+    "express": frozenset({"express", "preset", "presets", "2", "two"}),
+    "freestyle": frozenset(
+        {"freestyle", "free", "freeform", "describe", "3", "three"}
+    ),
+}
+
+
+def _parse_onboarding_persona_mode(lowered: str) -> str | None:
+    """Resolve an operator reply into one of guided/express/freestyle."""
+    text = " ".join(str(lowered or "").strip().split())
+    for mode, tokens in _ONBOARDING_PERSONA_MODE_TOKENS.items():
+        if text in tokens:
+            return mode
+    return None
 
 
 def _agent_onboarding_state_key(human_id: str) -> str:
