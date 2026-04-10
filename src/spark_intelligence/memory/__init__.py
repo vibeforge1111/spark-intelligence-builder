@@ -32,6 +32,10 @@ from spark_intelligence.memory.architecture_benchmark import (
     MemoryArchitectureBenchmarkResult,
     benchmark_memory_architectures,
 )
+from spark_intelligence.memory.architecture_live_comparison import (
+    TelegramArchitectureLiveComparisonResult,
+    compare_telegram_memory_architectures,
+)
 from spark_intelligence.memory.regression import (
     TelegramMemoryRegressionResult,
     run_telegram_memory_regression,
@@ -60,12 +64,14 @@ __all__ = [
     "SdkMaintenanceExportResult",
     "ShadowReplayBatchExportResult",
     "ShadowReplayExportResult",
+    "TelegramArchitectureLiveComparisonResult",
     "TelegramStateKnowledgeBaseResult",
     "TelegramMemoryRegressionResult",
     "benchmark_memory_architectures",
     "build_sdk_maintenance_payload",
     "build_shadow_replay_payload",
     "build_telegram_state_knowledge_base",
+    "compare_telegram_memory_architectures",
     "delete_personality_preferences_from_memory",
     "explain_memory_answer_in_memory",
     "export_sdk_maintenance_replay",

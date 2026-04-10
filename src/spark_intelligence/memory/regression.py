@@ -8,6 +8,7 @@ from typing import Any
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.identity.service import approve_pairing
 from spark_intelligence.memory.architecture_benchmark import benchmark_memory_architectures
+from spark_intelligence.memory.architecture_live_comparison import compare_telegram_memory_architectures
 from spark_intelligence.memory.knowledge_base import build_telegram_state_knowledge_base
 from spark_intelligence.memory.orchestrator import inspect_human_memory_in_memory
 from spark_intelligence.state.db import StateDB
@@ -342,6 +343,7 @@ def run_telegram_memory_regression(
     regression_summary_markdown_path = resolved_output_dir / "regression-summary.md"
     regression_cases_json_path = resolved_output_dir / "regression-cases.json"
     architecture_benchmark_output_dir = resolved_output_dir / "architecture-benchmark"
+    architecture_live_comparison_output_dir = resolved_output_dir / "architecture-live-comparison"
 
     case_payloads: list[dict[str, Any]] = []
     mismatches: list[dict[str, Any]] = []
@@ -474,6 +476,30 @@ def run_telegram_memory_regression(
         )
         inspection_payload = _parse_json_object(inspection_result.to_json())
 
+    architecture_benchmark_result = benchmark_memory_architectures(
+        config_manager=config_manager,
+        output_dir=architecture_benchmark_output_dir,
+        validator_root=validator_root,
+    )
+    architecture_benchmark_payload = architecture_benchmark_result.payload
+    architecture_summary_path = (
+        (architecture_benchmark_payload.get("artifact_paths") or {}).get("summary_markdown")
+        if isinstance(architecture_benchmark_payload, dict)
+        else None
+    )
+    architecture_live_comparison_result = compare_telegram_memory_architectures(
+        config_manager=config_manager,
+        case_payloads=case_payloads,
+        selected_cases=selected_cases,
+        output_dir=architecture_live_comparison_output_dir,
+        validator_root=validator_root,
+    )
+    architecture_live_comparison_payload = architecture_live_comparison_result.payload
+    architecture_live_comparison_summary_path = (
+        (architecture_live_comparison_payload.get("artifact_paths") or {}).get("summary_markdown")
+        if isinstance(architecture_live_comparison_payload, dict)
+        else None
+    )
     regression_summary_markdown_path.write_text(
         _build_regression_summary_markdown(
             selected_user_id=selected_user_id,
@@ -481,6 +507,7 @@ def run_telegram_memory_regression(
             case_payloads=case_payloads,
             mismatches=mismatches,
             inspection_payload=inspection_payload,
+            architecture_live_comparison_payload=architecture_live_comparison_payload,
         ),
         encoding="utf-8",
     )
@@ -493,6 +520,7 @@ def run_telegram_memory_regression(
                 "cases": case_payloads,
                 "mismatches": mismatches,
                 "inspection": inspection_payload,
+                "architecture_live_comparison": architecture_live_comparison_payload,
                 **filter_summary,
                 **selection_summary,
             },
@@ -500,20 +528,11 @@ def run_telegram_memory_regression(
         ),
         encoding="utf-8",
     )
-    architecture_benchmark_result = benchmark_memory_architectures(
-        config_manager=config_manager,
-        output_dir=architecture_benchmark_output_dir,
-        validator_root=validator_root,
-    )
-    architecture_benchmark_payload = architecture_benchmark_result.payload
-    architecture_summary_path = (
-        (architecture_benchmark_payload.get("artifact_paths") or {}).get("summary_markdown")
-        if isinstance(architecture_benchmark_payload, dict)
-        else None
-    )
     repo_sources = [str(regression_summary_markdown_path), str(regression_cases_json_path)]
     if architecture_summary_path:
         repo_sources.append(str(architecture_summary_path))
+    if architecture_live_comparison_summary_path:
+        repo_sources.append(str(architecture_live_comparison_summary_path))
     kb_result = build_telegram_state_knowledge_base(
         config_manager=config_manager,
         output_dir=resolved_kb_output_dir,
@@ -558,6 +577,30 @@ def run_telegram_memory_regression(
             "product_memory_leader_names",
             default=[],
         ),
+        "live_architecture_case_count": _nested_get(
+            architecture_live_comparison_payload,
+            "summary",
+            "case_count",
+            default=0,
+        ),
+        "live_architecture_leaders": _nested_get(
+            architecture_live_comparison_payload,
+            "summary",
+            "leader_names",
+            default=[],
+        ),
+        "live_architecture_recommended_runtime": _nested_get(
+            architecture_live_comparison_payload,
+            "summary",
+            "recommended_runtime_architecture",
+            default=None,
+        ),
+        "live_architecture_runtime_matches_leader": _nested_get(
+            architecture_live_comparison_payload,
+            "summary",
+            "runtime_matches_live_leader",
+            default=False,
+        ),
         "kb_has_probe_coverage": _nested_get(kb_payload, "failure_taxonomy", "summary", "has_probe_coverage", default=False),
         "kb_issue_labels": _nested_get(kb_payload, "failure_taxonomy", "summary", "issue_labels", default=[]),
         "kb_current_state_hits": current_probe.get("hits", 0),
@@ -573,6 +616,7 @@ def run_telegram_memory_regression(
         "mismatches": mismatches,
         "inspection": inspection_payload,
         "architecture_benchmark": architecture_benchmark_payload,
+        "architecture_live_comparison": architecture_live_comparison_payload,
         "kb_compile": kb_payload,
         "artifact_paths": {
             "summary_json": str(resolved_write_path),
@@ -582,6 +626,10 @@ def run_telegram_memory_regression(
             "regression_cases_json": str(regression_cases_json_path),
             "architecture_benchmark_dir": str(architecture_benchmark_output_dir),
             "architecture_benchmark_markdown": str(architecture_summary_path) if architecture_summary_path else None,
+            "architecture_live_comparison_dir": str(architecture_live_comparison_output_dir),
+            "architecture_live_comparison_markdown": (
+                str(architecture_live_comparison_summary_path) if architecture_live_comparison_summary_path else None
+            ),
         },
     }
     resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -694,6 +742,7 @@ def _build_regression_summary_markdown(
     case_payloads: list[dict[str, Any]],
     mismatches: list[dict[str, Any]],
     inspection_payload: dict[str, Any] | None,
+    architecture_live_comparison_payload: dict[str, Any] | None,
 ) -> str:
     category_counts = _build_category_counts(str(case.get("category") or "unknown") for case in case_payloads)
     bridge_mode_counts = _build_category_counts(str(case.get("bridge_mode") or "missing") for case in case_payloads)
@@ -702,6 +751,12 @@ def _build_regression_summary_markdown(
     )
     quality_lanes = _build_quality_lanes(category_counts)
     inspection_records = _inspection_records(inspection_payload)
+    live_architecture_summary = (
+        architecture_live_comparison_payload.get("summary")
+        if isinstance(architecture_live_comparison_payload, dict)
+        and isinstance(architecture_live_comparison_payload.get("summary"), dict)
+        else {}
+    )
 
     lines = [
         "# Telegram Memory Regression Summary",
@@ -711,6 +766,13 @@ def _build_regression_summary_markdown(
         f"- Total cases: `{len(case_payloads)}`",
         f"- Matched cases: `{len(case_payloads) - len(mismatches)}`",
         f"- Mismatched cases: `{len(mismatches)}`",
+        "",
+        "## Live Architecture Comparison",
+        "",
+        f"- Compared cases: `{live_architecture_summary.get('case_count', 0)}`",
+        f"- Leaders: `{', '.join(live_architecture_summary.get('leader_names') or []) or 'unknown'}`",
+        f"- Recommended runtime architecture: `{live_architecture_summary.get('recommended_runtime_architecture') or 'undecided'}`",
+        f"- Runtime matches live leader: `{'yes' if live_architecture_summary.get('runtime_matches_live_leader') else 'no'}`",
         "",
         "## Category Coverage",
         "",
@@ -768,6 +830,12 @@ def _build_regression_summary_markdown(
         lines.append("- Fix the mismatched cases before promoting wider runtime memory behavior.")
     else:
         lines.append("- Keep this regression bundle as a green baseline and add the next benchmark-style lane.")
+    if live_architecture_summary.get("recommended_runtime_architecture"):
+        lines.append(
+            f"- Promote `{live_architecture_summary.get('recommended_runtime_architecture')}` into the Builder runtime selector and rerun this bundle."
+        )
+    elif live_architecture_summary.get("leader_names"):
+        lines.append("- Break the live architecture tie with more cases before pinning the Builder runtime selector.")
     if not quality_lanes["abstention"]:
         lines.append("- Add abstention cases before widening memory promotion beyond the current lane.")
     if not quality_lanes["overwrite"]:

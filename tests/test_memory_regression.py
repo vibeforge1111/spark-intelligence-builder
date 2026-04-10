@@ -34,6 +34,25 @@ class MemoryRegressionTests(SparkTestCase):
             "errors": [],
         }
 
+    @staticmethod
+    def _live_comparison_payload(output_dir: Path) -> dict[str, object]:
+        comparison_dir = output_dir / "architecture-live-comparison"
+        comparison_markdown = comparison_dir / "telegram-memory-architecture-live-comparison.md"
+        comparison_dir.mkdir(parents=True, exist_ok=True)
+        comparison_markdown.write_text("# Telegram Memory Architecture Live Comparison\n", encoding="utf-8")
+        return {
+            "summary": {
+                "case_count": 8,
+                "leader_names": ["summary_synthesis_memory"],
+                "recommended_runtime_architecture": "summary_synthesis_memory",
+                "runtime_matches_live_leader": False,
+            },
+            "artifact_paths": {
+                "summary_markdown": str(comparison_markdown),
+            },
+            "errors": [],
+        }
+
     def test_memory_run_telegram_regression_dispatches_runner(self) -> None:
         output_dir = self.home / "artifacts" / "telegram-memory-regression"
         write_path = output_dir / "summary.json"
@@ -182,6 +201,9 @@ class MemoryRegressionTests(SparkTestCase):
         ) as compile_kb, patch(
             "spark_intelligence.memory.regression.benchmark_memory_architectures",
             return_value=SimpleNamespace(payload=self._benchmark_payload(output_dir)),
+        ), patch(
+            "spark_intelligence.memory.regression.compare_telegram_memory_architectures",
+            return_value=SimpleNamespace(payload=self._live_comparison_payload(output_dir)),
         ) as run_benchmark:
             result = run_telegram_memory_regression(
                 config_manager=self.config_manager,
@@ -194,11 +216,12 @@ class MemoryRegressionTests(SparkTestCase):
         kwargs = compile_kb.call_args.kwargs
         self.assertTrue(run_benchmark.called)
         repo_sources = kwargs["repo_sources"]
-        self.assertEqual(len(repo_sources), 3)
+        self.assertEqual(len(repo_sources), 4)
         summary_path = Path(repo_sources[0])
         self.assertTrue(summary_path.exists())
         summary_text = summary_path.read_text(encoding="utf-8")
         self.assertIn("# Telegram Memory Regression Summary", summary_text)
+        self.assertIn("## Live Architecture Comparison", summary_text)
         self.assertIn("## Category Coverage", summary_text)
         self.assertIn("## Route Coverage", summary_text)
         self.assertIn("## Quality Lanes", summary_text)
@@ -215,9 +238,15 @@ class MemoryRegressionTests(SparkTestCase):
             benchmark_markdown_path,
             output_dir / "architecture-benchmark" / "memory-architecture-benchmark.md",
         )
+        live_comparison_markdown_path = Path(repo_sources[3])
+        self.assertEqual(
+            live_comparison_markdown_path,
+            output_dir / "architecture-live-comparison" / "telegram-memory-architecture-live-comparison.md",
+        )
         cases_payload = json.loads(cases_json_path.read_text(encoding="utf-8"))
         self.assertEqual(cases_payload["selected_user_id"], "12345")
         self.assertEqual(cases_payload["cases"][0]["case_id"], "name_write")
+        self.assertIn("architecture_live_comparison", cases_payload)
         self.assertEqual(result.payload["summary"]["category_counts"]["overwrite"], 4)
         self.assertTrue(result.payload["summary"]["quality_lanes"]["overwrite"])
         self.assertEqual(
@@ -229,6 +258,16 @@ class MemoryRegressionTests(SparkTestCase):
             result.payload["summary"]["architecture_product_memory_leaders"],
             ["observational_temporal_memory", "dual_store_event_calendar_hybrid"],
         )
+        self.assertEqual(result.payload["summary"]["live_architecture_case_count"], 8)
+        self.assertEqual(
+            result.payload["summary"]["live_architecture_leaders"],
+            ["summary_synthesis_memory"],
+        )
+        self.assertEqual(
+            result.payload["summary"]["live_architecture_recommended_runtime"],
+            "summary_synthesis_memory",
+        )
+        self.assertFalse(result.payload["summary"]["live_architecture_runtime_matches_leader"])
         self.assertEqual(
             Path(result.payload["artifact_paths"]["regression_report_markdown"]),
             summary_path,
@@ -240,6 +279,10 @@ class MemoryRegressionTests(SparkTestCase):
         self.assertEqual(
             Path(result.payload["artifact_paths"]["architecture_benchmark_markdown"]),
             benchmark_markdown_path,
+        )
+        self.assertEqual(
+            Path(result.payload["artifact_paths"]["architecture_live_comparison_markdown"]),
+            live_comparison_markdown_path,
         )
 
     def test_run_telegram_memory_regression_filters_cases_by_category(self) -> None:
@@ -284,6 +327,9 @@ class MemoryRegressionTests(SparkTestCase):
         ), patch(
             "spark_intelligence.memory.regression.benchmark_memory_architectures",
             return_value=SimpleNamespace(payload=self._benchmark_payload(output_dir)),
+        ), patch(
+            "spark_intelligence.memory.regression.compare_telegram_memory_architectures",
+            return_value=SimpleNamespace(payload=self._live_comparison_payload(output_dir)),
         ):
             result = run_telegram_memory_regression(
                 config_manager=self.config_manager,
@@ -356,6 +402,9 @@ class MemoryRegressionTests(SparkTestCase):
         ), patch(
             "spark_intelligence.memory.regression.benchmark_memory_architectures",
             return_value=SimpleNamespace(payload=self._benchmark_payload(output_dir)),
+        ), patch(
+            "spark_intelligence.memory.regression.compare_telegram_memory_architectures",
+            return_value=SimpleNamespace(payload=self._live_comparison_payload(output_dir)),
         ):
             result = run_telegram_memory_regression(
                 config_manager=self.config_manager,
