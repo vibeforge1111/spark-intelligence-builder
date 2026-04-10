@@ -33,6 +33,7 @@ from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.capability_router import build_capability_router_prompt_context
 from spark_intelligence.harness_registry import build_harness_prompt_context
 from spark_intelligence.memory import (
+    explain_memory_answer_in_memory,
     inspect_human_memory_in_memory,
     lookup_current_state_in_memory,
     write_profile_fact_to_memory,
@@ -120,57 +121,6 @@ class ResearcherBridgeResult:
     active_chip_evaluate_used: bool = False
     output_keepability: str = "ephemeral_context"
     promotion_disposition: str = "not_promotable"
-
-
-def _profile_fact_query_related_predicates(predicate: str | None) -> tuple[str, ...]:
-    normalized = str(predicate or "").strip()
-    if normalized == "profile.startup_name":
-        return ("profile.founder_of",)
-    return ()
-
-
-def _profile_fact_record_timestamp(record: dict[str, Any]) -> datetime:
-    raw = str(record.get("timestamp") or "").strip()
-    if not raw:
-        return datetime.min.replace(tzinfo=timezone.utc)
-    try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return datetime.min.replace(tzinfo=timezone.utc)
-
-
-def _profile_fact_record_turn_key(record: dict[str, Any]) -> str:
-    turn_ids = record.get("turn_ids")
-    if isinstance(turn_ids, list) and turn_ids:
-        return str(turn_ids[-1] or "").strip()
-    return ""
-
-
-def _select_profile_fact_query_value(
-    *,
-    predicate: str | None,
-    primary_records: list[dict[str, Any]],
-    related_records: list[dict[str, Any]],
-) -> str | None:
-    target_predicate = str(predicate or "").strip()
-    candidates: list[tuple[datetime, str, int, str]] = []
-    for record in [*related_records, *primary_records]:
-        value = str(record.get("value") or "").strip()
-        if not value:
-            continue
-        record_predicate = str(record.get("predicate") or "").strip()
-        candidates.append(
-            (
-                _profile_fact_record_timestamp(record),
-                _profile_fact_record_turn_key(record),
-                1 if record_predicate == target_predicate else 0,
-                value,
-            )
-        )
-    if not candidates:
-        return None
-    candidates.sort()
-    return candidates[-1][3]
 
 
 @dataclass
@@ -2727,30 +2677,20 @@ def build_researcher_reply(
         and detected_profile_fact_query.query_kind == "single_fact"
     ):
         memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
-        related_predicates = _profile_fact_query_related_predicates(detected_profile_fact_query.predicate)
-        primary_records: list[dict[str, Any]] = []
-        related_records: list[dict[str, Any]] = []
-        if related_predicates:
-            inspection = inspect_human_memory_in_memory(
-                config_manager=config_manager,
-                state_db=state_db,
-                human_id=human_id,
-                actor_id="researcher_bridge",
-            )
-            if not inspection.read_result.abstained and inspection.read_result.records:
-                relevant_predicates = {
-                    str(detected_profile_fact_query.predicate or "").strip(),
-                    *related_predicates,
-                }
-                for record in inspection.read_result.records:
-                    record_predicate = str(record.get("predicate") or "").strip()
-                    if record_predicate not in relevant_predicates:
-                        continue
-                    if record_predicate == str(detected_profile_fact_query.predicate or "").strip():
-                        primary_records.append(record)
-                    else:
-                        related_records.append(record)
-        else:
+        direct_fact_explanation = explain_memory_answer_in_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            subject=memory_subject,
+            predicate=str(detected_profile_fact_query.predicate or ""),
+            question=str(user_message or "").strip() or f"What is my {detected_profile_fact_query.label}?",
+            actor_id="researcher_bridge",
+        )
+        direct_fact_value = None
+        direct_fact_read_method = "explain_answer"
+        explanation_payload = direct_fact_explanation.read_result.answer_explanation or {}
+        if not direct_fact_explanation.read_result.abstained and direct_fact_explanation.read_result.records:
+            direct_fact_value = str(direct_fact_explanation.read_result.records[0].get("answer") or "").strip() or None
+        if direct_fact_value is None:
             direct_fact_lookup = lookup_current_state_in_memory(
                 config_manager=config_manager,
                 state_db=state_db,
@@ -2758,17 +2698,9 @@ def build_researcher_reply(
                 predicate=str(detected_profile_fact_query.predicate or ""),
                 actor_id="researcher_bridge",
             )
+            direct_fact_read_method = "get_current_state"
             if not direct_fact_lookup.read_result.abstained and direct_fact_lookup.read_result.records:
-                primary_records = [
-                    record
-                    for record in direct_fact_lookup.read_result.records
-                    if str(record.get("predicate") or "").strip()
-                ]
-        direct_fact_value = _select_profile_fact_query_value(
-            predicate=detected_profile_fact_query.predicate,
-            primary_records=primary_records,
-            related_records=related_records,
-        )
+                direct_fact_value = str(direct_fact_lookup.read_result.records[0].get("value") or "").strip() or None
         output_keepability, promotion_disposition = _bridge_output_classification(
             mode="memory_profile_fact",
             routing_decision="memory_profile_fact_query",
@@ -2781,7 +2713,9 @@ def build_researcher_reply(
         evidence_summary = (
             "status=memory_profile_fact "
             f"predicate={detected_profile_fact_query.predicate or 'unknown'} "
-            f"value_found={'yes' if direct_fact_value else 'no'}"
+            f"value_found={'yes' if direct_fact_value else 'no'} "
+            f"read_method={direct_fact_read_method} "
+            f"explanation_found={'yes' if bool(explanation_payload) else 'no'}"
         )
         record_event(
             state_db,
@@ -2811,6 +2745,8 @@ def build_researcher_reply(
                     "predicate": detected_profile_fact_query.predicate,
                     "label": detected_profile_fact_query.label,
                     "value_found": bool(direct_fact_value),
+                    "read_method": direct_fact_read_method,
+                    "explanation_found": bool(explanation_payload),
                 },
             ),
         )

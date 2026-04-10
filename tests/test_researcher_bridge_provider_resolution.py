@@ -1266,6 +1266,10 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         read_events = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=10)
         self.assertTrue(read_events)
         self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate"), "profile.city")
+        bridge_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(bridge_events)
+        self.assertEqual((bridge_events[0]["facts_json"] or {}).get("read_method"), "explain_answer")
+        self.assertTrue(bool((bridge_events[0]["facts_json"] or {}).get("explanation_found")))
 
     def test_build_researcher_reply_preserves_uncertainty_for_missing_city_query_fact(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
@@ -1623,6 +1627,10 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         read_events = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=10)
         self.assertTrue(read_events)
         self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate"), "profile.home_country")
+        bridge_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(bridge_events)
+        self.assertEqual((bridge_events[0]["facts_json"] or {}).get("read_method"), "get_current_state")
+        self.assertTrue(bool((bridge_events[0]["facts_json"] or {}).get("explanation_found")))
 
     def test_build_researcher_reply_persists_preferred_name_profile_fact_before_bridge_execution(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
