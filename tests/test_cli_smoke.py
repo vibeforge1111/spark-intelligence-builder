@@ -1993,6 +1993,69 @@ class CliSmokeTests(SparkTestCase):
         inspect_payload = json.loads(inspect_stdout)
         self.assertEqual(inspect_payload["identity"]["agent_id"], "swarm-agent:zephyr")
         self.assertEqual(inspect_payload["identity"]["status"], "identity_conflict")
+
+    def test_identity_link_list_and_unlink_commands_manage_aliases(self) -> None:
+        approve_pairing(
+            state_db=self.state_db,
+            channel_id="telegram",
+            external_user_id="111",
+            display_name="Alice",
+        )
+
+        link_exit, link_stdout, link_stderr = self.run_cli(
+            "identity",
+            "link",
+            "--home",
+            str(self.home),
+            "--primary",
+            "telegram:111",
+            "--as",
+            "tui:local-operator",
+            "--created-by",
+            "test-suite",
+            "--json",
+        )
+        self.assertEqual(link_exit, 0, link_stderr)
+        link_payload = json.loads(link_stdout)
+        self.assertEqual(link_payload["alias"], "tui:local-operator")
+        self.assertEqual(link_payload["primary"], "telegram:111")
+        self.assertEqual(link_payload["primary_human_id"], "human:telegram:111")
+        self.assertEqual(link_payload["primary_agent_id"], "agent:human:telegram:111")
+
+        list_exit, list_stdout, list_stderr = self.run_cli(
+            "identity",
+            "list",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(list_exit, 0, list_stderr)
+        list_payload = json.loads(list_stdout)
+        self.assertEqual(len(list_payload), 1)
+        self.assertEqual(list_payload[0]["alias"], "tui:local-operator")
+        self.assertEqual(list_payload[0]["primary"], "telegram:111")
+
+        unlink_exit, unlink_stdout, unlink_stderr = self.run_cli(
+            "identity",
+            "unlink",
+            "--home",
+            str(self.home),
+            "tui:local-operator",
+            "--json",
+        )
+        self.assertEqual(unlink_exit, 0, unlink_stderr)
+        unlink_payload = json.loads(unlink_stdout)
+        self.assertTrue(unlink_payload["removed"])
+
+        list_exit, list_stdout, list_stderr = self.run_cli(
+            "identity",
+            "list",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+        self.assertEqual(list_exit, 0, list_stderr)
+        self.assertEqual(json.loads(list_stdout), [])
         self.assertEqual(inspect_payload["identity"]["conflict_agent_id"], "swarm-agent:atlas")
         self.assertEqual(inspect_payload["identity"]["conflict_reason"], "multiple_agent_ids_for_human")
 
