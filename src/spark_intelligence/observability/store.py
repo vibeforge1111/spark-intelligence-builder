@@ -1374,24 +1374,68 @@ def build_watchtower_snapshot(
         "health_facts": health_facts,
         "health_dimensions": dimensions,
         "top_level_state": _derive_watchtower_top_level_state(dimensions),
-        "contradictions": _build_contradiction_panel(state_db),
+        "contradictions": _safe_watchtower_panel(
+            "contradictions",
+            lambda: _build_contradiction_panel(state_db),
+        ),
         "panels": {
-            "config_authority": _build_config_authority_panel(state_db),
+            "config_authority": _safe_watchtower_panel(
+                "config_authority",
+                lambda: _build_config_authority_panel(state_db),
+            ),
             "execution_lineage": execution_panel,
             "delivery_truth": delivery_panel,
             "background_freshness": background_panel,
             "environment_parity": environment_panel,
-            "provenance_and_quarantine": _build_provenance_and_quarantine_panel(state_db),
-            "memory_lane_hygiene": _build_memory_lane_hygiene_panel(state_db),
-            "agent_identity": _build_agent_identity_panel(state_db),
-            "personality": _build_personality_panel(state_db),
-            "session_integrity": _build_session_integrity_panel(state_db),
-            "observer_incidents": _build_observer_incident_panel(state_db),
-            "observer_packets": _build_observer_packet_panel(state_db),
-            "observer_handoffs": _build_observer_handoff_panel(state_db),
-            "memory_shadow": _build_memory_shadow_panel(state_db),
+            "provenance_and_quarantine": _safe_watchtower_panel(
+                "provenance_and_quarantine",
+                lambda: _build_provenance_and_quarantine_panel(state_db),
+            ),
+            "memory_lane_hygiene": _safe_watchtower_panel(
+                "memory_lane_hygiene",
+                lambda: _build_memory_lane_hygiene_panel(state_db),
+            ),
+            "agent_identity": _safe_watchtower_panel(
+                "agent_identity",
+                lambda: _build_agent_identity_panel(state_db),
+            ),
+            "personality": _safe_watchtower_panel(
+                "personality",
+                lambda: _build_personality_panel(state_db),
+            ),
+            "session_integrity": _safe_watchtower_panel(
+                "session_integrity",
+                lambda: _build_session_integrity_panel(state_db),
+            ),
+            "observer_incidents": _safe_watchtower_panel(
+                "observer_incidents",
+                lambda: _build_observer_incident_panel(state_db),
+            ),
+            "observer_packets": _safe_watchtower_panel(
+                "observer_packets",
+                lambda: _build_observer_packet_panel(state_db),
+            ),
+            "observer_handoffs": _safe_watchtower_panel(
+                "observer_handoffs",
+                lambda: _build_observer_handoff_panel(state_db),
+            ),
+            "memory_shadow": _safe_watchtower_panel(
+                "memory_shadow",
+                lambda: _build_memory_shadow_panel(state_db),
+            ),
         },
     }
+
+
+def _safe_watchtower_panel(panel_name: str, factory: Any) -> dict[str, Any]:
+    try:
+        return factory()
+    except sqlite3.Error as exc:
+        return {
+            "status": "degraded",
+            "panel": panel_name,
+            "error": f"SQLite error while building watchtower panel: {exc}",
+        }
 
 
 def summarize_payload(payload: Any) -> dict[str, Any]:

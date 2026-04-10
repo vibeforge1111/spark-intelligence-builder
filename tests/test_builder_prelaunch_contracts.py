@@ -1333,6 +1333,35 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertFalse(issues["stop_ship_runtime_state_authority"].ok)
         self.assertIn("attachments", issues["stop_ship_runtime_state_authority"].detail)
 
+    def test_stop_ship_checks_fail_closed_when_sqlite_event_queries_error(self) -> None:
+        with patch(
+            "spark_intelligence.observability.checks._runtime_state_authority_issue",
+            side_effect=sqlite3.OperationalError("disk I/O error"),
+        ):
+            issues = {
+                issue.name: issue
+                for issue in evaluate_stop_ship_issues(
+                    config_manager=self.config_manager,
+                    state_db=self.state_db,
+                )
+            }
+
+        self.assertFalse(issues["stop_ship_runtime_state_authority"].ok)
+        self.assertIn("SQLite error", issues["stop_ship_runtime_state_authority"].detail)
+        self.assertIn("disk I/O error", issues["stop_ship_runtime_state_authority"].detail)
+
+    def test_watchtower_snapshot_degrades_panel_when_memory_lane_query_errors(self) -> None:
+        with patch(
+            "spark_intelligence.observability.store.recent_memory_lane_records",
+            side_effect=sqlite3.DatabaseError("database disk image is malformed"),
+        ):
+            snapshot = build_watchtower_snapshot(self.state_db)
+
+        panel = snapshot["panels"]["memory_lane_hygiene"]
+        self.assertEqual(panel["status"], "degraded")
+        self.assertEqual(panel["panel"], "memory_lane_hygiene")
+        self.assertIn("database disk image is malformed", panel["error"])
+
     def test_stop_ship_flags_ungoverned_external_execution_entry_points(self) -> None:
         with patch(
             "spark_intelligence.observability.checks._find_source_pattern_paths",
