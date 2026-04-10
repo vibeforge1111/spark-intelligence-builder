@@ -9,6 +9,7 @@ from spark_intelligence.swarm_bridge.local import (
 )
 from spark_intelligence.swarm_bridge.sync import (
     SwarmDecisionResult,
+    SwarmDoctorReport,
     SwarmStatus,
     SwarmSyncResult,
     evaluate_swarm_escalation,
@@ -27,6 +28,7 @@ from spark_intelligence.swarm_bridge.sync import (
     swarm_review_mastery,
     swarm_set_evolution_mode,
     swarm_sync_upgrade_delivery_status,
+    swarm_doctor,
     swarm_status,
     sync_swarm_collective,
 )
@@ -34,6 +36,7 @@ from spark_intelligence.swarm_bridge.sync import (
 __all__ = [
     "SwarmBridgeCommandResult",
     "SwarmDecisionResult",
+    "SwarmDoctorReport",
     "SwarmStatus",
     "SwarmSyncResult",
     "evaluate_swarm_escalation",
@@ -58,6 +61,7 @@ __all__ = [
     "swarm_review_mastery",
     "swarm_set_evolution_mode",
     "swarm_sync_upgrade_delivery_status",
+    "swarm_doctor",
     "swarm_status",
     "sync_swarm_collective",
 ]
