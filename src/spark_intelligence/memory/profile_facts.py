@@ -12,9 +12,11 @@ _CITY_PATTERNS = [
 _STARTUP_PATTERNS = [
     re.compile(r"\bmy\s+startup\s+is\s+([A-Za-z][A-Za-z0-9\s\-'`.&_]{1,60})", re.I),
     re.compile(r"\bi\s+created\s+a\s+startup\s+called\s+([A-Za-z][A-Za-z0-9\s\-'`.&_]{1,60})", re.I),
+    re.compile(r"\bi\s+run\s+([A-Za-z][A-Za-z0-9\s\-'`.&_]{1,60})", re.I),
 ]
 _FOUNDER_PATTERNS = [
     re.compile(r"\bi(?:'m| am)\s+the\s+founder\s+of\s+([A-Za-z][A-Za-z0-9\s\-'`.&_]{1,60})", re.I),
+    re.compile(r"\bi\s+founded\s+([A-Za-z][A-Za-z0-9\s\-'`.&_]{1,60})", re.I),
 ]
 _HACK_PATTERNS = [
     re.compile(r"\bwe\s+were\s+hacked\s+by\s+([A-Za-z][A-Za-z0-9\s\-'`.&_]{1,60})", re.I),
@@ -36,6 +38,7 @@ _NAME_PATTERNS = [
 _COUNTRY_PATTERNS = [
     re.compile(r"\bmy\s+country\s+is\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
     re.compile(r"\bi(?:'m| am)\s+from\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
+    re.compile(r"\bi(?:'m| am)\s+based\s+in\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
 ]
 _TIMEZONE_PATTERNS = [
     re.compile(r"\bmy\s+timezone\s+is\s+([A-Za-z_]+/[A-Za-z_]+(?:/[A-Za-z_]+)?)", re.I),
