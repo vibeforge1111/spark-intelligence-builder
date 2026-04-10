@@ -1654,6 +1654,8 @@ def build_parser() -> argparse.ArgumentParser:
     memory_regression_parser.add_argument("--user-id", help="Explicit Telegram user id to simulate")
     memory_regression_parser.add_argument("--username", help="Telegram username to simulate")
     memory_regression_parser.add_argument("--chat-id", help="Explicit Telegram chat id override")
+    memory_regression_parser.add_argument("--case-id", action="append", default=[], help="Restrict the regression run to one or more case ids")
+    memory_regression_parser.add_argument("--category", action="append", default=[], help="Restrict the regression run to one or more case categories")
     memory_regression_parser.add_argument("--kb-limit", type=int, default=25, help="Maximum Telegram conversations to scan when compiling the KB")
     memory_regression_parser.add_argument("--validator-root", help="domain-chip-memory repo root used for KB compilation")
     memory_regression_parser.add_argument("--write", help="Optional output path for the regression summary JSON payload")
@@ -4505,6 +4507,8 @@ def handle_memory_run_telegram_regression(args: argparse.Namespace) -> int:
         kb_limit=args.kb_limit,
         validator_root=args.validator_root,
         write_path=args.write,
+        case_ids=args.case_id,
+        categories=args.category,
     )
     print(result.to_json() if args.json else result.to_text())
     return 0

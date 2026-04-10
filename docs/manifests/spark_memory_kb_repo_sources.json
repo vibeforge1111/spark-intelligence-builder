@@ -1,6 +1,7 @@
 {
   "repo_sources": [
     "../../README.md",
+    "../MEMORY_EXECUTION_PLAN_2026-04-10.md",
     "../SPARK_MEMORY_KB_ROLLOUT_PLAN_2026-04-10.md",
     "../MEMORY_TELEGRAM_HANDOFF_2026-04-10.md"
   ]

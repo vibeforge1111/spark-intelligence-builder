@@ -21,6 +21,9 @@ class TelegramMemoryRegressionCase:
     expected_response_contains: tuple[str, ...] = ()
 
 
+QUALITY_LANE_KEYS: tuple[str, ...] = ("staleness", "overwrite", "abstention")
+
+
 DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ...] = (
     TelegramMemoryRegressionCase(
         case_id="name_write",
@@ -281,6 +284,8 @@ def run_telegram_memory_regression(
     kb_limit: int = 25,
     validator_root: str | Path | None = None,
     write_path: str | Path | None = None,
+    case_ids: list[str] | None = None,
+    categories: list[str] | None = None,
 ) -> TelegramMemoryRegressionResult:
     from spark_intelligence.gateway.runtime import gateway_ask_telegram
 
@@ -295,8 +300,50 @@ def run_telegram_memory_regression(
     mismatches: list[dict[str, Any]] = []
     selected_user_id = str(user_id or "").strip() or None
     selected_chat_id = str(chat_id or "").strip() or None
+    requested_case_ids = [str(item).strip() for item in (case_ids or []) if str(item).strip()]
+    requested_categories = [str(item).strip() for item in (categories or []) if str(item).strip()]
+    selected_cases = _select_regression_cases(case_ids=requested_case_ids, categories=requested_categories)
+    selection_summary = _selection_summary(selected_cases)
+    filter_summary = {
+        "requested_case_ids": requested_case_ids,
+        "requested_categories": requested_categories,
+    }
 
-    for case in DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES:
+    if not selected_cases:
+        payload = {
+            "summary": {
+                "status": "invalid_request",
+                "case_count": 0,
+                "matched_case_count": 0,
+                "mismatched_case_count": 0,
+                "selected_user_id": selected_user_id,
+                "selected_chat_id": selected_chat_id,
+                "human_id": f"human:telegram:{selected_user_id}" if selected_user_id else None,
+                "kb_has_probe_coverage": False,
+                "kb_issue_labels": [],
+                "kb_current_state_hits": 0,
+                "kb_current_state_total": 0,
+                "kb_evidence_hits": 0,
+                "kb_evidence_total": 0,
+                **filter_summary,
+                **selection_summary,
+            },
+            "errors": ["no_regression_cases_selected"],
+            "cases": [],
+            "mismatches": [],
+            "inspection": None,
+            "kb_compile": None,
+            "artifact_paths": {
+                "summary_json": str(resolved_write_path),
+                "kb_output_dir": str(resolved_kb_output_dir),
+                "kb_json": str(kb_write_path),
+                "regression_report_markdown": str(regression_summary_markdown_path),
+            },
+        }
+        resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return TelegramMemoryRegressionResult(output_dir=resolved_output_dir, payload=payload)
+
+    for case in selected_cases:
         raw = gateway_ask_telegram(
             config_manager=config_manager,
             state_db=state_db,
@@ -323,7 +370,7 @@ def run_telegram_memory_regression(
             payload = {
                 "summary": {
                     "status": "blocked_precondition",
-                    "case_count": len(DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES),
+                    "case_count": len(selected_cases),
                     "matched_case_count": 0,
                     "mismatched_case_count": 0,
                     "selected_user_id": selected_user_id,
@@ -336,6 +383,8 @@ def run_telegram_memory_regression(
                     "kb_evidence_hits": 0,
                     "kb_evidence_total": 0,
                     "blocked_reason": blocked_reason,
+                    **filter_summary,
+                    **selection_summary,
                 },
                 "cases": [case_result],
                 "mismatches": [],
@@ -400,6 +449,8 @@ def run_telegram_memory_regression(
         "kb_current_state_total": current_probe.get("total", 0),
         "kb_evidence_hits": evidence_probe.get("hits", 0),
         "kb_evidence_total": evidence_probe.get("total", 0),
+        **filter_summary,
+        **selection_summary,
     }
     payload = {
         "summary": summary,
@@ -452,6 +503,35 @@ def _default_output_dir(config_manager: ConfigManager) -> Path:
     return config_manager.paths.home / "artifacts" / "telegram-memory-regression"
 
 
+def _select_regression_cases(
+    *,
+    case_ids: list[str] | None,
+    categories: list[str] | None,
+) -> tuple[TelegramMemoryRegressionCase, ...]:
+    requested_case_ids = {str(item).strip() for item in (case_ids or []) if str(item).strip()}
+    requested_categories = {str(item).strip() for item in (categories or []) if str(item).strip()}
+    if not requested_case_ids and not requested_categories:
+        return DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES
+    selected: list[TelegramMemoryRegressionCase] = []
+    for case in DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES:
+        if requested_case_ids and case.case_id not in requested_case_ids:
+            continue
+        if requested_categories and case.category not in requested_categories:
+            continue
+        selected.append(case)
+    return tuple(selected)
+
+
+def _selection_summary(cases: tuple[TelegramMemoryRegressionCase, ...]) -> dict[str, Any]:
+    category_counts = _build_category_counts(case.category for case in cases)
+    return {
+        "selected_case_ids": [case.case_id for case in cases],
+        "selected_categories": sorted(category_counts),
+        "category_counts": category_counts,
+        "quality_lanes": _build_quality_lanes(category_counts),
+    }
+
+
 def _nested_get(payload: dict[str, Any], *path: str, default: Any = None) -> Any:
     current: Any = payload
     for key in path:
@@ -495,10 +575,8 @@ def _build_regression_summary_markdown(
     case_payloads: list[dict[str, Any]],
     mismatches: list[dict[str, Any]],
 ) -> str:
-    category_counts: dict[str, int] = {}
-    for case in case_payloads:
-        category = str(case.get("category") or "unknown")
-        category_counts[category] = category_counts.get(category, 0) + 1
+    category_counts = _build_category_counts(str(case.get("category") or "unknown") for case in case_payloads)
+    quality_lanes = _build_quality_lanes(category_counts)
 
     lines = [
         "# Telegram Memory Regression Summary",
@@ -519,9 +597,9 @@ def _build_regression_summary_markdown(
             "",
             "## Quality Lanes",
             "",
-            f"- `staleness`: `{'yes' if category_counts.get('staleness') else 'no'}`",
-            f"- `overwrite`: `{'yes' if category_counts.get('overwrite') else 'no'}`",
-            f"- `abstention`: `{'yes' if category_counts.get('abstention') else 'no'}`",
+            f"- `staleness`: `{'yes' if quality_lanes['staleness'] else 'no'}`",
+            f"- `overwrite`: `{'yes' if quality_lanes['overwrite'] else 'no'}`",
+            f"- `abstention`: `{'yes' if quality_lanes['abstention'] else 'no'}`",
             "",
             "## Cases",
             "",
@@ -545,3 +623,15 @@ def _build_regression_summary_markdown(
             lines.append(f"- Mismatches: `{rendered}`")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _build_category_counts(categories: Any) -> dict[str, int]:
+    category_counts: dict[str, int] = {}
+    for category in categories:
+        rendered = str(category or "unknown")
+        category_counts[rendered] = category_counts.get(rendered, 0) + 1
+    return category_counts
+
+
+def _build_quality_lanes(category_counts: dict[str, int]) -> dict[str, bool]:
+    return {lane: bool(category_counts.get(lane)) for lane in QUALITY_LANE_KEYS}

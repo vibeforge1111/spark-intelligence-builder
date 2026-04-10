@@ -45,6 +45,10 @@ class MemoryRegressionTests(SparkTestCase):
                 "12345",
                 "--chat-id",
                 "12345",
+                "--case-id",
+                "country_query",
+                "--category",
+                "overwrite",
                 "--kb-limit",
                 "12",
                 "--validator-root",
@@ -67,6 +71,8 @@ class MemoryRegressionTests(SparkTestCase):
         self.assertEqual(kwargs["kb_limit"], 12)
         self.assertEqual(kwargs["validator_root"], "C:/validator")
         self.assertEqual(kwargs["write_path"], str(write_path))
+        self.assertEqual(kwargs["case_ids"], ["country_query"])
+        self.assertEqual(kwargs["categories"], ["overwrite"])
 
     def test_run_telegram_memory_regression_blocks_fast_when_user_is_not_paired(self) -> None:
         output_dir = self.home / "artifacts" / "telegram-memory-regression-blocked"
@@ -158,7 +164,76 @@ class MemoryRegressionTests(SparkTestCase):
         self.assertIn("## Quality Lanes", summary_text)
         self.assertIn("startup_query_after_founder", summary_text)
         self.assertIn("country_query_after_overwrite", summary_text)
+        self.assertEqual(result.payload["summary"]["category_counts"]["overwrite"], 4)
+        self.assertTrue(result.payload["summary"]["quality_lanes"]["overwrite"])
         self.assertEqual(
             Path(result.payload["artifact_paths"]["regression_report_markdown"]),
             summary_path,
+        )
+
+    def test_run_telegram_memory_regression_filters_cases_by_category(self) -> None:
+        output_dir = self.home / "artifacts" / "telegram-memory-regression-overwrite-only"
+
+        def fake_gateway_payload(*, message: str, **_: object) -> str:
+            return json.dumps(
+                {
+                    "message": message,
+                    "user_id": "12345",
+                    "chat_id": "12345",
+                    "result": {
+                        "ok": True,
+                        "decision": "allowed",
+                        "detail": {
+                            "response_text": message,
+                            "bridge_mode": "memory_profile_fact",
+                            "routing_decision": "memory_profile_fact_query",
+                            "trace_ref": "trace:test",
+                        },
+                    },
+                }
+            )
+
+        kb_payload = {
+            "failure_taxonomy": {"summary": {"has_probe_coverage": True, "issue_labels": []}},
+            "probe_rows": [
+                {"probe_type": "current_state", "hits": 1, "total": 1},
+                {"probe_type": "evidence", "hits": 1, "total": 1},
+            ],
+        }
+
+        with patch(
+            "spark_intelligence.gateway.runtime.gateway_ask_telegram",
+            side_effect=fake_gateway_payload,
+        ) as ask_telegram, patch(
+            "spark_intelligence.memory.regression.inspect_human_memory_in_memory",
+            return_value=SimpleNamespace(to_json=lambda: json.dumps({"records": []})),
+        ), patch(
+            "spark_intelligence.memory.regression.build_telegram_state_knowledge_base",
+            return_value=SimpleNamespace(payload=kb_payload),
+        ):
+            result = run_telegram_memory_regression(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                output_dir=output_dir,
+                user_id="12345",
+                chat_id="12345",
+                categories=["overwrite"],
+            )
+
+        self.assertEqual(ask_telegram.call_count, 4)
+        self.assertEqual(result.payload["summary"]["case_count"], 4)
+        self.assertEqual(result.payload["summary"]["selected_categories"], ["overwrite"])
+        self.assertEqual(
+            result.payload["summary"]["selected_case_ids"],
+            [
+                "city_overwrite",
+                "country_overwrite",
+                "country_query_after_overwrite",
+                "city_query_after_overwrite",
+            ],
+        )
+        self.assertEqual(result.payload["summary"]["category_counts"], {"overwrite": 4})
+        self.assertEqual(
+            result.payload["summary"]["quality_lanes"],
+            {"staleness": False, "overwrite": True, "abstention": False},
         )
