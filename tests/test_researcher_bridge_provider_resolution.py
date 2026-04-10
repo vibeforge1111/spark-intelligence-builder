@@ -1236,45 +1236,18 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             channel_kind="telegram",
         )
 
-        runtime_root = self.home / "fake-researcher"
-        runtime_root.mkdir(parents=True, exist_ok=True)
-        config_path = runtime_root / "spark-researcher.project.json"
-        config_path.write_text("{}", encoding="utf-8")
-        captured: dict[str, object] = {}
-
-        def fake_build_advisory(path: Path, task: str, *, model: str = "generic", limit: int = 4, domain: str | None = None):
-            return {
-                "guidance": [],
-                "epistemic_status": {
-                    "status": "under_supported",
-                    "packet_stability": {"status": "no_belief_packets"},
-                },
-                "selected_packet_ids": [],
-                "trace_path": "trace:city-query",
-            }
-
-        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
-            captured["user_prompt"] = user_prompt
-            return {"raw_response": "You're in Dubai."}
-
-        def fail_execute_with_research(*args, **kwargs):
-            raise AssertionError("execute_with_research should not run for direct conversational fallback")
-
         with patch(
-            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
-            return_value=(runtime_root, "configured"),
-        ), patch(
-            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
-            return_value=config_path,
-        ), patch(
-            "spark_intelligence.researcher_bridge.advisory._import_build_advisory",
-            return_value=fake_build_advisory,
-        ), patch(
-            "spark_intelligence.researcher_bridge.advisory._import_execute_with_research",
-            return_value=fail_execute_with_research,
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for direct memory fact replies"),
         ), patch(
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
-            side_effect=fake_direct_provider_prompt,
+            side_effect=AssertionError("provider execution should not run for direct memory fact replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._load_recent_conversation_context",
+            side_effect=AssertionError("recent conversation context should not run for direct memory fact replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.build_system_registry_prompt_context",
+            side_effect=AssertionError("system registry context should not run for direct memory fact replies"),
         ):
             result = build_researcher_reply(
                 config_manager=self.config_manager,
@@ -1287,9 +1260,9 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 user_message="What city do you have for me?",
             )
 
-        self.assertEqual(result.reply_text, "You're in Dubai.")
-        self.assertIn("[Memory action: PROFILE_FACT_STATUS]", str(captured["user_prompt"]))
-        self.assertIn("city: Dubai", str(captured["user_prompt"]))
+        self.assertEqual(result.reply_text, "You live in Dubai.")
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
         read_events = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=10)
         self.assertTrue(read_events)
         self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate"), "profile.city")
@@ -1313,45 +1286,18 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         )
         self.assertEqual(connect_exit, 0, connect_stderr)
 
-        runtime_root = self.home / "fake-researcher"
-        runtime_root.mkdir(parents=True, exist_ok=True)
-        config_path = runtime_root / "spark-researcher.project.json"
-        config_path.write_text("{}", encoding="utf-8")
-        captured: dict[str, object] = {}
-
-        def fake_build_advisory(path: Path, task: str, *, model: str = "generic", limit: int = 4, domain: str | None = None):
-            return {
-                "guidance": [],
-                "epistemic_status": {
-                    "status": "under_supported",
-                    "packet_stability": {"status": "no_belief_packets"},
-                },
-                "selected_packet_ids": [],
-                "trace_path": "trace:city-query-missing",
-            }
-
-        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
-            captured["user_prompt"] = user_prompt
-            return {"raw_response": "I don't currently have a saved city for you."}
-
-        def fail_execute_with_research(*args, **kwargs):
-            raise AssertionError("execute_with_research should not run for direct conversational fallback")
-
         with patch(
-            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
-            return_value=(runtime_root, "configured"),
-        ), patch(
-            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
-            return_value=config_path,
-        ), patch(
-            "spark_intelligence.researcher_bridge.advisory._import_build_advisory",
-            return_value=fake_build_advisory,
-        ), patch(
-            "spark_intelligence.researcher_bridge.advisory._import_execute_with_research",
-            return_value=fail_execute_with_research,
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for direct memory fact replies"),
         ), patch(
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
-            side_effect=fake_direct_provider_prompt,
+            side_effect=AssertionError("provider execution should not run for direct memory fact replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._load_recent_conversation_context",
+            side_effect=AssertionError("recent conversation context should not run for direct memory fact replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.build_system_registry_prompt_context",
+            side_effect=AssertionError("system registry context should not run for direct memory fact replies"),
         ):
             result = build_researcher_reply(
                 config_manager=self.config_manager,
@@ -1364,9 +1310,9 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 user_message="What city do you have saved for me?",
             )
 
-        self.assertEqual(result.reply_text, "I don't currently have a saved city for you.")
-        self.assertIn("[Memory action: PROFILE_FACT_STATUS_MISSING]", str(captured["user_prompt"]))
-        self.assertIn("Do not pretend you know.", str(captured["user_prompt"]))
+        self.assertEqual(result.reply_text, "I don't currently have that saved.")
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
 
     def test_build_researcher_reply_persists_timezone_profile_fact_before_bridge_execution(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
@@ -1456,45 +1402,18 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             channel_kind="telegram",
         )
 
-        runtime_root = self.home / "fake-researcher"
-        runtime_root.mkdir(parents=True, exist_ok=True)
-        config_path = runtime_root / "spark-researcher.project.json"
-        config_path.write_text("{}", encoding="utf-8")
-        captured: dict[str, object] = {}
-
-        def fake_build_advisory(path: Path, task: str, *, model: str = "generic", limit: int = 4, domain: str | None = None):
-            return {
-                "guidance": [],
-                "epistemic_status": {
-                    "status": "under_supported",
-                    "packet_stability": {"status": "no_belief_packets"},
-                },
-                "selected_packet_ids": [],
-                "trace_path": "trace:timezone-query",
-            }
-
-        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
-            captured["user_prompt"] = user_prompt
-            return {"raw_response": "Your timezone is Asia/Dubai."}
-
-        def fail_execute_with_research(*args, **kwargs):
-            raise AssertionError("execute_with_research should not run for direct conversational fallback")
-
         with patch(
-            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
-            return_value=(runtime_root, "configured"),
-        ), patch(
-            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
-            return_value=config_path,
-        ), patch(
-            "spark_intelligence.researcher_bridge.advisory._import_build_advisory",
-            return_value=fake_build_advisory,
-        ), patch(
-            "spark_intelligence.researcher_bridge.advisory._import_execute_with_research",
-            return_value=fail_execute_with_research,
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for direct memory fact replies"),
         ), patch(
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
-            side_effect=fake_direct_provider_prompt,
+            side_effect=AssertionError("provider execution should not run for direct memory fact replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._load_recent_conversation_context",
+            side_effect=AssertionError("recent conversation context should not run for direct memory fact replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.build_system_registry_prompt_context",
+            side_effect=AssertionError("system registry context should not run for direct memory fact replies"),
         ):
             result = build_researcher_reply(
                 config_manager=self.config_manager,
@@ -1508,8 +1427,8 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             )
 
         self.assertEqual(result.reply_text, "Your timezone is Asia/Dubai.")
-        self.assertIn("[Memory action: PROFILE_FACT_STATUS]", str(captured["user_prompt"]))
-        self.assertIn("timezone: Asia/Dubai", str(captured["user_prompt"]))
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
         read_events = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=10)
         self.assertTrue(read_events)
         self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate"), "profile.timezone")
@@ -1719,45 +1638,18 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             channel_kind="telegram",
         )
 
-        runtime_root = self.home / "fake-researcher"
-        runtime_root.mkdir(parents=True, exist_ok=True)
-        config_path = runtime_root / "spark-researcher.project.json"
-        config_path.write_text("{}", encoding="utf-8")
-        captured: dict[str, object] = {}
-
-        def fake_build_advisory(path: Path, task: str, *, model: str = "generic", limit: int = 4, domain: str | None = None):
-            return {
-                "guidance": [],
-                "epistemic_status": {
-                    "status": "under_supported",
-                    "packet_stability": {"status": "no_belief_packets"},
-                },
-                "selected_packet_ids": [],
-                "trace_path": "trace:name-query",
-            }
-
-        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
-            captured["user_prompt"] = user_prompt
-            return {"raw_response": "Your name is Sarah."}
-
-        def fail_execute_with_research(*args, **kwargs):
-            raise AssertionError("execute_with_research should not run for direct conversational fallback")
-
         with patch(
-            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
-            return_value=(runtime_root, "configured"),
-        ), patch(
-            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
-            return_value=config_path,
-        ), patch(
-            "spark_intelligence.researcher_bridge.advisory._import_build_advisory",
-            return_value=fake_build_advisory,
-        ), patch(
-            "spark_intelligence.researcher_bridge.advisory._import_execute_with_research",
-            return_value=fail_execute_with_research,
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for direct memory fact replies"),
         ), patch(
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
-            side_effect=fake_direct_provider_prompt,
+            side_effect=AssertionError("provider execution should not run for direct memory fact replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._load_recent_conversation_context",
+            side_effect=AssertionError("recent conversation context should not run for direct memory fact replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.build_system_registry_prompt_context",
+            side_effect=AssertionError("system registry context should not run for direct memory fact replies"),
         ):
             result = build_researcher_reply(
                 config_manager=self.config_manager,
@@ -1771,8 +1663,8 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             )
 
         self.assertEqual(result.reply_text, "Your name is Sarah.")
-        self.assertIn("[Memory action: PROFILE_FACT_STATUS]", str(captured["user_prompt"]))
-        self.assertIn("name: Sarah", str(captured["user_prompt"]))
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
         read_events = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=10)
         self.assertTrue(read_events)
         self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate"), "profile.preferred_name")
@@ -1809,45 +1701,18 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             channel_kind="telegram",
         )
 
-        runtime_root = self.home / "fake-researcher"
-        runtime_root.mkdir(parents=True, exist_ok=True)
-        config_path = runtime_root / "spark-researcher.project.json"
-        config_path.write_text("{}", encoding="utf-8")
-        captured: dict[str, object] = {}
-
-        def fake_build_advisory(path: Path, task: str, *, model: str = "generic", limit: int = 4, domain: str | None = None):
-            return {
-                "guidance": [],
-                "epistemic_status": {
-                    "status": "under_supported",
-                    "packet_stability": {"status": "no_belief_packets"},
-                },
-                "selected_packet_ids": [],
-                "trace_path": "trace:startup-query",
-            }
-
-        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
-            captured["user_prompt"] = user_prompt
-            return {"raw_response": "Your startup is Seedify."}
-
-        def fail_execute_with_research(*args, **kwargs):
-            raise AssertionError("execute_with_research should not run for direct conversational fallback")
-
         with patch(
-            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
-            return_value=(runtime_root, "configured"),
-        ), patch(
-            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
-            return_value=config_path,
-        ), patch(
-            "spark_intelligence.researcher_bridge.advisory._import_build_advisory",
-            return_value=fake_build_advisory,
-        ), patch(
-            "spark_intelligence.researcher_bridge.advisory._import_execute_with_research",
-            return_value=fail_execute_with_research,
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for direct memory fact replies"),
         ), patch(
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
-            side_effect=fake_direct_provider_prompt,
+            side_effect=AssertionError("provider execution should not run for direct memory fact replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._load_recent_conversation_context",
+            side_effect=AssertionError("recent conversation context should not run for direct memory fact replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.build_system_registry_prompt_context",
+            side_effect=AssertionError("system registry context should not run for direct memory fact replies"),
         ):
             result = build_researcher_reply(
                 config_manager=self.config_manager,
@@ -1860,9 +1725,9 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 user_message="What startup did I create?",
             )
 
-        self.assertEqual(result.reply_text, "Your startup is Seedify.")
-        self.assertIn("[Memory action: PROFILE_FACT_STATUS]", str(captured["user_prompt"]))
-        self.assertIn("startup: Seedify", str(captured["user_prompt"]))
+        self.assertEqual(result.reply_text, "You created Seedify.")
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
         read_events = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=10)
         self.assertTrue(read_events)
         self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate"), "profile.startup_name")
@@ -1980,6 +1845,104 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         read_events = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=10)
         self.assertTrue(read_events)
         self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate"), "profile.current_mission")
+
+    def test_build_researcher_reply_answers_founder_query_directly_from_memory(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        write_profile_fact_to_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human-1",
+            predicate="profile.founder_of",
+            value="Spark Swarm",
+            evidence_text="I am the founder of Spark Swarm.",
+            fact_name="profile_founder_of",
+            session_id="session-founder-query",
+            turn_id="turn-founder-query-write",
+            channel_kind="telegram",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for direct memory fact replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for direct memory fact replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._load_recent_conversation_context",
+            side_effect=AssertionError("recent conversation context should not run for direct memory fact replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.build_system_registry_prompt_context",
+            side_effect=AssertionError("system registry context should not run for direct memory fact replies"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-founder-query-direct",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-founder-query",
+                channel_kind="telegram",
+                user_message="What company did I found?",
+            )
+
+        self.assertEqual(result.reply_text, "You founded Spark Swarm.")
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+        read_events = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=10)
+        self.assertTrue(read_events)
+        self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate"), "profile.founder_of")
+
+    def test_build_researcher_reply_answers_occupation_query_directly_from_memory(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        write_profile_fact_to_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human-1",
+            predicate="profile.occupation",
+            value="entrepreneur",
+            evidence_text="I am an entrepreneur.",
+            fact_name="profile_occupation",
+            session_id="session-occupation-query",
+            turn_id="turn-occupation-query-write",
+            channel_kind="telegram",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for direct memory fact replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for direct memory fact replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._load_recent_conversation_context",
+            side_effect=AssertionError("recent conversation context should not run for direct memory fact replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.build_system_registry_prompt_context",
+            side_effect=AssertionError("system registry context should not run for direct memory fact replies"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-occupation-query-direct",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-occupation-query",
+                channel_kind="telegram",
+                user_message="What is my occupation?",
+            )
+
+        self.assertEqual(result.reply_text, "You're an entrepreneur.")
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+        read_events = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=10)
+        self.assertTrue(read_events)
+        self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate"), "profile.occupation")
 
     def test_build_researcher_reply_answers_missing_country_query_directly_from_memory(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)

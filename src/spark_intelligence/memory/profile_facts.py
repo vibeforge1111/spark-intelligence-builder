@@ -166,6 +166,7 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
     text = str(user_message or "").strip().lower()
     if not text:
         return None
+    normalized_question = re.sub(r"[.!?]+$", "", text).strip()
     if any(
         phrase in text
         for phrase in (
@@ -211,6 +212,31 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
             predicate="profile.current_mission",
             fact_name="profile_current_mission",
             label="current mission",
+        )
+    if normalized_question in {
+        "what company did i found",
+        "which company did i found",
+        "what did i found",
+        "what have i founded",
+        "what company have i founded",
+        "what company did i start",
+        "which company did i start",
+    }:
+        return ProfileFactQuery(
+            predicate="profile.founder_of",
+            fact_name="profile_founder_of",
+            label="company you founded",
+        )
+    if normalized_question in {
+        "what am i",
+        "what is my occupation",
+        "what's my occupation",
+        "what do i do",
+    }:
+        return ProfileFactQuery(
+            predicate="profile.occupation",
+            fact_name="profile_occupation",
+            label="occupation",
         )
     if any(
         phrase in text
@@ -316,6 +342,8 @@ def build_profile_fact_observation_answer(*, observation: ProfileFactObservation
         return _ensure_sentence(f"I'll remember your name is {value}")
     if predicate == "profile.startup_name":
         return _ensure_sentence(f"I'll remember you created {value}")
+    if predicate == "profile.occupation":
+        return _ensure_sentence(f"I'll remember you're {_with_indefinite_article(value)}")
     if predicate == "profile.founder_of":
         return _ensure_sentence(f"I'll remember you founded {value}")
     if predicate == "profile.hack_actor":
@@ -323,7 +351,7 @@ def build_profile_fact_observation_answer(*, observation: ProfileFactObservation
     if predicate == "profile.current_mission":
         return _ensure_sentence(f"I'll remember your current mission is to {value}")
     if predicate == "profile.spark_role":
-        return _ensure_sentence(f"I'll remember {_spark_role_sentence(value).lower()}")
+        return _ensure_sentence(f"I'll remember {_spark_role_sentence(value)}")
     if predicate == "profile.home_country":
         return _ensure_sentence(f"I'll remember your country is {value}")
     if predicate == "profile.timezone":
@@ -341,8 +369,12 @@ def _build_profile_fact_concise_answer(*, query: ProfileFactQuery, value: str) -
     predicate = str(query.predicate or "").strip()
     if predicate == "profile.preferred_name":
         return _ensure_sentence(f"Your name is {normalized_value}")
+    if predicate == "profile.occupation":
+        return _ensure_sentence(f"You're {_with_indefinite_article(normalized_value)}")
     if predicate == "profile.startup_name":
         return _ensure_sentence(f"You created {normalized_value}")
+    if predicate == "profile.founder_of":
+        return _ensure_sentence(f"You founded {normalized_value}")
     if predicate == "profile.hack_actor":
         return _ensure_sentence(f"The hack actor was {normalized_value}")
     if predicate == "profile.current_mission":
@@ -372,6 +404,17 @@ def _spark_role_sentence(value: str) -> str:
     if normalized.lower().startswith("important part"):
         return f"Spark will be an {normalized}"
     return f"Spark will be {normalized}"
+
+
+def _with_indefinite_article(value: str) -> str:
+    normalized = " ".join(str(value or "").strip().split())
+    if not normalized:
+        return ""
+    lowered = normalized.lower()
+    if lowered.startswith("a ") or lowered.startswith("an "):
+        return normalized
+    article = "an" if normalized[:1].lower() in {"a", "e", "i", "o", "u"} else "a"
+    return f"{article} {normalized}"
 
 
 def build_profile_identity_summary_context(*, records: list[dict[str, str]]) -> str:
@@ -444,8 +487,7 @@ def build_profile_identity_summary_answer(*, records: list[dict[str, str]]) -> s
     if name:
         identity_bits.append(name)
     if occupation:
-        article = "an" if occupation[:1].lower() in {"a", "e", "i", "o", "u"} else "a"
-        identity_bits.append(f"{article} {occupation}")
+        identity_bits.append(_with_indefinite_article(occupation))
     if city:
         identity_bits.append(f"in {city}")
     if identity_bits:

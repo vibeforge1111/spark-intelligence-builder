@@ -16,6 +16,8 @@ from spark_intelligence.memory import (
     write_profile_fact_to_memory,
 )
 from spark_intelligence.memory.profile_facts import (
+    build_profile_fact_observation_answer,
+    build_profile_fact_query_answer,
     build_profile_identity_summary_answer,
     build_profile_fact_query_context,
     build_profile_identity_summary_context,
@@ -320,7 +322,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(mission.predicate, "profile.current_mission")
         self.assertEqual(mission.value, "survive the hack and revive the companies")
 
-    def test_profile_fact_query_detects_startup_and_identity_summary_queries(self) -> None:
+    def test_profile_fact_query_detects_startup_founder_occupation_and_identity_summary_queries(self) -> None:
         city_query = detect_profile_fact_query("Which city do I live in?")
         self.assertIsNotNone(city_query)
         assert city_query is not None
@@ -339,11 +341,58 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(startup_query.predicate, "profile.startup_name")
         self.assertEqual(startup_query.query_kind, "single_fact")
 
+        founder_query = detect_profile_fact_query("What company did I found?")
+        self.assertIsNotNone(founder_query)
+        assert founder_query is not None
+        self.assertEqual(founder_query.predicate, "profile.founder_of")
+        self.assertEqual(founder_query.query_kind, "single_fact")
+
+        occupation_query = detect_profile_fact_query("What is my occupation?")
+        self.assertIsNotNone(occupation_query)
+        assert occupation_query is not None
+        self.assertEqual(occupation_query.predicate, "profile.occupation")
+        self.assertEqual(occupation_query.query_kind, "single_fact")
+
         identity_query = detect_profile_fact_query("Who am I?")
         self.assertIsNotNone(identity_query)
         assert identity_query is not None
         self.assertEqual(identity_query.query_kind, "identity_summary")
         self.assertEqual(identity_query.predicate_prefix, "profile.")
+
+    def test_profile_fact_answers_cover_founder_occupation_and_clean_observation_wording(self) -> None:
+        founder_query = detect_profile_fact_query("What company did I found?")
+        self.assertIsNotNone(founder_query)
+        assert founder_query is not None
+        self.assertEqual(
+            build_profile_fact_query_answer(query=founder_query, value="Spark Swarm"),
+            "You founded Spark Swarm.",
+        )
+
+        occupation_query = detect_profile_fact_query("What am I?")
+        self.assertIsNotNone(occupation_query)
+        assert occupation_query is not None
+        self.assertEqual(
+            build_profile_fact_query_answer(query=occupation_query, value="entrepreneur"),
+            "You're an entrepreneur.",
+        )
+
+        occupation_observation = detect_profile_fact_observation("I am an entrepreneur.")
+        self.assertIsNotNone(occupation_observation)
+        assert occupation_observation is not None
+        self.assertEqual(
+            build_profile_fact_observation_answer(observation=occupation_observation),
+            "I'll remember you're an entrepreneur.",
+        )
+
+        spark_role_observation = detect_profile_fact_observation(
+            "Spark will be an important part of this rebuild."
+        )
+        self.assertIsNotNone(spark_role_observation)
+        assert spark_role_observation is not None
+        self.assertEqual(
+            build_profile_fact_observation_answer(observation=spark_role_observation),
+            "I'll remember Spark will be an important part of the rebuild.",
+        )
 
     def test_build_profile_identity_summary_context_lists_saved_facts(self) -> None:
         context = build_profile_identity_summary_context(
