@@ -523,7 +523,6 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
     if any(
         phrase in text
         for phrase in (
-            "what startup did i create",
             "what startup do you have for me",
             "what startup do you have saved for me",
             "what is my startup",
@@ -556,6 +555,7 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
             label="current mission",
         )
     if normalized_question in {
+        "what startup did i create",
         "what company did i found",
         "which company did i found",
         "what did i found",

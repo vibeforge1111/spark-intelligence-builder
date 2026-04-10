@@ -264,3 +264,64 @@ class MemoryRegressionTests(SparkTestCase):
             result.payload["summary"]["quality_lanes"],
             {"staleness": False, "overwrite": True, "abstention": False},
         )
+
+    def test_run_telegram_memory_regression_isolates_abstention_cases_to_fresh_subjects(self) -> None:
+        output_dir = self.home / "artifacts" / "telegram-memory-regression-abstention-only"
+        seen_pairs: list[tuple[str | None, str | None]] = []
+
+        def fake_gateway_payload(*, message: str, user_id: str | None = None, chat_id: str | None = None, **_: object) -> str:
+            seen_pairs.append((user_id, chat_id))
+            return json.dumps(
+                {
+                    "message": message,
+                    "user_id": user_id,
+                    "chat_id": chat_id,
+                    "result": {
+                        "ok": True,
+                        "decision": "allowed",
+                        "detail": {
+                            "response_text": "I don't currently have that saved.",
+                            "bridge_mode": "memory_profile_fact",
+                            "routing_decision": "memory_profile_fact_query",
+                            "trace_ref": "trace:test",
+                        },
+                    },
+                }
+            )
+
+        kb_payload = {
+            "failure_taxonomy": {"summary": {"has_probe_coverage": True, "issue_labels": []}},
+            "probe_rows": [
+                {"probe_type": "current_state", "hits": 1, "total": 1},
+                {"probe_type": "evidence", "hits": 1, "total": 1},
+            ],
+        }
+
+        with patch(
+            "spark_intelligence.gateway.runtime.gateway_ask_telegram",
+            side_effect=fake_gateway_payload,
+        ), patch(
+            "spark_intelligence.memory.regression.inspect_human_memory_in_memory",
+            return_value=SimpleNamespace(to_json=lambda: json.dumps({"records": []})),
+        ), patch(
+            "spark_intelligence.memory.regression.build_telegram_state_knowledge_base",
+            return_value=SimpleNamespace(payload=kb_payload),
+        ):
+            result = run_telegram_memory_regression(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                output_dir=output_dir,
+                user_id="12345",
+                chat_id="12345",
+                categories=["abstention"],
+            )
+
+        self.assertEqual(
+            seen_pairs,
+            [
+                ("12345-spark_role_abstention", "12345-spark_role_abstention"),
+                ("12345-hack_actor_query_missing", "12345-hack_actor_query_missing"),
+            ],
+        )
+        self.assertEqual(result.payload["summary"]["case_count"], 2)
+        self.assertEqual(result.payload["summary"]["selected_categories"], ["abstention"])

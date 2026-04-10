@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.identity.service import approve_pairing
 from spark_intelligence.memory.knowledge_base import build_telegram_state_knowledge_base
 from spark_intelligence.memory.orchestrator import inspect_human_memory_in_memory
 from spark_intelligence.state.db import StateDB
@@ -19,6 +20,7 @@ class TelegramMemoryRegressionCase:
     expected_bridge_mode: str | None = None
     expected_routing_decision: str | None = None
     expected_response_contains: tuple[str, ...] = ()
+    isolate_memory: bool = False
 
 
 QUALITY_LANE_KEYS: tuple[str, ...] = ("staleness", "overwrite", "abstention")
@@ -184,6 +186,7 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         expected_bridge_mode="memory_profile_fact",
         expected_routing_decision="memory_profile_fact_query",
         expected_response_contains=("don't currently have that saved",),
+        isolate_memory=True,
     ),
     TelegramMemoryRegressionCase(
         case_id="hack_actor_query_missing",
@@ -192,6 +195,7 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         expected_bridge_mode="memory_profile_fact",
         expected_routing_decision="memory_profile_fact_query",
         expected_response_contains=("don't currently have that saved",),
+        isolate_memory=True,
     ),
     TelegramMemoryRegressionCase(
         case_id="timezone_write",
@@ -386,13 +390,24 @@ def run_telegram_memory_regression(
         return TelegramMemoryRegressionResult(output_dir=resolved_output_dir, payload=payload)
 
     for case in selected_cases:
+        case_user_id = selected_user_id
+        case_chat_id = selected_chat_id
+        if case.isolate_memory and selected_user_id:
+            case_user_id = f"{selected_user_id}-{case.case_id}"
+            case_chat_id = f"{(selected_chat_id or selected_user_id)}-{case.case_id}"
+            approve_pairing(
+                state_db=state_db,
+                channel_id="telegram",
+                external_user_id=case_user_id,
+                display_name=username or f"Regression {case.case_id}",
+            )
         raw = gateway_ask_telegram(
             config_manager=config_manager,
             state_db=state_db,
             message=case.message,
-            user_id=selected_user_id,
+            user_id=case_user_id,
             username=username,
-            chat_id=selected_chat_id,
+            chat_id=case_chat_id,
             as_json=True,
         )
         gateway_payload = _parse_json_object(raw)

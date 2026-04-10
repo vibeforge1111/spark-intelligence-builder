@@ -514,7 +514,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         startup_query = detect_profile_fact_query("What startup did I create?")
         self.assertIsNotNone(startup_query)
         assert startup_query is not None
-        self.assertEqual(startup_query.predicate, "profile.startup_name")
+        self.assertEqual(startup_query.predicate, "profile.founder_of")
         self.assertEqual(startup_query.query_kind, "single_fact")
 
         founder_query = detect_profile_fact_query("What company did I found?")
