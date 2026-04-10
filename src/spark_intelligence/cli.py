@@ -52,6 +52,7 @@ from spark_intelligence.channel.service import (
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.doctor.checks import run_doctor
 from spark_intelligence.gateway.runtime import (
+    gateway_ask_telegram,
     gateway_outbound_view,
     gateway_simulate_discord_message,
     gateway_simulate_telegram_update,
@@ -129,6 +130,19 @@ from spark_intelligence.researcher_bridge import discover_researcher_runtime_roo
 from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_doctor, swarm_status, sync_swarm_collective
+from spark_intelligence.harness_registry import (
+    build_harness_registry,
+    select_auto_harness_recipe,
+    select_harness_recipe,
+)
+from spark_intelligence.harness_runtime import (
+    build_harness_runtime_snapshot,
+    build_harness_task_envelope,
+    execute_harness_chain,
+    execute_harness_task,
+)
+from spark_intelligence.mission_control import build_mission_control_plan, build_mission_control_snapshot
+from spark_intelligence.system_registry import build_system_registry
 
 
 @dataclass
@@ -171,6 +185,37 @@ class SystemStatus:
             f"- active chips: {', '.join(self.payload['attachments']['active_chip_keys']) if self.payload['attachments']['active_chip_keys'] else 'none'}"
         )
         lines.append(f"- active path: {self.payload['attachments']['active_path_key'] or 'none'}")
+        registry_summary = (self.payload.get("system_registry") or {}).get("summary") or {}
+        current_capabilities = registry_summary.get("current_capabilities") or []
+        if current_capabilities:
+            lines.append(f"- current capabilities: {len(current_capabilities)}")
+            lines.extend(f"- capability: {item}" for item in current_capabilities[:5])
+        mission_control = self.payload.get("mission_control") or {}
+        mission_summary = mission_control.get("summary") or {}
+        if mission_summary:
+            lines.append(f"- mission control: {mission_summary.get('top_level_state') or 'unknown'}")
+            if mission_summary.get("current_focus"):
+                lines.append(f"- mission focus: {mission_summary['current_focus']}")
+            degraded_surfaces = mission_summary.get("degraded_surfaces") or []
+            if degraded_surfaces:
+                lines.append(f"- degraded surfaces: {', '.join(str(item) for item in degraded_surfaces[:5])}")
+            active_loops = mission_summary.get("active_loops") or []
+            if active_loops:
+                lines.append(f"- active loops: {', '.join(str(item) for item in active_loops[:5])}")
+            recommended_actions = mission_summary.get("recommended_actions") or []
+            lines.extend(f"- next action: {str(item)}" for item in recommended_actions[:2])
+        harness_registry = self.payload.get("harness_registry") or {}
+        harness_summary = harness_registry.get("summary") or {}
+        available_harnesses = harness_summary.get("available_harnesses") or []
+        if available_harnesses:
+            lines.append(f"- harnesses: {', '.join(str(item) for item in available_harnesses[:5])}")
+        harness_runtime = self.payload.get("harness_runtime") or {}
+        harness_runtime_summary = harness_runtime.get("summary") or {}
+        if harness_runtime_summary.get("recent_run_count"):
+            lines.append(
+                f"- harness runtime: recent_runs={int(harness_runtime_summary.get('recent_run_count') or 0)} "
+                f"last={harness_runtime_summary.get('last_harness_id') or 'unknown'}"
+            )
         lines.append(
             f"- providers: {', '.join(self.payload['gateway']['configured_providers']) if self.payload['gateway']['configured_providers'] else 'none'}"
         )
@@ -577,6 +622,47 @@ class MemoryHumanInspection:
                     f"reason={event.get('reason') or 'n/a'} "
                     f"predicate={event.get('predicate') or event.get('predicate_prefix') or 'n/a'}"
                 )
+        return "\n".join(lines)
+
+
+@dataclass
+class MemoryRegressionScore:
+    payload: dict[str, object]
+
+    def to_json(self) -> str:
+        return json.dumps(self.payload, indent=2)
+
+    def to_text(self) -> str:
+        runtime = self.payload.get("runtime") or {}
+        lines = ["Spark memory regression score"]
+        lines.append(f"- pack_id: {self.payload.get('pack_id') or 'unknown'}")
+        lines.append(f"- title: {self.payload.get('title') or 'unknown'}")
+        lines.append(f"- human_id: {self.payload.get('human_id') or 'unknown'}")
+        lines.append(
+            f"- configured module: {runtime.get('configured_module') or 'unknown'} "
+            f"ready={'yes' if runtime.get('ready') else 'no'}"
+        )
+        lines.append(
+            f"- score: matched={self.payload.get('matched_count', 0)}/"
+            f"{self.payload.get('fact_count', 0)} "
+            f"missing={self.payload.get('missing_count', 0)} "
+            f"mismatched={self.payload.get('mismatched_count', 0)}"
+        )
+        fact_results = self.payload.get("fact_results") or []
+        if fact_results:
+            lines.append("- fact results:")
+            for row in fact_results:
+                if not isinstance(row, dict):
+                    continue
+                lines.append(
+                    f"  - {row.get('predicate')}: {row.get('status')} "
+                    f"expected={row.get('expected_value')} actual={row.get('actual_value')}"
+                )
+        probes = self.payload.get("probe_questions") or []
+        if probes:
+            lines.append("- recall probes:")
+            for probe in probes:
+                lines.append(f"  - {probe}")
         return "\n".join(lines)
 
 
@@ -1004,6 +1090,24 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
+    mission_parser = subparsers.add_parser("mission", help="Inspect mission control and task-specific operator plans")
+    mission_subparsers = mission_parser.add_subparsers(dest="mission_command", required=True)
+    mission_status_parser = mission_subparsers.add_parser(
+        "status",
+        help="Show the current mission-control snapshot",
+    )
+    mission_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    mission_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    mission_plan_parser = mission_subparsers.add_parser(
+        "plan",
+        help="Show the selected system, harness, recipe, and blockers for one task",
+    )
+    mission_plan_parser.add_argument("task", help="Task description to plan against mission control")
+    mission_plan_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    mission_plan_parser.add_argument("--harness-id", help="Force a specific harness id")
+    mission_plan_parser.add_argument("--recipe", help="Force a named harness recipe")
+    mission_plan_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+
     connect_parser = subparsers.add_parser("connect", help="Inspect phased system-connection progress")
     connect_subparsers = connect_parser.add_subparsers(dest="connect_command", required=True)
     connect_status_parser = connect_subparsers.add_parser(
@@ -1226,6 +1330,16 @@ def build_parser() -> argparse.ArgumentParser:
     gateway_simulate_parser.add_argument("update_file", help="Path to a Telegram update JSON file")
     gateway_simulate_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     gateway_simulate_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    gateway_ask_telegram_parser = gateway_subparsers.add_parser(
+        "ask-telegram",
+        help="Send one synthetic DM through the Telegram runtime path and print Spark's reply",
+    )
+    gateway_ask_telegram_parser.add_argument("message", help="Telegram DM text to inject into the runtime")
+    gateway_ask_telegram_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    gateway_ask_telegram_parser.add_argument("--user-id", help="Telegram user id to simulate")
+    gateway_ask_telegram_parser.add_argument("--username", help="Telegram username to simulate")
+    gateway_ask_telegram_parser.add_argument("--chat-id", help="Explicit Telegram chat id override")
+    gateway_ask_telegram_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     gateway_simulate_discord_parser = gateway_subparsers.add_parser(
         "simulate-discord-message",
         help="Simulate one Discord DM message through normalization and authorization routing",
@@ -1590,6 +1704,37 @@ def build_parser() -> argparse.ArgumentParser:
     jobs_tick_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     jobs_list_parser = jobs_subparsers.add_parser("list", help="List known jobs and the latest maintenance result")
     jobs_list_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+
+    harness_parser = subparsers.add_parser("harness", help="Inspect and exercise Spark harness planning and execution")
+    harness_subparsers = harness_parser.add_subparsers(dest="harness_command", required=True)
+    harness_status_parser = harness_subparsers.add_parser("status", help="Show harness registry and recent harness runtime state")
+    harness_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    harness_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    harness_plan_parser = harness_subparsers.add_parser("plan", help="Plan which harness Spark would use for a task")
+    harness_plan_parser.add_argument("task", help="Task description to classify into a harness")
+    harness_plan_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    harness_plan_parser.add_argument("--channel-kind", help="Optional channel kind context")
+    harness_plan_parser.add_argument("--session-id", help="Optional session id")
+    harness_plan_parser.add_argument("--human-id", help="Optional human id")
+    harness_plan_parser.add_argument("--agent-id", help="Optional agent id")
+    harness_plan_parser.add_argument("--harness-id", help="Force a specific harness id instead of routing automatically")
+    harness_plan_parser.add_argument("--recipe", help="Use a named harness recipe instead of raw routing")
+    harness_plan_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    harness_execute_parser = harness_subparsers.add_parser("execute", help="Execute a harness task envelope through the harness runtime")
+    harness_execute_parser.add_argument("task", help="Task description to execute through the selected harness")
+    harness_execute_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    harness_execute_parser.add_argument("--channel-kind", help="Optional channel kind context")
+    harness_execute_parser.add_argument("--session-id", help="Optional session id")
+    harness_execute_parser.add_argument("--human-id", help="Optional human id")
+    harness_execute_parser.add_argument("--agent-id", help="Optional agent id")
+    harness_execute_parser.add_argument("--harness-id", help="Force a specific harness id instead of routing automatically")
+    harness_execute_parser.add_argument("--recipe", help="Use a named harness recipe instead of raw routing")
+    harness_execute_parser.add_argument(
+        "--then-harness-id",
+        action="append",
+        help="Append a follow-up harness after the primary one; repeat to build a small execution chain",
+    )
+    harness_execute_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     agent_parser = subparsers.add_parser("agent", help="Inspect agent and workspace state")
     agent_subparsers = agent_parser.add_subparsers(dest="agent_command", required=True)
@@ -1971,6 +2116,8 @@ def handle_uninstall_autostart(args: argparse.Namespace) -> int:
 def handle_doctor(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
     report = run_doctor(config_manager, state_db)
     if args.json:
         print(report.to_json())
@@ -2676,6 +2823,10 @@ def handle_status(args: argparse.Namespace) -> int:
     attachments = attachment_status(config_manager)
     browser = _collect_status_browser_payload(config_manager)
     watchtower = build_watchtower_snapshot(state_db)
+    system_registry = build_system_registry(config_manager, state_db)
+    mission_control = build_mission_control_snapshot(config_manager, state_db)
+    harness_registry = build_harness_registry(config_manager, state_db)
+    harness_runtime = build_harness_runtime_snapshot(config_manager, state_db)
     active_chip_keys = config_manager.get_path("spark.chips.active_keys", default=[]) or []
     active_path_key = config_manager.get_path("spark.specialization_paths.active_path_key")
     autostart_payload = {
@@ -2697,6 +2848,10 @@ def handle_status(args: argparse.Namespace) -> int:
             "default_gateway_mode": config_manager.get_path("runtime.run.default_gateway_mode"),
             "autostart": autostart_payload,
         },
+        "system_registry": system_registry.to_payload(),
+        "mission_control": mission_control.to_payload(),
+        "harness_registry": harness_registry.to_payload(),
+        "harness_runtime": harness_runtime.to_payload(),
         "attachments": {
             "record_count": len(attachments.records),
             "warning_count": len(attachments.warnings),
@@ -2840,6 +2995,8 @@ def handle_gateway_start(args: argparse.Namespace) -> int:
 def handle_gateway_status(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
     status = gateway_status(config_manager, state_db)
     if args.json:
         print(status.to_json())
@@ -2888,6 +3045,29 @@ def handle_gateway_simulate_telegram_update(args: argparse.Namespace) -> int:
             as_json=args.json,
         )
     )
+    return 0
+
+
+def handle_gateway_ask_telegram(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    try:
+        print(
+            gateway_ask_telegram(
+                config_manager=config_manager,
+                state_db=state_db,
+                message=args.message,
+                user_id=args.user_id,
+                username=args.username,
+                chat_id=args.chat_id,
+                as_json=args.json,
+            )
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     return 0
 
 
@@ -4560,6 +4740,229 @@ def handle_jobs_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_harness_status(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    payload = {
+        "harness_registry": build_harness_registry(config_manager, state_db).to_payload(),
+        "harness_runtime": build_harness_runtime_snapshot(config_manager, state_db).to_payload(),
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        registry_summary = payload["harness_registry"]["summary"]
+        runtime_summary = payload["harness_runtime"]["summary"]
+        lines = ["Spark harness status"]
+        lines.append(f"- contracts: {int(registry_summary.get('contract_count') or 0)}")
+        lines.append(f"- available: {int(registry_summary.get('available_contract_count') or 0)}")
+        available_harnesses = registry_summary.get("available_harnesses") or []
+        if available_harnesses:
+            lines.append(f"- harnesses: {', '.join(str(item) for item in available_harnesses[:8])}")
+        lines.append(f"- recent runs: {int(runtime_summary.get('recent_run_count') or 0)}")
+        if runtime_summary.get("last_harness_id"):
+            lines.append(f"- last harness: {runtime_summary['last_harness_id']}")
+        print("\n".join(lines))
+    return 0
+
+
+def handle_harness_plan(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    recipe_payload = None
+    forced_harness_id = args.harness_id
+    if args.recipe:
+        recipe = select_harness_recipe(
+            config_manager=config_manager,
+            state_db=state_db,
+            recipe_id=args.recipe,
+        )
+        recipe_payload = recipe.to_payload()
+        forced_harness_id = recipe.primary_harness_id
+    elif not forced_harness_id:
+        auto_recipe = select_auto_harness_recipe(
+            config_manager=config_manager,
+            state_db=state_db,
+            task=args.task,
+        )
+        if auto_recipe is not None:
+            recipe_payload = auto_recipe.to_payload()
+            forced_harness_id = auto_recipe.recipe.primary_harness_id
+    envelope = build_harness_task_envelope(
+        config_manager=config_manager,
+        state_db=state_db,
+        task=args.task,
+        forced_harness_id=forced_harness_id,
+        channel_kind=args.channel_kind,
+        session_id=args.session_id,
+        human_id=args.human_id,
+        agent_id=args.agent_id,
+    )
+    if args.json:
+        payload = envelope.to_payload()
+        if recipe_payload is not None:
+            payload["recipe"] = recipe_payload
+        print(json.dumps(payload, indent=2))
+    else:
+        lines = ["Spark harness plan"]
+        if recipe_payload is not None:
+            lines.append(f"- recipe: {recipe_payload['recipe_id']}")
+        lines.append(f"- harness: {envelope.harness_id}")
+        lines.append(f"- owner: {envelope.owner_system}")
+        lines.append(f"- backend: {envelope.backend_kind}")
+        lines.append(f"- session scope: {envelope.session_scope}")
+        lines.append(f"- route mode: {envelope.route_mode}")
+        if envelope.required_capabilities:
+            lines.append(f"- capabilities: {', '.join(envelope.required_capabilities[:8])}")
+        if envelope.artifacts_expected:
+            lines.append(f"- artifacts: {', '.join(envelope.artifacts_expected[:8])}")
+        if envelope.next_actions:
+            lines.extend(f"- next action: {item}" for item in envelope.next_actions[:3])
+        print("\n".join(lines))
+    return 0
+
+
+def handle_harness_execute(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    recipe_payload = None
+    forced_harness_id = args.harness_id
+    follow_up_harness_ids = [str(item).strip() for item in (args.then_harness_id or []) if str(item).strip()]
+    if args.recipe:
+        recipe = select_harness_recipe(
+            config_manager=config_manager,
+            state_db=state_db,
+            recipe_id=args.recipe,
+        )
+        recipe_payload = recipe.to_payload()
+        forced_harness_id = recipe.primary_harness_id
+        if not follow_up_harness_ids:
+            follow_up_harness_ids = list(recipe.follow_up_harness_ids)
+    elif not forced_harness_id:
+        auto_recipe = select_auto_harness_recipe(
+            config_manager=config_manager,
+            state_db=state_db,
+            task=args.task,
+        )
+        if auto_recipe is not None:
+            recipe_payload = auto_recipe.to_payload()
+            forced_harness_id = auto_recipe.recipe.primary_harness_id
+            if not follow_up_harness_ids:
+                follow_up_harness_ids = list(auto_recipe.recipe.follow_up_harness_ids)
+    envelope = build_harness_task_envelope(
+        config_manager=config_manager,
+        state_db=state_db,
+        task=args.task,
+        forced_harness_id=forced_harness_id,
+        channel_kind=args.channel_kind,
+        session_id=args.session_id,
+        human_id=args.human_id,
+        agent_id=args.agent_id,
+    )
+    if follow_up_harness_ids:
+        result = execute_harness_chain(
+            config_manager=config_manager,
+            state_db=state_db,
+            envelope=envelope,
+            follow_up_harness_ids=follow_up_harness_ids,
+        )
+    else:
+        result = execute_harness_task(
+            config_manager=config_manager,
+            state_db=state_db,
+            envelope=envelope,
+        )
+    if args.json:
+        payload = result.to_payload()
+        if recipe_payload is not None:
+            payload["recipe"] = recipe_payload
+        print(json.dumps(payload, indent=2))
+    else:
+        lines = ["Spark harness execution"]
+        if recipe_payload is not None:
+            lines.append(f"- recipe: {recipe_payload['recipe_id']}")
+        lines.append(f"- harness: {result.envelope.harness_id}")
+        lines.append(f"- status: {result.status}")
+        lines.append(f"- summary: {result.summary}")
+        if result.chain_status:
+            lines.append(f"- chain status: {result.chain_status}")
+        artifact_keys = sorted(result.artifacts.keys())
+        if artifact_keys:
+            lines.append(f"- artifacts: {', '.join(artifact_keys)}")
+        for chained_result in result.chained_results or []:
+            lines.append(f"- chained harness: {chained_result.envelope.harness_id} ({chained_result.status})")
+        if result.next_actions:
+            lines.extend(f"- next action: {item}" for item in result.next_actions[:3])
+        print("\n".join(lines))
+    return 0
+
+
+def handle_mission_status(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    snapshot = build_mission_control_snapshot(config_manager, state_db)
+    if args.json:
+        print(snapshot.to_json())
+    else:
+        payload = snapshot.to_payload()
+        summary = payload.get("summary") or {}
+        lines = ["Spark mission status"]
+        lines.append(f"- state: {summary.get('top_level_state') or 'unknown'}")
+        if summary.get("current_focus"):
+            lines.append(f"- focus: {summary['current_focus']}")
+        active_systems = [str(item) for item in (summary.get("active_systems") or []) if str(item)]
+        if active_systems:
+            lines.append(f"- active systems: {', '.join(active_systems[:6])}")
+        degraded_surfaces = [str(item) for item in (summary.get("degraded_surfaces") or []) if str(item)]
+        if degraded_surfaces:
+            lines.append(f"- degraded surfaces: {', '.join(degraded_surfaces[:6])}")
+        next_actions = [str(item) for item in (summary.get("recommended_actions") or []) if str(item)]
+        lines.extend(f"- next action: {item}" for item in next_actions[:3])
+        print("\n".join(lines))
+    return 0
+
+
+def handle_mission_plan(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    plan = build_mission_control_plan(
+        config_manager=config_manager,
+        state_db=state_db,
+        task=args.task,
+        forced_harness_id=args.harness_id,
+        forced_recipe_id=args.recipe,
+    )
+    if args.json:
+        print(plan.to_json())
+    else:
+        payload = plan.to_payload()
+        summary = payload.get("summary") or {}
+        lines = ["Spark mission plan"]
+        lines.append(f"- state: {summary.get('top_level_state') or 'unknown'}")
+        lines.append(f"- system: {summary.get('selected_system') or 'unknown'}")
+        lines.append(f"- harness: {summary.get('selected_harness') or 'unknown'}")
+        if summary.get("selected_recipe"):
+            lines.append(f"- recipe: {summary['selected_recipe']}")
+        lines.append(f"- selection mode: {summary.get('selection_mode') or 'unknown'}")
+        if summary.get("current_focus"):
+            lines.append(f"- focus: {summary['current_focus']}")
+        blockers = [str(item) for item in (summary.get("blockers") or []) if str(item)]
+        lines.extend(f"- blocker: {item}" for item in blockers[:4])
+        next_actions = [str(item) for item in (summary.get("next_actions") or []) if str(item)]
+        lines.extend(f"- next action: {item}" for item in next_actions[:4])
+        print("\n".join(lines))
+    return 0
+
+
 def handle_agent_inspect(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -5360,6 +5763,10 @@ def main(argv: list[str] | None = None) -> int:
         return handle_doctor(args)
     if args.command == "status":
         return handle_status(args)
+    if args.command == "mission" and args.mission_command == "status":
+        return handle_mission_status(args)
+    if args.command == "mission" and args.mission_command == "plan":
+        return handle_mission_plan(args)
     if args.command == "connect" and args.connect_command == "status":
         return handle_connect_status(args)
     if args.command == "connect" and args.connect_command == "route-policy":
@@ -5414,6 +5821,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_gateway_oauth_callback(args)
     if args.command == "gateway" and args.gateway_command == "simulate-telegram-update":
         return handle_gateway_simulate_telegram_update(args)
+    if args.command == "gateway" and args.gateway_command == "ask-telegram":
+        return handle_gateway_ask_telegram(args)
     if args.command == "gateway" and args.gateway_command == "simulate-discord-message":
         return handle_gateway_simulate_discord_message(args)
     if args.command == "gateway" and args.gateway_command == "simulate-whatsapp-message":
@@ -5502,6 +5911,12 @@ def main(argv: list[str] | None = None) -> int:
         return handle_jobs_tick(args)
     if args.command == "jobs" and args.jobs_command == "list":
         return handle_jobs_list(args)
+    if args.command == "harness" and args.harness_command == "status":
+        return handle_harness_status(args)
+    if args.command == "harness" and args.harness_command == "plan":
+        return handle_harness_plan(args)
+    if args.command == "harness" and args.harness_command == "execute":
+        return handle_harness_execute(args)
     if args.command == "agent" and args.agent_command == "inspect":
         return handle_agent_inspect(args)
     if args.command == "agent" and args.agent_command == "rename":

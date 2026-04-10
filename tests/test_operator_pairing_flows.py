@@ -190,7 +190,10 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(follow_up.ok)
         self.assertEqual(follow_up.decision, "allowed")
         self.assertIn("Pairing approved.", str(follow_up.detail["response_text"]))
-        self.assertIn("alice is live in this Telegram DM now.", str(follow_up.detail["response_text"]))
+        # Finding G fix: agent starts with empty name; onboarding will prompt
+        # for the agent's name. Welcome no longer leaks the human's username.
+        self.assertIn("Let's set up your agent.", str(follow_up.detail["response_text"]))
+        self.assertNotIn("alice is live", str(follow_up.detail["response_text"]))
 
     def test_first_post_approval_dm_runs_multi_turn_agent_onboarding(self) -> None:
         self.add_telegram_channel()
@@ -251,7 +254,10 @@ class OperatorPairingFlowTests(SparkTestCase):
 
         self.assertTrue(first_turn.ok)
         self.assertIn("Pairing approved.", str(first_turn.detail["response_text"]))
-        self.assertIn("alice is live in this Telegram DM now.", str(first_turn.detail["response_text"]))
+        # Finding G fix: welcome no longer embeds the human's username as the
+        # agent identity. Onboarding flow still asks for the agent name next.
+        self.assertIn("Let's set up your agent.", str(first_turn.detail["response_text"]))
+        self.assertNotIn("alice is live", str(first_turn.detail["response_text"]))
         self.assertIn("What should I call your agent?", str(first_turn.detail["response_text"]))
 
         self.assertTrue(second_turn.ok)
@@ -401,11 +407,18 @@ class OperatorPairingFlowTests(SparkTestCase):
     def test_telegram_replies_hide_think_blocks_by_default(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
+        # NOTE: the mock reply text intentionally avoids trivial greetings
+        # ("hello there", "hey", "hi", etc.) because
+        # personality/loader._normalize_telegram_conversation_reply rewrites
+        # those into "Ready when you are." via _TELEGRAM_TRIVIAL_GREETING_RE
+        # (introduced in commit dbe3cdb, after this test was first written
+        # in fb533e0). Use a substantive reply so the test only exercises
+        # the think-block stripping behavior it is actually asserting.
         with patch(
             "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
             return_value=ResearcherBridgeResult(
                 request_id="req-think-off",
-                reply_text="<think>private reasoning</think>\n\nHello there.",
+                reply_text="<think>private reasoning</think>\n\nThe answer is 42.",
                 evidence_summary="status=under_supported provider_fallback=direct_http_chat",
                 escalation_hint=None,
                 trace_ref="trace:think-off",
@@ -435,7 +448,7 @@ class OperatorPairingFlowTests(SparkTestCase):
             )
 
         self.assertTrue(result.ok)
-        self.assertEqual(result.detail["response_text"], "Hello there.")
+        self.assertEqual(result.detail["response_text"], "The answer is 42.")
 
     def test_telegram_replies_strip_internal_swarm_routing_note(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -615,6 +628,39 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Swarm is ready.", str(result.detail["response_text"]))
         self.assertIn("Auth is configured, last sync was uploaded, and the last decision was manual_recommended.", str(result.detail["response_text"]))
         self.assertIn("Next: `/swarm sync` or `/swarm collective`.", str(result.detail["response_text"]))
+
+    def test_swarm_doctor_command_returns_operator_facing_diagnostics(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.swarm_doctor",
+            return_value=SimpleNamespace(
+                auth_source="workspace_env",
+                payload_source="specialization_path",
+                active_path_key="trading-crypto",
+                active_path_repo_root="/tmp/trading-crypto",
+                scenario_path="/tmp/trading-crypto/benchmarks/scenarios/trend-ema-btceth-4h.json",
+                mutation_target_path="/tmp/trading-crypto/benchmarks/trading-crypto-candidate.json",
+                blockers=[],
+                recommendations=["Run `/swarm sync` to upload the latest collective payload to Spark Swarm."],
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=1141,
+                    user_id="111",
+                    username="alice",
+                    text="/swarm doctor",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm doctor: ready.", str(result.detail["response_text"]))
+        self.assertIn("Auth source: workspace_env. Payload source: specialization_path.", str(result.detail["response_text"]))
+        self.assertIn("No blockers detected.", str(result.detail["response_text"]))
+        self.assertIn("Next: Run `/swarm sync` to upload the latest collective payload to Spark Swarm.", str(result.detail["response_text"]))
 
     def test_swarm_status_command_uses_saved_agent_identity_in_runtime_reply(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -854,6 +900,147 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(result.ok)
         self.assertIn("Swarm decision: manual_recommended.", str(result.detail["response_text"]))
         self.assertEqual(evaluate_mock.call_args.kwargs["task"], "delegate this as parallel swarm work")
+
+    def test_chip_status_reports_when_no_chips_are_attached(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=842,
+                user_id="111",
+                username="alice",
+                text="/chip status",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("No chips are attached in this workspace yet.", str(result.detail["response_text"]))
+
+    def test_chip_status_reports_trading_chip_details(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        record = SimpleNamespace(
+            key="domain-chip-trading-crypto",
+            commands={"evaluate": ["python"], "suggest": ["python"]},
+            repo_root="C:/chips/domain-chip-trading-crypto",
+            description="Crypto trading doctrine-and-strategy chip.",
+            frontier={
+                "allowed_mutations": {
+                    "doctrine_id": ["trend_regime_following"],
+                    "strategy_id": ["ema_pullback_long"],
+                    "market_regime": ["trend"],
+                }
+            },
+        )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.list_chip_records",
+            return_value=[record],
+        ), patch(
+            "spark_intelligence.adapters.telegram.runtime.build_attachment_context",
+            return_value={
+                "active_chip_keys": ["domain-chip-trading-crypto"],
+                "pinned_chip_keys": ["domain-chip-trading-crypto"],
+            },
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=843,
+                    user_id="111",
+                    username="alice",
+                    text="/chip status domain-chip-trading-crypto",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Chip `domain-chip-trading-crypto` is active and pinned.", str(result.detail["response_text"]))
+        self.assertIn("Hooks: evaluate, suggest.", str(result.detail["response_text"]))
+        self.assertIn("Frontier mutation fields: doctrine_id, market_regime, strategy_id.", str(result.detail["response_text"]))
+
+    def test_chip_evaluate_runs_direct_chip_command_with_mutation_pairs(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.run_chip_hook",
+            return_value=SimpleNamespace(
+                ok=True,
+                chip_key="domain-chip-trading-crypto",
+                hook="evaluate",
+                repo_root="C:/chips/domain-chip-trading-crypto",
+                command=["python", "-m", "domain_chip_trading_crypto.cli", "evaluate"],
+                exit_code=0,
+                stdout="",
+                stderr="",
+                output={
+                    "metrics": {
+                        "profitability_score": 0.81,
+                        "sharpe_ratio": 0.74,
+                        "max_drawdown": 0.19,
+                        "win_rate": 0.57,
+                        "paper_trade_readiness": 0.79,
+                        "verdict_confidence": 0.83,
+                    },
+                    "result": {
+                        "claim": "Backtest profitability must be judged with drawdown, regime fit, and paper-trade readiness.",
+                        "verdict": "approve",
+                        "mechanism": "Trend doctrine works when regime filters are explicit.",
+                        "boundary": "Weak in chop without a regime filter.",
+                        "recommended_next_step": "queue_for_paper_trade",
+                    },
+                },
+            ),
+        ) as run_hook_mock, patch(
+            "spark_intelligence.adapters.telegram.runtime.record_chip_hook_execution",
+            return_value=None,
+        ), patch(
+            "spark_intelligence.adapters.telegram.runtime.screen_chip_hook_text",
+            side_effect=lambda **kwargs: {"allowed": True, "text": kwargs["text"], "quarantine_id": None},
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=844,
+                    user_id="111",
+                    username="alice",
+                    text=(
+                        "/chip evaluate domain-chip-trading-crypto "
+                        "doctrine_id=trend_regime_following strategy_id=ema_pullback_long "
+                        "market_regime=trend timeframe=1h venue=binance asset_universe=BTC paper_gate=strict"
+                    ),
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Chip `domain-chip-trading-crypto` evaluate completed.", str(result.detail["response_text"]))
+        self.assertIn("Verdict: approve.", str(result.detail["response_text"]))
+        self.assertIn("Recommended next step: queue_for_paper_trade.", str(result.detail["response_text"]))
+        self.assertIn("Scope: this was a direct chip hook run only", str(result.detail["response_text"]))
+        payload = run_hook_mock.call_args.kwargs["payload"]
+        self.assertEqual(payload["candidate"]["mutations"]["doctrine_id"], "trend_regime_following")
+        self.assertEqual(payload["candidate"]["mutations"]["strategy_id"], "ema_pullback_long")
+
+    def test_chip_autoloop_explains_specialization_path_requirement(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=845,
+                user_id="111",
+                username="alice",
+                text="/chip autoloop domain-chip-trading-crypto",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Chip autoloop is not available", str(result.detail["response_text"]))
+        self.assertIn("/swarm autoloop <path_key>", str(result.detail["response_text"]))
 
     def test_natural_language_swarm_upgrades_command_returns_pending_summary(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -3099,7 +3286,12 @@ class OperatorPairingFlowTests(SparkTestCase):
             config_manager=self.config_manager,
         )
         self.assertEqual(profile["style_labels"]["directness"], "very direct")
-        self.assertIn("Be more direct and keep replies short", profile["agent_behavioral_rules"])
+        # The "too verbose" feedback is mapped by _build_style_training_message
+        # to the rule "Be less verbose and keep replies short." (see
+        # adapters/telegram/runtime.py:3577). The original assertion here
+        # said "Be more direct" which never matched the actual stored rule
+        # and was broken from its introduction in commit 1c5211a.
+        self.assertIn("Be less verbose and keep replies short", profile["agent_behavioral_rules"])
 
     def test_style_feedback_maps_canned_conversation_feedback_into_behavior_rules(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])

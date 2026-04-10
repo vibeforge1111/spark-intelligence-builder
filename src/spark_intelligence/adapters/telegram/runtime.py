@@ -12,7 +12,14 @@ from uuid import uuid4
 
 from spark_intelligence.adapters.telegram.client import TelegramBotApiClient
 from spark_intelligence.adapters.telegram.normalize import normalize_telegram_update
-from spark_intelligence.attachments import run_first_chip_hook_supporting
+from spark_intelligence.attachments import (
+    build_attachment_context,
+    list_chip_records,
+    record_chip_hook_execution,
+    run_chip_hook,
+    run_first_chip_hook_supporting,
+    screen_chip_hook_text,
+)
 from spark_intelligence.auth.runtime import resolve_runtime_provider
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.gateway.guardrails import (
@@ -70,6 +77,7 @@ from spark_intelligence.swarm_bridge import (
     swarm_review_mastery,
     swarm_set_evolution_mode,
     swarm_sync_upgrade_delivery_status,
+    swarm_doctor,
     swarm_status,
     sync_swarm_collective,
 )
@@ -2049,13 +2057,25 @@ def _handle_runtime_command(
                 "This only affects `<think>` blocks in future replies."
             ),
         }
+    chip_command = _parse_chip_command(normalized)
+    if chip_command is not None:
+        return _handle_telegram_chip_command(
+            config_manager=config_manager,
+            state_db=state_db,
+            chip_command=chip_command,
+            run_id=run_id,
+            request_id=request_id,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+        )
 
     if lowered == "/swarm" or natural_swarm_command == ("/swarm", None):
         return {
             "command": "/swarm",
             "reply_text": (
                 "Swarm commands: `/swarm status`, `/swarm overview`, `/swarm live`, `/swarm runtime`, "
-                "`/swarm specializations`, `/swarm insights`, `/swarm masteries`, `/swarm upgrades`, `/swarm issues`, `/swarm inbox`, `/swarm collective`, `/swarm sync`, "
+                "`/swarm doctor`, `/swarm specializations`, `/swarm insights`, `/swarm masteries`, `/swarm upgrades`, `/swarm issues`, `/swarm inbox`, `/swarm collective`, `/swarm sync`, "
                 "`/swarm paths`, `/swarm run <path_key>`, `/swarm autoloop <path_key> [rounds <n>]`, "
                 "`/swarm continue <path_key> [session <id>] [rounds <n>]`, `/swarm sessions <path_key>`, "
                 "`/swarm session <path_key> [latest|<session_id>]`, `/swarm rerun [path_key]`, "
@@ -2063,6 +2083,12 @@ def _handle_runtime_command(
                 "`/swarm mode <specialization_id> <observe_only|review_required|checked_auto_merge|trusted_auto_apply>`, "
                 "`/swarm deliver <upgrade_id>`, and `/swarm sync-delivery <upgrade_id>`."
             ),
+        }
+    if lowered == "/swarm doctor" or natural_swarm_command == ("/swarm doctor", None):
+        report = swarm_doctor(config_manager, state_db)
+        return {
+            "command": "/swarm doctor",
+            "reply_text": _render_swarm_doctor_reply(report),
         }
     if lowered == "/swarm status" or natural_swarm_command == ("/swarm status", None):
         status = swarm_status(config_manager, state_db)
@@ -4222,6 +4248,403 @@ def _run_swarm_read_command(
     }
 
 
+def _handle_telegram_chip_command(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    chip_command: dict[str, Any],
+    run_id: str | None,
+    request_id: str,
+    session_id: str,
+    human_id: str | None,
+    agent_id: str | None,
+) -> dict[str, str]:
+    command = str(chip_command.get("command") or "/chip")
+    if command == "/chip":
+        return {
+            "command": "/chip",
+            "reply_text": _render_chip_help_reply(),
+        }
+    if command == "/chip status":
+        return {
+            "command": "/chip status",
+            "reply_text": _render_chip_status_reply(
+                config_manager=config_manager,
+                chip_key=str(chip_command.get("chip_key") or "").strip() or None,
+            ),
+        }
+    if command == "/chip autoloop":
+        return {
+            "command": "/chip autoloop",
+            "reply_text": _render_chip_autoloop_reply(
+                chip_key=str(chip_command.get("chip_key") or "").strip() or "chip",
+            ),
+        }
+
+    hook = str(chip_command.get("hook") or "").strip()
+    chip_key = str(chip_command.get("chip_key") or "").strip()
+    if not hook or not chip_key:
+        return {
+            "command": command,
+            "reply_text": _render_chip_help_reply(),
+        }
+    try:
+        payload, payload_mode = _build_direct_chip_command_payload(
+            config_manager=config_manager,
+            raw_payload=str(chip_command.get("payload") or ""),
+            request_id=request_id,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+        )
+    except ValueError as exc:
+        return {
+            "command": command,
+            "reply_text": f"Chip command payload is invalid.\nReason: {_with_terminal_period(str(exc))}",
+        }
+
+    try:
+        execution = run_chip_hook(
+            config_manager,
+            chip_key=chip_key,
+            hook=hook,
+            payload=payload,
+        )
+    except ValueError as exc:
+        return {
+            "command": command,
+            "reply_text": f"Chip command is unavailable.\nReason: {_with_terminal_period(str(exc))}",
+        }
+    except RuntimeError as exc:
+        return {
+            "command": command,
+            "reply_text": f"Chip command failed before execution.\nReason: {_with_terminal_period(str(exc))}",
+        }
+
+    record_chip_hook_execution(
+        state_db,
+        execution=execution,
+        component="telegram_runtime",
+        actor_id="telegram_runtime",
+        summary="Telegram runtime executed a direct chip hook command.",
+        reason_code="telegram_chip_runtime_command",
+        keepability="operator_debug_only",
+        run_id=run_id,
+        request_id=request_id,
+        channel_id="telegram",
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+    )
+    reply_text = _render_direct_chip_execution_reply(
+        execution=execution,
+        hook=hook,
+        payload_mode=payload_mode,
+    )
+    screened = screen_chip_hook_text(
+        state_db=state_db,
+        execution=execution,
+        text=reply_text,
+        summary="Telegram runtime blocked secret-like chip hook output before delivery.",
+        reason_code="telegram_chip_runtime_secret_like",
+        policy_domain="telegram_runtime",
+        blocked_stage="telegram_reply",
+        run_id=run_id,
+        request_id=request_id,
+        trace_ref=f"trace:telegram:{request_id}",
+    )
+    if not screened["allowed"]:
+        return {
+            "command": command,
+            "reply_text": (
+                "Chip output was blocked before Telegram delivery.\n"
+                f"Reason: it contained secret-like material and was quarantined as {screened['quarantine_id']}."
+            ),
+        }
+    return {
+        "command": command,
+        "reply_text": str(screened["text"] or "").strip() or "Chip command completed with no displayable output.",
+    }
+
+
+def _render_chip_help_reply() -> str:
+    return (
+        "Chip commands: `/chip status [chip_key]`, `/chip evaluate <chip_key> [text|key=value ...|json]`, "
+        "`/chip suggest <chip_key> [text|key=value ...|json]`, and `/chip autoloop <chip_key>`.\n"
+        "Example: `/chip evaluate domain-chip-trading-crypto doctrine_id=trend_regime_following "
+        "strategy_id=ema_pullback_long market_regime=trend timeframe=1h venue=binance asset_universe=BTC paper_gate=strict`.\n"
+        "Rule: direct chip commands run the chip hook locally in Telegram, but they do not create a Swarm insight, "
+        "autoloop session, or GitHub delivery by themselves."
+    )
+
+
+def _render_chip_status_reply(
+    *,
+    config_manager: ConfigManager,
+    chip_key: str | None,
+) -> str:
+    records = list_chip_records(config_manager)
+    if not records:
+        return (
+            "No chips are attached in this workspace yet.\n"
+            "Next: add a chip root with `spark-intelligence attachments add-root chips <repo>` and activate the chip you want."
+        )
+    attachment_context = build_attachment_context(config_manager)
+    active_keys = {
+        str(item)
+        for item in attachment_context.get("active_chip_keys", [])
+        if str(item).strip()
+    }
+    pinned_keys = {
+        str(item)
+        for item in attachment_context.get("pinned_chip_keys", [])
+        if str(item).strip()
+    }
+    selected = None
+    if chip_key:
+        for record in records:
+            if str(record.key) == chip_key:
+                selected = record
+                break
+        if selected is None:
+            known = ", ".join(sorted(str(record.key) for record in records))
+            return f"Unknown chip key `{chip_key}`.\nKnown chips: {known}."
+    if selected is not None:
+        hooks = ", ".join(sorted(selected.commands)) if selected.commands else "none"
+        mutation_fields = []
+        frontier = selected.frontier if isinstance(selected.frontier, dict) else {}
+        allowed_mutations = frontier.get("allowed_mutations") if isinstance(frontier.get("allowed_mutations"), dict) else {}
+        if isinstance(allowed_mutations, dict):
+            mutation_fields = sorted(str(field) for field in allowed_mutations.keys() if str(field).strip())
+        status_bits = [
+            "active" if selected.key in active_keys else "inactive",
+            "pinned" if selected.key in pinned_keys else "unpinned",
+        ]
+        lines = [
+            f"Chip `{selected.key}` is {' and '.join(status_bits)}.",
+            f"Hooks: {hooks}.",
+            f"Repo: {selected.repo_root}.",
+        ]
+        if selected.description:
+            lines.append(f"Description: {_with_terminal_period(selected.description)}")
+        if mutation_fields:
+            lines.append(f"Frontier mutation fields: {', '.join(mutation_fields[:8])}.")
+        lines.append(
+            "Autoloop note: raw chip repos do not run through `/swarm autoloop`; that requires an attached specialization path."
+        )
+        return "\n".join(lines)
+    ranked = sorted(records, key=lambda record: (str(record.key) not in active_keys, str(record.key)))
+    lines = [f"Attached chips: {len(records)}."]
+    for record in ranked[:5]:
+        state = "active" if record.key in active_keys else "available"
+        if record.key in pinned_keys:
+            state = f"{state}, pinned"
+        hooks = ", ".join(sorted(record.commands)) if record.commands else "none"
+        lines.append(f"- {record.key}: {state} [{hooks}]")
+    lines.append("Next: `/chip status <chip_key>` for details or `/chip evaluate <chip_key> ...` to run one directly.")
+    return "\n".join(lines)
+
+
+def _render_chip_autoloop_reply(*, chip_key: str) -> str:
+    return (
+        f"Chip autoloop is not available for `{chip_key}` through Builder Telegram yet.\n"
+        "Reason: Builder autoloop runs attached specialization paths through the Swarm bridge, not raw chip repos.\n"
+        "Next: attach a specialization path and use `/swarm autoloop <path_key>` if you want a tracked autoloop session, "
+        "Swarm sync, and downstream upgrade-delivery flow."
+    )
+
+
+def _build_direct_chip_command_payload(
+    *,
+    config_manager: ConfigManager,
+    raw_payload: str,
+    request_id: str,
+    session_id: str,
+    human_id: str | None,
+    agent_id: str | None,
+) -> tuple[dict[str, Any], str]:
+    attachment_context = build_attachment_context(config_manager)
+    payload_text = str(raw_payload or "").strip()
+    user_payload: dict[str, Any]
+    payload_mode: str
+    if not payload_text:
+        user_payload = {}
+        payload_mode = "empty"
+    elif payload_text.startswith("{"):
+        try:
+            decoded = json.loads(payload_text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid JSON payload ({exc})") from exc
+        if not isinstance(decoded, dict):
+            raise ValueError("JSON payload must decode to an object.")
+        user_payload = decoded
+        payload_mode = "json"
+    else:
+        mutation_payload = _parse_direct_chip_mutation_pairs(payload_text)
+        if mutation_payload is not None:
+            user_payload = mutation_payload
+            payload_mode = "mutation_pairs"
+        else:
+            user_payload = {
+                "situation": payload_text,
+                "text": payload_text,
+                "prompt": payload_text,
+            }
+            payload_mode = "text"
+    base_payload = {
+        "channel_kind": "telegram",
+        "request_id": request_id,
+        "session_id": session_id,
+        "human_id": human_id,
+        "agent_id": agent_id,
+        "attachment_context": attachment_context,
+        "invocation_surface": "telegram_direct_chip_command",
+    }
+    payload = dict(user_payload)
+    for key, value in base_payload.items():
+        payload.setdefault(key, value)
+    return payload, payload_mode
+
+
+def _parse_direct_chip_mutation_pairs(payload_text: str) -> dict[str, Any] | None:
+    tokens = [token for token in str(payload_text or "").split() if token]
+    if not tokens or not all("=" in token and not token.startswith("=") and not token.endswith("=") for token in tokens):
+        return None
+    mutations: dict[str, str] = {}
+    for token in tokens:
+        key, value = token.split("=", 1)
+        cleaned_key = key.strip()
+        cleaned_value = value.strip()
+        if not cleaned_key or not cleaned_value:
+            return None
+        mutations[cleaned_key] = cleaned_value
+    return {
+        "candidate": {
+            "mutations": mutations,
+        }
+    }
+
+
+def _render_direct_chip_execution_reply(
+    *,
+    execution: Any,
+    hook: str,
+    payload_mode: str,
+) -> str:
+    if not getattr(execution, "ok", False):
+        return (
+            f"Chip `{execution.chip_key}` `{hook}` failed.\n"
+            f"Reason: {_with_terminal_period(_extract_chip_execution_error(execution))}"
+        )
+    output = execution.output if isinstance(getattr(execution, "output", None), dict) else {}
+    result = output.get("result") if isinstance(output.get("result"), dict) else {}
+    reply_text = str(result.get("reply_text") or output.get("reply_text") or "").strip()
+    if reply_text:
+        return reply_text
+    if hook == "evaluate":
+        return _render_direct_chip_evaluate_reply(
+            chip_key=str(execution.chip_key),
+            output=output,
+            payload_mode=payload_mode,
+        )
+    if hook == "suggest":
+        return _render_direct_chip_suggest_reply(
+            chip_key=str(execution.chip_key),
+            output=output,
+            payload_mode=payload_mode,
+        )
+    visible_output = json.dumps(output, indent=2, sort_keys=True)[:1500] if output else "No result payload."
+    return (
+        f"Chip `{execution.chip_key}` `{hook}` completed.\n"
+        f"Input mode: {payload_mode}.\n"
+        f"Output:\n{visible_output}"
+    )
+
+
+def _render_direct_chip_evaluate_reply(
+    *,
+    chip_key: str,
+    output: dict[str, Any],
+    payload_mode: str,
+) -> str:
+    result = output.get("result") if isinstance(output.get("result"), dict) else {}
+    metrics = output.get("metrics") if isinstance(output.get("metrics"), dict) else {}
+    lines = [f"Chip `{chip_key}` evaluate completed.", f"Input mode: {payload_mode}."]
+    if result:
+        if result.get("claim"):
+            lines.append(f"Claim: {_with_terminal_period(str(result.get('claim')))}")
+        if result.get("verdict"):
+            lines.append(f"Verdict: {str(result.get('verdict'))}.")
+        if result.get("mechanism"):
+            lines.append(f"Mechanism: {_with_terminal_period(str(result.get('mechanism')))}")
+        if result.get("boundary"):
+            lines.append(f"Boundary: {_with_terminal_period(str(result.get('boundary')))}")
+        if result.get("recommended_next_step"):
+            lines.append(f"Recommended next step: {str(result.get('recommended_next_step'))}.")
+    if metrics:
+        metric_bits = []
+        for key in (
+            "profitability_score",
+            "sharpe_ratio",
+            "max_drawdown",
+            "win_rate",
+            "paper_trade_readiness",
+            "verdict_confidence",
+        ):
+            value = metrics.get(key)
+            if isinstance(value, (int, float)):
+                metric_bits.append(f"{key}={float(value):.4f}")
+        if metric_bits:
+            lines.append("Metrics: " + ", ".join(metric_bits) + ".")
+    lines.append(
+        "Scope: this was a direct chip hook run only, so no Swarm insight, autoloop session, or GitHub delivery was created."
+    )
+    return "\n".join(lines)
+
+
+def _render_direct_chip_suggest_reply(
+    *,
+    chip_key: str,
+    output: dict[str, Any],
+    payload_mode: str,
+) -> str:
+    suggestions = output.get("suggestions") if isinstance(output.get("suggestions"), list) else []
+    reasons = output.get("reasons") if isinstance(output.get("reasons"), list) else []
+    lines = [f"Chip `{chip_key}` suggest completed.", f"Input mode: {payload_mode}."]
+    if reasons:
+        lines.append(f"Guidance: {_with_terminal_period(str(reasons[0]))}")
+    if not suggestions:
+        lines.append("No suggestions were returned.")
+    else:
+        lines.append(f"Suggestions: {len(suggestions)} candidate(s).")
+        for item in suggestions[:3]:
+            if not isinstance(item, dict):
+                continue
+            lines.append(
+                f"- {str(item.get('candidate_id') or 'candidate')}: "
+                f"{str(item.get('candidate_summary') or item.get('hypothesis') or 'no summary')}"
+            )
+    lines.append(
+        "Scope: this was a direct chip hook run only, so no Swarm insight, autoloop session, or GitHub delivery was created."
+    )
+    return "\n".join(lines)
+
+
+def _extract_chip_execution_error(execution: Any) -> str:
+    output = execution.output if isinstance(getattr(execution, "output", None), dict) else {}
+    result = output.get("result") if isinstance(output.get("result"), dict) else {}
+    for candidate in (
+        result.get("error") if isinstance(result, dict) else None,
+        output.get("error"),
+        getattr(execution, "stderr", ""),
+        getattr(execution, "stdout", ""),
+    ):
+        text = str(candidate or "").strip()
+        if text:
+            return text
+    return "chip command failed without a detailed error message"
+
+
 def _run_swarm_action_command(
     *,
     command: str,
@@ -4294,6 +4717,24 @@ def _render_swarm_overview_reply(payload: dict[str, Any]) -> str:
         f"Agent: {agent_name}. Repos: {len(repos)} attached, {verified_count} verified, {pending_count} pending.\n"
         "Next: `/swarm status` or `/swarm collective`."
     )
+
+
+def _render_swarm_doctor_reply(report: Any) -> str:
+    blockers = list(getattr(report, "blockers", []) or [])
+    recommendations = list(getattr(report, "recommendations", []) or [])
+    next_step = recommendations[0] if recommendations else "No next action suggested."
+    lines = [
+        f"Swarm doctor: {'blocked' if blockers else 'ready'}.",
+        f"Auth source: {getattr(report, 'auth_source', 'unknown')}. Payload source: {getattr(report, 'payload_source', 'missing')}.",
+        f"Active path: {getattr(report, 'active_path_key', None) or 'none'}. Repo: {getattr(report, 'active_path_repo_root', None) or 'missing'}.",
+        f"Scenario: {getattr(report, 'scenario_path', None) or 'missing'}. Mutation target: {getattr(report, 'mutation_target_path', None) or 'missing'}.",
+    ]
+    if blockers:
+        lines.append(f"Blocker: {blockers[0]}")
+    else:
+        lines.append("No blockers detected.")
+    lines.append(f"Next: {next_step}")
+    return "\n".join(lines)
 
 
 def _render_swarm_runtime_reply(payload: dict[str, Any]) -> str:
@@ -4894,6 +5335,40 @@ def _render_swarm_delivery_sync_reply(payload: dict[str, Any]) -> str:
     )
 
 
+def _parse_chip_command(inbound_text: str) -> dict[str, Any] | None:
+    normalized = " ".join(str(inbound_text or "").strip().split())
+    if not normalized:
+        return None
+    if normalized.lower() == "/chip":
+        return {"command": "/chip"}
+    match = re.match(r"^/chip status(?: (?P<chip_key>[A-Za-z0-9:_-]+))?$", normalized, flags=re.IGNORECASE)
+    if match:
+        return {
+            "command": "/chip status",
+            "chip_key": str(match.group("chip_key") or "").strip() or None,
+        }
+    match = re.match(r"^/chip autoloop (?P<chip_key>[A-Za-z0-9:_-]+)$", normalized, flags=re.IGNORECASE)
+    if match:
+        return {
+            "command": "/chip autoloop",
+            "chip_key": str(match.group("chip_key")),
+        }
+    match = re.match(
+        r"^/chip (?P<hook>evaluate|suggest) (?P<chip_key>[A-Za-z0-9:_-]+)(?: (?P<payload>.+))?$",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        hook = str(match.group("hook") or "").lower()
+        return {
+            "command": f"/chip {hook}",
+            "hook": hook,
+            "chip_key": str(match.group("chip_key") or "").strip(),
+            "payload": str(match.group("payload") or "").strip(),
+        }
+    return None
+
+
 def _match_natural_swarm_command(inbound_text: str) -> tuple[str, str | None] | None:
     normalized = " ".join(str(inbound_text or "").strip().split())
     lowered = normalized.lower()
@@ -4909,6 +5384,17 @@ def _match_natural_swarm_command(inbound_text: str) -> tuple[str, str | None] | 
         "what can swarm do",
     }:
         return ("/swarm", None)
+
+    if simplified in {
+        "swarm doctor",
+        "show swarm doctor",
+        "show me swarm doctor",
+        "run swarm doctor",
+        "check swarm doctor",
+        "diagnose swarm",
+        "diagnose spark swarm",
+    }:
+        return ("/swarm doctor", None)
 
     if simplified in {
         "swarm status",
@@ -5964,9 +6450,12 @@ def _apply_post_approval_welcome(
         human_id=human_id,
         agent_id=agent_id,
     )
+    # Pass agent_name as-is (possibly empty). build_telegram_surface_identity_preamble
+    # handles the empty-name case with a name-free welcome under the Phase 1
+    # empty-string sentinel regime.
     welcome_text = build_telegram_surface_identity_preamble(
         profile=profile,
-        agent_name=agent_name or "Spark Intelligence",
+        agent_name=agent_name,
         surface="approval_welcome",
     )
     return f"{welcome_text}\n\n{styled_reply}".strip()
