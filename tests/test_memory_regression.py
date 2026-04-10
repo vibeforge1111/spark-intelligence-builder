@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from spark_intelligence.memory import TelegramMemoryRegressionResult, run_telegram_memory_regression
+from spark_intelligence.memory.regression import DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES
 
 from tests.test_support import SparkTestCase
 
@@ -15,8 +17,8 @@ class MemoryRegressionTests(SparkTestCase):
         write_path = output_dir / "summary.json"
         payload = {
             "summary": {
-                "case_count": 20,
-                "matched_case_count": 20,
+                "case_count": len(DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES),
+                "matched_case_count": len(DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES),
                 "mismatched_case_count": 0,
                 "selected_user_id": "12345",
                 "selected_chat_id": "12345",
@@ -53,7 +55,10 @@ class MemoryRegressionTests(SparkTestCase):
             )
 
         self.assertEqual(exit_code, 0, stderr)
-        self.assertEqual(json.loads(stdout)["summary"]["case_count"], 20)
+        self.assertEqual(
+            json.loads(stdout)["summary"]["case_count"],
+            len(DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES),
+        )
         kwargs = run_regression.call_args.kwargs
         self.assertEqual(kwargs["config_manager"].paths.home, Path(self.home))
         self.assertEqual(kwargs["output_dir"], str(output_dir))
@@ -98,3 +103,59 @@ class MemoryRegressionTests(SparkTestCase):
         self.assertEqual(len(payload["cases"]), 1)
         ask_telegram.assert_called_once()
         compile_kb.assert_not_called()
+
+    def test_run_telegram_memory_regression_writes_operator_summary_and_passes_it_to_kb_compile(self) -> None:
+        output_dir = self.home / "artifacts" / "telegram-memory-regression-with-summary"
+        allowed_payload = {
+            "message": "ok",
+            "user_id": "12345",
+            "chat_id": "12345",
+            "result": {
+                "ok": True,
+                "decision": "allowed",
+                "detail": {
+                    "response_text": "ok",
+                    "bridge_mode": "memory_profile_fact",
+                    "routing_decision": "memory_profile_fact_query",
+                    "trace_ref": "trace:test",
+                },
+            },
+        }
+        kb_payload = {
+            "failure_taxonomy": {"summary": {"has_probe_coverage": True, "issue_labels": []}},
+            "probe_rows": [
+                {"probe_type": "current_state", "hits": 1, "total": 1},
+                {"probe_type": "evidence", "hits": 1, "total": 1},
+            ],
+        }
+
+        with patch(
+            "spark_intelligence.gateway.runtime.gateway_ask_telegram",
+            return_value=json.dumps(allowed_payload),
+        ), patch(
+            "spark_intelligence.memory.regression.inspect_human_memory_in_memory",
+            return_value=SimpleNamespace(to_json=lambda: json.dumps({"records": []})),
+        ), patch(
+            "spark_intelligence.memory.regression.build_telegram_state_knowledge_base",
+            return_value=SimpleNamespace(payload=kb_payload),
+        ) as compile_kb:
+            result = run_telegram_memory_regression(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                output_dir=output_dir,
+                user_id="12345",
+                chat_id="12345",
+            )
+
+        kwargs = compile_kb.call_args.kwargs
+        repo_sources = kwargs["repo_sources"]
+        self.assertEqual(len(repo_sources), 1)
+        summary_path = Path(repo_sources[0])
+        self.assertTrue(summary_path.exists())
+        summary_text = summary_path.read_text(encoding="utf-8")
+        self.assertIn("# Telegram Memory Regression Summary", summary_text)
+        self.assertIn("startup_query_after_founder", summary_text)
+        self.assertEqual(
+            Path(result.payload["artifact_paths"]["regression_report_markdown"]),
+            summary_path,
+        )
