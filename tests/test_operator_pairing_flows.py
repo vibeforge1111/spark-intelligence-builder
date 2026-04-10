@@ -401,11 +401,18 @@ class OperatorPairingFlowTests(SparkTestCase):
     def test_telegram_replies_hide_think_blocks_by_default(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
+        # NOTE: the mock reply text intentionally avoids trivial greetings
+        # ("hello there", "hey", "hi", etc.) because
+        # personality/loader._normalize_telegram_conversation_reply rewrites
+        # those into "Ready when you are." via _TELEGRAM_TRIVIAL_GREETING_RE
+        # (introduced in commit dbe3cdb, after this test was first written
+        # in fb533e0). Use a substantive reply so the test only exercises
+        # the think-block stripping behavior it is actually asserting.
         with patch(
             "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
             return_value=ResearcherBridgeResult(
                 request_id="req-think-off",
-                reply_text="<think>private reasoning</think>\n\nHello there.",
+                reply_text="<think>private reasoning</think>\n\nThe answer is 42.",
                 evidence_summary="status=under_supported provider_fallback=direct_http_chat",
                 escalation_hint=None,
                 trace_ref="trace:think-off",
@@ -435,7 +442,7 @@ class OperatorPairingFlowTests(SparkTestCase):
             )
 
         self.assertTrue(result.ok)
-        self.assertEqual(result.detail["response_text"], "Hello there.")
+        self.assertEqual(result.detail["response_text"], "The answer is 42.")
 
     def test_telegram_replies_strip_internal_swarm_routing_note(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -3099,7 +3106,12 @@ class OperatorPairingFlowTests(SparkTestCase):
             config_manager=self.config_manager,
         )
         self.assertEqual(profile["style_labels"]["directness"], "very direct")
-        self.assertIn("Be more direct and keep replies short", profile["agent_behavioral_rules"])
+        # The "too verbose" feedback is mapped by _build_style_training_message
+        # to the rule "Be less verbose and keep replies short." (see
+        # adapters/telegram/runtime.py:3577). The original assertion here
+        # said "Be more direct" which never matched the actual stored rule
+        # and was broken from its introduction in commit 1c5211a.
+        self.assertIn("Be less verbose and keep replies short", profile["agent_behavioral_rules"])
 
     def test_style_feedback_maps_canned_conversation_feedback_into_behavior_rules(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
