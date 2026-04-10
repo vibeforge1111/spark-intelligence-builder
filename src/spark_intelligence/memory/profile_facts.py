@@ -45,6 +45,7 @@ _TIMEZONE_PATTERNS = [
 ]
 _STOP_WORDS = {"and", "but", "because", "so", "that", "which", "where"}
 _LOWERCASE_JOINERS = {"and", "of", "the", "de", "al", "bin"}
+_TEMPORAL_TAIL_WORDS = {"now", "today", "currently"}
 
 
 @dataclass(frozen=True)
@@ -686,7 +687,7 @@ def _normalize_place(raw: str) -> str | None:
     parts = []
     for token in candidate.split():
         lowered = token.lower()
-        if lowered in _STOP_WORDS:
+        if lowered in _STOP_WORDS or lowered in _TEMPORAL_TAIL_WORDS:
             break
         cleaned = re.sub(r"[^A-Za-z'\-]", "", token)
         if not cleaned:

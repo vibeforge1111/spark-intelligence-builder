@@ -147,6 +147,13 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(observations[0]["predicate"], "profile.city")
         self.assertEqual(observations[0]["value"], "Dubai")
 
+    def test_profile_city_detection_strips_temporal_tail_words(self) -> None:
+        detected = detect_profile_fact_observation("I live in Abu Dhabi now.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.city")
+        self.assertEqual(detected.value, "Abu Dhabi")
+
     def test_profile_fact_write_does_not_double_prefix_prefixed_human_id(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
