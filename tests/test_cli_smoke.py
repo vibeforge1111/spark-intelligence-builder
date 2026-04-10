@@ -23,6 +23,37 @@ from tests.test_support import SparkTestCase, create_fake_hook_chip
 
 
 class CliSmokeTests(SparkTestCase):
+    def test_doctor_command_bootstraps_schema_before_attachment_snapshot_sync(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "doctor",
+            "--home",
+            str(self.home),
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertIn("Doctor checks:", stdout)
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'attachment_state_snapshots'"
+            ).fetchone()
+        self.assertIsNotNone(row)
+
+    def test_gateway_status_command_bootstraps_schema_before_status_checks(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "gateway",
+            "status",
+            "--home",
+            str(self.home),
+        )
+
+        self.assertEqual(exit_code, 1, stderr)
+        self.assertIn("Gateway ready:", stdout)
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'attachment_state_snapshots'"
+            ).fetchone()
+        self.assertIsNotNone(row)
+
     def test_browser_status_command_reports_governed_runtime_posture(self) -> None:
         chip_root = create_fake_hook_chip(self.home, chip_key="spark-browser")
         self.config_manager.set_path("spark.chips.roots", [str(chip_root)])

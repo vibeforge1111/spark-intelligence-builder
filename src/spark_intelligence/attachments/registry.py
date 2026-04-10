@@ -123,8 +123,13 @@ def list_attachments(config_manager: ConfigManager, *, kind: str = "all") -> Att
 def add_attachment_root(config_manager: ConfigManager, *, target: str, root: str) -> list[str]:
     dotted_path = "spark.chips.roots" if target == "chips" else "spark.specialization_paths.roots"
     existing = config_manager.get_path(dotted_path, default=[]) or []
-    normalized = str(Path(root).expanduser())
-    values = [str(Path(item).expanduser()) for item in existing if str(item).strip()]
+    normalized_path = config_manager.normalize_runtime_path(root)
+    normalized = str(normalized_path or Path(root).expanduser())
+    values = [
+        str(config_manager.normalize_runtime_path(item) or Path(str(item)).expanduser())
+        for item in existing
+        if str(item).strip()
+    ]
     if normalized not in values:
         values.append(normalized)
         config_manager.set_path(dotted_path, values)
@@ -133,7 +138,11 @@ def add_attachment_root(config_manager: ConfigManager, *, target: str, root: str
 
 def _resolve_chip_roots(config_manager: ConfigManager) -> tuple[list[Path], str]:
     configured = config_manager.get_path("spark.chips.roots", default=[]) or []
-    normalized = [Path(str(item)).expanduser() for item in configured if str(item).strip()]
+    normalized = [
+        config_manager.normalize_runtime_path(item) or Path(str(item)).expanduser()
+        for item in configured
+        if str(item).strip()
+    ]
     if normalized:
         return normalized, "configured"
 
@@ -159,7 +168,11 @@ def _resolve_chip_roots(config_manager: ConfigManager) -> tuple[list[Path], str]
 
 def _resolve_roots(config_manager: ConfigManager, dotted_path: str, default_glob: str) -> tuple[list[Path], str]:
     configured = config_manager.get_path(dotted_path, default=[]) or []
-    normalized = [Path(str(item)).expanduser() for item in configured if str(item).strip()]
+    normalized = [
+        config_manager.normalize_runtime_path(item) or Path(str(item)).expanduser()
+        for item in configured
+        if str(item).strip()
+    ]
     if normalized:
         return normalized, "configured"
     desktop = Path.home() / "Desktop"

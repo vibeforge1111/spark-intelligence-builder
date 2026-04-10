@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import stat
 import subprocess
+import re
 from dataclasses import dataclass
 from getpass import getuser
 from pathlib import Path
@@ -144,6 +145,25 @@ class ConfigManager:
             return self.default_config()
         data = yaml.safe_load(self.paths.config_yaml.read_text(encoding="utf-8")) or {}
         return data
+
+    @staticmethod
+    def normalize_runtime_path(value: str | os.PathLike[str] | None) -> Path | None:
+        if value is None:
+            return None
+        raw = str(value).strip()
+        if not raw:
+            return None
+        path = Path(raw).expanduser()
+        if path.exists():
+            return path
+        windows_match = re.match(r"^([A-Za-z]):[\\/](.*)$", raw)
+        if windows_match and os.name != "nt":
+            drive = windows_match.group(1).lower()
+            remainder = windows_match.group(2).replace("\\", "/")
+            translated = Path("/mnt") / drive / remainder
+            if translated.exists():
+                return translated
+        return path
 
     def save(
         self,

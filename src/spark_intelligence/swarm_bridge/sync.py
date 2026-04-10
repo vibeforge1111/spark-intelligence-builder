@@ -1218,7 +1218,7 @@ def evaluate_swarm_escalation(
 def _discover_swarm_runtime_root(config_manager: ConfigManager) -> tuple[Path | None, str]:
     configured_root = config_manager.get_path("spark.swarm.runtime_root")
     if configured_root:
-        path = Path(str(configured_root)).expanduser()
+        path = config_manager.normalize_runtime_path(configured_root)
         return (path if path.exists() else None, "configured")
     autodetect = Path.home() / "Desktop" / "spark-swarm"
     if autodetect.exists():
