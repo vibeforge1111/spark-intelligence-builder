@@ -80,6 +80,16 @@ PROVIDER_REGISTRY: dict[str, ProviderSpec] = {
         default_api_key_env="OPENROUTER_API_KEY",
         api_mode="chat_completions",
     ),
+    "minimax": ProviderSpec(
+        id="minimax",
+        provider_kind="minimax",
+        display_name="MiniMax",
+        auth_methods=("api_key_env",),
+        default_model="MiniMax-M2.7",
+        default_base_url="https://api.minimax.io/v1",
+        default_api_key_env="MINIMAX_API_KEY",
+        api_mode="chat_completions",
+    ),
     "custom": ProviderSpec(
         id="custom",
         provider_kind="custom",
