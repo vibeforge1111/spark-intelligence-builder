@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
+import sqlite3
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -2631,8 +2634,8 @@ def _environment_snapshot_disagreements(
         for field in comparable_fields:
             if not _environment_field_should_match(baseline_surface, surface, field):
                 continue
-            left = baseline.get(field)
-            right = snapshot.get(field)
+            left = _normalize_environment_snapshot_field(field, baseline.get(field))
+            right = _normalize_environment_snapshot_field(field, snapshot.get(field))
             if left and right and left != right:
                 mismatch_fields.append(
                     f"{baseline_surface}:{field}={left} != {surface}:{field}={right}"
@@ -2640,7 +2643,28 @@ def _environment_snapshot_disagreements(
     return mismatch_fields
 
 
+def _normalize_environment_snapshot_field(field: str, value: Any) -> Any:
+    normalized = str(value).strip() if value is not None else None
+    if not normalized:
+        return value
+    if field not in {"runtime_root", "config_path", "python_executable"}:
+        return normalized
+    translated = _translate_windows_path_for_posix(normalized)
+    return translated or normalized
+
+
+def _translate_windows_path_for_posix(value: str) -> str | None:
+    match = re.match(r"^([A-Za-z]):[\\/](.*)$", value)
+    if not match or os.name == "nt":
+        return None
+    drive = match.group(1).lower()
+    remainder = match.group(2).replace("\\", "/")
+    return str(Path("/mnt") / drive / remainder)
+
+
 def _environment_field_should_match(left_surface: str, right_surface: str, field: str) -> bool:
+    if field == "python_executable":
+        return False
     if field == "runtime_root" and "swarm_bridge" in {left_surface, right_surface}:
         return False
     return True
