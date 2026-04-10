@@ -930,6 +930,36 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         facts = events[0]["facts_json"]
         self.assertEqual(facts["keepability"], "ephemeral_context")
 
+    def test_environment_parity_accepts_windows_and_wsl_paths_for_same_runtime(self) -> None:
+        record_environment_snapshot(
+            self.state_db,
+            surface="doctor_cli",
+            summary="doctor",
+            runtime_root=r"C:\Users\USER\Desktop\spark-researcher",
+            config_path=r"C:\Users\USER\Desktop\spark-researcher\spark-researcher.project.json",
+        )
+        record_environment_snapshot(
+            self.state_db,
+            surface="researcher_bridge",
+            summary="bridge",
+            runtime_root="/mnt/c/Users/USER/Desktop/spark-researcher",
+            config_path="/mnt/c/Users/USER/Desktop/spark-researcher/spark-researcher.project.json",
+        )
+        record_environment_snapshot(
+            self.state_db,
+            surface="swarm_bridge",
+            summary="swarm",
+            runtime_root="/mnt/c/Users/USER/Desktop/spark-swarm",
+            config_path=r"C:\Users\USER\Desktop\spark-researcher\spark-researcher.project.json",
+        )
+
+        issues = {
+            issue.name: issue
+            for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)
+        }
+
+        self.assertTrue(issues["stop_ship_environment_parity"].ok)
+
     def test_build_researcher_reply_records_chip_hook_result_classification(self) -> None:
         self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
         self.config_manager.set_path("spark.specialization_paths.active_path_key", "startup-operator")
