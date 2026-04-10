@@ -269,6 +269,8 @@ def _build_question_spec(
             "memory_operation": _memory_operation(case),
             "memory_scope": _memory_scope(case),
             "expected_fragments": expected_fragments,
+            "expected_forbidden_fragments": list(getattr(case, "expected_response_excludes", ()) or ()),
+            "benchmark_tags": list(getattr(case, "benchmark_tags", ()) or ()),
             "bridge_mode": str(payload.get("bridge_mode") or ""),
             "routing_decision": str(payload.get("routing_decision") or ""),
             "trace_ref": str(payload.get("trace_ref") or ""),
@@ -329,8 +331,16 @@ def _product_memory_task(case: Any) -> str:
         return "provenance_explanation"
     if category == "identity":
         return "identity_summary"
+    if category == "identity_synthesis":
+        return "identity_synthesis"
     if category == "abstention":
         return "abstention_guard"
+    if category == "inappropriate_memory_use":
+        return "anti_overpersonalization"
+    if category == "long_term_memory":
+        return "long_horizon_retrieval"
+    if category == "short_term_memory":
+        return "short_horizon_retrieval"
     return "profile_retrieval"
 
 
@@ -341,7 +351,7 @@ def _memory_operation(case: Any) -> str:
 
 
 def _memory_scope(case: Any) -> str:
-    if str(getattr(case, "category", "")).strip() == "identity":
+    if str(getattr(case, "category", "")).strip() in {"identity", "identity_synthesis"}:
         return "multi_fact"
     return "single_fact"
 
@@ -361,6 +371,12 @@ def _leader_rows(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
         row
         for row in rows
         if _safe_accuracy((row.get("live_integration_overall") or {}).get("accuracy")) == best_accuracy
+    ]
+    best_trust = max(_safe_accuracy((row.get("trustworthiness_overall") or {}).get("accuracy")) for row in leaders)
+    leaders = [
+        row
+        for row in leaders
+        if _safe_accuracy((row.get("trustworthiness_overall") or {}).get("accuracy")) == best_trust
     ]
     best_alignment = max(_safe_accuracy((row.get("scorecard_alignment") or {}).get("rate")) for row in leaders)
     return [
@@ -423,9 +439,17 @@ def _build_summary_markdown(
     lines.extend(["", "## Baselines", ""])
     for row in baseline_rows:
         overall = row.get("live_integration_overall") or {}
+        trust = row.get("trustworthiness_overall") or {}
+        grounding = row.get("grounding_overall") or {}
+        abstention = row.get("abstention_overall") or {}
+        forbidden = row.get("forbidden_memory_overall") or {}
         lines.append(
             f"- `{row.get('baseline_name')}`: matched `{overall.get('matched', 0)}/{overall.get('total', 0)}` "
             f"(accuracy `{_safe_accuracy(overall.get('accuracy')):.4f}`), "
+            f"trust `{_safe_accuracy(trust.get('accuracy')):.4f}`, "
+            f"grounding `{_safe_accuracy(grounding.get('accuracy')):.4f}`, "
+            f"abstention `{_safe_accuracy(abstention.get('accuracy')):.4f}`, "
+            f"forbidden-clean `{_safe_accuracy(forbidden.get('accuracy')):.4f}`, "
             f"alignment `{_safe_accuracy((row.get('scorecard_alignment') or {}).get('rate')):.4f}`"
         )
         for category_row in row.get("live_by_category") or []:
@@ -449,6 +473,8 @@ def _sample_case_summary(sample_spec: dict[str, Any]) -> dict[str, Any]:
         "category": str(question.get("category") or "unknown"),
         "question": str(question.get("question") or ""),
         "expected_fragments": list(metadata.get("expected_fragments") or []),
+        "forbidden_fragments": list(metadata.get("expected_forbidden_fragments") or []),
+        "benchmark_tags": list(metadata.get("benchmark_tags") or []),
         "context_session_count": len(sample_spec.get("sessions") or []),
         "evidence_session_ids": list(question.get("evidence_session_ids") or []),
         "should_abstain": bool(question.get("should_abstain")),
@@ -568,6 +594,14 @@ def _baseline_row(
     }
     category_total: Counter[str] = Counter()
     category_matched: Counter[str] = Counter()
+    trust_total = 0
+    trust_matched = 0
+    grounding_total = 0
+    grounding_matched = 0
+    abstention_total = 0
+    abstention_matched = 0
+    forbidden_total = 0
+    forbidden_clean = 0
     rendered_predictions: list[dict[str, Any]] = []
     for question_id, spec in question_lookup.items():
         question = (spec.get("questions") or [{}])[0]
@@ -576,10 +610,39 @@ def _baseline_row(
         predicted = prediction_lookup.get(question_id) or {}
         predicted_answer = str(predicted.get("predicted_answer") or "")
         expected_fragments = [str(item) for item in list(metadata.get("expected_fragments") or [])]
+        forbidden_fragments = [str(item) for item in list(metadata.get("expected_forbidden_fragments") or [])]
         missing_fragments = [
             fragment for fragment in expected_fragments if fragment.lower() not in predicted_answer.lower()
         ]
+        forbidden_hits = [
+            fragment for fragment in forbidden_fragments if fragment.lower() in predicted_answer.lower()
+        ]
         matched = not missing_fragments
+        abstention_expected = bool(question.get("should_abstain"))
+        abstention_respected = abstention_expected and matched and not forbidden_hits
+        retrieved_memory_roles = (
+            (predicted.get("metadata") or {}).get("retrieved_memory_roles") or []
+            if isinstance(predicted.get("metadata"), dict)
+            else []
+        )
+        evidence_expected = bool(question.get("evidence_session_ids") or question.get("evidence_turn_ids"))
+        retrieval_support_present = bool(retrieved_memory_roles)
+        grounding_ok = matched and (not evidence_expected or retrieval_support_present)
+        trust_total += 1
+        if matched and not forbidden_hits and (not abstention_expected or abstention_respected):
+            trust_matched += 1
+        if evidence_expected:
+            grounding_total += 1
+            if grounding_ok:
+                grounding_matched += 1
+        if abstention_expected:
+            abstention_total += 1
+            if abstention_respected:
+                abstention_matched += 1
+        if forbidden_fragments:
+            forbidden_total += 1
+            if not forbidden_hits:
+                forbidden_clean += 1
         category_total[category] += 1
         if matched:
             category_matched[category] += 1
@@ -591,14 +654,17 @@ def _baseline_row(
                 "question": str(question.get("question") or ""),
                 "predicted_answer": predicted_answer,
                 "expected_fragments": expected_fragments,
+                "forbidden_fragments": forbidden_fragments,
                 "matched_expectations": matched,
                 "missing_fragments": missing_fragments,
+                "forbidden_hits": forbidden_hits,
+                "abstention_expected": abstention_expected,
+                "abstention_respected": abstention_respected,
+                "evidence_expected": evidence_expected,
+                "retrieval_support_present": retrieval_support_present,
+                "grounding_ok": grounding_ok,
                 "scorecard_is_correct": bool(predicted.get("is_correct", False)),
-                "retrieved_memory_roles": (
-                    (predicted.get("metadata") or {}).get("retrieved_memory_roles") or []
-                    if isinstance(predicted.get("metadata"), dict)
-                    else []
-                ),
+                "retrieved_memory_roles": retrieved_memory_roles,
             }
         )
     matched_total = sum(category_matched.values())
@@ -609,6 +675,26 @@ def _baseline_row(
             "matched": matched_total,
             "total": total,
             "accuracy": (matched_total / total) if total else 0.0,
+        },
+        "trustworthiness_overall": {
+            "matched": trust_matched,
+            "total": trust_total,
+            "accuracy": (trust_matched / trust_total) if trust_total else 0.0,
+        },
+        "grounding_overall": {
+            "matched": grounding_matched,
+            "total": grounding_total,
+            "accuracy": (grounding_matched / grounding_total) if grounding_total else 0.0,
+        },
+        "abstention_overall": {
+            "matched": abstention_matched,
+            "total": abstention_total,
+            "accuracy": (abstention_matched / abstention_total) if abstention_total else 0.0,
+        },
+        "forbidden_memory_overall": {
+            "clean": forbidden_clean,
+            "total": forbidden_total,
+            "accuracy": (forbidden_clean / forbidden_total) if forbidden_total else 0.0,
         },
         "live_by_category": [
             {

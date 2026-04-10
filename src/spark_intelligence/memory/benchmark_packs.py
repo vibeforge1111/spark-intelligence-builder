@@ -32,6 +32,8 @@ def _variant(
     category: str | None = None,
     message: str | None = None,
     expected_response_contains: tuple[str, ...] | None = None,
+    expected_response_excludes: tuple[str, ...] | None = None,
+    benchmark_tags: tuple[str, ...] | None = None,
     isolate_memory: bool | None = None,
 ) -> TelegramMemoryRegressionCase:
     base_case = _DEFAULT_CASES_BY_ID[source_case_id]
@@ -44,6 +46,14 @@ def _variant(
             expected_response_contains
             if expected_response_contains is not None
             else base_case.expected_response_contains
+        ),
+        expected_response_excludes=(
+            expected_response_excludes
+            if expected_response_excludes is not None
+            else base_case.expected_response_excludes
+        ),
+        benchmark_tags=(
+            benchmark_tags if benchmark_tags is not None else base_case.benchmark_tags
         ),
         isolate_memory=isolate_memory if isolate_memory is not None else base_case.isolate_memory,
     )
@@ -151,6 +161,33 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
             ),
         ),
         TelegramMemoryBenchmarkPack(
+            pack_id="provenance_audit",
+            title="Provenance Audit",
+            description=(
+                "Focuses on explanation quality and whether the answer explicitly signals that it is "
+                "using stored memory rather than free-associating from unrelated facts."
+            ),
+            cases=(
+                *_existing(
+                    "city_write",
+                    "startup_write",
+                    "mission_write",
+                    "country_write",
+                    "city_explanation",
+                    "startup_explanation",
+                    "mission_explanation",
+                    "country_explanation",
+                ),
+                _variant(
+                    "identity_summary",
+                    case_id="identity_summary_provenance_audit",
+                    category="identity",
+                    expected_response_contains=("entrepreneur", "Seedify"),
+                    benchmark_tags=("identity_audit",),
+                ),
+            ),
+        ),
+        TelegramMemoryBenchmarkPack(
             pack_id="boundary_abstention",
             title="Boundary Abstention",
             description=(
@@ -175,6 +212,8 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
                     case_id="timezone_query_missing_cleanroom",
                     category="abstention",
                     expected_response_contains=("don't currently have that saved",),
+                    expected_response_excludes=("Sarah", "entrepreneur", "Dubai", "Seedify", "UAE", "Asia/Dubai"),
+                    benchmark_tags=("anti_hallucination", "anti_overpersonalization"),
                     isolate_memory=True,
                 ),
                 _variant(
@@ -182,7 +221,54 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
                     case_id="country_query_missing_cleanroom",
                     category="abstention",
                     expected_response_contains=("don't currently have that saved",),
+                    expected_response_excludes=("Sarah", "entrepreneur", "Dubai", "Seedify", "UAE", "Asia/Dubai"),
+                    benchmark_tags=("anti_hallucination", "anti_overpersonalization"),
                     isolate_memory=True,
+                ),
+            ),
+        ),
+        TelegramMemoryBenchmarkPack(
+            pack_id="anti_personalization_guardrails",
+            title="Anti-Personalization Guardrails",
+            description=(
+                "Measures whether the memory system avoids using unrelated stored profile facts to "
+                "answer a question that should trigger abstention."
+            ),
+            cases=(
+                *_existing(
+                    "name_write",
+                    "occupation_write",
+                    "city_write",
+                    "startup_write",
+                    "country_write",
+                    "timezone_write",
+                ),
+                _variant(
+                    "timezone_query",
+                    case_id="favorite_color_missing_after_profile_writes",
+                    category="inappropriate_memory_use",
+                    message="What is my favorite color?",
+                    expected_response_contains=("don't currently have that saved",),
+                    expected_response_excludes=("Sarah", "entrepreneur", "Dubai", "Seedify", "UAE", "Asia/Dubai"),
+                    benchmark_tags=("anti_hallucination", "anti_overpersonalization"),
+                ),
+                _variant(
+                    "country_query",
+                    case_id="dog_name_missing_after_profile_writes",
+                    category="inappropriate_memory_use",
+                    message="What is my dog's name?",
+                    expected_response_contains=("don't currently have that saved",),
+                    expected_response_excludes=("Sarah", "entrepreneur", "Dubai", "Seedify", "UAE", "Asia/Dubai"),
+                    benchmark_tags=("anti_hallucination", "anti_overpersonalization"),
+                ),
+                _variant(
+                    "country_query",
+                    case_id="favorite_food_missing_after_profile_writes",
+                    category="inappropriate_memory_use",
+                    message="What food do I love the most?",
+                    expected_response_contains=("don't currently have that saved",),
+                    expected_response_excludes=("Sarah", "entrepreneur", "Dubai", "Seedify", "UAE", "Asia/Dubai"),
+                    benchmark_tags=("anti_hallucination", "anti_overpersonalization"),
                 ),
             ),
         ),
@@ -208,6 +294,7 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
                     case_id="identity_summary_rich",
                     category="identity_synthesis",
                     expected_response_contains=("entrepreneur", "Seedify", "Asia/Dubai", "UAE"),
+                    benchmark_tags=("identity_audit",),
                 ),
             ),
         ),

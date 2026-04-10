@@ -22,6 +22,8 @@ class TelegramMemoryRegressionCase:
     expected_bridge_mode: str | None = None
     expected_routing_decision: str | None = None
     expected_response_contains: tuple[str, ...] = ()
+    expected_response_excludes: tuple[str, ...] = ()
+    benchmark_tags: tuple[str, ...] = ()
     isolate_memory: bool = False
 
 
@@ -656,10 +658,16 @@ def _build_case_result(*, case: TelegramMemoryRegressionCase, payload: dict[str,
     for expected_fragment in case.expected_response_contains:
         if expected_fragment.lower() not in lowered_response:
             mismatches.append(f"response_missing:{expected_fragment}")
+    for forbidden_fragment in case.expected_response_excludes:
+        if forbidden_fragment.lower() in lowered_response:
+            mismatches.append(f"response_forbidden:{forbidden_fragment}")
     return {
         "case_id": case.case_id,
         "category": case.category,
         "message": case.message,
+        "expected_response_contains": list(case.expected_response_contains),
+        "expected_response_excludes": list(case.expected_response_excludes),
+        "benchmark_tags": list(case.benchmark_tags),
         "decision": str(result.get("decision") or payload.get("decision") or "").strip(),
         "bridge_mode": bridge_mode,
         "routing_decision": routing_decision,
