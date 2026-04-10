@@ -2,6 +2,7 @@
 
 Author: Claude (Opus 4.6), 2026-04-10
 Status: **PARTIAL (5 of 15+ probes scored).** This report is an interim scorecard based only on the probes completed in the prior session before `state.db` corruption halted Mode B. It is *not* the full gap report called for in the methodology §7 step 11. A full report requires Axis F (restraint), A (identity beyond A1), C (evolution loop beyond C7), D, E, G, H, and if accepted, I.
+Revision 2026-04-10: G1/G2/G3 guardrails were added after this report's initial scoring. O1/O4/O10/O13 are now hard guardrail violations (binary fail), not graded. §2 scores below were calibrated under the older graded rubric — they do not need to be re-written retroactively, but any future probes will use the harder rubric.
 Companion to: `docs/PERSONALITY_TESTING_METHODOLOGY.md`, `docs/PERSONALITY_TESTING_RESUME_PROMPT.md`
 
 ---
