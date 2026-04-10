@@ -366,3 +366,36 @@ v2 turns v1's two-step free-text onboarding into a **required-name, 4-to-8-step*
 Dependencies: Phase 1 (remove `"Spark Agent"` fallback, make `agent_name` nullable) must ship first.
 
 Next step: operator reviews this doc, answers Q-A through Q-H, and green-lights or redlines the direction. Until then, no code changes.
+
+---
+
+## 11. Operator decisions — Q-A through Q-H (locked 2026-04-10)
+
+| ID | Question | Decision | Notes |
+|----|----------|----------|-------|
+| Q-A | Long names (>48 chars) during `awaiting_name` | **Re-prompt** | Simpler; no `awaiting_name_confirm` sub-state. Matches recommendation. |
+| Q-B | Do trait rate limits (±0.25/turn) apply during onboarding? | **No** | Onboarding is a one-shot explicit capture. Q3 floors still apply; rate limits kick in post-completion. Matches recommendation. |
+| Q-C | Guardrails-ack step mandatory? | **Show but don't gate** | Display guardrails once; silence = acceptance. Matches recommendation. |
+| Q-D | `user_address` fallback when NULL | **Empty / no address** | Do not personalize when `user_address` is NULL. Messages omit the salutation entirely rather than falling back to `human_display_name`. *Diverges from recommendation.* |
+| Q-E | Support `/cancel` during onboarding? | **Yes — and `/cancel` fully resets the agent** | Typing `/cancel` wipes in-progress onboarding state AND the agent's saved name. User starts over from pairing next time. *Diverges from recommendation, which kept the name.* |
+| Q-F | Per-trait anchor labels for the 1-5 guided scale? | **Per-trait** | Each of the 5 traits gets its own 5-anchor label set (25 phrases total). Matches recommendation. |
+| Q-G | Guardrails step for `express` / `freestyle` modes? | **Show uniformly** | All 3 persona modes hit the same guardrails step. Matches recommendation. |
+| Q-H | Surface v2 onboarding to existing users with saved personas? | **Run once for everyone, with a one-tap skip** | Existing users see a short offer ("Want to re-set up your agent? (yes/skip)"). Only `yes` starts v2 onboarding; `skip` or any other reply keeps the existing persona untouched. *Diverges from the "do not re-run" recommendation.* |
+
+### Implementation notes derived from decisions
+
+- **Q-D (empty user_address):** The read path for reply templates needs an "address-aware" formatting helper that produces two variants — with salutation (when `user_address` is set) and without (when NULL). Do NOT silently substitute `human_display_name`; treat NULL as "user explicitly wants no address" OR "user hasn't set one yet" — both produce the same no-address rendering. A follow-up UX question (not blocking Phase 2): should the onboarding's `awaiting_user_address` step offer an explicit "don't address me" choice, or is leaving it blank enough?
+
+- **Q-E (/cancel wipes name):** `rename_agent_identity` currently sets `agent_name` and writes to `agent_rename_history`. A `/cancel` path needs a new service function that:
+  1. Deletes the in-progress `agent_persona_onboarding_state` row
+  2. Clears `agent_profiles.agent_name` back to empty string (the Phase 1 sentinel)
+  3. Records the wipe in `agent_rename_history` with `source_ref="onboarding-cancel"` and `new_name=""`
+  4. Leaves `agent_profiles.agent_id` and the pairing intact (so the user can restart without re-pairing)
+
+- **Q-H (existing users get a skip offer):** New state `awaiting_reonboard_consent` is entered on first DM for any user whose `agent_persona_onboarding_state.status != 'completed'` AND who has a saved persona. The state presents a short offer; any reply other than `yes` / `y` / `restart` transitions to `completed` without changes (silence = skip, not nag). Users who already have `status='completed'` but no persona profile are treated as brand-new.
+
+### Questions opened by the decisions (deferred, not blocking Phase 2)
+
+- **Q-I (new):** Should the `awaiting_user_address` step offer an explicit "don't address me by name" option, or does leaving it blank cover that? — follow-up on Q-D.
+- **Q-J (new):** When `/cancel` wipes the agent name, do we also wipe `agent_persona_profiles` (rules, traits, summary)? Or just the name and onboarding state? — follow-up on Q-E. Default assumption: wipe only the name and onboarding state, keep the profile. The user can `/cancel` to rename but keep the vibe.
+- **Q-K (new):** For Q-H existing-user offers, how is "has a saved persona" detected? Candidate: `agent_persona_profiles` row exists for the agent with non-empty `behavioral_rules_json` or `persona_summary`. Needs confirmation once Phase 2 implementation starts.
