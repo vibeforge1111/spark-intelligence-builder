@@ -9,16 +9,21 @@ from spark_intelligence.memory import orchestrator as memory_orchestrator
 from spark_intelligence.memory import (
     build_sdk_maintenance_payload,
     build_shadow_replay_payload,
-    explain_memory_answer_in_memory,
     export_shadow_replay_batch,
     inspect_human_memory_in_memory,
     lookup_current_state_in_memory,
     run_memory_sdk_smoke_test,
-    retrieve_memory_evidence_in_memory,
-    retrieve_memory_events_in_memory,
     write_profile_fact_to_memory,
 )
-from spark_intelligence.memory.profile_facts import detect_profile_fact_observation
+from spark_intelligence.memory.profile_facts import (
+    build_profile_fact_observation_answer,
+    build_profile_fact_query_answer,
+    build_profile_identity_summary_answer,
+    build_profile_fact_query_context,
+    build_profile_identity_summary_context,
+    detect_profile_fact_observation,
+    detect_profile_fact_query,
+)
 from spark_intelligence.observability.store import (
     build_watchtower_snapshot,
     latest_events_by_type,
@@ -37,9 +42,6 @@ class _FakeMemoryClient:
     def __init__(self) -> None:
         self.observation_calls: list[dict[str, object]] = []
         self.current_state_calls: list[dict[str, object]] = []
-        self.explain_answer_calls: list[dict[str, object]] = []
-        self.retrieve_evidence_calls: list[dict[str, object]] = []
-        self.retrieve_events_calls: list[dict[str, object]] = []
 
     def write_observation(self, **payload):
         self.observation_calls.append(payload)
@@ -65,58 +67,6 @@ class _FakeMemoryClient:
             "provenance": [{"memory_role": "current_state", "source": "fake_sdk"}],
             "retrieval_trace": {"trace_id": "mem-trace-read"},
             "answer_explanation": {"method": "get_current_state"},
-        }
-
-    def explain_answer(self, **payload):
-        self.explain_answer_calls.append(payload)
-        return {
-            "status": "supported",
-            "memory_role": "current_state",
-            "records": [{"answer": "Dubai"}],
-            "provenance": [{"memory_role": "current_state", "source": "fake_sdk"}],
-            "retrieval_trace": {"trace_id": "mem-trace-explain"},
-            "answer_explanation": {
-                "answer": "Dubai",
-                "explanation": "Resolved profile.city for human:test to Dubai from current_state.",
-                "evidence": [{"memory_role": "current_state", "predicate": "profile.city", "value": "Dubai"}],
-                "events": [{"memory_role": "event", "predicate": "profile.city", "value": "Dubai"}],
-            },
-        }
-
-    def retrieve_evidence(self, **payload):
-        self.retrieve_evidence_calls.append(payload)
-        return {
-            "status": "supported",
-            "memory_role": "current_state",
-            "records": [
-                {
-                    "memory_role": "current_state",
-                    "subject": payload.get("subject"),
-                    "predicate": payload.get("predicate"),
-                    "value": "Dubai",
-                    "text": "I moved to Dubai.",
-                }
-            ],
-            "provenance": [{"memory_role": "current_state", "source": "fake_sdk"}],
-            "retrieval_trace": {"trace_id": "mem-trace-evidence"},
-        }
-
-    def retrieve_events(self, **payload):
-        self.retrieve_events_calls.append(payload)
-        return {
-            "status": "supported",
-            "memory_role": "event",
-            "records": [
-                {
-                    "memory_role": "event",
-                    "subject": payload.get("subject"),
-                    "predicate": payload.get("predicate"),
-                    "value": "Dubai",
-                    "text": "user said they moved to Dubai",
-                }
-            ],
-            "provenance": [{"memory_role": "event", "source": "fake_sdk"}],
-            "retrieval_trace": {"trace_id": "mem-trace-events"},
         }
 
 
@@ -187,7 +137,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(result.status, "succeeded")
         self.assertEqual(len(fake_client.observation_calls), 1)
         call = fake_client.observation_calls[0]
-        self.assertEqual(call["subject"], "human:human:test")
+        self.assertEqual(call["subject"], "human:test")
         self.assertEqual(call["predicate"], "profile.city")
         self.assertEqual(call["value"], "Dubai")
         self.assertEqual(call["text"], "I moved to Dubai.")
@@ -259,6 +209,86 @@ class MemoryOrchestratorTests(SparkTestCase):
         assert detected is not None
         self.assertEqual(detected.predicate, "profile.home_country")
         self.assertEqual(detected.value, "Canada")
+
+    def test_profile_country_detection_accepts_im_in_country_phrasing(self) -> None:
+        detected = detect_profile_fact_observation("I'm in Canada now.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.home_country")
+        self.assertEqual(detected.value, "Canada")
+
+    def test_profile_city_detection_keeps_im_in_city_phrasing(self) -> None:
+        detected = detect_profile_fact_observation("I'm in Abu Dhabi now.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.city")
+        self.assertEqual(detected.value, "Abu Dhabi")
+
+    def test_profile_country_detection_accepts_moved_to_country_phrasing(self) -> None:
+        detected = detect_profile_fact_observation("I moved to Canada.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.home_country")
+        self.assertEqual(detected.value, "Canada")
+
+    def test_profile_city_detection_keeps_moved_to_city_phrasing(self) -> None:
+        detected = detect_profile_fact_observation("I moved to Dubai.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.city")
+        self.assertEqual(detected.value, "Dubai")
+
+    def test_profile_country_detection_accepts_live_in_country_phrasing(self) -> None:
+        detected = detect_profile_fact_observation("I live in Canada.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.home_country")
+        self.assertEqual(detected.value, "Canada")
+
+    def test_profile_country_detection_accepts_live_in_country_aliases(self) -> None:
+        uae = detect_profile_fact_observation("I live in UAE.")
+        self.assertIsNotNone(uae)
+        assert uae is not None
+        self.assertEqual(uae.predicate, "profile.home_country")
+        self.assertEqual(uae.value, "UAE")
+
+        us = detect_profile_fact_observation("I live in the US.")
+        self.assertIsNotNone(us)
+        assert us is not None
+        self.assertEqual(us.predicate, "profile.home_country")
+        self.assertEqual(us.value, "United States")
+
+    def test_profile_city_detection_keeps_live_in_city_phrasing(self) -> None:
+        detected = detect_profile_fact_observation("I live in Dubai.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.city")
+        self.assertEqual(detected.value, "Dubai")
+
+    def test_profile_country_detection_normalizes_explicit_country_aliases_with_the(self) -> None:
+        from_us = detect_profile_fact_observation("I'm from the US.")
+        self.assertIsNotNone(from_us)
+        assert from_us is not None
+        self.assertEqual(from_us.predicate, "profile.home_country")
+        self.assertEqual(from_us.value, "United States")
+
+        based_in_us = detect_profile_fact_observation("I'm based in the US.")
+        self.assertIsNotNone(based_in_us)
+        assert based_in_us is not None
+        self.assertEqual(based_in_us.predicate, "profile.home_country")
+        self.assertEqual(based_in_us.value, "United States")
+
+        based_out_uk = detect_profile_fact_observation("I'm based out of the UK.")
+        self.assertIsNotNone(based_out_uk)
+        assert based_out_uk is not None
+        self.assertEqual(based_out_uk.predicate, "profile.home_country")
+        self.assertEqual(based_out_uk.value, "United Kingdom")
+
+        from_uae = detect_profile_fact_observation("I'm from the UAE.")
+        self.assertIsNotNone(from_uae)
+        assert from_uae is not None
+        self.assertEqual(from_uae.predicate, "profile.home_country")
+        self.assertEqual(from_uae.value, "UAE")
 
     def test_profile_founder_detection_accepts_founded_phrasing(self) -> None:
         detected = detect_profile_fact_observation("I founded Atlas Labs.")
@@ -421,6 +451,7 @@ class MemoryOrchestratorTests(SparkTestCase):
             [str(call.get("subject") or "") for call in fake_client.current_state_calls],
             ["human:telegram:8319079055", "human:human:telegram:8319079055"],
         )
+
     def test_profile_timezone_detection_normalizes_structured_fact(self) -> None:
         detected = detect_profile_fact_observation("My timezone is Asia/Dubai.")
         self.assertIsNotNone(detected)
@@ -441,6 +472,200 @@ class MemoryOrchestratorTests(SparkTestCase):
         assert detected is not None
         self.assertEqual(detected.predicate, "profile.preferred_name")
         self.assertEqual(detected.value, "Sarah")
+
+    def test_profile_founder_startup_hack_and_mission_detection_normalize_structured_facts(self) -> None:
+        startup = detect_profile_fact_observation("My startup is Seedify.")
+        self.assertIsNotNone(startup)
+        assert startup is not None
+        self.assertEqual(startup.predicate, "profile.startup_name")
+        self.assertEqual(startup.value, "Seedify")
+
+        founder = detect_profile_fact_observation("I am the founder of Spark Swarm.")
+        self.assertIsNotNone(founder)
+        assert founder is not None
+        self.assertEqual(founder.predicate, "profile.founder_of")
+        self.assertEqual(founder.value, "Spark Swarm")
+
+        hack_actor = detect_profile_fact_observation("We were hacked by North Korea.")
+        self.assertIsNotNone(hack_actor)
+        assert hack_actor is not None
+        self.assertEqual(hack_actor.predicate, "profile.hack_actor")
+        self.assertEqual(hack_actor.value, "North Korea")
+
+        mission = detect_profile_fact_observation("I am trying to survive the hack and revive the companies.")
+        self.assertIsNotNone(mission)
+        assert mission is not None
+        self.assertEqual(mission.predicate, "profile.current_mission")
+        self.assertEqual(mission.value, "survive the hack and revive the companies")
+
+    def test_profile_fact_query_detects_startup_founder_occupation_and_identity_summary_queries(self) -> None:
+        city_query = detect_profile_fact_query("Which city do I live in?")
+        self.assertIsNotNone(city_query)
+        assert city_query is not None
+        self.assertEqual(city_query.predicate, "profile.city")
+        self.assertEqual(city_query.query_kind, "single_fact")
+
+        country_query = detect_profile_fact_query("What country do I live in?")
+        self.assertIsNotNone(country_query)
+        assert country_query is not None
+        self.assertEqual(country_query.predicate, "profile.home_country")
+        self.assertEqual(country_query.query_kind, "single_fact")
+
+        startup_query = detect_profile_fact_query("What startup did I create?")
+        self.assertIsNotNone(startup_query)
+        assert startup_query is not None
+        self.assertEqual(startup_query.predicate, "profile.startup_name")
+        self.assertEqual(startup_query.query_kind, "single_fact")
+
+        founder_query = detect_profile_fact_query("What company did I found?")
+        self.assertIsNotNone(founder_query)
+        assert founder_query is not None
+        self.assertEqual(founder_query.predicate, "profile.founder_of")
+        self.assertEqual(founder_query.query_kind, "single_fact")
+
+        occupation_query = detect_profile_fact_query("What is my occupation?")
+        self.assertIsNotNone(occupation_query)
+        assert occupation_query is not None
+        self.assertEqual(occupation_query.predicate, "profile.occupation")
+        self.assertEqual(occupation_query.query_kind, "single_fact")
+
+        identity_query = detect_profile_fact_query("Who am I?")
+        self.assertIsNotNone(identity_query)
+        assert identity_query is not None
+        self.assertEqual(identity_query.query_kind, "identity_summary")
+        self.assertEqual(identity_query.predicate_prefix, "profile.")
+
+        remember_query = detect_profile_fact_query("What do you remember about me?")
+        self.assertIsNotNone(remember_query)
+        assert remember_query is not None
+        self.assertEqual(remember_query.query_kind, "identity_summary")
+        self.assertEqual(remember_query.predicate_prefix, "profile.")
+
+    def test_profile_fact_answers_cover_founder_occupation_and_clean_observation_wording(self) -> None:
+        founder_query = detect_profile_fact_query("What company did I found?")
+        self.assertIsNotNone(founder_query)
+        assert founder_query is not None
+        self.assertEqual(
+            build_profile_fact_query_answer(query=founder_query, value="Spark Swarm"),
+            "You founded Spark Swarm.",
+        )
+
+        occupation_query = detect_profile_fact_query("What am I?")
+        self.assertIsNotNone(occupation_query)
+        assert occupation_query is not None
+        self.assertEqual(
+            build_profile_fact_query_answer(query=occupation_query, value="entrepreneur"),
+            "You're an entrepreneur.",
+        )
+
+        occupation_observation = detect_profile_fact_observation("I am an entrepreneur.")
+        self.assertIsNotNone(occupation_observation)
+        assert occupation_observation is not None
+        self.assertEqual(
+            build_profile_fact_observation_answer(observation=occupation_observation),
+            "I'll remember you're an entrepreneur.",
+        )
+
+        spark_role_observation = detect_profile_fact_observation(
+            "Spark will be an important part of this rebuild."
+        )
+        self.assertIsNotNone(spark_role_observation)
+        assert spark_role_observation is not None
+        self.assertEqual(
+            build_profile_fact_observation_answer(observation=spark_role_observation),
+            "I'll remember Spark will be an important part of the rebuild.",
+        )
+
+    def test_build_profile_identity_summary_context_lists_saved_facts(self) -> None:
+        context = build_profile_identity_summary_context(
+            records=[
+                {"predicate": "profile.occupation", "value": "entrepreneur"},
+                {"predicate": "profile.startup_name", "value": "Seedify"},
+                {"predicate": "profile.current_mission", "value": "revive the companies"},
+            ]
+        )
+
+        self.assertIn("[Memory action: PROFILE_IDENTITY_SUMMARY]", context)
+        self.assertIn("- occupation: entrepreneur", context)
+        self.assertIn("- startup: Seedify", context)
+        self.assertIn("- current mission: revive the companies", context)
+
+    def test_build_profile_identity_summary_prefers_latest_values_per_predicate(self) -> None:
+        context = build_profile_identity_summary_context(
+            records=[
+                {"predicate": "profile.home_country", "value": "UAE"},
+                {"predicate": "profile.home_country", "value": "Canada"},
+                {"predicate": "profile.founder_of", "value": "Spark Swarm"},
+                {"predicate": "profile.founder_of", "value": "Atlas Labs"},
+            ]
+        )
+
+        self.assertIn("- country: Canada", context)
+        self.assertIn("- founder of: Atlas Labs", context)
+        self.assertNotIn("- country: UAE", context)
+        self.assertNotIn("- founder of: Spark Swarm", context)
+
+        answer = build_profile_identity_summary_answer(
+            records=[
+                {"predicate": "profile.home_country", "value": "UAE"},
+                {"predicate": "profile.home_country", "value": "Canada"},
+                {"predicate": "profile.startup_name", "value": "Seedify"},
+                {"predicate": "profile.startup_name", "value": "Atlas Labs"},
+                {"predicate": "profile.founder_of", "value": "Spark Swarm"},
+                {"predicate": "profile.founder_of", "value": "Atlas Labs"},
+            ]
+        )
+
+        self.assertIn("You founded Atlas Labs.", answer)
+        self.assertIn("You're based in Canada.", answer)
+        self.assertNotIn("Spark Swarm", answer)
+        self.assertNotIn("Seedify", answer)
+        self.assertNotIn("UAE", answer)
+
+    def test_build_profile_identity_summary_answer_compacts_saved_facts(self) -> None:
+        answer = build_profile_identity_summary_answer(
+            records=[
+                {"predicate": "profile.occupation", "value": "entrepreneur"},
+                {"predicate": "profile.city", "value": "Dubai"},
+                {"predicate": "profile.startup_name", "value": "Seedify"},
+                {"predicate": "profile.founder_of", "value": "Spark Swarm"},
+                {"predicate": "profile.home_country", "value": "UAE"},
+                {"predicate": "profile.current_mission", "value": "survive the hack and revive the companies"},
+                {"predicate": "profile.spark_role", "value": "important part of the rebuild"},
+            ]
+        )
+
+        self.assertIn("You're an entrepreneur in Dubai.", answer)
+        self.assertIn("You founded Spark Swarm.", answer)
+        self.assertIn("Your startup is Seedify.", answer)
+        self.assertIn("Your country is UAE.", answer)
+        self.assertIn("Your current mission is to survive the hack and revive the companies.", answer)
+        self.assertIn("Spark will be an important part of the rebuild.", answer)
+
+    def test_build_profile_identity_summary_answer_deduplicates_matching_founder_and_startup(self) -> None:
+        answer = build_profile_identity_summary_answer(
+            records=[
+                {"predicate": "profile.startup_name", "value": "Atlas Labs"},
+                {"predicate": "profile.founder_of", "value": "Atlas Labs"},
+            ]
+        )
+
+        self.assertEqual(answer, "You founded Atlas Labs.")
+
+    def test_build_profile_fact_query_context_demands_single_sentence_grounded_answer(self) -> None:
+        query = detect_profile_fact_query("What role will Spark play in this?")
+        self.assertIsNotNone(query)
+        assert query is not None
+
+        context = build_profile_fact_query_context(
+            query=query,
+            value="important part of the rebuild",
+        )
+
+        self.assertIn("[Memory action: PROFILE_FACT_STATUS]", context)
+        self.assertIn("Expected concise answer: Spark will be an important part of the rebuild.", context)
+        self.assertIn("Answer in one sentence only.", context)
+        self.assertIn("Do not add broader narrative", context)
 
     def test_memory_sdk_smoke_test_runs_real_domain_chip_roundtrip(self) -> None:
         result = run_memory_sdk_smoke_test(
@@ -489,101 +714,6 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertTrue(result.read_result.records)
         self.assertEqual(result.read_result.records[0]["predicate"], "system.memory.lookup")
         self.assertEqual(result.read_result.records[0]["value"], "ok")
-
-    def test_explain_memory_answer_in_memory_returns_answer_explanation_payload(self) -> None:
-        self.config_manager.set_path("spark.memory.enabled", True)
-        self.config_manager.set_path("spark.memory.shadow_mode", False)
-
-        fake_client = _FakeMemoryClient()
-        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client):
-            result = explain_memory_answer_in_memory(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
-                subject="human:test",
-                predicate="profile.city",
-                question="Where do I live?",
-                sdk_module="domain_chip_memory",
-            )
-
-        self.assertFalse(result.read_result.abstained)
-        self.assertEqual(result.read_result.records[0]["answer"], "Dubai")
-        self.assertEqual(result.read_result.answer_explanation["answer"], "Dubai")
-        self.assertIn("Resolved profile.city", result.read_result.answer_explanation["explanation"])
-        self.assertEqual(fake_client.explain_answer_calls[0]["question"], "Where do I live?")
-        read_events = latest_events_by_type(self.state_db, event_type="memory_read_succeeded", limit=10)
-        self.assertTrue(read_events)
-        self.assertEqual((read_events[0]["facts_json"] or {}).get("method"), "explain_answer")
-
-    def test_explain_memory_answer_in_memory_reads_back_domain_chip_explanation(self) -> None:
-        run_memory_sdk_smoke_test(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
-            sdk_module="domain_chip_memory",
-            subject="human:explain:test",
-            predicate="system.memory.explain",
-            value="ok",
-            cleanup=False,
-        )
-        memory_orchestrator._SDK_CLIENT_CACHE.clear()
-
-        result = explain_memory_answer_in_memory(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
-            subject="human:explain:test",
-            predicate="system.memory.explain",
-            question="What do you know about system.memory.explain?",
-            sdk_module="domain_chip_memory",
-        )
-
-        self.assertFalse(result.read_result.abstained)
-        self.assertEqual(result.read_result.records[0]["answer"], "ok")
-        self.assertIsNotNone(result.read_result.answer_explanation)
-        self.assertEqual(result.read_result.answer_explanation["answer"], "ok")
-        self.assertTrue(result.read_result.answer_explanation["evidence"])
-
-    def test_retrieve_memory_evidence_in_memory_returns_matching_records(self) -> None:
-        self.config_manager.set_path("spark.memory.enabled", True)
-        self.config_manager.set_path("spark.memory.shadow_mode", False)
-
-        fake_client = _FakeMemoryClient()
-        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client):
-            result = retrieve_memory_evidence_in_memory(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
-                query="Where do I live?",
-                subject="human:test",
-                predicate="profile.city",
-                sdk_module="domain_chip_memory",
-            )
-
-        self.assertFalse(result.read_result.abstained)
-        self.assertEqual(result.read_result.records[0]["value"], "Dubai")
-        self.assertEqual(fake_client.retrieve_evidence_calls[0]["query"], "Where do I live?")
-        read_events = latest_events_by_type(self.state_db, event_type="memory_read_succeeded", limit=10)
-        self.assertTrue(read_events)
-        self.assertEqual((read_events[0]["facts_json"] or {}).get("method"), "retrieve_evidence")
-
-    def test_retrieve_memory_events_in_memory_returns_matching_records(self) -> None:
-        self.config_manager.set_path("spark.memory.enabled", True)
-        self.config_manager.set_path("spark.memory.shadow_mode", False)
-
-        fake_client = _FakeMemoryClient()
-        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client):
-            result = retrieve_memory_events_in_memory(
-                config_manager=self.config_manager,
-                state_db=self.state_db,
-                query="Where do I live?",
-                subject="human:test",
-                predicate="profile.city",
-                sdk_module="domain_chip_memory",
-            )
-
-        self.assertFalse(result.read_result.abstained)
-        self.assertEqual(result.read_result.records[0]["memory_role"], "event")
-        self.assertEqual(fake_client.retrieve_events_calls[0]["query"], "Where do I live?")
-        read_events = latest_events_by_type(self.state_db, event_type="memory_read_succeeded", limit=10)
-        self.assertTrue(read_events)
-        self.assertEqual((read_events[0]["facts_json"] or {}).get("method"), "retrieve_events")
 
     def test_lookup_current_state_in_memory_rehydrates_domain_chip_state_after_cache_clear(self) -> None:
         run_memory_sdk_smoke_test(
@@ -716,7 +846,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertIsNotNone(deltas)
         self.assertTrue(fake_client.observation_calls)
         first_call = fake_client.observation_calls[0]
-        self.assertEqual(first_call["subject"], "human:human:test")
+        self.assertEqual(first_call["subject"], "human:test")
         self.assertEqual(first_call["memory_role"], "current_state")
         self.assertEqual(first_call["session_id"], "session:memory")
         self.assertEqual(first_call["turn_id"], "turn:memory-write")
@@ -909,7 +1039,7 @@ class MemoryOrchestratorTests(SparkTestCase):
             lookup_result = lookup_current_state_in_memory(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
-                subject="human:human:test",
+                subject="human:test",
                 predicate="profile.city",
             )
 
@@ -1010,7 +1140,7 @@ class MemoryOrchestratorTests(SparkTestCase):
                         {
                             "observations": [
                                 {
-                                    "subject": "human:human:test",
+                                    "subject": "human:test",
                                     "predicate": "personality.preference.directness",
                                     "value": 0.35,
                                     "operation": "update",
@@ -1097,7 +1227,7 @@ class MemoryOrchestratorTests(SparkTestCase):
                         {
                             "observations": [
                                 {
-                                    "subject": "human:human:test",
+                                    "subject": "human:test",
                                     "predicate": "personality.preference.directness",
                                     "value": 0.75,
                                     "operation": "update",
@@ -1148,7 +1278,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(conversation["turns"][0]["role"], "user")
         self.assertEqual(conversation["turns"][0]["content"], "Please be more direct with me.")
         self.assertEqual(conversation["turns"][0]["metadata"]["memory_kind"], "observation")
-        self.assertEqual(conversation["turns"][0]["metadata"]["subject"], "human:human:test")
+        self.assertEqual(conversation["turns"][0]["metadata"]["subject"], "human:test")
         self.assertEqual(conversation["turns"][0]["metadata"]["predicate"], "personality.preference.directness")
         self.assertEqual(conversation["turns"][0]["metadata"]["value"], 0.35)
         self.assertEqual(conversation["turns"][0]["metadata"]["operation"], "update")
@@ -1160,6 +1290,204 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertIn("historical_state", probe_types)
         historical_probe = next(probe for probe in conversation["probes"] if probe["probe_type"] == "historical_state")
         self.assertEqual(historical_probe["expected_value"], 0.35)
+
+    def test_shadow_replay_payload_supports_bridge_native_memory_turns(self) -> None:
+        with self.state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-bridge-write-req",
+                    "memory_write_requested",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "sim:write-1",
+                    "session-bridge",
+                    "telegram:test",
+                    "researcher_bridge",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Memory write requested.",
+                    "2026-04-10T11:45:07Z",
+                    json.dumps(
+                        {
+                            "memory_role": "current_state",
+                            "method": "write_observation",
+                            "observations": [
+                                {
+                                    "subject": "human:telegram:test",
+                                    "predicate": "profile.startup_name",
+                                    "value": "Seedify",
+                                    "operation": "update",
+                                    "memory_role": "current_state",
+                                    "text": "My startup is Seedify.",
+                                }
+                            ],
+                        }
+                    ),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-bridge-write-ok",
+                    "memory_write_succeeded",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "memory_orchestrator",
+                    "sim:write-1",
+                    "session-bridge",
+                    "telegram:test",
+                    "researcher_bridge",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Memory write succeeded.",
+                    "2026-04-10T11:45:07Z",
+                    json.dumps({"accepted_count": 1, "rejected_count": 0, "skipped_count": 0}),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-bridge-write-result",
+                    "tool_result_received",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "researcher_bridge",
+                    "sim:write-1",
+                    "session-bridge",
+                    "telegram:test",
+                    "researcher_bridge",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Researcher bridge acknowledged a profile fact update directly from memory.",
+                    "2026-04-10T11:45:07Z",
+                    json.dumps(
+                        {
+                            "bridge_mode": "memory_profile_fact_update",
+                            "routing_decision": "memory_profile_fact_observation",
+                            "fact_name": "profile_startup_name",
+                            "predicate": "profile.startup_name",
+                            "value": "Seedify",
+                            "operation": "update",
+                            "keepability": "ephemeral_context",
+                            "promotion_disposition": "not_promotable",
+                        }
+                    ),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-bridge-query-influence",
+                    "plugin_or_chip_influence_recorded",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "researcher_bridge",
+                    "sim:query-1",
+                    "session-bridge",
+                    "telegram:test",
+                    "researcher_bridge",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Personality influence was recorded before bridge execution.",
+                    "2026-04-10T11:45:08Z",
+                    json.dumps(
+                        {
+                            "detected_profile_fact_query": {
+                                "fact_name": "profile_startup_name",
+                                "label": "startup",
+                                "predicate": "profile.startup_name",
+                            }
+                        }
+                    ),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-bridge-query-result",
+                    "tool_result_received",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "researcher_bridge",
+                    "sim:query-1",
+                    "session-bridge",
+                    "telegram:test",
+                    "researcher_bridge",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Researcher bridge answered a single-fact profile query directly from memory.",
+                    "2026-04-10T11:45:08Z",
+                    json.dumps(
+                        {
+                            "bridge_mode": "memory_profile_fact",
+                            "routing_decision": "memory_profile_fact_query",
+                            "fact_name": "profile_startup_name",
+                            "predicate": "profile.startup_name",
+                            "label": "startup",
+                            "value_found": True,
+                            "keepability": "ephemeral_context",
+                            "promotion_disposition": "not_promotable",
+                        }
+                    ),
+                ),
+            )
+            conn.commit()
+
+        payload = build_shadow_replay_payload(
+            state_db=self.state_db,
+            conversation_limit=10,
+            event_limit=100,
+        )
+
+        self.assertEqual(len(payload["conversations"]), 1)
+        conversation = payload["conversations"][0]
+        self.assertEqual(conversation["conversation_id"], "session-bridge")
+        self.assertEqual(len(conversation["turns"]), 4)
+        self.assertEqual(
+            [turn["content"] for turn in conversation["turns"]],
+            [
+                "My startup is Seedify.",
+                "I'll remember you created Seedify.",
+                "What is my startup?",
+                "You created Seedify.",
+            ],
+        )
+        self.assertEqual(conversation["turns"][0]["metadata"]["memory_kind"], "observation")
+        self.assertEqual(conversation["turns"][0]["metadata"]["predicate"], "profile.startup_name")
+        probe_types = {probe["probe_type"] for probe in conversation["probes"]}
+        self.assertEqual(probe_types, {"current_state", "evidence"})
 
     def test_shadow_replay_delete_probes_skip_current_and_target_pre_delete_history(self) -> None:
         with self.state_db.connect() as conn:
@@ -1220,7 +1548,7 @@ class MemoryOrchestratorTests(SparkTestCase):
                     {
                         "observations": [
                             {
-                                "subject": "human:human:test",
+                                "subject": "human:test",
                                 "predicate": "profile.pet_name",
                                 "value": "Nova",
                                 "operation": "update",
@@ -1236,7 +1564,7 @@ class MemoryOrchestratorTests(SparkTestCase):
                     {
                         "observations": [
                             {
-                                "subject": "human:human:test",
+                                "subject": "human:test",
                                 "predicate": "profile.pet_name",
                                 "value": None,
                                 "operation": "delete",
@@ -1370,7 +1698,7 @@ class MemoryOrchestratorTests(SparkTestCase):
                         {
                             "observations": [
                                 {
-                                    "subject": "human:human:test",
+                                    "subject": "human:test",
                                     "predicate": "calendar.dentist_visit.at",
                                     "value": "2026-04-04T15:00:00+04:00",
                                     "operation": "event",
@@ -1475,7 +1803,7 @@ class MemoryOrchestratorTests(SparkTestCase):
                         {
                             "observations": [
                                 {
-                                    "subject": "human:human:test",
+                                    "subject": "human:test",
                                     "predicate": "profile.city",
                                     "value": "Dubai",
                                     "operation": "update",
@@ -1636,7 +1964,7 @@ class MemoryOrchestratorTests(SparkTestCase):
                             "method": "write_observation",
                             "observations": [
                                 {
-                                    "subject": "human:human:test",
+                                    "subject": "human:test",
                                     "predicate": "profile.city",
                                     "value": "Dubai",
                                     "operation": "update",
@@ -1700,7 +2028,7 @@ class MemoryOrchestratorTests(SparkTestCase):
                             "method": "write_observation",
                             "observations": [
                                 {
-                                    "subject": "human:human:test",
+                                    "subject": "human:test",
                                     "predicate": "profile.city",
                                     "value": "Abu Dhabi",
                                     "operation": "update",
@@ -1747,7 +2075,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         write = payload["writes"][0]
         self.assertEqual(write["write_kind"], "observation")
         self.assertEqual(write["text"], "I moved to Dubai.")
-        self.assertEqual(write["subject"], "human:human:test")
+        self.assertEqual(write["subject"], "human:test")
         self.assertEqual(write["predicate"], "profile.city")
         self.assertEqual(write["value"], "Dubai")
         self.assertEqual(payload["checks"]["current_state"][0]["predicate"], "profile.city")
