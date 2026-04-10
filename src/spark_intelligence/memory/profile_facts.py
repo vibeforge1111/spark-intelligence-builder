@@ -753,7 +753,10 @@ def build_profile_identity_summary_answer(*, records: list[dict[str, str]]) -> s
 
     home_country = value_by_predicate.get("profile.home_country")
     if home_country:
-        sentences.append(_ensure_sentence(f"You're based in {home_country}"))
+        if city:
+            sentences.append(_ensure_sentence(f"Your country is {home_country}"))
+        else:
+            sentences.append(_ensure_sentence(f"You're based in {home_country}"))
 
     timezone = value_by_predicate.get("profile.timezone")
     if timezone:

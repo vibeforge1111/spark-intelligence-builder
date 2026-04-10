@@ -638,7 +638,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertIn("You're an entrepreneur in Dubai.", answer)
         self.assertIn("You founded Spark Swarm.", answer)
         self.assertIn("Your startup is Seedify.", answer)
-        self.assertIn("You're based in UAE.", answer)
+        self.assertIn("Your country is UAE.", answer)
         self.assertIn("Your current mission is to survive the hack and revive the companies.", answer)
         self.assertIn("Spark will be an important part of the rebuild.", answer)
 
