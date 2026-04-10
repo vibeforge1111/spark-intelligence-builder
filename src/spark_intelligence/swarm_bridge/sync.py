@@ -118,6 +118,101 @@ class SwarmStatus:
 
 
 @dataclass
+class SwarmDoctorReport:
+    enabled: bool
+    configured: bool
+    api_ready: bool
+    payload_ready: bool
+    auth_state: str
+    auth_source: str
+    workspace_env_path: str
+    api_url: str | None
+    workspace_id: str | None
+    access_token_env: str | None
+    active_path_key: str | None
+    active_path_repo_root: str | None
+    active_path_manifest_path: str | None
+    scenario_path: str | None
+    mutation_target_path: str | None
+    payload_source: str
+    payload_path: str | None
+    expected_bridge_repo_env: str | None
+    expected_bridge_repo_value: str | None
+    last_sync_mode: str | None
+    last_failure_mode: str | None
+    last_failure_error: str | None
+    blockers: list[str]
+    recommendations: list[str]
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "enabled": self.enabled,
+                "configured": self.configured,
+                "api_ready": self.api_ready,
+                "payload_ready": self.payload_ready,
+                "auth_state": self.auth_state,
+                "auth_source": self.auth_source,
+                "workspace_env_path": self.workspace_env_path,
+                "api_url": self.api_url,
+                "workspace_id": self.workspace_id,
+                "access_token_env": self.access_token_env,
+                "active_path_key": self.active_path_key,
+                "active_path_repo_root": self.active_path_repo_root,
+                "active_path_manifest_path": self.active_path_manifest_path,
+                "scenario_path": self.scenario_path,
+                "mutation_target_path": self.mutation_target_path,
+                "payload_source": self.payload_source,
+                "payload_path": self.payload_path,
+                "expected_bridge_repo_env": self.expected_bridge_repo_env,
+                "expected_bridge_repo_value": self.expected_bridge_repo_value,
+                "last_sync_mode": self.last_sync_mode,
+                "last_failure_mode": self.last_failure_mode,
+                "last_failure_error": self.last_failure_error,
+                "blockers": self.blockers,
+                "recommendations": self.recommendations,
+            },
+            indent=2,
+        )
+
+    def to_text(self) -> str:
+        lines = [
+            "Swarm doctor",
+            f"- enabled: {'yes' if self.enabled else 'no'}",
+            f"- configured: {'yes' if self.configured else 'no'}",
+            f"- auth_state: {self.auth_state}",
+            f"- auth_source: {self.auth_source}",
+            f"- api_ready: {'yes' if self.api_ready else 'no'}",
+            f"- payload_ready: {'yes' if self.payload_ready else 'no'}",
+            f"- api_url: {self.api_url or 'missing'}",
+            f"- workspace_id: {self.workspace_id or 'missing'}",
+            f"- workspace_env_path: {self.workspace_env_path}",
+            f"- active_path_key: {self.active_path_key or 'none'}",
+            f"- active_path_repo_root: {self.active_path_repo_root or 'missing'}",
+            f"- active_path_manifest_path: {self.active_path_manifest_path or 'missing'}",
+            f"- scenario_path: {self.scenario_path or 'missing'}",
+            f"- mutation_target_path: {self.mutation_target_path or 'missing'}",
+            f"- payload_source: {self.payload_source}",
+            f"- payload_path: {self.payload_path or 'missing'}",
+            f"- expected_bridge_repo_env: {self.expected_bridge_repo_env or 'n/a'}",
+            f"- expected_bridge_repo_value: {self.expected_bridge_repo_value or 'n/a'}",
+            f"- last_sync_mode: {self.last_sync_mode or 'none'}",
+            f"- last_failure_mode: {self.last_failure_mode or 'none'}",
+        ]
+        if self.last_failure_error:
+            lines.append(f"- last_failure_error: {self.last_failure_error}")
+        if self.blockers:
+            lines.append("- blockers:")
+            lines.extend(f"  - {item}" for item in self.blockers)
+        else:
+            lines.append("- blockers: none")
+        if self.recommendations:
+            lines.append("- next:")
+            lines.extend(f"  - {item}" for item in self.recommendations)
+        return "\n".join(lines)
+
+
+@dataclass
 class SwarmSyncResult:
     ok: bool
     mode: str
@@ -412,7 +507,8 @@ def swarm_status(config_manager: ConfigManager, state_db: StateDB | None = None)
     runtime_state = _read_swarm_runtime_state(state_db) if state_db is not None else {}
     typed_status = _read_typed_swarm_status(state_db) if state_db is not None else {}
     researcher_ready = enabled and bool(researcher_root and researcher_config_path and researcher_config_path.exists())
-    payload_ready = researcher_ready and _researcher_has_ledger(researcher_config_path)
+    path_collective = _resolve_active_path_collective_payload(config_manager, attachment_context=attachment_context)
+    payload_ready = bool(path_collective) or (researcher_ready and _researcher_has_ledger(researcher_config_path))
     api_ready = enabled and bool(api_url and workspace_id and session.access_token)
     return SwarmStatus(
         enabled=enabled,
@@ -441,6 +537,86 @@ def swarm_status(config_manager: ConfigManager, state_db: StateDB | None = None)
     )
 
 
+def swarm_doctor(config_manager: ConfigManager, state_db: StateDB | None = None) -> SwarmDoctorReport:
+    status = swarm_status(config_manager, state_db)
+    attachment_context = status.attachment_context if isinstance(status.attachment_context, dict) else {}
+    active_path_record = _resolve_active_path_record(attachment_context)
+    active_path_key = str(attachment_context.get("active_path_key") or "").strip() or None
+    active_path_repo_root = (
+        _resolve_attachment_repo_root(config_manager, active_path_record.get("repo_root"))
+        if active_path_record is not None
+        else None
+    )
+    manifest_path = active_path_repo_root / "specialization-path.json" if active_path_repo_root is not None else None
+    manifest_payload = _read_json_file_if_exists(manifest_path) if manifest_path is not None else None
+    scenario_path = (
+        _resolve_specialization_default_scenario_path(active_path_repo_root, manifest_payload)
+        if active_path_repo_root is not None
+        else None
+    )
+    mutation_target_path = (
+        _resolve_specialization_default_mutation_target_path(active_path_repo_root, manifest_payload)
+        if active_path_repo_root is not None
+        else None
+    )
+    path_collective = _resolve_active_path_collective_payload(config_manager, attachment_context=attachment_context)
+    payload_source = "missing"
+    payload_path: Path | None = None
+    if path_collective is not None:
+        payload_source = "specialization_path"
+        payload_path = path_collective[1]
+    elif status.researcher_ready and status.researcher_config_path and _researcher_has_ledger(Path(status.researcher_config_path)):
+        payload_source = "spark_researcher"
+    auth_source = _resolve_swarm_auth_source(config_manager, status.access_token_env)
+    blockers = _build_swarm_doctor_blockers(
+        config_manager=config_manager,
+        status=status,
+        active_path_key=active_path_key,
+        active_path_repo_root=active_path_repo_root,
+        manifest_path=manifest_path,
+        scenario_path=scenario_path,
+        mutation_target_path=mutation_target_path,
+        payload_source=payload_source,
+    )
+    recommendations = _build_swarm_doctor_recommendations(
+        status=status,
+        auth_source=auth_source,
+        active_path_key=active_path_key,
+        payload_source=payload_source,
+    )
+    last_failure = status.last_failure if isinstance(status.last_failure, dict) else {}
+    response_body = last_failure.get("response_body") if isinstance(last_failure, dict) else {}
+    last_failure_error = response_body.get("error") if isinstance(response_body, dict) else None
+    expected_bridge_repo_env = _specialization_repo_env_var(active_path_key) if active_path_key else None
+    expected_bridge_repo_value = str(active_path_repo_root) if active_path_repo_root is not None else None
+    return SwarmDoctorReport(
+        enabled=status.enabled,
+        configured=status.configured,
+        api_ready=status.api_ready,
+        payload_ready=status.payload_ready,
+        auth_state=status.auth_state,
+        auth_source=auth_source,
+        workspace_env_path=str(config_manager.paths.env_file),
+        api_url=status.api_url,
+        workspace_id=status.workspace_id,
+        access_token_env=status.access_token_env,
+        active_path_key=active_path_key,
+        active_path_repo_root=str(active_path_repo_root) if active_path_repo_root is not None else None,
+        active_path_manifest_path=str(manifest_path) if manifest_path is not None else None,
+        scenario_path=str(scenario_path) if scenario_path is not None else None,
+        mutation_target_path=str(mutation_target_path) if mutation_target_path is not None else None,
+        payload_source=payload_source,
+        payload_path=str(payload_path) if payload_path is not None else None,
+        expected_bridge_repo_env=expected_bridge_repo_env,
+        expected_bridge_repo_value=expected_bridge_repo_value,
+        last_sync_mode=(status.last_sync or {}).get("mode") if isinstance(status.last_sync, dict) else None,
+        last_failure_mode=last_failure.get("mode") if isinstance(last_failure, dict) else None,
+        last_failure_error=str(last_failure_error).strip() or None if last_failure_error is not None else None,
+        blockers=blockers,
+        recommendations=recommendations,
+    )
+
+
 def sync_swarm_collective(
     *,
     config_manager: ConfigManager,
@@ -456,6 +632,7 @@ def sync_swarm_collective(
     actor_id: str = "swarm_bridge",
 ) -> SwarmSyncResult:
     status = swarm_status(config_manager, state_db)
+    path_collective = _resolve_active_path_collective_payload(config_manager, attachment_context=status.attachment_context)
     record_environment_snapshot(
         state_db,
         surface="swarm_bridge",
@@ -502,11 +679,13 @@ def sync_swarm_collective(
             actor_id=actor_id,
         )
         return result
-    if not status.researcher_ready or not status.researcher_config_path or not status.researcher_runtime_root:
+    if path_collective is None and (
+        not status.researcher_ready or not status.researcher_config_path or not status.researcher_runtime_root
+    ):
         result = SwarmSyncResult(
             ok=False,
-            mode="researcher_missing",
-            message="Spark Researcher runtime/config is missing; cannot build a Swarm payload.",
+            mode="payload_source_missing",
+            message="No active specialization-path collective payload or Spark Researcher runtime/config is available.",
             payload_path=None,
             api_url=status.api_url,
             workspace_id=status.workspace_id,
@@ -528,8 +707,6 @@ def sync_swarm_collective(
         )
         return result
 
-    researcher_root = Path(status.researcher_runtime_root)
-    researcher_config_path = Path(status.researcher_config_path)
     workspace_id = status.workspace_id
     if not workspace_id:
         result = SwarmSyncResult(
@@ -557,12 +734,24 @@ def sync_swarm_collective(
         )
         return result
 
-    payload, payload_path = _build_collective_payload(
-        config_manager=config_manager,
-        researcher_root=researcher_root,
-        researcher_config_path=researcher_config_path,
-        workspace_id=workspace_id,
-    )
+    if path_collective is not None:
+        payload, payload_path = path_collective
+    else:
+        researcher_root = Path(status.researcher_runtime_root)
+        researcher_config_path = Path(status.researcher_config_path)
+        payload, payload_path = _build_collective_payload(
+            config_manager=config_manager,
+            researcher_root=researcher_root,
+            researcher_config_path=researcher_config_path,
+            workspace_id=workspace_id,
+        )
+    payload_changed = False
+    if _normalize_collective_workspace(payload, workspace_id):
+        payload_changed = True
+    if _normalize_collective_payload(payload):
+        payload_changed = True
+    if payload_changed:
+        payload_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     _record_swarm_sync_state(
         state_db,
         mode="payload_built",
@@ -877,7 +1066,7 @@ def sync_swarm_collective(
                 result = SwarmSyncResult(
                     ok=accepted,
                     mode="uploaded",
-                    message="Uploaded the latest Spark Researcher collective payload to Spark Swarm after refreshing the session.",
+                    message="Uploaded the latest Spark Swarm collective payload after refreshing the session.",
                     payload_path=str(payload_path),
                     api_url=api_url,
                     workspace_id=workspace_id,
@@ -1001,7 +1190,7 @@ def sync_swarm_collective(
     result = SwarmSyncResult(
         ok=accepted,
         mode="uploaded",
-        message="Uploaded the latest Spark Researcher collective payload to Spark Swarm.",
+        message="Uploaded the latest Spark Swarm collective payload.",
         payload_path=str(payload_path),
         api_url=api_url,
         workspace_id=workspace_id,
@@ -1369,6 +1558,195 @@ def _researcher_has_ledger(config_path: Path) -> bool:
         return False
 
 
+def _resolve_attachment_repo_root(config_manager: ConfigManager, repo_root_value: Any) -> Path | None:
+    raw = str(repo_root_value or "").strip()
+    if not raw:
+        return None
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        candidate = (config_manager.paths.home / candidate).resolve()
+    if candidate.exists():
+        return candidate
+    normalized = config_manager.normalize_runtime_path(raw)
+    if normalized and normalized.exists():
+        return normalized
+    return candidate if candidate.exists() else None
+
+
+def _resolve_active_path_record(attachment_context: dict[str, Any]) -> dict[str, Any] | None:
+    active_path_key = str(attachment_context.get("active_path_key") or "").strip()
+    if not active_path_key:
+        return None
+    records = list(attachment_context.get("attached_path_records") or [])
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        if str(record.get("key") or "").strip() == active_path_key:
+            return record
+    return None
+
+
+def _read_json_file_if_exists(path: Path | None) -> dict[str, Any] | None:
+    if path is None or not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _resolve_specialization_default_scenario_path(
+    repo_root: Path,
+    manifest_payload: dict[str, Any] | None,
+) -> Path | None:
+    profile = (manifest_payload or {}).get("benchmarkProfile")
+    if not isinstance(profile, dict):
+        return None
+    raw = str(profile.get("defaultScenario") or "").strip()
+    if not raw:
+        return None
+    raw_path = Path(raw)
+    if raw_path.suffix.lower() == ".json":
+        candidate = repo_root / raw_path
+        return candidate
+    stem = raw_path.stem
+    return repo_root / "benchmarks" / "scenarios" / f"{stem}.json"
+
+
+def _resolve_specialization_default_mutation_target_path(
+    repo_root: Path,
+    manifest_payload: dict[str, Any] | None,
+) -> Path | None:
+    templates = (manifest_payload or {}).get("templates")
+    if not isinstance(templates, list):
+        return None
+    for template in templates:
+        if not isinstance(template, dict):
+            continue
+        destination = str(template.get("destination") or "").strip()
+        if destination:
+            return repo_root / destination
+    return None
+
+
+def _resolve_swarm_auth_source(config_manager: ConfigManager, env_ref: str | None) -> str:
+    if not env_ref:
+        return "unconfigured"
+    if env_ref.startswith("local:"):
+        return "workspace_env"
+    workspace_env = config_manager.read_env_map()
+    if str(workspace_env.get(env_ref) or "").strip():
+        return "workspace_env"
+    if str(os.environ.get(env_ref) or "").strip():
+        return "process_env_only"
+    return "missing_from_workspace_env"
+
+
+def _specialization_repo_env_var(path_key: str) -> str:
+    normalized = str(path_key).strip().upper().replace("-", "_")
+    return f"SPARK_SWARM_SPECIALIZATION_PATH_{normalized}_REPO"
+
+
+def _build_swarm_doctor_blockers(
+    *,
+    config_manager: ConfigManager,
+    status: SwarmStatus,
+    active_path_key: str | None,
+    active_path_repo_root: Path | None,
+    manifest_path: Path | None,
+    scenario_path: Path | None,
+    mutation_target_path: Path | None,
+    payload_source: str,
+) -> list[str]:
+    blockers: list[str] = []
+    if not status.enabled:
+        blockers.append("Spark Swarm is disabled in this workspace config.")
+    if not status.api_url:
+        blockers.append("Swarm API URL is not configured.")
+    if not status.workspace_id:
+        blockers.append("Swarm workspace id is not configured.")
+    if not status.access_token_env:
+        blockers.append("Swarm access token env ref is not configured.")
+    else:
+        auth_source = _resolve_swarm_auth_source(config_manager, status.access_token_env)
+        if auth_source == "missing_from_workspace_env":
+            blockers.append(f"Configured Swarm access token env `{status.access_token_env}` is missing from the workspace .env.")
+    if active_path_key and active_path_repo_root is None:
+        blockers.append(f"Active specialization path `{active_path_key}` does not resolve to a reachable repo root.")
+    if active_path_key and manifest_path is not None and not manifest_path.exists():
+        blockers.append(f"Active specialization path is missing `{manifest_path.name}`.")
+    if scenario_path is not None and not scenario_path.exists():
+        blockers.append(f"Default benchmark scenario is missing at `{scenario_path}`.")
+    if mutation_target_path is not None and not mutation_target_path.exists():
+        blockers.append(f"Default mutation target is missing at `{mutation_target_path}`.")
+    if active_path_key and payload_source == "missing":
+        blockers.append(
+            f"No collective payload is ready for `{active_path_key}`. Run an autoloop or specialization-path run first."
+        )
+    if not active_path_key and not status.researcher_ready:
+        blockers.append("Neither an active specialization path nor a ready Spark Researcher runtime is available.")
+    return blockers
+
+
+def _build_swarm_doctor_recommendations(
+    *,
+    status: SwarmStatus,
+    auth_source: str,
+    active_path_key: str | None,
+    payload_source: str,
+) -> list[str]:
+    recommendations: list[str] = []
+    if not status.enabled:
+        recommendations.append("Re-enable Spark Swarm in `spark.swarm.enabled` before using Telegram Swarm commands.")
+    if not status.api_url or not status.workspace_id:
+        recommendations.append("Configure `spark.swarm.api_url` and `spark.swarm.workspace_id` for this workspace.")
+    if auth_source == "unconfigured":
+        recommendations.append("Store the Swarm access token in the workspace `.env` and set `spark.swarm.access_token_env` to that key.")
+    elif auth_source == "process_env_only":
+        recommendations.append("Copy the Swarm access token into the workspace `.env` so Telegram and background runs share the same auth.")
+    elif auth_source == "missing_from_workspace_env":
+        recommendations.append("Restore the configured Swarm access token env key in the workspace `.env` or point config at the correct key.")
+    if active_path_key and payload_source == "missing":
+        recommendations.append(f"Run `/swarm autoloop {active_path_key}` to generate a fresh specialization-path collective payload.")
+    elif payload_source != "missing" and status.api_ready:
+        recommendations.append("Run `/swarm sync` to upload the latest collective payload to Spark Swarm.")
+    elif payload_source != "missing":
+        recommendations.append("Fix Swarm auth, then run `/swarm sync`.")
+    if active_path_key:
+        recommendations.append(f"Use `/swarm session {active_path_key}` to inspect the latest autoloop session and kept changes.")
+    return recommendations
+
+
+def _resolve_active_path_collective_payload(
+    config_manager: ConfigManager,
+    *,
+    attachment_context: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], Path] | None:
+    context = attachment_context or build_attachment_context(config_manager)
+    active_path_key = str(context.get("active_path_key") or "").strip()
+    if not active_path_key:
+        return None
+    record = _resolve_active_path_record(context)
+    if not isinstance(record, dict):
+        return None
+    repo_root = _resolve_attachment_repo_root(config_manager, record.get("repo_root"))
+    if repo_root is None:
+        return None
+    payload_path = repo_root / ".spark-swarm" / "collective-sync.json"
+    if not payload_path.exists():
+        return None
+    try:
+        payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if _normalize_collective_payload(payload):
+        payload_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return payload, payload_path
+
+
 def _build_collective_payload(
     *,
     config_manager: ConfigManager,
@@ -1578,6 +1956,14 @@ def _normalize_collective_payload(payload: dict[str, Any]) -> bool:
     if _normalize_contradictions(payload):
         changed = True
     return changed
+
+
+def _normalize_collective_workspace(payload: dict[str, Any], workspace_id: str) -> bool:
+    workspace_value = payload.get("workspaceId")
+    if workspace_value is None or (isinstance(workspace_value, str) and not workspace_value.strip()):
+        payload["workspaceId"] = workspace_id
+        return True
+    return False
 
 
 def _normalize_runtime_source(payload: dict[str, Any]) -> bool:
