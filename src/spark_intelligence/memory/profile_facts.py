@@ -594,6 +594,7 @@ def _extract_current_mission(text: str) -> str | None:
         if not match:
             continue
         candidate = re.split(r"[.!?]", str(match.group(1) or ""), maxsplit=1)[0].strip(" '\"`")
+        candidate = re.sub(r"\b(?:now|today|currently)\b\s*$", "", candidate, flags=re.I).strip(" '\"`")
         if candidate:
             return candidate.lower()
     return None
@@ -716,7 +717,7 @@ def _normalize_entity_name(raw: str) -> str | None:
     parts = []
     for token in candidate.split():
         lowered = token.lower()
-        if lowered in _STOP_WORDS:
+        if lowered in _STOP_WORDS or lowered in _TEMPORAL_TAIL_WORDS:
             break
         cleaned = re.sub(r"[^A-Za-z0-9'\-&_.]", "", token)
         if not cleaned:
