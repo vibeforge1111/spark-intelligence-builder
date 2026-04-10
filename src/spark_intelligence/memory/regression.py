@@ -103,6 +103,22 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         expected_response_contains=("Spark Swarm",),
     ),
     TelegramMemoryRegressionCase(
+        case_id="startup_query_after_founder",
+        category="staleness",
+        message="What startup did I create?",
+        expected_bridge_mode="memory_profile_fact",
+        expected_routing_decision="memory_profile_fact_query",
+        expected_response_contains=("Spark Swarm",),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="startup_explanation_after_founder",
+        category="staleness",
+        message="How do you know my startup?",
+        expected_bridge_mode="memory_profile_fact_explanation",
+        expected_routing_decision="memory_profile_fact_explanation",
+        expected_response_contains=("saved memory record", "Seedify"),
+    ),
+    TelegramMemoryRegressionCase(
         case_id="mission_write",
         category="profile_write",
         message="I am trying to survive the hack and revive the companies.",
@@ -122,6 +138,14 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         case_id="spark_role_abstention",
         category="abstention",
         message="What role will Spark play in this?",
+        expected_bridge_mode="memory_profile_fact",
+        expected_routing_decision="memory_profile_fact_query",
+        expected_response_contains=("don't currently have that saved",),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="hack_actor_query_missing",
+        category="abstention",
+        message="Who hacked us?",
         expected_bridge_mode="memory_profile_fact",
         expected_routing_decision="memory_profile_fact_query",
         expected_response_contains=("don't currently have that saved",),
@@ -241,6 +265,7 @@ def run_telegram_memory_regression(
     resolved_kb_output_dir = resolved_output_dir / "kb"
     resolved_write_path = Path(write_path) if write_path else resolved_output_dir / "telegram-memory-regression.json"
     kb_write_path = resolved_output_dir / "telegram-memory-kb.json"
+    regression_summary_markdown_path = resolved_output_dir / "regression-summary.md"
 
     case_payloads: list[dict[str, Any]] = []
     mismatches: list[dict[str, Any]] = []
@@ -296,6 +321,7 @@ def run_telegram_memory_regression(
                     "summary_json": str(resolved_write_path),
                     "kb_output_dir": str(resolved_kb_output_dir),
                     "kb_json": str(kb_write_path),
+                    "regression_report_markdown": str(regression_summary_markdown_path),
                 },
             }
             resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -315,11 +341,21 @@ def run_telegram_memory_regression(
         )
         inspection_payload = _parse_json_object(inspection_result.to_json())
 
+    regression_summary_markdown_path.write_text(
+        _build_regression_summary_markdown(
+            selected_user_id=selected_user_id,
+            selected_chat_id=selected_chat_id,
+            case_payloads=case_payloads,
+            mismatches=mismatches,
+        ),
+        encoding="utf-8",
+    )
     kb_result = build_telegram_state_knowledge_base(
         config_manager=config_manager,
         output_dir=resolved_kb_output_dir,
         limit=max(int(kb_limit), 1),
         chat_id=selected_chat_id,
+        repo_sources=[str(regression_summary_markdown_path)],
         write_path=kb_write_path,
         validator_root=validator_root,
     )
@@ -351,6 +387,7 @@ def run_telegram_memory_regression(
             "summary_json": str(resolved_write_path),
             "kb_output_dir": str(resolved_kb_output_dir),
             "kb_json": str(kb_write_path),
+            "regression_report_markdown": str(regression_summary_markdown_path),
         },
     }
     resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -425,3 +462,42 @@ def _blocked_reason_for_case(case_result: dict[str, Any]) -> str:
     if response_text:
         return f"{case_id}:{decision}:{response_text}"
     return f"{case_id}:{decision}"
+
+
+def _build_regression_summary_markdown(
+    *,
+    selected_user_id: str | None,
+    selected_chat_id: str | None,
+    case_payloads: list[dict[str, Any]],
+    mismatches: list[dict[str, Any]],
+) -> str:
+    lines = [
+        "# Telegram Memory Regression Summary",
+        "",
+        f"- Selected user id: `{selected_user_id or 'unknown'}`",
+        f"- Selected chat id: `{selected_chat_id or 'unknown'}`",
+        f"- Total cases: `{len(case_payloads)}`",
+        f"- Matched cases: `{len(case_payloads) - len(mismatches)}`",
+        f"- Mismatched cases: `{len(mismatches)}`",
+        "",
+        "## Cases",
+        "",
+    ]
+    for case in case_payloads:
+        case_id = str(case.get("case_id") or "unknown")
+        category = str(case.get("category") or "unknown")
+        decision = str(case.get("decision") or "unknown")
+        matched = "yes" if case.get("matched_expectations", False) else "no"
+        response_text = " ".join(str(case.get("response_text") or "").split())
+        lines.append(f"### {case_id}")
+        lines.append(f"- Category: `{category}`")
+        lines.append(f"- Decision: `{decision}`")
+        lines.append(f"- Matched: `{matched}`")
+        if response_text:
+            lines.append(f"- Response: {response_text}")
+        mismatch_items = case.get("mismatches")
+        if isinstance(mismatch_items, list) and mismatch_items:
+            rendered = ", ".join(str(item) for item in mismatch_items)
+            lines.append(f"- Mismatches: `{rendered}`")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"

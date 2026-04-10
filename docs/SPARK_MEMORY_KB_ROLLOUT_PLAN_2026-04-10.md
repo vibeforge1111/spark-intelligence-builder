@@ -72,6 +72,7 @@ Status: in progress
   - memory inspect output
   - compiled KB vault
   - summary JSON
+  - operator-readable regression summary markdown
 
 Current implementation target:
 - `spark-intelligence memory run-telegram-regression`
@@ -81,17 +82,28 @@ Current implementation target:
   - city write + explanation
   - startup write + explanation
   - founder write + query
+  - startup query after newer founder write
+  - startup explanation after newer founder write
   - mission write + explanation
   - timezone write + query
   - country write + query
   - identity summary
   - stable abstention on an unwritten fact lane
+  - stable abstention on an unwritten hack-actor lane
   - overwrite/update case for city
 - summary should score:
   - expected bridge mode
   - expected routing decision
   - expected response substrings
   - KB probe coverage totals
+  - mismatch breakdown by case
+
+Latest validated regression on recovered Telegram home:
+- `23/23` matched
+- `kb_has_probe_coverage = true`
+- `kb_current_state_hits = 54/54`
+- `kb_evidence_hits = 54/54`
+- KB now includes a repo-source page for the regression summary markdown emitted by the runner
 
 Acceptance:
 - One command can reproduce the end-to-end memory benchmark loop from Builder.
