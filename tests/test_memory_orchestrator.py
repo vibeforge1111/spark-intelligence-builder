@@ -168,6 +168,13 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(detected.predicate, "profile.startup_name")
         self.assertEqual(detected.value, "Atlas Labs")
 
+    def test_profile_startup_detection_accepts_reverse_startup_phrasing(self) -> None:
+        detected = detect_profile_fact_observation("Atlas Labs is my startup.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.startup_name")
+        self.assertEqual(detected.value, "Atlas Labs")
+
     def test_profile_current_mission_detection_strips_temporal_tail_words(self) -> None:
         detected = detect_profile_fact_observation("I am trying to rebuild the company now.")
         self.assertIsNotNone(detected)
@@ -196,8 +203,41 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(detected.predicate, "profile.home_country")
         self.assertEqual(detected.value, "Canada")
 
+    def test_profile_country_detection_accepts_based_out_of_phrasing(self) -> None:
+        detected = detect_profile_fact_observation("I'm based out of Canada.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.home_country")
+        self.assertEqual(detected.value, "Canada")
+
     def test_profile_founder_detection_accepts_founded_phrasing(self) -> None:
         detected = detect_profile_fact_observation("I founded Atlas Labs.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.founder_of")
+        self.assertEqual(detected.value, "Atlas Labs")
+
+    def test_profile_founder_detection_accepts_started_built_and_launched_phrasing(self) -> None:
+        started = detect_profile_fact_observation("I started Atlas Labs.")
+        self.assertIsNotNone(started)
+        assert started is not None
+        self.assertEqual(started.predicate, "profile.founder_of")
+        self.assertEqual(started.value, "Atlas Labs")
+
+        built = detect_profile_fact_observation("I built Atlas Labs.")
+        self.assertIsNotNone(built)
+        assert built is not None
+        self.assertEqual(built.predicate, "profile.founder_of")
+        self.assertEqual(built.value, "Atlas Labs")
+
+        launched = detect_profile_fact_observation("I launched Atlas Labs.")
+        self.assertIsNotNone(launched)
+        assert launched is not None
+        self.assertEqual(launched.predicate, "profile.founder_of")
+        self.assertEqual(launched.value, "Atlas Labs")
+
+    def test_profile_founder_detection_accepts_founded_startup_called_phrasing(self) -> None:
+        detected = detect_profile_fact_observation("I founded a startup called Atlas Labs.")
         self.assertIsNotNone(detected)
         assert detected is not None
         self.assertEqual(detected.predicate, "profile.founder_of")

@@ -616,6 +616,39 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Auth is configured, last sync was uploaded, and the last decision was manual_recommended.", str(result.detail["response_text"]))
         self.assertIn("Next: `/swarm sync` or `/swarm collective`.", str(result.detail["response_text"]))
 
+    def test_swarm_doctor_command_returns_operator_facing_diagnostics(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.swarm_doctor",
+            return_value=SimpleNamespace(
+                auth_source="workspace_env",
+                payload_source="specialization_path",
+                active_path_key="trading-crypto",
+                active_path_repo_root="/tmp/trading-crypto",
+                scenario_path="/tmp/trading-crypto/benchmarks/scenarios/trend-ema-btceth-4h.json",
+                mutation_target_path="/tmp/trading-crypto/benchmarks/trading-crypto-candidate.json",
+                blockers=[],
+                recommendations=["Run `/swarm sync` to upload the latest collective payload to Spark Swarm."],
+            ),
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=1141,
+                    user_id="111",
+                    username="alice",
+                    text="/swarm doctor",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Swarm doctor: ready.", str(result.detail["response_text"]))
+        self.assertIn("Auth source: workspace_env. Payload source: specialization_path.", str(result.detail["response_text"]))
+        self.assertIn("No blockers detected.", str(result.detail["response_text"]))
+        self.assertIn("Next: Run `/swarm sync` to upload the latest collective payload to Spark Swarm.", str(result.detail["response_text"]))
+
     def test_swarm_status_command_uses_saved_agent_identity_in_runtime_reply(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
         approve_pairing(
