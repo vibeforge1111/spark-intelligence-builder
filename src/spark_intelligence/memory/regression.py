@@ -581,6 +581,12 @@ def run_telegram_memory_regression(
             "runtime_sdk_class",
             default=None,
         ),
+        "architecture_runtime_memory_architecture": _nested_get(
+            architecture_benchmark_payload,
+            "summary",
+            "runtime_memory_architecture",
+            default=None,
+        ),
         "architecture_compared_baselines": _nested_get(
             architecture_benchmark_payload,
             "summary",
@@ -849,6 +855,7 @@ def _build_regression_summary_markdown(
         f"- Compared cases: `{live_architecture_summary.get('case_count', 0)}`",
         f"- Leaders: `{', '.join(live_architecture_summary.get('leader_names') or []) or 'unknown'}`",
         f"- Recommended runtime architecture: `{live_architecture_summary.get('recommended_runtime_architecture') or 'undecided'}`",
+        f"- Current runtime architecture: `{live_architecture_summary.get('current_runtime_memory_architecture') or 'unknown'}`",
         f"- Runtime matches live leader: `{'yes' if live_architecture_summary.get('runtime_matches_live_leader') else 'no'}`",
         "",
         "## Category Coverage",

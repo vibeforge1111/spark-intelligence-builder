@@ -630,6 +630,9 @@ def inspect_memory_sdk_runtime(
         "ready": False,
         "resolved_module": None,
         "client_kind": None,
+        "runtime_class": None,
+        "runtime_memory_architecture": None,
+        "runtime_memory_provider": None,
         "reason": None,
     }
     try:
@@ -645,6 +648,15 @@ def inspect_memory_sdk_runtime(
         except Exception as exc:
             payload["reason"] = f"sdk_init_failed:{type(exc).__name__}"
             return payload
+        if hasattr(module, "build_sdk_contract_summary"):
+            try:
+                contract_summary = getattr(module, "build_sdk_contract_summary")() or {}
+            except Exception as exc:
+                payload["reason"] = f"sdk_contract_summary_failed:{type(exc).__name__}"
+                return payload
+            payload["runtime_class"] = contract_summary.get("runtime_class")
+            payload["runtime_memory_architecture"] = contract_summary.get("runtime_memory_architecture")
+            payload["runtime_memory_provider"] = contract_summary.get("runtime_memory_provider")
         if _supports_domain_chip_memory_adapter(module):
             payload["client_kind"] = _DomainChipMemoryClientAdapter.__name__
         else:

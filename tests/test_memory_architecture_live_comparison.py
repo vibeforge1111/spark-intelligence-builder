@@ -111,7 +111,13 @@ class MemoryArchitectureLiveComparisonTests(SparkTestCase):
 
         with patch(
             "spark_intelligence.memory.architecture_live_comparison._run_live_comparison_scorecards",
-            return_value=(baseline_rows, "SparkMemorySDK"),
+            return_value=(
+                baseline_rows,
+                {
+                    "runtime_class": "SparkMemorySDK",
+                    "runtime_memory_architecture": "dual_store_event_calendar_hybrid",
+                },
+            ),
         ):
             result = compare_telegram_memory_architectures(
                 config_manager=self.config_manager,
@@ -128,6 +134,10 @@ class MemoryArchitectureLiveComparisonTests(SparkTestCase):
         self.assertEqual(
             result.payload["summary"]["recommended_runtime_architecture"],
             "summary_synthesis_memory",
+        )
+        self.assertEqual(
+            result.payload["summary"]["current_runtime_memory_architecture"],
+            "dual_store_event_calendar_hybrid",
         )
         self.assertFalse(result.payload["summary"]["runtime_matches_live_leader"])
         self.assertTrue(Path(result.payload["artifact_paths"]["summary_json"]).exists())
@@ -214,7 +224,13 @@ class MemoryArchitectureLiveComparisonTests(SparkTestCase):
 
         with patch(
             "spark_intelligence.memory.architecture_live_comparison._run_live_comparison_scorecards",
-            return_value=(baseline_rows, "SparkMemorySDK"),
+            return_value=(
+                baseline_rows,
+                {
+                    "runtime_class": "SparkMemorySDK",
+                    "runtime_memory_architecture": "dual_store_event_calendar_hybrid",
+                },
+            ),
         ):
             result = compare_telegram_memory_architectures(
                 config_manager=self.config_manager,
@@ -276,7 +292,13 @@ class MemoryArchitectureLiveComparisonTests(SparkTestCase):
 
         with patch(
             "spark_intelligence.memory.architecture_live_comparison._run_live_comparison_scorecards",
-            return_value=(baseline_rows, "SparkMemorySDK"),
+            return_value=(
+                baseline_rows,
+                {
+                    "runtime_class": "SparkMemorySDK",
+                    "runtime_memory_architecture": "dual_store_event_calendar_hybrid",
+                },
+            ),
         ):
             result = compare_telegram_memory_architectures(
                 config_manager=self.config_manager,
@@ -305,7 +327,13 @@ class MemoryArchitectureLiveComparisonTests(SparkTestCase):
 
         with patch(
             "spark_intelligence.memory.architecture_live_comparison._run_live_comparison_scorecards",
-            return_value=([], "SparkMemorySDK"),
+            return_value=(
+                [],
+                {
+                    "runtime_class": "SparkMemorySDK",
+                    "runtime_memory_architecture": "dual_store_event_calendar_hybrid",
+                },
+            ),
         ) as run_scorecards:
             compare_telegram_memory_architectures(
                 config_manager=self.config_manager,

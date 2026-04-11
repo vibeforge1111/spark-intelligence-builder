@@ -70,8 +70,9 @@ class MemoryCliKnowledgeBaseTests(SparkTestCase):
         payload = {
             "summary": {
                 "runtime_sdk_class": "SparkMemorySDK",
+                "runtime_memory_architecture": "summary_synthesis_memory",
                 "documented_frontier_architecture": "summary_synthesis_memory",
-                "runtime_matches_documented_frontier": False,
+                "runtime_matches_documented_frontier": True,
                 "product_memory_leader_names": [
                     "observational_temporal_memory",
                     "dual_store_event_calendar_hybrid",
@@ -105,6 +106,10 @@ class MemoryCliKnowledgeBaseTests(SparkTestCase):
 
         self.assertEqual(exit_code, 0, stderr)
         self.assertEqual(json.loads(stdout)["summary"]["runtime_sdk_class"], "SparkMemorySDK")
+        self.assertEqual(
+            json.loads(stdout)["summary"]["runtime_memory_architecture"],
+            "summary_synthesis_memory",
+        )
         kwargs = run_benchmark.call_args.kwargs
         self.assertEqual(kwargs["config_manager"].paths.home, Path(self.home))
         self.assertEqual(kwargs["output_dir"], str(output_dir))

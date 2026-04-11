@@ -48,8 +48,8 @@ class TelegramArchitectureLiveComparisonResult:
                 f"{summary.get('recommended_runtime_architecture') or 'undecided'}"
             )
             lines.append(
-                f"- current_runtime_sdk_class: "
-                f"{summary.get('current_runtime_sdk_class') or 'unknown'}"
+                f"- current_runtime_memory_architecture: "
+                f"{summary.get('current_runtime_memory_architecture') or 'unknown'}"
             )
             lines.append(
                 f"- runtime_matches_live_leader: "
@@ -92,6 +92,7 @@ def compare_telegram_memory_architectures(
         errors.append(str(exc))
     baseline_rows: list[dict[str, Any]] = []
     current_runtime_sdk_class = "unknown"
+    current_runtime_memory_architecture = "unknown"
 
     if not sample_specs:
         errors.append("no_comparable_cases")
@@ -101,10 +102,14 @@ def compare_telegram_memory_architectures(
         errors.append(f"validator_root_missing:{validator_path}")
     else:
         try:
-            baseline_rows, current_runtime_sdk_class = _run_live_comparison_scorecards(
+            baseline_rows, contract_summary = _run_live_comparison_scorecards(
                 sample_specs=sample_specs,
                 validator_path=validator_path,
                 baseline_names=resolved_baseline_names,
+            )
+            current_runtime_sdk_class = str(contract_summary.get("runtime_class") or "unknown")
+            current_runtime_memory_architecture = str(
+                contract_summary.get("runtime_memory_architecture") or "unknown"
             )
         except Exception as exc:  # pragma: no cover - defensive runtime path
             errors.append(f"live_comparison_failed:{type(exc).__name__}:{exc}")
@@ -128,10 +133,12 @@ def compare_telegram_memory_architectures(
         else 0.0,
         "recommended_runtime_architecture": leader_rows[0]["baseline_name"] if len(leader_rows) == 1 else None,
         "current_runtime_sdk_class": current_runtime_sdk_class,
-        "runtime_matches_live_leader": current_runtime_sdk_class in {row["baseline_name"] for row in leader_rows},
+        "current_runtime_memory_architecture": current_runtime_memory_architecture,
+        "runtime_matches_live_leader": current_runtime_memory_architecture
+        in {row["baseline_name"] for row in leader_rows},
         "assessment": _assessment_text(
             leader_rows=leader_rows,
-            current_runtime_sdk_class=current_runtime_sdk_class,
+            current_runtime_memory_architecture=current_runtime_memory_architecture,
         ),
     }
     payload = {
@@ -398,14 +405,14 @@ def _leader_rows(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
-def _assessment_text(*, leader_rows: Sequence[dict[str, Any]], current_runtime_sdk_class: str) -> str:
+def _assessment_text(*, leader_rows: Sequence[dict[str, Any]], current_runtime_memory_architecture: str) -> str:
     if not leader_rows:
         return (
             "No architecture achieved a positive live signal on the comparable cases, "
             "so there is no runtime recommendation yet."
         )
     leader_names = [row["baseline_name"] for row in leader_rows]
-    if current_runtime_sdk_class in leader_names:
+    if current_runtime_memory_architecture in leader_names:
         return (
             f"The current runtime selector already matches the best live integration architecture: "
             f"{', '.join(leader_names)}."
@@ -413,13 +420,13 @@ def _assessment_text(*, leader_rows: Sequence[dict[str, Any]], current_runtime_s
     if len(leader_names) == 1:
         return (
             f"Live Telegram regression favors `{leader_names[0]}` over the other named variants. "
-            f"The current runtime selector remains `{current_runtime_sdk_class}`, so Builder is still "
+            f"The current runtime selector remains `{current_runtime_memory_architecture}`, so Builder is still "
             "not pinned to the live leader."
         )
     return (
         "Live Telegram regression ended in a tie between "
         f"{', '.join(f'`{name}`' for name in leader_names)}. "
-        f"The current runtime selector is `{current_runtime_sdk_class}`, so Builder is still not pinned "
+        f"The current runtime selector is `{current_runtime_memory_architecture}`, so Builder is still not pinned "
         "to a live winner."
     )
 
@@ -439,6 +446,7 @@ def _build_summary_markdown(
         f"- Leaders: `{', '.join(summary.get('leader_names') or []) or 'unknown'}`",
         f"- Recommended runtime architecture: `{summary.get('recommended_runtime_architecture') or 'undecided'}`",
         f"- Current runtime SDK class: `{summary.get('current_runtime_sdk_class') or 'unknown'}`",
+        f"- Current runtime memory architecture: `{summary.get('current_runtime_memory_architecture') or 'unknown'}`",
         f"- Runtime matches live leader: `{'yes' if summary.get('runtime_matches_live_leader') else 'no'}`",
         "",
         "## Assessment",
@@ -521,7 +529,7 @@ def _run_live_comparison_scorecards(
     sample_specs: Sequence[dict[str, Any]],
     validator_path: Path,
     baseline_names: Sequence[str],
-) -> tuple[list[dict[str, Any]], str]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     src_path = validator_path / "src"
     with _prepend_sys_path(src_path):
         from domain_chip_memory.contracts import (
@@ -575,7 +583,7 @@ def _run_live_comparison_scorecards(
             )
             for spec in sample_specs
         ]
-        runtime_sdk_class = str((build_sdk_contract_summary() or {}).get("sdk_class") or "unknown")
+        contract_summary = dict(build_sdk_contract_summary() or {})
         baseline_rows: list[dict[str, Any]] = []
         for baseline_name in baseline_names:
             scorecard = run_baseline(
@@ -592,7 +600,7 @@ def _run_live_comparison_scorecards(
                     sample_specs=sample_specs,
                 )
             )
-        return baseline_rows, runtime_sdk_class
+        return baseline_rows, contract_summary
 
 
 def _baseline_row(

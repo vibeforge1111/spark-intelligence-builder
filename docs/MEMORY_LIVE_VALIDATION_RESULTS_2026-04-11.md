@@ -32,9 +32,9 @@ The current decision should hold:
 3. Do not promote on offline scorecards alone.
 4. Keep live Telegram regression and soak as mandatory gates.
 
-## Current Gap
+## Runtime Selector
 
-The comparison harness still reports the Builder runtime selector as effectively unresolved rather than explicitly pinned to a named memory architecture. The next implementation step is to wire a controlled runtime selector so Builder can intentionally run the live winner instead of only benchmarking around it.
+The Builder runtime contract now explicitly reports `summary_synthesis_memory` as the active memory architecture alongside the governed `SparkMemorySDK` substrate. That means the live leader is now pinned in the runtime summary layer while `dual_store_event_calendar_hybrid` remains the offline challenger that still has to win both scorecards and live Telegram before any promotion decision changes.
 
 ## Artifacts
 

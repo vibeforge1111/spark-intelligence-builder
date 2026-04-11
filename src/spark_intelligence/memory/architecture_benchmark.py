@@ -45,6 +45,10 @@ class MemoryArchitectureBenchmarkResult:
         if isinstance(summary, dict):
             lines.append(f"- runtime_sdk: {summary.get('runtime_sdk_class') or 'unknown'}")
             lines.append(
+                f"- runtime_memory_architecture: "
+                f"{summary.get('runtime_memory_architecture') or 'unknown'}"
+            )
+            lines.append(
                 f"- documented_frontier: "
                 f"{summary.get('documented_frontier_architecture') or 'unknown'}"
             )
@@ -87,7 +91,8 @@ def benchmark_memory_architectures(
         resolved_baseline_names = ()
         errors.append(str(exc))
     benchmark_rows: list[dict[str, Any]] = []
-    runtime_sdk_class = "unknown"
+    runtime_sdk_class = str(runtime.get("runtime_class") or "unknown")
+    runtime_memory_architecture = str(runtime.get("runtime_memory_architecture") or "unknown")
 
     if not resolved_baseline_names:
         errors.append("no_baselines_selected")
@@ -95,9 +100,13 @@ def benchmark_memory_architectures(
         errors.append(f"validator_root_missing:{validator_path}")
     else:
         try:
-            benchmark_rows, runtime_sdk_class = _run_product_memory_scorecards(
+            benchmark_rows, contract_summary = _run_product_memory_scorecards(
                 validator_path,
                 baseline_names=resolved_baseline_names,
+            )
+            runtime_sdk_class = str(contract_summary.get("runtime_class") or runtime_sdk_class or "unknown")
+            runtime_memory_architecture = str(
+                contract_summary.get("runtime_memory_architecture") or runtime_memory_architecture or "unknown"
             )
         except Exception as exc:  # pragma: no cover - defensive runtime path
             errors.append(f"benchmark_execution_failed:{type(exc).__name__}:{exc}")
@@ -112,18 +121,20 @@ def benchmark_memory_architectures(
         "resolved_module": runtime.get("resolved_module"),
         "client_kind": runtime.get("client_kind"),
         "runtime_sdk_class": runtime_sdk_class,
+        "runtime_memory_architecture": runtime_memory_architecture,
+        "runtime_memory_provider": runtime.get("runtime_memory_provider"),
         "baseline_names": list(resolved_baseline_names),
         "documented_frontier_architecture": DOCUMENTED_FRONTIER_ARCHITECTURE,
         "documented_frontier_provider": DOCUMENTED_FRONTIER_PROVIDER,
         "documented_frontier_source_files": documented_frontier_sources,
         "product_memory_leader_names": [row["baseline_name"] for row in product_memory_leaders],
-        "runtime_matches_documented_frontier": runtime_sdk_class == DOCUMENTED_FRONTIER_ARCHITECTURE,
-        "runtime_matches_best_product_memory": runtime_sdk_class
+        "runtime_matches_documented_frontier": runtime_memory_architecture == DOCUMENTED_FRONTIER_ARCHITECTURE,
+        "runtime_matches_best_product_memory": runtime_memory_architecture
         in {row["baseline_name"] for row in product_memory_leaders},
         "kb_connection_model": "downstream_compile_only",
         "kb_connection_status": "Builder compiles KB/wiki from governed memory snapshots but does not route runtime reads through the KB.",
         "assessment": _assessment_text(
-            runtime_sdk_class=runtime_sdk_class,
+            runtime_memory_architecture=runtime_memory_architecture,
             product_memory_leaders=product_memory_leaders,
         ),
     }
@@ -179,20 +190,21 @@ def resolve_memory_architecture_baselines(
 
 def _assessment_text(
     *,
-    runtime_sdk_class: str,
+    runtime_memory_architecture: str,
     product_memory_leaders: list[dict[str, Any]],
 ) -> str:
-    if runtime_sdk_class == DOCUMENTED_FRONTIER_ARCHITECTURE:
+    if runtime_memory_architecture == DOCUMENTED_FRONTIER_ARCHITECTURE:
         return (
             "Builder runtime is using the same named architecture that the domain-chip-memory repo "
             "documents as the current BEAM and LongMemEval leader."
         )
     leader_names = ", ".join(row["baseline_name"] for row in product_memory_leaders) or "unknown"
     return (
-        "Builder runtime is using the governed SparkMemorySDK substrate, not a named benchmark-frontier "
-        f"architecture selector. The current ProductMemory leaders are {leader_names}, while the "
-        f"repo-documented BEAM and LongMemEval leader remains {DOCUMENTED_FRONTIER_ARCHITECTURE}. "
-        "That means Builder is benchmark-grounded but not frontier-matched yet."
+        "Builder runtime is using the governed SparkMemorySDK substrate with "
+        f"`{runtime_memory_architecture}` as its declared architecture selector. The current "
+        f"ProductMemory leaders are {leader_names}, while the repo-documented BEAM and LongMemEval "
+        f"leader remains {DOCUMENTED_FRONTIER_ARCHITECTURE}. That means Builder is benchmark-grounded "
+        "but still needs explicit validation when benchmark winners change."
     )
 
 
@@ -212,6 +224,8 @@ def _build_summary_markdown(
         f"- Resolved module: `{summary.get('resolved_module') or 'unknown'}`",
         f"- Client kind: `{summary.get('client_kind') or 'unknown'}`",
         f"- Runtime SDK class: `{summary.get('runtime_sdk_class') or 'unknown'}`",
+        f"- Runtime memory architecture: `{summary.get('runtime_memory_architecture') or 'unknown'}`",
+        f"- Runtime memory provider: `{summary.get('runtime_memory_provider') or 'unknown'}`",
         f"- Memory enabled: `{'yes' if runtime.get('memory_enabled') else 'no'}`",
         f"- Shadow mode: `{'yes' if runtime.get('shadow_mode') else 'no'}`",
         "",
@@ -296,7 +310,7 @@ def _run_product_memory_scorecards(
     validator_path: Path,
     *,
     baseline_names: Sequence[str],
-) -> tuple[list[dict[str, Any]], str]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     src_path = validator_path / "src"
     with _prepend_sys_path(src_path):
         from domain_chip_memory.providers import get_provider
@@ -326,5 +340,5 @@ def _run_product_memory_scorecards(
                     ),
                 }
             )
-        runtime_sdk_class = str(build_sdk_contract_summary().get("runtime_class") or "unknown")
-        return rows, runtime_sdk_class
+        contract_summary = dict(build_sdk_contract_summary() or {})
+        return rows, contract_summary

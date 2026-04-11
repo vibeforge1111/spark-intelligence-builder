@@ -21,12 +21,13 @@ class MemoryRegressionTests(SparkTestCase):
         return {
             "summary": {
                 "runtime_sdk_class": "SparkMemorySDK",
+                "runtime_memory_architecture": "summary_synthesis_memory",
                 "baseline_names": [
                     "summary_synthesis_memory",
                     "dual_store_event_calendar_hybrid",
                 ],
                 "documented_frontier_architecture": "summary_synthesis_memory",
-                "runtime_matches_documented_frontier": False,
+                "runtime_matches_documented_frontier": True,
                 "product_memory_leader_names": ["summary_synthesis_memory"],
             },
             "artifact_paths": {
@@ -50,7 +51,8 @@ class MemoryRegressionTests(SparkTestCase):
                 "case_count": 8,
                 "leader_names": ["summary_synthesis_memory"],
                 "recommended_runtime_architecture": "summary_synthesis_memory",
-                "runtime_matches_live_leader": False,
+                "current_runtime_memory_architecture": "summary_synthesis_memory",
+                "runtime_matches_live_leader": True,
             },
             "artifact_paths": {
                 "summary_markdown": str(comparison_markdown),
@@ -273,7 +275,11 @@ class MemoryRegressionTests(SparkTestCase):
             result.payload["summary"]["architecture_compared_baselines"],
             ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
         )
-        self.assertFalse(result.payload["summary"]["architecture_runtime_matches_documented_frontier"])
+        self.assertEqual(
+            result.payload["summary"]["architecture_runtime_memory_architecture"],
+            "summary_synthesis_memory",
+        )
+        self.assertTrue(result.payload["summary"]["architecture_runtime_matches_documented_frontier"])
         self.assertEqual(
             result.payload["summary"]["architecture_product_memory_leaders"],
             ["summary_synthesis_memory"],
@@ -291,7 +297,7 @@ class MemoryRegressionTests(SparkTestCase):
             result.payload["summary"]["live_architecture_recommended_runtime"],
             "summary_synthesis_memory",
         )
-        self.assertFalse(result.payload["summary"]["live_architecture_runtime_matches_leader"])
+        self.assertTrue(result.payload["summary"]["live_architecture_runtime_matches_leader"])
         self.assertEqual(
             Path(result.payload["artifact_paths"]["regression_report_markdown"]),
             summary_path,

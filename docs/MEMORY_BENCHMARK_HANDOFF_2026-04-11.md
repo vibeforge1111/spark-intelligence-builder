@@ -6,8 +6,8 @@ Related memory substrate repo: `C:\Users\USER\Desktop\domain-chip-memory`
 
 ## Current state
 
-- Builder is still not pinned to a named winning runtime architecture.
-- The generic live runtime remains the governed `SparkMemorySDK` / `domain_chip_memory` stack.
+- Builder is now pinned to `summary_synthesis_memory` as the named runtime architecture in the SDK contract summary.
+- The live runtime still runs through the governed `SparkMemorySDK` / `domain_chip_memory` stack.
 - The benchmark harness was expanded from a fixed Telegram replay into a varied pack suite.
 - The soak/reporting logic was then hardened so zero-signal categories no longer look like meaningful ties.
 - The current default serious comparison loop is now governed by `docs/MEMORY_REALTIME_BENCHMARK_PROGRAM_2026-04-11.md`.
@@ -110,7 +110,7 @@ Why they may keep tying:
    - abstention under tempting but irrelevant stored facts
    - provenance/explanation phrasing quality
 5. Run the top two through those new real-time packs.
-6. If `summary_synthesis_memory` still leads, start wiring Builder toward it behind a controlled runtime selector.
+6. Keep rerunning the pinned `summary_synthesis_memory` runtime against the active challenger and only repin if the challenger wins both offline and live.
 
 Promotion rule:
 
