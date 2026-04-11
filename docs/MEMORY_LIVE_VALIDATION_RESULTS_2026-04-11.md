@@ -41,10 +41,12 @@ The live suite is now stricter in the places that were still underreporting ambi
 ## Pack Readout
 
 - `core_profile_baseline`: `dual_store_event_calendar_hybrid` now leads on explanation-source alignment while matched-case metrics stay tied
+- `contradiction_and_recency`: after fixing soak namespace reuse and seeding a deterministic agent name during regression setup, this pack now also favors `dual_store_event_calendar_hybrid` on fresh namespaces instead of tying on onboarding residue
 - `provenance_audit`: `dual_store_event_calendar_hybrid` leads on explanation-source alignment
 - `explanation_pressure_suite`: `dual_store_event_calendar_hybrid` leads on explanation-source alignment
 - `interleaved_noise_resilience`: `dual_store_event_calendar_hybrid` leads after the same provenance alignment signal is carried through the noisy pack
 - `quality_lane_gauntlet`: `dual_store_event_calendar_hybrid` leads when explanation provenance is mixed with abstention and overwrite pressure
+- `temporal_conflict_gauntlet`: on the corrected fresh-namespace soak, this pack also favors `dual_store_event_calendar_hybrid`
 - `long_horizon_recall`, `boundary_abstention`, `anti_personalization_guardrails`, `identity_synthesis`, and `loaded_context_abstention` are now fully green ties, so they are treated as health gates rather than selector packs
 - `identity_under_recency_pressure`: the latest targeted rerun is now a full `11/11` tie after chip-side extraction and profile-query routing fixes
 
@@ -74,6 +76,9 @@ The benchmark-pack CLI path now runs custom Telegram variants directly:
 - that tighter temporal conflict rerun now compares `13` live architecture cases and cleanly favors `dual_store_event_calendar_hybrid`, so chronology is now helping a previously tied conflict lane separate the contenders
 - the contradiction-and-recency pack was then tightened with the same overwrite-history questions, and its targeted live rerun went `16/16` with `13/13` KB probe coverage
 - that tightened contradiction-and-recency rerun now compares `10` live architecture cases and also favors `dual_store_event_calendar_hybrid`, which removes another previously tied live lane
+- a later soak investigation showed that some whole-suite reruns were still reusing stale soak namespaces and occasionally falling back into the Telegram agent-name onboarding path
+- regression setup now seeds the canonical agent name to `Atlas`, and each soak invocation now uses a fresh suite token in its user/chat namespace
+- after that harness fix, the fresh contradiction-and-recency soak run also moved to `dual_store_event_calendar_hybrid`, so the previous contradiction tie was not a stable runtime verdict
 - the live architecture comparison for that proxy pack compares `8` cases and currently favors `dual_store_event_calendar_hybrid`
 
 ## Interpretation
@@ -88,7 +93,7 @@ The current decision now has a real live separator again:
 6. The runtime selector has now been repinned to `dual_store_event_calendar_hybrid` so the Builder contract matches the combined benchmark result.
 7. Native Telegram chronology queries are now part of the live benchmark surface, but chronology still is not the main separator between the two contenders; it is currently a green health gate plus a mild tie-break edge for `dual_store_event_calendar_hybrid`.
 8. The best immediate use of chronology is inside conflict-heavy packs, where it now helps `temporal_conflict_gauntlet` separate the contenders more cleanly than before.
-9. The same pattern now holds for `contradiction_and_recency`, so the remaining ambiguity is shrinking specifically in overwrite-heavy packs rather than in generic profile recall.
+9. After the fresh-namespace fix, the remaining selector packs now all point the same way: `dual_store_event_calendar_hybrid` leads every current selector pack, while the six health gates stay fully green.
 
 ## Runtime Selector
 
