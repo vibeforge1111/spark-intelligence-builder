@@ -24,7 +24,10 @@ def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
     assert "timezone_query_after_temporal_conflict_noise" in temporal_case_ids
 
     identity_case_ids = {case.case_id for case in packs["identity_under_recency_pressure"].cases}
+    assert "name_query_after_recency_pressure" in identity_case_ids
     assert "occupation_query_after_recency_pressure" in identity_case_ids
     assert "timezone_query_after_recency_pressure" in identity_case_ids
     assert "founder_query_after_recency_pressure" in identity_case_ids
     assert "mission_query_after_recency_pressure" in identity_case_ids
+    assert "identity_summary_after_recency_pressure_rich" in identity_case_ids
+    assert "identity_summary_after_recency_pressure_with_latest_state" in identity_case_ids
