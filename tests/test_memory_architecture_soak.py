@@ -372,4 +372,4 @@ class MemoryArchitectureSoakTests(SparkTestCase):
     def test_default_benchmark_pack_suite_grows_beyond_original_nine_packs(self) -> None:
         packs = default_telegram_memory_benchmark_packs()
 
-        self.assertGreaterEqual(len(packs), 13)
+        self.assertGreaterEqual(len(packs), 14)

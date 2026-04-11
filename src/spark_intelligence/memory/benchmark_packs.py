@@ -478,6 +478,59 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
             ),
         ),
         TelegramMemoryBenchmarkPack(
+            pack_id="event_calendar_lineage_proxy",
+            title="Event Calendar Lineage Proxy",
+            description=(
+                "A chronology-sensitive proxy lane for event-ordering and calendar-style recall using only the "
+                "currently supported Telegram memory prompts. Until Telegram exposes native historical-state or "
+                "event queries, this pack stresses overwrite sequencing, stale explanations, and timeline-aware "
+                "profile summaries as the closest live approximation."
+            ),
+            focus_areas=("event_ordering_proxy", "calendar_proxy", "temporal_lineage", "lineage_proxy"),
+            cases=(
+                *_existing(
+                    "startup_write",
+                    "founder_write",
+                    "startup_query_after_founder",
+                    "startup_explanation_after_founder",
+                    "city_write",
+                    "city_overwrite",
+                    "city_query_after_overwrite",
+                    "country_write",
+                    "country_overwrite",
+                    "country_query_after_overwrite",
+                    "timezone_write",
+                    "occupation_write",
+                    "mission_write",
+                ),
+                _variant(
+                    "mission_query",
+                    case_id="mission_query_after_event_lineage_noise",
+                    category="short_term_memory",
+                    benchmark_tags=("event_calendar_proxy", "lineage_proxy"),
+                ),
+                _variant(
+                    "timezone_query",
+                    case_id="timezone_query_after_event_lineage_noise",
+                    category="short_term_memory",
+                    benchmark_tags=("event_calendar_proxy", "lineage_proxy"),
+                ),
+                _variant(
+                    "occupation_query",
+                    case_id="occupation_query_after_event_lineage_noise",
+                    category="short_term_memory",
+                    benchmark_tags=("event_calendar_proxy", "lineage_proxy"),
+                ),
+                _variant(
+                    "identity_summary",
+                    case_id="identity_summary_after_event_lineage_proxy",
+                    category="identity_synthesis",
+                    expected_response_contains=("entrepreneur", "Spark Swarm", "Canada", "Abu Dhabi"),
+                    benchmark_tags=("event_calendar_proxy", "lineage_proxy", "profile_summary"),
+                ),
+            ),
+        ),
+        TelegramMemoryBenchmarkPack(
             pack_id="explanation_pressure_suite",
             title="Explanation Pressure Suite",
             description=(
