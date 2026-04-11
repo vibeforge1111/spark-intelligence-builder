@@ -88,7 +88,9 @@ Current memory benchmarking program:
 Operator shortcut:
 
 - `powershell -ExecutionPolicy Bypass -File .\scripts\run_memory_two_contender_validation.ps1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\run_memory_automation_tests.ps1`
 - by default it writes each full run into a timestamped artifact root under `.spark-intelligence\artifacts\memory-validation-runs\`
+- use `run_memory_automation_tests.ps1` for fast wrapper/renderer/harness regression checks without running the live Telegram soak
 - it also refreshes `.spark-intelligence\artifacts\memory-validation-runs\latest-run.json` to point at the newest run manifest
 - it refreshes `.spark-intelligence\artifacts\memory-validation-runs\latest-full-run.json` only when a full benchmark + regression + soak run exists
 - on full runs it also preserves `.spark-intelligence\artifacts\memory-validation-runs\previous-full-run.json` and writes a per-run `validation-delta.md`
