@@ -94,14 +94,14 @@ Operator shortcut:
 - on full runs it also preserves `.spark-intelligence\artifacts\memory-validation-runs\previous-full-run.json` and writes a per-run `validation-delta.md`
 - it also auto-refreshes [docs/MEMORY_FAILURE_LEDGER_2026-04-11.md](./docs/MEMORY_FAILURE_LEDGER_2026-04-11.md) from the newest run
 - current clean full-run baseline:
-  `.spark-intelligence\artifacts\memory-validation-runs\20260412-001858`
+  `.spark-intelligence\artifacts\memory-validation-runs\20260412-005417`
 - current canonical full-run pointer:
   `.spark-intelligence\artifacts\memory-validation-runs\latest-full-run.json`
 - expected full validation cost from the latest clean run:
-  - benchmark: `12.21s`
-  - regression: `22.934s`
-  - soak: `350.911s`
-  - total: `386.479s`
+  - benchmark: `13.153s`
+  - regression: `25.528s`
+  - soak: `350.805s`
+  - total: `389.672s`
 
 Key repo skills:
 

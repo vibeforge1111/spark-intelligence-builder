@@ -19,13 +19,13 @@ Related memory substrate repo: `C:\Users\USER\Desktop\domain-chip-memory`
 ## Current clean timed baseline
 
 - latest clean full validation root:
-  `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\20260412-001858`
+  `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\20260412-005417`
 - latest full-run pointer:
   `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\latest-full-run.json`
 - previous full-run pointer:
   `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\previous-full-run.json`
 - validation delta for the latest run:
-  `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\20260412-001858\validation-delta.md`
+  `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\20260412-005417\validation-delta.md`
 - offline ProductMemory leaders:
   `summary_synthesis_memory`, `dual_store_event_calendar_hybrid`
 - live regression:
@@ -35,10 +35,10 @@ Related memory substrate repo: `C:\Users\USER\Desktop\domain-chip-memory`
 - live soak leader:
   `summary_synthesis_memory`
 - measured validation cost:
-  - benchmark: `12.21s`
-  - regression: `22.934s`
-  - soak: `350.911s`
-  - total: `386.479s`
+  - benchmark: `13.153s`
+  - regression: `25.528s`
+  - soak: `350.805s`
+  - total: `389.672s`
 
 ## Historical soak snapshot
 
