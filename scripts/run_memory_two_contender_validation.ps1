@@ -153,7 +153,7 @@ function Invoke-ValidationStep {
     Write-Host "== $Label =="
     Write-Host ("spark-intelligence " + ($Arguments -join " "))
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-    & spark-intelligence @Arguments
+    & spark-intelligence @Arguments | Out-Host
     $stopwatch.Stop()
     if ($LASTEXITCODE -ne 0) {
         throw "Validation step failed: $Label"
