@@ -418,12 +418,16 @@ def _leader_rows(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
         for row in leaders
         if _safe_accuracy((row.get("grounding_overall") or {}).get("accuracy")) == best_grounding
     ]
-    best_scorecard = max(_safe_accuracy((row.get("scorecard_overall") or {}).get("accuracy")) for row in leaders)
-    leaders = [
-        row
-        for row in leaders
-        if _safe_accuracy((row.get("scorecard_overall") or {}).get("accuracy")) == best_scorecard
-    ]
+    best_scorecard_substantive = max(
+        _safe_accuracy((row.get("scorecard_substantive_overall") or {}).get("accuracy")) for row in leaders
+    )
+    if best_scorecard_substantive > 0.0:
+        leaders = [
+            row
+            for row in leaders
+            if _safe_accuracy((row.get("scorecard_substantive_overall") or {}).get("accuracy"))
+            == best_scorecard_substantive
+        ]
     best_alignment = max(_safe_accuracy((row.get("scorecard_alignment") or {}).get("rate")) for row in leaders)
     return [
         row for row in leaders if _safe_accuracy((row.get("scorecard_alignment") or {}).get("rate")) == best_alignment
@@ -650,6 +654,8 @@ def _baseline_row(
     trust_matched = 0
     grounding_total = 0
     grounding_matched = 0
+    substantive_scorecard_total = 0
+    substantive_scorecard_correct = 0
     abstention_total = 0
     abstention_matched = 0
     forbidden_total = 0
@@ -702,6 +708,10 @@ def _baseline_row(
         category_total[category] += 1
         if matched:
             category_matched[category] += 1
+        if not _is_explanation_like_prediction(category=category, question_text=str(question.get("question") or "")):
+            substantive_scorecard_total += 1
+            if bool(predicted.get("is_correct", False)):
+                substantive_scorecard_correct += 1
         rendered_predictions.append(
             {
                 "case_id": str(spec.get("sample_id") or question_id),
@@ -762,6 +772,13 @@ def _baseline_row(
             for category in sorted(category_total)
         ],
         "scorecard_overall": dict(scorecard.get("overall") or {}),
+        "scorecard_substantive_overall": {
+            "correct": substantive_scorecard_correct,
+            "total": substantive_scorecard_total,
+            "accuracy": (substantive_scorecard_correct / substantive_scorecard_total)
+            if substantive_scorecard_total
+            else 0.0,
+        },
         "scorecard_alignment": dict(
             ((scorecard.get("product_memory_summary") or {}).get("measured_metrics") or {}).get(
                 "primary_answer_candidate_source_alignment", {}
@@ -783,6 +800,13 @@ def _required_live_match_fragments(*, category: str, expected_fragments: Sequenc
         for fragment in expected_fragments
         if fragment.strip().lower() not in _EXPLANATION_STYLE_ONLY_FRAGMENTS
     ]
+
+
+def _is_explanation_like_prediction(*, category: str, question_text: str) -> bool:
+    question_lower = str(question_text or "").strip().lower()
+    if category == "explanation":
+        return True
+    return question_lower.startswith("how do you know")
 
 
 def _is_truthful_abstention_answer(predicted_answer: str) -> bool:

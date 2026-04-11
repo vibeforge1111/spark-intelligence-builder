@@ -48,6 +48,7 @@ class MemoryArchitectureLiveComparisonTests(SparkTestCase):
                     "trustworthiness_overall": {"accuracy": 0.5},
                     "grounding_overall": {"accuracy": 0.5},
                     "scorecard_overall": {"accuracy": 0.0},
+                    "scorecard_substantive_overall": {"accuracy": 0.0},
                     "scorecard_alignment": {"rate": 1.0},
                 },
                 {
@@ -56,12 +57,42 @@ class MemoryArchitectureLiveComparisonTests(SparkTestCase):
                     "trustworthiness_overall": {"accuracy": 0.5},
                     "grounding_overall": {"accuracy": 0.5},
                     "scorecard_overall": {"accuracy": 0.25},
+                    "scorecard_substantive_overall": {"accuracy": 0.25},
                     "scorecard_alignment": {"rate": 0.0},
                 },
             ]
         )
 
         self.assertEqual([row["baseline_name"] for row in leaders], ["dual_store_event_calendar_hybrid"])
+
+    def test_leader_rows_ignores_explanation_only_scorecard_differences_when_live_metrics_tie(self) -> None:
+        leaders = _leader_rows(
+            [
+                {
+                    "baseline_name": "summary_synthesis_memory",
+                    "live_integration_overall": {"accuracy": 0.8},
+                    "trustworthiness_overall": {"accuracy": 0.8},
+                    "grounding_overall": {"accuracy": 0.8},
+                    "scorecard_overall": {"accuracy": 0.0},
+                    "scorecard_substantive_overall": {"accuracy": 0.0},
+                    "scorecard_alignment": {"rate": 0.0},
+                },
+                {
+                    "baseline_name": "dual_store_event_calendar_hybrid",
+                    "live_integration_overall": {"accuracy": 0.8},
+                    "trustworthiness_overall": {"accuracy": 0.8},
+                    "grounding_overall": {"accuracy": 0.8},
+                    "scorecard_overall": {"accuracy": 0.4},
+                    "scorecard_substantive_overall": {"accuracy": 0.0},
+                    "scorecard_alignment": {"rate": 0.0},
+                },
+            ]
+        )
+
+        self.assertEqual(
+            [row["baseline_name"] for row in leaders],
+            ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
+        )
 
     def test_baseline_row_treats_unknown_as_truthful_abstention(self) -> None:
         sample_specs = [
@@ -139,6 +170,67 @@ class MemoryArchitectureLiveComparisonTests(SparkTestCase):
 
         self.assertEqual(row["live_integration_overall"]["matched"], 1)
         self.assertEqual(row["grounding_overall"]["matched"], 1)
+        self.assertEqual(row["scorecard_substantive_overall"]["total"], 0)
+
+    def test_baseline_row_excludes_explanation_like_questions_from_substantive_scorecard_accuracy(self) -> None:
+        sample_specs = [
+            {
+                "sample_id": "startup_explanation_after_founder",
+                "questions": [
+                    {
+                        "question_id": "startup_explanation_after_founder",
+                        "question": "How do you know my startup?",
+                        "category": "staleness",
+                        "metadata": {
+                            "expected_fragments": ["saved memory record", "Seedify"],
+                            "expected_forbidden_fragments": [],
+                        },
+                    }
+                ],
+            },
+            {
+                "sample_id": "founder_query",
+                "questions": [
+                    {
+                        "question_id": "founder_query",
+                        "question": "What company did I found?",
+                        "category": "profile_query",
+                        "metadata": {
+                            "expected_fragments": ["Spark Swarm"],
+                            "expected_forbidden_fragments": [],
+                        },
+                    }
+                ],
+            },
+        ]
+        scorecard = {
+            "predictions": [
+                {
+                    "question_id": "startup_explanation_after_founder",
+                    "predicted_answer": "My startup is Seedify",
+                    "metadata": {"retrieved_memory_roles": ["structured_evidence"]},
+                    "is_correct": False,
+                },
+                {
+                    "question_id": "founder_query",
+                    "predicted_answer": "You founded Spark Swarm.",
+                    "metadata": {"retrieved_memory_roles": ["structured_evidence"]},
+                    "is_correct": True,
+                },
+            ],
+            "overall": {"accuracy": 0.5},
+        }
+
+        row = _baseline_row(
+            baseline_name="summary_synthesis_memory",
+            scorecard=scorecard,
+            sample_specs=sample_specs,
+        )
+
+        self.assertEqual(row["scorecard_overall"]["accuracy"], 0.5)
+        self.assertEqual(row["scorecard_substantive_overall"]["correct"], 1)
+        self.assertEqual(row["scorecard_substantive_overall"]["total"], 1)
+        self.assertEqual(row["scorecard_substantive_overall"]["accuracy"], 1.0)
 
     def test_build_telegram_regression_sample_specs_uses_prior_context_and_isolated_abstention(self) -> None:
         selected_cases = [

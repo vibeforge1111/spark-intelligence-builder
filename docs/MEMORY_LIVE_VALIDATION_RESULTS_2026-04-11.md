@@ -15,14 +15,15 @@ The goal was to keep offline ProductMemory comparison and live Telegram validati
 - KB compile: valid
 - KB probe coverage: `38/38` current-state and `38/38` evidence hits
 - Telegram soak status: `13/13` completed, `0` failed
-- Latest whole-suite soak leader: `dual_store_event_calendar_hybrid`
+- Latest whole-suite soak result: full tie between `summary_synthesis_memory` and `dual_store_event_calendar_hybrid`
 - Offline ProductMemory leader: `dual_store_event_calendar_hybrid`
 
 ## Soak Aggregate
 
 - earlier live soak snapshot: `summary_synthesis_memory` at `36/72` vs `33/72`
-- latest post-extraction whole-suite soak: both contenders at `66/75`, `88.00%` aggregate accuracy
-- latest post-extraction whole-suite soak leader: `dual_store_event_calendar_hybrid` by pack-level leader count and soak tie-breaks, not by raw aggregate accuracy alone
+- earlier post-extraction whole-suite soak briefly reported `dual_store_event_calendar_hybrid` as leader, but that turned out to be a comparison-harness artifact
+- the live-comparison tie-break now ignores explanation-only exact-string scorecard differences when live accuracy, trustworthiness, and grounding already tie
+- latest corrected whole-suite soak: both contenders at `66/75`, `88.00%` aggregate accuracy, with `13/13` pack ties and no remaining live leader
 
 ## What Tightened
 
@@ -55,12 +56,12 @@ The benchmark-pack CLI path now runs custom Telegram variants directly:
 
 ## Interpretation
 
-The current decision is now more contested than it was at the start of the day:
+The current decision is now blocked on new separating evidence rather than old harness noise:
 
 1. `summary_synthesis_memory` is still the pinned runtime architecture and still matches the targeted live regression leader set.
-2. `dual_store_event_calendar_hybrid` now leads the latest full 13-pack live soak as well as the offline ProductMemory benchmark.
-3. The targeted identity pack no longer separates the contenders, so it should not be used alone for promotion decisions.
-4. Promotion still should not happen on offline scorecards alone; the deciding signal now has to come from broader live-pack coverage and repeat soak stability.
+2. `dual_store_event_calendar_hybrid` still leads the offline ProductMemory benchmark.
+3. The targeted identity pack no longer separates the contenders, and the corrected 13-pack live soak no longer separates them either.
+4. Promotion still should not happen on offline scorecards alone; the next move has to be adding new live packs that expose a real behavioral difference.
 
 ## Runtime Selector
 
