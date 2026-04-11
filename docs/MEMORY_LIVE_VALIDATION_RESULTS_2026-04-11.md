@@ -46,8 +46,9 @@ The benchmark-pack CLI path now runs custom Telegram variants directly:
 - the first targeted run matched `19/21`, and the only misses were the two richer profile-summary prompts
 - the follow-up routing fix widened identity-summary detection for explicit prompts like `Summarize my profile in one sentence.` and `Give me a full profile summary with my latest location too.`
 - the corrected targeted rerun is now `21/21` matched on live Telegram with `48/48` current-state and `48/48` evidence probe hits
+- the shadow-replay contract now also preserves the original profile-summary prompt text for benchmark reconstruction instead of flattening every identity-summary query to `What do you remember about me?`
 - the live architecture comparison for the same targeted pack still compared `11` cases and still tied `summary_synthesis_memory` vs `dual_store_event_calendar_hybrid` at `2/11`
-- this means the Telegram runtime routing bug is fixed, but the architecture scorecards for identity-summary pressure are still unresolved
+- this means the Telegram runtime routing bug is fixed, and the remaining architecture tie is now a real synthesis weakness rather than a replay-prompt bug
 
 ## Interpretation
 

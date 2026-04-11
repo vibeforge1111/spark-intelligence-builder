@@ -1488,6 +1488,8 @@ class MemoryOrchestratorTests(SparkTestCase):
                                 "fact_name": "profile_startup_name",
                                 "label": "startup",
                                 "predicate": "profile.startup_name",
+                                "query_kind": "single_fact",
+                                "message_text": "What is my startup?",
                             }
                         }
                     ),
@@ -1554,6 +1556,59 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(conversation["turns"][0]["metadata"]["predicate"], "profile.startup_name")
         probe_types = {probe["probe_type"] for probe in conversation["probes"]}
         self.assertEqual(probe_types, {"current_state", "evidence"})
+
+    def test_shadow_replay_payload_preserves_explicit_identity_summary_prompt(self) -> None:
+        with self.state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO builder_events(
+                    event_id, event_type, truth_kind, target_surface, component, request_id, session_id, human_id,
+                    actor_id, evidence_lane, severity, status, summary, created_at, facts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-identity-query-influence",
+                    "plugin_or_chip_influence_recorded",
+                    "fact",
+                    "spark_intelligence_builder",
+                    "researcher_bridge",
+                    "sim:identity-query-1",
+                    "session-identity-bridge",
+                    "telegram:test",
+                    "researcher_bridge",
+                    "realworld_validated",
+                    "medium",
+                    "recorded",
+                    "Personality influence was recorded before bridge execution.",
+                    "2026-04-11T12:00:00Z",
+                    json.dumps(
+                        {
+                            "detected_profile_fact_query": {
+                                "fact_name": "profile_identity_summary",
+                                "label": "identity summary",
+                                "predicate_prefix": "profile.",
+                                "query_kind": "identity_summary",
+                                "message_text": "Give me a full profile summary with my latest location too.",
+                            }
+                        }
+                    ),
+                ),
+            )
+            conn.commit()
+
+        payload = build_shadow_replay_payload(
+            state_db=self.state_db,
+            conversation_limit=10,
+            event_limit=20,
+        )
+
+        self.assertEqual(len(payload["conversations"]), 1)
+        conversation = payload["conversations"][0]
+        self.assertEqual(len(conversation["turns"]), 1)
+        self.assertEqual(
+            conversation["turns"][0]["content"],
+            "Give me a full profile summary with my latest location too.",
+        )
 
     def test_shadow_replay_delete_probes_skip_current_and_target_pre_delete_history(self) -> None:
         with self.state_db.connect() as conn:

@@ -956,7 +956,12 @@ def _bridge_tool_result_content(
 
 
 def _bridge_query_prompt_from_facts(facts: dict[str, Any]) -> str:
-    query = _bridge_query_from_facts(facts.get("detected_profile_fact_query"))
+    query_payload = facts.get("detected_profile_fact_query")
+    if isinstance(query_payload, dict):
+        message_text = str(query_payload.get("message_text") or "").strip()
+        if message_text:
+            return message_text
+    query = _bridge_query_from_facts(query_payload)
     if query is None:
         return ""
     return _query_prompt_for_label(query.label, query_kind=query.query_kind)

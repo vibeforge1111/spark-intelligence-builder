@@ -2872,6 +2872,9 @@ def build_researcher_reply(
                         "predicate": detected_profile_fact_query.predicate,
                         "fact_name": detected_profile_fact_query.fact_name,
                         "label": detected_profile_fact_query.label,
+                        "query_kind": detected_profile_fact_query.query_kind,
+                        "predicate_prefix": detected_profile_fact_query.predicate_prefix,
+                        "message_text": str(user_message or "").strip(),
                     }
                     if detected_profile_fact_query is not None
                     else None

@@ -2201,6 +2201,19 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("Canada", result.reply_text)
         self.assertEqual(result.mode, "memory_profile_identity")
         self.assertEqual(result.routing_decision, "memory_profile_identity_summary")
+        influence_events = latest_events_by_type(
+            self.state_db,
+            event_type="plugin_or_chip_influence_recorded",
+            limit=10,
+        )
+        self.assertTrue(influence_events)
+        detected = (influence_events[0]["facts_json"] or {}).get("detected_profile_fact_query") or {}
+        self.assertEqual(detected.get("query_kind"), "identity_summary")
+        self.assertEqual(detected.get("predicate_prefix"), "profile.")
+        self.assertEqual(
+            detected.get("message_text"),
+            "Give me a full profile summary with my latest location too.",
+        )
 
     def test_build_researcher_reply_answers_single_fact_mission_query_directly_from_memory(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
