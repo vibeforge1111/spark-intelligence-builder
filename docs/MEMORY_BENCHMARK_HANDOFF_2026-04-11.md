@@ -38,6 +38,13 @@ Current whole-suite decision:
 1. `dual_store_event_calendar_hybrid`
 2. `summary_synthesis_memory`
 
+Post-repin validation:
+
+- `.spark-intelligence/artifacts/telegram-memory-architecture-soak-post-repin-v1/telegram-memory-architecture-soak.json`
+- status: `13/13` completed, `0` failed
+- aggregate accuracy stayed tied at `66/75`
+- `dual_store_event_calendar_hybrid` still led the suite on pack-level wins, so the repin held under a fresh full live soak
+
 ## Current operating decision
 
 The current default operating program is:
@@ -132,6 +139,7 @@ Promotion rule:
 Tomorrow, resume from:
 - the completed fixed soak artifact
 - the refreshed explanation-pack rerun at `C:\Users\USER\.spark-intelligence\artifacts\telegram-memory-regression-explanation-pack-v2`
+- the post-repin whole-suite soak at `C:\Users\USER\.spark-intelligence\artifacts\telegram-memory-architecture-soak-post-repin-v1`
 - the current default two-contender program in `docs/MEMORY_REALTIME_BENCHMARK_PROGRAM_2026-04-11.md`
 - new benchmark design focused on the unsolved lanes and on separating observational vs event-calendar behavior in a more targeted way
 

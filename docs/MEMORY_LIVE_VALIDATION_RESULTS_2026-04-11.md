@@ -17,6 +17,7 @@ The goal was to keep offline ProductMemory comparison and live Telegram validati
 - Telegram soak status: `13/13` completed, `0` failed
 - Latest whole-suite soak leader: `dual_store_event_calendar_hybrid`
 - Offline ProductMemory leader: `dual_store_event_calendar_hybrid`
+- Post-repin whole-suite soak: `13/13` completed, `0` failed, with `dual_store_event_calendar_hybrid` still leading while the runtime stays aligned
 
 ## Soak Aggregate
 
@@ -25,6 +26,7 @@ The goal was to keep offline ProductMemory comparison and live Telegram validati
 - the live-comparison tie-break now ignores explanation-only exact-string scorecard differences when live accuracy, trustworthiness, and grounding already tie
 - the live-comparison harness now also sets explicit `expected_answer_candidate_source = evidence_memory` for explanation cases, so live provenance alignment is measured directly
 - latest corrected whole-suite soak: both contenders are still tied at `66/75`, `88.00%` aggregate accuracy, but `dual_store_event_calendar_hybrid` is the live leader by pack-level provenance alignment on explanation-heavy lanes
+- post-repin rerun at `.spark-intelligence/artifacts/telegram-memory-architecture-soak-post-repin-v1` finished with the same `66/75`, `88.00%` aggregate accuracy tie, and `dual_store_event_calendar_hybrid` kept the whole-suite lead with `13` leader runs vs `8` for `summary_synthesis_memory`
 
 ## What Tightened
 
@@ -90,3 +92,4 @@ The Builder runtime contract now explicitly reports `dual_store_event_calendar_h
 - `.spark-intelligence/artifacts/telegram-memory-regression-explanation-pack-v2/telegram-memory-regression.json`
 - `.spark-intelligence/artifacts/telegram-memory-regression-explanation-pack-v2/architecture-live-comparison/telegram-memory-architecture-live-comparison.json`
 - `.spark-intelligence/artifacts/telegram-memory-architecture-soak/telegram-memory-architecture-soak.json`
+- `.spark-intelligence/artifacts/telegram-memory-architecture-soak-post-repin-v1/telegram-memory-architecture-soak.json`
