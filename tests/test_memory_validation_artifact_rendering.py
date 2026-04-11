@@ -135,6 +135,88 @@ def test_render_memory_validation_delta_reports_runtime_timings_and_mismatches(t
     assert "previous mismatches: `city_history_query_after_overwrite`" in markdown
 
 
+def test_render_memory_validation_delta_accepts_direct_previous_run_summary_and_unknown_timings(tmp_path: Path) -> None:
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "render_memory_validation_delta.py"
+    module = _load_module("render_memory_validation_delta_direct_summary_test", script_path)
+
+    latest_pointer = tmp_path / "latest-full-run.json"
+    latest_summary = tmp_path / "latest-run-summary.json"
+    previous_summary = tmp_path / "previous-run-summary.json"
+    latest_regression_dir = tmp_path / "latest-regression"
+    latest_soak_dir = tmp_path / "latest-soak"
+    latest_regression_dir.mkdir()
+    latest_soak_dir.mkdir()
+
+    _write_json(
+        latest_pointer,
+        {
+            "output_root": str(tmp_path / "20260412-014855"),
+            "run_summary": str(latest_summary),
+        },
+    )
+    _write_json(
+        latest_summary,
+        {
+            "output_root": str(tmp_path / "20260412-014855"),
+            "offline_runtime_architecture": "summary_synthesis_memory",
+            "offline_product_memory_leaders": ["summary_synthesis_memory"],
+            "benchmark_duration_seconds": 15.816,
+            "regression_duration_seconds": 26.001,
+            "soak_duration_seconds": 335.587,
+            "total_duration_seconds": 377.593,
+            "live_regression": "34/34",
+            "live_regression_leaders": ["summary_synthesis_memory"],
+            "live_soak_completion": "14/14",
+            "live_soak_leaders": ["summary_synthesis_memory"],
+            "live_soak_recommended_top_two": [
+                "summary_synthesis_memory",
+                "dual_store_event_calendar_hybrid",
+            ],
+            "regression_output_dir": str(latest_regression_dir),
+            "soak_output_dir": str(latest_soak_dir),
+        },
+    )
+    _write_json(
+        previous_summary,
+        {
+            "output_root": str(tmp_path / "20260412-001418"),
+            "offline_runtime_architecture": "dual_store_event_calendar_hybrid",
+            "offline_product_memory_leaders": ["dual_store_event_calendar_hybrid"],
+            "benchmark_duration_seconds": None,
+            "regression_duration_seconds": "",
+            "soak_duration_seconds": None,
+            "total_duration_seconds": "",
+            "live_regression": "unknown",
+            "live_regression_leaders": [],
+            "live_soak_completion": "unknown",
+            "live_soak_leaders": [],
+            "live_soak_recommended_top_two": [],
+        },
+    )
+    _write_json(
+        latest_regression_dir / "telegram-memory-regression.json",
+        {"summary": {"mismatched_case_ids": ["mission_explanation"]}},
+    )
+    _write_json(
+        latest_soak_dir / "telegram-memory-architecture-soak.json",
+        {
+            "selection_aggregate_results": [
+                {"baseline_name": "summary_synthesis_memory", "matched": 64, "total": 64},
+            ]
+        },
+    )
+
+    markdown = module.render_delta(latest_pointer=latest_pointer, previous_source=previous_summary)
+
+    assert f"- previous full run: `{tmp_path / '20260412-001418'}`" in markdown
+    assert "previous benchmark duration: `unknown`" in markdown
+    assert "previous regression duration: `unknown`" in markdown
+    assert "previous soak duration: `unknown`" in markdown
+    assert "previous total duration: `unknown`" in markdown
+    assert "previous leaders: `none`" in markdown
+    assert "## Mismatch Delta" not in markdown
+
+
 def test_render_memory_failure_ledger_reports_clean_baseline_and_watchlist(tmp_path: Path) -> None:
     script_path = Path(__file__).resolve().parents[1] / "scripts" / "render_memory_failure_ledger.py"
     module = _load_module("render_memory_failure_ledger_test", script_path)
