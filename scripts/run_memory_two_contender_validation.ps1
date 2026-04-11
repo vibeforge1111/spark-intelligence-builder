@@ -16,6 +16,12 @@ $baselineFlags = @(
     "--baseline", "dual_store_event_calendar_hybrid"
 )
 
+$expectedBenchmarkSeconds = 12.21
+$expectedRegressionSeconds = 22.934
+$expectedSoakSeconds = 350.911
+$expectedTotalSeconds = 386.479
+$expectedLatestFullRunPointer = Join-Path $SparkHome "artifacts\memory-validation-runs\latest-full-run.json"
+
 $resolvedOutputRoot = $OutputRoot
 if ([string]::IsNullOrWhiteSpace($resolvedOutputRoot)) {
     $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -24,6 +30,12 @@ if ([string]::IsNullOrWhiteSpace($resolvedOutputRoot)) {
 
 New-Item -ItemType Directory -Path $resolvedOutputRoot -Force | Out-Null
 Write-Host "Validation output root: $resolvedOutputRoot"
+Write-Host "Expected full-run cost from latest clean baseline:"
+Write-Host ("- benchmark: {0:0.###}s" -f $expectedBenchmarkSeconds)
+Write-Host ("- regression: {0:0.###}s" -f $expectedRegressionSeconds)
+Write-Host ("- soak: {0:0.###}s" -f $expectedSoakSeconds)
+Write-Host ("- total: {0:0.###}s" -f $expectedTotalSeconds)
+Write-Host ("- latest full-run pointer: " + $expectedLatestFullRunPointer)
 
 function Get-GitRevision {
     param(
