@@ -111,6 +111,12 @@ spark-intelligence memory run-telegram-regression
 spark-intelligence memory soak-architectures --runs 27
 ```
 
+Operator shortcut:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_memory_two_contender_validation.ps1
+```
+
 Explicit two-contender comparison:
 
 ```bash

@@ -83,6 +83,10 @@ Current memory benchmarking program:
 - benchmark upgrades are not promoted on offline scorecards alone
 - the same contenders must also stay green on live Telegram regression and soak runs
 
+Operator shortcut:
+
+- `powershell -ExecutionPolicy Bypass -File .\scripts\run_memory_two_contender_validation.ps1`
+
 Key repo skills:
 
 - [skills/reliable-job-harnesses/SKILL.md](./skills/reliable-job-harnesses/SKILL.md)
