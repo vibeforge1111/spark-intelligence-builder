@@ -151,6 +151,8 @@ class MemoryCliKnowledgeBaseTests(SparkTestCase):
                 "12345",
                 "--chat-id",
                 "12345",
+                "--benchmark-pack",
+                "identity_under_recency_pressure",
                 "--case-id",
                 "country_query",
                 "--category",
@@ -179,6 +181,7 @@ class MemoryCliKnowledgeBaseTests(SparkTestCase):
         self.assertEqual(kwargs["chat_id"], "12345")
         self.assertEqual(kwargs["kb_limit"], 12)
         self.assertEqual(kwargs["validator_root"], "C:/validator")
+        self.assertEqual(kwargs["benchmark_pack_ids"], ["identity_under_recency_pressure"])
         self.assertEqual(kwargs["case_ids"], ["country_query"])
         self.assertEqual(kwargs["categories"], ["overwrite"])
         self.assertEqual(

@@ -93,6 +93,8 @@ class MemoryRegressionTests(SparkTestCase):
                 "12345",
                 "--chat-id",
                 "12345",
+                "--benchmark-pack",
+                "identity_under_recency_pressure",
                 "--case-id",
                 "country_query",
                 "--category",
@@ -123,6 +125,7 @@ class MemoryRegressionTests(SparkTestCase):
         self.assertEqual(kwargs["kb_limit"], 12)
         self.assertEqual(kwargs["validator_root"], "C:/validator")
         self.assertEqual(kwargs["write_path"], str(write_path))
+        self.assertEqual(kwargs["benchmark_pack_ids"], ["identity_under_recency_pressure"])
         self.assertEqual(kwargs["case_ids"], ["country_query"])
         self.assertEqual(kwargs["categories"], ["overwrite"])
         self.assertEqual(
@@ -165,6 +168,63 @@ class MemoryRegressionTests(SparkTestCase):
         self.assertEqual(len(payload["cases"]), 1)
         ask_telegram.assert_called_once()
         compile_kb.assert_not_called()
+
+    def test_run_telegram_memory_regression_selects_custom_cases_from_benchmark_pack(self) -> None:
+        output_dir = self.home / "artifacts" / "telegram-memory-regression-pack"
+        allowed_payload = {
+            "message": "ok",
+            "user_id": "12345",
+            "chat_id": "12345",
+            "result": {
+                "ok": True,
+                "decision": "allowed",
+                "detail": {
+                    "response_text": "ok",
+                    "bridge_mode": "memory_profile_fact",
+                    "routing_decision": "memory_profile_fact_query",
+                    "trace_ref": "trace:test",
+                },
+            },
+        }
+        kb_payload = {
+            "failure_taxonomy": {"summary": {"has_probe_coverage": True, "issue_labels": []}},
+            "probe_rows": [],
+        }
+
+        with patch(
+            "spark_intelligence.gateway.runtime.gateway_ask_telegram",
+            return_value=json.dumps(allowed_payload),
+        ), patch(
+            "spark_intelligence.memory.regression.inspect_human_memory_in_memory",
+            return_value=SimpleNamespace(to_json=lambda: json.dumps({"read_result": {"records": []}})),
+        ), patch(
+            "spark_intelligence.memory.regression.build_telegram_state_knowledge_base",
+            return_value=SimpleNamespace(payload=kb_payload),
+        ), patch(
+            "spark_intelligence.memory.regression.benchmark_memory_architectures",
+            return_value=SimpleNamespace(payload=self._benchmark_payload(output_dir)),
+        ), patch(
+            "spark_intelligence.memory.regression.compare_telegram_memory_architectures",
+            return_value=SimpleNamespace(payload=self._live_comparison_payload(output_dir)),
+        ):
+            result = run_telegram_memory_regression(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                output_dir=output_dir,
+                user_id="12345",
+                chat_id="12345",
+                benchmark_pack_ids=["identity_under_recency_pressure"],
+                case_ids=["identity_summary_after_recency_pressure_rich"],
+            )
+
+        self.assertEqual(
+            result.payload["summary"]["requested_benchmark_pack_ids"],
+            ["identity_under_recency_pressure"],
+        )
+        self.assertEqual(
+            result.payload["summary"]["selected_case_ids"],
+            ["identity_summary_after_recency_pressure_rich"],
+        )
 
     def test_run_telegram_memory_regression_writes_operator_summary_and_passes_it_to_kb_compile(self) -> None:
         output_dir = self.home / "artifacts" / "telegram-memory-regression-with-summary"

@@ -336,6 +336,7 @@ def run_telegram_memory_regression(
     case_ids: list[str] | None = None,
     categories: list[str] | None = None,
     cases: list[TelegramMemoryRegressionCase] | tuple[TelegramMemoryRegressionCase, ...] | None = None,
+    benchmark_pack_ids: list[str] | tuple[str, ...] | None = None,
     baseline_names: list[str] | tuple[str, ...] | None = None,
 ) -> TelegramMemoryRegressionResult:
     from spark_intelligence.gateway.runtime import gateway_ask_telegram
@@ -356,16 +357,32 @@ def run_telegram_memory_regression(
     selected_chat_id = str(chat_id or "").strip() or None
     requested_case_ids = [str(item).strip() for item in (case_ids or []) if str(item).strip()]
     requested_categories = [str(item).strip() for item in (categories or []) if str(item).strip()]
+    requested_benchmark_pack_ids = [str(item).strip() for item in (benchmark_pack_ids or []) if str(item).strip()]
     requested_baseline_names = [str(item).strip() for item in (baseline_names or []) if str(item).strip()]
+    selected_pack_cases = cases
+    benchmark_pack_error: str | None = None
+    if selected_pack_cases is None and requested_benchmark_pack_ids:
+        from spark_intelligence.memory.benchmark_packs import (
+            flatten_benchmark_pack_cases,
+            select_telegram_memory_benchmark_packs,
+        )
+
+        try:
+            selected_pack_cases = flatten_benchmark_pack_cases(
+                select_telegram_memory_benchmark_packs(requested_benchmark_pack_ids)
+            )
+        except ValueError as exc:
+            benchmark_pack_error = str(exc)
     selected_cases = _select_regression_cases(
         case_ids=requested_case_ids,
         categories=requested_categories,
-        cases_source=cases,
+        cases_source=selected_pack_cases,
     )
     selection_summary = _selection_summary(selected_cases)
     filter_summary = {
         "requested_case_ids": requested_case_ids,
         "requested_categories": requested_categories,
+        "requested_benchmark_pack_ids": requested_benchmark_pack_ids,
         "requested_baseline_names": requested_baseline_names,
     }
     if selected_user_id is None:
@@ -378,7 +395,8 @@ def run_telegram_memory_regression(
     elif selected_chat_id is None:
         selected_chat_id = selected_user_id
 
-    if not selected_cases:
+    if benchmark_pack_error or not selected_cases:
+        errors = [benchmark_pack_error] if benchmark_pack_error else ["no_regression_cases_selected"]
         payload = {
             "summary": {
                 "status": "invalid_request",
@@ -397,7 +415,7 @@ def run_telegram_memory_regression(
                 **filter_summary,
                 **selection_summary,
             },
-            "errors": ["no_regression_cases_selected"],
+            "errors": errors,
             "cases": [],
             "mismatches": [],
             "inspection": None,

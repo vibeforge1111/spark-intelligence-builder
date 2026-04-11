@@ -230,6 +230,52 @@ class MemoryArchitectureSoakTests(SparkTestCase):
             ["summary_synthesis_memory"],
         )
 
+    def test_run_telegram_memory_architecture_soak_accepts_benchmark_pack_filter(self) -> None:
+        payload = {
+            "summary": {"matched_case_count": 8, "mismatched_case_count": 0},
+            "architecture_live_comparison": {
+                "summary": {
+                    "baseline_names": ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
+                    "leader_names": ["summary_synthesis_memory"],
+                },
+                "baseline_results": [
+                    {
+                        "baseline_name": "dual_store_event_calendar_hybrid",
+                        "live_integration_overall": {"matched": 1, "total": 2, "accuracy": 0.5},
+                        "live_by_category": [{"category": "identity_synthesis", "matched": 1, "total": 2, "accuracy": 0.5}],
+                    },
+                    {
+                        "baseline_name": "summary_synthesis_memory",
+                        "live_integration_overall": {"matched": 2, "total": 2, "accuracy": 1.0},
+                        "live_by_category": [{"category": "identity_synthesis", "matched": 2, "total": 2, "accuracy": 1.0}],
+                    },
+                ],
+            },
+        }
+
+        with patch(
+            "spark_intelligence.memory.architecture_soak.run_telegram_memory_regression",
+            return_value=SimpleNamespace(payload=payload),
+        ) as patched_run:
+            result = run_telegram_memory_architecture_soak(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                output_dir=self.home / "artifacts" / "architecture-soak-pack",
+                runs=1,
+                benchmark_pack_ids=["identity_under_recency_pressure"],
+            )
+
+        self.assertEqual(result.payload["summary"]["benchmark_pack_count"], 1)
+        self.assertEqual(result.payload["benchmark_packs"][0]["pack_id"], "identity_under_recency_pressure")
+        self.assertIn(
+            "identity_summary_after_recency_pressure_rich",
+            result.payload["benchmark_packs"][0]["case_ids"],
+        )
+        self.assertEqual(
+            patched_run.call_args.kwargs["cases"][-1].case_id,
+            "identity_summary_after_recency_pressure_with_latest_state",
+        )
+
     def test_run_telegram_memory_architecture_soak_treats_zero_accuracy_categories_as_unresolved(self) -> None:
         payload = {
             "summary": {"matched_case_count": 4, "mismatched_case_count": 0},

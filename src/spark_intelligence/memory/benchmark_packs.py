@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
 from spark_intelligence.memory.regression import (
@@ -588,3 +589,39 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
             ),
         ),
     )
+
+
+def select_telegram_memory_benchmark_packs(
+    pack_ids: Sequence[str] | None = None,
+) -> tuple[TelegramMemoryBenchmarkPack, ...]:
+    packs = default_telegram_memory_benchmark_packs()
+    if not pack_ids:
+        return packs
+    packs_by_id = {pack.pack_id: pack for pack in packs}
+    selected: list[TelegramMemoryBenchmarkPack] = []
+    missing: list[str] = []
+    for raw_pack_id in pack_ids:
+        pack_id = str(raw_pack_id).strip()
+        if not pack_id:
+            continue
+        pack = packs_by_id.get(pack_id)
+        if pack is None:
+            missing.append(pack_id)
+            continue
+        selected.append(pack)
+    if missing:
+        available = ", ".join(sorted(packs_by_id))
+        raise ValueError(
+            f"unknown_benchmark_packs:{', '.join(missing)}; available={available}"
+        )
+    return tuple(selected)
+
+
+def flatten_benchmark_pack_cases(
+    packs: Sequence[TelegramMemoryBenchmarkPack],
+) -> tuple[TelegramMemoryRegressionCase, ...]:
+    deduped: dict[str, TelegramMemoryRegressionCase] = {}
+    for pack in packs:
+        for case in pack.cases:
+            deduped.setdefault(case.case_id, case)
+    return tuple(deduped.values())

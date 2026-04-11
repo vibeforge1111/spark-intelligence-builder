@@ -8,7 +8,7 @@ from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.memory.benchmark_packs import (
-    default_telegram_memory_benchmark_packs,
+    select_telegram_memory_benchmark_packs,
 )
 from spark_intelligence.memory.regression import (
     QUALITY_LANE_KEYS,
@@ -69,6 +69,7 @@ def run_telegram_memory_architecture_soak(
     write_path: str | Path | None = None,
     case_ids: list[str] | None = None,
     categories: list[str] | None = None,
+    benchmark_pack_ids: list[str] | None = None,
     baseline_names: list[str] | None = None,
 ) -> TelegramArchitectureSoakResult:
     resolved_output_dir = Path(output_dir) if output_dir else config_manager.paths.home / "artifacts" / "telegram-memory-architecture-soak"
@@ -78,7 +79,43 @@ def run_telegram_memory_architecture_soak(
     requested_runs = max(int(runs), 1)
     requested_baseline_names = [str(item).strip() for item in (baseline_names or []) if str(item).strip()]
     resolved_baseline_names = list(requested_baseline_names)
-    run_specs = _build_run_specs(case_ids=case_ids, categories=categories)
+    try:
+        run_specs = _build_run_specs(
+            case_ids=case_ids,
+            categories=categories,
+            benchmark_pack_ids=benchmark_pack_ids,
+        )
+    except ValueError as exc:
+        payload = {
+            "summary": {
+                "status": "invalid_request",
+                "requested_runs": requested_runs,
+                "completed_runs": 0,
+                "failed_runs": 0,
+                "benchmark_mode": "invalid_request",
+                "memory_namespace_mode": "isolated_per_run",
+                "baseline_names": list(resolved_baseline_names),
+                "benchmark_pack_count": 0,
+                "benchmark_pack_ids": [],
+                "covered_categories": [],
+                "covered_focus_areas": [],
+                "covered_benchmark_tags": [],
+                "quality_lane_coverage": {lane: False for lane in QUALITY_LANE_KEYS},
+                "overall_leader_names": [],
+                "recommended_top_two": [],
+            },
+            "aggregate_results": [],
+            "benchmark_packs": [],
+            "benchmark_pack_results": [],
+            "category_results": [],
+            "runs": [],
+            "errors": [str(exc)],
+            "artifact_paths": {
+                "summary_json": str(resolved_write_path),
+            },
+        }
+        resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return TelegramArchitectureSoakResult(output_dir=resolved_output_dir, payload=payload)
     benchmark_pack_rows = [_run_spec_payload(spec) for spec in run_specs]
     baseline_aggregate: dict[str, dict[str, Any]] = {}
     category_aggregate: dict[str, dict[str, dict[str, Any]]] = {}
@@ -226,9 +263,11 @@ def _build_run_specs(
     *,
     case_ids: list[str] | None,
     categories: list[str] | None,
+    benchmark_pack_ids: list[str] | None,
 ) -> tuple[_BenchmarkRunSpec, ...]:
     requested_case_ids = tuple(str(item).strip() for item in (case_ids or []) if str(item).strip())
     requested_categories = tuple(str(item).strip() for item in (categories or []) if str(item).strip())
+    requested_pack_ids = tuple(str(item).strip() for item in (benchmark_pack_ids or []) if str(item).strip())
     if requested_case_ids or requested_categories:
         return (
             _BenchmarkRunSpec(
@@ -251,7 +290,7 @@ def _build_run_specs(
             case_ids=tuple(case.case_id for case in pack.cases),
             categories=tuple(sorted({case.category for case in pack.cases})),
         )
-        for pack in default_telegram_memory_benchmark_packs()
+        for pack in select_telegram_memory_benchmark_packs(requested_pack_ids)
     )
 
 

@@ -1656,6 +1656,7 @@ def build_parser() -> argparse.ArgumentParser:
     memory_regression_parser.add_argument("--user-id", help="Explicit Telegram user id to simulate")
     memory_regression_parser.add_argument("--username", help="Telegram username to simulate")
     memory_regression_parser.add_argument("--chat-id", help="Explicit Telegram chat id override")
+    memory_regression_parser.add_argument("--benchmark-pack", action="append", default=[], help="Restrict the regression run to one or more named Telegram benchmark packs")
     memory_regression_parser.add_argument("--case-id", action="append", default=[], help="Restrict the regression run to one or more case ids")
     memory_regression_parser.add_argument("--category", action="append", default=[], help="Restrict the regression run to one or more case categories")
     memory_regression_parser.add_argument("--baseline", action="append", default=[], help="Restrict architecture comparison to one or more named memory baselines")
@@ -1683,6 +1684,7 @@ def build_parser() -> argparse.ArgumentParser:
     memory_architecture_soak_parser.add_argument("--user-id", help="Explicit Telegram user id to simulate")
     memory_architecture_soak_parser.add_argument("--username", help="Telegram username to simulate")
     memory_architecture_soak_parser.add_argument("--chat-id", help="Explicit Telegram chat id override")
+    memory_architecture_soak_parser.add_argument("--benchmark-pack", action="append", default=[], help="Restrict the soak to one or more named Telegram benchmark packs")
     memory_architecture_soak_parser.add_argument("--case-id", action="append", default=[], help="Restrict the soak to one or more case ids")
     memory_architecture_soak_parser.add_argument("--category", action="append", default=[], help="Restrict the soak to one or more case categories")
     memory_architecture_soak_parser.add_argument("--baseline", action="append", default=[], help="Restrict architecture comparison to one or more named memory baselines")
@@ -4539,6 +4541,7 @@ def handle_memory_run_telegram_regression(args: argparse.Namespace) -> int:
         write_path=args.write,
         case_ids=args.case_id,
         categories=args.category,
+        benchmark_pack_ids=args.benchmark_pack,
         baseline_names=args.baseline,
     )
     print(result.to_json() if args.json else result.to_text())
@@ -4578,6 +4581,7 @@ def handle_memory_soak_architectures(args: argparse.Namespace) -> int:
         write_path=args.write,
         case_ids=args.case_id,
         categories=args.category,
+        benchmark_pack_ids=args.benchmark_pack,
         baseline_names=args.baseline,
     )
     print(result.to_json() if args.json else result.to_text())

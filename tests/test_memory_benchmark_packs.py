@@ -1,4 +1,10 @@
-from spark_intelligence.memory.benchmark_packs import default_telegram_memory_benchmark_packs
+import pytest
+
+from spark_intelligence.memory.benchmark_packs import (
+    default_telegram_memory_benchmark_packs,
+    flatten_benchmark_pack_cases,
+    select_telegram_memory_benchmark_packs,
+)
 
 
 def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
@@ -31,3 +37,18 @@ def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
     assert "mission_query_after_recency_pressure" in identity_case_ids
     assert "identity_summary_after_recency_pressure_rich" in identity_case_ids
     assert "identity_summary_after_recency_pressure_with_latest_state" in identity_case_ids
+
+
+def test_select_benchmark_packs_and_flatten_cases_preserves_custom_variants() -> None:
+    packs = select_telegram_memory_benchmark_packs(["identity_under_recency_pressure"])
+
+    assert [pack.pack_id for pack in packs] == ["identity_under_recency_pressure"]
+
+    case_ids = {case.case_id for case in flatten_benchmark_pack_cases(packs)}
+    assert "identity_summary_after_recency_pressure_rich" in case_ids
+    assert "identity_summary_after_recency_pressure_with_latest_state" in case_ids
+
+
+def test_select_benchmark_packs_rejects_unknown_pack_ids() -> None:
+    with pytest.raises(ValueError, match="unknown_benchmark_packs"):
+        select_telegram_memory_benchmark_packs(["does_not_exist"])
