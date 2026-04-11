@@ -96,14 +96,14 @@ Operator shortcut:
 - it also auto-refreshes the baseline sections in [README.md](./README.md), [docs/MEMORY_LIVE_VALIDATION_RESULTS_2026-04-11.md](./docs/MEMORY_LIVE_VALIDATION_RESULTS_2026-04-11.md), and [docs/MEMORY_BENCHMARK_HANDOFF_2026-04-11.md](./docs/MEMORY_BENCHMARK_HANDOFF_2026-04-11.md) from the newest full run
 <!-- AUTO_MEMORY_BASELINE_README_START -->
 - current clean full-run baseline:
-  `.spark-intelligence\artifacts\memory-validation-runs\20260412-010753`
+  `.spark-intelligence\artifacts\memory-validation-runs\20260412-012118`
 - current canonical full-run pointer:
   `.spark-intelligence\artifacts\memory-validation-runs\latest-full-run.json`
 - expected full validation cost from the latest clean run:
-  - benchmark: `15.041s`
-  - regression: `26.173s`
-  - soak: `345.112s`
-  - total: `386.583s`
+  - benchmark: `16.570s`
+  - regression: `28.206s`
+  - soak: `355.454s`
+  - total: `400.446s`
 <!-- AUTO_MEMORY_BASELINE_README_END -->
 
 Key repo skills:
