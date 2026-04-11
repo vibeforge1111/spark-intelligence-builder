@@ -382,6 +382,7 @@ $summaryPath = Join-Path $resolvedOutputRoot "run-summary.json"
 $runSummary | ConvertTo-Json | Set-Content -Path $summaryPath -Encoding utf8
 
 $validationRunsRoot = Join-Path $SparkHome "artifacts\memory-validation-runs"
+New-Item -ItemType Directory -Path $validationRunsRoot -Force | Out-Null
 $latestRunPath = Join-Path $validationRunsRoot "latest-run.json"
 $latestFullRunPath = Join-Path $validationRunsRoot "latest-full-run.json"
 $previousFullRunPath = Join-Path $validationRunsRoot "previous-full-run.json"
