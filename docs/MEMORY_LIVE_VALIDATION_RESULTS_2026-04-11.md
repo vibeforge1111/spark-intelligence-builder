@@ -16,8 +16,8 @@ The goal was to keep offline ProductMemory comparison and live Telegram validati
 - KB probe coverage: `38/38` current-state and `38/38` evidence hits
 - Clean Telegram soak status: `14/14` completed, `0` failed
 - Latest clean whole-suite soak leader: `summary_synthesis_memory`
-- Latest clean whole-suite aggregate: `90/92` for `summary_synthesis_memory` vs `86/92` for `dual_store_event_calendar_hybrid`
-- Latest clean selector-pack aggregate: `62/64` for `summary_synthesis_memory` vs `58/64` for `dual_store_event_calendar_hybrid`
+- Latest clean whole-suite aggregate: `92/92` for `summary_synthesis_memory` vs `89/92` for `dual_store_event_calendar_hybrid`
+- Latest clean selector-pack aggregate: `64/64` for `summary_synthesis_memory` vs `61/64` for `dual_store_event_calendar_hybrid`
 - Offline ProductMemory leader: `dual_store_event_calendar_hybrid`
 - Current runtime selector: `dual_store_event_calendar_hybrid`
 
@@ -26,7 +26,7 @@ The goal was to keep offline ProductMemory comparison and live Telegram validati
 - earlier live soak snapshot: `summary_synthesis_memory` at `36/72` vs `33/72`
 - several later soak verdicts that appeared to favor `dual_store_event_calendar_hybrid` were contaminated by concurrent soak processes writing to the same artifact path
 - those stale soak processes were terminated and the `14`-pack suite was rerun clean
-- the latest clean rerun finished `14/14`, `0` failed, with `summary_synthesis_memory` leading the full suite by four matched cases and the selector subset by four matched cases
+- the latest clean rerun finished `14/14`, `0` failed, with `summary_synthesis_memory` leading the full suite by three matched cases and the selector subset by three matched cases
 - the live-comparison tie-break still ignores explanation-only exact-string scorecard differences when live accuracy, trustworthiness, and grounding already tie
 - explanation prompts still carry explicit `expected_answer_candidate_source = evidence_memory`, so provenance alignment is measured directly instead of being hidden behind surface phrasing
 - alignment-only scorecard differences no longer pick a winner when there is no substantive non-explanation scorecard signal, so the explanation-heavy packs no longer manufacture a live leader on phrasing/internal provenance alone
@@ -48,7 +48,7 @@ The live suite is now stricter in the places that were still underreporting ambi
 - `contradiction_and_recency` and `temporal_conflict_gauntlet` moved toward `summary_synthesis_memory` after the chip-side history/query fixes were aligned with Builder prompts
 - direct profile fact explanation support in the chip-side benchmark runtime removed the shared `mission_explanation` failure and cleaned up `startup_explanation_after_founder`
 - adding the missing `occupation_write` prerequisite to `provenance_audit` converted that pack from a manufactured failure into a clean tie
-- the current clean-soak selector packs still requiring work are `event_calendar_lineage_proxy` and `temporal_conflict_gauntlet`
+- normalizing `location` entries into the history-answer path then cleared `city_history_query_after_overwrite`, which removed the last remaining selector-pack gaps from the live suite
 - `long_horizon_recall`, `boundary_abstention`, `anti_personalization_guardrails`, `identity_synthesis`, `loaded_context_abstention`, and `identity_under_recency_pressure` are now health gates rather than selector packs because both contenders are fully green there
 - `identity_under_recency_pressure` remains a targeted `11/11` tie after the chip-side extraction and profile-query routing fixes
 

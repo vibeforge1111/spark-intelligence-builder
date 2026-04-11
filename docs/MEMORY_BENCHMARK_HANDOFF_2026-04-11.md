@@ -44,8 +44,8 @@ Latest clean live validation:
 
 - `.spark-intelligence/artifacts/telegram-memory-architecture-soak/telegram-memory-architecture-soak.json`
 - status: `14/14` completed, `0` failed
-- full-suite aggregate: `90/92` for `summary_synthesis_memory` vs `86/92` for `dual_store_event_calendar_hybrid`
-- selector-pack aggregate: `62/64` for `summary_synthesis_memory` vs `58/64` for `dual_store_event_calendar_hybrid`
+- full-suite aggregate: `92/92` for `summary_synthesis_memory` vs `89/92` for `dual_store_event_calendar_hybrid`
+- selector-pack aggregate: `64/64` for `summary_synthesis_memory` vs `61/64` for `dual_store_event_calendar_hybrid`
 - that rerun was performed after terminating stale concurrent soak jobs that had been contaminating the shared artifact path
 - a later chip/runtime scoring pass then removed the shared explanation misses and eliminated alignment-only live tiebreaks, which is why the clean live margin widened materially
 - the latest pack-definition cleanup also converted `provenance_audit` into a clean tie by adding the missing `occupation_write` prerequisite it implicitly depended on
@@ -82,8 +82,8 @@ Why the contender pair changed:
 - The benchmark now honestly reports unresolved lanes instead of inventing ties.
 
 Still unresolved / weak:
-- `event_calendar_lineage_proxy`
-- `temporal_conflict_gauntlet`
+- no live selector packs are currently unresolved
+- the remaining disagreement is between the offline ProductMemory result and the fully green live Telegram result
 
 Observed trust metrics:
 - both contenders stayed clean on the current forbidden-memory lanes in the latest live soak
