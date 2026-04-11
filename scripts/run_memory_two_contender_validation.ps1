@@ -37,6 +37,8 @@ function Get-ExpectedValidationBaseline {
         $runSummaryPayload = Get-Content $runSummaryPath -Raw | ConvertFrom-Json
         return [ordered]@{
             output_root = [string]$pointerPayload.output_root
+            builder_repo_commit = $runSummaryPayload.builder_repo_commit
+            domain_chip_repo_commit = $runSummaryPayload.domain_chip_repo_commit
             benchmark_duration_seconds = $runSummaryPayload.benchmark_duration_seconds
             regression_duration_seconds = $runSummaryPayload.regression_duration_seconds
             soak_duration_seconds = $runSummaryPayload.soak_duration_seconds
@@ -65,24 +67,7 @@ if ([string]::IsNullOrWhiteSpace($resolvedOutputRoot)) {
     $resolvedOutputRoot = Join-Path $SparkHome "artifacts\memory-validation-runs\$timestamp"
 }
 
-$expectedBaseline = Get-ExpectedValidationBaseline -LatestFullRunPath $expectedLatestFullRunPointer
 New-Item -ItemType Directory -Path $resolvedOutputRoot -Force | Out-Null
-Write-Host "Validation output root: $resolvedOutputRoot"
-Write-Host "Expected full-run cost from latest clean baseline:"
-if ($expectedBaseline) {
-    Write-Host ("- source baseline: " + $expectedBaseline.output_root)
-    Write-Host ("- benchmark: " + (Format-ExpectedDuration -Value $expectedBaseline.benchmark_duration_seconds))
-    Write-Host ("- regression: " + (Format-ExpectedDuration -Value $expectedBaseline.regression_duration_seconds))
-    Write-Host ("- soak: " + (Format-ExpectedDuration -Value $expectedBaseline.soak_duration_seconds))
-    Write-Host ("- total: " + (Format-ExpectedDuration -Value $expectedBaseline.total_duration_seconds))
-} else {
-    Write-Host "- source baseline: unavailable"
-    Write-Host "- benchmark: unknown"
-    Write-Host "- regression: unknown"
-    Write-Host "- soak: unknown"
-    Write-Host "- total: unknown"
-}
-Write-Host ("- latest full-run pointer: " + $expectedLatestFullRunPointer)
 
 function Get-GitRevision {
     param(
@@ -169,6 +154,41 @@ $builderRepoRoot = (Get-Location).Path
 $domainChipRepoRoot = Join-Path (Split-Path $builderRepoRoot -Parent) "domain-chip-memory"
 $builderRevision = Get-GitRevision -RepoRoot $builderRepoRoot
 $domainChipRevision = Get-GitRevision -RepoRoot $domainChipRepoRoot
+$expectedBaseline = Get-ExpectedValidationBaseline -LatestFullRunPath $expectedLatestFullRunPointer
+Write-Host "Validation output root: $resolvedOutputRoot"
+Write-Host "Expected full-run cost from latest clean baseline:"
+if ($expectedBaseline) {
+    Write-Host ("- source baseline: " + $expectedBaseline.output_root)
+    Write-Host ("- benchmark: " + (Format-ExpectedDuration -Value $expectedBaseline.benchmark_duration_seconds))
+    Write-Host ("- regression: " + (Format-ExpectedDuration -Value $expectedBaseline.regression_duration_seconds))
+    Write-Host ("- soak: " + (Format-ExpectedDuration -Value $expectedBaseline.soak_duration_seconds))
+    Write-Host ("- total: " + (Format-ExpectedDuration -Value $expectedBaseline.total_duration_seconds))
+    if (
+        (($expectedBaseline.builder_repo_commit) -and ($builderRevision) -and ([string]$expectedBaseline.builder_repo_commit -ne [string]$builderRevision)) -or
+        (($expectedBaseline.domain_chip_repo_commit) -and ($domainChipRevision) -and ([string]$expectedBaseline.domain_chip_repo_commit -ne [string]$domainChipRevision))
+    ) {
+        Write-Host "- baseline staleness: warning"
+        if (($expectedBaseline.builder_repo_commit) -and ($builderRevision) -and ([string]$expectedBaseline.builder_repo_commit -ne [string]$builderRevision)) {
+            Write-Host ("  builder baseline commit: " + [string]$expectedBaseline.builder_repo_commit)
+            Write-Host ("  builder current commit: " + [string]$builderRevision)
+        }
+        if (($expectedBaseline.domain_chip_repo_commit) -and ($domainChipRevision) -and ([string]$expectedBaseline.domain_chip_repo_commit -ne [string]$domainChipRevision)) {
+            Write-Host ("  domain-chip baseline commit: " + [string]$expectedBaseline.domain_chip_repo_commit)
+            Write-Host ("  domain-chip current commit: " + [string]$domainChipRevision)
+        }
+    } else {
+        Write-Host "- baseline staleness: clean"
+    }
+} else {
+    Write-Host "- source baseline: unavailable"
+    Write-Host "- benchmark: unknown"
+    Write-Host "- regression: unknown"
+    Write-Host "- soak: unknown"
+    Write-Host "- total: unknown"
+    Write-Host "- baseline staleness: unknown"
+}
+Write-Host ("- latest full-run pointer: " + $expectedLatestFullRunPointer)
+
 $runStartedAt = Get-Date
 
 $runSummary = [ordered]@{
