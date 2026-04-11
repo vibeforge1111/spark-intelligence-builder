@@ -97,14 +97,14 @@ Operator shortcut:
 - if `domain-chip-memory` is available next to this repo, full runs also auto-refresh its top-level Builder-alignment docs from the same `latest-full-run.json` pointer
 <!-- AUTO_MEMORY_BASELINE_README_START -->
 - current clean full-run baseline:
-  `.spark-intelligence\artifacts\memory-validation-runs\20260412-020542`
+  `.spark-intelligence\artifacts\memory-validation-runs\20260412-021554`
 - current canonical full-run pointer:
   `.spark-intelligence\artifacts\memory-validation-runs\latest-full-run.json`
 - expected full validation cost from the latest clean run:
-  - benchmark: `12.615s`
-  - regression: `24.977s`
-  - soak: `342.464s`
-  - total: `380.236s`
+  - benchmark: `14.326s`
+  - regression: `24.020s`
+  - soak: `340.759s`
+  - total: `379.336s`
 <!-- AUTO_MEMORY_BASELINE_README_END -->
 
 Key repo skills:
