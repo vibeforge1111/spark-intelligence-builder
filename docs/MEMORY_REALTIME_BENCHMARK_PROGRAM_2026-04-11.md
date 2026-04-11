@@ -7,6 +7,7 @@ Related substrate repo: `C:\Users\USER\Desktop\domain-chip-memory`
 Execution companion:
 
 - `docs/NEXT_48H_MEMORY_EXECUTION_PLAN_2026-04-11.md`
+- `docs/MEMORY_FAILURE_LEDGER_2026-04-11.md`
 
 ## Goal
 

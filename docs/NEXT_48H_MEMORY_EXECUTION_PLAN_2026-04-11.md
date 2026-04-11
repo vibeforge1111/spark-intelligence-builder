@@ -144,6 +144,7 @@ Success criteria:
 - one clean wrapper run exists
 - one stable pointer exists
 - one stable manifest exists
+- one current failure ledger exists, even if it records zero open live failures
 
 Do not move on if:
 - any step failed
