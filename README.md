@@ -94,16 +94,17 @@ Operator shortcut:
 - on full runs it also preserves `.spark-intelligence\artifacts\memory-validation-runs\previous-full-run.json` and writes a per-run `validation-delta.md`
 - it also auto-refreshes [docs/MEMORY_FAILURE_LEDGER_2026-04-11.md](./docs/MEMORY_FAILURE_LEDGER_2026-04-11.md) from the newest run
 - it also auto-refreshes the baseline sections in [README.md](./README.md), [docs/MEMORY_LIVE_VALIDATION_RESULTS_2026-04-11.md](./docs/MEMORY_LIVE_VALIDATION_RESULTS_2026-04-11.md), and [docs/MEMORY_BENCHMARK_HANDOFF_2026-04-11.md](./docs/MEMORY_BENCHMARK_HANDOFF_2026-04-11.md) from the newest full run
+- if `domain-chip-memory` is available next to this repo, full runs also auto-refresh its top-level Builder-alignment docs from the same `latest-full-run.json` pointer
 <!-- AUTO_MEMORY_BASELINE_README_START -->
 - current clean full-run baseline:
-  `.spark-intelligence\artifacts\memory-validation-runs\20260412-012118`
+  `.spark-intelligence\artifacts\memory-validation-runs\20260412-013326`
 - current canonical full-run pointer:
   `.spark-intelligence\artifacts\memory-validation-runs\latest-full-run.json`
 - expected full validation cost from the latest clean run:
-  - benchmark: `16.570s`
-  - regression: `28.206s`
-  - soak: `355.454s`
-  - total: `400.446s`
+  - benchmark: `12.348s`
+  - regression: `23.045s`
+  - soak: `348.233s`
+  - total: `383.853s`
 <!-- AUTO_MEMORY_BASELINE_README_END -->
 
 Key repo skills:

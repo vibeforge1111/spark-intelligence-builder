@@ -125,6 +125,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_memory_two_contender_vali
 By default that wrapper writes to a timestamped output root under `.spark-intelligence/artifacts/memory-validation-runs/`, so one full validation pass does not overwrite another.
 It also refreshes `.spark-intelligence/artifacts/memory-validation-runs/latest-run.json`, which points at the newest `run-summary.json` manifest.
 It refreshes `.spark-intelligence/artifacts/memory-validation-runs/latest-full-run.json` only for full validation runs, and the failure ledger is generated from that full-run pointer rather than from arbitrary no-op runs.
+
+The same full-run path now also auto-refreshes the baseline sections in Builder's README and memory handoff docs. When `domain-chip-memory` is present as the sibling substrate repo, that same full-run path also refreshes the chip-side Builder-alignment docs so both repos stay on the same runtime baseline without manual patching.
 It now also refreshes `docs/MEMORY_FAILURE_LEDGER_2026-04-11.md` from that newest full run, so the ledger and the full validation pointer stay in sync.
 On full runs it also preserves `.spark-intelligence/artifacts/memory-validation-runs/previous-full-run.json` and writes a `validation-delta.md` file into the new run root.
 
