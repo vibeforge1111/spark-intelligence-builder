@@ -415,7 +415,7 @@ class MemoryOrchestratorTests(SparkTestCase):
             "def build_sdk_contract_summary():\n"
             "    return {\n"
             "        'runtime_class': 'SparkMemorySDK',\n"
-            "        'runtime_memory_architecture': 'summary_synthesis_memory',\n"
+            "        'runtime_memory_architecture': 'dual_store_event_calendar_hybrid',\n"
             "        'runtime_memory_provider': 'heuristic_v1',\n"
             "    }\n",
             encoding="utf-8",
@@ -437,7 +437,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(runtime["configured_module"], "domain_chip_memory")
         self.assertEqual(runtime["resolved_module"], "domain_chip_memory")
         self.assertEqual(runtime["runtime_class"], "SparkMemorySDK")
-        self.assertEqual(runtime["runtime_memory_architecture"], "summary_synthesis_memory")
+        self.assertEqual(runtime["runtime_memory_architecture"], "dual_store_event_calendar_hybrid")
         self.assertEqual(runtime["runtime_memory_provider"], "heuristic_v1")
 
     def test_lookup_current_state_uses_legacy_double_prefixed_fallback_for_prefixed_subject(self) -> None:

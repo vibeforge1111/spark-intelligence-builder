@@ -75,6 +75,7 @@ This repo currently includes:
 Current memory benchmarking program:
 
 - default contenders are `summary_synthesis_memory` and `dual_store_event_calendar_hybrid`
+- current pinned runtime selector is `dual_store_event_calendar_hybrid`
 - benchmark upgrades are not promoted on offline scorecards alone
 - the same contenders must also stay green on live Telegram regression and soak runs
 

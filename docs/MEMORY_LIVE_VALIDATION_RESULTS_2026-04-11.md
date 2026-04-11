@@ -63,15 +63,15 @@ The benchmark-pack CLI path now runs custom Telegram variants directly:
 
 The current decision now has a real live separator again:
 
-1. `summary_synthesis_memory` is still the pinned runtime architecture and still matches the targeted live regression leader set.
-2. `dual_store_event_calendar_hybrid` leads the offline ProductMemory benchmark.
-3. `dual_store_event_calendar_hybrid` also leads the corrected 13-pack live soak once explanation provenance alignment is measured explicitly.
-4. The targeted identity pack still does not separate the contenders, so it should remain a regression gate, not the sole promotion driver.
-5. Promotion still should not happen on offline scorecards alone, but the live suite now has a meaningful provenance-based separator instead of only harness noise.
+1. `dual_store_event_calendar_hybrid` leads the offline ProductMemory benchmark.
+2. `dual_store_event_calendar_hybrid` also leads the corrected 13-pack live soak once explanation provenance alignment is measured explicitly.
+3. The targeted identity pack still does not separate the contenders, so it should remain a regression gate, not the sole promotion driver.
+4. Promotion still should not happen on offline scorecards alone, but the live suite now has a meaningful provenance-based separator instead of only harness noise.
+5. The runtime selector has now been repinned to `dual_store_event_calendar_hybrid` so the Builder contract matches the combined benchmark result.
 
 ## Runtime Selector
 
-The Builder runtime contract now explicitly reports `summary_synthesis_memory` as the active memory architecture alongside the governed `SparkMemorySDK` substrate. That means the live leader is now pinned in the runtime summary layer while `dual_store_event_calendar_hybrid` remains the offline challenger that still has to win both scorecards and live Telegram before any promotion decision changes.
+The Builder runtime contract now explicitly reports `dual_store_event_calendar_hybrid` as the active memory architecture alongside the governed `SparkMemorySDK` substrate. That means the runtime summary layer now matches the current offline and live whole-suite leader, while the promotion rule still stays the same: any future change has to keep winning both scorecards and live Telegram before it gets pinned.
 
 ## Artifacts
 
@@ -87,4 +87,6 @@ The Builder runtime contract now explicitly reports `summary_synthesis_memory` a
 - `.spark-intelligence/artifacts/telegram-memory-regression-identity-pack-v9/architecture-live-comparison/telegram-memory-architecture-live-comparison.json`
 - `.spark-intelligence/artifacts/telegram-memory-regression-explanation-pack-v1/telegram-memory-regression.json`
 - `.spark-intelligence/artifacts/telegram-memory-regression-explanation-pack-v1/architecture-live-comparison/telegram-memory-architecture-live-comparison.json`
+- `.spark-intelligence/artifacts/telegram-memory-regression-explanation-pack-v2/telegram-memory-regression.json`
+- `.spark-intelligence/artifacts/telegram-memory-regression-explanation-pack-v2/architecture-live-comparison/telegram-memory-architecture-live-comparison.json`
 - `.spark-intelligence/artifacts/telegram-memory-architecture-soak/telegram-memory-architecture-soak.json`

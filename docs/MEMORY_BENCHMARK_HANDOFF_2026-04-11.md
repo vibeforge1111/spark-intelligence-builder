@@ -6,13 +6,13 @@ Related memory substrate repo: `C:\Users\USER\Desktop\domain-chip-memory`
 
 ## Current state
 
-- Builder is now pinned to `summary_synthesis_memory` as the named runtime architecture in the SDK contract summary.
+- Builder is now pinned to `dual_store_event_calendar_hybrid` as the named runtime architecture in the SDK contract summary.
 - The live runtime still runs through the governed `SparkMemorySDK` / `domain_chip_memory` stack.
 - The benchmark harness was expanded from a fixed Telegram replay into a varied pack suite.
 - The soak/reporting logic was then hardened so zero-signal categories no longer look like meaningful ties.
 - The current default serious comparison loop is now governed by `docs/MEMORY_REALTIME_BENCHMARK_PROGRAM_2026-04-11.md`.
 
-## Final completed soak
+## Historical soak snapshot
 
 Artifact root:
 - `C:\Users\USER\.spark-intelligence\artifacts\telegram-memory-architecture-trust-soak-27-fixed`
@@ -24,14 +24,19 @@ Run status:
 - completed `27/27`
 - failed `0/27`
 
-Final aggregate leaderboard:
+Historical aggregate leaderboard:
 1. `summary_synthesis_memory` = `27/138` = `19.57%`
 2. `observational_temporal_memory` = `21/138` = `15.22%`
 3. `dual_store_event_calendar_hybrid` = `21/138` = `15.22%`
 
-Historical top-two recommendation from this soak:
+Historical top-two recommendation from that soak:
 1. `summary_synthesis_memory`
 2. `observational_temporal_memory`
+
+Current whole-suite decision:
+
+1. `dual_store_event_calendar_hybrid`
+2. `summary_synthesis_memory`
 
 ## Current operating decision
 
@@ -39,6 +44,10 @@ The current default operating program is:
 
 1. `summary_synthesis_memory`
 2. `dual_store_event_calendar_hybrid`
+
+The current pinned runtime selector is:
+
+1. `dual_store_event_calendar_hybrid`
 
 This is now the default contender pair for:
 
@@ -48,13 +57,13 @@ This is now the default contender pair for:
 
 Why the contender pair changed:
 
-- `summary_synthesis_memory` remains the primary candidate
-- `dual_store_event_calendar_hybrid` is the more structurally different challenger
+- `dual_store_event_calendar_hybrid` now wins the combined offline and live whole-suite program
+- `summary_synthesis_memory` remains the closest serious challenger and still ties on some targeted live packs
 - `observational_temporal_memory` remains useful as a control or explicit extra baseline, but is no longer the default second contender
 
 ## Important benchmark interpretation
 
-- The winner is real for this hardened benchmark suite: `summary_synthesis_memory`.
+- The current combined winner is real for the hardened offline-plus-live suite: `dual_store_event_calendar_hybrid`.
 - The absolute performance is still weak.
 - The benchmark now honestly reports unresolved lanes instead of inventing ties.
 
@@ -100,8 +109,8 @@ Why they may keep tying:
 
 ## Recommended next steps tomorrow
 
-1. Keep `summary_synthesis_memory` as the primary candidate.
-2. Keep `dual_store_event_calendar_hybrid` as the active challenger in the default live program.
+1. Keep `dual_store_event_calendar_hybrid` as the pinned runtime architecture.
+2. Keep `summary_synthesis_memory` as the active challenger in the default live program.
 3. Use `observational_temporal_memory` as a control lane when we want a third comparison, not as the default second contender.
 4. Add new benchmark packs specifically for:
    - event ordering
@@ -110,7 +119,7 @@ Why they may keep tying:
    - abstention under tempting but irrelevant stored facts
    - provenance/explanation phrasing quality
 5. Run the top two through those new real-time packs.
-6. Keep rerunning the pinned `summary_synthesis_memory` runtime against the active challenger and only repin if the challenger wins both offline and live.
+6. Keep rerunning the pinned `dual_store_event_calendar_hybrid` runtime against the active challenger and only repin if the challenger wins both offline and live.
 
 Promotion rule:
 
@@ -122,6 +131,7 @@ Promotion rule:
 
 Tomorrow, resume from:
 - the completed fixed soak artifact
+- the refreshed explanation-pack rerun at `C:\Users\USER\.spark-intelligence\artifacts\telegram-memory-regression-explanation-pack-v2`
 - the current default two-contender program in `docs/MEMORY_REALTIME_BENCHMARK_PROGRAM_2026-04-11.md`
 - new benchmark design focused on the unsolved lanes and on separating observational vs event-calendar behavior in a more targeted way
 

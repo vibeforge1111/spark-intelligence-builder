@@ -70,11 +70,10 @@ class MemoryCliKnowledgeBaseTests(SparkTestCase):
         payload = {
             "summary": {
                 "runtime_sdk_class": "SparkMemorySDK",
-                "runtime_memory_architecture": "summary_synthesis_memory",
-                "documented_frontier_architecture": "summary_synthesis_memory",
+                "runtime_memory_architecture": "dual_store_event_calendar_hybrid",
+                "documented_frontier_architecture": "dual_store_event_calendar_hybrid",
                 "runtime_matches_documented_frontier": True,
                 "product_memory_leader_names": [
-                    "observational_temporal_memory",
                     "dual_store_event_calendar_hybrid",
                 ],
             },
@@ -108,7 +107,7 @@ class MemoryCliKnowledgeBaseTests(SparkTestCase):
         self.assertEqual(json.loads(stdout)["summary"]["runtime_sdk_class"], "SparkMemorySDK")
         self.assertEqual(
             json.loads(stdout)["summary"]["runtime_memory_architecture"],
-            "summary_synthesis_memory",
+            "dual_store_event_calendar_hybrid",
         )
         kwargs = run_benchmark.call_args.kwargs
         self.assertEqual(kwargs["config_manager"].paths.home, Path(self.home))
@@ -126,8 +125,8 @@ class MemoryCliKnowledgeBaseTests(SparkTestCase):
                 "requested_runs": 5,
                 "completed_runs": 5,
                 "failed_runs": 0,
-                "overall_leader_names": ["summary_synthesis_memory"],
-                "recommended_top_two": ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
+                "overall_leader_names": ["dual_store_event_calendar_hybrid"],
+                "recommended_top_two": ["dual_store_event_calendar_hybrid", "summary_synthesis_memory"],
             },
             "errors": [],
         }

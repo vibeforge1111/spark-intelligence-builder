@@ -163,6 +163,7 @@ Current live separation note:
 
 - the broad live suite now separates the contenders again on explanation provenance alignment
 - `dual_store_event_calendar_hybrid` is the current whole-suite live soak leader because it preserves `evidence_memory` alignment on explanation-heavy packs where `summary_synthesis_memory` still falls back to `aggregate_memory`
+- the runtime selector is now pinned to `dual_store_event_calendar_hybrid` because it won both the offline ProductMemory comparison and the corrected live Telegram soak
 - the identity-under-recency targeted pack still ties, so it should be treated as a health gate, not as the deciding promotion signal
 
 ## Next benchmark expansions
