@@ -93,6 +93,8 @@ Operator shortcut:
 - it refreshes `.spark-intelligence\artifacts\memory-validation-runs\latest-full-run.json` only when a full benchmark + regression + soak run exists
 - on full runs it also preserves `.spark-intelligence\artifacts\memory-validation-runs\previous-full-run.json` and writes a per-run `validation-delta.md`
 - it also auto-refreshes [docs/MEMORY_FAILURE_LEDGER_2026-04-11.md](./docs/MEMORY_FAILURE_LEDGER_2026-04-11.md) from the newest run
+- it also auto-refreshes the baseline sections in [README.md](./README.md), [docs/MEMORY_LIVE_VALIDATION_RESULTS_2026-04-11.md](./docs/MEMORY_LIVE_VALIDATION_RESULTS_2026-04-11.md), and [docs/MEMORY_BENCHMARK_HANDOFF_2026-04-11.md](./docs/MEMORY_BENCHMARK_HANDOFF_2026-04-11.md) from the newest full run
+<!-- AUTO_MEMORY_BASELINE_README_START -->
 - current clean full-run baseline:
   `.spark-intelligence\artifacts\memory-validation-runs\20260412-005417`
 - current canonical full-run pointer:
@@ -102,6 +104,7 @@ Operator shortcut:
   - regression: `25.528s`
   - soak: `350.805s`
   - total: `389.672s`
+<!-- AUTO_MEMORY_BASELINE_README_END -->
 
 Key repo skills:
 

@@ -106,6 +106,25 @@ function Invoke-LedgerRender {
     return $true
 }
 
+function Invoke-BaselineDocsRender {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$LatestRunPath
+    )
+
+    $renderScript = Join-Path $RepoRoot "scripts\render_memory_baseline_docs.py"
+    if (-not (Test-Path $renderScript)) {
+        return $false
+    }
+    python $renderScript --latest-run $LatestRunPath | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to render memory baseline docs"
+    }
+    return $true
+}
+
 function Test-IsFullValidationSummary {
     param(
         [Parameter(Mandatory = $true)]
@@ -362,6 +381,7 @@ $canRenderLedger = (
     -not [string]::IsNullOrWhiteSpace([string]$runSummary["soak_output_dir"])
 )
 $ledgerRendered = $false
+$baselineDocsRendered = $false
 $deltaRendered = $false
 if ($canRenderLedger) {
     $priorFullRunJson = if (Test-Path $latestFullRunPath) { Get-Content $latestFullRunPath -Raw } else { $null }
@@ -374,6 +394,7 @@ if ($canRenderLedger) {
         updated_at = (Get-Date).ToString("o")
     } | ConvertTo-Json | Set-Content -Path $latestFullRunPath -Encoding utf8
     $ledgerRendered = Invoke-LedgerRender -RepoRoot $builderRepoRoot -LatestRunPath $latestFullRunPath -LedgerPath $ledgerPath
+    $baselineDocsRendered = Invoke-BaselineDocsRender -RepoRoot $builderRepoRoot -LatestRunPath $latestFullRunPath
     $deltaScript = Join-Path $builderRepoRoot "scripts\render_memory_validation_delta.py"
     if ((Test-Path $deltaScript) -and (Test-Path $previousFullRunPath)) {
         python $deltaScript --latest $latestFullRunPath --previous $previousFullRunPath --write $deltaPath | Out-Null
@@ -406,6 +427,11 @@ if (Test-Path $previousFullRunPath) {
 }
 if ($ledgerRendered) {
     Write-Host ("- failure ledger: " + $ledgerPath)
+}
+if ($baselineDocsRendered) {
+    Write-Host ("- baseline docs: " + (Join-Path $builderRepoRoot "README.md"))
+    Write-Host ("- baseline handoff docs: " + (Join-Path $builderRepoRoot "docs\MEMORY_LIVE_VALIDATION_RESULTS_2026-04-11.md"))
+    Write-Host ("- baseline benchmark handoff: " + (Join-Path $builderRepoRoot "docs\MEMORY_BENCHMARK_HANDOFF_2026-04-11.md"))
 }
 if ($deltaRendered) {
     Write-Host ("- validation delta: " + $deltaPath)

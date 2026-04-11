@@ -18,6 +18,7 @@ Related memory substrate repo: `C:\Users\USER\Desktop\domain-chip-memory`
 
 ## Current clean timed baseline
 
+<!-- AUTO_MEMORY_BASELINE_HANDOFF_START -->
 - latest clean full validation root:
   `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\20260412-005417`
 - latest full-run pointer:
@@ -39,6 +40,7 @@ Related memory substrate repo: `C:\Users\USER\Desktop\domain-chip-memory`
   - regression: `25.528s`
   - soak: `350.805s`
   - total: `389.672s`
+<!-- AUTO_MEMORY_BASELINE_HANDOFF_END -->
 
 ## Historical soak snapshot
 
