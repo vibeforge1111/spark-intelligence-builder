@@ -253,6 +253,7 @@ $runSummary | ConvertTo-Json | Set-Content -Path $summaryPath -Encoding utf8
 $validationRunsRoot = Join-Path $SparkHome "artifacts\memory-validation-runs"
 $latestRunPath = Join-Path $validationRunsRoot "latest-run.json"
 $latestFullRunPath = Join-Path $validationRunsRoot "latest-full-run.json"
+$previousFullRunPath = Join-Path $validationRunsRoot "previous-full-run.json"
 [ordered]@{
     output_root = $resolvedOutputRoot
     run_summary = $summaryPath
@@ -261,19 +262,33 @@ $latestFullRunPath = Join-Path $validationRunsRoot "latest-full-run.json"
 Ensure-LatestFullRunPointer -ValidationRunsRoot $validationRunsRoot -LatestFullRunPath $latestFullRunPath
 
 $ledgerPath = Join-Path $builderRepoRoot "docs\MEMORY_FAILURE_LEDGER_2026-04-11.md"
+$deltaPath = Join-Path $resolvedOutputRoot "validation-delta.md"
 $canRenderLedger = (
     -not [string]::IsNullOrWhiteSpace([string]$runSummary["benchmark_output_dir"]) -and
     -not [string]::IsNullOrWhiteSpace([string]$runSummary["regression_output_dir"]) -and
     -not [string]::IsNullOrWhiteSpace([string]$runSummary["soak_output_dir"])
 )
 $ledgerRendered = $false
+$deltaRendered = $false
 if ($canRenderLedger) {
+    $priorFullRunJson = if (Test-Path $latestFullRunPath) { Get-Content $latestFullRunPath -Raw } else { $null }
+    if ($priorFullRunJson) {
+        Set-Content -Path $previousFullRunPath -Value $priorFullRunJson -Encoding utf8
+    }
     [ordered]@{
         output_root = $resolvedOutputRoot
         run_summary = $summaryPath
         updated_at = (Get-Date).ToString("o")
     } | ConvertTo-Json | Set-Content -Path $latestFullRunPath -Encoding utf8
     $ledgerRendered = Invoke-LedgerRender -RepoRoot $builderRepoRoot -LatestRunPath $latestFullRunPath -LedgerPath $ledgerPath
+    $deltaScript = Join-Path $builderRepoRoot "scripts\render_memory_validation_delta.py"
+    if ((Test-Path $deltaScript) -and (Test-Path $previousFullRunPath)) {
+        python $deltaScript --latest $latestFullRunPath --previous $previousFullRunPath --write $deltaPath | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to render memory validation delta"
+        }
+        $deltaRendered = $true
+    }
 }
 
 Write-Host ""
@@ -293,8 +308,14 @@ Write-Host ("- latest pointer: " + $latestRunPath)
 if (Test-Path $latestFullRunPath) {
     Write-Host ("- latest full-run pointer: " + $latestFullRunPath)
 }
+if (Test-Path $previousFullRunPath) {
+    Write-Host ("- previous full-run pointer: " + $previousFullRunPath)
+}
 if ($ledgerRendered) {
     Write-Host ("- failure ledger: " + $ledgerPath)
+}
+if ($deltaRendered) {
+    Write-Host ("- validation delta: " + $deltaPath)
 }
 
 Write-Host ""
