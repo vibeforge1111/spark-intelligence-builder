@@ -125,6 +125,25 @@ function Invoke-BaselineDocsRender {
     return $true
 }
 
+function Invoke-ChipBaselineDocsRender {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ChipRepoRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$BuilderLatestRunPath
+    )
+
+    $renderScript = Join-Path $ChipRepoRoot "scripts\render_builder_baseline_docs.py"
+    if (-not (Test-Path $renderScript)) {
+        return $false
+    }
+    python $renderScript --builder-latest-run $BuilderLatestRunPath | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to render chip baseline docs"
+    }
+    return $true
+}
+
 function Test-IsFullValidationSummary {
     param(
         [Parameter(Mandatory = $true)]
@@ -382,6 +401,7 @@ $canRenderLedger = (
 )
 $ledgerRendered = $false
 $baselineDocsRendered = $false
+$chipBaselineDocsRendered = $false
 $deltaRendered = $false
 if ($canRenderLedger) {
     $priorFullRunJson = if (Test-Path $latestFullRunPath) { Get-Content $latestFullRunPath -Raw } else { $null }
@@ -395,6 +415,9 @@ if ($canRenderLedger) {
     } | ConvertTo-Json | Set-Content -Path $latestFullRunPath -Encoding utf8
     $ledgerRendered = Invoke-LedgerRender -RepoRoot $builderRepoRoot -LatestRunPath $latestFullRunPath -LedgerPath $ledgerPath
     $baselineDocsRendered = Invoke-BaselineDocsRender -RepoRoot $builderRepoRoot -LatestRunPath $latestFullRunPath
+    if (Test-Path $domainChipRepoRoot) {
+        $chipBaselineDocsRendered = Invoke-ChipBaselineDocsRender -ChipRepoRoot $domainChipRepoRoot -BuilderLatestRunPath $latestFullRunPath
+    }
     $deltaScript = Join-Path $builderRepoRoot "scripts\render_memory_validation_delta.py"
     if ((Test-Path $deltaScript) -and (Test-Path $previousFullRunPath)) {
         python $deltaScript --latest $latestFullRunPath --previous $previousFullRunPath --write $deltaPath | Out-Null
@@ -432,6 +455,11 @@ if ($baselineDocsRendered) {
     Write-Host ("- baseline docs: " + (Join-Path $builderRepoRoot "README.md"))
     Write-Host ("- baseline handoff docs: " + (Join-Path $builderRepoRoot "docs\MEMORY_LIVE_VALIDATION_RESULTS_2026-04-11.md"))
     Write-Host ("- baseline benchmark handoff: " + (Join-Path $builderRepoRoot "docs\MEMORY_BENCHMARK_HANDOFF_2026-04-11.md"))
+}
+if ($chipBaselineDocsRendered) {
+    Write-Host ("- chip baseline docs: " + (Join-Path $domainChipRepoRoot "README.md"))
+    Write-Host ("- chip next-phase handoff: " + (Join-Path $domainChipRepoRoot "docs\NEXT_PHASE_SPARK_MEMORY_KB_BENCHMARK_PROGRAM_2026-04-10.md"))
+    Write-Host ("- chip current-status handoff: " + (Join-Path $domainChipRepoRoot "docs\CURRENT_STATUS_BENCHMARKS_AND_KB_2026-04-09.md"))
 }
 if ($deltaRendered) {
     Write-Host ("- validation delta: " + $deltaPath)
