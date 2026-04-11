@@ -6,6 +6,7 @@ from unittest.mock import patch
 from spark_intelligence.memory.architecture_live_comparison import (
     _baseline_row,
     _leader_rows,
+    _required_live_match_fragments,
     build_telegram_regression_sample_specs,
     compare_telegram_memory_architectures,
 )
@@ -171,6 +172,34 @@ class MemoryArchitectureLiveComparisonTests(SparkTestCase):
         self.assertEqual(row["live_integration_overall"]["matched"], 1)
         self.assertEqual(row["grounding_overall"]["matched"], 1)
         self.assertEqual(row["scorecard_substantive_overall"]["total"], 0)
+
+    def test_required_live_match_fragments_for_previous_state_questions_only_requires_historical_value(self) -> None:
+        self.assertEqual(
+            _required_live_match_fragments(
+                category="event_history",
+                question_text="Where did I live before?",
+                expected_fragments=["Dubai", "Abu Dhabi"],
+            ),
+            ["Dubai"],
+        )
+        self.assertEqual(
+            _required_live_match_fragments(
+                category="event_history",
+                question_text="What was my previous country?",
+                expected_fragments=["UAE", "Canada"],
+            ),
+            ["UAE"],
+        )
+
+    def test_required_live_match_fragments_keeps_full_history_requirements_for_event_listing_prompts(self) -> None:
+        self.assertEqual(
+            _required_live_match_fragments(
+                category="event_history",
+                question_text="What memory events do you have about where I live?",
+                expected_fragments=["Dubai", "Abu Dhabi"],
+            ),
+            ["Dubai", "Abu Dhabi"],
+        )
 
     def test_baseline_row_excludes_explanation_like_questions_from_substantive_scorecard_accuracy(self) -> None:
         sample_specs = [

@@ -46,7 +46,8 @@ The live suite is now stricter in the places that were still underreporting ambi
 - `explanation_pressure_suite`: `dual_store_event_calendar_hybrid` leads on explanation-source alignment
 - `interleaved_noise_resilience`: `dual_store_event_calendar_hybrid` leads after the same provenance alignment signal is carried through the noisy pack
 - `quality_lane_gauntlet`: `dual_store_event_calendar_hybrid` leads when explanation provenance is mixed with abstention and overwrite pressure
-- `temporal_conflict_gauntlet`: on the corrected fresh-namespace soak, this pack also favors `dual_store_event_calendar_hybrid`
+- `temporal_conflict_gauntlet`: on the corrected fresh-namespace soak, this pack also favors `dual_store_event_calendar_hybrid`, and the history-specific comparison fix raised it from `8/13` to `9/13`
+- `event_calendar_lineage_proxy`: the same history-specific comparison fix raised this pack from `6/11` to `7/11`, while keeping `dual_store_event_calendar_hybrid` as the leader
 - `long_horizon_recall`, `boundary_abstention`, `anti_personalization_guardrails`, `identity_synthesis`, and `loaded_context_abstention` are now fully green ties, so they are treated as health gates rather than selector packs
 - `identity_under_recency_pressure`: the latest targeted rerun is now a full `11/11` tie after chip-side extraction and profile-query routing fixes
 
@@ -79,6 +80,7 @@ The benchmark-pack CLI path now runs custom Telegram variants directly:
 - a later soak investigation showed that some whole-suite reruns were still reusing stale soak namespaces and occasionally falling back into the Telegram agent-name onboarding path
 - regression setup now seeds the canonical agent name to `Atlas`, and each soak invocation now uses a fresh suite token in its user/chat namespace
 - after that harness fix, the fresh contradiction-and-recency soak run also moved to `dual_store_event_calendar_hybrid`, so the previous contradiction tie was not a stable runtime verdict
+- the architecture comparison now only requires the historical fragment for explicit `previous state` questions like `Where did I live before?` and `What was my previous country?`, while still keeping full chronology requirements for true event-listing prompts
 - the live architecture comparison for that proxy pack compares `8` cases and currently favors `dual_store_event_calendar_hybrid`
 
 ## Interpretation

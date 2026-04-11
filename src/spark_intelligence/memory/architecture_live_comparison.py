@@ -680,6 +680,7 @@ def _baseline_row(
         forbidden_fragments = [str(item) for item in list(metadata.get("expected_forbidden_fragments") or [])]
         required_fragments = _required_live_match_fragments(
             category=category,
+            question_text=str(question.get("question") or ""),
             expected_fragments=expected_fragments,
         )
         missing_fragments = [
@@ -801,8 +802,19 @@ def _iso_timestamp(index: int) -> str:
     return (_BASE_TIMESTAMP + timedelta(minutes=index)).isoformat()
 
 
-def _required_live_match_fragments(*, category: str, expected_fragments: Sequence[str]) -> list[str]:
+def _required_live_match_fragments(
+    *,
+    category: str,
+    question_text: str,
+    expected_fragments: Sequence[str],
+) -> list[str]:
     if category != "explanation":
+        if category == "event_history":
+            lowered_question = str(question_text or "").strip().lower()
+            if lowered_question.startswith("where did i live before"):
+                return list(expected_fragments[:1])
+            if lowered_question.startswith("what was my previous country"):
+                return list(expected_fragments[:1])
         return list(expected_fragments)
     return [
         fragment
