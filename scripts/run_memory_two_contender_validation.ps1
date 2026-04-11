@@ -25,9 +25,34 @@ if ([string]::IsNullOrWhiteSpace($resolvedOutputRoot)) {
 New-Item -ItemType Directory -Path $resolvedOutputRoot -Force | Out-Null
 Write-Host "Validation output root: $resolvedOutputRoot"
 
+function Get-GitRevision {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot
+    )
+
+    if (-not (Test-Path (Join-Path $RepoRoot ".git"))) {
+        return $null
+    }
+    $revision = git -C $RepoRoot rev-parse HEAD 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        return $null
+    }
+    return ($revision | Select-Object -First 1)
+}
+
+$builderRepoRoot = (Get-Location).Path
+$domainChipRepoRoot = Join-Path (Split-Path $builderRepoRoot -Parent) "domain-chip-memory"
+$builderRevision = Get-GitRevision -RepoRoot $builderRepoRoot
+$domainChipRevision = Get-GitRevision -RepoRoot $domainChipRepoRoot
+
 $runSummary = [ordered]@{
     spark_home = $SparkHome
     output_root = $resolvedOutputRoot
+    builder_repo_root = $builderRepoRoot
+    builder_repo_commit = $builderRevision
+    domain_chip_repo_root = $(if (Test-Path $domainChipRepoRoot) { $domainChipRepoRoot } else { $null })
+    domain_chip_repo_commit = $domainChipRevision
     baselines = @("summary_synthesis_memory", "dual_store_event_calendar_hybrid")
     soak_runs = $SoakRuns
     soak_timeout_seconds = $SoakTimeoutSeconds
