@@ -193,12 +193,18 @@ def _assessment_text(
     runtime_memory_architecture: str,
     product_memory_leaders: list[dict[str, Any]],
 ) -> str:
+    leader_names = ", ".join(row["baseline_name"] for row in product_memory_leaders) or "unknown"
     if runtime_memory_architecture == DOCUMENTED_FRONTIER_ARCHITECTURE:
+        if len(product_memory_leaders) > 1:
+            return (
+                "Builder runtime is using the same named architecture that the domain-chip-memory repo "
+                f"documents as the current benchmark frontier, and the latest ProductMemory scorecard is a tie "
+                f"between {leader_names}."
+            )
         return (
             "Builder runtime is using the same named architecture that the domain-chip-memory repo "
             "documents as the current BEAM and LongMemEval leader."
         )
-    leader_names = ", ".join(row["baseline_name"] for row in product_memory_leaders) or "unknown"
     return (
         "Builder runtime is using the governed SparkMemorySDK substrate with "
         f"`{runtime_memory_architecture}` as its declared architecture selector. The current "
@@ -280,12 +286,8 @@ def _product_memory_leaders(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not rows:
         return []
     best_accuracy = max(float((row.get("overall") or {}).get("accuracy") or 0.0) for row in rows)
-    accuracy_leaders = [
-        row for row in rows if float((row.get("overall") or {}).get("accuracy") or 0.0) == best_accuracy
-    ]
-    best_alignment = max(float((row.get("alignment") or {}).get("rate") or 0.0) for row in accuracy_leaders)
     return [
-        row for row in accuracy_leaders if float((row.get("alignment") or {}).get("rate") or 0.0) == best_alignment
+        row for row in rows if float((row.get("overall") or {}).get("accuracy") or 0.0) == best_accuracy
     ]
 
 

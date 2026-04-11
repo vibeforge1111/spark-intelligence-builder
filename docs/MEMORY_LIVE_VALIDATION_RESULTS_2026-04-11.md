@@ -18,7 +18,7 @@ The goal was to keep offline ProductMemory comparison and live Telegram validati
 - Latest clean whole-suite soak leader: `summary_synthesis_memory`
 - Latest clean whole-suite aggregate: `92/92` for `summary_synthesis_memory` vs `89/92` for `dual_store_event_calendar_hybrid`
 - Latest clean selector-pack aggregate: `64/64` for `summary_synthesis_memory` vs `61/64` for `dual_store_event_calendar_hybrid`
-- Offline ProductMemory leader: `dual_store_event_calendar_hybrid`
+- Offline ProductMemory result: tied at `1156/1266` between `summary_synthesis_memory` and `dual_store_event_calendar_hybrid`
 - Current runtime selector: `dual_store_event_calendar_hybrid`
 
 ## Soak Aggregate
@@ -90,19 +90,19 @@ The benchmark-pack CLI path now runs custom Telegram variants directly:
 
 ## Interpretation
 
-The current decision is now a real split, not a unified winner:
+The current decision is no longer a hard offline-vs-live split:
 
-1. `dual_store_event_calendar_hybrid` still leads the offline ProductMemory benchmark.
-2. `summary_synthesis_memory` leads the latest clean `14`-pack live Telegram soak.
+1. The offline ProductMemory benchmark is now tied at `1156/1266` for both contenders.
+2. `summary_synthesis_memory` still leads the latest clean `14`-pack live Telegram soak.
 3. The identity-heavy health gates are no longer useful promotion signals on their own because both contenders already stay green there.
 4. Promotion still should not happen on offline scorecards alone, but it also should not happen on a live-only win.
-5. The runtime selector therefore still should not move yet: one contender has to win both offline and live.
+5. The runtime selector therefore still should not move yet: the current state is an offline tie plus a live-only `summary_synthesis_memory` lead, not a fully converged winner.
 6. Native Telegram chronology queries are now part of the live benchmark surface, and they materially helped `summary_synthesis_memory` recover on contradiction and temporal-conflict packs.
-7. The most useful next work is still not another repin attempt; it is tightening the remaining selector packs so the split resolves honestly instead of oscillating between offline and live.
+7. The most useful next work is now the same as before: keep tightening remaining benchmark quality rather than forcing a repin off a partial verdict.
 
 ## Runtime Selector
 
-The Builder runtime contract still explicitly reports `dual_store_event_calendar_hybrid` as the active memory architecture alongside the governed `SparkMemorySDK` substrate. That is still the correct pin for now because the offline benchmark remains `dual_store_event_calendar_hybrid` even though the latest clean live soak moved back to `summary_synthesis_memory`. The promotion rule stays unchanged: any future repin has to win both scorecards and live Telegram.
+The Builder runtime contract still explicitly reports `dual_store_event_calendar_hybrid` as the active memory architecture alongside the governed `SparkMemorySDK` substrate. That remains the current pin for now because the offline benchmark is only a tie, while the latest clean live soak favors `summary_synthesis_memory`. The promotion rule stays unchanged: any future repin has to justify itself across both scorecards and live Telegram.
 
 ## Artifacts
 

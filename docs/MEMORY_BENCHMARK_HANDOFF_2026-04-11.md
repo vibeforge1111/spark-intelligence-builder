@@ -11,8 +11,8 @@ Related memory substrate repo: `C:\Users\USER\Desktop\domain-chip-memory`
 - The benchmark harness was expanded from a fixed Telegram replay into a varied pack suite.
 - The soak/reporting logic was then hardened so zero-signal categories no longer look like meaningful ties.
 - The current default serious comparison loop is now governed by `docs/MEMORY_REALTIME_BENCHMARK_PROGRAM_2026-04-11.md`.
-- The latest clean live `14`-pack soak now favors `summary_synthesis_memory`, while the offline ProductMemory benchmark still favors `dual_store_event_calendar_hybrid`.
-- Because the two sides disagree, the runtime stays pinned to `dual_store_event_calendar_hybrid` until one contender wins both offline and live.
+- The latest clean live `14`-pack soak now favors `summary_synthesis_memory`, while the latest offline ProductMemory benchmark is tied with both contenders at `1156/1266`.
+- Because the result is an offline tie plus a live-only `summary_synthesis_memory` lead, the runtime stays pinned to `dual_store_event_calendar_hybrid` until one contender earns a clearer combined promotion case.
 
 ## Historical soak snapshot
 
@@ -69,21 +69,21 @@ This is now the default contender pair for:
 
 Why the contender pair changed:
 
-- `dual_store_event_calendar_hybrid` still wins the offline ProductMemory side
+- the offline ProductMemory side is now tied at `1156/1266`
 - `summary_synthesis_memory` now wins the latest clean live whole-suite soak
 - `summary_synthesis_memory` recovered specifically after the chip-side history/query fixes aligned Builder prompts and chronology scoring
 - `observational_temporal_memory` remains useful as a control or explicit extra baseline, but is no longer the default second contender
 
 ## Important benchmark interpretation
 
-- There is no current combined winner for the hardened offline-plus-live suite.
-- The current honest result is a split verdict: offline points to `dual_store_event_calendar_hybrid`, live points to `summary_synthesis_memory`.
+- There is still no current combined winner for the hardened offline-plus-live suite.
+- The current honest result is an offline tie plus a live `summary_synthesis_memory` lead.
 - The absolute performance is still weak.
 - The benchmark now honestly reports unresolved lanes instead of inventing ties.
 
 Still unresolved / weak:
 - no live selector packs are currently unresolved
-- the remaining disagreement is between the offline ProductMemory result and the fully green live Telegram result
+- the remaining disagreement is between the offline ProductMemory tie and the fully green live Telegram result
 
 Observed trust metrics:
 - both contenders stayed clean on the current forbidden-memory lanes in the latest live soak
@@ -122,7 +122,7 @@ Why they may keep tying:
 
 ## Recommended next steps tomorrow
 
-1. Keep `dual_store_event_calendar_hybrid` as the pinned runtime architecture until the same contender wins both offline and live.
+1. Keep `dual_store_event_calendar_hybrid` as the pinned runtime architecture until one contender wins both offline and live or we explicitly relax that promotion rule.
 2. Keep `summary_synthesis_memory` as the active challenger in the default live program.
 3. Use `observational_temporal_memory` as a control lane when we want a third comparison, not as the default second contender.
 4. Add new benchmark packs specifically for:

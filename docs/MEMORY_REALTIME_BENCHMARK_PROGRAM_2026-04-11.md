@@ -184,8 +184,8 @@ Current live separation note:
 - the latest clean uncontaminated `14/14` live soak now favors `summary_synthesis_memory`
 - full-suite live aggregate is `92/92` for `summary_synthesis_memory` vs `89/92` for `dual_store_event_calendar_hybrid`
 - selector-pack aggregate is `64/64` for `summary_synthesis_memory` vs `61/64` for `dual_store_event_calendar_hybrid`
-- the offline ProductMemory benchmark still favors `dual_store_event_calendar_hybrid`
-- the runtime selector therefore remains pinned to `dual_store_event_calendar_hybrid` until one contender wins both offline and live
+- the latest offline ProductMemory benchmark is tied at `1156/1266` between `summary_synthesis_memory` and `dual_store_event_calendar_hybrid`
+- the runtime selector therefore remains pinned to `dual_store_event_calendar_hybrid` until one contender wins both offline and live or we deliberately relax that rule
 - the long-horizon, abstention, anti-personalization, identity-synthesis, loaded-context, and identity-under-recency packs are all currently health gates, not deciding promotion signals
 - soak summaries now expose `selector_pack_ids` and `health_gate_pack_ids`, and only the selector packs feed `overall_leader_names` and `recommended_top_two`
 - soak reruns now also use fresh suite-specific Telegram namespaces, and regression setup seeds a deterministic agent name, so selector packs are no longer allowed to inherit stale onboarding residue from older runs

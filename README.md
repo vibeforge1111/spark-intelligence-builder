@@ -76,7 +76,9 @@ Current memory benchmarking program:
 
 - default contenders are `summary_synthesis_memory` and `dual_store_event_calendar_hybrid`
 - current pinned runtime selector is `dual_store_event_calendar_hybrid`
-- latest clean live `14/14` soak favors `summary_synthesis_memory` at `92/92` overall and `64/64` on selector packs, so the runtime stays pinned until offline and live agree again
+- latest clean live `14/14` soak favors `summary_synthesis_memory` at `92/92` overall and `64/64` on selector packs
+- the latest offline ProductMemory benchmark is tied between `summary_synthesis_memory` and `dual_store_event_calendar_hybrid` at `1156/1266`
+- the runtime stays pinned until one contender has a clearer combined promotion case than the current offline tie plus live-only `summary_synthesis_memory` lead
 - benchmark upgrades are not promoted on offline scorecards alone
 - the same contenders must also stay green on live Telegram regression and soak runs
 
