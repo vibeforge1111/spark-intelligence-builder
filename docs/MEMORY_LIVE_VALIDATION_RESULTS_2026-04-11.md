@@ -27,7 +27,8 @@ The goal was to keep offline ProductMemory comparison and live Telegram validati
 - several later soak verdicts that appeared to favor `dual_store_event_calendar_hybrid` were contaminated by concurrent soak processes writing to the same artifact path
 - those stale soak processes were terminated and the `14`-pack suite was rerun clean
 - the latest clean rerun finished `14/14`, `0` failed, with `summary_synthesis_memory` leading the full suite by three matched cases and the selector subset by three matched cases
-- a later post-repin whole-suite soak attempt stalled mid-run after `9/14`, so the unfinished tail was rerun as isolated single-pack regressions instead of trusting a partial shared artifact
+- a later post-repin whole-suite soak attempt did stall mid-run after `9/14`, which exposed the need for a per-pack soak timeout instead of trusting the old long-running path
+- after adding the soak timeout, the fresh whole-suite rerun at `telegram-memory-architecture-soak-post-timeout-v1` completed cleanly at `14/14`, `0` failed, and preserved the same live leader and aggregate margins
 - the live-comparison tie-break still ignores explanation-only exact-string scorecard differences when live accuracy, trustworthiness, and grounding already tie
 - explanation prompts still carry explicit `expected_answer_candidate_source = evidence_memory`, so provenance alignment is measured directly instead of being hidden behind surface phrasing
 - alignment-only scorecard differences no longer pick a winner when there is no substantive non-explanation scorecard signal, so the explanation-heavy packs no longer manufacture a live leader on phrasing/internal provenance alone
@@ -77,6 +78,8 @@ The benchmark-pack CLI path now runs custom Telegram variants directly:
 - the latest post-repin isolated pack reruns stayed green too:
   `temporal_conflict_gauntlet` at `23/23`, `event_calendar_lineage_proxy` at `20/20`, `explanation_pressure_suite` at `13/13`, and `identity_under_recency_pressure` at `21/21`
 - those post-repin isolated reruns kept `summary_synthesis_memory` as the live leader on `temporal_conflict_gauntlet` and `event_calendar_lineage_proxy`, while `explanation_pressure_suite` and `identity_under_recency_pressure` remained honest ties
+- the timeout-hardened whole-suite rerun confirmed the same pack-level story:
+  `contradiction_and_recency`, `temporal_conflict_gauntlet`, and `event_calendar_lineage_proxy` still favor `summary_synthesis_memory`, while the health gates and explanation-heavy lanes remain honest ties
 - an earlier corrected full 14-pack soak finished `14/14`, `0` failed, with `dual_store_event_calendar_hybrid` as the then-current live leader
 - that completed soak now covers `event_history` and `native_history` explicitly in the rotating live suite
 - the chronology pack itself is green at the Telegram runtime layer, but the architecture comparison inside the soak still only separates the contenders weakly on that pack at `6/11`, with `dual_store_event_calendar_hybrid` taking the tie-break
@@ -103,7 +106,8 @@ The current decision is no longer a hard offline-vs-live split:
 5. The runtime selector is now moved to `summary_synthesis_memory`: it leads the clean live suite and no longer loses the offline ProductMemory benchmark on accuracy.
 6. Native Telegram chronology queries are now part of the live benchmark surface, and they materially helped `summary_synthesis_memory` recover on contradiction and temporal-conflict packs.
 7. When explanation-heavy packs and overwrite-heavy packs need targeted reruns, they should be run as isolated per-pack regressions or a soak, not merged into one synthetic namespace.
-8. The most useful next work is now the same as before: keep tightening remaining benchmark quality rather than forcing a repin off a partial verdict.
+8. The soak harness itself is now safer: one hung pack should fail that run instead of freezing the full benchmark suite.
+9. The most useful next work is now the same as before: keep tightening remaining benchmark quality rather than forcing a repin off a partial verdict.
 
 ## Runtime Selector
 
@@ -131,6 +135,7 @@ The Builder runtime contract now explicitly reports `summary_synthesis_memory` a
 - `.spark-intelligence/artifacts/post-repin-pack-runs/event_calendar_lineage_proxy/telegram-memory-regression.json`
 - `.spark-intelligence/artifacts/post-repin-pack-runs/explanation_pressure_suite/telegram-memory-regression.json`
 - `.spark-intelligence/artifacts/post-repin-pack-runs/identity_under_recency_pressure/telegram-memory-regression.json`
+- `.spark-intelligence/artifacts/telegram-memory-architecture-soak-post-timeout-v1/telegram-memory-architecture-soak.json`
 - `.spark-intelligence/artifacts/telegram-memory-regression/telegram-memory-regression.json`
 - `.spark-intelligence/artifacts/telegram-memory-regression/regression-summary.md`
 - `.spark-intelligence/artifacts/telegram-memory-architecture-soak/telegram-memory-architecture-soak.json`

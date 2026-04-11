@@ -193,6 +193,7 @@ Current live separation note:
 - selector-pack aggregate is `64/64` for `summary_synthesis_memory` vs `61/64` for `dual_store_event_calendar_hybrid`
 - the latest offline ProductMemory benchmark is tied at `1156/1266` between `summary_synthesis_memory` and `dual_store_event_calendar_hybrid`
 - the runtime selector is now pinned to `summary_synthesis_memory` because it leads live Telegram and no longer trails offline ProductMemory on accuracy
+- the latest timeout-hardened whole-suite artifact is `.spark-intelligence/artifacts/telegram-memory-architecture-soak-post-timeout-v1/telegram-memory-architecture-soak.json`
 - the long-horizon, abstention, anti-personalization, identity-synthesis, loaded-context, and identity-under-recency packs are all currently health gates, not deciding promotion signals
 - soak summaries now expose `selector_pack_ids` and `health_gate_pack_ids`, and only the selector packs feed `overall_leader_names` and `recommended_top_two`
 - soak reruns now also use fresh suite-specific Telegram namespaces, and regression setup seeds a deterministic agent name, so selector packs are no longer allowed to inherit stale onboarding residue from older runs
