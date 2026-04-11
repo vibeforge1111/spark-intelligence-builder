@@ -14,6 +14,31 @@ Related memory substrate repo: `C:\Users\USER\Desktop\domain-chip-memory`
 - The current default serious comparison loop is now governed by `docs/MEMORY_REALTIME_BENCHMARK_PROGRAM_2026-04-11.md`.
 - The latest clean live `14`-pack soak now favors `summary_synthesis_memory`, while the latest offline ProductMemory benchmark is tied with both contenders at `1156/1266`.
 - Because the result is an offline tie plus a live `summary_synthesis_memory` lead, the runtime is now pinned to `summary_synthesis_memory`.
+- The current canonical full validation pointer is `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\latest-full-run.json`.
+
+## Current clean timed baseline
+
+- latest clean full validation root:
+  `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\20260412-001858`
+- latest full-run pointer:
+  `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\latest-full-run.json`
+- previous full-run pointer:
+  `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\previous-full-run.json`
+- validation delta for the latest run:
+  `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\20260412-001858\validation-delta.md`
+- offline ProductMemory leaders:
+  `summary_synthesis_memory`, `dual_store_event_calendar_hybrid`
+- live regression:
+  `34/34`
+- live soak:
+  `14/14`, `0` failed
+- live soak leader:
+  `summary_synthesis_memory`
+- measured validation cost:
+  - benchmark: `12.21s`
+  - regression: `22.934s`
+  - soak: `350.911s`
+  - total: `386.479s`
 
 ## Historical soak snapshot
 

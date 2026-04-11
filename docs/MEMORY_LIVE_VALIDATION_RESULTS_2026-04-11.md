@@ -11,7 +11,10 @@ The goal was to keep offline ProductMemory comparison and live Telegram validati
 
 ## Confirmed Results
 
-- Live Telegram regression: `31/31` matched
+- Latest clean full validation root: `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\20260412-001858`
+- Stable latest full-run pointer: `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\latest-full-run.json`
+- Stable previous full-run pointer: `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\previous-full-run.json`
+- Live Telegram regression: `34/34` matched
 - KB compile: valid
 - KB probe coverage: `38/38` current-state and `38/38` evidence hits
 - Clean Telegram soak status: `14/14` completed, `0` failed
@@ -20,6 +23,11 @@ The goal was to keep offline ProductMemory comparison and live Telegram validati
 - Latest clean selector-pack aggregate: `64/64` for `summary_synthesis_memory` vs `61/64` for `dual_store_event_calendar_hybrid`
 - Offline ProductMemory result: tied at `1156/1266` between `summary_synthesis_memory` and `dual_store_event_calendar_hybrid`
 - Current runtime selector: `summary_synthesis_memory`
+- Latest clean timed validation cost:
+  - benchmark: `12.21s`
+  - regression: `22.934s`
+  - soak: `350.911s`
+  - total: `386.479s`
 
 ## Soak Aggregate
 
