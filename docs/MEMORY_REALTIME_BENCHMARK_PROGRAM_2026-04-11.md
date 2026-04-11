@@ -178,6 +178,7 @@ Current live separation note:
 - the runtime selector is now pinned to `dual_store_event_calendar_hybrid` because it won both the offline ProductMemory comparison and the corrected live Telegram soak
 - the identity-under-recency targeted pack still ties, so it should be treated as a health gate, not as the deciding promotion signal
 - the event-calendar lane now includes native Telegram history queries for overwritten profile facts, so chronology regressions can be caught in the live runtime rather than only through proxy prompts
+- the current full 14-pack soak still recommends `dual_store_event_calendar_hybrid`, while the chronology pack itself should be treated as a required green lane plus a secondary tie-break signal rather than the sole promotion driver
 
 ## Next benchmark expansions
 

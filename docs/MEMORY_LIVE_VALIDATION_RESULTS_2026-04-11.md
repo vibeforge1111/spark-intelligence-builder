@@ -64,6 +64,9 @@ The benchmark-pack CLI path now runs custom Telegram variants directly:
 - the first filtered live rerun failed `0/3` only because it skipped the prerequisite write cases and hit an empty synthetic namespace
 - after adding inspection-backed chronology fallback, the full pack rerun went `20/20` on live Telegram with `23/23` current-state and `23/23` evidence probe hits
 - the new green chronology cases are `city_history_query_after_overwrite`, `country_history_query_after_overwrite`, and `city_event_history_query_after_overwrite`
+- the follow-up full 14-pack soak finished `14/14`, `0` failed, still with `dual_store_event_calendar_hybrid` as the overall live leader
+- that completed soak now covers `event_history` and `native_history` explicitly in the rotating live suite
+- the chronology pack itself is green at the Telegram runtime layer, but the architecture comparison inside the soak still only separates the contenders weakly on that pack at `6/11`, with `dual_store_event_calendar_hybrid` taking the tie-break
 - the live architecture comparison for that proxy pack compares `8` cases and currently favors `dual_store_event_calendar_hybrid`
 
 ## Interpretation
@@ -75,6 +78,7 @@ The current decision now has a real live separator again:
 3. The targeted identity pack still does not separate the contenders, so it should remain a regression gate, not the sole promotion driver.
 4. Promotion still should not happen on offline scorecards alone, but the live suite now has a meaningful provenance-based separator instead of only harness noise.
 5. The runtime selector has now been repinned to `dual_store_event_calendar_hybrid` so the Builder contract matches the combined benchmark result.
+6. Native Telegram chronology queries are now part of the live benchmark surface, but chronology still is not the main separator between the two contenders; it is currently a green health gate plus a mild tie-break edge for `dual_store_event_calendar_hybrid`.
 
 ## Runtime Selector
 
@@ -101,4 +105,5 @@ The Builder runtime contract now explicitly reports `dual_store_event_calendar_h
 - `.spark-intelligence/artifacts/telegram-memory-regression/telegram-memory-regression.json`
 - `.spark-intelligence/artifacts/telegram-memory-regression/regression-summary.md`
 - `.spark-intelligence/artifacts/telegram-memory-architecture-soak/telegram-memory-architecture-soak.json`
+- `.spark-intelligence/artifacts/telegram-memory-architecture-soak/`
 - `.spark-intelligence/artifacts/telegram-memory-architecture-soak-post-repin-v1/telegram-memory-architecture-soak.json`
