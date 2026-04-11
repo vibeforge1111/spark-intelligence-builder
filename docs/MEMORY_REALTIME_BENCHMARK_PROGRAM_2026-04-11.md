@@ -4,6 +4,10 @@ Date: 2026-04-11
 Repo: `spark-intelligence-builder`
 Related substrate repo: `C:\Users\USER\Desktop\domain-chip-memory`
 
+Execution companion:
+
+- `docs/NEXT_48H_MEMORY_EXECUTION_PLAN_2026-04-11.md`
+
 ## Goal
 
 Keep memory improvements honest by forcing every serious architecture change through both:
