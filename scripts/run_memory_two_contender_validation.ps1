@@ -1,5 +1,5 @@
 param(
-    [string]$Home = "$HOME\.spark-intelligence",
+    [string]$SparkHome = "$HOME\.spark-intelligence",
     [string]$OutputRoot = "",
     [int]$SoakRuns = 14,
     [double]$SoakTimeoutSeconds = 300,
@@ -15,6 +15,15 @@ $baselineFlags = @(
     "--baseline", "summary_synthesis_memory",
     "--baseline", "dual_store_event_calendar_hybrid"
 )
+
+$resolvedOutputRoot = $OutputRoot
+if ([string]::IsNullOrWhiteSpace($resolvedOutputRoot)) {
+    $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $resolvedOutputRoot = Join-Path $SparkHome "artifacts\memory-validation-runs\$timestamp"
+}
+
+New-Item -ItemType Directory -Path $resolvedOutputRoot -Force | Out-Null
+Write-Host "Validation output root: $resolvedOutputRoot"
 
 function Invoke-ValidationStep {
     param(
@@ -40,15 +49,15 @@ function Resolve-OutputDir {
     )
 
     if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
-        return $null
+        return (Join-Path $resolvedOutputRoot $LeafName)
     }
-    return (Join-Path $OutputRoot $LeafName)
+    return (Join-Path $resolvedOutputRoot $LeafName)
 }
 
 if (-not $SkipBenchmark) {
     $benchmarkArgs = @(
         "memory", "benchmark-architectures",
-        "--home", $Home
+        "--home", $SparkHome
     ) + $baselineFlags
     $benchmarkOutputDir = Resolve-OutputDir -LeafName "memory-architecture-benchmark"
     if ($benchmarkOutputDir) {
@@ -60,7 +69,7 @@ if (-not $SkipBenchmark) {
 if (-not $SkipRegression) {
     $regressionArgs = @(
         "memory", "run-telegram-regression",
-        "--home", $Home
+        "--home", $SparkHome
     ) + $baselineFlags
     $regressionOutputDir = Resolve-OutputDir -LeafName "telegram-memory-regression"
     if ($regressionOutputDir) {
@@ -72,7 +81,7 @@ if (-not $SkipRegression) {
 if (-not $SkipSoak) {
     $soakArgs = @(
         "memory", "soak-architectures",
-        "--home", $Home,
+        "--home", $SparkHome,
         "--runs", [string]$SoakRuns,
         "--run-timeout-seconds", ([string]::Format("{0:0.###}", $SoakTimeoutSeconds))
     ) + $baselineFlags
