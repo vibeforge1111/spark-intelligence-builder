@@ -36,11 +36,15 @@ from spark_intelligence.memory import (
     explain_memory_answer_in_memory,
     inspect_human_memory_in_memory,
     lookup_current_state_in_memory,
+    lookup_historical_state_in_memory,
     retrieve_memory_evidence_in_memory,
+    retrieve_memory_events_in_memory,
     write_profile_fact_to_memory,
 )
 from spark_intelligence.memory.profile_facts import (
     build_profile_fact_explanation_answer,
+    build_profile_fact_event_history_answer,
+    build_profile_fact_history_answer,
     build_profile_fact_observation_answer,
     build_profile_fact_query_answer,
     build_profile_fact_query_context,
@@ -183,6 +187,47 @@ def _select_profile_fact_query_value(
         return None
     candidates.sort()
     return candidates[-1][3]
+
+
+def _select_previous_profile_fact_record(
+    *,
+    current_value: str | None,
+    records: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    normalized_current = str(current_value or "").strip()
+    distinct_records: list[dict[str, Any]] = []
+    last_value = ""
+    for record in sorted(
+        records,
+        key=lambda item: (
+            _profile_fact_record_timestamp(item),
+            _profile_fact_record_turn_key(item),
+        ),
+    ):
+        value = _profile_fact_record_value(record)
+        if not value or value == last_value:
+            continue
+        distinct_records.append(record)
+        last_value = value
+    if not distinct_records:
+        return None
+    if normalized_current:
+        for record in reversed(distinct_records):
+            value = _profile_fact_record_value(record)
+            if value and value != normalized_current:
+                return record
+        return None
+    return distinct_records[-1]
+
+
+def _ordered_profile_fact_event_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        [record for record in records if _profile_fact_record_value(record)],
+        key=lambda item: (
+            _profile_fact_record_timestamp(item),
+            _profile_fact_record_turn_key(item),
+        ),
+    )
 
 
 def _inspect_profile_fact_records(
@@ -3248,6 +3293,225 @@ def build_researcher_reply(
             config_path=None,
             attachment_context=attachment_context,
             routing_decision="memory_profile_fact_query",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+    if (
+        detected_profile_fact_query is not None
+        and detected_profile_fact_query.query_kind == "fact_history"
+    ):
+        memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
+        target_predicate = str(detected_profile_fact_query.predicate or "").strip()
+        current_lookup = lookup_current_state_in_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            subject=memory_subject,
+            predicate=target_predicate,
+            actor_id="researcher_bridge",
+        )
+        current_records = []
+        if not current_lookup.read_result.abstained and current_lookup.read_result.records:
+            current_records = [
+                record
+                for record in current_lookup.read_result.records
+                if _profile_fact_record_value(record)
+            ]
+        current_value = _select_profile_fact_query_value(
+            predicate=target_predicate,
+            primary_records=current_records,
+            related_records=[],
+        )
+        history_lookup = retrieve_memory_events_in_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            query=str(user_message or "").strip() or f"What did I have before for {detected_profile_fact_query.label}?",
+            subject=memory_subject,
+            predicate=target_predicate,
+            limit=8,
+            actor_id="researcher_bridge",
+        )
+        history_records: list[dict[str, Any]] = []
+        if not history_lookup.read_result.abstained and history_lookup.read_result.records:
+            history_records = _ordered_profile_fact_event_records(
+                [
+                    record
+                    for record in history_lookup.read_result.records
+                    if str(record.get("predicate") or "").strip() == target_predicate
+                ]
+            )
+        previous_record = _select_previous_profile_fact_record(
+            current_value=current_value,
+            records=history_records,
+        )
+        previous_value = None
+        history_read_method = "retrieve_events"
+        if previous_record is not None:
+            previous_value = _profile_fact_record_value(previous_record)
+            previous_as_of = str(previous_record.get("timestamp") or "").strip()
+            if previous_as_of:
+                historical_lookup = lookup_historical_state_in_memory(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    subject=memory_subject,
+                    predicate=target_predicate,
+                    as_of=previous_as_of,
+                    actor_id="researcher_bridge",
+                )
+                if not historical_lookup.read_result.abstained and historical_lookup.read_result.records:
+                    previous_value = _profile_fact_record_value(historical_lookup.read_result.records[0]) or previous_value
+                    history_read_method = "get_historical_state+retrieve_events"
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_profile_fact_history",
+            routing_decision="memory_profile_fact_history_query",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = build_profile_fact_history_answer(
+            query=detected_profile_fact_query,
+            previous_value=previous_value,
+            current_value=current_value,
+        )
+        evidence_summary = (
+            "status=memory_profile_fact_history "
+            f"predicate={target_predicate or 'unknown'} "
+            f"previous_value_found={'yes' if previous_value else 'no'} "
+            f"read_method={history_read_method}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered a profile fact history query directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_profile_fact_history_query",
+            facts=_bridge_event_facts(
+                routing_decision="memory_profile_fact_history_query",
+                bridge_mode="memory_profile_fact_history",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "fact_name": detected_profile_fact_query.fact_name,
+                    "predicate": target_predicate,
+                    "label": detected_profile_fact_query.label,
+                    "current_value_found": bool(current_value),
+                    "previous_value_found": bool(previous_value),
+                    "event_record_count": len(history_records),
+                    "read_method": history_read_method,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_profile_fact_history",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_profile_fact_history_query",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+    if (
+        detected_profile_fact_query is not None
+        and detected_profile_fact_query.query_kind == "event_history"
+    ):
+        memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
+        target_predicate = str(detected_profile_fact_query.predicate or "").strip()
+        history_lookup = retrieve_memory_events_in_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            query=str(user_message or "").strip() or f"Show my {detected_profile_fact_query.label} history.",
+            subject=memory_subject,
+            predicate=target_predicate,
+            limit=8,
+            actor_id="researcher_bridge",
+        )
+        history_records: list[dict[str, Any]] = []
+        if not history_lookup.read_result.abstained and history_lookup.read_result.records:
+            history_records = _ordered_profile_fact_event_records(
+                [
+                    record
+                    for record in history_lookup.read_result.records
+                    if str(record.get("predicate") or "").strip() == target_predicate
+                ]
+            )
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_profile_event_history",
+            routing_decision="memory_profile_event_history_query",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = build_profile_fact_event_history_answer(
+            query=detected_profile_fact_query,
+            records=history_records,
+        )
+        evidence_summary = (
+            "status=memory_profile_event_history "
+            f"predicate={target_predicate or 'unknown'} "
+            f"event_count={len(history_records)} "
+            "read_method=retrieve_events"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered a profile fact event history query directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_profile_event_history_query",
+            facts=_bridge_event_facts(
+                routing_decision="memory_profile_event_history_query",
+                bridge_mode="memory_profile_event_history",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "fact_name": detected_profile_fact_query.fact_name,
+                    "predicate": target_predicate,
+                    "label": detected_profile_fact_query.label,
+                    "event_record_count": len(history_records),
+                    "read_method": "retrieve_events",
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_profile_event_history",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_profile_event_history_query",
             active_chip_key=None,
             active_chip_task_type=None,
             active_chip_evaluate_used=False,

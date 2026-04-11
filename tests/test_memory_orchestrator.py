@@ -13,10 +13,13 @@ from spark_intelligence.memory import (
     export_shadow_replay_batch,
     inspect_human_memory_in_memory,
     lookup_current_state_in_memory,
+    lookup_historical_state_in_memory,
     run_memory_sdk_smoke_test,
     write_profile_fact_to_memory,
 )
 from spark_intelligence.memory.profile_facts import (
+    build_profile_fact_event_history_answer,
+    build_profile_fact_history_answer,
     build_profile_fact_observation_answer,
     build_profile_fact_query_answer,
     build_profile_identity_summary_answer,
@@ -642,6 +645,65 @@ class MemoryOrchestratorTests(SparkTestCase):
             detect_profile_fact_observation("How do you know what I'm trying to do now?")
         )
 
+    def test_profile_fact_query_detects_history_and_event_history_queries(self) -> None:
+        history_query = detect_profile_fact_query("Where did I live before?")
+        self.assertIsNotNone(history_query)
+        assert history_query is not None
+        self.assertEqual(history_query.predicate, "profile.city")
+        self.assertEqual(history_query.query_kind, "fact_history")
+
+        country_history_query = detect_profile_fact_query("What was my previous country?")
+        self.assertIsNotNone(country_history_query)
+        assert country_history_query is not None
+        self.assertEqual(country_history_query.predicate, "profile.home_country")
+        self.assertEqual(country_history_query.query_kind, "fact_history")
+
+        event_history_query = detect_profile_fact_query(
+            "What memory events do you have about where I live?"
+        )
+        self.assertIsNotNone(event_history_query)
+        assert event_history_query is not None
+        self.assertEqual(event_history_query.predicate, "profile.city")
+        self.assertEqual(event_history_query.query_kind, "event_history")
+
+    def test_profile_fact_history_and_event_answers_are_grounded_and_compact(self) -> None:
+        history_query = detect_profile_fact_query("Where did I live before?")
+        self.assertIsNotNone(history_query)
+        assert history_query is not None
+        self.assertEqual(
+            build_profile_fact_history_answer(
+                query=history_query,
+                previous_value="Dubai",
+                current_value="Abu Dhabi",
+            ),
+            "Before Abu Dhabi, you lived in Dubai.",
+        )
+        self.assertEqual(
+            build_profile_fact_history_answer(
+                query=history_query,
+                previous_value=None,
+                current_value="Abu Dhabi",
+            ),
+            "I don't currently have an earlier saved city.",
+        )
+
+        event_history_query = detect_profile_fact_query(
+            "What memory events do you have about where I live?"
+        )
+        self.assertIsNotNone(event_history_query)
+        assert event_history_query is not None
+        self.assertEqual(
+            build_profile_fact_event_history_answer(
+                query=event_history_query,
+                records=[
+                    {"value": "Dubai"},
+                    {"value": "Dubai"},
+                    {"value": "Abu Dhabi"},
+                ],
+            ),
+            "I have 2 saved city events: Dubai then Abu Dhabi.",
+        )
+
     def test_build_profile_identity_summary_context_lists_saved_facts(self) -> None:
         context = build_profile_identity_summary_context(
             records=[
@@ -805,6 +867,50 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertTrue(result.read_result.records)
         self.assertEqual(result.read_result.records[0]["predicate"], "system.memory.persisted")
         self.assertEqual(result.read_result.records[0]["value"], "ok")
+
+    def test_lookup_historical_state_in_memory_reads_prior_value_after_overwrite(self) -> None:
+        expected_read_result = memory_orchestrator.MemoryReadResult(
+            status="supported",
+            method="get_historical_state",
+            memory_role="structured_evidence",
+            records=[
+                {
+                    "predicate": "profile.city",
+                    "value": "Dubai",
+                    "timestamp": "2026-04-10T10:00:00+00:00",
+                }
+            ],
+            provenance=[],
+            retrieval_trace={"operation": "get_historical_state"},
+            answer_explanation=None,
+            abstained=False,
+        )
+
+        with patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "configured_module": "domain_chip_memory"},
+        ), patch(
+            "spark_intelligence.memory.orchestrator._load_sdk_client_for_module",
+            return_value=object(),
+        ), patch(
+            "spark_intelligence.memory.orchestrator._get_historical_state_with_subject_fallback",
+            return_value=("human:history:test", expected_read_result),
+        ) as history_lookup_mock:
+            result = lookup_historical_state_in_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                subject="human:history:test",
+                predicate="profile.city",
+                as_of="2026-04-10T10:00:00+00:00",
+                sdk_module="domain_chip_memory",
+            )
+
+        self.assertFalse(result.read_result.abstained)
+        self.assertEqual(result.as_of, "2026-04-10T10:00:00+00:00")
+        self.assertTrue(result.read_result.records)
+        self.assertEqual(result.read_result.records[0]["predicate"], "profile.city")
+        self.assertEqual(result.read_result.records[0]["value"], "Dubai")
+        history_lookup_mock.assert_called_once()
 
     def test_inspect_human_memory_in_memory_returns_all_current_state_records_for_subject(self) -> None:
         run_memory_sdk_smoke_test(

@@ -175,6 +175,48 @@ class MemoryCurrentStateLookupResult:
 
 
 @dataclass(frozen=True)
+class MemoryHistoricalStateLookupResult:
+    sdk_module: str
+    subject: str
+    predicate: str
+    as_of: str
+    runtime: dict[str, Any]
+    read_result: MemoryReadResult
+    shadow_only_eval: bool = True
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "sdk_module": self.sdk_module,
+                "subject": self.subject,
+                "predicate": self.predicate,
+                "as_of": self.as_of,
+                "runtime": self.runtime,
+                "shadow_only_eval": self.shadow_only_eval,
+                "read_result": MemorySdkSmokeResult._read_payload(self.read_result),
+            },
+            indent=2,
+        )
+
+    def to_text(self) -> str:
+        lines = ["Spark memory historical-state lookup"]
+        lines.append(f"- sdk_module: {self.sdk_module}")
+        lines.append(f"- subject: {self.subject}")
+        lines.append(f"- predicate: {self.predicate}")
+        lines.append(f"- as_of: {self.as_of}")
+        lines.append(f"- ready: {'yes' if self.runtime.get('ready') else 'no'}")
+        lines.append(
+            f"- read: status={self.read_result.status} records={len(self.read_result.records)} "
+            f"abstained={'yes' if self.read_result.abstained else 'no'}"
+        )
+        if self.read_result.records:
+            lines.append(f"- value: {self.read_result.records[0].get('value')}")
+        if self.read_result.reason:
+            lines.append(f"- reason: {self.read_result.reason}")
+        return "\n".join(lines)
+
+
+@dataclass(frozen=True)
 class HumanMemoryInspectionResult:
     sdk_module: str
     human_id: str
@@ -730,6 +772,77 @@ def lookup_current_state_in_memory(
         sdk_module=module_name,
         subject=subject,
         predicate=predicate,
+        runtime=runtime,
+        read_result=read_result,
+    )
+
+
+def lookup_historical_state_in_memory(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    subject: str,
+    predicate: str,
+    as_of: str,
+    sdk_module: str | None = None,
+    actor_id: str = "memory_cli",
+) -> MemoryHistoricalStateLookupResult:
+    module_name = str(sdk_module or config_manager.get_path("spark.memory.sdk_module", default=DEFAULT_SDK_MODULE) or DEFAULT_SDK_MODULE)
+    runtime = inspect_memory_sdk_runtime(config_manager=config_manager, sdk_module=module_name)
+    client = _load_sdk_client_for_module(module_name=module_name, home_path=config_manager.paths.home)
+    if client is None:
+        read_result = MemoryReadResult(
+            status="abstained",
+            method="get_historical_state",
+            memory_role="current_state",
+            records=[],
+            provenance=[],
+            retrieval_trace=None,
+            answer_explanation=None,
+            abstained=True,
+            reason="sdk_unavailable",
+            shadow_only=False,
+        )
+        _record_memory_read_event(
+            state_db=state_db,
+            result=read_result,
+            human_id=_human_id_from_subject(subject),
+            session_id=f"memory-history:{actor_id}",
+            turn_id=f"{actor_id}:lookup-history",
+            actor_id=actor_id,
+        )
+        return MemoryHistoricalStateLookupResult(
+            sdk_module=module_name,
+            subject=subject,
+            predicate=predicate,
+            as_of=as_of,
+            runtime=runtime,
+            read_result=read_result,
+        )
+    _, read_result = _get_historical_state_with_subject_fallback(
+        client=client,
+        state_db=state_db,
+        subject_candidates=_subject_fallback_candidates(subject),
+        predicate=predicate,
+        as_of=as_of,
+        session_id=f"memory-history:{actor_id}",
+        turn_id=f"{actor_id}:lookup-history",
+        actor_id=actor_id,
+        source_surface="memory_cli_lookup_historical",
+    )
+    _record_memory_read_event(
+        state_db=state_db,
+        result=read_result,
+        human_id=_human_id_from_subject(subject),
+        session_id=f"memory-history:{actor_id}",
+        turn_id=f"{actor_id}:lookup-history",
+        actor_id=actor_id,
+    )
+    return MemoryHistoricalStateLookupResult(
+        sdk_module=module_name,
+        subject=subject,
+        predicate=predicate,
+        as_of=as_of,
         runtime=runtime,
         read_result=read_result,
     )
@@ -1503,6 +1616,52 @@ def _get_current_state_with_subject_fallback(
     return last_subject, last_result
 
 
+def _get_historical_state_with_subject_fallback(
+    *,
+    client: Any,
+    state_db: StateDB,
+    subject_candidates: tuple[str, ...],
+    predicate: str,
+    as_of: str,
+    session_id: str | None,
+    turn_id: str | None,
+    actor_id: str,
+    source_surface: str,
+    shadow_only: bool = False,
+) -> tuple[str, MemoryReadResult]:
+    last_subject = ""
+    last_result = _disabled_read_result(reason="invalid_subject")
+    for subject in subject_candidates:
+        last_subject = subject
+        _record_memory_read_requested_subject(
+            state_db=state_db,
+            method="get_historical_state",
+            subject=subject,
+            predicate=predicate,
+            as_of=as_of,
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=actor_id,
+        )
+        raw = _call_sdk_method(
+            client,
+            "get_historical_state",
+            {
+                "subject": subject,
+                "predicate": predicate,
+                "as_of": as_of,
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "timestamp": _now_iso(),
+                "metadata": {"source_surface": source_surface},
+            },
+        )
+        last_result = _normalize_read_result(raw=raw, method="get_historical_state", shadow_only=shadow_only)
+        if last_result.records:
+            return subject, last_result
+    return last_subject, last_result
+
+
 def _normalize_domain_write_result(*, result: Any, default_role: str) -> dict[str, Any]:
     provenance = [
         _domain_record_to_dict(item)
@@ -2064,6 +2223,7 @@ def _record_memory_read_requested_subject(
     predicate: str | None,
     query: str | None = None,
     predicate_prefix: str | None = None,
+    as_of: str | None = None,
     session_id: str | None,
     turn_id: str | None,
     actor_id: str,
@@ -2075,6 +2235,8 @@ def _record_memory_read_requested_subject(
         facts["query"] = query
     if predicate_prefix is not None:
         facts["predicate_prefix"] = predicate_prefix
+    if as_of is not None:
+        facts["as_of"] = as_of
     record_event(
         state_db,
         event_type="memory_read_requested",

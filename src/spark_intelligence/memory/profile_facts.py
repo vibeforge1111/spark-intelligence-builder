@@ -293,6 +293,145 @@ class ProfileFactQuery:
     predicate_prefix: str | None = None
 
 
+def _history_fact_query(
+    *,
+    predicate: str,
+    fact_name: str,
+    label: str,
+    query_kind: str,
+) -> ProfileFactQuery:
+    return ProfileFactQuery(
+        predicate=predicate,
+        fact_name=fact_name,
+        label=label,
+        query_kind=query_kind,
+    )
+
+
+def _detect_profile_fact_history_query(text: str) -> ProfileFactQuery | None:
+    if any(
+        phrase in text
+        for phrase in (
+            "where did i live before",
+            "where was i living before",
+            "what city did i live in before",
+            "which city did i live in before",
+            "what was my previous city",
+            "what city was i in before",
+            "what city did you have for me before",
+        )
+    ):
+        return _history_fact_query(
+            predicate="profile.city",
+            fact_name="profile_city",
+            label="city",
+            query_kind="fact_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what country did i live in before",
+            "which country did i live in before",
+            "what was my previous country",
+            "what country did you have for me before",
+        )
+    ):
+        return _history_fact_query(
+            predicate="profile.home_country",
+            fact_name="profile_home_country",
+            label="country",
+            query_kind="fact_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what timezone did i have before",
+            "what was my previous timezone",
+            "which timezone did you have for me before",
+        )
+    ):
+        return _history_fact_query(
+            predicate="profile.timezone",
+            fact_name="profile_timezone",
+            label="timezone",
+            query_kind="fact_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what startup did i have before",
+            "what was my previous startup",
+        )
+    ):
+        return _history_fact_query(
+            predicate="profile.startup_name",
+            fact_name="profile_startup_name",
+            label="startup",
+            query_kind="fact_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what company did i found before",
+            "what was the previous company i founded",
+        )
+    ):
+        return _history_fact_query(
+            predicate="profile.founder_of",
+            fact_name="profile_founder_of",
+            label="company you founded",
+            query_kind="fact_history",
+        )
+    return None
+
+
+def _detect_profile_fact_event_history_query(text: str) -> ProfileFactQuery | None:
+    if any(
+        phrase in text
+        for phrase in (
+            "what memory events do you have about where i live",
+            "what memory events do you have about my city",
+            "what memory events do you have about my location",
+            "show my city history",
+            "show my location history",
+        )
+    ):
+        return _history_fact_query(
+            predicate="profile.city",
+            fact_name="profile_city",
+            label="city",
+            query_kind="event_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what memory events do you have about my country",
+            "show my country history",
+            "what country history do you have for me",
+        )
+    ):
+        return _history_fact_query(
+            predicate="profile.home_country",
+            fact_name="profile_home_country",
+            label="country",
+            query_kind="event_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what memory events do you have about my timezone",
+            "show my timezone history",
+        )
+    ):
+        return _history_fact_query(
+            predicate="profile.timezone",
+            fact_name="profile_timezone",
+            label="timezone",
+            query_kind="event_history",
+        )
+    return None
+
+
 def detect_profile_fact_observation(user_message: str) -> ProfileFactObservation | None:
     text = str(user_message or "").strip()
     if not text:
@@ -397,6 +536,12 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
     if not text:
         return None
     normalized_question = re.sub(r"[.!?]+$", "", text).strip()
+    historical_query = _detect_profile_fact_history_query(text)
+    if historical_query is not None:
+        return historical_query
+    event_history_query = _detect_profile_fact_event_history_query(text)
+    if event_history_query is not None:
+        return event_history_query
     if any(
         phrase in text
         for phrase in (
@@ -713,6 +858,48 @@ def build_profile_fact_explanation_answer(*, query: ProfileFactQuery, explanatio
             if evidence_text:
                 return f'Because I have a saved memory record from when you said: "{evidence_text}" {concise_answer}'
     return f"Because I have a saved memory record for that. {concise_answer}"
+
+
+def build_profile_fact_history_answer(
+    *,
+    query: ProfileFactQuery,
+    previous_value: str | None,
+    current_value: str | None = None,
+) -> str:
+    normalized_previous = str(previous_value or "").strip()
+    normalized_current = str(current_value or "").strip()
+    if not normalized_previous:
+        return f"I don't currently have an earlier saved {query.label}."
+    predicate = str(query.predicate or "").strip()
+    if predicate == "profile.city":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before {normalized_current}, you lived in {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved city was {normalized_previous}")
+    if predicate == "profile.home_country":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before {normalized_current}, your country was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved country was {normalized_previous}")
+    if predicate == "profile.timezone":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before {normalized_current}, your timezone was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved timezone was {normalized_previous}")
+    return _ensure_sentence(f"An earlier saved {query.label} was {normalized_previous}")
+
+
+def build_profile_fact_event_history_answer(*, query: ProfileFactQuery, records: list[dict[str, object]]) -> str:
+    values: list[str] = []
+    last_value = ""
+    for record in records:
+        value = str(record.get("value") or record.get("normalized_value") or "").strip()
+        if not value or value == last_value:
+            continue
+        values.append(value)
+        last_value = value
+    if not values:
+        return f"I don't currently have saved {query.label} events."
+    if len(values) == 1:
+        return _ensure_sentence(f"I only have one saved {query.label} event: {values[0]}")
+    return _ensure_sentence(f"I have {len(values)} saved {query.label} events: {' then '.join(values)}")
 
 
 def build_profile_fact_observation_answer(*, observation: ProfileFactObservation) -> str:

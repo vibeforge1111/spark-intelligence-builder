@@ -2620,6 +2620,133 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         read_events = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=10)
         self.assertTrue(read_events)
         self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate"), "profile.home_country")
+
+    def test_build_researcher_reply_answers_profile_fact_history_query_directly_from_memory(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.lookup_current_state_in_memory",
+            return_value=SimpleNamespace(
+                read_result=SimpleNamespace(
+                    abstained=False,
+                    records=[
+                        {
+                            "predicate": "profile.city",
+                            "normalized_value": "Abu Dhabi",
+                            "value": "Abu Dhabi",
+                        }
+                    ],
+                )
+            ),
+        ) as current_lookup_mock, patch(
+            "spark_intelligence.researcher_bridge.advisory.retrieve_memory_events_in_memory",
+            return_value=SimpleNamespace(
+                read_result=SimpleNamespace(
+                    abstained=False,
+                    records=[
+                        {
+                            "predicate": "profile.city",
+                            "value": "Dubai",
+                            "timestamp": "2026-04-10T10:00:00+00:00",
+                            "turn_ids": ["turn-city-1"],
+                        },
+                        {
+                            "predicate": "profile.city",
+                            "value": "Abu Dhabi",
+                            "timestamp": "2026-04-10T11:00:00+00:00",
+                            "turn_ids": ["turn-city-2"],
+                        },
+                    ],
+                )
+            ),
+        ) as events_mock, patch(
+            "spark_intelligence.researcher_bridge.advisory.lookup_historical_state_in_memory",
+            return_value=SimpleNamespace(
+                read_result=SimpleNamespace(
+                    abstained=False,
+                    records=[
+                        {
+                            "predicate": "profile.city",
+                            "value": "Dubai",
+                        }
+                    ],
+                )
+            ),
+        ) as historical_lookup_mock, patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for memory history replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for memory history replies"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-city-history-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-city-history-query",
+                channel_kind="telegram",
+                user_message="Where did I live before?",
+            )
+
+        self.assertEqual(result.reply_text, "Before Abu Dhabi, you lived in Dubai.")
+        self.assertEqual(result.mode, "memory_profile_fact_history")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_history_query")
+        self.assertGreaterEqual(current_lookup_mock.call_count, 1)
+        self.assertGreaterEqual(events_mock.call_count, 1)
+        historical_lookup_mock.assert_called_once()
+
+    def test_build_researcher_reply_answers_profile_event_history_query_directly_from_memory(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.retrieve_memory_events_in_memory",
+            return_value=SimpleNamespace(
+                read_result=SimpleNamespace(
+                    abstained=False,
+                    records=[
+                        {
+                            "predicate": "profile.city",
+                            "value": "Dubai",
+                            "timestamp": "2026-04-10T10:00:00+00:00",
+                            "turn_ids": ["turn-city-1"],
+                        },
+                        {
+                            "predicate": "profile.city",
+                            "value": "Abu Dhabi",
+                            "timestamp": "2026-04-10T11:00:00+00:00",
+                            "turn_ids": ["turn-city-2"],
+                        },
+                    ],
+                )
+            ),
+        ) as events_mock, patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for memory event history replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for memory event history replies"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-city-event-history-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-city-event-history-query",
+                channel_kind="telegram",
+                user_message="What memory events do you have about where I live?",
+            )
+
+        self.assertEqual(result.reply_text, "I have 2 saved city events: Dubai then Abu Dhabi.")
+        self.assertEqual(result.mode, "memory_profile_event_history")
+        self.assertEqual(result.routing_decision, "memory_profile_event_history_query")
+        events_mock.assert_called_once()
     def test_build_researcher_reply_appends_swarm_recommendation_for_explicit_delegation(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         connect_exit, _, connect_stderr = self.run_cli(
