@@ -16,8 +16,8 @@ The goal was to keep offline ProductMemory comparison and live Telegram validati
 - KB probe coverage: `38/38` current-state and `38/38` evidence hits
 - Clean Telegram soak status: `14/14` completed, `0` failed
 - Latest clean whole-suite soak leader: `summary_synthesis_memory`
-- Latest clean whole-suite aggregate: `89/92` for `summary_synthesis_memory` vs `85/92` for `dual_store_event_calendar_hybrid`
-- Latest clean selector-pack aggregate: `61/64` for `summary_synthesis_memory` vs `57/64` for `dual_store_event_calendar_hybrid`
+- Latest clean whole-suite aggregate: `90/92` for `summary_synthesis_memory` vs `86/92` for `dual_store_event_calendar_hybrid`
+- Latest clean selector-pack aggregate: `62/64` for `summary_synthesis_memory` vs `58/64` for `dual_store_event_calendar_hybrid`
 - Offline ProductMemory leader: `dual_store_event_calendar_hybrid`
 - Current runtime selector: `dual_store_event_calendar_hybrid`
 
@@ -47,7 +47,8 @@ The live suite is now stricter in the places that were still underreporting ambi
 - `summary_synthesis_memory` now leads the clean whole-suite live soak overall by a material margin rather than by a one-case edge
 - `contradiction_and_recency` and `temporal_conflict_gauntlet` moved toward `summary_synthesis_memory` after the chip-side history/query fixes were aligned with Builder prompts
 - direct profile fact explanation support in the chip-side benchmark runtime removed the shared `mission_explanation` failure and cleaned up `startup_explanation_after_founder`
-- the current clean-soak selector packs still requiring work are `provenance_audit`, `event_calendar_lineage_proxy`, and `temporal_conflict_gauntlet`
+- adding the missing `occupation_write` prerequisite to `provenance_audit` converted that pack from a manufactured failure into a clean tie
+- the current clean-soak selector packs still requiring work are `event_calendar_lineage_proxy` and `temporal_conflict_gauntlet`
 - `long_horizon_recall`, `boundary_abstention`, `anti_personalization_guardrails`, `identity_synthesis`, `loaded_context_abstention`, and `identity_under_recency_pressure` are now health gates rather than selector packs because both contenders are fully green there
 - `identity_under_recency_pressure` remains a targeted `11/11` tie after the chip-side extraction and profile-query routing fixes
 

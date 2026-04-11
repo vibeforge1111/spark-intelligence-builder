@@ -182,6 +182,7 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
             focus_areas=("explanation", "grounding", "provenance"),
             cases=(
                 *_existing(
+                    "occupation_write",
                     "city_write",
                     "startup_write",
                     "mission_write",
