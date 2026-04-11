@@ -146,6 +146,12 @@ spark-intelligence memory run-telegram-regression \
   --baseline dual_store_event_calendar_hybrid
 ```
 
+Important operator note:
+
+- if explanation-heavy packs and overwrite-heavy packs are both under inspection, do not merge them into one ad hoc multi-pack regression namespace and then trust the raw mismatch count
+- those merged runs can legitimately fail explanation expectations because later overwrite writes replace the facts that the explanation pack was meant to explain
+- use one benchmark pack per regression run, or use `memory soak-architectures`, so each pack gets its own isolated Telegram namespace
+
 Focused chronology run:
 
 ```bash
