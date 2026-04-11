@@ -582,6 +582,20 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(remember_query.query_kind, "identity_summary")
         self.assertEqual(remember_query.predicate_prefix, "profile.")
 
+        summarize_profile_query = detect_profile_fact_query("Summarize my profile in one sentence.")
+        self.assertIsNotNone(summarize_profile_query)
+        assert summarize_profile_query is not None
+        self.assertEqual(summarize_profile_query.query_kind, "identity_summary")
+        self.assertEqual(summarize_profile_query.predicate_prefix, "profile.")
+
+        full_profile_query = detect_profile_fact_query(
+            "Give me a full profile summary with my latest location too."
+        )
+        self.assertIsNotNone(full_profile_query)
+        assert full_profile_query is not None
+        self.assertEqual(full_profile_query.query_kind, "identity_summary")
+        self.assertEqual(full_profile_query.predicate_prefix, "profile.")
+
     def test_profile_fact_answers_cover_founder_occupation_and_clean_observation_wording(self) -> None:
         founder_query = detect_profile_fact_query("What company did I found?")
         self.assertIsNotNone(founder_query)

@@ -590,17 +590,7 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
         )
     ):
         return ProfileFactQuery(predicate="profile.spark_role", fact_name="profile_spark_role", label="spark role")
-    if any(
-        phrase in text
-        for phrase in (
-            "who am i",
-            "what do you know about me",
-            "what do you remember about me",
-            "what do you remember for me",
-            "what do you remember of me",
-            "what do you have saved about me",
-        )
-    ):
+    if _is_identity_summary_query(text=text, normalized_question=normalized_question):
         return ProfileFactQuery(
             predicate=None,
             predicate_prefix="profile.",
@@ -649,6 +639,36 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
     ):
         return ProfileFactQuery(predicate="profile.city", fact_name="profile_city", label="city")
     return None
+
+
+def _is_identity_summary_query(*, text: str, normalized_question: str) -> bool:
+    if any(
+        phrase in text
+        for phrase in (
+            "who am i",
+            "what do you know about me",
+            "what do you remember about me",
+            "what do you remember for me",
+            "what do you remember of me",
+            "what do you have saved about me",
+            "summarize my profile",
+            "summarise my profile",
+            "give me my profile summary",
+            "give me a full profile summary",
+            "give me the full profile summary",
+        )
+    ):
+        return True
+    if "profile summary" not in text:
+        return False
+    return any(
+        phrase in normalized_question
+        for phrase in (
+            "my profile summary",
+            "full profile summary",
+            "latest location",
+        )
+    )
 
 
 def build_profile_fact_query_context(*, query: ProfileFactQuery, value: str | None) -> str:

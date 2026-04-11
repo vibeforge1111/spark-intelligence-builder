@@ -2124,6 +2124,84 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual(result.mode, "memory_profile_identity")
         self.assertEqual(result.routing_decision, "memory_profile_identity_summary")
 
+    def test_build_researcher_reply_injects_identity_summary_from_memory_for_profile_summary_prompt(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        write_profile_fact_to_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human-1",
+            predicate="profile.occupation",
+            value="entrepreneur",
+            evidence_text="I am an entrepreneur.",
+            fact_name="profile_occupation",
+            session_id="session-identity-summary-rich",
+            turn_id="turn-identity-summary-rich-write-1",
+            channel_kind="telegram",
+        )
+        write_profile_fact_to_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human-1",
+            predicate="profile.founder_of",
+            value="Spark Swarm",
+            evidence_text="I am the founder of Spark Swarm.",
+            fact_name="profile_founder_of",
+            session_id="session-identity-summary-rich",
+            turn_id="turn-identity-summary-rich-write-2",
+            channel_kind="telegram",
+        )
+        write_profile_fact_to_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human-1",
+            predicate="profile.timezone",
+            value="Asia/Dubai",
+            evidence_text="My timezone is Asia/Dubai.",
+            fact_name="profile_timezone",
+            session_id="session-identity-summary-rich",
+            turn_id="turn-identity-summary-rich-write-3",
+            channel_kind="telegram",
+        )
+        write_profile_fact_to_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human-1",
+            predicate="profile.home_country",
+            value="Canada",
+            evidence_text="My country is Canada.",
+            fact_name="profile_home_country",
+            session_id="session-identity-summary-rich",
+            turn_id="turn-identity-summary-rich-write-4",
+            channel_kind="telegram",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for direct identity replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for direct identity replies"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-identity-summary-rich",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-identity-summary-rich",
+                channel_kind="telegram",
+                user_message="Give me a full profile summary with my latest location too.",
+            )
+
+        self.assertIn("entrepreneur", result.reply_text)
+        self.assertIn("Spark Swarm", result.reply_text)
+        self.assertIn("Canada", result.reply_text)
+        self.assertEqual(result.mode, "memory_profile_identity")
+        self.assertEqual(result.routing_decision, "memory_profile_identity_summary")
+
     def test_build_researcher_reply_answers_single_fact_mission_query_directly_from_memory(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)

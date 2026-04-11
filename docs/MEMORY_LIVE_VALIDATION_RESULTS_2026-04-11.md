@@ -43,9 +43,11 @@ The live suite is now stricter in the places that were still underreporting ambi
 The benchmark-pack CLI path now runs custom Telegram variants directly:
 
 - `memory run-telegram-regression --benchmark-pack identity_under_recency_pressure` executed `21` cases end-to-end
-- that targeted run matched `19/21`, with only the two richer summary prompts failing at runtime
-- the live architecture comparison for the full targeted pack compared `11` cases and still tied `summary_synthesis_memory` vs `dual_store_event_calendar_hybrid` at `2/11`
-- this confirms the unresolved lane is real: both contenders still collapse toward the freshest overwrite under identity-summary pressure
+- the first targeted run matched `19/21`, and the only misses were the two richer profile-summary prompts
+- the follow-up routing fix widened identity-summary detection for explicit prompts like `Summarize my profile in one sentence.` and `Give me a full profile summary with my latest location too.`
+- the corrected targeted rerun is now `21/21` matched on live Telegram with `48/48` current-state and `48/48` evidence probe hits
+- the live architecture comparison for the same targeted pack still compared `11` cases and still tied `summary_synthesis_memory` vs `dual_store_event_calendar_hybrid` at `2/11`
+- this means the Telegram runtime routing bug is fixed, but the architecture scorecards for identity-summary pressure are still unresolved
 
 ## Interpretation
 
@@ -68,3 +70,5 @@ The Builder runtime contract now explicitly reports `summary_synthesis_memory` a
 - `.spark-intelligence/artifacts/telegram-memory-architecture-soak/telegram-memory-architecture-soak.json`
 - `.spark-intelligence/artifacts/telegram-memory-regression-identity-pack-v2/telegram-memory-regression.json`
 - `.spark-intelligence/artifacts/telegram-memory-regression-identity-pack-v2/architecture-live-comparison/telegram-memory-architecture-live-comparison.json`
+- `.spark-intelligence/artifacts/telegram-memory-regression-identity-pack-v3/telegram-memory-regression.json`
+- `.spark-intelligence/artifacts/telegram-memory-regression-identity-pack-v3/architecture-live-comparison/telegram-memory-architecture-live-comparison.json`
