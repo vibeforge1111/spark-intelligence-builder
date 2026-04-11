@@ -19,6 +19,7 @@ def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
     assert "abstention" in packs["loaded_context_abstention"].focus_areas
     assert "temporal_conflict" in packs["temporal_conflict_gauntlet"].focus_areas
     assert "native_history" in packs["temporal_conflict_gauntlet"].focus_areas
+    assert "native_history" in packs["contradiction_and_recency"].focus_areas
     assert "event_ordering_proxy" in packs["event_calendar_lineage_proxy"].focus_areas
     assert "native_history" in packs["event_calendar_lineage_proxy"].focus_areas
     assert "provenance" in packs["explanation_pressure_suite"].focus_areas
@@ -35,6 +36,11 @@ def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
     assert "city_history_query_after_overwrite" in temporal_case_ids
     assert "country_history_query_after_overwrite" in temporal_case_ids
     assert "city_event_history_query_after_overwrite" in temporal_case_ids
+
+    contradiction_case_ids = {case.case_id for case in packs["contradiction_and_recency"].cases}
+    assert "city_history_query_after_overwrite" in contradiction_case_ids
+    assert "country_history_query_after_overwrite" in contradiction_case_ids
+    assert "city_event_history_query_after_overwrite" in contradiction_case_ids
 
     event_proxy_case_ids = {case.case_id for case in packs["event_calendar_lineage_proxy"].cases}
     assert "mission_query_after_event_lineage_noise" in event_proxy_case_ids

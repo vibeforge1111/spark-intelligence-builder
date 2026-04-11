@@ -180,6 +180,7 @@ Current live separation note:
 - the event-calendar lane now includes native Telegram history queries for overwritten profile facts, so chronology regressions can be caught in the live runtime rather than only through proxy prompts
 - the current full 14-pack soak still recommends `dual_store_event_calendar_hybrid`, while the chronology pack itself should be treated as a required green lane plus a secondary tie-break signal rather than the sole promotion driver
 - the tightened `temporal_conflict_gauntlet` now also carries native history cases, and that conflict-heavy targeted rerun currently gives a cleaner live win to `dual_store_event_calendar_hybrid` than the standalone chronology pack does
+- the same overwrite-history cases now also sharpen `contradiction_and_recency`, which means chronology is directly improving separation in the most important overwrite lanes instead of only living in a sidecar chronology pack
 
 ## Next benchmark expansions
 

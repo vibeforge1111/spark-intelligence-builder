@@ -69,6 +69,8 @@ The benchmark-pack CLI path now runs custom Telegram variants directly:
 - the chronology pack itself is green at the Telegram runtime layer, but the architecture comparison inside the soak still only separates the contenders weakly on that pack at `6/11`, with `dual_store_event_calendar_hybrid` taking the tie-break
 - the temporal conflict pack was then tightened with the same native history cases, and the targeted live rerun went `23/23` with `20/20` KB probe coverage
 - that tighter temporal conflict rerun now compares `13` live architecture cases and cleanly favors `dual_store_event_calendar_hybrid`, so chronology is now helping a previously tied conflict lane separate the contenders
+- the contradiction-and-recency pack was then tightened with the same overwrite-history questions, and its targeted live rerun went `16/16` with `13/13` KB probe coverage
+- that tightened contradiction-and-recency rerun now compares `10` live architecture cases and also favors `dual_store_event_calendar_hybrid`, which removes another previously tied live lane
 - the live architecture comparison for that proxy pack compares `8` cases and currently favors `dual_store_event_calendar_hybrid`
 
 ## Interpretation
@@ -82,6 +84,7 @@ The current decision now has a real live separator again:
 5. The runtime selector has now been repinned to `dual_store_event_calendar_hybrid` so the Builder contract matches the combined benchmark result.
 6. Native Telegram chronology queries are now part of the live benchmark surface, but chronology still is not the main separator between the two contenders; it is currently a green health gate plus a mild tie-break edge for `dual_store_event_calendar_hybrid`.
 7. The best immediate use of chronology is inside conflict-heavy packs, where it now helps `temporal_conflict_gauntlet` separate the contenders more cleanly than before.
+8. The same pattern now holds for `contradiction_and_recency`, so the remaining ambiguity is shrinking specifically in overwrite-heavy packs rather than in generic profile recall.
 
 ## Runtime Selector
 

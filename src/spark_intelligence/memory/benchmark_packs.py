@@ -136,9 +136,11 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
             title="Contradiction And Recency",
             description=(
                 "Exercises overwrite and contradiction pressure so the winning memory "
-                "architecture has to preserve the latest correct state instead of stale facts."
+                "architecture has to preserve the latest correct state instead of stale facts. "
+                "It now also checks whether overwritten state can still be retrieved through native "
+                "Telegram history and event-history questions."
             ),
-            focus_areas=("overwrite", "recency", "temporal_conflict"),
+            focus_areas=("overwrite", "recency", "temporal_conflict", "native_history"),
             cases=(
                 *_existing(
                     "startup_write",
@@ -152,6 +154,9 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
                     "country_write",
                     "country_overwrite",
                     "country_query_after_overwrite",
+                    "city_history_query_after_overwrite",
+                    "country_history_query_after_overwrite",
+                    "city_event_history_query_after_overwrite",
                 ),
                 _variant(
                     "city_query_after_overwrite",
