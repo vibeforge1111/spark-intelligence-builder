@@ -88,7 +88,9 @@ Pack roles:
 
 - separator packs contribute to runtime-selection and contender-ranking decisions
 - health-gate packs must stay green but do not count as runtime-selection votes inside the soak summary
-- `identity_under_recency_pressure` is now explicitly a health gate because both active contenders are fully green there and the pack no longer provides honest separation
+- the current health-gate set is:
+  `long_horizon_recall`, `boundary_abstention`, `anti_personalization_guardrails`, `identity_synthesis`, `loaded_context_abstention`, and `identity_under_recency_pressure`
+- those packs are explicitly health gates because both active contenders are fully green there and they no longer provide honest live separation
 
 The newest recency-heavy packs now also force:
 
@@ -182,7 +184,7 @@ Current live separation note:
 - the broad live suite now separates the contenders again on explanation provenance alignment
 - `dual_store_event_calendar_hybrid` is the current whole-suite live soak leader because it preserves `evidence_memory` alignment on explanation-heavy packs where `summary_synthesis_memory` still falls back to `aggregate_memory`
 - the runtime selector is now pinned to `dual_store_event_calendar_hybrid` because it won both the offline ProductMemory comparison and the corrected live Telegram soak
-- the identity-under-recency targeted pack still ties, so it should be treated as a health gate, not as the deciding promotion signal
+- the long-horizon, abstention, anti-personalization, identity-synthesis, loaded-context, and identity-under-recency packs are all currently health gates, not deciding promotion signals
 - soak summaries now expose `selector_pack_ids` and `health_gate_pack_ids`, and only the selector packs feed `overall_leader_names` and `recommended_top_two`
 - the event-calendar lane now includes native Telegram history queries for overwritten profile facts, so chronology regressions can be caught in the live runtime rather than only through proxy prompts
 - the current full 14-pack soak still recommends `dual_store_event_calendar_hybrid`, while the chronology pack itself should be treated as a required green lane plus a secondary tie-break signal rather than the sole promotion driver

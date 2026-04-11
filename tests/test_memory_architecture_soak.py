@@ -155,7 +155,17 @@ class MemoryArchitectureSoakTests(SparkTestCase):
         self.assertEqual(result.payload["summary"]["benchmark_mode"], "varied_pack_suite")
         self.assertGreater(result.payload["summary"]["benchmark_pack_count"], 1)
         self.assertIn("temporal_conflict", result.payload["summary"]["covered_focus_areas"])
-        self.assertIn("identity_under_recency_pressure", result.payload["summary"]["health_gate_pack_ids"])
+        self.assertEqual(
+            set(result.payload["summary"]["health_gate_pack_ids"]),
+            {
+                "long_horizon_recall",
+                "boundary_abstention",
+                "anti_personalization_guardrails",
+                "identity_synthesis",
+                "loaded_context_abstention",
+                "identity_under_recency_pressure",
+            },
+        )
         self.assertNotEqual(
             result.payload["runs"][0]["benchmark_pack"]["pack_id"],
             result.payload["runs"][1]["benchmark_pack"]["pack_id"],

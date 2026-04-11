@@ -179,11 +179,23 @@ def run_telegram_memory_architecture_soak(
                 for item in list(live_comparison_payload.get("baseline_results") or [])
                 if isinstance(item, dict)
             ]
+            if resolved_baseline_names:
+                allowed_baseline_names = {name for name in resolved_baseline_names if str(name).strip()}
+                baseline_rows = [
+                    row
+                    for row in baseline_rows
+                    if str(row.get("baseline_name") or "").strip() in allowed_baseline_names
+                ]
             leader_names = list(
                 ((live_comparison_payload.get("summary") or {}).get("leader_names") or [])
                 if isinstance(live_comparison_payload.get("summary"), dict)
                 else []
             )
+            if resolved_baseline_names:
+                allowed_baseline_names = {name for name in resolved_baseline_names if str(name).strip()}
+                leader_names = [
+                    name for name in leader_names if str(name).strip() in allowed_baseline_names
+                ]
             run_payloads.append(
                 {
                     "run_index": index,

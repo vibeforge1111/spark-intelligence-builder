@@ -23,6 +23,11 @@ def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
     assert "event_ordering_proxy" in packs["event_calendar_lineage_proxy"].focus_areas
     assert "native_history" in packs["event_calendar_lineage_proxy"].focus_areas
     assert "provenance" in packs["explanation_pressure_suite"].focus_areas
+    assert packs["long_horizon_recall"].selection_role == "health_gate"
+    assert packs["boundary_abstention"].selection_role == "health_gate"
+    assert packs["anti_personalization_guardrails"].selection_role == "health_gate"
+    assert packs["identity_synthesis"].selection_role == "health_gate"
+    assert packs["loaded_context_abstention"].selection_role == "health_gate"
     assert "identity_synthesis" in packs["identity_under_recency_pressure"].focus_areas
     assert packs["identity_under_recency_pressure"].selection_role == "health_gate"
 

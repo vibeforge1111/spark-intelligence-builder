@@ -93,6 +93,7 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
                 "Writes multiple facts, injects unrelated memory updates, then checks whether "
                 "older facts are still recalled after a longer interaction horizon."
             ),
+            selection_role="health_gate",
             focus_areas=("long_horizon_recall", "interleaved_noise", "profile_retention"),
             cases=(
                 *_existing(
@@ -206,6 +207,7 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
                 "Checks whether the system abstains cleanly when a fact has not been written, "
                 "instead of hallucinating a profile answer."
             ),
+            selection_role="health_gate",
             focus_areas=("abstention", "cleanroom", "anti_hallucination"),
             cases=(
                 _variant(
@@ -247,6 +249,7 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
                 "Measures whether the memory system avoids using unrelated stored profile facts to "
                 "answer a question that should trigger abstention."
             ),
+            selection_role="health_gate",
             focus_areas=("abstention", "loaded_context", "anti_overpersonalization"),
             cases=(
                 *_existing(
@@ -293,6 +296,7 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
                 "Measures whether many separate writes are fused into a coherent identity-level "
                 "summary instead of being recalled only as isolated facts."
             ),
+            selection_role="health_gate",
             focus_areas=("identity_synthesis", "multi_fact_fusion", "profile_summary"),
             cases=(
                 *_existing(
@@ -389,6 +393,7 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
                 "Loads the runtime with many saved profile facts, then asks several tempting but "
                 "unsupported questions so abstention quality is measured under maximal personalization pressure."
             ),
+            selection_role="health_gate",
             focus_areas=("abstention", "loaded_context", "anti_hallucination", "anti_overpersonalization"),
             cases=(
                 *_existing(

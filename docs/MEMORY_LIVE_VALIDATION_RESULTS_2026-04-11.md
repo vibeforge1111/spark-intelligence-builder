@@ -45,6 +45,7 @@ The live suite is now stricter in the places that were still underreporting ambi
 - `explanation_pressure_suite`: `dual_store_event_calendar_hybrid` leads on explanation-source alignment
 - `interleaved_noise_resilience`: `dual_store_event_calendar_hybrid` leads after the same provenance alignment signal is carried through the noisy pack
 - `quality_lane_gauntlet`: `dual_store_event_calendar_hybrid` leads when explanation provenance is mixed with abstention and overwrite pressure
+- `long_horizon_recall`, `boundary_abstention`, `anti_personalization_guardrails`, `identity_synthesis`, and `loaded_context_abstention` are now fully green ties, so they are treated as health gates rather than selector packs
 - `identity_under_recency_pressure`: the latest targeted rerun is now a full `11/11` tie after chip-side extraction and profile-query routing fixes
 
 ## Targeted Pack Validation
@@ -61,6 +62,7 @@ The benchmark-pack CLI path now runs custom Telegram variants directly:
 - the live architecture comparison for the same targeted pack now compares `11` cases and ties `summary_synthesis_memory` vs `dual_store_event_calendar_hybrid` at `11/11`
 - this is a materially better tie than the earlier `2/11`: the targeted identity pack is no longer exposing synthesis misses, but it also no longer separates the two contenders on its own
 - because of that, `identity_under_recency_pressure` is now classified as a soak health gate rather than a selector pack: it still must stay green, but it no longer contributes to whole-suite runtime-pinning votes
+- the same rule now covers the other fully green tied packs too, so whole-suite leader selection is driven by the remaining separator packs rather than by sanity lanes that both contenders already pass perfectly
 - the `event_calendar_lineage_proxy` pack now includes native Telegram history and event-history questions for overwritten profile facts instead of staying proxy-only
 - the first filtered live rerun failed `0/3` only because it skipped the prerequisite write cases and hit an empty synthetic namespace
 - after adding inspection-backed chronology fallback, the full pack rerun went `20/20` on live Telegram with `23/23` current-state and `23/23` evidence probe hits
