@@ -13,7 +13,10 @@ class MemoryArchitectureSoakTests(SparkTestCase):
         payload_one = {
             "summary": {"matched_case_count": 29, "mismatched_case_count": 2},
             "architecture_live_comparison": {
-                "summary": {"leader_names": ["summary_synthesis_memory"]},
+                "summary": {
+                    "baseline_names": ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
+                    "leader_names": ["summary_synthesis_memory"],
+                },
                 "baseline_results": [
                     {
                         "baseline_name": "observational_temporal_memory",
@@ -33,7 +36,10 @@ class MemoryArchitectureSoakTests(SparkTestCase):
         payload_two = {
             "summary": {"matched_case_count": 30, "mismatched_case_count": 1},
             "architecture_live_comparison": {
-                "summary": {"leader_names": ["dual_store_event_calendar_hybrid"]},
+                "summary": {
+                    "baseline_names": ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
+                    "leader_names": ["dual_store_event_calendar_hybrid"],
+                },
                 "baseline_results": [
                     {
                         "baseline_name": "observational_temporal_memory",
@@ -71,6 +77,10 @@ class MemoryArchitectureSoakTests(SparkTestCase):
         self.assertEqual(result.payload["summary"]["failed_runs"], 0)
         self.assertEqual(result.payload["summary"]["status"], "completed")
         self.assertEqual(
+            result.payload["summary"]["baseline_names"],
+            ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
+        )
+        self.assertEqual(
             set(result.payload["summary"]["recommended_top_two"]),
             {"summary_synthesis_memory", "dual_store_event_calendar_hybrid"},
         )
@@ -83,7 +93,10 @@ class MemoryArchitectureSoakTests(SparkTestCase):
         payload = {
             "summary": {"matched_case_count": 10, "mismatched_case_count": 0},
             "architecture_live_comparison": {
-                "summary": {"leader_names": ["summary_synthesis_memory"]},
+                "summary": {
+                    "baseline_names": ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
+                    "leader_names": ["summary_synthesis_memory"],
+                },
                 "baseline_results": [
                     {
                         "baseline_name": "observational_temporal_memory",
@@ -118,6 +131,7 @@ class MemoryArchitectureSoakTests(SparkTestCase):
                 runs=2,
                 user_id="telegram-user",
                 chat_id="telegram-chat",
+                baseline_names=["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
             )
 
         first_kwargs = patched_run.call_args_list[0].kwargs
@@ -126,6 +140,10 @@ class MemoryArchitectureSoakTests(SparkTestCase):
         self.assertNotEqual(first_kwargs["chat_id"], second_kwargs["chat_id"])
         self.assertIsNotNone(first_kwargs["cases"])
         self.assertIsNotNone(second_kwargs["cases"])
+        self.assertEqual(
+            first_kwargs["baseline_names"],
+            ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
+        )
         self.assertEqual(result.payload["summary"]["benchmark_mode"], "varied_pack_suite")
         self.assertGreater(result.payload["summary"]["benchmark_pack_count"], 1)
         self.assertNotEqual(
@@ -137,7 +155,10 @@ class MemoryArchitectureSoakTests(SparkTestCase):
         payload = {
             "summary": {"matched_case_count": 8, "mismatched_case_count": 0},
             "architecture_live_comparison": {
-                "summary": {"leader_names": ["summary_synthesis_memory"]},
+                "summary": {
+                    "baseline_names": ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
+                    "leader_names": ["summary_synthesis_memory"],
+                },
                 "baseline_results": [
                     {
                         "baseline_name": "observational_temporal_memory",
@@ -180,6 +201,10 @@ class MemoryArchitectureSoakTests(SparkTestCase):
             )
 
         self.assertEqual(result.payload["summary"]["benchmark_mode"], "fixed_selection")
+        self.assertEqual(
+            result.payload["summary"]["baseline_names"],
+            ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
+        )
         self.assertEqual(result.payload["summary"]["benchmark_pack_count"], 1)
         self.assertEqual(result.payload["benchmark_packs"][0]["pack_id"], "user_selected_slice")
         self.assertEqual(
@@ -199,7 +224,10 @@ class MemoryArchitectureSoakTests(SparkTestCase):
         payload = {
             "summary": {"matched_case_count": 4, "mismatched_case_count": 0},
             "architecture_live_comparison": {
-                "summary": {"leader_names": []},
+                "summary": {
+                    "baseline_names": ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
+                    "leader_names": [],
+                },
                 "baseline_results": [
                     {
                         "baseline_name": "observational_temporal_memory",

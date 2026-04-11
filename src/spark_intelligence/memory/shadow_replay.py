@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -9,6 +10,12 @@ from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.execution import run_governed_command
+from spark_intelligence.memory.profile_facts import (
+    ProfileFactObservation,
+    ProfileFactQuery,
+    build_profile_fact_observation_answer,
+    build_profile_fact_query_answer,
+)
 from spark_intelligence.memory_contracts import memory_contract_reason, normalize_memory_role
 from spark_intelligence.state.db import StateDB
 
@@ -247,11 +254,23 @@ def build_shadow_replay_payload(
     accepted_observations = _load_accepted_observations(state_db=state_db, event_limit=event_limit)
     observations_by_session = _group_observations_by_session(accepted_observations)
     histories = _build_observation_histories(accepted_observations)
+    canonical_user_request_keys = _request_keys_for_event_type(turn_rows, "intent_committed")
+    canonical_assistant_request_keys = _request_keys_for_event_type(turn_rows, "delivery_succeeded")
 
     conversations: dict[str, dict[str, Any]] = {}
     for row in turn_rows:
+        if _skip_synthetic_turn(
+            row=row,
+            canonical_user_request_keys=canonical_user_request_keys,
+            canonical_assistant_request_keys=canonical_assistant_request_keys,
+        ):
+            continue
         conversation_id = _conversation_id(row)
-        content = _turn_content(row)
+        content = _turn_content(
+            row,
+            observations_by_session=observations_by_session,
+            histories=histories,
+        )
         if not content:
             continue
         conversation = conversations.setdefault(
@@ -264,7 +283,14 @@ def build_shadow_replay_payload(
                 "_request_keys": set(),
             },
         )
-        conversation["turns"].append(_build_turn(row, observations_by_session))
+        conversation["turns"].append(
+            _build_turn(
+                row,
+                content=content,
+                observations_by_session=observations_by_session,
+                histories=histories,
+            )
+        )
         if row.get("request_id"):
             conversation["_request_keys"].add((str(row.get("session_id") or ""), str(row.get("request_id") or "")))
         _merge_conversation_metadata(conversation["metadata"], row)
@@ -377,6 +403,7 @@ def _run_domain_chip_memory_cli(
             "errors": [f"validator_root_missing:{root}"],
             "warnings": [],
         }
+    command_env = _domain_chip_memory_cli_env(root)
     execution = run_governed_command(
         command=[
             sys.executable,
@@ -386,6 +413,7 @@ def _run_domain_chip_memory_cli(
             *command_args,
         ],
         cwd=str(root),
+        env=command_env,
     )
     stdout = execution.stdout.strip()
     parsed: dict[str, Any] | None = None
@@ -406,6 +434,14 @@ def _run_domain_chip_memory_cli(
         "stdout": stdout,
         "stderr": execution.stderr.strip(),
     }
+
+
+def _domain_chip_memory_cli_env(root: Path) -> dict[str, str]:
+    env = dict(os.environ)
+    src_path = str((root / "src").resolve())
+    current_pythonpath = env.get("PYTHONPATH", "").strip()
+    env["PYTHONPATH"] = src_path if not current_pythonpath else f"{src_path}{os.pathsep}{current_pythonpath}"
+    return env
 
 
 def _default_output_path(config_manager: ConfigManager) -> Path:
@@ -433,7 +469,13 @@ def _load_turn_rows(*, state_db: StateDB, event_limit: int) -> list[dict[str, An
                     facts_json,
                     provenance_json
                 FROM builder_events
-                WHERE event_type IN ('intent_committed', 'delivery_succeeded')
+                WHERE event_type IN (
+                    'intent_committed',
+                    'delivery_succeeded',
+                    'memory_write_requested',
+                    'plugin_or_chip_influence_recorded',
+                    'tool_result_received'
+                )
                 ORDER BY created_at DESC, event_id DESC
                 LIMIT ?
             )
@@ -535,14 +577,17 @@ def _build_observation_histories(observations: list[dict[str, Any]]) -> dict[tup
 
 def _build_turn(
     row: dict[str, Any],
+    *,
+    content: str,
     observations_by_session: dict[str, list[dict[str, Any]]],
+    histories: dict[tuple[str, str], list[dict[str, Any]]],
 ) -> dict[str, Any]:
     facts = row.get("facts_json") or {}
-    role = "user" if row.get("event_type") == "intent_committed" else "assistant"
+    role = _turn_role(row)
     turn: dict[str, Any] = {
         "message_id": _message_id(row),
         "role": role,
-        "content": _turn_content(row),
+        "content": content,
         "timestamp": _normalized_timestamp(row.get("created_at")),
     }
     metadata = {
@@ -557,6 +602,19 @@ def _build_turn(
         metadata["keepability"] = facts.get("keepability")
         metadata["promotion_disposition"] = facts.get("promotion_disposition")
         metadata["delivery_target"] = facts.get("delivery_target")
+        if row.get("event_type") == "tool_result_received":
+            query = _bridge_query_from_facts(facts)
+            if query is not None:
+                latest_value = _latest_query_value(
+                    row=row,
+                    predicate=str(query.predicate or ""),
+                    observations_by_session=observations_by_session,
+                    histories=histories,
+                )
+                metadata["predicate"] = query.predicate
+                metadata["fact_name"] = query.fact_name
+                if latest_value not in (None, ""):
+                    metadata["value"] = latest_value
     else:
         session_id = str(row.get("session_id") or "")
         request_id = str(row.get("request_id") or "")
@@ -576,6 +634,12 @@ def _build_turn(
             metadata["entity_hints"] = sorted({str(item.get("subject") or "") for item in observation_hints if item.get("subject")})
             metadata["predicate_hints"] = [str(item.get("predicate") or "") for item in observation_hints if item.get("predicate")]
             metadata["source_tags"] = ["spark_memory_sdk_shadow_candidate"]
+        elif row.get("event_type") == "plugin_or_chip_influence_recorded":
+            query = _bridge_query_from_facts(facts)
+            if query is not None:
+                metadata["memory_kind"] = "observation"
+                metadata["predicate"] = query.predicate
+                metadata["fact_name"] = query.fact_name
     metadata = {key: value for key, value in metadata.items() if value not in (None, [], {}, "")}
     if metadata:
         turn["metadata"] = metadata
@@ -745,17 +809,36 @@ def _merge_conversation_metadata(metadata: dict[str, Any], row: dict[str, Any]) 
             metadata[key].append(value)
 
 
-def _turn_content(row: dict[str, Any]) -> str:
+def _turn_content(
+    row: dict[str, Any],
+    *,
+    observations_by_session: dict[str, list[dict[str, Any]]],
+    histories: dict[tuple[str, str], list[dict[str, Any]]],
+) -> str:
     facts = row.get("facts_json") or {}
-    if row.get("event_type") == "intent_committed":
+    event_type = str(row.get("event_type") or "")
+    if event_type == "intent_committed":
         return str(facts.get("message_text") or "").strip()
-    return str(facts.get("delivered_text") or "").strip()
+    if event_type == "delivery_succeeded":
+        return str(facts.get("delivered_text") or "").strip()
+    if event_type == "memory_write_requested":
+        return _bridge_memory_write_content(facts)
+    if event_type == "plugin_or_chip_influence_recorded":
+        return _bridge_query_prompt_from_facts(facts)
+    if event_type == "tool_result_received":
+        return _bridge_tool_result_content(
+            row=row,
+            facts=facts,
+            observations_by_session=observations_by_session,
+            histories=histories,
+        )
+    return ""
 
 
 def _message_id(row: dict[str, Any]) -> str:
     event_type = str(row.get("event_type") or "")
     facts = row.get("facts_json") or {}
-    if event_type == "intent_committed":
+    if _turn_role(row) == "user":
         candidate = facts.get("message_ref") or row.get("request_id")
         suffix = "user"
     else:
@@ -798,6 +881,204 @@ def _loads_json_value(value: Any) -> dict[str, Any]:
 def _json_field(value: Any, field: str, default: Any = None) -> Any:
     payload = _loads_json_value(value)
     return payload.get(field, default)
+
+
+def _request_keys_for_event_type(rows: list[dict[str, Any]], event_type: str) -> set[tuple[str, str]]:
+    return {
+        (str(row.get("session_id") or ""), str(row.get("request_id") or ""))
+        for row in rows
+        if str(row.get("event_type") or "") == event_type and row.get("request_id")
+    }
+
+
+def _skip_synthetic_turn(
+    *,
+    row: dict[str, Any],
+    canonical_user_request_keys: set[tuple[str, str]],
+    canonical_assistant_request_keys: set[tuple[str, str]],
+) -> bool:
+    request_key = (str(row.get("session_id") or ""), str(row.get("request_id") or ""))
+    if not request_key[1]:
+        return False
+    event_type = str(row.get("event_type") or "")
+    if event_type in {"memory_write_requested", "plugin_or_chip_influence_recorded"}:
+        return request_key in canonical_user_request_keys
+    if event_type == "tool_result_received":
+        return request_key in canonical_assistant_request_keys
+    return False
+
+
+def _turn_role(row: dict[str, Any]) -> str:
+    event_type = str(row.get("event_type") or "")
+    if event_type in {"intent_committed", "memory_write_requested", "plugin_or_chip_influence_recorded"}:
+        return "user"
+    return "assistant"
+
+
+def _bridge_memory_write_content(facts: dict[str, Any]) -> str:
+    observations = facts.get("observations")
+    if not isinstance(observations, list):
+        return ""
+    for observation in observations:
+        if not isinstance(observation, dict):
+            continue
+        text = str(observation.get("text") or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _bridge_tool_result_content(
+    *,
+    row: dict[str, Any],
+    facts: dict[str, Any],
+    observations_by_session: dict[str, list[dict[str, Any]]],
+    histories: dict[tuple[str, str], list[dict[str, Any]]],
+) -> str:
+    bridge_mode = str(facts.get("bridge_mode") or "").strip().lower()
+    if bridge_mode == "memory_profile_fact_update":
+        observation = _bridge_observation_from_facts(facts)
+        if observation is not None:
+            return build_profile_fact_observation_answer(observation=observation)
+    if bridge_mode == "memory_profile_fact":
+        query = _bridge_query_from_facts(facts)
+        if query is not None:
+            value = str(facts.get("value") or "").strip() or None
+            if value is None and bool(facts.get("value_found")):
+                value = _latest_query_value(
+                    row=row,
+                    predicate=str(query.predicate or ""),
+                    observations_by_session=observations_by_session,
+                    histories=histories,
+                )
+            return build_profile_fact_query_answer(query=query, value=value)
+    return ""
+
+
+def _bridge_query_prompt_from_facts(facts: dict[str, Any]) -> str:
+    query = _bridge_query_from_facts(facts.get("detected_profile_fact_query"))
+    if query is None:
+        return ""
+    return _query_prompt_for_label(query.label, query_kind=query.query_kind)
+
+
+def _bridge_observation_from_facts(facts: dict[str, Any]) -> ProfileFactObservation | None:
+    predicate = str(facts.get("predicate") or "").strip()
+    value = str(facts.get("value") or "").strip()
+    if not predicate or not value:
+        return None
+    return ProfileFactObservation(
+        predicate=predicate,
+        value=value,
+        operation=str(facts.get("operation") or "update"),
+        evidence_text=str(facts.get("text") or value),
+        fact_name=str(facts.get("fact_name") or _fact_name_for_predicate(predicate)),
+    )
+
+
+def _bridge_query_from_facts(payload: Any) -> ProfileFactQuery | None:
+    if not isinstance(payload, dict):
+        return None
+    predicate = str(payload.get("predicate") or "").strip() or None
+    label = str(payload.get("label") or _label_for_predicate(str(predicate or ""))).strip()
+    fact_name = str(payload.get("fact_name") or _fact_name_for_predicate(str(predicate or ""))).strip()
+    query_kind = str(payload.get("query_kind") or "single_fact").strip() or "single_fact"
+    predicate_prefix = str(payload.get("predicate_prefix") or "").strip() or None
+    if not fact_name or (predicate is None and predicate_prefix is None):
+        return None
+    return ProfileFactQuery(
+        predicate=predicate,
+        fact_name=fact_name,
+        label=label or "memory fact",
+        query_kind=query_kind,
+        predicate_prefix=predicate_prefix,
+    )
+
+
+def _fact_name_for_predicate(predicate: str) -> str:
+    normalized = str(predicate or "").strip()
+    if not normalized:
+        return "profile_fact"
+    return normalized.replace(".", "_")
+
+
+def _label_for_predicate(predicate: str) -> str:
+    return {
+        "profile.city": "city",
+        "profile.home_country": "country",
+        "profile.startup_name": "startup",
+        "profile.founder_of": "company you founded",
+        "profile.occupation": "occupation",
+        "profile.preferred_name": "name",
+        "profile.timezone": "timezone",
+        "profile.current_mission": "current mission",
+        "profile.hack_actor": "hack actor",
+        "profile.spark_role": "spark role",
+    }.get(str(predicate or "").strip(), "memory fact")
+
+
+def _query_prompt_for_label(label: str, *, query_kind: str) -> str:
+    normalized = str(label or "").strip().lower()
+    if query_kind == "identity_summary":
+        return "What do you remember about me?"
+    prompts = {
+        "startup": "What is my startup?",
+        "company you founded": "What company did I found?",
+        "occupation": "What is my occupation?",
+        "name": "What is my name?",
+        "timezone": "What is my timezone?",
+        "current mission": "What is my current mission?",
+        "hack actor": "Who hacked us?",
+        "spark role": "What is Spark's role?",
+        "country": "What country do I live in?",
+        "city": "Which city do I live in?",
+    }
+    if normalized in prompts:
+        return prompts[normalized]
+    if normalized:
+        return f"What is my {normalized}?"
+    return ""
+
+
+def _latest_query_value(
+    *,
+    row: dict[str, Any],
+    predicate: str,
+    observations_by_session: dict[str, list[dict[str, Any]]],
+    histories: dict[tuple[str, str], list[dict[str, Any]]],
+) -> str | None:
+    normalized_predicate = str(predicate or "").strip()
+    if not normalized_predicate:
+        return None
+    session_id = str(row.get("session_id") or "")
+    session_observations = observations_by_session.get(session_id, [])
+    for observation in reversed(session_observations):
+        if str(observation.get("predicate") or "") != normalized_predicate:
+            continue
+        if str(observation.get("operation") or "").strip().lower() == "delete":
+            continue
+        value = str(observation.get("value") or "").strip()
+        if value:
+            return value
+    for subject in _subject_candidates_for_row(row):
+        history = histories.get((subject, normalized_predicate)) or []
+        for observation in reversed(history):
+            if str(observation.get("operation") or "").strip().lower() == "delete":
+                continue
+            value = str(observation.get("value") or "").strip()
+            if value:
+                return value
+    return None
+
+
+def _subject_candidates_for_row(row: dict[str, Any]) -> tuple[str, ...]:
+    human_id = str(row.get("human_id") or "").strip()
+    if not human_id:
+        return ()
+    candidates = [human_id]
+    if not human_id.startswith("human:"):
+        candidates.append(f"human:{human_id}")
+    return tuple(dict.fromkeys(candidates))
 
 
 def _validation_ok(validation: dict[str, Any] | None) -> bool:

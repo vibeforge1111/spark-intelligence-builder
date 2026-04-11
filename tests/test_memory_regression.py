@@ -21,12 +21,13 @@ class MemoryRegressionTests(SparkTestCase):
         return {
             "summary": {
                 "runtime_sdk_class": "SparkMemorySDK",
-                "documented_frontier_architecture": "summary_synthesis_memory",
-                "runtime_matches_documented_frontier": False,
-                "product_memory_leader_names": [
-                    "observational_temporal_memory",
+                "baseline_names": [
+                    "summary_synthesis_memory",
                     "dual_store_event_calendar_hybrid",
                 ],
+                "documented_frontier_architecture": "summary_synthesis_memory",
+                "runtime_matches_documented_frontier": False,
+                "product_memory_leader_names": ["summary_synthesis_memory"],
             },
             "artifact_paths": {
                 "summary_markdown": str(benchmark_markdown),
@@ -42,6 +43,10 @@ class MemoryRegressionTests(SparkTestCase):
         comparison_markdown.write_text("# Telegram Memory Architecture Live Comparison\n", encoding="utf-8")
         return {
             "summary": {
+                "baseline_names": [
+                    "summary_synthesis_memory",
+                    "dual_store_event_calendar_hybrid",
+                ],
                 "case_count": 8,
                 "leader_names": ["summary_synthesis_memory"],
                 "recommended_runtime_architecture": "summary_synthesis_memory",
@@ -90,6 +95,10 @@ class MemoryRegressionTests(SparkTestCase):
                 "country_query",
                 "--category",
                 "overwrite",
+                "--baseline",
+                "summary_synthesis_memory",
+                "--baseline",
+                "dual_store_event_calendar_hybrid",
                 "--kb-limit",
                 "12",
                 "--validator-root",
@@ -114,6 +123,10 @@ class MemoryRegressionTests(SparkTestCase):
         self.assertEqual(kwargs["write_path"], str(write_path))
         self.assertEqual(kwargs["case_ids"], ["country_query"])
         self.assertEqual(kwargs["categories"], ["overwrite"])
+        self.assertEqual(
+            kwargs["baseline_names"],
+            ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
+        )
 
     def test_run_telegram_memory_regression_blocks_fast_when_user_is_not_paired(self) -> None:
         output_dir = self.home / "artifacts" / "telegram-memory-regression-blocked"
@@ -222,11 +235,14 @@ class MemoryRegressionTests(SparkTestCase):
         summary_text = summary_path.read_text(encoding="utf-8")
         self.assertIn("# Telegram Memory Regression Summary", summary_text)
         self.assertIn("## Live Architecture Comparison", summary_text)
+        self.assertIn("ProductMemory contenders", summary_text)
+        self.assertIn("Live Telegram contenders", summary_text)
         self.assertIn("## Category Coverage", summary_text)
         self.assertIn("## Route Coverage", summary_text)
         self.assertIn("## Quality Lanes", summary_text)
         self.assertIn("## Current Memory Snapshot", summary_text)
         self.assertIn("## Recommended Next Actions", summary_text)
+        self.assertIn("Only promote a memory change after it stays green", summary_text)
         self.assertIn("`profile.startup_name`: `Seedify`", summary_text)
         self.assertIn("startup_query_after_founder", summary_text)
         self.assertIn("country_query_after_overwrite", summary_text)
@@ -253,12 +269,20 @@ class MemoryRegressionTests(SparkTestCase):
             result.payload["summary"]["architecture_documented_frontier"],
             "summary_synthesis_memory",
         )
+        self.assertEqual(
+            result.payload["summary"]["architecture_compared_baselines"],
+            ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
+        )
         self.assertFalse(result.payload["summary"]["architecture_runtime_matches_documented_frontier"])
         self.assertEqual(
             result.payload["summary"]["architecture_product_memory_leaders"],
-            ["observational_temporal_memory", "dual_store_event_calendar_hybrid"],
+            ["summary_synthesis_memory"],
         )
         self.assertEqual(result.payload["summary"]["live_architecture_case_count"], 8)
+        self.assertEqual(
+            result.payload["summary"]["live_architecture_compared_baselines"],
+            ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
+        )
         self.assertEqual(
             result.payload["summary"]["live_architecture_leaders"],
             ["summary_synthesis_memory"],

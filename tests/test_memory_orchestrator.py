@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -398,6 +399,36 @@ class MemoryOrchestratorTests(SparkTestCase):
             [str(call.get("subject") or "") for call in fake_client.current_state_calls],
             ["human:telegram:8319079055", "human:human:telegram:8319079055"],
         )
+
+    def test_inspect_memory_sdk_runtime_falls_back_to_local_domain_chip_memory_src(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        local_root = self.home / "domain-chip-memory"
+        package_dir = local_root / "src" / "domain_chip_memory"
+        package_dir.mkdir(parents=True, exist_ok=True)
+        (package_dir / "__init__.py").write_text(
+            "class SparkMemorySDK:\n"
+            "    def __init__(self):\n"
+            "        self.ready = True\n",
+            encoding="utf-8",
+        )
+
+        original_module = sys.modules.pop("domain_chip_memory", None)
+        try:
+            with patch.object(memory_orchestrator, "DEFAULT_DOMAIN_CHIP_MEMORY_ROOT", local_root):
+                runtime = memory_orchestrator.inspect_memory_sdk_runtime(
+                    config_manager=self.config_manager,
+                    sdk_module="domain_chip_memory",
+                )
+        finally:
+            sys.modules.pop("domain_chip_memory", None)
+            if original_module is not None:
+                sys.modules["domain_chip_memory"] = original_module
+
+        self.assertTrue(runtime["ready"])
+        self.assertEqual(runtime["configured_module"], "domain_chip_memory")
+        self.assertEqual(runtime["resolved_module"], "domain_chip_memory")
 
     def test_lookup_current_state_uses_legacy_double_prefixed_fallback_for_prefixed_subject(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -995,7 +1026,7 @@ class MemoryOrchestratorTests(SparkTestCase):
 
         self.assertEqual(panel["counts"]["write_requests"], 1)
         self.assertEqual(panel["counts"]["accepted_observations"], 1)
-        self.assertEqual(panel["counts"]["read_requests"], 1)
+        self.assertEqual(panel["counts"]["read_requests"], 2)
         self.assertEqual(panel["counts"]["read_hits"], 1)
         self.assertEqual(panel["counts"]["shadow_only_reads"], 0)
 

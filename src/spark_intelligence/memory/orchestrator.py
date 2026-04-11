@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib
 import json
+import sys
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +21,7 @@ from spark_intelligence.state.db import StateDB
 
 
 DEFAULT_SDK_MODULE = "domain_chip_memory"
+DEFAULT_DOMAIN_CHIP_MEMORY_ROOT = Path.home() / "Desktop" / "domain-chip-memory"
 PREFERENCE_PREDICATE_PREFIX = "personality.preference."
 _SDK_CLIENT_CACHE: dict[tuple[str, str], Any] = {}
 
@@ -470,7 +473,7 @@ class _DomainChipMemoryClientAdapter:
         if hasattr(module, "build_current_state_view"):
             return module
         nested_name = f"{module.__name__}.sdk"
-        return importlib.import_module(nested_name)
+        return _import_memory_sdk_module(nested_name)
 
     def _persist_manual_state(self) -> None:
         if self._persistence_path is None:
@@ -581,6 +584,39 @@ def run_memory_sdk_smoke_test(
     return result
 
 
+@contextmanager
+def _prepend_sys_path(path: Path):
+    inserted = False
+    path_str = str(path)
+    if path_str not in sys.path:
+        sys.path.insert(0, path_str)
+        inserted = True
+    try:
+        yield
+    finally:
+        if inserted:
+            try:
+                sys.path.remove(path_str)
+            except ValueError:
+                pass
+
+
+def _local_domain_chip_memory_src() -> Path:
+    return DEFAULT_DOMAIN_CHIP_MEMORY_ROOT / "src"
+
+
+def _import_memory_sdk_module(module_name: str) -> ModuleType:
+    try:
+        return importlib.import_module(module_name)
+    except ModuleNotFoundError as exc:
+        root_name = module_name.split(".", 1)[0]
+        local_src = _local_domain_chip_memory_src()
+        if exc.name != root_name or root_name != "domain_chip_memory" or not local_src.exists():
+            raise
+        with _prepend_sys_path(local_src):
+            return importlib.import_module(module_name)
+
+
 def inspect_memory_sdk_runtime(
     *,
     config_manager: ConfigManager,
@@ -597,7 +633,7 @@ def inspect_memory_sdk_runtime(
         "reason": None,
     }
     try:
-        module = importlib.import_module(module_name)
+        module = _import_memory_sdk_module(module_name)
     except Exception as exc:
         payload["reason"] = f"import_failed:{type(exc).__name__}"
         return payload
@@ -1275,7 +1311,7 @@ def _load_sdk_client_for_module(*, module_name: str, home_path: Any) -> Any | No
     if cache_key in _SDK_CLIENT_CACHE:
         return _SDK_CLIENT_CACHE[cache_key]
     try:
-        module = importlib.import_module(module_name)
+        module = _import_memory_sdk_module(module_name)
     except Exception:
         return None
     if hasattr(module, "SparkMemorySDK"):
@@ -1339,7 +1375,7 @@ def _hydrate_domain_chip_memory_sdk(*, client: Any, module: ModuleType, persiste
         return
     if not isinstance(payload, dict):
         return
-    sdk_module = module if hasattr(module, "ObservationEntry") else importlib.import_module(f"{module.__name__}.sdk")
+    sdk_module = module if hasattr(module, "ObservationEntry") else _import_memory_sdk_module(f"{module.__name__}.sdk")
     observation_cls = getattr(sdk_module, "ObservationEntry", None)
     event_cls = getattr(sdk_module, "EventCalendarEntry", None)
     if observation_cls is None or event_cls is None:

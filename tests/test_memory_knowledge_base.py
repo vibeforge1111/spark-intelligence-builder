@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +13,15 @@ from tests.test_support import SparkTestCase
 
 
 class TelegramStateKnowledgeBaseTests(SparkTestCase):
+    def _assert_governed_cli_call(self, governed: object, *, command: list[str]) -> None:
+        kwargs = governed.call_args.kwargs
+        self.assertEqual(kwargs["command"], command)
+        self.assertEqual(kwargs["cwd"], str(self.home))
+        env = kwargs["env"]
+        self.assertIsInstance(env, dict)
+        pythonpath_parts = str(env.get("PYTHONPATH") or "").split(os.pathsep)
+        self.assertEqual(pythonpath_parts[0], str((self.home / "src").resolve()))
+
     def test_build_telegram_state_knowledge_base_clears_stale_output_files_before_compile(self) -> None:
         output_dir = self.home / "artifacts" / "spark-memory-kb"
         stale_file = output_dir / "raw" / "repos" / "99-orphan.md"
@@ -80,7 +90,9 @@ class TelegramStateKnowledgeBaseTests(SparkTestCase):
         self.assertEqual(result.output_dir, output_dir)
         self.assertEqual(result.payload["summary"]["selected_chat_id"], "12345")
         self.assertIn("accepted_writes: 2", result.to_text())
-        governed.assert_called_once_with(
+        governed.assert_called_once()
+        self._assert_governed_cli_call(
+            governed,
             command=[
                 sys.executable,
                 "-m",
@@ -103,7 +115,6 @@ class TelegramStateKnowledgeBaseTests(SparkTestCase):
                 "--write",
                 str(write_path),
             ],
-            cwd=str(self.home),
         )
 
     def test_build_telegram_state_knowledge_base_reports_missing_validator_root(self) -> None:
@@ -154,7 +165,9 @@ class TelegramStateKnowledgeBaseTests(SparkTestCase):
                 validator_root=self.home,
             )
 
-        governed.assert_called_once_with(
+        governed.assert_called_once()
+        self._assert_governed_cli_call(
+            governed,
             command=[
                 sys.executable,
                 "-m",
@@ -169,7 +182,6 @@ class TelegramStateKnowledgeBaseTests(SparkTestCase):
                 "--repo-source",
                 str((self.home / "README.md").resolve()),
             ],
-            cwd=str(self.home),
         )
 
     def test_build_telegram_state_knowledge_base_expands_default_manifest_when_explicit_repo_source_is_added(self) -> None:
@@ -211,7 +223,9 @@ class TelegramStateKnowledgeBaseTests(SparkTestCase):
                 validator_root=self.home,
             )
 
-        governed.assert_called_once_with(
+        governed.assert_called_once()
+        self._assert_governed_cli_call(
+            governed,
             command=[
                 sys.executable,
                 "-m",
@@ -228,5 +242,4 @@ class TelegramStateKnowledgeBaseTests(SparkTestCase):
                 "--repo-source",
                 str((self.home / "README.md").resolve()),
             ],
-            cwd=str(self.home),
         )

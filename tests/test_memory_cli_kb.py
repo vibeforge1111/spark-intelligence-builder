@@ -96,6 +96,10 @@ class MemoryCliKnowledgeBaseTests(SparkTestCase):
                 str(output_dir),
                 "--validator-root",
                 "C:/validator",
+                "--baseline",
+                "summary_synthesis_memory",
+                "--baseline",
+                "dual_store_event_calendar_hybrid",
                 "--json",
             )
 
@@ -105,6 +109,10 @@ class MemoryCliKnowledgeBaseTests(SparkTestCase):
         self.assertEqual(kwargs["config_manager"].paths.home, Path(self.home))
         self.assertEqual(kwargs["output_dir"], str(output_dir))
         self.assertEqual(kwargs["validator_root"], "C:/validator")
+        self.assertEqual(
+            kwargs["baseline_names"],
+            ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
+        )
 
     def test_memory_soak_architectures_dispatches_runner(self) -> None:
         output_dir = self.home / "artifacts" / "memory-architecture-soak"
@@ -142,6 +150,10 @@ class MemoryCliKnowledgeBaseTests(SparkTestCase):
                 "country_query",
                 "--category",
                 "overwrite",
+                "--baseline",
+                "summary_synthesis_memory",
+                "--baseline",
+                "dual_store_event_calendar_hybrid",
                 "--kb-limit",
                 "12",
                 "--validator-root",
@@ -164,3 +176,7 @@ class MemoryCliKnowledgeBaseTests(SparkTestCase):
         self.assertEqual(kwargs["validator_root"], "C:/validator")
         self.assertEqual(kwargs["case_ids"], ["country_query"])
         self.assertEqual(kwargs["categories"], ["overwrite"])
+        self.assertEqual(
+            kwargs["baseline_names"],
+            ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
+        )

@@ -67,6 +67,16 @@ This repo currently includes:
 - [docs/TELEGRAM_COMMUNICATION_AND_EVOLUTION_PLAN_2026-04-09.md](./docs/TELEGRAM_COMMUNICATION_AND_EVOLUTION_PLAN_2026-04-09.md)
 - [docs/CONTINUATION_PLAN_2026-04-09.md](./docs/CONTINUATION_PLAN_2026-04-09.md)
 - [docs/SPARK_SYSTEM_REGISTRY_AND_MISSION_CONTROL_PLAN_2026-04-09.md](./docs/SPARK_SYSTEM_REGISTRY_AND_MISSION_CONTROL_PLAN_2026-04-09.md)
+- [docs/MEMORY_REALTIME_BENCHMARK_PROGRAM_2026-04-11.md](./docs/MEMORY_REALTIME_BENCHMARK_PROGRAM_2026-04-11.md)
+- [docs/MEMORY_BENCHMARK_HANDOFF_2026-04-11.md](./docs/MEMORY_BENCHMARK_HANDOFF_2026-04-11.md)
+- [docs/MEMORY_EXECUTION_PLAN_2026-04-10.md](./docs/MEMORY_EXECUTION_PLAN_2026-04-10.md)
+- [docs/SPARK_MEMORY_KB_ROLLOUT_PLAN_2026-04-10.md](./docs/SPARK_MEMORY_KB_ROLLOUT_PLAN_2026-04-10.md)
+
+Current memory benchmarking program:
+
+- default contenders are `summary_synthesis_memory` and `dual_store_event_calendar_hybrid`
+- benchmark upgrades are not promoted on offline scorecards alone
+- the same contenders must also stay green on live Telegram regression and soak runs
 
 Key repo skills:
 
@@ -248,6 +258,12 @@ spark-intelligence gateway outbound --channel-id telegram --delivery failed
 
 There is also an internal operator-only terminal-to-Telegram bridge for probing the Telegram runtime directly from the CLI, but it should remain disabled by default and should not be treated as a normal end-user surface.
 `gateway ask-telegram` sends one synthetic private Telegram message through Builder's real Telegram runtime path and prints Spark's reply locally. It remains an internal operator-only bridge and should stay disabled by default. Pass `--user-id` when the home has multiple Telegram users; otherwise the command will reuse the most recent Telegram user or the single configured allowlisted user when it can infer one safely.
+
+For local recovery on Windows, use [`start-telegram.ps1`](C:/Users/USER/Desktop/spark-intelligence-builder/start-telegram.ps1). The default invocation tests Telegram auth against `.tmp-home-live-telegram-real` and then starts the continuous gateway:
+
+```powershell
+.\start-telegram.ps1
+```
 
 Production ingress ownership rule:
 

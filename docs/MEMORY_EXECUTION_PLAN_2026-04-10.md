@@ -43,6 +43,21 @@ Latest broad coverage now includes:
 - Stronger synthesis pages so the wiki reads like an operator notebook, not only a contract artifact.
 - Tighter quality gates that reject noisy or low-durability promotions.
 
+## Active Architecture Program
+
+The current default serious comparison loop is:
+
+1. `summary_synthesis_memory`
+2. `dual_store_event_calendar_hybrid`
+
+Those two contenders must move together through:
+
+- ProductMemory scorecards from `domain-chip-memory`
+- live Telegram regression in Builder
+- live Telegram soak packs in Builder
+
+`observational_temporal_memory` remains a useful control baseline, but not the default second contender.
+
 ## Execution Tracks
 
 ### Track 1: Broaden the regression surface
@@ -52,6 +67,7 @@ Ship benchmark-style slices instead of only one monolithic run.
 Immediate work:
 - keep the full default regression matrix as the always-on baseline
 - support targeted `--category` and `--case-id` runs for focused validation
+- support targeted `--baseline` runs while keeping the default contender pair stable
 - add more non-profile and evidence-sensitive cases after each live green run
 
 Acceptance:
@@ -90,6 +106,7 @@ Immediate work:
 - define stop-ship checks for noisy promotions
 - keep overwrite and abstention lanes mandatory in the regression pack
 - add contradiction-oriented cases before any wider rollout
+- require both offline scorecards and live Telegram packs to remain green before promoting a memory change
 
 Acceptance:
 - memory quality improves without inflating long-lived clutter
@@ -98,4 +115,4 @@ Acceptance:
 
 Continue small, benchmark-backed promotions.
 
-Do not rebuild the memory stack. Keep expanding coverage, feed the execution plan into the wiki, and only promote new runtime behavior after live Telegram validation on real Builder homes.
+Do not rebuild the memory stack. Keep expanding coverage, feed the execution plan into the wiki, and only promote new runtime behavior after it stays green on both offline ProductMemory scorecards and live Telegram validation on real Builder homes.

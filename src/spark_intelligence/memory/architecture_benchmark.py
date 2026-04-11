@@ -5,7 +5,7 @@ import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Sequence
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.memory.orchestrator import inspect_memory_sdk_runtime
@@ -21,6 +21,10 @@ PRODUCT_MEMORY_BASELINES: tuple[str, ...] = (
     "contradiction_aware_summary_synthesis_memory",
     "stateful_event_reconstruction",
     "typed_state_update_memory",
+)
+ACTIVE_MEMORY_ARCHITECTURE_CONTENDERS: tuple[str, ...] = (
+    "summary_synthesis_memory",
+    "dual_store_event_calendar_hybrid",
 )
 DOCUMENTED_FRONTIER_ARCHITECTURE = "summary_synthesis_memory"
 DOCUMENTED_FRONTIER_PROVIDER = "heuristic_v1"
@@ -67,6 +71,7 @@ def benchmark_memory_architectures(
     config_manager: ConfigManager,
     output_dir: str | Path | None = None,
     validator_root: str | Path | None = None,
+    baseline_names: Sequence[str] | None = None,
 ) -> MemoryArchitectureBenchmarkResult:
     resolved_output_dir = Path(output_dir) if output_dir else _default_output_dir(config_manager)
     resolved_output_dir.mkdir(parents=True, exist_ok=True)
@@ -76,14 +81,24 @@ def benchmark_memory_architectures(
     runtime = inspect_memory_sdk_runtime(config_manager=config_manager)
     validator_path = Path(validator_root) if validator_root else DEFAULT_DOMAIN_CHIP_MEMORY_ROOT
     errors: list[str] = []
+    try:
+        resolved_baseline_names = resolve_memory_architecture_baselines(baseline_names)
+    except ValueError as exc:
+        resolved_baseline_names = ()
+        errors.append(str(exc))
     benchmark_rows: list[dict[str, Any]] = []
     runtime_sdk_class = "unknown"
 
-    if not validator_path.exists():
+    if not resolved_baseline_names:
+        errors.append("no_baselines_selected")
+    elif not validator_path.exists():
         errors.append(f"validator_root_missing:{validator_path}")
     else:
         try:
-            benchmark_rows, runtime_sdk_class = _run_product_memory_scorecards(validator_path)
+            benchmark_rows, runtime_sdk_class = _run_product_memory_scorecards(
+                validator_path,
+                baseline_names=resolved_baseline_names,
+            )
         except Exception as exc:  # pragma: no cover - defensive runtime path
             errors.append(f"benchmark_execution_failed:{type(exc).__name__}:{exc}")
 
@@ -97,6 +112,7 @@ def benchmark_memory_architectures(
         "resolved_module": runtime.get("resolved_module"),
         "client_kind": runtime.get("client_kind"),
         "runtime_sdk_class": runtime_sdk_class,
+        "baseline_names": list(resolved_baseline_names),
         "documented_frontier_architecture": DOCUMENTED_FRONTIER_ARCHITECTURE,
         "documented_frontier_provider": DOCUMENTED_FRONTIER_PROVIDER,
         "documented_frontier_source_files": documented_frontier_sources,
@@ -136,6 +152,29 @@ def benchmark_memory_architectures(
 
 def _default_output_dir(config_manager: ConfigManager) -> Path:
     return config_manager.paths.home / "artifacts" / "memory-architecture-benchmark"
+
+
+def resolve_memory_architecture_baselines(
+    baseline_names: Sequence[str] | None,
+    *,
+    allowed_baselines: Sequence[str] = PRODUCT_MEMORY_BASELINES,
+    default_baselines: Sequence[str] = ACTIVE_MEMORY_ARCHITECTURE_CONTENDERS,
+) -> tuple[str, ...]:
+    allowed = set(allowed_baselines)
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in baseline_names or ():
+        rendered = str(item or "").strip()
+        if not rendered or rendered in seen:
+            continue
+        normalized.append(rendered)
+        seen.add(rendered)
+    if not normalized:
+        return tuple(default_baselines)
+    invalid = [name for name in normalized if name not in allowed]
+    if invalid:
+        raise ValueError(f"unsupported_baselines:{','.join(invalid)}")
+    return tuple(normalized)
 
 
 def _assessment_text(
@@ -184,6 +223,8 @@ def _build_summary_markdown(
         f"- Runtime matches best ProductMemory architecture: `{'yes' if summary.get('runtime_matches_best_product_memory') else 'no'}`",
         "",
         "## ProductMemory Benchmark",
+        "",
+        f"- Compared baselines: `{', '.join(summary.get('baseline_names') or []) or 'none'}`",
         "",
     ]
     for row in benchmark_rows:
@@ -251,7 +292,11 @@ def _prepend_sys_path(path: Path) -> Iterator[None]:
                 pass
 
 
-def _run_product_memory_scorecards(validator_path: Path) -> tuple[list[dict[str, Any]], str]:
+def _run_product_memory_scorecards(
+    validator_path: Path,
+    *,
+    baseline_names: Sequence[str],
+) -> tuple[list[dict[str, Any]], str]:
     src_path = validator_path / "src"
     with _prepend_sys_path(src_path):
         from domain_chip_memory.providers import get_provider
@@ -262,7 +307,7 @@ def _run_product_memory_scorecards(validator_path: Path) -> tuple[list[dict[str,
         provider = get_provider(DOCUMENTED_FRONTIER_PROVIDER)
         samples = product_memory_samples()
         rows: list[dict[str, Any]] = []
-        for baseline_name in PRODUCT_MEMORY_BASELINES:
+        for baseline_name in baseline_names:
             scorecard = run_baseline(
                 samples,
                 baseline_name=baseline_name,

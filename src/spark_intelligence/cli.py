@@ -1658,6 +1658,7 @@ def build_parser() -> argparse.ArgumentParser:
     memory_regression_parser.add_argument("--chat-id", help="Explicit Telegram chat id override")
     memory_regression_parser.add_argument("--case-id", action="append", default=[], help="Restrict the regression run to one or more case ids")
     memory_regression_parser.add_argument("--category", action="append", default=[], help="Restrict the regression run to one or more case categories")
+    memory_regression_parser.add_argument("--baseline", action="append", default=[], help="Restrict architecture comparison to one or more named memory baselines")
     memory_regression_parser.add_argument("--kb-limit", type=int, default=25, help="Maximum Telegram conversations to scan when compiling the KB")
     memory_regression_parser.add_argument("--validator-root", help="domain-chip-memory repo root used for KB compilation")
     memory_regression_parser.add_argument("--write", help="Optional output path for the regression summary JSON payload")
@@ -1669,6 +1670,7 @@ def build_parser() -> argparse.ArgumentParser:
     memory_architecture_benchmark_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     memory_architecture_benchmark_parser.add_argument("--output-dir", help="Benchmark artifact output directory")
     memory_architecture_benchmark_parser.add_argument("--validator-root", help="domain-chip-memory repo root used for architecture benchmarking")
+    memory_architecture_benchmark_parser.add_argument("--baseline", action="append", default=[], help="Restrict ProductMemory benchmarking to one or more named baselines")
     memory_architecture_benchmark_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_architecture_soak_parser = memory_subparsers.add_parser(
         "soak-architectures",
@@ -1683,6 +1685,7 @@ def build_parser() -> argparse.ArgumentParser:
     memory_architecture_soak_parser.add_argument("--chat-id", help="Explicit Telegram chat id override")
     memory_architecture_soak_parser.add_argument("--case-id", action="append", default=[], help="Restrict the soak to one or more case ids")
     memory_architecture_soak_parser.add_argument("--category", action="append", default=[], help="Restrict the soak to one or more case categories")
+    memory_architecture_soak_parser.add_argument("--baseline", action="append", default=[], help="Restrict architecture comparison to one or more named memory baselines")
     memory_architecture_soak_parser.add_argument("--kb-limit", type=int, default=25, help="Maximum Telegram conversations to scan when compiling the KB")
     memory_architecture_soak_parser.add_argument("--validator-root", help="domain-chip-memory repo root used for KB compilation")
     memory_architecture_soak_parser.add_argument("--write", help="Optional output path for the soak summary JSON payload")
@@ -4536,6 +4539,7 @@ def handle_memory_run_telegram_regression(args: argparse.Namespace) -> int:
         write_path=args.write,
         case_ids=args.case_id,
         categories=args.category,
+        baseline_names=args.baseline,
     )
     print(result.to_json() if args.json else result.to_text())
     return 0
@@ -4548,6 +4552,7 @@ def handle_memory_benchmark_architectures(args: argparse.Namespace) -> int:
         config_manager=config_manager,
         output_dir=args.output_dir,
         validator_root=args.validator_root,
+        baseline_names=args.baseline,
     )
     print(result.to_json() if args.json else result.to_text())
     payload = result.payload if isinstance(result.payload, dict) else {}
@@ -4573,6 +4578,7 @@ def handle_memory_soak_architectures(args: argparse.Namespace) -> int:
         write_path=args.write,
         case_ids=args.case_id,
         categories=args.category,
+        baseline_names=args.baseline,
     )
     print(result.to_json() if args.json else result.to_text())
     payload = result.payload if isinstance(result.payload, dict) else {}

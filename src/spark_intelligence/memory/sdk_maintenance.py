@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -143,6 +144,7 @@ def _run_domain_chip_memory_cli(
             "warnings": [],
             "valid": False,
         }
+    command_env = _domain_chip_memory_cli_env(root)
     execution = run_governed_command(
         command=[
             sys.executable,
@@ -152,6 +154,7 @@ def _run_domain_chip_memory_cli(
             *command_args,
         ],
         cwd=str(root),
+        env=command_env,
     )
     stdout = execution.stdout.strip()
     if stdout:
@@ -169,6 +172,14 @@ def _run_domain_chip_memory_cli(
         "stdout": stdout,
         "stderr": execution.stderr.strip(),
     }
+
+
+def _domain_chip_memory_cli_env(root: Path) -> dict[str, str]:
+    env = dict(os.environ)
+    src_path = str((root / "src").resolve())
+    current_pythonpath = env.get("PYTHONPATH", "").strip()
+    env["PYTHONPATH"] = src_path if not current_pythonpath else f"{src_path}{os.pathsep}{current_pythonpath}"
+    return env
 
 
 def _default_output_path(config_manager: ConfigManager) -> Path:

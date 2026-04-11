@@ -11,16 +11,15 @@ from typing import Any, Iterator, Sequence
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.memory.architecture_benchmark import (
+    ACTIVE_MEMORY_ARCHITECTURE_CONTENDERS,
     DEFAULT_DOMAIN_CHIP_MEMORY_ROOT,
     DOCUMENTED_FRONTIER_PROVIDER,
+    PRODUCT_MEMORY_BASELINES,
+    resolve_memory_architecture_baselines,
 )
 
 
-LIVE_COMPARISON_BASELINES: tuple[str, ...] = (
-    "observational_temporal_memory",
-    "dual_store_event_calendar_hybrid",
-    "summary_synthesis_memory",
-)
+LIVE_COMPARISON_BASELINES: tuple[str, ...] = ACTIVE_MEMORY_ARCHITECTURE_CONTENDERS
 _WRITE_BRIDGE_MODE = "memory_profile_fact_update"
 _DEFAULT_BENCHMARK_NAME = "ProductMemory"
 _DEFAULT_OUTPUT_DIR_NAME = "telegram-memory-architecture-live-comparison"
@@ -69,6 +68,7 @@ def compare_telegram_memory_architectures(
     selected_cases: Sequence[Any],
     output_dir: str | Path | None = None,
     validator_root: str | Path | None = None,
+    baseline_names: Sequence[str] | None = None,
 ) -> TelegramArchitectureLiveComparisonResult:
     resolved_output_dir = Path(output_dir) if output_dir else _default_output_dir(config_manager)
     resolved_output_dir.mkdir(parents=True, exist_ok=True)
@@ -81,11 +81,22 @@ def compare_telegram_memory_architectures(
     )
     validator_path = Path(validator_root) if validator_root else DEFAULT_DOMAIN_CHIP_MEMORY_ROOT
     errors: list[str] = []
+    try:
+        resolved_baseline_names = resolve_memory_architecture_baselines(
+            baseline_names,
+            allowed_baselines=PRODUCT_MEMORY_BASELINES,
+            default_baselines=LIVE_COMPARISON_BASELINES,
+        )
+    except ValueError as exc:
+        resolved_baseline_names = ()
+        errors.append(str(exc))
     baseline_rows: list[dict[str, Any]] = []
     current_runtime_sdk_class = "unknown"
 
     if not sample_specs:
         errors.append("no_comparable_cases")
+    elif not resolved_baseline_names:
+        errors.append("no_baselines_selected")
     elif not validator_path.exists():
         errors.append(f"validator_root_missing:{validator_path}")
     else:
@@ -93,6 +104,7 @@ def compare_telegram_memory_architectures(
             baseline_rows, current_runtime_sdk_class = _run_live_comparison_scorecards(
                 sample_specs=sample_specs,
                 validator_path=validator_path,
+                baseline_names=resolved_baseline_names,
             )
         except Exception as exc:  # pragma: no cover - defensive runtime path
             errors.append(f"live_comparison_failed:{type(exc).__name__}:{exc}")
@@ -100,7 +112,7 @@ def compare_telegram_memory_architectures(
     leader_rows = _leader_rows(baseline_rows)
     case_summaries = [_sample_case_summary(spec) for spec in sample_specs]
     summary = {
-        "baseline_names": list(LIVE_COMPARISON_BASELINES),
+        "baseline_names": list(resolved_baseline_names),
         "case_count": len(sample_specs),
         "case_ids": [str(item.get("sample_id") or "unknown") for item in sample_specs],
         "categories": sorted(
@@ -423,6 +435,7 @@ def _build_summary_markdown(
         "# Telegram Memory Architecture Live Comparison",
         "",
         f"- Compared cases: `{summary.get('case_count', 0)}`",
+        f"- Compared baselines: `{', '.join(summary.get('baseline_names') or []) or 'none'}`",
         f"- Leaders: `{', '.join(summary.get('leader_names') or []) or 'unknown'}`",
         f"- Recommended runtime architecture: `{summary.get('recommended_runtime_architecture') or 'undecided'}`",
         f"- Current runtime SDK class: `{summary.get('current_runtime_sdk_class') or 'unknown'}`",
@@ -507,6 +520,7 @@ def _run_live_comparison_scorecards(
     *,
     sample_specs: Sequence[dict[str, Any]],
     validator_path: Path,
+    baseline_names: Sequence[str],
 ) -> tuple[list[dict[str, Any]], str]:
     src_path = validator_path / "src"
     with _prepend_sys_path(src_path):
@@ -563,7 +577,7 @@ def _run_live_comparison_scorecards(
         ]
         runtime_sdk_class = str((build_sdk_contract_summary() or {}).get("sdk_class") or "unknown")
         baseline_rows: list[dict[str, Any]] = []
-        for baseline_name in LIVE_COMPARISON_BASELINES:
+        for baseline_name in baseline_names:
             scorecard = run_baseline(
                 samples,
                 baseline_name=baseline_name,

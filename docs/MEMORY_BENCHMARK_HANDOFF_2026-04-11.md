@@ -10,6 +10,7 @@ Related memory substrate repo: `C:\Users\USER\Desktop\domain-chip-memory`
 - The generic live runtime remains the governed `SparkMemorySDK` / `domain_chip_memory` stack.
 - The benchmark harness was expanded from a fixed Telegram replay into a varied pack suite.
 - The soak/reporting logic was then hardened so zero-signal categories no longer look like meaningful ties.
+- The current default serious comparison loop is now governed by `docs/MEMORY_REALTIME_BENCHMARK_PROGRAM_2026-04-11.md`.
 
 ## Final completed soak
 
@@ -28,9 +29,28 @@ Final aggregate leaderboard:
 2. `observational_temporal_memory` = `21/138` = `15.22%`
 3. `dual_store_event_calendar_hybrid` = `21/138` = `15.22%`
 
-Current top-two recommendation:
+Historical top-two recommendation from this soak:
 1. `summary_synthesis_memory`
 2. `observational_temporal_memory`
+
+## Current operating decision
+
+The current default operating program is:
+
+1. `summary_synthesis_memory`
+2. `dual_store_event_calendar_hybrid`
+
+This is now the default contender pair for:
+
+- ProductMemory scorecards
+- live Telegram regression
+- live Telegram soak
+
+Why the contender pair changed:
+
+- `summary_synthesis_memory` remains the primary candidate
+- `dual_store_event_calendar_hybrid` is the more structurally different challenger
+- `observational_temporal_memory` remains useful as a control or explicit extra baseline, but is no longer the default second contender
 
 ## Important benchmark interpretation
 
@@ -81,8 +101,8 @@ Why they may keep tying:
 ## Recommended next steps tomorrow
 
 1. Keep `summary_synthesis_memory` as the primary candidate.
-2. Keep `observational_temporal_memory` as the active challenger.
-3. De-prioritize `dual_store_event_calendar_hybrid` unless we add stronger event/calendar-specific packs.
+2. Keep `dual_store_event_calendar_hybrid` as the active challenger in the default live program.
+3. Use `observational_temporal_memory` as a control lane when we want a third comparison, not as the default second contender.
 4. Add new benchmark packs specifically for:
    - event ordering
    - schedule/calendar recall
@@ -92,11 +112,17 @@ Why they may keep tying:
 5. Run the top two through those new real-time packs.
 6. If `summary_synthesis_memory` still leads, start wiring Builder toward it behind a controlled runtime selector.
 
+Promotion rule:
+
+- no memory change is promoted on offline benchmark wins alone
+- no memory change is promoted on a single live Telegram replay alone
+- both the offline scorecards and the live Telegram packs have to stay green
+
 ## Good continuation point
 
 Tomorrow, resume from:
 - the completed fixed soak artifact
-- the top-two comparison decision
+- the current default two-contender program in `docs/MEMORY_REALTIME_BENCHMARK_PROGRAM_2026-04-11.md`
 - new benchmark design focused on the unsolved lanes and on separating observational vs event-calendar behavior in a more targeted way
 
 ## Relevant commits from this session

@@ -4,9 +4,10 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from spark_intelligence.config.loader import ConfigManager
-from spark_intelligence.identity.service import approve_pairing
+from spark_intelligence.identity.service import approve_pairing, consume_pairing_welcome
 from spark_intelligence.memory.architecture_benchmark import benchmark_memory_architectures
 from spark_intelligence.memory.architecture_live_comparison import compare_telegram_memory_architectures
 from spark_intelligence.memory.knowledge_base import build_telegram_state_knowledge_base
@@ -335,6 +336,7 @@ def run_telegram_memory_regression(
     case_ids: list[str] | None = None,
     categories: list[str] | None = None,
     cases: list[TelegramMemoryRegressionCase] | tuple[TelegramMemoryRegressionCase, ...] | None = None,
+    baseline_names: list[str] | tuple[str, ...] | None = None,
 ) -> TelegramMemoryRegressionResult:
     from spark_intelligence.gateway.runtime import gateway_ask_telegram
 
@@ -354,6 +356,7 @@ def run_telegram_memory_regression(
     selected_chat_id = str(chat_id or "").strip() or None
     requested_case_ids = [str(item).strip() for item in (case_ids or []) if str(item).strip()]
     requested_categories = [str(item).strip() for item in (categories or []) if str(item).strip()]
+    requested_baseline_names = [str(item).strip() for item in (baseline_names or []) if str(item).strip()]
     selected_cases = _select_regression_cases(
         case_ids=requested_case_ids,
         categories=requested_categories,
@@ -363,7 +366,17 @@ def run_telegram_memory_regression(
     filter_summary = {
         "requested_case_ids": requested_case_ids,
         "requested_categories": requested_categories,
+        "requested_baseline_names": requested_baseline_names,
     }
+    if selected_user_id is None:
+        selected_user_id, selected_chat_id = _allocate_regression_identity(chat_id=selected_chat_id)
+        _prepare_regression_identity(
+            state_db=state_db,
+            external_user_id=selected_user_id,
+            username=username or "memory-regression",
+        )
+    elif selected_chat_id is None:
+        selected_chat_id = selected_user_id
 
     if not selected_cases:
         payload = {
@@ -406,11 +419,10 @@ def run_telegram_memory_regression(
         if case.isolate_memory and selected_user_id:
             case_user_id = f"{selected_user_id}-{case.case_id}"
             case_chat_id = f"{(selected_chat_id or selected_user_id)}-{case.case_id}"
-            approve_pairing(
+            _prepare_regression_identity(
                 state_db=state_db,
-                channel_id="telegram",
                 external_user_id=case_user_id,
-                display_name=username or f"Regression {case.case_id}",
+                username=username or f"Regression {case.case_id}",
             )
         raw = gateway_ask_telegram(
             config_manager=config_manager,
@@ -487,6 +499,7 @@ def run_telegram_memory_regression(
         config_manager=config_manager,
         output_dir=architecture_benchmark_output_dir,
         validator_root=validator_root,
+        baseline_names=requested_baseline_names or None,
     )
     architecture_benchmark_payload = architecture_benchmark_result.payload
     architecture_summary_path = (
@@ -500,6 +513,7 @@ def run_telegram_memory_regression(
         selected_cases=selected_cases,
         output_dir=architecture_live_comparison_output_dir,
         validator_root=validator_root,
+        baseline_names=requested_baseline_names or None,
     )
     architecture_live_comparison_payload = architecture_live_comparison_result.payload
     architecture_live_comparison_summary_path = (
@@ -514,6 +528,7 @@ def run_telegram_memory_regression(
             case_payloads=case_payloads,
             mismatches=mismatches,
             inspection_payload=inspection_payload,
+            architecture_benchmark_payload=architecture_benchmark_payload,
             architecture_live_comparison_payload=architecture_live_comparison_payload,
         ),
         encoding="utf-8",
@@ -566,6 +581,12 @@ def run_telegram_memory_regression(
             "runtime_sdk_class",
             default=None,
         ),
+        "architecture_compared_baselines": _nested_get(
+            architecture_benchmark_payload,
+            "summary",
+            "baseline_names",
+            default=[],
+        ),
         "architecture_documented_frontier": _nested_get(
             architecture_benchmark_payload,
             "summary",
@@ -589,6 +610,12 @@ def run_telegram_memory_regression(
             "summary",
             "case_count",
             default=0,
+        ),
+        "live_architecture_compared_baselines": _nested_get(
+            architecture_live_comparison_payload,
+            "summary",
+            "baseline_names",
+            default=[],
         ),
         "live_architecture_leaders": _nested_get(
             architecture_live_comparison_payload,
@@ -641,6 +668,32 @@ def run_telegram_memory_regression(
     }
     resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return TelegramMemoryRegressionResult(output_dir=resolved_output_dir, payload=payload)
+
+
+def _allocate_regression_identity(*, chat_id: str | None) -> tuple[str, str]:
+    run_suffix = uuid4().hex[:8]
+    user_id = f"spark-memory-regression-user-{run_suffix}"
+    resolved_chat_id = str(chat_id or "").strip() or user_id
+    return user_id, resolved_chat_id
+
+
+def _prepare_regression_identity(
+    *,
+    state_db: StateDB,
+    external_user_id: str,
+    username: str,
+) -> None:
+    approve_pairing(
+        state_db=state_db,
+        channel_id="telegram",
+        external_user_id=external_user_id,
+        display_name=username,
+    )
+    consume_pairing_welcome(
+        state_db=state_db,
+        channel_id="telegram",
+        external_user_id=external_user_id,
+    )
 
 
 def _build_case_result(*, case: TelegramMemoryRegressionCase, payload: dict[str, Any]) -> dict[str, Any]:
@@ -757,6 +810,7 @@ def _build_regression_summary_markdown(
     case_payloads: list[dict[str, Any]],
     mismatches: list[dict[str, Any]],
     inspection_payload: dict[str, Any] | None,
+    architecture_benchmark_payload: dict[str, Any] | None,
     architecture_live_comparison_payload: dict[str, Any] | None,
 ) -> str:
     category_counts = _build_category_counts(str(case.get("category") or "unknown") for case in case_payloads)
@@ -772,6 +826,12 @@ def _build_regression_summary_markdown(
         and isinstance(architecture_live_comparison_payload.get("summary"), dict)
         else {}
     )
+    benchmark_summary = (
+        architecture_benchmark_payload.get("summary")
+        if isinstance(architecture_benchmark_payload, dict)
+        and isinstance(architecture_benchmark_payload.get("summary"), dict)
+        else {}
+    )
 
     lines = [
         "# Telegram Memory Regression Summary",
@@ -784,6 +844,8 @@ def _build_regression_summary_markdown(
         "",
         "## Live Architecture Comparison",
         "",
+        f"- ProductMemory contenders: `{', '.join(benchmark_summary.get('baseline_names') or []) or 'none'}`",
+        f"- Live Telegram contenders: `{', '.join(live_architecture_summary.get('baseline_names') or []) or 'none'}`",
         f"- Compared cases: `{live_architecture_summary.get('case_count', 0)}`",
         f"- Leaders: `{', '.join(live_architecture_summary.get('leader_names') or []) or 'unknown'}`",
         f"- Recommended runtime architecture: `{live_architecture_summary.get('recommended_runtime_architecture') or 'undecided'}`",
@@ -845,6 +907,7 @@ def _build_regression_summary_markdown(
         lines.append("- Fix the mismatched cases before promoting wider runtime memory behavior.")
     else:
         lines.append("- Keep this regression bundle as a green baseline and add the next benchmark-style lane.")
+    lines.append("- Only promote a memory change after it stays green on both ProductMemory scorecards and live Telegram regression packs.")
     if live_architecture_summary.get("recommended_runtime_architecture"):
         lines.append(
             f"- Promote `{live_architecture_summary.get('recommended_runtime_architecture')}` into the Builder runtime selector and rerun this bundle."

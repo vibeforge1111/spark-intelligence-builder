@@ -120,6 +120,10 @@ class MemoryArchitectureLiveComparisonTests(SparkTestCase):
                 output_dir=output_dir,
             )
 
+        self.assertEqual(
+            result.payload["summary"]["baseline_names"],
+            ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
+        )
         self.assertEqual(result.payload["summary"]["leader_names"], ["summary_synthesis_memory"])
         self.assertEqual(
             result.payload["summary"]["recommended_runtime_architecture"],
@@ -283,3 +287,35 @@ class MemoryArchitectureLiveComparisonTests(SparkTestCase):
 
         self.assertEqual(result.payload["summary"]["leader_names"], [])
         self.assertIsNone(result.payload["summary"]["recommended_runtime_architecture"])
+
+    def test_compare_telegram_memory_architectures_forwards_explicit_baseline_selection(self) -> None:
+        selected_cases = [
+            next(case for case in DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES if case.case_id == "name_query"),
+        ]
+        case_payloads = [
+            {
+                "case_id": "name_query",
+                "decision": "allowed",
+                "bridge_mode": "memory_profile_fact",
+                "routing_decision": "memory_profile_fact_query",
+                "response_text": "Your name is Sarah.",
+                "matched_expectations": True,
+            },
+        ]
+
+        with patch(
+            "spark_intelligence.memory.architecture_live_comparison._run_live_comparison_scorecards",
+            return_value=([], "SparkMemorySDK"),
+        ) as run_scorecards:
+            compare_telegram_memory_architectures(
+                config_manager=self.config_manager,
+                case_payloads=case_payloads,
+                selected_cases=selected_cases,
+                output_dir=self.home / "artifacts" / "architecture-live-comparison-selected",
+                baseline_names=["dual_store_event_calendar_hybrid"],
+            )
+
+        self.assertEqual(
+            list(run_scorecards.call_args.kwargs["baseline_names"]),
+            ["dual_store_event_calendar_hybrid"],
+        )

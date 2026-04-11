@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 from dataclasses import dataclass
@@ -100,6 +101,7 @@ def _run_domain_chip_memory_cli(
             "errors": [f"validator_root_missing:{root}"],
             "warnings": [],
         }
+    command_env = _domain_chip_memory_cli_env(root)
     execution = run_governed_command(
         command=[
             sys.executable,
@@ -109,6 +111,7 @@ def _run_domain_chip_memory_cli(
             *command_args,
         ],
         cwd=str(root),
+        env=command_env,
     )
     stdout = execution.stdout.strip()
     parsed: dict[str, Any] | None = None
@@ -129,6 +132,14 @@ def _run_domain_chip_memory_cli(
         "stdout": stdout,
         "stderr": execution.stderr.strip(),
     }
+
+
+def _domain_chip_memory_cli_env(root: Path) -> dict[str, str]:
+    env = dict(os.environ)
+    src_path = str((root / "src").resolve())
+    current_pythonpath = env.get("PYTHONPATH", "").strip()
+    env["PYTHONPATH"] = src_path if not current_pythonpath else f"{src_path}{os.pathsep}{current_pythonpath}"
+    return env
 
 
 def _default_output_dir(config_manager: ConfigManager) -> Path:

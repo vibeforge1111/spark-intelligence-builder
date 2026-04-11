@@ -65,12 +65,15 @@ def run_telegram_memory_architecture_soak(
     write_path: str | Path | None = None,
     case_ids: list[str] | None = None,
     categories: list[str] | None = None,
+    baseline_names: list[str] | None = None,
 ) -> TelegramArchitectureSoakResult:
     resolved_output_dir = Path(output_dir) if output_dir else config_manager.paths.home / "artifacts" / "telegram-memory-architecture-soak"
     resolved_output_dir.mkdir(parents=True, exist_ok=True)
     resolved_write_path = Path(write_path) if write_path else resolved_output_dir / "telegram-memory-architecture-soak.json"
 
     requested_runs = max(int(runs), 1)
+    requested_baseline_names = [str(item).strip() for item in (baseline_names or []) if str(item).strip()]
+    resolved_baseline_names = list(requested_baseline_names)
     run_specs = _build_run_specs(case_ids=case_ids, categories=categories)
     benchmark_pack_rows = [_run_spec_payload(spec) for spec in run_specs]
     baseline_aggregate: dict[str, dict[str, Any]] = {}
@@ -108,6 +111,7 @@ def run_telegram_memory_architecture_soak(
                 case_ids=list(run_spec.case_ids) or None,
                 categories=list(run_spec.categories) or None,
                 cases=list(run_spec.cases) if run_spec.cases is not None else None,
+                baseline_names=requested_baseline_names or None,
             )
             regression_payload = regression_result.payload if isinstance(regression_result.payload, dict) else {}
             live_comparison_payload = (
@@ -115,6 +119,16 @@ def run_telegram_memory_architecture_soak(
                 if isinstance(regression_payload.get("architecture_live_comparison"), dict)
                 else {}
             )
+            if not resolved_baseline_names:
+                resolved_baseline_names = [
+                    str(item).strip()
+                    for item in (
+                        ((live_comparison_payload.get("summary") or {}).get("baseline_names") or [])
+                        if isinstance(live_comparison_payload.get("summary"), dict)
+                        else []
+                    )
+                    if str(item).strip()
+                ]
             baseline_rows = [
                 item
                 for item in list(live_comparison_payload.get("baseline_results") or [])
@@ -183,6 +197,7 @@ def run_telegram_memory_architecture_soak(
             errors=errors,
             resolved_write_path=resolved_write_path,
             status="running" if index < requested_runs else "completed",
+            baseline_names=resolved_baseline_names,
         )
         resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         if sleep_seconds > 0 and index < requested_runs:
@@ -198,6 +213,7 @@ def run_telegram_memory_architecture_soak(
         errors=errors,
         resolved_write_path=resolved_write_path,
         status="completed",
+        baseline_names=resolved_baseline_names,
     )
     resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return TelegramArchitectureSoakResult(output_dir=resolved_output_dir, payload=payload)
@@ -364,6 +380,7 @@ def _build_soak_payload(
     errors: list[str],
     resolved_write_path: Path,
     status: str,
+    baseline_names: list[str],
 ) -> dict[str, Any]:
     aggregate_rows = _finalize_aggregate_rows(baseline_aggregate)
     pack_results = _build_pack_results(
@@ -397,6 +414,7 @@ def _build_soak_payload(
         "failed_runs": sum(1 for run in run_payloads if run.get("error")),
         "benchmark_mode": "varied_pack_suite" if len(benchmark_pack_rows) > 1 else "fixed_selection",
         "memory_namespace_mode": "isolated_per_run",
+        "baseline_names": list(baseline_names),
         "benchmark_pack_count": len(benchmark_pack_rows),
         "benchmark_pack_ids": [str(pack.get("pack_id") or "unknown") for pack in benchmark_pack_rows],
         "covered_categories": covered_categories,

@@ -33,6 +33,13 @@ What still needs work:
 - We have strong fact/query/explanation behavior for profile memory, but not yet a broad regression matrix across identity summary, evidence retrieval, contradiction handling, and non-profile memory lanes.
 - The KB compile path is now available in Builder, but the broader benchmark loop is still manual.
 
+Current default contender pair:
+
+1. `summary_synthesis_memory`
+2. `dual_store_event_calendar_hybrid`
+
+Those two are now the default serious comparison loop across offline ProductMemory scorecards and live Telegram validation.
+
 ## Phase Plan
 
 ### Phase 1: Builder KB Entry Points
@@ -76,6 +83,8 @@ Status: in progress
 
 Current implementation target:
 - `spark-intelligence memory run-telegram-regression`
+- `spark-intelligence memory benchmark-architectures`
+- `spark-intelligence memory soak-architectures`
 - default matrix should cover:
   - name write + query
   - occupation write + query
@@ -104,10 +113,13 @@ Latest validated regression on recovered Telegram home:
 - `kb_current_state_hits = 84/84`
 - `kb_evidence_hits = 84/84`
 - KB now includes a repo-source page for the regression summary markdown emitted by the runner
-- The regression runner now emits machine-readable `category_counts`, `quality_lanes`, and supports targeted `--category` / `--case-id` runs for benchmark-style slices
+- The regression runner now emits machine-readable `category_counts`, `quality_lanes`, and supports targeted `--category` / `--case-id` / `--baseline` runs for benchmark-style slices
 
 Acceptance:
-- One command can reproduce the end-to-end memory benchmark loop from Builder.
+- Builder can reproduce the end-to-end memory benchmark loop from Builder without changing code:
+  - offline ProductMemory scorecards
+  - live Telegram regression
+  - live Telegram soak
 
 ### Phase 4: KB Enrichment
 Status: in progress
@@ -126,14 +138,15 @@ Status: planned
 - Tighten keepability and contradiction handling.
 - Separate durable personal facts from conversational residue.
 - Add stop-ship checks for noisy memory promotions.
+- Make live Telegram validation a required promotion gate for benchmark upgrades.
 
 Acceptance:
-- Memory writes remain durable for stable facts without polluting long-lived knowledge with operational residue.
+- Memory writes remain durable for stable facts without polluting long-lived knowledge with operational residue, and architecture changes do not ship on offline benchmark wins alone.
 
 ## Immediate Next Steps
 
-1. Land the Builder Telegram regression runner and commit it.
-2. Run the full matrix against a real Builder home and save the bundle.
+1. Treat `docs/MEMORY_REALTIME_BENCHMARK_PROGRAM_2026-04-11.md` as the current source of truth for the architecture comparison loop.
+2. Run the default contender pair through `benchmark-architectures`, `run-telegram-regression`, and `soak-architectures`.
 3. Expand from profile-only routes into abstention, contradiction, and non-profile memory lanes.
 4. Expand the default repo-source manifest and synthesis pages now that manifest-backed repo context is wired into Builder KB compiles.
 5. Promote the structured execution plan into the default KB repo-source manifest so the wiki carries the current implementation roadmap alongside runtime artifacts.
