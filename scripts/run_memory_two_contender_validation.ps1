@@ -62,6 +62,50 @@ function Invoke-LedgerRender {
     return $true
 }
 
+function Test-IsFullValidationSummary {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RunSummaryPath
+    )
+
+    if (-not (Test-Path $RunSummaryPath)) {
+        return $false
+    }
+    $payload = Get-Content $RunSummaryPath -Raw | ConvertFrom-Json
+    return (
+        -not [string]::IsNullOrWhiteSpace([string]$payload.benchmark_output_dir) -and
+        -not [string]::IsNullOrWhiteSpace([string]$payload.regression_output_dir) -and
+        -not [string]::IsNullOrWhiteSpace([string]$payload.soak_output_dir)
+    )
+}
+
+function Ensure-LatestFullRunPointer {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ValidationRunsRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$LatestFullRunPath
+    )
+
+    if (Test-Path $LatestFullRunPath) {
+        return
+    }
+    $candidateDirs = Get-ChildItem -Path $ValidationRunsRoot -Directory -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending
+    foreach ($dir in $candidateDirs) {
+        $summaryPath = Join-Path $dir.FullName "run-summary.json"
+        if (-not (Test-IsFullValidationSummary -RunSummaryPath $summaryPath)) {
+            continue
+        }
+        [ordered]@{
+            output_root = $dir.FullName
+            run_summary = $summaryPath
+            updated_at = (Get-Date).ToString("o")
+        } | ConvertTo-Json | Set-Content -Path $LatestFullRunPath -Encoding utf8
+        return
+    }
+}
+
 $builderRepoRoot = (Get-Location).Path
 $domainChipRepoRoot = Join-Path (Split-Path $builderRepoRoot -Parent) "domain-chip-memory"
 $builderRevision = Get-GitRevision -RepoRoot $builderRepoRoot
@@ -206,12 +250,15 @@ if ($soakPayload) {
 $summaryPath = Join-Path $resolvedOutputRoot "run-summary.json"
 $runSummary | ConvertTo-Json | Set-Content -Path $summaryPath -Encoding utf8
 
-$latestRunPath = Join-Path (Join-Path $SparkHome "artifacts\memory-validation-runs") "latest-run.json"
+$validationRunsRoot = Join-Path $SparkHome "artifacts\memory-validation-runs"
+$latestRunPath = Join-Path $validationRunsRoot "latest-run.json"
+$latestFullRunPath = Join-Path $validationRunsRoot "latest-full-run.json"
 [ordered]@{
     output_root = $resolvedOutputRoot
     run_summary = $summaryPath
     updated_at = (Get-Date).ToString("o")
 } | ConvertTo-Json | Set-Content -Path $latestRunPath -Encoding utf8
+Ensure-LatestFullRunPointer -ValidationRunsRoot $validationRunsRoot -LatestFullRunPath $latestFullRunPath
 
 $ledgerPath = Join-Path $builderRepoRoot "docs\MEMORY_FAILURE_LEDGER_2026-04-11.md"
 $canRenderLedger = (
@@ -221,7 +268,12 @@ $canRenderLedger = (
 )
 $ledgerRendered = $false
 if ($canRenderLedger) {
-    $ledgerRendered = Invoke-LedgerRender -RepoRoot $builderRepoRoot -LatestRunPath $latestRunPath -LedgerPath $ledgerPath
+    [ordered]@{
+        output_root = $resolvedOutputRoot
+        run_summary = $summaryPath
+        updated_at = (Get-Date).ToString("o")
+    } | ConvertTo-Json | Set-Content -Path $latestFullRunPath -Encoding utf8
+    $ledgerRendered = Invoke-LedgerRender -RepoRoot $builderRepoRoot -LatestRunPath $latestFullRunPath -LedgerPath $ledgerPath
 }
 
 Write-Host ""
@@ -238,6 +290,9 @@ if ($runSummary["soak_output_dir"]) {
 }
 Write-Host ("- manifest: " + $summaryPath)
 Write-Host ("- latest pointer: " + $latestRunPath)
+if (Test-Path $latestFullRunPath) {
+    Write-Host ("- latest full-run pointer: " + $latestFullRunPath)
+}
 if ($ledgerRendered) {
     Write-Host ("- failure ledger: " + $ledgerPath)
 }
