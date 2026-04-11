@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from spark_intelligence.memory.architecture_live_comparison import (
     _baseline_row,
+    _leader_rows,
     build_telegram_regression_sample_specs,
     compare_telegram_memory_architectures,
 )
@@ -14,6 +15,54 @@ from tests.test_support import SparkTestCase
 
 
 class MemoryArchitectureLiveComparisonTests(SparkTestCase):
+    def test_leader_rows_uses_grounding_before_scorecard_tiebreaks(self) -> None:
+        leaders = _leader_rows(
+            [
+                {
+                    "baseline_name": "summary_synthesis_memory",
+                    "live_integration_overall": {"accuracy": 0.5},
+                    "trustworthiness_overall": {"accuracy": 0.5},
+                    "grounding_overall": {"accuracy": 0.6},
+                    "scorecard_overall": {"accuracy": 0.1},
+                    "scorecard_alignment": {"rate": 0.0},
+                },
+                {
+                    "baseline_name": "dual_store_event_calendar_hybrid",
+                    "live_integration_overall": {"accuracy": 0.5},
+                    "trustworthiness_overall": {"accuracy": 0.5},
+                    "grounding_overall": {"accuracy": 0.4},
+                    "scorecard_overall": {"accuracy": 1.0},
+                    "scorecard_alignment": {"rate": 1.0},
+                },
+            ]
+        )
+
+        self.assertEqual([row["baseline_name"] for row in leaders], ["summary_synthesis_memory"])
+
+    def test_leader_rows_uses_scorecard_correctness_when_live_metrics_tie(self) -> None:
+        leaders = _leader_rows(
+            [
+                {
+                    "baseline_name": "summary_synthesis_memory",
+                    "live_integration_overall": {"accuracy": 0.5},
+                    "trustworthiness_overall": {"accuracy": 0.5},
+                    "grounding_overall": {"accuracy": 0.5},
+                    "scorecard_overall": {"accuracy": 0.0},
+                    "scorecard_alignment": {"rate": 1.0},
+                },
+                {
+                    "baseline_name": "dual_store_event_calendar_hybrid",
+                    "live_integration_overall": {"accuracy": 0.5},
+                    "trustworthiness_overall": {"accuracy": 0.5},
+                    "grounding_overall": {"accuracy": 0.5},
+                    "scorecard_overall": {"accuracy": 0.25},
+                    "scorecard_alignment": {"rate": 0.0},
+                },
+            ]
+        )
+
+        self.assertEqual([row["baseline_name"] for row in leaders], ["dual_store_event_calendar_hybrid"])
+
     def test_baseline_row_treats_unknown_as_truthful_abstention(self) -> None:
         sample_specs = [
             {

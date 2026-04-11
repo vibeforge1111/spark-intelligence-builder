@@ -18,3 +18,13 @@ def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
     assert "favorite_color_missing_after_loaded_context" in loaded_context_case_ids
     assert "dog_name_missing_after_loaded_context" in loaded_context_case_ids
     assert "favorite_food_missing_after_loaded_context" in loaded_context_case_ids
+
+    temporal_case_ids = {case.case_id for case in packs["temporal_conflict_gauntlet"].cases}
+    assert "occupation_query_after_temporal_conflict_noise" in temporal_case_ids
+    assert "timezone_query_after_temporal_conflict_noise" in temporal_case_ids
+
+    identity_case_ids = {case.case_id for case in packs["identity_under_recency_pressure"].cases}
+    assert "occupation_query_after_recency_pressure" in identity_case_ids
+    assert "timezone_query_after_recency_pressure" in identity_case_ids
+    assert "founder_query_after_recency_pressure" in identity_case_ids
+    assert "mission_query_after_recency_pressure" in identity_case_ids

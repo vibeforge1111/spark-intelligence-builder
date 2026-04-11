@@ -412,6 +412,18 @@ def _leader_rows(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
         for row in leaders
         if _safe_accuracy((row.get("trustworthiness_overall") or {}).get("accuracy")) == best_trust
     ]
+    best_grounding = max(_safe_accuracy((row.get("grounding_overall") or {}).get("accuracy")) for row in leaders)
+    leaders = [
+        row
+        for row in leaders
+        if _safe_accuracy((row.get("grounding_overall") or {}).get("accuracy")) == best_grounding
+    ]
+    best_scorecard = max(_safe_accuracy((row.get("scorecard_overall") or {}).get("accuracy")) for row in leaders)
+    leaders = [
+        row
+        for row in leaders
+        if _safe_accuracy((row.get("scorecard_overall") or {}).get("accuracy")) == best_scorecard
+    ]
     best_alignment = max(_safe_accuracy((row.get("scorecard_alignment") or {}).get("rate")) for row in leaders)
     return [
         row for row in leaders if _safe_accuracy((row.get("scorecard_alignment") or {}).get("rate")) == best_alignment
