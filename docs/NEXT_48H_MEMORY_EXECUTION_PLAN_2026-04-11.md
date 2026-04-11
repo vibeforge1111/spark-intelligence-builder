@@ -77,6 +77,12 @@ Default entrypoint for serious validation:
 powershell -ExecutionPolicy Bypass -File .\scripts\run_memory_two_contender_validation.ps1
 ```
 
+Fast preflight for harness-only changes:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_memory_automation_tests.ps1
+```
+
 What it already gives us:
 
 - fixed contender pair
@@ -86,6 +92,12 @@ What it already gives us:
 - verdict summary
 - builder and chip repo SHAs
 - soak timeout protection
+
+What the fast preflight gives us:
+
+- wrapper regression coverage without paying for a live soak
+- renderer coverage for baseline docs, failure ledger, and validation delta
+- chip-side Builder baseline sync coverage when the sibling repo is present
 
 Stable pointer for the latest run:
 
@@ -98,14 +110,15 @@ C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\latest-run.js
 This is the exact loop to repeat.
 
 1. Run the wrapper.
-2. Read the latest run manifest and the produced soak/regression artifacts.
-3. Identify only real live misses or weak selector-pack separations.
-4. Bucket each issue into a small failure taxonomy.
-5. Fix one bucket at a time.
-6. Rerun only the affected targeted pack or regression slice.
-7. If the targeted result improves, rerun the full wrapper.
-8. If the full wrapper stays green, keep the change.
-9. If the full wrapper regresses, revert the idea or narrow the patch.
+2. If the change only touches the wrapper, renderers, pointers, manifests, or docs, run the fast automation preflight first.
+3. Read the latest run manifest and the produced soak/regression artifacts.
+4. Identify only real live misses or weak selector-pack separations.
+5. Bucket each issue into a small failure taxonomy.
+6. Fix one bucket at a time.
+7. Rerun only the affected targeted pack or regression slice.
+8. If the targeted result improves, rerun the full wrapper.
+9. If the full wrapper stays green, keep the change.
+10. If the full wrapper regresses, revert the idea or narrow the patch.
 
 ## Failure taxonomy
 
