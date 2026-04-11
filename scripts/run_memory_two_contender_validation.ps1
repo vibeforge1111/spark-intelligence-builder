@@ -16,11 +16,48 @@ $baselineFlags = @(
     "--baseline", "dual_store_event_calendar_hybrid"
 )
 
-$expectedBenchmarkSeconds = 12.21
-$expectedRegressionSeconds = 22.934
-$expectedSoakSeconds = 350.911
-$expectedTotalSeconds = 386.479
 $expectedLatestFullRunPointer = Join-Path $SparkHome "artifacts\memory-validation-runs\latest-full-run.json"
+
+function Get-ExpectedValidationBaseline {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$LatestFullRunPath
+    )
+
+    if (-not (Test-Path $LatestFullRunPath)) {
+        return $null
+    }
+
+    try {
+        $pointerPayload = Get-Content $LatestFullRunPath -Raw | ConvertFrom-Json
+        $runSummaryPath = [string]$pointerPayload.run_summary
+        if ([string]::IsNullOrWhiteSpace($runSummaryPath) -or -not (Test-Path $runSummaryPath)) {
+            return $null
+        }
+        $runSummaryPayload = Get-Content $runSummaryPath -Raw | ConvertFrom-Json
+        return [ordered]@{
+            output_root = [string]$pointerPayload.output_root
+            benchmark_duration_seconds = $runSummaryPayload.benchmark_duration_seconds
+            regression_duration_seconds = $runSummaryPayload.regression_duration_seconds
+            soak_duration_seconds = $runSummaryPayload.soak_duration_seconds
+            total_duration_seconds = $runSummaryPayload.total_duration_seconds
+        }
+    } catch {
+        return $null
+    }
+}
+
+function Format-ExpectedDuration {
+    param(
+        [Parameter(Mandatory = $false)]
+        [object]$Value
+    )
+
+    if ($null -eq $Value -or [string]::IsNullOrWhiteSpace([string]$Value)) {
+        return "unknown"
+    }
+    return ("{0:0.###}s" -f [double]$Value)
+}
 
 $resolvedOutputRoot = $OutputRoot
 if ([string]::IsNullOrWhiteSpace($resolvedOutputRoot)) {
@@ -28,13 +65,23 @@ if ([string]::IsNullOrWhiteSpace($resolvedOutputRoot)) {
     $resolvedOutputRoot = Join-Path $SparkHome "artifacts\memory-validation-runs\$timestamp"
 }
 
+$expectedBaseline = Get-ExpectedValidationBaseline -LatestFullRunPath $expectedLatestFullRunPointer
 New-Item -ItemType Directory -Path $resolvedOutputRoot -Force | Out-Null
 Write-Host "Validation output root: $resolvedOutputRoot"
 Write-Host "Expected full-run cost from latest clean baseline:"
-Write-Host ("- benchmark: {0:0.###}s" -f $expectedBenchmarkSeconds)
-Write-Host ("- regression: {0:0.###}s" -f $expectedRegressionSeconds)
-Write-Host ("- soak: {0:0.###}s" -f $expectedSoakSeconds)
-Write-Host ("- total: {0:0.###}s" -f $expectedTotalSeconds)
+if ($expectedBaseline) {
+    Write-Host ("- source baseline: " + $expectedBaseline.output_root)
+    Write-Host ("- benchmark: " + (Format-ExpectedDuration -Value $expectedBaseline.benchmark_duration_seconds))
+    Write-Host ("- regression: " + (Format-ExpectedDuration -Value $expectedBaseline.regression_duration_seconds))
+    Write-Host ("- soak: " + (Format-ExpectedDuration -Value $expectedBaseline.soak_duration_seconds))
+    Write-Host ("- total: " + (Format-ExpectedDuration -Value $expectedBaseline.total_duration_seconds))
+} else {
+    Write-Host "- source baseline: unavailable"
+    Write-Host "- benchmark: unknown"
+    Write-Host "- regression: unknown"
+    Write-Host "- soak: unknown"
+    Write-Host "- total: unknown"
+}
 Write-Host ("- latest full-run pointer: " + $expectedLatestFullRunPointer)
 
 function Get-GitRevision {
