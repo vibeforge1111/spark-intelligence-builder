@@ -86,6 +86,7 @@ The newest recency-heavy packs now also force:
 - older stable facts to survive overwrite noise
 - identity recall to preserve occupation, timezone, founder, and mission under recency pressure
 - temporal conflict packs to prove retention of non-overwritten facts, not just the freshest overwrite
+- targeted pack runs to execute custom variant cases directly from the CLI instead of falling back to default regression ids
 
 ## Operator commands
 
@@ -119,6 +120,25 @@ Focused live slice while keeping the same architecture race:
 ```bash
 spark-intelligence memory soak-architectures \
   --category overwrite \
+  --baseline summary_synthesis_memory \
+  --baseline dual_store_event_calendar_hybrid
+```
+
+Focused benchmark-pack run with custom Telegram variants:
+
+```bash
+spark-intelligence memory run-telegram-regression \
+  --benchmark-pack identity_under_recency_pressure \
+  --baseline summary_synthesis_memory \
+  --baseline dual_store_event_calendar_hybrid
+```
+
+Focused benchmark-pack soak:
+
+```bash
+spark-intelligence memory soak-architectures \
+  --runs 5 \
+  --benchmark-pack identity_under_recency_pressure \
   --baseline summary_synthesis_memory \
   --baseline dual_store_event_calendar_hybrid
 ```

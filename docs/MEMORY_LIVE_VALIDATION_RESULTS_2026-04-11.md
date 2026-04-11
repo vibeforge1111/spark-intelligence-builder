@@ -38,6 +38,15 @@ The live suite is now stricter in the places that were still underreporting ambi
 - `explanation_pressure_suite`: `dual_store_event_calendar_hybrid` wins the pack tie-break at `2/5` vs `2/5`
 - `identity_under_recency_pressure`: still a true tie at `2/8` vs `2/8`
 
+## Targeted Pack Validation
+
+The benchmark-pack CLI path now runs custom Telegram variants directly:
+
+- `memory run-telegram-regression --benchmark-pack identity_under_recency_pressure` executed `21` cases end-to-end
+- that targeted run matched `19/21`, with only the two richer summary prompts failing at runtime
+- the live architecture comparison for the full targeted pack compared `11` cases and still tied `summary_synthesis_memory` vs `dual_store_event_calendar_hybrid` at `2/11`
+- this confirms the unresolved lane is real: both contenders still collapse toward the freshest overwrite under identity-summary pressure
+
 ## Interpretation
 
 The current decision should hold:
@@ -57,3 +66,5 @@ The Builder runtime contract now explicitly reports `summary_synthesis_memory` a
 - `.spark-intelligence/artifacts/telegram-memory-regression/regression-summary.md`
 - `.spark-intelligence/artifacts/telegram-memory-regression/architecture-live-comparison/telegram-memory-architecture-live-comparison.json`
 - `.spark-intelligence/artifacts/telegram-memory-architecture-soak/telegram-memory-architecture-soak.json`
+- `.spark-intelligence/artifacts/telegram-memory-regression-identity-pack-v2/telegram-memory-regression.json`
+- `.spark-intelligence/artifacts/telegram-memory-regression-identity-pack-v2/architecture-live-comparison/telegram-memory-architecture-live-comparison.json`
