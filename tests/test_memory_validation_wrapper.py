@@ -190,3 +190,71 @@ def test_memory_validation_wrapper_reports_clean_expected_baseline_banner(tmp_pa
     assert "soak: 348.233s" in completed.stdout
     assert "total: 383.853s" in completed.stdout
     assert "baseline staleness: clean" in completed.stdout
+
+
+def test_memory_validation_wrapper_reports_stale_expected_baseline_banner(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script_path = repo_root / "scripts" / "run_memory_two_contender_validation.ps1"
+    spark_home = tmp_path / "spark-home"
+    output_root = tmp_path / "validation-run"
+    validation_runs_root = spark_home / "artifacts" / "memory-validation-runs"
+    baseline_root = validation_runs_root / "20260412-013326"
+    baseline_root.mkdir(parents=True)
+
+    latest_full_run_path = validation_runs_root / "latest-full-run.json"
+    baseline_run_summary_path = baseline_root / "run-summary.json"
+
+    baseline_run_summary_path.write_text(
+        json.dumps(
+            {
+                "output_root": str(baseline_root),
+                "builder_repo_commit": "builder-old-sha",
+                "domain_chip_repo_commit": "chip-old-sha",
+                "benchmark_duration_seconds": 12.348,
+                "regression_duration_seconds": 23.045,
+                "soak_duration_seconds": 348.233,
+                "total_duration_seconds": 383.853,
+                "benchmark_output_dir": str(baseline_root / "memory-architecture-benchmark"),
+                "regression_output_dir": str(baseline_root / "telegram-memory-regression"),
+                "soak_output_dir": str(baseline_root / "telegram-memory-architecture-soak"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    latest_full_run_path.write_text(
+        json.dumps(
+            {
+                "output_root": str(baseline_root),
+                "run_summary": str(baseline_run_summary_path),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script_path),
+            "-SparkHome",
+            str(spark_home),
+            "-OutputRoot",
+            str(output_root),
+            "-SkipBenchmark",
+            "-SkipRegression",
+            "-SkipSoak",
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    assert f"source baseline: {baseline_root}" in completed.stdout
+    assert "baseline staleness: warning" in completed.stdout
+    assert "builder baseline commit: builder-old-sha" in completed.stdout
+    assert "domain-chip baseline commit: chip-old-sha" in completed.stdout
