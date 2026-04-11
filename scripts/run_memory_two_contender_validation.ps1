@@ -149,6 +149,13 @@ if ($soakPayload) {
 $summaryPath = Join-Path $resolvedOutputRoot "run-summary.json"
 $runSummary | ConvertTo-Json | Set-Content -Path $summaryPath -Encoding utf8
 
+$latestRunPath = Join-Path (Join-Path $SparkHome "artifacts\memory-validation-runs") "latest-run.json"
+[ordered]@{
+    output_root = $resolvedOutputRoot
+    run_summary = $summaryPath
+    updated_at = (Get-Date).ToString("o")
+} | ConvertTo-Json | Set-Content -Path $latestRunPath -Encoding utf8
+
 Write-Host ""
 Write-Host "Validation artifacts:"
 Write-Host ("- output root: " + $resolvedOutputRoot)
@@ -162,6 +169,7 @@ if ($runSummary["soak_output_dir"]) {
     Write-Host ("- live soak: " + $runSummary["soak_output_dir"])
 }
 Write-Host ("- manifest: " + $summaryPath)
+Write-Host ("- latest pointer: " + $latestRunPath)
 
 Write-Host ""
 Write-Host "Validation verdict:"
