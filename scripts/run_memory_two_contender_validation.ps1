@@ -26,7 +26,12 @@ New-Item -ItemType Directory -Path $resolvedOutputRoot -Force | Out-Null
 Write-Host "Validation output root: $resolvedOutputRoot"
 
 $runSummary = [ordered]@{
+    spark_home = $SparkHome
     output_root = $resolvedOutputRoot
+    baselines = @("summary_synthesis_memory", "dual_store_event_calendar_hybrid")
+    soak_runs = $SoakRuns
+    soak_timeout_seconds = $SoakTimeoutSeconds
+    skipped_steps = @()
     benchmark_output_dir = $null
     regression_output_dir = $null
     soak_output_dir = $null
@@ -91,6 +96,8 @@ if (-not $SkipBenchmark) {
         $runSummary["benchmark_output_dir"] = $benchmarkOutputDir
     }
     Invoke-ValidationStep -Label "Offline ProductMemory Benchmark" -Arguments $benchmarkArgs
+} else {
+    $runSummary["skipped_steps"] += "benchmark"
 }
 
 if (-not $SkipRegression) {
@@ -104,6 +111,8 @@ if (-not $SkipRegression) {
         $runSummary["regression_output_dir"] = $regressionOutputDir
     }
     Invoke-ValidationStep -Label "Live Telegram Regression" -Arguments $regressionArgs
+} else {
+    $runSummary["skipped_steps"] += "regression"
 }
 
 if (-not $SkipSoak) {
@@ -119,6 +128,8 @@ if (-not $SkipSoak) {
         $runSummary["soak_output_dir"] = $soakOutputDir
     }
     Invoke-ValidationStep -Label "Live Telegram Soak" -Arguments $soakArgs
+} else {
+    $runSummary["skipped_steps"] += "soak"
 }
 
 $benchmarkSummaryPath = if ($runSummary["benchmark_output_dir"]) { Join-Path $runSummary["benchmark_output_dir"] "memory-architecture-benchmark.json" } else { $null }
