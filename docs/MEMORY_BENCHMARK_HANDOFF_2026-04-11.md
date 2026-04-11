@@ -6,13 +6,13 @@ Related memory substrate repo: `C:\Users\USER\Desktop\domain-chip-memory`
 
 ## Current state
 
-- Builder is now pinned to `dual_store_event_calendar_hybrid` as the named runtime architecture in the SDK contract summary.
+- Builder is now pinned to `summary_synthesis_memory` as the named runtime architecture in the SDK contract summary.
 - The live runtime still runs through the governed `SparkMemorySDK` / `domain_chip_memory` stack.
 - The benchmark harness was expanded from a fixed Telegram replay into a varied pack suite.
 - The soak/reporting logic was then hardened so zero-signal categories no longer look like meaningful ties.
 - The current default serious comparison loop is now governed by `docs/MEMORY_REALTIME_BENCHMARK_PROGRAM_2026-04-11.md`.
 - The latest clean live `14`-pack soak now favors `summary_synthesis_memory`, while the latest offline ProductMemory benchmark is tied with both contenders at `1156/1266`.
-- Because the result is an offline tie plus a live-only `summary_synthesis_memory` lead, the runtime stays pinned to `dual_store_event_calendar_hybrid` until one contender earns a clearer combined promotion case.
+- Because the result is an offline tie plus a live `summary_synthesis_memory` lead, the runtime is now pinned to `summary_synthesis_memory`.
 
 ## Historical soak snapshot
 
@@ -59,7 +59,7 @@ The current default operating program is:
 
 The current pinned runtime selector is:
 
-1. `dual_store_event_calendar_hybrid`
+1. `summary_synthesis_memory`
 
 This is now the default contender pair for:
 
@@ -122,8 +122,8 @@ Why they may keep tying:
 
 ## Recommended next steps tomorrow
 
-1. Keep `dual_store_event_calendar_hybrid` as the pinned runtime architecture until one contender wins both offline and live or we explicitly relax that promotion rule.
-2. Keep `summary_synthesis_memory` as the active challenger in the default live program.
+1. Keep `summary_synthesis_memory` as the pinned runtime architecture unless a future contender clearly beats it across both offline and live validation.
+2. Keep `dual_store_event_calendar_hybrid` as the active challenger in the default comparison program.
 3. Use `observational_temporal_memory` as a control lane when we want a third comparison, not as the default second contender.
 4. Add new benchmark packs specifically for:
    - event ordering
@@ -132,7 +132,7 @@ Why they may keep tying:
    - abstention under tempting but irrelevant stored facts
    - provenance/explanation phrasing quality
 5. Keep rerunning the top two through those real-time packs, especially the current clean-soak selector packs that still require work: `provenance_audit`, `explanation_pressure_suite`, `event_calendar_lineage_proxy`, `temporal_conflict_gauntlet`, `quality_lane_gauntlet`, and `contradiction_and_recency`.
-6. Keep rerunning the pinned `dual_store_event_calendar_hybrid` runtime against the active challenger and only repin if the challenger wins both offline and live.
+6. Keep rerunning the pinned `summary_synthesis_memory` runtime against the active challenger and only repin if the challenger wins both offline and live.
 
 Promotion rule:
 
