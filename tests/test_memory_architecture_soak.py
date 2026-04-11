@@ -155,6 +155,7 @@ class MemoryArchitectureSoakTests(SparkTestCase):
         self.assertEqual(result.payload["summary"]["benchmark_mode"], "varied_pack_suite")
         self.assertGreater(result.payload["summary"]["benchmark_pack_count"], 1)
         self.assertIn("temporal_conflict", result.payload["summary"]["covered_focus_areas"])
+        self.assertIn("identity_under_recency_pressure", result.payload["summary"]["health_gate_pack_ids"])
         self.assertNotEqual(
             result.payload["runs"][0]["benchmark_pack"]["pack_id"],
             result.payload["runs"][1]["benchmark_pack"]["pack_id"],
@@ -267,6 +268,11 @@ class MemoryArchitectureSoakTests(SparkTestCase):
 
         self.assertEqual(result.payload["summary"]["benchmark_pack_count"], 1)
         self.assertEqual(result.payload["benchmark_packs"][0]["pack_id"], "identity_under_recency_pressure")
+        self.assertEqual(result.payload["benchmark_packs"][0]["selection_role"], "health_gate")
+        self.assertEqual(result.payload["summary"]["selector_pack_ids"], [])
+        self.assertEqual(result.payload["summary"]["health_gate_pack_ids"], ["identity_under_recency_pressure"])
+        self.assertEqual(result.payload["summary"]["overall_leader_names"], [])
+        self.assertEqual(result.payload["summary"]["recommended_top_two"], [])
         self.assertIn(
             "identity_summary_after_recency_pressure_rich",
             result.payload["benchmark_packs"][0]["case_ids"],

@@ -16,6 +16,7 @@ class TelegramMemoryBenchmarkPack:
     description: str
     focus_areas: tuple[str, ...]
     cases: tuple[TelegramMemoryRegressionCase, ...]
+    selection_role: str = "separator"
 
 
 _DEFAULT_CASES_BY_ID = {
@@ -582,6 +583,7 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
                 "after newer state updates displace older facts."
             ),
             focus_areas=("identity_synthesis", "overwrite", "recency", "profile_summary"),
+            selection_role="health_gate",
             cases=(
                 *_existing(
                     "name_write",

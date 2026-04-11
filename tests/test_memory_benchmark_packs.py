@@ -24,6 +24,7 @@ def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
     assert "native_history" in packs["event_calendar_lineage_proxy"].focus_areas
     assert "provenance" in packs["explanation_pressure_suite"].focus_areas
     assert "identity_synthesis" in packs["identity_under_recency_pressure"].focus_areas
+    assert packs["identity_under_recency_pressure"].selection_role == "health_gate"
 
     loaded_context_case_ids = {case.case_id for case in packs["loaded_context_abstention"].cases}
     assert "favorite_color_missing_after_loaded_context" in loaded_context_case_ids

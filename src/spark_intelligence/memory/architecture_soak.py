@@ -48,6 +48,7 @@ class _BenchmarkRunSpec:
     pack_id: str
     title: str
     description: str
+    selection_role: str = "separator"
     focus_areas: tuple[str, ...] = ()
     cases: tuple[Any, ...] | None = None
     case_ids: tuple[str, ...] = ()
@@ -97,6 +98,8 @@ def run_telegram_memory_architecture_soak(
                 "baseline_names": list(resolved_baseline_names),
                 "benchmark_pack_count": 0,
                 "benchmark_pack_ids": [],
+                "selector_pack_ids": [],
+                "health_gate_pack_ids": [],
                 "covered_categories": [],
                 "covered_focus_areas": [],
                 "covered_benchmark_tags": [],
@@ -105,6 +108,7 @@ def run_telegram_memory_architecture_soak(
                 "recommended_top_two": [],
             },
             "aggregate_results": [],
+            "selection_aggregate_results": [],
             "benchmark_packs": [],
             "benchmark_pack_results": [],
             "category_results": [],
@@ -118,6 +122,7 @@ def run_telegram_memory_architecture_soak(
         return TelegramArchitectureSoakResult(output_dir=resolved_output_dir, payload=payload)
     benchmark_pack_rows = [_run_spec_payload(spec) for spec in run_specs]
     baseline_aggregate: dict[str, dict[str, Any]] = {}
+    selector_baseline_aggregate: dict[str, dict[str, Any]] = {}
     category_aggregate: dict[str, dict[str, dict[str, Any]]] = {}
     pack_aggregate: dict[str, dict[str, Any]] = {}
     run_payloads: list[dict[str, Any]] = []
@@ -202,6 +207,15 @@ def run_telegram_memory_architecture_soak(
                     row=row,
                     is_leader=baseline_name in leader_names,
                 )
+                if run_spec.selection_role != "health_gate":
+                    _update_aggregate(
+                        aggregate=selector_baseline_aggregate.setdefault(
+                            baseline_name,
+                            _new_aggregate_row(baseline_name),
+                        ),
+                        row=row,
+                        is_leader=baseline_name in leader_names,
+                    )
                 _update_pack_aggregate(
                     pack_aggregate=pack_aggregate,
                     run_spec=run_spec,
@@ -231,6 +245,7 @@ def run_telegram_memory_architecture_soak(
             requested_runs=requested_runs,
             benchmark_pack_rows=benchmark_pack_rows,
             baseline_aggregate=baseline_aggregate,
+            selector_baseline_aggregate=selector_baseline_aggregate,
             category_aggregate=category_aggregate,
             pack_aggregate=pack_aggregate,
             run_payloads=run_payloads,
@@ -247,6 +262,7 @@ def run_telegram_memory_architecture_soak(
         requested_runs=requested_runs,
         benchmark_pack_rows=benchmark_pack_rows,
         baseline_aggregate=baseline_aggregate,
+        selector_baseline_aggregate=selector_baseline_aggregate,
         category_aggregate=category_aggregate,
         pack_aggregate=pack_aggregate,
         run_payloads=run_payloads,
@@ -274,6 +290,7 @@ def _build_run_specs(
                 pack_id="user_selected_slice",
                 title="User Selected Slice",
                 description="Repeatedly evaluates the exact case/category filters requested on the command line.",
+                selection_role="separator",
                 focus_areas=("user_selected",),
                 cases=None,
                 case_ids=requested_case_ids,
@@ -285,6 +302,7 @@ def _build_run_specs(
             pack_id=pack.pack_id,
             title=pack.title,
             description=pack.description,
+            selection_role=pack.selection_role,
             focus_areas=pack.focus_areas,
             cases=pack.cases,
             case_ids=tuple(case.case_id for case in pack.cases),
@@ -320,6 +338,7 @@ def _run_spec_payload(run_spec: _BenchmarkRunSpec) -> dict[str, Any]:
         "pack_id": run_spec.pack_id,
         "title": run_spec.title,
         "description": run_spec.description,
+        "selection_role": run_spec.selection_role,
         "focus_areas": list(run_spec.focus_areas),
         "case_ids": list(run_spec.case_ids),
         "categories": list(run_spec.categories),
@@ -428,6 +447,7 @@ def _build_soak_payload(
     requested_runs: int,
     benchmark_pack_rows: list[dict[str, Any]],
     baseline_aggregate: dict[str, dict[str, Any]],
+    selector_baseline_aggregate: dict[str, dict[str, Any]],
     category_aggregate: dict[str, dict[str, dict[str, Any]]],
     pack_aggregate: dict[str, dict[str, Any]],
     run_payloads: list[dict[str, Any]],
@@ -437,12 +457,23 @@ def _build_soak_payload(
     baseline_names: list[str],
 ) -> dict[str, Any]:
     aggregate_rows = _finalize_aggregate_rows(baseline_aggregate)
+    selector_aggregate_rows = _finalize_aggregate_rows(selector_baseline_aggregate)
     pack_results = _build_pack_results(
         benchmark_pack_rows=benchmark_pack_rows,
         pack_aggregate=pack_aggregate,
     )
     category_results = _build_category_results(category_aggregate)
-    overall_leader_names = _aggregate_leader_names(aggregate_rows)
+    overall_leader_names = _aggregate_leader_names(selector_aggregate_rows)
+    selector_pack_ids = [
+        str(pack.get("pack_id") or "unknown")
+        for pack in benchmark_pack_rows
+        if str(pack.get("selection_role") or "separator") != "health_gate"
+    ]
+    health_gate_pack_ids = [
+        str(pack.get("pack_id") or "unknown")
+        for pack in benchmark_pack_rows
+        if str(pack.get("selection_role") or "separator") == "health_gate"
+    ]
     covered_categories = sorted(
         {
             str(category)
@@ -478,16 +509,19 @@ def _build_soak_payload(
         "baseline_names": list(baseline_names),
         "benchmark_pack_count": len(benchmark_pack_rows),
         "benchmark_pack_ids": [str(pack.get("pack_id") or "unknown") for pack in benchmark_pack_rows],
+        "selector_pack_ids": selector_pack_ids,
+        "health_gate_pack_ids": health_gate_pack_ids,
         "covered_categories": covered_categories,
         "covered_focus_areas": covered_focus_areas,
         "covered_benchmark_tags": covered_benchmark_tags,
         "quality_lane_coverage": quality_lane_coverage,
         "overall_leader_names": overall_leader_names,
-        "recommended_top_two": [row["baseline_name"] for row in aggregate_rows[:2]],
+        "recommended_top_two": [row["baseline_name"] for row in selector_aggregate_rows[:2]],
     }
     return {
         "summary": summary,
         "aggregate_results": aggregate_rows,
+        "selection_aggregate_results": selector_aggregate_rows,
         "benchmark_packs": benchmark_pack_rows,
         "benchmark_pack_results": pack_results,
         "category_results": category_results,
