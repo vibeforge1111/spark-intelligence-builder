@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from spark_intelligence.memory.architecture_live_comparison import (
+    _baseline_row,
     build_telegram_regression_sample_specs,
     compare_telegram_memory_architectures,
 )
@@ -13,6 +14,83 @@ from tests.test_support import SparkTestCase
 
 
 class MemoryArchitectureLiveComparisonTests(SparkTestCase):
+    def test_baseline_row_treats_unknown_as_truthful_abstention(self) -> None:
+        sample_specs = [
+            {
+                "sample_id": "favorite_color_missing_after_loaded_context",
+                "questions": [
+                    {
+                        "question_id": "favorite_color_missing_after_loaded_context",
+                        "question": "What is my favorite color?",
+                        "category": "inappropriate_memory_use",
+                        "should_abstain": True,
+                        "metadata": {
+                            "expected_fragments": ["don't currently have that saved"],
+                            "expected_forbidden_fragments": ["Sarah"],
+                        },
+                    }
+                ],
+            }
+        ]
+        scorecard = {
+            "predictions": [
+                {
+                    "question_id": "favorite_color_missing_after_loaded_context",
+                    "predicted_answer": "unknown",
+                    "metadata": {"retrieved_memory_roles": ["aggregate"]},
+                    "is_correct": True,
+                }
+            ]
+        }
+
+        row = _baseline_row(
+            baseline_name="summary_synthesis_memory",
+            scorecard=scorecard,
+            sample_specs=sample_specs,
+        )
+
+        self.assertEqual(row["live_integration_overall"]["matched"], 1)
+        self.assertEqual(row["abstention_overall"]["matched"], 1)
+        self.assertEqual(row["forbidden_memory_overall"]["clean"], 1)
+
+    def test_baseline_row_ignores_runtime_only_explanation_phrase_when_fact_is_present(self) -> None:
+        sample_specs = [
+            {
+                "sample_id": "city_explanation",
+                "questions": [
+                    {
+                        "question_id": "city_explanation",
+                        "question": "How do you know where I live?",
+                        "category": "explanation",
+                        "evidence_session_ids": ["shared:city_write"],
+                        "metadata": {
+                            "expected_fragments": ["saved memory record", "Dubai"],
+                            "expected_forbidden_fragments": [],
+                        },
+                    }
+                ],
+            }
+        ]
+        scorecard = {
+            "predictions": [
+                {
+                    "question_id": "city_explanation",
+                    "predicted_answer": "Dubai",
+                    "metadata": {"retrieved_memory_roles": ["structured_evidence"]},
+                    "is_correct": True,
+                }
+            ]
+        }
+
+        row = _baseline_row(
+            baseline_name="summary_synthesis_memory",
+            scorecard=scorecard,
+            sample_specs=sample_specs,
+        )
+
+        self.assertEqual(row["live_integration_overall"]["matched"], 1)
+        self.assertEqual(row["grounding_overall"]["matched"], 1)
+
     def test_build_telegram_regression_sample_specs_uses_prior_context_and_isolated_abstention(self) -> None:
         selected_cases = [
             next(case for case in DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES if case.case_id == "name_write"),

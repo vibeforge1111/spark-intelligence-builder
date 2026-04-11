@@ -24,6 +24,19 @@ _WRITE_BRIDGE_MODE = "memory_profile_fact_update"
 _DEFAULT_BENCHMARK_NAME = "ProductMemory"
 _DEFAULT_OUTPUT_DIR_NAME = "telegram-memory-architecture-live-comparison"
 _BASE_TIMESTAMP = datetime(2026, 4, 10, 0, 0, tzinfo=timezone.utc)
+_EXPLANATION_STYLE_ONLY_FRAGMENTS = frozenset({"saved memory record"})
+_ABSTENTION_EQUIVALENT_ANSWERS = frozenset(
+    {
+        "unknown",
+        "i don't know",
+        "i do not know",
+        "don't currently have that saved",
+        "do not currently have that saved",
+        "i don't currently have that saved",
+        "i do not currently have that saved",
+        "not enough information",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -638,15 +651,19 @@ def _baseline_row(
         predicted_answer = str(predicted.get("predicted_answer") or "")
         expected_fragments = [str(item) for item in list(metadata.get("expected_fragments") or [])]
         forbidden_fragments = [str(item) for item in list(metadata.get("expected_forbidden_fragments") or [])]
+        required_fragments = _required_live_match_fragments(
+            category=category,
+            expected_fragments=expected_fragments,
+        )
         missing_fragments = [
-            fragment for fragment in expected_fragments if fragment.lower() not in predicted_answer.lower()
+            fragment for fragment in required_fragments if fragment.lower() not in predicted_answer.lower()
         ]
         forbidden_hits = [
             fragment for fragment in forbidden_fragments if fragment.lower() in predicted_answer.lower()
         ]
-        matched = not missing_fragments
         abstention_expected = bool(question.get("should_abstain"))
-        abstention_respected = abstention_expected and matched and not forbidden_hits
+        abstention_respected = abstention_expected and _is_truthful_abstention_answer(predicted_answer) and not forbidden_hits
+        matched = abstention_respected if abstention_expected else not missing_fragments
         retrieved_memory_roles = (
             (predicted.get("metadata") or {}).get("retrieved_memory_roles") or []
             if isinstance(predicted.get("metadata"), dict)
@@ -744,3 +761,18 @@ def _baseline_row(
 
 def _iso_timestamp(index: int) -> str:
     return (_BASE_TIMESTAMP + timedelta(minutes=index)).isoformat()
+
+
+def _required_live_match_fragments(*, category: str, expected_fragments: Sequence[str]) -> list[str]:
+    if category != "explanation":
+        return list(expected_fragments)
+    return [
+        fragment
+        for fragment in expected_fragments
+        if fragment.strip().lower() not in _EXPLANATION_STYLE_ONLY_FRAGMENTS
+    ]
+
+
+def _is_truthful_abstention_answer(predicted_answer: str) -> bool:
+    lowered = str(predicted_answer or "").strip().lower()
+    return lowered in _ABSTENTION_EQUIVALENT_ANSWERS
