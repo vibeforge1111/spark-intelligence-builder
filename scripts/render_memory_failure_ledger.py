@@ -149,8 +149,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Render the memory failure ledger from the latest validation run.")
     parser.add_argument(
         "--latest-run",
-        default=str(Path.home() / ".spark-intelligence" / "artifacts" / "memory-validation-runs" / "latest-run.json"),
-        help="Path to latest-run.json",
+        default=str(Path.home() / ".spark-intelligence" / "artifacts" / "memory-validation-runs" / "latest-full-run.json"),
+        help="Path to latest-full-run.json",
     )
     parser.add_argument("--write", help="Optional output path for the rendered markdown ledger")
     args = parser.parse_args()
