@@ -45,6 +45,7 @@ class _BenchmarkRunSpec:
     pack_id: str
     title: str
     description: str
+    focus_areas: tuple[str, ...] = ()
     cases: tuple[Any, ...] | None = None
     case_ids: tuple[str, ...] = ()
     categories: tuple[str, ...] = ()
@@ -232,6 +233,7 @@ def _build_run_specs(
                 pack_id="user_selected_slice",
                 title="User Selected Slice",
                 description="Repeatedly evaluates the exact case/category filters requested on the command line.",
+                focus_areas=("user_selected",),
                 cases=None,
                 case_ids=requested_case_ids,
                 categories=requested_categories,
@@ -242,6 +244,7 @@ def _build_run_specs(
             pack_id=pack.pack_id,
             title=pack.title,
             description=pack.description,
+            focus_areas=pack.focus_areas,
             cases=pack.cases,
             case_ids=tuple(case.case_id for case in pack.cases),
             categories=tuple(sorted({case.category for case in pack.cases})),
@@ -264,12 +267,22 @@ def _resolve_run_namespace(
 
 
 def _run_spec_payload(run_spec: _BenchmarkRunSpec) -> dict[str, Any]:
+    benchmark_tags = sorted(
+        {
+            str(tag)
+            for case in (run_spec.cases or ())
+            for tag in tuple(getattr(case, "benchmark_tags", ()) or ())
+            if str(tag).strip()
+        }
+    )
     return {
         "pack_id": run_spec.pack_id,
         "title": run_spec.title,
         "description": run_spec.description,
+        "focus_areas": list(run_spec.focus_areas),
         "case_ids": list(run_spec.case_ids),
         "categories": list(run_spec.categories),
+        "benchmark_tags": benchmark_tags,
     }
 
 
@@ -406,6 +419,22 @@ def _build_soak_payload(
             if str(category).strip()
         }
     )
+    covered_focus_areas = sorted(
+        {
+            str(area)
+            for pack in benchmark_pack_rows
+            for area in list(pack.get("focus_areas") or [])
+            if str(area).strip()
+        }
+    )
+    covered_benchmark_tags = sorted(
+        {
+            str(tag)
+            for pack in benchmark_pack_rows
+            for tag in list(pack.get("benchmark_tags") or [])
+            if str(tag).strip()
+        }
+    )
     quality_lane_coverage = {lane: lane in set(covered_categories) for lane in QUALITY_LANE_KEYS}
     summary = {
         "status": status,
@@ -418,6 +447,8 @@ def _build_soak_payload(
         "benchmark_pack_count": len(benchmark_pack_rows),
         "benchmark_pack_ids": [str(pack.get("pack_id") or "unknown") for pack in benchmark_pack_rows],
         "covered_categories": covered_categories,
+        "covered_focus_areas": covered_focus_areas,
+        "covered_benchmark_tags": covered_benchmark_tags,
         "quality_lane_coverage": quality_lane_coverage,
         "overall_leader_names": overall_leader_names,
         "recommended_top_two": [row["baseline_name"] for row in aggregate_rows[:2]],

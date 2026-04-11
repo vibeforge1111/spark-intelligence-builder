@@ -56,6 +56,10 @@ The real-time harness already covers more than a single fixed replay. It include
 - identity synthesis
 - interleaved noise resilience
 - quality lane gauntlet
+- loaded-context abstention
+- temporal conflict gauntlet
+- explanation pressure suite
+- identity under recency pressure
 
 That means the live loop already tests:
 
@@ -65,6 +69,9 @@ That means the live loop already tests:
 - explanation and provenance behavior
 - identity synthesis across multiple facts
 - noisy interleaved real-time interaction pressure
+- loaded-context anti-hallucination pressure
+- temporal lineage proxies under overwrite pressure
+- profile-summary coherence after recency conflicts
 
 ## Operator commands
 

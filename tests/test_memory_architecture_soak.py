@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from spark_intelligence.memory.benchmark_packs import default_telegram_memory_benchmark_packs
 from spark_intelligence.memory.architecture_soak import run_telegram_memory_architecture_soak
 
 from tests.test_support import SparkTestCase
@@ -146,6 +147,7 @@ class MemoryArchitectureSoakTests(SparkTestCase):
         )
         self.assertEqual(result.payload["summary"]["benchmark_mode"], "varied_pack_suite")
         self.assertGreater(result.payload["summary"]["benchmark_pack_count"], 1)
+        self.assertIn("temporal_conflict", result.payload["summary"]["covered_focus_areas"])
         self.assertNotEqual(
             result.payload["runs"][0]["benchmark_pack"]["pack_id"],
             result.payload["runs"][1]["benchmark_pack"]["pack_id"],
@@ -207,6 +209,7 @@ class MemoryArchitectureSoakTests(SparkTestCase):
         )
         self.assertEqual(result.payload["summary"]["benchmark_pack_count"], 1)
         self.assertEqual(result.payload["benchmark_packs"][0]["pack_id"], "user_selected_slice")
+        self.assertEqual(result.payload["benchmark_packs"][0]["focus_areas"], ["user_selected"])
         self.assertEqual(
             [row["category"] for row in result.payload["category_results"]],
             ["abstention", "short_term_memory"],
@@ -263,3 +266,8 @@ class MemoryArchitectureSoakTests(SparkTestCase):
         self.assertEqual(result.payload["summary"]["overall_leader_names"], [])
         self.assertEqual(result.payload["category_results"][0]["leader_names"], [])
         self.assertEqual(result.payload["benchmark_pack_results"][0]["leader_names"], [])
+
+    def test_default_benchmark_pack_suite_grows_beyond_original_nine_packs(self) -> None:
+        packs = default_telegram_memory_benchmark_packs()
+
+        self.assertGreaterEqual(len(packs), 13)

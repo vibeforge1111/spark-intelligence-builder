@@ -13,6 +13,7 @@ class TelegramMemoryBenchmarkPack:
     pack_id: str
     title: str
     description: str
+    focus_areas: tuple[str, ...]
     cases: tuple[TelegramMemoryRegressionCase, ...]
 
 
@@ -68,6 +69,7 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
                 "Baseline end-to-end profile memory pack covering writes, direct recall, and "
                 "evidence-style explanations through the Telegram runtime."
             ),
+            focus_areas=("profile_recall", "direct_query", "explanation"),
             cases=_existing(
                 "name_write",
                 "name_query",
@@ -89,6 +91,7 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
                 "Writes multiple facts, injects unrelated memory updates, then checks whether "
                 "older facts are still recalled after a longer interaction horizon."
             ),
+            focus_areas=("long_horizon_recall", "interleaved_noise", "profile_retention"),
             cases=(
                 *_existing(
                     "timezone_write",
@@ -134,6 +137,7 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
                 "Exercises overwrite and contradiction pressure so the winning memory "
                 "architecture has to preserve the latest correct state instead of stale facts."
             ),
+            focus_areas=("overwrite", "recency", "temporal_conflict"),
             cases=(
                 *_existing(
                     "startup_write",
@@ -167,6 +171,7 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
                 "Focuses on explanation quality and whether the answer explicitly signals that it is "
                 "using stored memory rather than free-associating from unrelated facts."
             ),
+            focus_areas=("explanation", "grounding", "provenance"),
             cases=(
                 *_existing(
                     "city_write",
@@ -194,6 +199,7 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
                 "Checks whether the system abstains cleanly when a fact has not been written, "
                 "instead of hallucinating a profile answer."
             ),
+            focus_areas=("abstention", "cleanroom", "anti_hallucination"),
             cases=(
                 _variant(
                     "spark_role_abstention",
@@ -234,6 +240,7 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
                 "Measures whether the memory system avoids using unrelated stored profile facts to "
                 "answer a question that should trigger abstention."
             ),
+            focus_areas=("abstention", "loaded_context", "anti_overpersonalization"),
             cases=(
                 *_existing(
                     "name_write",
@@ -279,6 +286,7 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
                 "Measures whether many separate writes are fused into a coherent identity-level "
                 "summary instead of being recalled only as isolated facts."
             ),
+            focus_areas=("identity_synthesis", "multi_fact_fusion", "profile_summary"),
             cases=(
                 *_existing(
                     "name_write",
@@ -305,6 +313,7 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
                 "Interleaves unrelated writes and reads so the benchmark captures whether memory "
                 "still surfaces the right fact under short-term distraction."
             ),
+            focus_areas=("short_term_resilience", "interleaved_noise", "query_stability"),
             cases=(
                 *_existing(
                     "name_write",
@@ -341,6 +350,7 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
                 "Combines abstention, overwrite, staleness, explanation, and identity pressure in "
                 "one pack to expose architectural tradeoffs under mixed real-world conditions."
             ),
+            focus_areas=("mixed_quality_lanes", "abstention", "overwrite", "identity"),
             cases=(
                 *_existing(
                     "startup_write",
@@ -362,6 +372,157 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
                     category="abstention",
                     expected_response_contains=("don't currently have that saved",),
                     isolate_memory=True,
+                ),
+            ),
+        ),
+        TelegramMemoryBenchmarkPack(
+            pack_id="loaded_context_abstention",
+            title="Loaded Context Abstention",
+            description=(
+                "Loads the runtime with many saved profile facts, then asks several tempting but "
+                "unsupported questions so abstention quality is measured under maximal personalization pressure."
+            ),
+            focus_areas=("abstention", "loaded_context", "anti_hallucination", "anti_overpersonalization"),
+            cases=(
+                *_existing(
+                    "name_write",
+                    "occupation_write",
+                    "city_write",
+                    "startup_write",
+                    "mission_write",
+                    "hack_actor_write",
+                    "timezone_write",
+                    "country_write",
+                ),
+                _variant(
+                    "timezone_query",
+                    case_id="favorite_color_missing_after_loaded_context",
+                    category="inappropriate_memory_use",
+                    message="What is my favorite color?",
+                    expected_response_contains=("don't currently have that saved",),
+                    expected_response_excludes=("Sarah", "entrepreneur", "Dubai", "Seedify", "North Korea", "UAE", "Asia/Dubai"),
+                    benchmark_tags=("anti_hallucination", "anti_overpersonalization", "loaded_context"),
+                ),
+                _variant(
+                    "country_query",
+                    case_id="dog_name_missing_after_loaded_context",
+                    category="inappropriate_memory_use",
+                    message="What is my dog's name?",
+                    expected_response_contains=("don't currently have that saved",),
+                    expected_response_excludes=("Sarah", "entrepreneur", "Dubai", "Seedify", "North Korea", "UAE", "Asia/Dubai"),
+                    benchmark_tags=("anti_hallucination", "anti_overpersonalization", "loaded_context"),
+                ),
+                _variant(
+                    "country_query",
+                    case_id="favorite_food_missing_after_loaded_context",
+                    category="inappropriate_memory_use",
+                    message="What food do I love the most?",
+                    expected_response_contains=("don't currently have that saved",),
+                    expected_response_excludes=("Sarah", "entrepreneur", "Dubai", "Seedify", "North Korea", "UAE", "Asia/Dubai"),
+                    benchmark_tags=("anti_hallucination", "anti_overpersonalization", "loaded_context"),
+                ),
+            ),
+        ),
+        TelegramMemoryBenchmarkPack(
+            pack_id="temporal_conflict_gauntlet",
+            title="Temporal Conflict Gauntlet",
+            description=(
+                "Pushes repeated recency conflicts and stale-explanation pressure so the live runtime has to "
+                "separate current truth from earlier evidence-backed state."
+            ),
+            focus_areas=("temporal_conflict", "overwrite", "staleness", "lineage_proxy"),
+            cases=(
+                *_existing(
+                    "startup_write",
+                    "founder_write",
+                    "startup_query_after_founder",
+                    "startup_explanation_after_founder",
+                    "city_write",
+                    "city_overwrite",
+                    "city_query_after_overwrite",
+                    "country_write",
+                    "country_overwrite",
+                    "country_query_after_overwrite",
+                    "mission_write",
+                    "mission_query",
+                    "hack_actor_write",
+                    "hack_actor_query",
+                ),
+                _variant(
+                    "city_query_after_overwrite",
+                    case_id="city_query_after_temporal_conflict_noise",
+                    category="short_term_memory",
+                    benchmark_tags=("temporal_conflict", "overwrite"),
+                ),
+                _variant(
+                    "country_query_after_overwrite",
+                    case_id="country_query_after_temporal_conflict_noise",
+                    category="short_term_memory",
+                    benchmark_tags=("temporal_conflict", "overwrite"),
+                ),
+            ),
+        ),
+        TelegramMemoryBenchmarkPack(
+            pack_id="explanation_pressure_suite",
+            title="Explanation Pressure Suite",
+            description=(
+                "Stacks many writes before running explanation prompts so provenance quality is tested under "
+                "heavy contextual load rather than one clean fact at a time."
+            ),
+            focus_areas=("explanation", "grounding", "loaded_context", "provenance"),
+            cases=(
+                *_existing(
+                    "name_write",
+                    "occupation_write",
+                    "city_write",
+                    "startup_write",
+                    "founder_write",
+                    "mission_write",
+                    "hack_actor_write",
+                    "country_write",
+                    "city_explanation",
+                    "startup_explanation",
+                    "mission_explanation",
+                    "country_explanation",
+                ),
+                _variant(
+                    "identity_summary",
+                    case_id="identity_summary_after_explanation_pressure",
+                    category="identity_synthesis",
+                    expected_response_contains=("entrepreneur", "Seedify"),
+                    benchmark_tags=("identity_audit", "loaded_context"),
+                ),
+            ),
+        ),
+        TelegramMemoryBenchmarkPack(
+            pack_id="identity_under_recency_pressure",
+            title="Identity Under Recency Pressure",
+            description=(
+                "Combines identity synthesis with overwrite pressure so the profile summary remains coherent "
+                "after newer state updates displace older facts."
+            ),
+            focus_areas=("identity_synthesis", "overwrite", "recency", "profile_summary"),
+            cases=(
+                *_existing(
+                    "name_write",
+                    "occupation_write",
+                    "startup_write",
+                    "founder_write",
+                    "timezone_write",
+                    "city_write",
+                    "city_overwrite",
+                    "country_write",
+                    "country_overwrite",
+                    "city_query_after_overwrite",
+                    "country_query_after_overwrite",
+                    "identity_summary",
+                ),
+                _variant(
+                    "identity_summary",
+                    case_id="identity_summary_after_recency_pressure",
+                    category="identity_synthesis",
+                    expected_response_contains=("entrepreneur", "Spark Swarm"),
+                    benchmark_tags=("identity_audit", "overwrite"),
                 ),
             ),
         ),
