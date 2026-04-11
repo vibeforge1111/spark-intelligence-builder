@@ -806,3 +806,223 @@ else:
 
     builder_readme = (builder_root / "README.md").read_text(encoding="utf-8")
     assert output_root.name in builder_readme
+
+
+def test_memory_validation_wrapper_skip_baseline_publish_preserves_canonical_pointers_and_docs(tmp_path: Path) -> None:
+    real_builder_root = Path(__file__).resolve().parents[1]
+
+    workspace_root = tmp_path / "workspace"
+    builder_root = workspace_root / "spark-intelligence-builder"
+    spark_home = tmp_path / "spark-home"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+
+    _copy_file(
+        real_builder_root / "scripts" / "run_memory_two_contender_validation.ps1",
+        builder_root / "scripts" / "run_memory_two_contender_validation.ps1",
+    )
+    _copy_file(
+        real_builder_root / "scripts" / "render_memory_failure_ledger.py",
+        builder_root / "scripts" / "render_memory_failure_ledger.py",
+    )
+    _copy_file(
+        real_builder_root / "scripts" / "render_memory_baseline_docs.py",
+        builder_root / "scripts" / "render_memory_baseline_docs.py",
+    )
+    _copy_file(
+        real_builder_root / "scripts" / "render_memory_validation_delta.py",
+        builder_root / "scripts" / "render_memory_validation_delta.py",
+    )
+
+    original_readme = "\n".join(
+        [
+            "prefix",
+            "<!-- AUTO_MEMORY_BASELINE_README_START -->",
+            "old baseline",
+            "<!-- AUTO_MEMORY_BASELINE_README_END -->",
+            "suffix",
+        ]
+    )
+    original_live_results = "\n".join(
+        [
+            "prefix",
+            "<!-- AUTO_MEMORY_BASELINE_LIVE_RESULTS_START -->",
+            "old live results",
+            "<!-- AUTO_MEMORY_BASELINE_LIVE_RESULTS_END -->",
+            "suffix",
+        ]
+    )
+    original_handoff = "\n".join(
+        [
+            "prefix",
+            "<!-- AUTO_MEMORY_BASELINE_HANDOFF_START -->",
+            "old handoff",
+            "<!-- AUTO_MEMORY_BASELINE_HANDOFF_END -->",
+            "suffix",
+        ]
+    )
+    original_ledger = "original ledger"
+
+    _write_text(builder_root / "README.md", original_readme)
+    _write_text(builder_root / "docs" / "MEMORY_LIVE_VALIDATION_RESULTS_2026-04-11.md", original_live_results)
+    _write_text(builder_root / "docs" / "MEMORY_BENCHMARK_HANDOFF_2026-04-11.md", original_handoff)
+    _write_text(builder_root / "docs" / "MEMORY_FAILURE_LEDGER_2026-04-11.md", original_ledger)
+
+    fake_cli_py = bin_dir / "fake_spark_intelligence.py"
+    _write_text(
+        fake_cli_py,
+        """
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+
+def _write_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+args = sys.argv[1:]
+output_dir = Path(args[args.index("--output-dir") + 1])
+output_dir.mkdir(parents=True, exist_ok=True)
+command = tuple(args[:2])
+
+if command == ("memory", "benchmark-architectures"):
+    _write_json(
+        output_dir / "memory-architecture-benchmark.json",
+        {
+            "summary": {
+                "runtime_memory_architecture": "summary_synthesis_memory",
+                "product_memory_leader_names": [
+                    "summary_synthesis_memory",
+                    "dual_store_event_calendar_hybrid",
+                ],
+            }
+        },
+    )
+elif command == ("memory", "run-telegram-regression"):
+    _write_json(
+        output_dir / "telegram-memory-regression.json",
+        {
+            "summary": {
+                "matched_case_count": 34,
+                "case_count": 34,
+                "live_architecture_leaders": ["summary_synthesis_memory"],
+                "kb_has_probe_coverage": True,
+                "kb_current_state_hits": 38,
+                "kb_current_state_total": 38,
+                "kb_evidence_hits": 38,
+                "kb_evidence_total": 38,
+                "mismatched_case_ids": [],
+            }
+        },
+    )
+elif command == ("memory", "soak-architectures"):
+    _write_json(
+        output_dir / "telegram-memory-architecture-soak.json",
+        {
+            "summary": {
+                "completed_runs": 1,
+                "requested_runs": 1,
+                "failed_runs": 0,
+                "overall_leader_names": ["summary_synthesis_memory"],
+                "recommended_top_two": [
+                    "summary_synthesis_memory",
+                    "dual_store_event_calendar_hybrid",
+                ],
+                "selector_packs_requiring_work": [],
+            },
+            "aggregate_results": [
+                {"baseline_name": "summary_synthesis_memory", "matched": 92, "total": 92},
+                {"baseline_name": "dual_store_event_calendar_hybrid", "matched": 89, "total": 92},
+            ],
+            "selection_aggregate_results": [
+                {"baseline_name": "summary_synthesis_memory", "matched": 64, "total": 64},
+                {"baseline_name": "dual_store_event_calendar_hybrid", "matched": 61, "total": 64},
+            ],
+            "benchmark_pack_results": [
+                {
+                    "pack_id": "temporal_conflict_gauntlet",
+                    "selection_role": "selector",
+                    "leader_names": ["summary_synthesis_memory"],
+                }
+            ],
+        },
+    )
+else:
+    raise SystemExit(f"unexpected args: {args}")
+""".strip(),
+    )
+    fake_cli_cmd = bin_dir / "spark-intelligence.cmd"
+    _write_text(
+        fake_cli_cmd,
+        f'@echo off\r\n"{Path(subprocess.list2cmdline([Path(os.sys.executable)]).strip(chr(34)))}" "%~dp0fake_spark_intelligence.py" %*\r\n',
+    )
+
+    validation_runs_root = spark_home / "artifacts" / "memory-validation-runs"
+    prior_run_root = validation_runs_root / "20260412-000000"
+    prior_run_summary_path = prior_run_root / "run-summary.json"
+    prior_run_root.mkdir(parents=True)
+    prior_run_summary_path.write_text(
+        json.dumps(
+            {
+                "output_root": str(prior_run_root),
+                "benchmark_output_dir": str(prior_run_root / "memory-architecture-benchmark"),
+                "regression_output_dir": str(prior_run_root / "telegram-memory-regression"),
+                "soak_output_dir": str(prior_run_root / "telegram-memory-architecture-soak"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    latest_full_run_path = validation_runs_root / "latest-full-run.json"
+    latest_full_run_path.parent.mkdir(parents=True, exist_ok=True)
+    latest_full_run_path.write_text(
+        json.dumps(
+            {
+                "output_root": str(prior_run_root),
+                "run_summary": str(prior_run_summary_path),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = os.environ.copy()
+    env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
+
+    completed = subprocess.run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(builder_root / "scripts" / "run_memory_two_contender_validation.ps1"),
+            "-SparkHome",
+            str(spark_home),
+            "-SkipBaselinePublish",
+        ],
+        cwd=builder_root,
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    assert "- baseline publish: skipped" in completed.stdout
+
+    latest_run = json.loads((validation_runs_root / "latest-run.json").read_text(encoding="utf-8-sig"))
+    latest_full_run = json.loads(latest_full_run_path.read_text(encoding="utf-8-sig"))
+    assert Path(latest_run["output_root"]).name != prior_run_root.name
+    assert latest_full_run["output_root"] == str(prior_run_root)
+    assert latest_full_run["run_summary"] == str(prior_run_summary_path)
+
+    output_root = Path(latest_run["output_root"])
+    assert not (output_root / "validation-delta.md").exists()
+
+    assert (builder_root / "README.md").read_text(encoding="utf-8") == original_readme
+    assert (builder_root / "docs" / "MEMORY_LIVE_VALIDATION_RESULTS_2026-04-11.md").read_text(encoding="utf-8") == original_live_results
+    assert (builder_root / "docs" / "MEMORY_BENCHMARK_HANDOFF_2026-04-11.md").read_text(encoding="utf-8") == original_handoff
+    assert (builder_root / "docs" / "MEMORY_FAILURE_LEDGER_2026-04-11.md").read_text(encoding="utf-8") == original_ledger

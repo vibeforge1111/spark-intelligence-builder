@@ -3,6 +3,7 @@ param(
     [string]$OutputRoot = "",
     [int]$SoakRuns = 14,
     [double]$SoakTimeoutSeconds = 300,
+    [switch]$SkipBaselinePublish,
     [switch]$SkipBenchmark,
     [switch]$SkipRegression,
     [switch]$SkipSoak
@@ -404,7 +405,7 @@ $ledgerRendered = $false
 $baselineDocsRendered = $false
 $chipBaselineDocsRendered = $false
 $deltaRendered = $false
-if ($canRenderLedger) {
+if ($canRenderLedger -and -not $SkipBaselinePublish) {
     $priorFullRunJson = if (Test-Path $latestFullRunPath) { Get-Content $latestFullRunPath -Raw } else { $null }
     if ($priorFullRunJson) {
         Set-Content -Path $previousFullRunPath -Value $priorFullRunJson -Encoding utf8
@@ -464,6 +465,9 @@ if ($chipBaselineDocsRendered) {
 }
 if ($deltaRendered) {
     Write-Host ("- validation delta: " + $deltaPath)
+}
+if ($SkipBaselinePublish) {
+    Write-Host ("- baseline publish: skipped")
 }
 
 Write-Host ""
