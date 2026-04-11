@@ -46,6 +46,15 @@ def _fmt_list(items: list[str]) -> str:
     return ", ".join(items) if items else "none"
 
 
+def _fmt_duration(value: Any) -> str:
+    if value is None or value == "":
+        return "unknown"
+    try:
+        return f"{float(value):.3f}s"
+    except (TypeError, ValueError):
+        return str(value)
+
+
 def render_delta(*, latest_pointer: Path, previous_source: Path) -> str:
     latest_summary = _load_run_summary(latest_pointer)
     previous_summary = _load_run_summary(previous_source)
@@ -66,6 +75,17 @@ def render_delta(*, latest_pointer: Path, previous_source: Path) -> str:
     lines.append(f"- previous runtime architecture: `{previous_summary.get('offline_runtime_architecture') or 'unknown'}`")
     lines.append(f"- latest offline leaders: `{_fmt_list(list(latest_summary.get('offline_product_memory_leaders') or []))}`")
     lines.append(f"- previous offline leaders: `{_fmt_list(list(previous_summary.get('offline_product_memory_leaders') or []))}`")
+    lines.append("")
+    lines.append("## Timings")
+    lines.append("")
+    lines.append(f"- latest benchmark duration: `{_fmt_duration(latest_summary.get('benchmark_duration_seconds'))}`")
+    lines.append(f"- previous benchmark duration: `{_fmt_duration(previous_summary.get('benchmark_duration_seconds'))}`")
+    lines.append(f"- latest regression duration: `{_fmt_duration(latest_summary.get('regression_duration_seconds'))}`")
+    lines.append(f"- previous regression duration: `{_fmt_duration(previous_summary.get('regression_duration_seconds'))}`")
+    lines.append(f"- latest soak duration: `{_fmt_duration(latest_summary.get('soak_duration_seconds'))}`")
+    lines.append(f"- previous soak duration: `{_fmt_duration(previous_summary.get('soak_duration_seconds'))}`")
+    lines.append(f"- latest total duration: `{_fmt_duration(latest_summary.get('total_duration_seconds'))}`")
+    lines.append(f"- previous total duration: `{_fmt_duration(previous_summary.get('total_duration_seconds'))}`")
     lines.append("")
     lines.append("## Live Regression")
     lines.append("")

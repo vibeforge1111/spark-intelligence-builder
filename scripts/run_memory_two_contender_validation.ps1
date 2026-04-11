@@ -110,8 +110,12 @@ $builderRepoRoot = (Get-Location).Path
 $domainChipRepoRoot = Join-Path (Split-Path $builderRepoRoot -Parent) "domain-chip-memory"
 $builderRevision = Get-GitRevision -RepoRoot $builderRepoRoot
 $domainChipRevision = Get-GitRevision -RepoRoot $domainChipRepoRoot
+$runStartedAt = Get-Date
 
 $runSummary = [ordered]@{
+    started_at = $runStartedAt.ToString("o")
+    finished_at = $null
+    total_duration_seconds = $null
     spark_home = $SparkHome
     output_root = $resolvedOutputRoot
     builder_repo_root = $builderRepoRoot
@@ -122,6 +126,9 @@ $runSummary = [ordered]@{
     soak_runs = $SoakRuns
     soak_timeout_seconds = $SoakTimeoutSeconds
     skipped_steps = @()
+    benchmark_duration_seconds = $null
+    regression_duration_seconds = $null
+    soak_duration_seconds = $null
     benchmark_output_dir = $null
     regression_output_dir = $null
     soak_output_dir = $null
@@ -145,10 +152,13 @@ function Invoke-ValidationStep {
     Write-Host ""
     Write-Host "== $Label =="
     Write-Host ("spark-intelligence " + ($Arguments -join " "))
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     & spark-intelligence @Arguments
+    $stopwatch.Stop()
     if ($LASTEXITCODE -ne 0) {
         throw "Validation step failed: $Label"
     }
+    return [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
 }
 
 function Resolve-OutputDir {
@@ -185,7 +195,7 @@ if (-not $SkipBenchmark) {
         $benchmarkArgs += @("--output-dir", $benchmarkOutputDir)
         $runSummary["benchmark_output_dir"] = $benchmarkOutputDir
     }
-    Invoke-ValidationStep -Label "Offline ProductMemory Benchmark" -Arguments $benchmarkArgs
+    $runSummary["benchmark_duration_seconds"] = Invoke-ValidationStep -Label "Offline ProductMemory Benchmark" -Arguments $benchmarkArgs
 } else {
     $runSummary["skipped_steps"] += "benchmark"
 }
@@ -200,7 +210,7 @@ if (-not $SkipRegression) {
         $regressionArgs += @("--output-dir", $regressionOutputDir)
         $runSummary["regression_output_dir"] = $regressionOutputDir
     }
-    Invoke-ValidationStep -Label "Live Telegram Regression" -Arguments $regressionArgs
+    $runSummary["regression_duration_seconds"] = Invoke-ValidationStep -Label "Live Telegram Regression" -Arguments $regressionArgs
 } else {
     $runSummary["skipped_steps"] += "regression"
 }
@@ -217,7 +227,7 @@ if (-not $SkipSoak) {
         $soakArgs += @("--output-dir", $soakOutputDir)
         $runSummary["soak_output_dir"] = $soakOutputDir
     }
-    Invoke-ValidationStep -Label "Live Telegram Soak" -Arguments $soakArgs
+    $runSummary["soak_duration_seconds"] = Invoke-ValidationStep -Label "Live Telegram Soak" -Arguments $soakArgs
 } else {
     $runSummary["skipped_steps"] += "soak"
 }
@@ -246,6 +256,10 @@ if ($soakPayload) {
     $runSummary["live_soak_leaders"] = @($soakSummary.overall_leader_names)
     $runSummary["live_soak_recommended_top_two"] = @($soakSummary.recommended_top_two)
 }
+
+$runFinishedAt = Get-Date
+$runSummary["finished_at"] = $runFinishedAt.ToString("o")
+$runSummary["total_duration_seconds"] = [math]::Round(($runFinishedAt - $runStartedAt).TotalSeconds, 3)
 
 $summaryPath = Join-Path $resolvedOutputRoot "run-summary.json"
 $runSummary | ConvertTo-Json | Set-Content -Path $summaryPath -Encoding utf8
@@ -333,3 +347,7 @@ if ($soakPayload) {
     Write-Host ("- live soak leaders: " + (($soakSummary.overall_leader_names | ForEach-Object { $_ }) -join ", "))
     Write-Host ("- live soak recommended top two: " + (($soakSummary.recommended_top_two | ForEach-Object { $_ }) -join ", "))
 }
+Write-Host ("- benchmark duration seconds: " + $(if ($null -ne $runSummary["benchmark_duration_seconds"]) { $runSummary["benchmark_duration_seconds"] } else { "skipped" }))
+Write-Host ("- regression duration seconds: " + $(if ($null -ne $runSummary["regression_duration_seconds"]) { $runSummary["regression_duration_seconds"] } else { "skipped" }))
+Write-Host ("- soak duration seconds: " + $(if ($null -ne $runSummary["soak_duration_seconds"]) { $runSummary["soak_duration_seconds"] } else { "skipped" }))
+Write-Host ("- total duration seconds: " + $runSummary["total_duration_seconds"])
