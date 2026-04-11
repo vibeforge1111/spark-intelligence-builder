@@ -16,8 +16,8 @@ The goal was to keep offline ProductMemory comparison and live Telegram validati
 - KB probe coverage: `38/38` current-state and `38/38` evidence hits
 - Clean Telegram soak status: `14/14` completed, `0` failed
 - Latest clean whole-suite soak leader: `summary_synthesis_memory`
-- Latest clean whole-suite aggregate: `83/92` for `summary_synthesis_memory` vs `82/92` for `dual_store_event_calendar_hybrid`
-- Latest clean selector-pack aggregate: `55/64` for `summary_synthesis_memory` vs `54/64` for `dual_store_event_calendar_hybrid`
+- Latest clean whole-suite aggregate: `89/92` for `summary_synthesis_memory` vs `85/92` for `dual_store_event_calendar_hybrid`
+- Latest clean selector-pack aggregate: `61/64` for `summary_synthesis_memory` vs `57/64` for `dual_store_event_calendar_hybrid`
 - Offline ProductMemory leader: `dual_store_event_calendar_hybrid`
 - Current runtime selector: `dual_store_event_calendar_hybrid`
 
@@ -26,9 +26,10 @@ The goal was to keep offline ProductMemory comparison and live Telegram validati
 - earlier live soak snapshot: `summary_synthesis_memory` at `36/72` vs `33/72`
 - several later soak verdicts that appeared to favor `dual_store_event_calendar_hybrid` were contaminated by concurrent soak processes writing to the same artifact path
 - those stale soak processes were terminated and the `14`-pack suite was rerun clean
-- the clean rerun finished `14/14`, `0` failed, with `summary_synthesis_memory` leading the full suite and the selector subset by one matched case in each aggregate
+- the latest clean rerun finished `14/14`, `0` failed, with `summary_synthesis_memory` leading the full suite by four matched cases and the selector subset by four matched cases
 - the live-comparison tie-break still ignores explanation-only exact-string scorecard differences when live accuracy, trustworthiness, and grounding already tie
 - explanation prompts still carry explicit `expected_answer_candidate_source = evidence_memory`, so provenance alignment is measured directly instead of being hidden behind surface phrasing
+- alignment-only scorecard differences no longer pick a winner when there is no substantive non-explanation scorecard signal, so the explanation-heavy packs no longer manufacture a live leader on phrasing/internal provenance alone
 
 ## What Tightened
 
@@ -43,9 +44,10 @@ The live suite is now stricter in the places that were still underreporting ambi
 
 ## Pack Readout
 
-- `summary_synthesis_memory` now leads the clean whole-suite live soak overall, but the lead is narrow rather than decisive
+- `summary_synthesis_memory` now leads the clean whole-suite live soak overall by a material margin rather than by a one-case edge
 - `contradiction_and_recency` and `temporal_conflict_gauntlet` moved toward `summary_synthesis_memory` after the chip-side history/query fixes were aligned with Builder prompts
-- the current clean-soak selector packs still requiring work are `provenance_audit`, `explanation_pressure_suite`, `event_calendar_lineage_proxy`, `temporal_conflict_gauntlet`, `quality_lane_gauntlet`, and `contradiction_and_recency`
+- direct profile fact explanation support in the chip-side benchmark runtime removed the shared `mission_explanation` failure and cleaned up `startup_explanation_after_founder`
+- the current clean-soak selector packs still requiring work are `provenance_audit`, `event_calendar_lineage_proxy`, and `temporal_conflict_gauntlet`
 - `long_horizon_recall`, `boundary_abstention`, `anti_personalization_guardrails`, `identity_synthesis`, `loaded_context_abstention`, and `identity_under_recency_pressure` are now health gates rather than selector packs because both contenders are fully green there
 - `identity_under_recency_pressure` remains a targeted `11/11` tie after the chip-side extraction and profile-query routing fixes
 
@@ -93,9 +95,9 @@ The current decision is now a real split, not a unified winner:
 2. `summary_synthesis_memory` leads the latest clean `14`-pack live Telegram soak.
 3. The identity-heavy health gates are no longer useful promotion signals on their own because both contenders already stay green there.
 4. Promotion still should not happen on offline scorecards alone, but it also should not happen on a live-only win.
-5. The runtime selector therefore should not move yet: one contender has to win both offline and live.
+5. The runtime selector therefore still should not move yet: one contender has to win both offline and live.
 6. Native Telegram chronology queries are now part of the live benchmark surface, and they materially helped `summary_synthesis_memory` recover on contradiction and temporal-conflict packs.
-7. The most useful next work is not another repin attempt; it is tightening the remaining selector packs so the split resolves honestly instead of oscillating on one-case margins.
+7. The most useful next work is still not another repin attempt; it is tightening the remaining selector packs so the split resolves honestly instead of oscillating between offline and live.
 
 ## Runtime Selector
 

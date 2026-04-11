@@ -182,16 +182,17 @@ If one architecture wins BEAM or LongMemEval style lanes but loses abstention, p
 Current live separation note:
 
 - the latest clean uncontaminated `14/14` live soak now favors `summary_synthesis_memory`
-- full-suite live aggregate is `83/92` for `summary_synthesis_memory` vs `82/92` for `dual_store_event_calendar_hybrid`
-- selector-pack aggregate is `55/64` for `summary_synthesis_memory` vs `54/64` for `dual_store_event_calendar_hybrid`
+- full-suite live aggregate is `89/92` for `summary_synthesis_memory` vs `85/92` for `dual_store_event_calendar_hybrid`
+- selector-pack aggregate is `61/64` for `summary_synthesis_memory` vs `57/64` for `dual_store_event_calendar_hybrid`
 - the offline ProductMemory benchmark still favors `dual_store_event_calendar_hybrid`
 - the runtime selector therefore remains pinned to `dual_store_event_calendar_hybrid` until one contender wins both offline and live
 - the long-horizon, abstention, anti-personalization, identity-synthesis, loaded-context, and identity-under-recency packs are all currently health gates, not deciding promotion signals
 - soak summaries now expose `selector_pack_ids` and `health_gate_pack_ids`, and only the selector packs feed `overall_leader_names` and `recommended_top_two`
 - soak reruns now also use fresh suite-specific Telegram namespaces, and regression setup seeds a deterministic agent name, so selector packs are no longer allowed to inherit stale onboarding residue from older runs
 - the event-calendar lane now includes native Telegram history queries for overwritten profile facts, so chronology regressions can be caught in the live runtime rather than only through proxy prompts
-- the current selector packs still requiring work in the clean soak are `provenance_audit`, `explanation_pressure_suite`, `event_calendar_lineage_proxy`, `temporal_conflict_gauntlet`, `quality_lane_gauntlet`, and `contradiction_and_recency`
-- the tightened `temporal_conflict_gauntlet` and `contradiction_and_recency` lanes now include native history cases, and the latest targeted reruns lean `summary_synthesis_memory`, which is why the clean full-suite live result moved back toward `summary_synthesis_memory`
+- the current selector packs still requiring work in the clean soak are `provenance_audit`, `event_calendar_lineage_proxy`, and `temporal_conflict_gauntlet`
+- `mission_explanation` and `startup_explanation_after_founder` now have direct profile-explanation support in the chip-side benchmark runtime, which removed the shared explanation misses from the live suite
+- alignment-only scorecard differences no longer decide leaders when live, trustworthiness, grounding, and substantive non-explanation scorecard signal are tied, which collapsed the old false separator behavior in `explanation_pressure_suite` and `quality_lane_gauntlet`
 - the live architecture comparison now treats explicit `previous state` questions as historical-value checks rather than requiring both the previous and current values, while true event-listing prompts still have to show multi-fragment chronology
 - explanation-like staleness prompts such as `How do you know my startup?` now ignore style-only fragments like `saved memory record` during live matching, so the selector packs measure factual evidence retrieval instead of phrasing noise
 
