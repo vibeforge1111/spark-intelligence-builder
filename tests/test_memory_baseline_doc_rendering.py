@@ -159,3 +159,146 @@ def test_render_memory_baseline_docs_updates_marked_sections(tmp_path: Path) -> 
     assert str(pointer) in handoff_text
     assert "14/14" in handoff_text
     assert "383.853s" in handoff_text
+
+
+def test_render_memory_baseline_docs_handles_missing_probe_coverage_and_unknown_selector_rows(tmp_path: Path) -> None:
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "render_memory_baseline_docs.py"
+    module = _load_module("render_memory_baseline_docs_fallback_test", script_path)
+
+    readme = tmp_path / "README.md"
+    live_results = tmp_path / "MEMORY_LIVE_VALIDATION_RESULTS_2026-04-11.md"
+    handoff = tmp_path / "MEMORY_BENCHMARK_HANDOFF_2026-04-11.md"
+    pointer = tmp_path / "latest-full-run.json"
+    run_summary = tmp_path / "run-summary.json"
+    regression_dir = tmp_path / "telegram-memory-regression"
+    soak_dir = tmp_path / "telegram-memory-architecture-soak"
+    regression_dir.mkdir()
+    soak_dir.mkdir()
+
+    readme.write_text(
+        "\n".join(
+            [
+                "prefix",
+                "<!-- AUTO_MEMORY_BASELINE_README_START -->",
+                "old",
+                "<!-- AUTO_MEMORY_BASELINE_README_END -->",
+                "suffix",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    live_results.write_text(
+        "\n".join(
+            [
+                "prefix",
+                "<!-- AUTO_MEMORY_BASELINE_LIVE_RESULTS_START -->",
+                "old",
+                "<!-- AUTO_MEMORY_BASELINE_LIVE_RESULTS_END -->",
+                "suffix",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    handoff.write_text(
+        "\n".join(
+            [
+                "prefix",
+                "<!-- AUTO_MEMORY_BASELINE_HANDOFF_START -->",
+                "old",
+                "<!-- AUTO_MEMORY_BASELINE_HANDOFF_END -->",
+                "suffix",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    pointer.write_text(
+        json.dumps(
+            {
+                "output_root": str(tmp_path / "20260412-014855"),
+                "run_summary": str(run_summary),
+            }
+        ),
+        encoding="utf-8",
+    )
+    run_summary.write_text(
+        json.dumps(
+            {
+                "output_root": str(tmp_path / "20260412-014855"),
+                "benchmark_duration_seconds": None,
+                "regression_duration_seconds": "",
+                "soak_duration_seconds": None,
+                "total_duration_seconds": "",
+                "offline_runtime_architecture": "summary_synthesis_memory",
+                "offline_product_memory_leaders": [
+                    "summary_synthesis_memory",
+                    "dual_store_event_calendar_hybrid",
+                ],
+                "live_regression": "33/34",
+                "live_soak_completion": "13/14",
+                "live_soak_leaders": ["dual_store_event_calendar_hybrid"],
+                "live_soak_recommended_top_two": [
+                    "dual_store_event_calendar_hybrid",
+                    "summary_synthesis_memory",
+                ],
+                "regression_output_dir": str(regression_dir),
+                "soak_output_dir": str(soak_dir),
+            }
+        ),
+        encoding="utf-8",
+    )
+    (regression_dir / "telegram-memory-regression.json").write_text(
+        json.dumps(
+            {
+                "summary": {
+                    "matched_case_count": 33,
+                    "case_count": 34,
+                    "kb_has_probe_coverage": False,
+                    "kb_current_state_hits": 0,
+                    "kb_current_state_total": 0,
+                    "kb_evidence_hits": 0,
+                    "kb_evidence_total": 0,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (soak_dir / "telegram-memory-architecture-soak.json").write_text(
+        json.dumps(
+            {
+                "summary": {
+                    "completed_runs": 13,
+                    "requested_runs": 14,
+                    "failed_runs": 1,
+                },
+                "aggregate_results": [
+                    {"baseline_name": "summary_synthesis_memory", "matched": 90, "total": 92},
+                    {"baseline_name": "dual_store_event_calendar_hybrid", "matched": 91, "total": 92},
+                ],
+                "selection_aggregate_results": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    module.README_PATH = readme
+    module.LIVE_RESULTS_PATH = live_results
+    module.HANDOFF_PATH = handoff
+    module.LATEST_POINTER = pointer
+
+    module.render_docs(latest_run_path=pointer)
+
+    readme_text = readme.read_text(encoding="utf-8")
+    assert "20260412-014855" in readme_text
+    assert "`unknown`" in readme_text
+
+    live_results_text = live_results.read_text(encoding="utf-8")
+    assert "KB compile: missing probe coverage" in live_results_text
+    assert "`unknown/unknown` for `summary_synthesis_memory` vs `unknown/unknown` for `dual_store_event_calendar_hybrid`" in live_results_text
+    assert "13/14" in live_results_text
+    assert "1` failed" in live_results_text
+
+    handoff_text = handoff.read_text(encoding="utf-8")
+    assert "13/14" in handoff_text
+    assert "1` failed" in handoff_text
+    assert "validation-delta.md" in handoff_text
