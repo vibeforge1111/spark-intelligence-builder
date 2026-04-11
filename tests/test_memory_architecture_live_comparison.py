@@ -95,6 +95,35 @@ class MemoryArchitectureLiveComparisonTests(SparkTestCase):
             ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
         )
 
+    def test_leader_rows_ignores_alignment_only_tiebreak_when_no_substantive_signal_exists(self) -> None:
+        leaders = _leader_rows(
+            [
+                {
+                    "baseline_name": "summary_synthesis_memory",
+                    "live_integration_overall": {"accuracy": 1.0},
+                    "trustworthiness_overall": {"accuracy": 1.0},
+                    "grounding_overall": {"accuracy": 1.0},
+                    "scorecard_overall": {"accuracy": 0.2},
+                    "scorecard_substantive_overall": {"accuracy": 0.0},
+                    "scorecard_alignment": {"rate": 0.0},
+                },
+                {
+                    "baseline_name": "dual_store_event_calendar_hybrid",
+                    "live_integration_overall": {"accuracy": 1.0},
+                    "trustworthiness_overall": {"accuracy": 1.0},
+                    "grounding_overall": {"accuracy": 1.0},
+                    "scorecard_overall": {"accuracy": 0.2},
+                    "scorecard_substantive_overall": {"accuracy": 0.0},
+                    "scorecard_alignment": {"rate": 1.0},
+                },
+            ]
+        )
+
+        self.assertEqual(
+            [row["baseline_name"] for row in leaders],
+            ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
+        )
+
     def test_baseline_row_treats_unknown_as_truthful_abstention(self) -> None:
         sample_specs = [
             {

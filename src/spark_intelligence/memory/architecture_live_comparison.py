@@ -451,6 +451,8 @@ def _leader_rows(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
             if _safe_accuracy((row.get("scorecard_substantive_overall") or {}).get("accuracy"))
             == best_scorecard_substantive
         ]
+    else:
+        return list(leaders)
     best_alignment = max(_safe_accuracy((row.get("scorecard_alignment") or {}).get("rate")) for row in leaders)
     return [
         row for row in leaders if _safe_accuracy((row.get("scorecard_alignment") or {}).get("rate")) == best_alignment
