@@ -141,6 +141,8 @@ class MemoryArchitectureSoakTests(SparkTestCase):
         second_kwargs = patched_run.call_args_list[1].kwargs
         self.assertNotEqual(first_kwargs["user_id"], second_kwargs["user_id"])
         self.assertNotEqual(first_kwargs["chat_id"], second_kwargs["chat_id"])
+        self.assertIn("-core_profile_baseline-0001", first_kwargs["user_id"])
+        self.assertIn("-long_horizon_recall-0002", second_kwargs["user_id"])
         self.assertIsNotNone(first_kwargs["cases"])
         self.assertIsNotNone(second_kwargs["cases"])
         self.assertEqual(

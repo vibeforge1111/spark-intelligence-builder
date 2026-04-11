@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.memory.benchmark_packs import (
@@ -78,6 +79,7 @@ def run_telegram_memory_architecture_soak(
     resolved_write_path = Path(write_path) if write_path else resolved_output_dir / "telegram-memory-architecture-soak.json"
 
     requested_runs = max(int(runs), 1)
+    suite_run_token = uuid4().hex[:8]
     requested_baseline_names = [str(item).strip() for item in (baseline_names or []) if str(item).strip()]
     resolved_baseline_names = list(requested_baseline_names)
     try:
@@ -136,6 +138,7 @@ def run_telegram_memory_architecture_soak(
             run_spec=run_spec,
             user_id=user_id,
             chat_id=chat_id,
+            suite_run_token=suite_run_token,
         )
         try:
             _prepare_regression_identity(
@@ -330,10 +333,11 @@ def _resolve_run_namespace(
     run_spec: _BenchmarkRunSpec,
     user_id: str | None,
     chat_id: str | None,
+    suite_run_token: str,
 ) -> tuple[str, str]:
     base_user_id = str(user_id or "").strip() or "spark-memory-soak-user"
     base_chat_id = str(chat_id or "").strip() or "spark-memory-soak-chat"
-    suffix = f"{run_spec.pack_id}-{run_index:04d}"
+    suffix = f"{suite_run_token}-{run_spec.pack_id}-{run_index:04d}"
     return f"{base_user_id}-{suffix}", f"{base_chat_id}-{suffix}"
 
 

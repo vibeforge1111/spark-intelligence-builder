@@ -7,7 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from spark_intelligence.config.loader import ConfigManager
-from spark_intelligence.identity.service import approve_pairing, consume_pairing_welcome
+from spark_intelligence.identity.service import approve_pairing, consume_pairing_welcome, rename_agent_identity
 from spark_intelligence.memory.architecture_benchmark import benchmark_memory_architectures
 from spark_intelligence.memory.architecture_live_comparison import compare_telegram_memory_architectures
 from spark_intelligence.memory.knowledge_base import build_telegram_state_knowledge_base
@@ -736,6 +736,13 @@ def _prepare_regression_identity(
         channel_id="telegram",
         external_user_id=external_user_id,
         display_name=username,
+    )
+    rename_agent_identity(
+        state_db=state_db,
+        human_id=f"human:telegram:{external_user_id}",
+        new_name="Atlas",
+        source_surface="memory_regression",
+        source_ref="memory-regression-setup",
     )
     consume_pairing_welcome(
         state_db=state_db,

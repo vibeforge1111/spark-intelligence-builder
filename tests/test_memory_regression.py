@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from spark_intelligence.memory import TelegramMemoryRegressionResult, run_telegram_memory_regression
-from spark_intelligence.memory.regression import DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES
+from spark_intelligence.memory.regression import DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES, _prepare_regression_identity
 
 from tests.test_support import SparkTestCase
 
@@ -132,6 +132,30 @@ class MemoryRegressionTests(SparkTestCase):
             kwargs["baseline_names"],
             ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
         )
+
+    def test_prepare_regression_identity_sets_agent_name_before_runtime(self) -> None:
+        with patch(
+            "spark_intelligence.memory.regression.approve_pairing",
+        ) as approve_pairing_mock, patch(
+            "spark_intelligence.memory.regression.rename_agent_identity",
+        ) as rename_agent_identity_mock, patch(
+            "spark_intelligence.memory.regression.consume_pairing_welcome",
+        ) as consume_pairing_welcome_mock:
+            _prepare_regression_identity(
+                state_db=self.state_db,
+                external_user_id="regression-user-123",
+                username="memory-regression",
+            )
+
+        approve_pairing_mock.assert_called_once()
+        rename_agent_identity_mock.assert_called_once_with(
+            state_db=self.state_db,
+            human_id="human:telegram:regression-user-123",
+            new_name="Atlas",
+            source_surface="memory_regression",
+            source_ref="memory-regression-setup",
+        )
+        consume_pairing_welcome_mock.assert_called_once()
 
     def test_run_telegram_memory_regression_blocks_fast_when_user_is_not_paired(self) -> None:
         output_dir = self.home / "artifacts" / "telegram-memory-regression-blocked"
