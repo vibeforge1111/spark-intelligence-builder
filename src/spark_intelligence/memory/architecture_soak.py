@@ -403,16 +403,7 @@ def _build_soak_payload(
         pack_aggregate=pack_aggregate,
     )
     category_results = _build_category_results(category_aggregate)
-    best_accuracy = float(aggregate_rows[0].get("aggregate_accuracy") or 0.0) if aggregate_rows else 0.0
-    overall_leader_names = (
-        [
-            row["baseline_name"]
-            for row in aggregate_rows
-            if float(row.get("aggregate_accuracy") or 0.0) == best_accuracy
-        ]
-        if best_accuracy > 0.0
-        else []
-    )
+    overall_leader_names = _aggregate_leader_names(aggregate_rows)
     covered_categories = sorted(
         {
             str(category)
@@ -536,19 +527,10 @@ def _build_pack_results(
         aggregate_rows = _finalize_aggregate_rows(
             (pack_aggregate.get(pack_id) or {}).get("baseline_aggregate") or {}
         )
-        best_accuracy = float(aggregate_rows[0].get("aggregate_accuracy") or 0.0) if aggregate_rows else 0.0
         rows.append(
             {
                 **pack,
-                "leader_names": (
-                    [
-                        row["baseline_name"]
-                        for row in aggregate_rows
-                        if float(row.get("aggregate_accuracy") or 0.0) == best_accuracy
-                    ]
-                    if best_accuracy > 0.0
-                    else []
-                ),
+                "leader_names": _aggregate_leader_names(aggregate_rows),
                 "recommended_top_two": [row["baseline_name"] for row in aggregate_rows[:2]],
                 "baseline_results": aggregate_rows,
             }
@@ -562,20 +544,43 @@ def _build_category_results(
     rows: list[dict[str, Any]] = []
     for category_name in sorted(category_aggregate):
         aggregate_rows = _finalize_aggregate_rows(category_aggregate[category_name])
-        best_accuracy = float(aggregate_rows[0].get("aggregate_accuracy") or 0.0) if aggregate_rows else 0.0
         rows.append(
             {
                 "category": category_name,
-                "leader_names": (
-                    [
-                        row["baseline_name"]
-                        for row in aggregate_rows
-                        if float(row.get("aggregate_accuracy") or 0.0) == best_accuracy
-                    ]
-                    if best_accuracy > 0.0
-                    else []
-                ),
+                "leader_names": _aggregate_leader_names(aggregate_rows),
                 "baseline_results": aggregate_rows,
             }
         )
     return rows
+
+
+def _aggregate_leader_names(rows: list[dict[str, Any]]) -> list[str]:
+    if not rows:
+        return []
+    top_row = rows[0]
+    if float(top_row.get("aggregate_accuracy") or 0.0) <= 0.0:
+        return []
+    top_signature = (
+        float(top_row.get("aggregate_accuracy") or 0.0),
+        float(top_row.get("trustworthiness_accuracy") or 0.0),
+        float(top_row.get("grounding_accuracy") or 0.0),
+        float(top_row.get("abstention_accuracy") or 0.0),
+        float(top_row.get("forbidden_clean_accuracy") or 0.0),
+        int(top_row.get("leader_run_count") or 0),
+        float(top_row.get("mean_run_accuracy") or 0.0),
+    )
+    leaders: list[str] = []
+    for row in rows:
+        signature = (
+            float(row.get("aggregate_accuracy") or 0.0),
+            float(row.get("trustworthiness_accuracy") or 0.0),
+            float(row.get("grounding_accuracy") or 0.0),
+            float(row.get("abstention_accuracy") or 0.0),
+            float(row.get("forbidden_clean_accuracy") or 0.0),
+            int(row.get("leader_run_count") or 0),
+            float(row.get("mean_run_accuracy") or 0.0),
+        )
+        if signature != top_signature:
+            break
+        leaders.append(str(row.get("baseline_name") or "unknown"))
+    return leaders

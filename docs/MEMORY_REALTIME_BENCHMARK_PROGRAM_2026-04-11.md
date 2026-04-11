@@ -43,6 +43,14 @@ Promotion rule:
 - no architecture change gets promoted on one green Telegram replay alone
 - the change has to stay green on both offline scorecards and live Telegram packs
 
+Live leader rule:
+
+- live matched-case accuracy stays primary
+- trustworthiness is the first tie-break
+- grounding is the second tie-break
+- scorecard correctness only breaks ties after the live metrics are equal
+- scorecard alignment stays a last-resort tie-break
+
 ## Live Telegram benchmark structure
 
 The real-time harness already covers more than a single fixed replay. It includes:
@@ -72,6 +80,12 @@ That means the live loop already tests:
 - loaded-context anti-hallucination pressure
 - temporal lineage proxies under overwrite pressure
 - profile-summary coherence after recency conflicts
+
+The newest recency-heavy packs now also force:
+
+- older stable facts to survive overwrite noise
+- identity recall to preserve occupation, timezone, founder, and mission under recency pressure
+- temporal conflict packs to prove retention of non-overwritten facts, not just the freshest overwrite
 
 ## Operator commands
 

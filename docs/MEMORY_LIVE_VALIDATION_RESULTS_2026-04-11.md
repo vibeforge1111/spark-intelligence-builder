@@ -14,14 +14,29 @@ The goal was to keep offline ProductMemory comparison and live Telegram validati
 - Live Telegram regression: `31/31` matched
 - KB compile: valid
 - KB probe coverage: `38/38` current-state and `38/38` evidence hits
-- Telegram soak status: `27/27` completed, `0` failed
+- Telegram soak status: `13/13` completed, `0` failed
 - Live overall leader: `summary_synthesis_memory`
 - Offline ProductMemory leader: `dual_store_event_calendar_hybrid`
 
 ## Soak Aggregate
 
-- `summary_synthesis_memory`: `27/138` matched, `19.57%` aggregate accuracy
-- `dual_store_event_calendar_hybrid`: `21/138` matched, `15.22%` aggregate accuracy
+- `summary_synthesis_memory`: `36/72` matched, `50.00%` aggregate accuracy
+- `dual_store_event_calendar_hybrid`: `33/72` matched, `45.83%` aggregate accuracy
+
+## What Tightened
+
+The live suite is now stricter in the places that were still underreporting ambiguity:
+
+- recency-heavy benchmark packs now include retention checks for occupation, timezone, founder, and mission
+- temporal conflict packs now test whether non-overwritten facts survive overwrite noise
+- live leader selection now breaks ties in this order: matched-case accuracy, trustworthiness, grounding, scorecard correctness, then scorecard alignment
+- soak summary leader labels now use that same full tie-break signature instead of flattening back to raw accuracy only
+
+## Pack Readout
+
+- `temporal_conflict_gauntlet`: `dual_store_event_calendar_hybrid` wins the pack tie-break at `4/10` vs `4/10`
+- `explanation_pressure_suite`: `dual_store_event_calendar_hybrid` wins the pack tie-break at `2/5` vs `2/5`
+- `identity_under_recency_pressure`: still a true tie at `2/8` vs `2/8`
 
 ## Interpretation
 

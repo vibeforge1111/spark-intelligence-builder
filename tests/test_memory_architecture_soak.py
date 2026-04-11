@@ -274,6 +274,55 @@ class MemoryArchitectureSoakTests(SparkTestCase):
         self.assertEqual(result.payload["category_results"][0]["leader_names"], [])
         self.assertEqual(result.payload["benchmark_pack_results"][0]["leader_names"], [])
 
+    def test_run_telegram_memory_architecture_soak_uses_full_tiebreak_signature_for_leaders(self) -> None:
+        payload = {
+            "summary": {"matched_case_count": 4, "mismatched_case_count": 0},
+            "architecture_live_comparison": {
+                "summary": {
+                    "baseline_names": ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
+                    "leader_names": ["summary_synthesis_memory"],
+                },
+                "baseline_results": [
+                    {
+                        "baseline_name": "dual_store_event_calendar_hybrid",
+                        "live_integration_overall": {"matched": 1, "total": 2, "accuracy": 0.5},
+                        "trustworthiness_overall": {"matched": 1, "total": 2, "accuracy": 0.5},
+                        "grounding_overall": {"matched": 0, "total": 2, "accuracy": 0.0},
+                        "live_by_category": [{"category": "profile_query", "matched": 1, "total": 2, "accuracy": 0.5}],
+                    },
+                    {
+                        "baseline_name": "summary_synthesis_memory",
+                        "live_integration_overall": {"matched": 1, "total": 2, "accuracy": 0.5},
+                        "trustworthiness_overall": {"matched": 1, "total": 2, "accuracy": 0.5},
+                        "grounding_overall": {"matched": 1, "total": 2, "accuracy": 0.5},
+                        "live_by_category": [{"category": "profile_query", "matched": 1, "total": 2, "accuracy": 0.5}],
+                    },
+                ],
+            },
+        }
+
+        with patch(
+            "spark_intelligence.memory.architecture_soak.run_telegram_memory_regression",
+            return_value=SimpleNamespace(payload=payload),
+        ):
+            result = run_telegram_memory_architecture_soak(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                output_dir=self.home / "artifacts" / "architecture-soak-tiebreak",
+                runs=1,
+                case_ids=["name_query"],
+            )
+
+        self.assertEqual(result.payload["summary"]["overall_leader_names"], ["summary_synthesis_memory"])
+        self.assertEqual(
+            result.payload["category_results"][0]["leader_names"],
+            ["summary_synthesis_memory"],
+        )
+        self.assertEqual(
+            result.payload["benchmark_pack_results"][0]["leader_names"],
+            ["summary_synthesis_memory"],
+        )
+
     def test_default_benchmark_pack_suite_grows_beyond_original_nine_packs(self) -> None:
         packs = default_telegram_memory_benchmark_packs()
 
