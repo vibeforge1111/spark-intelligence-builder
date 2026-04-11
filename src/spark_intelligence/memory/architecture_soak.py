@@ -478,6 +478,7 @@ def _build_soak_payload(
         benchmark_pack_rows=benchmark_pack_rows,
         pack_aggregate=pack_aggregate,
     )
+    selector_pack_gap_rows = _build_selector_pack_gap_rows(pack_results)
     category_results = _build_category_results(category_aggregate)
     overall_leader_names = _aggregate_leader_names(selector_aggregate_rows)
     selector_pack_ids = [
@@ -533,6 +534,9 @@ def _build_soak_payload(
         "quality_lane_coverage": quality_lane_coverage,
         "overall_leader_names": overall_leader_names,
         "recommended_top_two": [row["baseline_name"] for row in selector_aggregate_rows[:2]],
+        "selector_packs_requiring_work": [
+            str(item.get("pack_id") or "unknown") for item in selector_pack_gap_rows
+        ],
     }
     return {
         "summary": summary,
@@ -540,6 +544,7 @@ def _build_soak_payload(
         "selection_aggregate_results": selector_aggregate_rows,
         "benchmark_packs": benchmark_pack_rows,
         "benchmark_pack_results": pack_results,
+        "selector_pack_gap_rows": selector_pack_gap_rows,
         "category_results": category_results,
         "runs": run_payloads,
         "errors": errors,
@@ -640,6 +645,29 @@ def _build_category_results(
                 "baseline_results": aggregate_rows,
             }
         )
+    return rows
+
+
+def _build_selector_pack_gap_rows(pack_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for pack_result in pack_results:
+        if str(pack_result.get("selection_role") or "separator") == "health_gate":
+            continue
+        baseline_results = list(pack_result.get("baseline_results") or [])
+        if not baseline_results:
+            continue
+        best_row = baseline_results[0]
+        best_accuracy = float(best_row.get("aggregate_accuracy") or 0.0)
+        if best_accuracy >= 1.0:
+            continue
+        rows.append(
+            {
+                "pack_id": str(pack_result.get("pack_id") or "unknown"),
+                "leader_names": list(pack_result.get("leader_names") or []),
+                "best_accuracy": best_accuracy,
+            }
+        )
+    rows.sort(key=lambda row: (float(row.get("best_accuracy") or 0.0), str(row.get("pack_id") or "")))
     return rows
 
 

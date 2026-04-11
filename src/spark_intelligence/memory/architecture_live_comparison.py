@@ -120,6 +120,13 @@ def compare_telegram_memory_architectures(
                 validator_path=validator_path,
                 baseline_names=resolved_baseline_names,
             )
+            allowed_baseline_names = {name for name in resolved_baseline_names if str(name).strip()}
+            if allowed_baseline_names:
+                baseline_rows = [
+                    row
+                    for row in baseline_rows
+                    if str(row.get("baseline_name") or "").strip() in allowed_baseline_names
+                ]
             current_runtime_sdk_class = str(contract_summary.get("runtime_class") or "unknown")
             current_runtime_memory_architecture = str(
                 contract_summary.get("runtime_memory_architecture") or "unknown"
@@ -129,6 +136,10 @@ def compare_telegram_memory_architectures(
 
     leader_rows = _leader_rows(baseline_rows)
     case_summaries = [_sample_case_summary(spec) for spec in sample_specs]
+    diagnostics = _build_case_diagnostics(
+        case_summaries=case_summaries,
+        baseline_rows=baseline_rows,
+    )
     summary = {
         "baseline_names": list(resolved_baseline_names),
         "case_count": len(sample_specs),
@@ -149,6 +160,8 @@ def compare_telegram_memory_architectures(
         "current_runtime_memory_architecture": current_runtime_memory_architecture,
         "runtime_matches_live_leader": current_runtime_memory_architecture
         in {row["baseline_name"] for row in leader_rows},
+        "shared_failed_case_ids": list(diagnostics.get("shared_failed_case_ids") or []),
+        "separating_case_ids": list(diagnostics.get("separating_case_ids") or []),
         "assessment": _assessment_text(
             leader_rows=leader_rows,
             current_runtime_memory_architecture=current_runtime_memory_architecture,
@@ -158,6 +171,7 @@ def compare_telegram_memory_architectures(
         "summary": summary,
         "cases": case_summaries,
         "baseline_results": baseline_rows,
+        "diagnostics": diagnostics,
         "errors": errors,
         "artifact_paths": {
             "summary_json": str(resolved_write_path),
@@ -469,6 +483,60 @@ def _assessment_text(*, leader_rows: Sequence[dict[str, Any]], current_runtime_m
     )
 
 
+def _build_case_diagnostics(
+    *,
+    case_summaries: Sequence[dict[str, Any]],
+    baseline_rows: Sequence[dict[str, Any]],
+) -> dict[str, Any]:
+    baseline_prediction_maps: dict[str, dict[str, dict[str, Any]]] = {}
+    baseline_case_diagnostics: list[dict[str, Any]] = []
+    for row in baseline_rows:
+        baseline_name = str(row.get("baseline_name") or "unknown")
+        prediction_map: dict[str, dict[str, Any]] = {}
+        matched_case_ids: list[str] = []
+        missed_case_ids: list[str] = []
+        for prediction in list(row.get("predictions") or []):
+            if not isinstance(prediction, dict):
+                continue
+            case_id = str(prediction.get("case_id") or prediction.get("question_id") or "unknown")
+            prediction_map[case_id] = prediction
+            if bool(prediction.get("matched_expectations")):
+                matched_case_ids.append(case_id)
+            else:
+                missed_case_ids.append(case_id)
+        baseline_prediction_maps[baseline_name] = prediction_map
+        baseline_case_diagnostics.append(
+            {
+                "baseline_name": baseline_name,
+                "matched_case_ids": matched_case_ids,
+                "missed_case_ids": missed_case_ids,
+            }
+        )
+
+    shared_failed_case_ids: list[str] = []
+    separating_case_ids: list[str] = []
+    for case_summary in case_summaries:
+        case_id = str(case_summary.get("case_id") or "unknown")
+        matched_by: list[str] = []
+        missed_by: list[str] = []
+        for baseline_name, prediction_map in baseline_prediction_maps.items():
+            prediction = prediction_map.get(case_id) or {}
+            if bool(prediction.get("matched_expectations")):
+                matched_by.append(baseline_name)
+            else:
+                missed_by.append(baseline_name)
+        if matched_by and missed_by:
+            separating_case_ids.append(case_id)
+        elif missed_by and not matched_by:
+            shared_failed_case_ids.append(case_id)
+
+    return {
+        "shared_failed_case_ids": shared_failed_case_ids,
+        "separating_case_ids": separating_case_ids,
+        "baseline_case_diagnostics": baseline_case_diagnostics,
+    }
+
+
 def _build_summary_markdown(
     *,
     summary: dict[str, Any],
@@ -486,6 +554,16 @@ def _build_summary_markdown(
         f"- Current runtime SDK class: `{summary.get('current_runtime_sdk_class') or 'unknown'}`",
         f"- Current runtime memory architecture: `{summary.get('current_runtime_memory_architecture') or 'unknown'}`",
         f"- Runtime matches live leader: `{'yes' if summary.get('runtime_matches_live_leader') else 'no'}`",
+        (
+            f"- Shared failed cases: `{', '.join(summary.get('shared_failed_case_ids') or [])}`"
+            if summary.get("shared_failed_case_ids")
+            else None
+        ),
+        (
+            f"- Separating cases: `{', '.join(summary.get('separating_case_ids') or [])}`"
+            if summary.get("separating_case_ids")
+            else None
+        ),
         "",
         "## Assessment",
         "",
@@ -494,6 +572,7 @@ def _build_summary_markdown(
         "## Case Coverage",
         "",
     ]
+    lines = [line for line in lines if line is not None]
     for case in case_summaries:
         lines.append(
             f"- `{case.get('case_id')}`: category `{case.get('category')}`, "

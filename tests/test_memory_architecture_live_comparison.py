@@ -397,18 +397,36 @@ class MemoryArchitectureLiveComparisonTests(SparkTestCase):
                 "live_integration_overall": {"matched": 0, "total": 1, "accuracy": 0.0},
                 "live_by_category": [],
                 "scorecard_alignment": {"rate": 0.1},
+                "predictions": [
+                    {
+                        "case_id": "name_query",
+                        "matched_expectations": False,
+                    }
+                ],
             },
             {
                 "baseline_name": "dual_store_event_calendar_hybrid",
                 "live_integration_overall": {"matched": 0, "total": 1, "accuracy": 0.0},
                 "live_by_category": [],
                 "scorecard_alignment": {"rate": 0.2},
+                "predictions": [
+                    {
+                        "case_id": "name_query",
+                        "matched_expectations": False,
+                    }
+                ],
             },
             {
                 "baseline_name": "summary_synthesis_memory",
                 "live_integration_overall": {"matched": 1, "total": 1, "accuracy": 1.0},
                 "live_by_category": [{"category": "profile_query", "matched": 1, "total": 1, "accuracy": 1.0}],
                 "scorecard_alignment": {"rate": 0.9},
+                "predictions": [
+                    {
+                        "case_id": "name_query",
+                        "matched_expectations": True,
+                    }
+                ],
             },
         ]
 
@@ -443,8 +461,29 @@ class MemoryArchitectureLiveComparisonTests(SparkTestCase):
             "dual_store_event_calendar_hybrid",
         )
         self.assertFalse(result.payload["summary"]["runtime_matches_live_leader"])
+        self.assertEqual(result.payload["summary"]["shared_failed_case_ids"], [])
+        self.assertEqual(result.payload["summary"]["separating_case_ids"], ["name_query"])
+        self.assertEqual(
+            result.payload["diagnostics"]["baseline_case_diagnostics"],
+            [
+                {
+                    "baseline_name": "dual_store_event_calendar_hybrid",
+                    "matched_case_ids": [],
+                    "missed_case_ids": ["name_query"],
+                },
+                {
+                    "baseline_name": "summary_synthesis_memory",
+                    "matched_case_ids": ["name_query"],
+                    "missed_case_ids": [],
+                },
+            ],
+        )
         self.assertTrue(Path(result.payload["artifact_paths"]["summary_json"]).exists())
         self.assertTrue(Path(result.payload["artifact_paths"]["summary_markdown"]).exists())
+        self.assertIn(
+            "Separating cases: `name_query`",
+            Path(result.payload["artifact_paths"]["summary_markdown"]).read_text(encoding="utf-8"),
+        )
 
     def test_compare_row_tracks_forbidden_memory_and_grounding_metrics(self) -> None:
         selected_cases = [
