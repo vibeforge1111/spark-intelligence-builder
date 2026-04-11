@@ -15,13 +15,14 @@ The goal was to keep offline ProductMemory comparison and live Telegram validati
 - KB compile: valid
 - KB probe coverage: `38/38` current-state and `38/38` evidence hits
 - Telegram soak status: `13/13` completed, `0` failed
-- Live overall leader: `summary_synthesis_memory`
+- Latest whole-suite soak leader: `dual_store_event_calendar_hybrid`
 - Offline ProductMemory leader: `dual_store_event_calendar_hybrid`
 
 ## Soak Aggregate
 
-- `summary_synthesis_memory`: `36/72` matched, `50.00%` aggregate accuracy
-- `dual_store_event_calendar_hybrid`: `33/72` matched, `45.83%` aggregate accuracy
+- earlier live soak snapshot: `summary_synthesis_memory` at `36/72` vs `33/72`
+- latest post-extraction whole-suite soak: both contenders at `66/75`, `88.00%` aggregate accuracy
+- latest post-extraction whole-suite soak leader: `dual_store_event_calendar_hybrid` by pack-level leader count and soak tie-breaks, not by raw aggregate accuracy alone
 
 ## What Tightened
 
@@ -54,12 +55,12 @@ The benchmark-pack CLI path now runs custom Telegram variants directly:
 
 ## Interpretation
 
-The current decision should hold:
+The current decision is now more contested than it was at the start of the day:
 
-1. Keep `summary_synthesis_memory` as the live runtime favorite.
-2. Keep `dual_store_event_calendar_hybrid` as the active offline challenger.
-3. Do not promote on offline scorecards alone.
-4. Keep live Telegram regression and soak as mandatory gates.
+1. `summary_synthesis_memory` is still the pinned runtime architecture and still matches the targeted live regression leader set.
+2. `dual_store_event_calendar_hybrid` now leads the latest full 13-pack live soak as well as the offline ProductMemory benchmark.
+3. The targeted identity pack no longer separates the contenders, so it should not be used alone for promotion decisions.
+4. Promotion still should not happen on offline scorecards alone; the deciding signal now has to come from broader live-pack coverage and repeat soak stability.
 
 ## Runtime Selector
 
@@ -77,3 +78,4 @@ The Builder runtime contract now explicitly reports `summary_synthesis_memory` a
 - `.spark-intelligence/artifacts/telegram-memory-regression-identity-pack-v3/architecture-live-comparison/telegram-memory-architecture-live-comparison.json`
 - `.spark-intelligence/artifacts/telegram-memory-regression-identity-pack-v9/telegram-memory-regression.json`
 - `.spark-intelligence/artifacts/telegram-memory-regression-identity-pack-v9/architecture-live-comparison/telegram-memory-architecture-live-comparison.json`
+- `.spark-intelligence/artifacts/telegram-memory-architecture-soak/telegram-memory-architecture-soak.json`
