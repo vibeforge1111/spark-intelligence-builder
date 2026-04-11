@@ -429,9 +429,10 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
             title="Temporal Conflict Gauntlet",
             description=(
                 "Pushes repeated recency conflicts and stale-explanation pressure so the live runtime has to "
-                "separate current truth from earlier evidence-backed state."
+                "separate current truth from earlier evidence-backed state. It now also includes native "
+                "Telegram history questions so chronology is tested directly instead of only through current-state prompts."
             ),
-            focus_areas=("temporal_conflict", "overwrite", "staleness", "lineage_proxy"),
+            focus_areas=("temporal_conflict", "overwrite", "staleness", "lineage_proxy", "native_history"),
             cases=(
                 *_existing(
                     "startup_write",
@@ -444,6 +445,9 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
                     "country_write",
                     "country_overwrite",
                     "country_query_after_overwrite",
+                    "city_history_query_after_overwrite",
+                    "country_history_query_after_overwrite",
+                    "city_event_history_query_after_overwrite",
                     "mission_write",
                     "mission_query",
                     "hack_actor_write",

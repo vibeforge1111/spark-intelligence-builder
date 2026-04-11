@@ -67,6 +67,8 @@ The benchmark-pack CLI path now runs custom Telegram variants directly:
 - the follow-up full 14-pack soak finished `14/14`, `0` failed, still with `dual_store_event_calendar_hybrid` as the overall live leader
 - that completed soak now covers `event_history` and `native_history` explicitly in the rotating live suite
 - the chronology pack itself is green at the Telegram runtime layer, but the architecture comparison inside the soak still only separates the contenders weakly on that pack at `6/11`, with `dual_store_event_calendar_hybrid` taking the tie-break
+- the temporal conflict pack was then tightened with the same native history cases, and the targeted live rerun went `23/23` with `20/20` KB probe coverage
+- that tighter temporal conflict rerun now compares `13` live architecture cases and cleanly favors `dual_store_event_calendar_hybrid`, so chronology is now helping a previously tied conflict lane separate the contenders
 - the live architecture comparison for that proxy pack compares `8` cases and currently favors `dual_store_event_calendar_hybrid`
 
 ## Interpretation
@@ -79,6 +81,7 @@ The current decision now has a real live separator again:
 4. Promotion still should not happen on offline scorecards alone, but the live suite now has a meaningful provenance-based separator instead of only harness noise.
 5. The runtime selector has now been repinned to `dual_store_event_calendar_hybrid` so the Builder contract matches the combined benchmark result.
 6. Native Telegram chronology queries are now part of the live benchmark surface, but chronology still is not the main separator between the two contenders; it is currently a green health gate plus a mild tie-break edge for `dual_store_event_calendar_hybrid`.
+7. The best immediate use of chronology is inside conflict-heavy packs, where it now helps `temporal_conflict_gauntlet` separate the contenders more cleanly than before.
 
 ## Runtime Selector
 
