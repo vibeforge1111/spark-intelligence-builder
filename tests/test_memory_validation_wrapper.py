@@ -1190,3 +1190,83 @@ Add-Content -Path "{trace_path}" -Value ([ordered]@{{
     assert full_entry["soak_runs"] == 3
     assert full_entry["soak_timeout_seconds"] == 123.0
     assert full_entry["skip_baseline_publish"] is True
+
+
+def test_validated_full_cycle_publish_baseline_overrides_auto_skip_for_non_default_runs(tmp_path: Path) -> None:
+    real_builder_root = Path(__file__).resolve().parents[1]
+
+    workspace_root = tmp_path / "workspace"
+    builder_root = workspace_root / "spark-intelligence-builder"
+    scripts_root = builder_root / "scripts"
+    scripts_root.mkdir(parents=True)
+
+    _copy_file(
+        real_builder_root / "scripts" / "run_memory_validated_full_cycle.ps1",
+        scripts_root / "run_memory_validated_full_cycle.ps1",
+    )
+
+    trace_path = tmp_path / "validated-full-cycle-publish-trace.jsonl"
+
+    _write_text(
+        scripts_root / "run_memory_automation_tests.ps1",
+        f"""
+param()
+Add-Content -Path "{trace_path}" -Value ([ordered]@{{ step = "preflight" }} | ConvertTo-Json -Compress)
+""".strip(),
+    )
+    _write_text(
+        scripts_root / "run_memory_two_contender_validation.ps1",
+        f"""
+param(
+    [string]$SparkHome = "",
+    [string]$OutputRoot = "",
+    [int]$SoakRuns = 14,
+    [double]$SoakTimeoutSeconds = 300,
+    [switch]$SkipBaselinePublish
+)
+Add-Content -Path "{trace_path}" -Value ([ordered]@{{
+    step = "full"
+    spark_home = $SparkHome
+    output_root = $OutputRoot
+    soak_runs = $SoakRuns
+    soak_timeout_seconds = $SoakTimeoutSeconds
+    skip_baseline_publish = [bool]$SkipBaselinePublish
+}} | ConvertTo-Json -Compress)
+""".strip(),
+    )
+
+    completed = subprocess.run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(scripts_root / "run_memory_validated_full_cycle.ps1"),
+            "-SparkHome",
+            str(tmp_path / "spark-home"),
+            "-OutputRoot",
+            str(tmp_path / "custom-output-root"),
+            "-SoakRuns",
+            "3",
+            "-SoakTimeoutSeconds",
+            "123",
+            "-PublishBaseline",
+        ],
+        cwd=builder_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    assert "Baseline publish mode: enabled" in completed.stdout
+
+    trace_lines = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+    assert [entry["step"] for entry in trace_lines] == ["preflight", "full"]
+    full_entry = trace_lines[1]
+    assert full_entry["spark_home"] == str(tmp_path / "spark-home")
+    assert full_entry["output_root"] == str(tmp_path / "custom-output-root")
+    assert full_entry["soak_runs"] == 3
+    assert full_entry["soak_timeout_seconds"] == 123.0
+    assert full_entry["skip_baseline_publish"] is False
