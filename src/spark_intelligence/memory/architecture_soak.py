@@ -7,11 +7,14 @@ from pathlib import Path
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
-from spark_intelligence.identity.service import approve_pairing
 from spark_intelligence.memory.benchmark_packs import (
     default_telegram_memory_benchmark_packs,
 )
-from spark_intelligence.memory.regression import QUALITY_LANE_KEYS, run_telegram_memory_regression
+from spark_intelligence.memory.regression import (
+    QUALITY_LANE_KEYS,
+    _prepare_regression_identity,
+    run_telegram_memory_regression,
+)
 from spark_intelligence.state.db import StateDB
 
 
@@ -93,11 +96,10 @@ def run_telegram_memory_architecture_soak(
             chat_id=chat_id,
         )
         try:
-            approve_pairing(
+            _prepare_regression_identity(
                 state_db=state_db,
-                channel_id="telegram",
                 external_user_id=run_user_id,
-                display_name=username or f"Memory Soak {run_spec.pack_id}",
+                username=username or f"Memory Soak {run_spec.pack_id}",
             )
             regression_result = run_telegram_memory_regression(
                 config_manager=config_manager,

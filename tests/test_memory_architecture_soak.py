@@ -119,6 +119,8 @@ class MemoryArchitectureSoakTests(SparkTestCase):
         }
 
         with patch(
+            "spark_intelligence.memory.architecture_soak._prepare_regression_identity",
+        ) as prepare_identity, patch(
             "spark_intelligence.memory.architecture_soak.run_telegram_memory_regression",
             side_effect=[
                 SimpleNamespace(payload=payload),
@@ -144,6 +146,11 @@ class MemoryArchitectureSoakTests(SparkTestCase):
         self.assertEqual(
             first_kwargs["baseline_names"],
             ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
+        )
+        self.assertEqual(prepare_identity.call_count, 2)
+        self.assertNotEqual(
+            prepare_identity.call_args_list[0].kwargs["external_user_id"],
+            prepare_identity.call_args_list[1].kwargs["external_user_id"],
         )
         self.assertEqual(result.payload["summary"]["benchmark_mode"], "varied_pack_suite")
         self.assertGreater(result.payload["summary"]["benchmark_pack_count"], 1)
