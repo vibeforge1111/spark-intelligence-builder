@@ -11,6 +11,8 @@ Related memory substrate repo: `C:\Users\USER\Desktop\domain-chip-memory`
 - The benchmark harness was expanded from a fixed Telegram replay into a varied pack suite.
 - The soak/reporting logic was then hardened so zero-signal categories no longer look like meaningful ties.
 - The current default serious comparison loop is now governed by `docs/MEMORY_REALTIME_BENCHMARK_PROGRAM_2026-04-11.md`.
+- The latest clean live `14`-pack soak now favors `summary_synthesis_memory`, while the offline ProductMemory benchmark still favors `dual_store_event_calendar_hybrid`.
+- Because the two sides disagree, the runtime stays pinned to `dual_store_event_calendar_hybrid` until one contender wins both offline and live.
 
 ## Historical soak snapshot
 
@@ -35,15 +37,16 @@ Historical top-two recommendation from that soak:
 
 Current whole-suite decision:
 
-1. `dual_store_event_calendar_hybrid`
-2. `summary_synthesis_memory`
+1. `summary_synthesis_memory`
+2. `dual_store_event_calendar_hybrid`
 
-Post-repin validation:
+Latest clean live validation:
 
-- `.spark-intelligence/artifacts/telegram-memory-architecture-soak-post-repin-v1/telegram-memory-architecture-soak.json`
-- status: `13/13` completed, `0` failed
-- aggregate accuracy stayed tied at `66/75`
-- `dual_store_event_calendar_hybrid` still led the suite on pack-level wins, so the repin held under a fresh full live soak
+- `.spark-intelligence/artifacts/telegram-memory-architecture-soak/telegram-memory-architecture-soak.json`
+- status: `14/14` completed, `0` failed
+- full-suite aggregate: `83/92` for `summary_synthesis_memory` vs `82/92` for `dual_store_event_calendar_hybrid`
+- selector-pack aggregate: `55/64` for `summary_synthesis_memory` vs `54/64` for `dual_store_event_calendar_hybrid`
+- that rerun was performed after terminating stale concurrent soak jobs that had been contaminating the shared artifact path
 
 ## Current operating decision
 
@@ -64,24 +67,29 @@ This is now the default contender pair for:
 
 Why the contender pair changed:
 
-- `dual_store_event_calendar_hybrid` now wins the combined offline and live whole-suite program
-- `summary_synthesis_memory` remains the closest serious challenger and still ties on some targeted live packs
+- `dual_store_event_calendar_hybrid` still wins the offline ProductMemory side
+- `summary_synthesis_memory` now wins the latest clean live whole-suite soak
+- `summary_synthesis_memory` recovered specifically after the chip-side history/query fixes aligned Builder prompts and chronology scoring
 - `observational_temporal_memory` remains useful as a control or explicit extra baseline, but is no longer the default second contender
 
 ## Important benchmark interpretation
 
-- The current combined winner is real for the hardened offline-plus-live suite: `dual_store_event_calendar_hybrid`.
+- There is no current combined winner for the hardened offline-plus-live suite.
+- The current honest result is a split verdict: offline points to `dual_store_event_calendar_hybrid`, live points to `summary_synthesis_memory`.
 - The absolute performance is still weak.
 - The benchmark now honestly reports unresolved lanes instead of inventing ties.
 
 Still unresolved / weak:
-- `abstention`: no leader
-- `explanation`: no leader
-- `quality_lane_gauntlet`: no leader
+- `provenance_audit`
+- `explanation_pressure_suite`
+- `event_calendar_lineage_proxy`
+- `temporal_conflict_gauntlet`
+- `quality_lane_gauntlet`
+- `contradiction_and_recency`
 
 Observed trust metrics:
-- `forbidden_clean_accuracy` was `1.0` across all three on the anti-personalization lane that was actually scored.
-- `abstention_accuracy` remained `0.0` across all three.
+- both contenders stayed clean on the current forbidden-memory lanes in the latest live soak
+- the current disagreement is concentrated in selector-pack quality rather than in the fully green health gates
 
 ## What changed in the harness
 
@@ -116,7 +124,7 @@ Why they may keep tying:
 
 ## Recommended next steps tomorrow
 
-1. Keep `dual_store_event_calendar_hybrid` as the pinned runtime architecture.
+1. Keep `dual_store_event_calendar_hybrid` as the pinned runtime architecture until the same contender wins both offline and live.
 2. Keep `summary_synthesis_memory` as the active challenger in the default live program.
 3. Use `observational_temporal_memory` as a control lane when we want a third comparison, not as the default second contender.
 4. Add new benchmark packs specifically for:
@@ -125,7 +133,7 @@ Why they may keep tying:
    - temporal conflict resolution
    - abstention under tempting but irrelevant stored facts
    - provenance/explanation phrasing quality
-5. Run the top two through those new real-time packs.
+5. Keep rerunning the top two through those real-time packs, especially the current clean-soak selector packs that still require work: `provenance_audit`, `explanation_pressure_suite`, `event_calendar_lineage_proxy`, `temporal_conflict_gauntlet`, `quality_lane_gauntlet`, and `contradiction_and_recency`.
 6. Keep rerunning the pinned `dual_store_event_calendar_hybrid` runtime against the active challenger and only repin if the challenger wins both offline and live.
 
 Promotion rule:
@@ -137,11 +145,11 @@ Promotion rule:
 ## Good continuation point
 
 Tomorrow, resume from:
-- the completed fixed soak artifact
+- the latest clean `14/14` soak artifact at `C:\Users\USER\.spark-intelligence\artifacts\telegram-memory-architecture-soak\telegram-memory-architecture-soak.json`
 - the refreshed explanation-pack rerun at `C:\Users\USER\.spark-intelligence\artifacts\telegram-memory-regression-explanation-pack-v2`
-- the post-repin whole-suite soak at `C:\Users\USER\.spark-intelligence\artifacts\telegram-memory-architecture-soak-post-repin-v1`
 - the current default two-contender program in `docs/MEMORY_REALTIME_BENCHMARK_PROGRAM_2026-04-11.md`
-- new benchmark design focused on the unsolved lanes and on separating observational vs event-calendar behavior in a more targeted way
+- the offline benchmark artifact at `C:\Users\USER\.spark-intelligence\artifacts\memory-architecture-benchmark\memory-architecture-benchmark.json`
+- new benchmark design focused on the unsolved selector lanes and on separating offline-vs-live disagreement more directly
 
 ## Relevant commits from this session
 

@@ -14,19 +14,21 @@ The goal was to keep offline ProductMemory comparison and live Telegram validati
 - Live Telegram regression: `31/31` matched
 - KB compile: valid
 - KB probe coverage: `38/38` current-state and `38/38` evidence hits
-- Telegram soak status: `14/14` completed, `0` failed
-- Latest whole-suite soak leader: `dual_store_event_calendar_hybrid`
+- Clean Telegram soak status: `14/14` completed, `0` failed
+- Latest clean whole-suite soak leader: `summary_synthesis_memory`
+- Latest clean whole-suite aggregate: `83/92` for `summary_synthesis_memory` vs `82/92` for `dual_store_event_calendar_hybrid`
+- Latest clean selector-pack aggregate: `55/64` for `summary_synthesis_memory` vs `54/64` for `dual_store_event_calendar_hybrid`
 - Offline ProductMemory leader: `dual_store_event_calendar_hybrid`
-- Post-repin whole-suite soak: `14/14` completed, `0` failed, with `dual_store_event_calendar_hybrid` still leading while the runtime stays aligned
+- Current runtime selector: `dual_store_event_calendar_hybrid`
 
 ## Soak Aggregate
 
 - earlier live soak snapshot: `summary_synthesis_memory` at `36/72` vs `33/72`
-- earlier post-extraction whole-suite soak briefly reported `dual_store_event_calendar_hybrid` as leader, but that turned out to be a comparison-harness artifact
-- the live-comparison tie-break now ignores explanation-only exact-string scorecard differences when live accuracy, trustworthiness, and grounding already tie
-- the live-comparison harness now also sets explicit `expected_answer_candidate_source = evidence_memory` for explanation cases, so live provenance alignment is measured directly
-- latest corrected whole-suite soak: both contenders are still tied at `66/75`, `88.00%` aggregate accuracy, but `dual_store_event_calendar_hybrid` is the live leader by pack-level provenance alignment on explanation-heavy lanes
-- post-repin rerun at `.spark-intelligence/artifacts/telegram-memory-architecture-soak-post-repin-v1` finished with the same `66/75`, `88.00%` aggregate accuracy tie, and `dual_store_event_calendar_hybrid` kept the whole-suite lead with `13` leader runs vs `8` for `summary_synthesis_memory`
+- several later soak verdicts that appeared to favor `dual_store_event_calendar_hybrid` were contaminated by concurrent soak processes writing to the same artifact path
+- those stale soak processes were terminated and the `14`-pack suite was rerun clean
+- the clean rerun finished `14/14`, `0` failed, with `summary_synthesis_memory` leading the full suite and the selector subset by one matched case in each aggregate
+- the live-comparison tie-break still ignores explanation-only exact-string scorecard differences when live accuracy, trustworthiness, and grounding already tie
+- explanation prompts still carry explicit `expected_answer_candidate_source = evidence_memory`, so provenance alignment is measured directly instead of being hidden behind surface phrasing
 
 ## What Tightened
 
@@ -36,22 +38,20 @@ The live suite is now stricter in the places that were still underreporting ambi
 - temporal conflict packs now test whether non-overwritten facts survive overwrite noise
 - live leader selection now breaks ties in this order: matched-case accuracy, trustworthiness, grounding, substantive scorecard correctness, then scorecard alignment
 - soak summary leader labels now use that same full tie-break signature instead of flattening back to raw accuracy only
-- explanation prompts now carry explicit source-alignment expectations, which means provenance behavior can create a real live leader instead of staying invisible behind surface-text ties
+- explanation prompts now carry explicit source-alignment expectations, which means provenance behavior can create a real live separator instead of staying invisible behind surface-text ties
+- native Telegram history and event-history questions are now part of the chronology-sensitive packs instead of living only in proxy prompts
 
 ## Pack Readout
 
-- `core_profile_baseline`: `dual_store_event_calendar_hybrid` now leads on explanation-source alignment while matched-case metrics stay tied
-- `contradiction_and_recency`: after fixing soak namespace reuse and seeding a deterministic agent name during regression setup, this pack now also favors `dual_store_event_calendar_hybrid` on fresh namespaces instead of tying on onboarding residue
-- `provenance_audit`: `dual_store_event_calendar_hybrid` leads on explanation-source alignment
-- `explanation_pressure_suite`: `dual_store_event_calendar_hybrid` leads on explanation-source alignment
-- `interleaved_noise_resilience`: `dual_store_event_calendar_hybrid` leads after the same provenance alignment signal is carried through the noisy pack
-- `quality_lane_gauntlet`: `dual_store_event_calendar_hybrid` leads when explanation provenance is mixed with abstention and overwrite pressure
-- `temporal_conflict_gauntlet`: on the corrected fresh-namespace soak, this pack also favors `dual_store_event_calendar_hybrid`, and the history-specific comparison fix raised it from `8/13` to `9/13`
-- `event_calendar_lineage_proxy`: the same history-specific comparison fix raised this pack from `6/11` to `7/11`, while keeping `dual_store_event_calendar_hybrid` as the leader
-- `long_horizon_recall`, `boundary_abstention`, `anti_personalization_guardrails`, `identity_synthesis`, and `loaded_context_abstention` are now fully green ties, so they are treated as health gates rather than selector packs
-- `identity_under_recency_pressure`: the latest targeted rerun is now a full `11/11` tie after chip-side extraction and profile-query routing fixes
+- `summary_synthesis_memory` now leads the clean whole-suite live soak overall, but the lead is narrow rather than decisive
+- `contradiction_and_recency` and `temporal_conflict_gauntlet` moved toward `summary_synthesis_memory` after the chip-side history/query fixes were aligned with Builder prompts
+- the current clean-soak selector packs still requiring work are `provenance_audit`, `explanation_pressure_suite`, `event_calendar_lineage_proxy`, `temporal_conflict_gauntlet`, `quality_lane_gauntlet`, and `contradiction_and_recency`
+- `long_horizon_recall`, `boundary_abstention`, `anti_personalization_guardrails`, `identity_synthesis`, `loaded_context_abstention`, and `identity_under_recency_pressure` are now health gates rather than selector packs because both contenders are fully green there
+- `identity_under_recency_pressure` remains a targeted `11/11` tie after the chip-side extraction and profile-query routing fixes
 
-## Targeted Pack Validation
+## Historical Targeted Pack Validation
+
+These targeted reruns explain how the live suite moved over time. The current source of truth is still the clean full-suite rerun summarized above.
 
 The benchmark-pack CLI path now runs custom Telegram variants directly:
 
@@ -70,7 +70,7 @@ The benchmark-pack CLI path now runs custom Telegram variants directly:
 - the first filtered live rerun failed `0/3` only because it skipped the prerequisite write cases and hit an empty synthetic namespace
 - after adding inspection-backed chronology fallback, the full pack rerun went `20/20` on live Telegram with `23/23` current-state and `23/23` evidence probe hits
 - the new green chronology cases are `city_history_query_after_overwrite`, `country_history_query_after_overwrite`, and `city_event_history_query_after_overwrite`
-- the follow-up full 14-pack soak finished `14/14`, `0` failed, still with `dual_store_event_calendar_hybrid` as the overall live leader
+- an earlier corrected full 14-pack soak finished `14/14`, `0` failed, with `dual_store_event_calendar_hybrid` as the then-current live leader
 - that completed soak now covers `event_history` and `native_history` explicitly in the rotating live suite
 - the chronology pack itself is green at the Telegram runtime layer, but the architecture comparison inside the soak still only separates the contenders weakly on that pack at `6/11`, with `dual_store_event_calendar_hybrid` taking the tie-break
 - the temporal conflict pack was then tightened with the same native history cases, and the targeted live rerun went `23/23` with `20/20` KB probe coverage
@@ -83,24 +83,23 @@ The benchmark-pack CLI path now runs custom Telegram variants directly:
 - the architecture comparison now only requires the historical fragment for explicit `previous state` questions like `Where did I live before?` and `What was my previous country?`, while still keeping full chronology requirements for true event-listing prompts
 - the scorer now also strips style-only fragments like `saved memory record` from explanation-like staleness prompts such as `How do you know my startup?`, so those lanes no longer penalize factual evidence answers for missing narration boilerplate
 - the live architecture comparison for that proxy pack compares `8` cases and currently favors `dual_store_event_calendar_hybrid`
+- those intermediate dual-leading soak outputs were later superseded by the clean rerun described above, after stale concurrent soak jobs were removed from the shared artifact path
 
 ## Interpretation
 
-The current decision now has a real live separator again:
+The current decision is now a real split, not a unified winner:
 
-1. `dual_store_event_calendar_hybrid` leads the offline ProductMemory benchmark.
-2. `dual_store_event_calendar_hybrid` also leads the corrected 14-pack live soak once explanation provenance alignment is measured explicitly.
-3. The targeted identity pack still does not separate the contenders, so it should remain a regression gate, not the sole promotion driver.
-4. The soak model now records that distinction explicitly through `selector_pack_ids` and `health_gate_pack_ids`, so whole-suite leaders are chosen from honest separator packs only.
-5. Promotion still should not happen on offline scorecards alone, but the live suite now has a meaningful provenance-based separator instead of only harness noise.
-6. The runtime selector has now been repinned to `dual_store_event_calendar_hybrid` so the Builder contract matches the combined benchmark result.
-7. Native Telegram chronology queries are now part of the live benchmark surface, but chronology still is not the main separator between the two contenders; it is currently a green health gate plus a mild tie-break edge for `dual_store_event_calendar_hybrid`.
-8. The best immediate use of chronology is inside conflict-heavy packs, where it now helps `temporal_conflict_gauntlet` separate the contenders more cleanly than before.
-9. After the fresh-namespace fix, the remaining selector packs now all point the same way: `dual_store_event_calendar_hybrid` leads every current selector pack, while the six health gates stay fully green.
+1. `dual_store_event_calendar_hybrid` still leads the offline ProductMemory benchmark.
+2. `summary_synthesis_memory` leads the latest clean `14`-pack live Telegram soak.
+3. The identity-heavy health gates are no longer useful promotion signals on their own because both contenders already stay green there.
+4. Promotion still should not happen on offline scorecards alone, but it also should not happen on a live-only win.
+5. The runtime selector therefore should not move yet: one contender has to win both offline and live.
+6. Native Telegram chronology queries are now part of the live benchmark surface, and they materially helped `summary_synthesis_memory` recover on contradiction and temporal-conflict packs.
+7. The most useful next work is not another repin attempt; it is tightening the remaining selector packs so the split resolves honestly instead of oscillating on one-case margins.
 
 ## Runtime Selector
 
-The Builder runtime contract now explicitly reports `dual_store_event_calendar_hybrid` as the active memory architecture alongside the governed `SparkMemorySDK` substrate. That means the runtime summary layer now matches the current offline and live whole-suite leader, while the promotion rule still stays the same: any future change has to keep winning both scorecards and live Telegram before it gets pinned.
+The Builder runtime contract still explicitly reports `dual_store_event_calendar_hybrid` as the active memory architecture alongside the governed `SparkMemorySDK` substrate. That is still the correct pin for now because the offline benchmark remains `dual_store_event_calendar_hybrid` even though the latest clean live soak moved back to `summary_synthesis_memory`. The promotion rule stays unchanged: any future repin has to win both scorecards and live Telegram.
 
 ## Artifacts
 

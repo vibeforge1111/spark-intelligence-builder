@@ -181,16 +181,17 @@ If one architecture wins BEAM or LongMemEval style lanes but loses abstention, p
 
 Current live separation note:
 
-- the broad live suite now separates the contenders again on explanation provenance alignment
-- `dual_store_event_calendar_hybrid` is the current whole-suite live soak leader because it preserves `evidence_memory` alignment on explanation-heavy packs where `summary_synthesis_memory` still falls back to `aggregate_memory`
-- the runtime selector is now pinned to `dual_store_event_calendar_hybrid` because it won both the offline ProductMemory comparison and the corrected live Telegram soak
+- the latest clean uncontaminated `14/14` live soak now favors `summary_synthesis_memory`
+- full-suite live aggregate is `83/92` for `summary_synthesis_memory` vs `82/92` for `dual_store_event_calendar_hybrid`
+- selector-pack aggregate is `55/64` for `summary_synthesis_memory` vs `54/64` for `dual_store_event_calendar_hybrid`
+- the offline ProductMemory benchmark still favors `dual_store_event_calendar_hybrid`
+- the runtime selector therefore remains pinned to `dual_store_event_calendar_hybrid` until one contender wins both offline and live
 - the long-horizon, abstention, anti-personalization, identity-synthesis, loaded-context, and identity-under-recency packs are all currently health gates, not deciding promotion signals
 - soak summaries now expose `selector_pack_ids` and `health_gate_pack_ids`, and only the selector packs feed `overall_leader_names` and `recommended_top_two`
 - soak reruns now also use fresh suite-specific Telegram namespaces, and regression setup seeds a deterministic agent name, so selector packs are no longer allowed to inherit stale onboarding residue from older runs
 - the event-calendar lane now includes native Telegram history queries for overwritten profile facts, so chronology regressions can be caught in the live runtime rather than only through proxy prompts
-- the current full 14-pack soak still recommends `dual_store_event_calendar_hybrid`, while the chronology pack itself should be treated as a required green lane plus a secondary tie-break signal rather than the sole promotion driver
-- the tightened `temporal_conflict_gauntlet` now also carries native history cases, and that conflict-heavy targeted rerun currently gives a cleaner live win to `dual_store_event_calendar_hybrid` than the standalone chronology pack does
-- the same overwrite-history cases now also sharpen `contradiction_and_recency`, and on the corrected fresh-namespace soak that pack also favors `dual_store_event_calendar_hybrid`, which means chronology is directly improving separation in the most important overwrite lanes instead of only living in a sidecar chronology pack
+- the current selector packs still requiring work in the clean soak are `provenance_audit`, `explanation_pressure_suite`, `event_calendar_lineage_proxy`, `temporal_conflict_gauntlet`, `quality_lane_gauntlet`, and `contradiction_and_recency`
+- the tightened `temporal_conflict_gauntlet` and `contradiction_and_recency` lanes now include native history cases, and the latest targeted reruns lean `summary_synthesis_memory`, which is why the clean full-suite live result moved back toward `summary_synthesis_memory`
 - the live architecture comparison now treats explicit `previous state` questions as historical-value checks rather than requiring both the previous and current values, while true event-listing prompts still have to show multi-fragment chronology
 - explanation-like staleness prompts such as `How do you know my startup?` now ignore style-only fragments like `saved memory record` during live matching, so the selector packs measure factual evidence retrieval instead of phrasing noise
 
