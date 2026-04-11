@@ -96,6 +96,7 @@ Operator shortcut:
 - it also refreshes `.spark-intelligence\artifacts\memory-validation-runs\latest-run.json` to point at the newest run manifest
 - it refreshes `.spark-intelligence\artifacts\memory-validation-runs\latest-full-run.json` only when a full benchmark + regression + soak run exists
 - use `-SkipBaselinePublish` on ad hoc smoke runs when you do not want a short or experimental full run to replace the canonical published baseline
+- `run_memory_validated_full_cycle.ps1` now auto-skips baseline publishing on non-default runs such as custom output roots or shortened soaks; use `-PublishBaseline` only when you intentionally want that run to replace the canonical published baseline
 - on full runs it also preserves `.spark-intelligence\artifacts\memory-validation-runs\previous-full-run.json` and writes a per-run `validation-delta.md`
 - it also auto-refreshes [docs/MEMORY_FAILURE_LEDGER_2026-04-11.md](./docs/MEMORY_FAILURE_LEDGER_2026-04-11.md) from the newest run
 - it also auto-refreshes the baseline sections in [README.md](./README.md), [docs/MEMORY_LIVE_VALIDATION_RESULTS_2026-04-11.md](./docs/MEMORY_LIVE_VALIDATION_RESULTS_2026-04-11.md), and [docs/MEMORY_BENCHMARK_HANDOFF_2026-04-11.md](./docs/MEMORY_BENCHMARK_HANDOFF_2026-04-11.md) from the newest full run

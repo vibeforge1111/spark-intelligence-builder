@@ -140,6 +140,7 @@ It refreshes `.spark-intelligence/artifacts/memory-validation-runs/latest-full-r
 
 Use the fast automation runner before speculative wrapper or renderer edits. It validates the PowerShell wrapper, baseline renderers, failure ledger, delta renderer, and chip-side sync tests without consuming a live Telegram soak run.
 Use the chained full-cycle wrapper when you want that same fast preflight to gate the real live Builder/Telegram run automatically.
+For safety, `run_memory_validated_full_cycle.ps1` now auto-skips baseline publishing on non-default runs such as custom output roots or shortened soaks. Use `-PublishBaseline` only when that run should replace the canonical published baseline.
 
 Important publish rule:
 
