@@ -158,6 +158,8 @@ Goal:
 
 Actions:
 - create a compact failure ledger from the latest regression and soak artifacts
+- regenerate it with:
+  `python scripts/render_memory_failure_ledger.py --write docs/MEMORY_FAILURE_LEDGER_2026-04-11.md`
 - for each miss or weak selector pack, record:
   - pack id
   - case id

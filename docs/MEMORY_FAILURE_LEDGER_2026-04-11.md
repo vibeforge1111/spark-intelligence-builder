@@ -1,11 +1,9 @@
 # Memory Failure Ledger
 
 Date: 2026-04-11
-Status: active ledger for the current 48-hour cycle
+Status: generated from the latest validation run
 
 ## Baseline run
-
-Source-of-truth baseline run for this cycle:
 
 - wrapper output root: `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\20260411-233246`
 - manifest: `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\20260411-233246\run-summary.json`
@@ -20,15 +18,17 @@ Pinned code state behind this run:
 
 - offline runtime architecture: `summary_synthesis_memory`
 - offline ProductMemory leaders:
-  - `summary_synthesis_memory`
-  - `dual_store_event_calendar_hybrid`
+  - summary_synthesis_memory
+  - dual_store_event_calendar_hybrid
 - live regression: `34/34`
-- live regression leader: `summary_synthesis_memory`
+- live regression leader:
+  - summary_synthesis_memory
 - live soak: `14/14`
-- live soak leader: `summary_synthesis_memory`
+- live soak leader:
+  - summary_synthesis_memory
 - live soak recommended top two:
-  - `summary_synthesis_memory`
-  - `dual_store_event_calendar_hybrid`
+  - summary_synthesis_memory
+  - dual_store_event_calendar_hybrid
 
 ## Open failures
 
@@ -45,29 +45,29 @@ These are not current failures. They are the live separator packs and health gat
 
 ### Selector packs
 
+- `core_profile_baseline`
+  - current state: `honest tie`
+  - bucket if it regresses: `routing`
 - `contradiction_and_recency`
   - current leader: `summary_synthesis_memory`
   - bucket if it regresses: `overwrite_history_retrieval`
+- `provenance_audit`
+  - current state: `honest tie`
+  - bucket if it regresses: `explanation_provenance`
+- `interleaved_noise_resilience`
+  - current state: `honest tie`
+  - bucket if it regresses: `identity_synthesis`
+- `quality_lane_gauntlet`
+  - current state: `honest tie`
+  - bucket if it regresses: `routing`
 - `temporal_conflict_gauntlet`
   - current leader: `summary_synthesis_memory`
   - bucket if it regresses: `event_history_chronology`
 - `event_calendar_lineage_proxy`
   - current leader: `summary_synthesis_memory`
   - bucket if it regresses: `event_history_chronology`
-- `core_profile_baseline`
-  - current state: honest tie
-  - bucket if it regresses: `routing`
-- `provenance_audit`
-  - current state: honest tie
-  - bucket if it regresses: `explanation_provenance`
-- `interleaved_noise_resilience`
-  - current state: honest tie
-  - bucket if it regresses: `identity_synthesis`
-- `quality_lane_gauntlet`
-  - current state: honest tie
-  - bucket if it regresses: `routing`
 - `explanation_pressure_suite`
-  - current state: honest tie
+  - current state: `honest tie`
   - bucket if it regresses: `explanation_provenance`
 
 ### Health gates
