@@ -220,3 +220,94 @@ def test_render_memory_failure_ledger_reports_clean_baseline_and_watchlist(tmp_p
     assert "- `identity_under_recency_pressure`" in markdown
     assert "builder-sha" in markdown
     assert "chip-sha" in markdown
+
+
+def test_render_memory_failure_ledger_reports_open_mismatches_and_selector_gaps(tmp_path: Path) -> None:
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "render_memory_failure_ledger.py"
+    module = _load_module("render_memory_failure_ledger_open_issues_test", script_path)
+
+    latest_pointer = tmp_path / "latest-full-run.json"
+    run_summary = tmp_path / "run-summary.json"
+    regression_dir = tmp_path / "telegram-memory-regression"
+    soak_dir = tmp_path / "telegram-memory-architecture-soak"
+    regression_dir.mkdir()
+    soak_dir.mkdir()
+
+    _write_json(
+        latest_pointer,
+        {
+            "output_root": str(tmp_path / "20260412-013326"),
+            "run_summary": str(run_summary),
+        },
+    )
+    _write_json(
+        run_summary,
+        {
+            "output_root": str(tmp_path / "20260412-013326"),
+            "builder_repo_commit": "builder-sha",
+            "domain_chip_repo_commit": "chip-sha",
+            "offline_runtime_architecture": "summary_synthesis_memory",
+            "offline_product_memory_leaders": [
+                "summary_synthesis_memory",
+                "dual_store_event_calendar_hybrid",
+            ],
+            "live_regression": "32/34",
+            "live_regression_leaders": ["summary_synthesis_memory"],
+            "live_soak_completion": "13/14",
+            "live_soak_leaders": ["summary_synthesis_memory"],
+            "live_soak_recommended_top_two": [
+                "summary_synthesis_memory",
+                "dual_store_event_calendar_hybrid",
+            ],
+            "regression_output_dir": str(regression_dir),
+            "soak_output_dir": str(soak_dir),
+        },
+    )
+    _write_json(
+        regression_dir / "telegram-memory-regression.json",
+        {
+            "summary": {
+                "mismatched_case_ids": [
+                    "city_history_query_after_overwrite",
+                    "country_history_query_after_overwrite",
+                ],
+            }
+        },
+    )
+    _write_json(
+        soak_dir / "telegram-memory-architecture-soak.json",
+        {
+            "summary": {
+                "selector_packs_requiring_work": [
+                    "temporal_conflict_gauntlet",
+                    "event_calendar_lineage_proxy",
+                ],
+            },
+            "benchmark_pack_results": [
+                {
+                    "pack_id": "temporal_conflict_gauntlet",
+                    "selection_role": "selector",
+                    "leader_names": ["dual_store_event_calendar_hybrid"],
+                },
+                {
+                    "pack_id": "identity_under_recency_pressure",
+                    "selection_role": "health_gate",
+                    "leader_names": [
+                        "summary_synthesis_memory",
+                        "dual_store_event_calendar_hybrid",
+                    ],
+                },
+            ],
+        },
+    )
+
+    markdown = module.render_failure_ledger(latest_run_path=latest_pointer)
+
+    assert "- open live mismatches: `2`" in markdown
+    assert "- open selector-pack gaps requiring work: `2`" in markdown
+    assert "Open issues:" in markdown
+    assert "Prioritize the current artifact-backed issues before any new architecture exploration." in markdown
+    assert "city_history_query_after_overwrite" in markdown
+    assert "country_history_query_after_overwrite" in markdown
+    assert "temporal_conflict_gauntlet" in markdown
+    assert "event_calendar_lineage_proxy" in markdown
