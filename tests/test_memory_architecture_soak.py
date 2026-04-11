@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -433,6 +434,96 @@ class MemoryArchitectureSoakTests(SparkTestCase):
                 }
             ],
         )
+
+    def test_run_telegram_memory_architecture_soak_uses_subprocess_runner_when_timeout_configured(self) -> None:
+        payload = {
+            "summary": {"matched_case_count": 8, "mismatched_case_count": 0},
+            "architecture_live_comparison": {
+                "summary": {
+                    "baseline_names": ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
+                    "leader_names": ["summary_synthesis_memory"],
+                },
+                "baseline_results": [
+                    {
+                        "baseline_name": "dual_store_event_calendar_hybrid",
+                        "live_integration_overall": {"matched": 1, "total": 2, "accuracy": 0.5},
+                        "live_by_category": [{"category": "profile_query", "matched": 1, "total": 2, "accuracy": 0.5}],
+                    },
+                    {
+                        "baseline_name": "summary_synthesis_memory",
+                        "live_integration_overall": {"matched": 2, "total": 2, "accuracy": 1.0},
+                        "live_by_category": [{"category": "profile_query", "matched": 2, "total": 2, "accuracy": 1.0}],
+                    },
+                ],
+            },
+        }
+
+        with patch(
+            "spark_intelligence.memory.architecture_soak._run_regression_subprocess",
+            return_value=payload,
+        ) as patched_subprocess, patch(
+            "spark_intelligence.memory.architecture_soak.run_telegram_memory_regression",
+        ) as patched_direct:
+            result = run_telegram_memory_architecture_soak(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                output_dir=self.home / "artifacts" / "architecture-soak-timeout",
+                runs=1,
+                benchmark_pack_ids=["core_profile_baseline"],
+                run_timeout_seconds=120,
+            )
+
+        self.assertEqual(result.payload["summary"]["completed_runs"], 1)
+        self.assertEqual(result.payload["summary"]["failed_runs"], 0)
+        self.assertEqual(result.payload["summary"]["per_run_timeout_seconds"], 120.0)
+        self.assertEqual(result.payload["summary"]["overall_leader_names"], ["summary_synthesis_memory"])
+        self.assertEqual(patched_subprocess.call_count, 1)
+        patched_direct.assert_not_called()
+
+    def test_run_telegram_memory_architecture_soak_records_timeout_failures(self) -> None:
+        with patch(
+            "spark_intelligence.memory.architecture_soak._run_regression_subprocess",
+            side_effect=TimeoutError("regression_subprocess_timeout:core_profile_baseline:120s"),
+        ):
+            result = run_telegram_memory_architecture_soak(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                output_dir=self.home / "artifacts" / "architecture-soak-timeout-failure",
+                runs=1,
+                benchmark_pack_ids=["core_profile_baseline"],
+                run_timeout_seconds=120,
+            )
+
+        self.assertEqual(result.payload["summary"]["completed_runs"], 0)
+        self.assertEqual(result.payload["summary"]["failed_runs"], 1)
+        self.assertEqual(result.payload["summary"]["per_run_timeout_seconds"], 120.0)
+        self.assertIn("TimeoutError:regression_subprocess_timeout:core_profile_baseline:120s", result.payload["errors"][0])
+        self.assertIn("TimeoutError:regression_subprocess_timeout:core_profile_baseline:120s", result.payload["runs"][0]["error"])
+
+    def test_run_regression_subprocess_raises_timeout_error(self) -> None:
+        with patch(
+            "spark_intelligence.memory.architecture_soak.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd=["python"], timeout=30),
+        ):
+            with self.assertRaisesRegex(TimeoutError, "regression_subprocess_timeout:core_profile_baseline:30s"):
+                from spark_intelligence.memory.architecture_soak import _BenchmarkRunSpec, _run_regression_subprocess
+
+                _run_regression_subprocess(
+                    config_manager=self.config_manager,
+                    run_spec=_BenchmarkRunSpec(
+                        pack_id="core_profile_baseline",
+                        title="Core Profile Baseline",
+                        description="",
+                    ),
+                    output_dir=self.home / "artifacts" / "architecture-soak-timeout-direct",
+                    user_id="telegram-user",
+                    username="memory-soak",
+                    chat_id="telegram-chat",
+                    kb_limit=25,
+                    validator_root=None,
+                    baseline_names=["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
+                    run_timeout_seconds=30,
+                )
 
     def test_default_benchmark_pack_suite_grows_beyond_original_nine_packs(self) -> None:
         packs = default_telegram_memory_benchmark_packs()

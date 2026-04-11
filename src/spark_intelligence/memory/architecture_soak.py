@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -73,6 +76,7 @@ def run_telegram_memory_architecture_soak(
     categories: list[str] | None = None,
     benchmark_pack_ids: list[str] | None = None,
     baseline_names: list[str] | None = None,
+    run_timeout_seconds: float | None = None,
 ) -> TelegramArchitectureSoakResult:
     resolved_output_dir = Path(output_dir) if output_dir else config_manager.paths.home / "artifacts" / "telegram-memory-architecture-soak"
     resolved_output_dir.mkdir(parents=True, exist_ok=True)
@@ -97,6 +101,7 @@ def run_telegram_memory_architecture_soak(
                 "failed_runs": 0,
                 "benchmark_mode": "invalid_request",
                 "memory_namespace_mode": "isolated_per_run",
+                "per_run_timeout_seconds": float(run_timeout_seconds) if run_timeout_seconds else None,
                 "baseline_names": list(resolved_baseline_names),
                 "benchmark_pack_count": 0,
                 "benchmark_pack_ids": [],
@@ -146,22 +151,19 @@ def run_telegram_memory_architecture_soak(
                 external_user_id=run_user_id,
                 username=username or f"Memory Soak {run_spec.pack_id}",
             )
-            regression_result = run_telegram_memory_regression(
+            regression_payload = _run_soak_regression(
                 config_manager=config_manager,
                 state_db=state_db,
+                run_spec=run_spec,
                 output_dir=run_output_dir,
                 user_id=run_user_id,
                 username=username or "memory-soak",
                 chat_id=run_chat_id,
                 kb_limit=kb_limit,
                 validator_root=validator_root,
-                write_path=run_output_dir / "telegram-memory-regression.json",
-                case_ids=list(run_spec.case_ids) or None,
-                categories=list(run_spec.categories) or None,
-                cases=list(run_spec.cases) if run_spec.cases is not None else None,
                 baseline_names=requested_baseline_names or None,
+                run_timeout_seconds=run_timeout_seconds,
             )
-            regression_payload = regression_result.payload if isinstance(regression_result.payload, dict) else {}
             live_comparison_payload = (
                 regression_payload.get("architecture_live_comparison")
                 if isinstance(regression_payload.get("architecture_live_comparison"), dict)
@@ -268,6 +270,7 @@ def run_telegram_memory_architecture_soak(
             resolved_write_path=resolved_write_path,
             status="running" if index < requested_runs else "completed",
             baseline_names=resolved_baseline_names,
+            per_run_timeout_seconds=run_timeout_seconds,
         )
         resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         if sleep_seconds > 0 and index < requested_runs:
@@ -285,9 +288,140 @@ def run_telegram_memory_architecture_soak(
         resolved_write_path=resolved_write_path,
         status="completed",
         baseline_names=resolved_baseline_names,
+        per_run_timeout_seconds=run_timeout_seconds,
     )
     resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return TelegramArchitectureSoakResult(output_dir=resolved_output_dir, payload=payload)
+
+
+def _run_soak_regression(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    run_spec: _BenchmarkRunSpec,
+    output_dir: Path,
+    user_id: str,
+    username: str,
+    chat_id: str,
+    kb_limit: int,
+    validator_root: str | Path | None,
+    baseline_names: list[str] | None,
+    run_timeout_seconds: float | None,
+) -> dict[str, Any]:
+    if run_timeout_seconds and float(run_timeout_seconds) > 0:
+        return _run_regression_subprocess(
+            config_manager=config_manager,
+            run_spec=run_spec,
+            output_dir=output_dir,
+            user_id=user_id,
+            username=username,
+            chat_id=chat_id,
+            kb_limit=kb_limit,
+            validator_root=validator_root,
+            baseline_names=baseline_names,
+            run_timeout_seconds=float(run_timeout_seconds),
+        )
+    regression_result = run_telegram_memory_regression(
+        config_manager=config_manager,
+        state_db=state_db,
+        output_dir=output_dir,
+        user_id=user_id,
+        username=username,
+        chat_id=chat_id,
+        kb_limit=kb_limit,
+        validator_root=validator_root,
+        write_path=output_dir / "telegram-memory-regression.json",
+        case_ids=list(run_spec.case_ids) or None,
+        categories=list(run_spec.categories) or None,
+        cases=list(run_spec.cases) if run_spec.cases is not None else None,
+        baseline_names=baseline_names,
+    )
+    return regression_result.payload if isinstance(regression_result.payload, dict) else {}
+
+
+def _run_regression_subprocess(
+    *,
+    config_manager: ConfigManager,
+    run_spec: _BenchmarkRunSpec,
+    output_dir: Path,
+    user_id: str,
+    username: str,
+    chat_id: str,
+    kb_limit: int,
+    validator_root: str | Path | None,
+    baseline_names: list[str] | None,
+    run_timeout_seconds: float,
+) -> dict[str, Any]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    write_path = output_dir / "telegram-memory-regression.json"
+    repo_root = Path(__file__).resolve().parents[3]
+    repo_src = repo_root / "src"
+    env = os.environ.copy()
+    existing_pythonpath = str(env.get("PYTHONPATH") or "").strip()
+    env["PYTHONPATH"] = (
+        str(repo_src) if not existing_pythonpath else os.pathsep.join([str(repo_src), existing_pythonpath])
+    )
+    command = [
+        sys.executable,
+        "-m",
+        "spark_intelligence.cli",
+        "memory",
+        "run-telegram-regression",
+        "--home",
+        str(config_manager.paths.home),
+        "--output-dir",
+        str(output_dir),
+        "--user-id",
+        user_id,
+        "--username",
+        username,
+        "--chat-id",
+        chat_id,
+        "--kb-limit",
+        str(kb_limit),
+        "--write",
+        str(write_path),
+        "--json",
+    ]
+    if validator_root:
+        command.extend(["--validator-root", str(validator_root)])
+    for baseline_name in baseline_names or []:
+        if str(baseline_name).strip():
+            command.extend(["--baseline", str(baseline_name)])
+    if run_spec.pack_id != "user_selected_slice":
+        command.extend(["--benchmark-pack", run_spec.pack_id])
+    else:
+        for case_id in run_spec.case_ids:
+            if str(case_id).strip():
+                command.extend(["--case-id", str(case_id)])
+        for category in run_spec.categories:
+            if str(category).strip():
+                command.extend(["--category", str(category)])
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=repo_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=float(run_timeout_seconds),
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise TimeoutError(
+            f"regression_subprocess_timeout:{run_spec.pack_id}:{float(run_timeout_seconds):g}s"
+        ) from exc
+    payload: dict[str, Any] = {}
+    if write_path.exists():
+        payload = json.loads(write_path.read_text(encoding="utf-8"))
+    elif (completed.stdout or "").strip():
+        payload = json.loads(completed.stdout)
+    if payload:
+        return payload
+    stderr_tail = ((completed.stderr or completed.stdout or "").strip().splitlines() or [""])[-1]
+    raise RuntimeError(
+        f"regression_subprocess_exit:{completed.returncode}:{run_spec.pack_id}:{stderr_tail[:200]}"
+    )
 
 
 def _build_run_specs(
@@ -471,6 +605,7 @@ def _build_soak_payload(
     resolved_write_path: Path,
     status: str,
     baseline_names: list[str],
+    per_run_timeout_seconds: float | None,
 ) -> dict[str, Any]:
     aggregate_rows = _finalize_aggregate_rows(baseline_aggregate)
     selector_aggregate_rows = _finalize_aggregate_rows(selector_baseline_aggregate)
@@ -523,6 +658,7 @@ def _build_soak_payload(
         "failed_runs": sum(1 for run in run_payloads if run.get("error")),
         "benchmark_mode": "varied_pack_suite" if len(benchmark_pack_rows) > 1 else "fixed_selection",
         "memory_namespace_mode": "isolated_per_run",
+        "per_run_timeout_seconds": float(per_run_timeout_seconds) if per_run_timeout_seconds else None,
         "baseline_names": list(baseline_names),
         "benchmark_pack_count": len(benchmark_pack_rows),
         "benchmark_pack_ids": [str(pack.get("pack_id") or "unknown") for pack in benchmark_pack_rows],

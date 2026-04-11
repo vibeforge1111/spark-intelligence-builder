@@ -124,6 +124,7 @@ spark-intelligence memory run-telegram-regression \
 
 spark-intelligence memory soak-architectures \
   --runs 27 \
+  --run-timeout-seconds 300 \
   --baseline summary_synthesis_memory \
   --baseline dual_store_event_calendar_hybrid
 ```
@@ -195,6 +196,7 @@ Current live separation note:
 - the long-horizon, abstention, anti-personalization, identity-synthesis, loaded-context, and identity-under-recency packs are all currently health gates, not deciding promotion signals
 - soak summaries now expose `selector_pack_ids` and `health_gate_pack_ids`, and only the selector packs feed `overall_leader_names` and `recommended_top_two`
 - soak reruns now also use fresh suite-specific Telegram namespaces, and regression setup seeds a deterministic agent name, so selector packs are no longer allowed to inherit stale onboarding residue from older runs
+- soak runs now execute each benchmark pack through a subprocess-enforced per-pack timeout, so one hung Telegram regression cannot stall the whole suite forever
 - the event-calendar lane now includes native Telegram history queries for overwritten profile facts, so chronology regressions can be caught in the live runtime rather than only through proxy prompts
 - the current clean soak has no selector packs requiring work
 - `mission_explanation` and `startup_explanation_after_founder` now have direct profile-explanation support in the chip-side benchmark runtime, which removed the shared explanation misses from the live suite

@@ -1681,6 +1681,12 @@ def build_parser() -> argparse.ArgumentParser:
     memory_architecture_soak_parser.add_argument("--output-dir", help="Soak artifact output directory")
     memory_architecture_soak_parser.add_argument("--runs", type=int, default=50, help="Number of benchmark-pack runs to execute")
     memory_architecture_soak_parser.add_argument("--sleep-seconds", type=float, default=0.0, help="Optional delay between runs")
+    memory_architecture_soak_parser.add_argument(
+        "--run-timeout-seconds",
+        type=float,
+        default=300.0,
+        help="Fail one soak run if its Telegram regression subprocess exceeds this many seconds",
+    )
     memory_architecture_soak_parser.add_argument("--user-id", help="Explicit Telegram user id to simulate")
     memory_architecture_soak_parser.add_argument("--username", help="Telegram username to simulate")
     memory_architecture_soak_parser.add_argument("--chat-id", help="Explicit Telegram chat id override")
@@ -4583,6 +4589,7 @@ def handle_memory_soak_architectures(args: argparse.Namespace) -> int:
         categories=args.category,
         benchmark_pack_ids=args.benchmark_pack,
         baseline_names=args.baseline,
+        run_timeout_seconds=args.run_timeout_seconds,
     )
     print(result.to_json() if args.json else result.to_text())
     payload = result.payload if isinstance(result.payload, dict) else {}

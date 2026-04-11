@@ -147,6 +147,8 @@ class MemoryCliKnowledgeBaseTests(SparkTestCase):
                 "5",
                 "--sleep-seconds",
                 "0.5",
+                "--run-timeout-seconds",
+                "90",
                 "--user-id",
                 "12345",
                 "--chat-id",
@@ -177,6 +179,7 @@ class MemoryCliKnowledgeBaseTests(SparkTestCase):
         self.assertEqual(kwargs["output_dir"], str(output_dir))
         self.assertEqual(kwargs["runs"], 5)
         self.assertEqual(kwargs["sleep_seconds"], 0.5)
+        self.assertEqual(kwargs["run_timeout_seconds"], 90.0)
         self.assertEqual(kwargs["user_id"], "12345")
         self.assertEqual(kwargs["chat_id"], "12345")
         self.assertEqual(kwargs["kb_limit"], 12)

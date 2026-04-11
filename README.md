@@ -79,6 +79,7 @@ Current memory benchmarking program:
 - latest clean live `14/14` soak favors `summary_synthesis_memory` at `92/92` overall and `64/64` on selector packs
 - the latest offline ProductMemory benchmark is tied between `summary_synthesis_memory` and `dual_store_event_calendar_hybrid` at `1156/1266`
 - the runtime is now pinned to `summary_synthesis_memory` because it leads live Telegram and no longer trails offline ProductMemory on accuracy
+- soak runs now enforce a per-pack timeout so one hung Telegram regression cannot freeze the full benchmark suite
 - benchmark upgrades are not promoted on offline scorecards alone
 - the same contenders must also stay green on live Telegram regression and soak runs
 
