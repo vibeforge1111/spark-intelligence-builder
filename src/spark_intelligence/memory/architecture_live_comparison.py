@@ -808,6 +808,12 @@ def _required_live_match_fragments(
     question_text: str,
     expected_fragments: Sequence[str],
 ) -> list[str]:
+    if _is_explanation_like_prediction(category=category, question_text=question_text):
+        return [
+            fragment
+            for fragment in expected_fragments
+            if fragment.strip().lower() not in _EXPLANATION_STYLE_ONLY_FRAGMENTS
+        ]
     if category != "explanation":
         if category == "event_history":
             lowered_question = str(question_text or "").strip().lower()
@@ -816,11 +822,7 @@ def _required_live_match_fragments(
             if lowered_question.startswith("what was my previous country"):
                 return list(expected_fragments[:1])
         return list(expected_fragments)
-    return [
-        fragment
-        for fragment in expected_fragments
-        if fragment.strip().lower() not in _EXPLANATION_STYLE_ONLY_FRAGMENTS
-    ]
+    return list(expected_fragments)
 
 
 def _is_explanation_like_prediction(*, category: str, question_text: str) -> bool:

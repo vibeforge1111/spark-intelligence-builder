@@ -192,6 +192,7 @@ Current live separation note:
 - the tightened `temporal_conflict_gauntlet` now also carries native history cases, and that conflict-heavy targeted rerun currently gives a cleaner live win to `dual_store_event_calendar_hybrid` than the standalone chronology pack does
 - the same overwrite-history cases now also sharpen `contradiction_and_recency`, and on the corrected fresh-namespace soak that pack also favors `dual_store_event_calendar_hybrid`, which means chronology is directly improving separation in the most important overwrite lanes instead of only living in a sidecar chronology pack
 - the live architecture comparison now treats explicit `previous state` questions as historical-value checks rather than requiring both the previous and current values, while true event-listing prompts still have to show multi-fragment chronology
+- explanation-like staleness prompts such as `How do you know my startup?` now ignore style-only fragments like `saved memory record` during live matching, so the selector packs measure factual evidence retrieval instead of phrasing noise
 
 ## Next benchmark expansions
 

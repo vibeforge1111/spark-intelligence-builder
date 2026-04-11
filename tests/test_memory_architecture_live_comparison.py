@@ -201,6 +201,16 @@ class MemoryArchitectureLiveComparisonTests(SparkTestCase):
             ["Dubai", "Abu Dhabi"],
         )
 
+    def test_required_live_match_fragments_strips_explanation_style_only_fragment_for_staleness_explanations(self) -> None:
+        self.assertEqual(
+            _required_live_match_fragments(
+                category="staleness",
+                question_text="How do you know my startup?",
+                expected_fragments=["saved memory record", "Seedify"],
+            ),
+            ["Seedify"],
+        )
+
     def test_baseline_row_excludes_explanation_like_questions_from_substantive_scorecard_accuracy(self) -> None:
         sample_specs = [
             {

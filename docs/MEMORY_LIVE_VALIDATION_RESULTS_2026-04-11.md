@@ -81,6 +81,7 @@ The benchmark-pack CLI path now runs custom Telegram variants directly:
 - regression setup now seeds the canonical agent name to `Atlas`, and each soak invocation now uses a fresh suite token in its user/chat namespace
 - after that harness fix, the fresh contradiction-and-recency soak run also moved to `dual_store_event_calendar_hybrid`, so the previous contradiction tie was not a stable runtime verdict
 - the architecture comparison now only requires the historical fragment for explicit `previous state` questions like `Where did I live before?` and `What was my previous country?`, while still keeping full chronology requirements for true event-listing prompts
+- the scorer now also strips style-only fragments like `saved memory record` from explanation-like staleness prompts such as `How do you know my startup?`, so those lanes no longer penalize factual evidence answers for missing narration boilerplate
 - the live architecture comparison for that proxy pack compares `8` cases and currently favors `dual_store_event_calendar_hybrid`
 
 ## Interpretation
