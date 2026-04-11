@@ -10,6 +10,7 @@ Related memory substrate repo: `C:\Users\USER\Desktop\domain-chip-memory`
 - The live runtime still runs through the governed `SparkMemorySDK` / `domain_chip_memory` stack.
 - The benchmark harness was expanded from a fixed Telegram replay into a varied pack suite.
 - The soak/reporting logic was then hardened so zero-signal categories no longer look like meaningful ties.
+- The soak path now also enforces a per-pack timeout so one hung Telegram regression cannot freeze the full suite.
 - The current default serious comparison loop is now governed by `docs/MEMORY_REALTIME_BENCHMARK_PROGRAM_2026-04-11.md`.
 - The latest clean live `14`-pack soak now favors `summary_synthesis_memory`, while the latest offline ProductMemory benchmark is tied with both contenders at `1156/1266`.
 - Because the result is an offline tie plus a live `summary_synthesis_memory` lead, the runtime is now pinned to `summary_synthesis_memory`.
@@ -42,11 +43,13 @@ Current whole-suite decision:
 
 Latest clean live validation:
 
-- `.spark-intelligence/artifacts/telegram-memory-architecture-soak/telegram-memory-architecture-soak.json`
+- `.spark-intelligence/artifacts/telegram-memory-architecture-soak-post-timeout-v1/telegram-memory-architecture-soak.json`
 - status: `14/14` completed, `0` failed
+- per-pack timeout: `180` seconds
 - full-suite aggregate: `92/92` for `summary_synthesis_memory` vs `89/92` for `dual_store_event_calendar_hybrid`
 - selector-pack aggregate: `64/64` for `summary_synthesis_memory` vs `61/64` for `dual_store_event_calendar_hybrid`
 - that rerun was performed after terminating stale concurrent soak jobs that had been contaminating the shared artifact path
+- the first post-repin whole-suite rerun had stalled mid-suite, which is why this timeout-hardened artifact is now the source of truth
 - a later chip/runtime scoring pass then removed the shared explanation misses and eliminated alignment-only live tiebreaks, which is why the clean live margin widened materially
 - the latest pack-definition cleanup also converted `provenance_audit` into a clean tie by adding the missing `occupation_write` prerequisite it implicitly depended on
 
@@ -76,10 +79,9 @@ Why the contender pair changed:
 
 ## Important benchmark interpretation
 
-- There is still no current combined winner for the hardened offline-plus-live suite.
 - The current honest result is an offline tie plus a live `summary_synthesis_memory` lead.
-- The absolute performance is still weak.
-- The benchmark now honestly reports unresolved lanes instead of inventing ties.
+- The live side is no longer weak on the active suite: the latest clean whole-suite rerun is fully green.
+- The benchmark now honestly reports unresolved lanes instead of inventing ties, but there are no unresolved selector packs in the latest clean whole-suite artifact.
 
 Still unresolved / weak:
 - no live selector packs are currently unresolved
@@ -100,6 +102,7 @@ Main files:
 Key improvements already made:
 - varied benchmark packs instead of one fixed replay
 - isolated Telegram namespace per run
+- per-pack timeout enforcement for soak runs
 - negative checks for forbidden memory use
 - trust, grounding, abstention, and forbidden-clean metrics
 - zero-signal lanes no longer reported as leaders
@@ -131,7 +134,7 @@ Why they may keep tying:
    - temporal conflict resolution
    - abstention under tempting but irrelevant stored facts
    - provenance/explanation phrasing quality
-5. Keep rerunning the top two through those real-time packs, especially the current clean-soak selector packs that still require work: `provenance_audit`, `explanation_pressure_suite`, `event_calendar_lineage_proxy`, `temporal_conflict_gauntlet`, `quality_lane_gauntlet`, and `contradiction_and_recency`.
+5. Keep rerunning the top two through those real-time packs, but treat the latest timeout-hardened whole-suite artifact as the current live source of truth unless a newer clean rerun supersedes it.
 6. Keep rerunning the pinned `summary_synthesis_memory` runtime against the active challenger and only repin if the challenger wins both offline and live.
 
 Promotion rule:
@@ -143,7 +146,7 @@ Promotion rule:
 ## Good continuation point
 
 Tomorrow, resume from:
-- the latest clean `14/14` soak artifact at `C:\Users\USER\.spark-intelligence\artifacts\telegram-memory-architecture-soak\telegram-memory-architecture-soak.json`
+- the latest clean `14/14` soak artifact at `C:\Users\USER\.spark-intelligence\artifacts\telegram-memory-architecture-soak-post-timeout-v1\telegram-memory-architecture-soak.json`
 - the refreshed explanation-pack rerun at `C:\Users\USER\.spark-intelligence\artifacts\telegram-memory-regression-explanation-pack-v2`
 - the current default two-contender program in `docs/MEMORY_REALTIME_BENCHMARK_PROGRAM_2026-04-11.md`
 - the offline benchmark artifact at `C:\Users\USER\.spark-intelligence\artifacts\memory-architecture-benchmark\memory-architecture-benchmark.json`
