@@ -300,6 +300,7 @@ def _build_question_spec(
             "product_memory_task": _product_memory_task(case),
             "memory_operation": _memory_operation(case),
             "memory_scope": _memory_scope(case),
+            "expected_answer_candidate_source": _expected_answer_candidate_source(case=case, payload=payload),
             "expected_fragments": expected_fragments,
             "expected_forbidden_fragments": list(getattr(case, "expected_response_excludes", ()) or ()),
             "benchmark_tags": list(getattr(case, "benchmark_tags", ()) or ()),
@@ -386,6 +387,14 @@ def _memory_scope(case: Any) -> str:
     if str(getattr(case, "category", "")).strip() in {"identity", "identity_synthesis"}:
         return "multi_fact"
     return "single_fact"
+
+
+def _expected_answer_candidate_source(*, case: Any, payload: dict[str, Any]) -> str | None:
+    category = str(getattr(case, "category", "") or "").strip()
+    bridge_mode = str(payload.get("bridge_mode") or getattr(case, "expected_bridge_mode", "") or "").strip()
+    if category == "explanation" or bridge_mode == "memory_profile_fact_explanation":
+        return "evidence_memory"
+    return None
 
 
 def _safe_accuracy(value: Any) -> float:

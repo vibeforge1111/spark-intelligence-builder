@@ -48,8 +48,9 @@ Live leader rule:
 - live matched-case accuracy stays primary
 - trustworthiness is the first tie-break
 - grounding is the second tie-break
-- scorecard correctness only breaks ties after the live metrics are equal
-- scorecard alignment stays a last-resort tie-break
+- substantive scorecard correctness only breaks ties after the live metrics are equal
+- explanation-only exact-string scorecard differences do not decide the winner on their own
+- scorecard alignment stays the last-resort tie-break, but it is now used intentionally for explanation provenance lanes
 
 ## Live Telegram benchmark structure
 
@@ -87,6 +88,7 @@ The newest recency-heavy packs now also force:
 - identity recall to preserve occupation, timezone, founder, and mission under recency pressure
 - temporal conflict packs to prove retention of non-overwritten facts, not just the freshest overwrite
 - targeted pack runs to execute custom variant cases directly from the CLI instead of falling back to default regression ids
+- explanation cases to carry explicit `expected_answer_candidate_source = evidence_memory` so live provenance alignment is measured, not just surface phrasing
 
 ## Operator commands
 
@@ -156,6 +158,12 @@ A contender is only meaningfully better if it improves the combined picture:
 - soak consistency across multiple benchmark packs
 
 If one architecture wins BEAM or LongMemEval style lanes but loses abstention, provenance, overwrite, or live Telegram robustness, it is not the production winner yet.
+
+Current live separation note:
+
+- the broad live suite now separates the contenders again on explanation provenance alignment
+- `dual_store_event_calendar_hybrid` is the current whole-suite live soak leader because it preserves `evidence_memory` alignment on explanation-heavy packs where `summary_synthesis_memory` still falls back to `aggregate_memory`
+- the identity-under-recency targeted pack still ties, so it should be treated as a health gate, not as the deciding promotion signal
 
 ## Next benchmark expansions
 

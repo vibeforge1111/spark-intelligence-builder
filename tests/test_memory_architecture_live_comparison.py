@@ -283,6 +283,51 @@ class MemoryArchitectureLiveComparisonTests(SparkTestCase):
         self.assertEqual(abstention_question["evidence_session_ids"], [])
         self.assertEqual(abstention_question["metadata"]["expected_forbidden_fragments"], [])
 
+    def test_build_telegram_regression_sample_specs_sets_explanation_source_alignment_expectation(self) -> None:
+        selected_cases = [
+            next(case for case in DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES if case.case_id == "city_write"),
+            next(case for case in DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES if case.case_id == "city_explanation"),
+            next(case for case in DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES if case.case_id == "name_query"),
+        ]
+        case_payloads = [
+            {
+                "case_id": "city_write",
+                "decision": "allowed",
+                "bridge_mode": "memory_profile_fact_update",
+                "routing_decision": "memory_profile_fact_observation",
+                "response_text": "I'll remember you live in Dubai.",
+                "matched_expectations": True,
+            },
+            {
+                "case_id": "city_explanation",
+                "decision": "allowed",
+                "bridge_mode": "memory_profile_fact_explanation",
+                "routing_decision": "memory_profile_fact_explanation",
+                "response_text": "I know that from a saved memory record about Dubai.",
+                "matched_expectations": True,
+            },
+            {
+                "case_id": "name_query",
+                "decision": "allowed",
+                "bridge_mode": "memory_profile_fact",
+                "routing_decision": "memory_profile_fact_query",
+                "response_text": "Your name is Sarah.",
+                "matched_expectations": True,
+            },
+        ]
+
+        sample_specs = build_telegram_regression_sample_specs(
+            case_payloads=case_payloads,
+            selected_cases=selected_cases,
+        )
+
+        explanation_question = sample_specs[0]["questions"][0]
+        query_question = sample_specs[1]["questions"][0]
+        self.assertEqual(explanation_question["question_id"], "city_explanation")
+        self.assertEqual(explanation_question["metadata"]["expected_answer_candidate_source"], "evidence_memory")
+        self.assertEqual(query_question["question_id"], "name_query")
+        self.assertIsNone(query_question["metadata"]["expected_answer_candidate_source"])
+
     def test_compare_telegram_memory_architectures_writes_summary_and_picks_leader(self) -> None:
         selected_cases = [
             next(case for case in DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES if case.case_id == "name_write"),

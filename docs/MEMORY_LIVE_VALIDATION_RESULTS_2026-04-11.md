@@ -15,7 +15,7 @@ The goal was to keep offline ProductMemory comparison and live Telegram validati
 - KB compile: valid
 - KB probe coverage: `38/38` current-state and `38/38` evidence hits
 - Telegram soak status: `13/13` completed, `0` failed
-- Latest whole-suite soak result: full tie between `summary_synthesis_memory` and `dual_store_event_calendar_hybrid`
+- Latest whole-suite soak leader: `dual_store_event_calendar_hybrid`
 - Offline ProductMemory leader: `dual_store_event_calendar_hybrid`
 
 ## Soak Aggregate
@@ -23,7 +23,8 @@ The goal was to keep offline ProductMemory comparison and live Telegram validati
 - earlier live soak snapshot: `summary_synthesis_memory` at `36/72` vs `33/72`
 - earlier post-extraction whole-suite soak briefly reported `dual_store_event_calendar_hybrid` as leader, but that turned out to be a comparison-harness artifact
 - the live-comparison tie-break now ignores explanation-only exact-string scorecard differences when live accuracy, trustworthiness, and grounding already tie
-- latest corrected whole-suite soak: both contenders at `66/75`, `88.00%` aggregate accuracy, with `13/13` pack ties and no remaining live leader
+- the live-comparison harness now also sets explicit `expected_answer_candidate_source = evidence_memory` for explanation cases, so live provenance alignment is measured directly
+- latest corrected whole-suite soak: both contenders are still tied at `66/75`, `88.00%` aggregate accuracy, but `dual_store_event_calendar_hybrid` is the live leader by pack-level provenance alignment on explanation-heavy lanes
 
 ## What Tightened
 
@@ -31,13 +32,17 @@ The live suite is now stricter in the places that were still underreporting ambi
 
 - recency-heavy benchmark packs now include retention checks for occupation, timezone, founder, and mission
 - temporal conflict packs now test whether non-overwritten facts survive overwrite noise
-- live leader selection now breaks ties in this order: matched-case accuracy, trustworthiness, grounding, scorecard correctness, then scorecard alignment
+- live leader selection now breaks ties in this order: matched-case accuracy, trustworthiness, grounding, substantive scorecard correctness, then scorecard alignment
 - soak summary leader labels now use that same full tie-break signature instead of flattening back to raw accuracy only
+- explanation prompts now carry explicit source-alignment expectations, which means provenance behavior can create a real live leader instead of staying invisible behind surface-text ties
 
 ## Pack Readout
 
-- `temporal_conflict_gauntlet`: `dual_store_event_calendar_hybrid` wins the pack tie-break at `4/10` vs `4/10`
-- `explanation_pressure_suite`: `dual_store_event_calendar_hybrid` wins the pack tie-break at `2/5` vs `2/5`
+- `core_profile_baseline`: `dual_store_event_calendar_hybrid` now leads on explanation-source alignment while matched-case metrics stay tied
+- `provenance_audit`: `dual_store_event_calendar_hybrid` leads on explanation-source alignment
+- `explanation_pressure_suite`: `dual_store_event_calendar_hybrid` leads on explanation-source alignment
+- `interleaved_noise_resilience`: `dual_store_event_calendar_hybrid` leads after the same provenance alignment signal is carried through the noisy pack
+- `quality_lane_gauntlet`: `dual_store_event_calendar_hybrid` leads when explanation provenance is mixed with abstention and overwrite pressure
 - `identity_under_recency_pressure`: the latest targeted rerun is now a full `11/11` tie after chip-side extraction and profile-query routing fixes
 
 ## Targeted Pack Validation
@@ -56,12 +61,13 @@ The benchmark-pack CLI path now runs custom Telegram variants directly:
 
 ## Interpretation
 
-The current decision is now blocked on new separating evidence rather than old harness noise:
+The current decision now has a real live separator again:
 
 1. `summary_synthesis_memory` is still the pinned runtime architecture and still matches the targeted live regression leader set.
-2. `dual_store_event_calendar_hybrid` still leads the offline ProductMemory benchmark.
-3. The targeted identity pack no longer separates the contenders, and the corrected 13-pack live soak no longer separates them either.
-4. Promotion still should not happen on offline scorecards alone; the next move has to be adding new live packs that expose a real behavioral difference.
+2. `dual_store_event_calendar_hybrid` leads the offline ProductMemory benchmark.
+3. `dual_store_event_calendar_hybrid` also leads the corrected 13-pack live soak once explanation provenance alignment is measured explicitly.
+4. The targeted identity pack still does not separate the contenders, so it should remain a regression gate, not the sole promotion driver.
+5. Promotion still should not happen on offline scorecards alone, but the live suite now has a meaningful provenance-based separator instead of only harness noise.
 
 ## Runtime Selector
 
@@ -79,4 +85,6 @@ The Builder runtime contract now explicitly reports `summary_synthesis_memory` a
 - `.spark-intelligence/artifacts/telegram-memory-regression-identity-pack-v3/architecture-live-comparison/telegram-memory-architecture-live-comparison.json`
 - `.spark-intelligence/artifacts/telegram-memory-regression-identity-pack-v9/telegram-memory-regression.json`
 - `.spark-intelligence/artifacts/telegram-memory-regression-identity-pack-v9/architecture-live-comparison/telegram-memory-architecture-live-comparison.json`
+- `.spark-intelligence/artifacts/telegram-memory-regression-explanation-pack-v1/telegram-memory-regression.json`
+- `.spark-intelligence/artifacts/telegram-memory-regression-explanation-pack-v1/architecture-live-comparison/telegram-memory-architecture-live-comparison.json`
 - `.spark-intelligence/artifacts/telegram-memory-architecture-soak/telegram-memory-architecture-soak.json`
