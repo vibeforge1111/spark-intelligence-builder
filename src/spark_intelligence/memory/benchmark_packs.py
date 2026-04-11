@@ -481,12 +481,12 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
             pack_id="event_calendar_lineage_proxy",
             title="Event Calendar Lineage Proxy",
             description=(
-                "A chronology-sensitive proxy lane for event-ordering and calendar-style recall using only the "
-                "currently supported Telegram memory prompts. Until Telegram exposes native historical-state or "
-                "event queries, this pack stresses overwrite sequencing, stale explanations, and timeline-aware "
-                "profile summaries as the closest live approximation."
+                "A chronology-sensitive lane for event-ordering and calendar-style recall that now mixes native "
+                "Telegram historical-state/event queries with the older overwrite and summary proxy prompts. "
+                "This pack is the live checkpoint for whether chronology survives both direct history questions "
+                "and regular profile-memory pressure."
             ),
-            focus_areas=("event_ordering_proxy", "calendar_proxy", "temporal_lineage", "lineage_proxy"),
+            focus_areas=("event_ordering_proxy", "calendar_proxy", "temporal_lineage", "lineage_proxy", "native_history"),
             cases=(
                 *_existing(
                     "startup_write",
@@ -499,6 +499,9 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
                     "country_write",
                     "country_overwrite",
                     "country_query_after_overwrite",
+                    "city_history_query_after_overwrite",
+                    "country_history_query_after_overwrite",
+                    "city_event_history_query_after_overwrite",
                     "timezone_write",
                     "occupation_write",
                     "mission_write",

@@ -81,7 +81,7 @@ That means the live loop already tests:
 - noisy interleaved real-time interaction pressure
 - loaded-context anti-hallucination pressure
 - temporal lineage proxies under overwrite pressure
-- event-ordering and calendar-style pressure through a chronology-sensitive proxy pack built from currently supported Telegram prompts
+- event-ordering and calendar-style pressure through a chronology-sensitive pack that now mixes proxy pressure with native Telegram history queries
 - profile-summary coherence after recency conflicts
 
 The newest recency-heavy packs now also force:
@@ -91,7 +91,7 @@ The newest recency-heavy packs now also force:
 - temporal conflict packs to prove retention of non-overwritten facts, not just the freshest overwrite
 - targeted pack runs to execute custom variant cases directly from the CLI instead of falling back to default regression ids
 - explanation cases to carry explicit `expected_answer_candidate_source = evidence_memory` so live provenance alignment is measured, not just surface phrasing
-- an explicit `event_calendar_lineage_proxy` pack to approximate event-ordering and calendar-style stress until Telegram exposes native historical-state or event queries
+- an explicit `event_calendar_lineage_proxy` pack that now includes native Telegram historical-state and event-history questions on top of the older chronology proxy lanes
 
 ## Operator commands
 
@@ -138,7 +138,7 @@ spark-intelligence memory run-telegram-regression \
   --baseline dual_store_event_calendar_hybrid
 ```
 
-Focused chronology proxy run:
+Focused chronology run:
 
 ```bash
 spark-intelligence memory run-telegram-regression \
@@ -177,7 +177,7 @@ Current live separation note:
 - `dual_store_event_calendar_hybrid` is the current whole-suite live soak leader because it preserves `evidence_memory` alignment on explanation-heavy packs where `summary_synthesis_memory` still falls back to `aggregate_memory`
 - the runtime selector is now pinned to `dual_store_event_calendar_hybrid` because it won both the offline ProductMemory comparison and the corrected live Telegram soak
 - the identity-under-recency targeted pack still ties, so it should be treated as a health gate, not as the deciding promotion signal
-- the new event-calendar lane is currently a proxy benchmark, not a native Telegram event-query surface, so any future promotion on true calendar recall still requires exposing those queries in the runtime
+- the event-calendar lane now includes native Telegram history queries for overwritten profile facts, so chronology regressions can be caught in the live runtime rather than only through proxy prompts
 
 ## Next benchmark expansions
 

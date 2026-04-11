@@ -60,8 +60,10 @@ The benchmark-pack CLI path now runs custom Telegram variants directly:
 - the newest targeted rerun at `telegram-memory-regression-identity-pack-v9` still matched `21/21` on live Telegram with `48/48` current-state and `48/48` evidence hits
 - the live architecture comparison for the same targeted pack now compares `11` cases and ties `summary_synthesis_memory` vs `dual_store_event_calendar_hybrid` at `11/11`
 - this is a materially better tie than the earlier `2/11`: the targeted identity pack is no longer exposing synthesis misses, but it also no longer separates the two contenders on its own
-- the new `event_calendar_lineage_proxy` pack is explicitly a chronology-sensitive proxy rather than a native event-query surface, but it already runs live end-to-end
-- the first targeted proxy rerun at `telegram-memory-regression-event-calendar-proxy-v1` matched `17/17` on live Telegram with `23/23` current-state and `23/23` evidence probe hits
+- the `event_calendar_lineage_proxy` pack now includes native Telegram history and event-history questions for overwritten profile facts instead of staying proxy-only
+- the first filtered live rerun failed `0/3` only because it skipped the prerequisite write cases and hit an empty synthetic namespace
+- after adding inspection-backed chronology fallback, the full pack rerun went `20/20` on live Telegram with `23/23` current-state and `23/23` evidence probe hits
+- the new green chronology cases are `city_history_query_after_overwrite`, `country_history_query_after_overwrite`, and `city_event_history_query_after_overwrite`
 - the live architecture comparison for that proxy pack compares `8` cases and currently favors `dual_store_event_calendar_hybrid`
 
 ## Interpretation
@@ -96,5 +98,7 @@ The Builder runtime contract now explicitly reports `dual_store_event_calendar_h
 - `.spark-intelligence/artifacts/telegram-memory-regression-explanation-pack-v2/architecture-live-comparison/telegram-memory-architecture-live-comparison.json`
 - `.spark-intelligence/artifacts/telegram-memory-regression-event-calendar-proxy-v1/telegram-memory-regression.json`
 - `.spark-intelligence/artifacts/telegram-memory-regression-event-calendar-proxy-v1/architecture-live-comparison/telegram-memory-architecture-live-comparison.json`
+- `.spark-intelligence/artifacts/telegram-memory-regression/telegram-memory-regression.json`
+- `.spark-intelligence/artifacts/telegram-memory-regression/regression-summary.md`
 - `.spark-intelligence/artifacts/telegram-memory-architecture-soak/telegram-memory-architecture-soak.json`
 - `.spark-intelligence/artifacts/telegram-memory-architecture-soak-post-repin-v1/telegram-memory-architecture-soak.json`

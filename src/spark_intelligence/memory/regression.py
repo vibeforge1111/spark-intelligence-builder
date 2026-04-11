@@ -282,6 +282,30 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         expected_routing_decision="memory_profile_fact_query",
         expected_response_contains=("Abu Dhabi",),
     ),
+    TelegramMemoryRegressionCase(
+        case_id="city_history_query_after_overwrite",
+        category="event_history",
+        message="Where did I live before?",
+        expected_bridge_mode="memory_profile_fact_history",
+        expected_routing_decision="memory_profile_fact_history_query",
+        expected_response_contains=("Dubai", "Abu Dhabi"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="country_history_query_after_overwrite",
+        category="event_history",
+        message="What was my previous country?",
+        expected_bridge_mode="memory_profile_fact_history",
+        expected_routing_decision="memory_profile_fact_history_query",
+        expected_response_contains=("UAE", "Canada"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="city_event_history_query_after_overwrite",
+        category="event_history",
+        message="What memory events do you have about where I live?",
+        expected_bridge_mode="memory_profile_event_history",
+        expected_routing_decision="memory_profile_event_history_query",
+        expected_response_contains=("Dubai", "Abu Dhabi"),
+    ),
 )
 
 

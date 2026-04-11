@@ -3342,12 +3342,23 @@ def build_researcher_reply(
                     if str(record.get("predicate") or "").strip() == target_predicate
                 ]
             )
+        history_read_method = "retrieve_events"
+        if not history_records:
+            inspection_records, _ = _inspect_profile_fact_records(
+                config_manager=config_manager,
+                state_db=state_db,
+                human_id=human_id,
+                predicate=target_predicate,
+                actor_id="researcher_bridge",
+            )
+            history_records = _ordered_profile_fact_event_records(inspection_records)
+            if history_records:
+                history_read_method = "inspect_current_state_history"
         previous_record = _select_previous_profile_fact_record(
             current_value=current_value,
             records=history_records,
         )
         previous_value = None
-        history_read_method = "retrieve_events"
         if previous_record is not None:
             previous_value = _profile_fact_record_value(previous_record)
             previous_as_of = str(previous_record.get("timestamp") or "").strip()
@@ -3362,7 +3373,10 @@ def build_researcher_reply(
                 )
                 if not historical_lookup.read_result.abstained and historical_lookup.read_result.records:
                     previous_value = _profile_fact_record_value(historical_lookup.read_result.records[0]) or previous_value
-                    history_read_method = "get_historical_state+retrieve_events"
+                    if history_read_method == "inspect_current_state_history":
+                        history_read_method = "get_historical_state+inspect_current_state_history"
+                    else:
+                        history_read_method = "get_historical_state+retrieve_events"
         output_keepability, promotion_disposition = _bridge_output_classification(
             mode="memory_profile_fact_history",
             routing_decision="memory_profile_fact_history_query",
@@ -3454,6 +3468,18 @@ def build_researcher_reply(
                     if str(record.get("predicate") or "").strip() == target_predicate
                 ]
             )
+        history_read_method = "retrieve_events"
+        if not history_records:
+            inspection_records, _ = _inspect_profile_fact_records(
+                config_manager=config_manager,
+                state_db=state_db,
+                human_id=human_id,
+                predicate=target_predicate,
+                actor_id="researcher_bridge",
+            )
+            history_records = _ordered_profile_fact_event_records(inspection_records)
+            if history_records:
+                history_read_method = "inspect_current_state_history"
         output_keepability, promotion_disposition = _bridge_output_classification(
             mode="memory_profile_event_history",
             routing_decision="memory_profile_event_history_query",
@@ -3467,7 +3493,7 @@ def build_researcher_reply(
             "status=memory_profile_event_history "
             f"predicate={target_predicate or 'unknown'} "
             f"event_count={len(history_records)} "
-            "read_method=retrieve_events"
+            f"read_method={history_read_method}"
         )
         record_event(
             state_db,
@@ -3497,7 +3523,7 @@ def build_researcher_reply(
                     "predicate": target_predicate,
                     "label": detected_profile_fact_query.label,
                     "event_record_count": len(history_records),
-                    "read_method": "retrieve_events",
+                    "read_method": history_read_method,
                 },
             ),
         )
