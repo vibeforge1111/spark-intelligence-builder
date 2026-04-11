@@ -89,10 +89,13 @@ Operator shortcut:
 
 - `powershell -ExecutionPolicy Bypass -File .\scripts\run_memory_two_contender_validation.ps1`
 - `powershell -ExecutionPolicy Bypass -File .\scripts\run_memory_automation_tests.ps1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\run_memory_validated_full_cycle.ps1`
 - by default it writes each full run into a timestamped artifact root under `.spark-intelligence\artifacts\memory-validation-runs\`
 - use `run_memory_automation_tests.ps1` for fast wrapper/renderer/harness regression checks without running the live Telegram soak
+- use `run_memory_validated_full_cycle.ps1` when you want the fast automation preflight and the real full validation in one command
 - it also refreshes `.spark-intelligence\artifacts\memory-validation-runs\latest-run.json` to point at the newest run manifest
 - it refreshes `.spark-intelligence\artifacts\memory-validation-runs\latest-full-run.json` only when a full benchmark + regression + soak run exists
+- use `-SkipBaselinePublish` on ad hoc smoke runs when you do not want a short or experimental full run to replace the canonical published baseline
 - on full runs it also preserves `.spark-intelligence\artifacts\memory-validation-runs\previous-full-run.json` and writes a per-run `validation-delta.md`
 - it also auto-refreshes [docs/MEMORY_FAILURE_LEDGER_2026-04-11.md](./docs/MEMORY_FAILURE_LEDGER_2026-04-11.md) from the newest run
 - it also auto-refreshes the baseline sections in [README.md](./README.md), [docs/MEMORY_LIVE_VALIDATION_RESULTS_2026-04-11.md](./docs/MEMORY_LIVE_VALIDATION_RESULTS_2026-04-11.md), and [docs/MEMORY_BENCHMARK_HANDOFF_2026-04-11.md](./docs/MEMORY_BENCHMARK_HANDOFF_2026-04-11.md) from the newest full run

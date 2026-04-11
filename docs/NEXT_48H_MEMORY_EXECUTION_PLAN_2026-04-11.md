@@ -83,6 +83,12 @@ Fast preflight for harness-only changes:
 powershell -ExecutionPolicy Bypass -File .\scripts\run_memory_automation_tests.ps1
 ```
 
+Chained preflight + full validation:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_memory_validated_full_cycle.ps1
+```
+
 What it already gives us:
 
 - fixed contender pair
@@ -99,6 +105,12 @@ What the fast preflight gives us:
 - renderer coverage for baseline docs, failure ledger, and validation delta
 - chip-side Builder baseline sync coverage when the sibling repo is present
 
+What the chained entrypoint gives us:
+
+- fast automation preflight first
+- then the real full Builder/Telegram validation only if the harness layer is green
+- a cleaner default for end-to-end operator runs
+
 Stable pointer for the latest run:
 
 ```text
@@ -111,6 +123,7 @@ This is the exact loop to repeat.
 
 1. Run the wrapper.
 2. If the change only touches the wrapper, renderers, pointers, manifests, or docs, run the fast automation preflight first.
+   For the normal end-to-end path, prefer `run_memory_validated_full_cycle.ps1` so the preflight happens automatically.
 3. Read the latest run manifest and the produced soak/regression artifacts.
 4. Identify only real live misses or weak selector-pack separations.
 5. Bucket each issue into a small failure taxonomy.
@@ -119,6 +132,10 @@ This is the exact loop to repeat.
 8. If the targeted result improves, rerun the full wrapper.
 9. If the full wrapper stays green, keep the change.
 10. If the full wrapper regresses, revert the idea or narrow the patch.
+
+Ad hoc smoke rule:
+
+- if you run a shortened or experimental full cycle, pass `-SkipBaselinePublish` so the canonical `latest-full-run.json` and auto-refreshed docs stay pinned to the last serious full baseline
 
 ## Failure taxonomy
 

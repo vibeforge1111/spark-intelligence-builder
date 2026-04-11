@@ -128,11 +128,22 @@ Fast automation-only check:
 powershell -ExecutionPolicy Bypass -File .\scripts\run_memory_automation_tests.ps1
 ```
 
+Chained preflight + full validation:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_memory_validated_full_cycle.ps1
+```
+
 By default that wrapper writes to a timestamped output root under `.spark-intelligence/artifacts/memory-validation-runs/`, so one full validation pass does not overwrite another.
 It also refreshes `.spark-intelligence/artifacts/memory-validation-runs/latest-run.json`, which points at the newest `run-summary.json` manifest.
 It refreshes `.spark-intelligence/artifacts/memory-validation-runs/latest-full-run.json` only for full validation runs, and the failure ledger is generated from that full-run pointer rather than from arbitrary no-op runs.
 
 Use the fast automation runner before speculative wrapper or renderer edits. It validates the PowerShell wrapper, baseline renderers, failure ledger, delta renderer, and chip-side sync tests without consuming a live Telegram soak run.
+Use the chained full-cycle wrapper when you want that same fast preflight to gate the real live Builder/Telegram run automatically.
+
+Important publish rule:
+
+- ad hoc smoke runs or shortened full runs should use `-SkipBaselinePublish` so they do not replace the canonical `latest-full-run.json` baseline or auto-refreshed docs
 
 The same full-run path now also auto-refreshes the baseline sections in Builder's README and memory handoff docs. When `domain-chip-memory` is present as the sibling substrate repo, that same full-run path also refreshes the chip-side Builder-alignment docs so both repos stay on the same runtime baseline without manual patching.
 It now also refreshes `docs/MEMORY_FAILURE_LEDGER_2026-04-11.md` from that newest full run, so the ledger and the full validation pointer stay in sync.
