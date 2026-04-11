@@ -12,7 +12,7 @@ The goal was to keep offline ProductMemory comparison and live Telegram validati
 ## Confirmed Results
 
 <!-- AUTO_MEMORY_BASELINE_LIVE_RESULTS_START -->
-- Latest clean full validation root: `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\20260412-021554`
+- Latest clean full validation root: `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\20260412-023241`
 - Stable latest full-run pointer: `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\latest-full-run.json`
 - Stable previous full-run pointer: `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\previous-full-run.json`
 - Live Telegram regression: `34/34` matched
@@ -25,10 +25,10 @@ The goal was to keep offline ProductMemory comparison and live Telegram validati
 - Offline ProductMemory result: tied at `1156/1266` between `summary_synthesis_memory` and `dual_store_event_calendar_hybrid`
 - Current runtime selector: `summary_synthesis_memory`
 - Latest clean timed validation cost:
-  - benchmark: `14.326s`
-  - regression: `24.020s`
-  - soak: `340.759s`
-  - total: `379.336s`
+  - benchmark: `13.543s`
+  - regression: `23.724s`
+  - soak: `339.130s`
+  - total: `376.594s`
 <!-- AUTO_MEMORY_BASELINE_LIVE_RESULTS_END -->
 
 ## Soak Aggregate

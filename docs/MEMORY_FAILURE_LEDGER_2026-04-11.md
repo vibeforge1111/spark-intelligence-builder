@@ -5,14 +5,14 @@ Status: generated from the latest validation run
 
 ## Baseline run
 
-- wrapper output root: `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\20260412-021554`
-- manifest: `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\20260412-021554\run-summary.json`
+- wrapper output root: `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\20260412-023241`
+- manifest: `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\20260412-023241\run-summary.json`
 - stable pointer: `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\latest-full-run.json`
 
 Pinned code state behind this run:
 
-- Builder: `f22adcdf973a9cbb738dd7c9eb22cde927efe8a2`
-- domain-chip-memory: `4b6a8ad30fe92767ff6b13c5b242046f1c87a73c`
+- Builder: `ed02ee74aaa7a78dbc62b7fceb6eced54c409b8e`
+- domain-chip-memory: `26fe26582f4188c2abad64d9f7f6b5ca7b09d0e9`
 
 ## Baseline verdict
 
