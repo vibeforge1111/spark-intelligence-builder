@@ -90,6 +90,7 @@ Operator shortcut:
 - `powershell -ExecutionPolicy Bypass -File .\scripts\run_memory_two_contender_validation.ps1`
 - by default it writes each full run into a timestamped artifact root under `.spark-intelligence\artifacts\memory-validation-runs\`
 - it also refreshes `.spark-intelligence\artifacts\memory-validation-runs\latest-run.json` to point at the newest run manifest
+- it also auto-refreshes [docs/MEMORY_FAILURE_LEDGER_2026-04-11.md](./docs/MEMORY_FAILURE_LEDGER_2026-04-11.md) from the newest run
 
 Key repo skills:
 

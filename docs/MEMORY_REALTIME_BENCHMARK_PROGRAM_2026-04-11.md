@@ -124,6 +124,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_memory_two_contender_vali
 
 By default that wrapper writes to a timestamped output root under `.spark-intelligence/artifacts/memory-validation-runs/`, so one full validation pass does not overwrite another.
 It also refreshes `.spark-intelligence/artifacts/memory-validation-runs/latest-run.json`, which points at the newest `run-summary.json` manifest.
+It now also refreshes `docs/MEMORY_FAILURE_LEDGER_2026-04-11.md` from that newest run, so the ledger and the latest pointer stay in sync.
 
 Explicit two-contender comparison:
 

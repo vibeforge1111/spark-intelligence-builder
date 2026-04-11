@@ -41,6 +41,27 @@ function Get-GitRevision {
     return ($revision | Select-Object -First 1)
 }
 
+function Invoke-LedgerRender {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$LatestRunPath,
+        [Parameter(Mandatory = $true)]
+        [string]$LedgerPath
+    )
+
+    $renderScript = Join-Path $RepoRoot "scripts\render_memory_failure_ledger.py"
+    if (-not (Test-Path $renderScript)) {
+        return $false
+    }
+    python $renderScript --latest-run $LatestRunPath --write $LedgerPath | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to render memory failure ledger"
+    }
+    return $true
+}
+
 $builderRepoRoot = (Get-Location).Path
 $domainChipRepoRoot = Join-Path (Split-Path $builderRepoRoot -Parent) "domain-chip-memory"
 $builderRevision = Get-GitRevision -RepoRoot $builderRepoRoot
@@ -192,6 +213,17 @@ $latestRunPath = Join-Path (Join-Path $SparkHome "artifacts\memory-validation-ru
     updated_at = (Get-Date).ToString("o")
 } | ConvertTo-Json | Set-Content -Path $latestRunPath -Encoding utf8
 
+$ledgerPath = Join-Path $builderRepoRoot "docs\MEMORY_FAILURE_LEDGER_2026-04-11.md"
+$canRenderLedger = (
+    -not [string]::IsNullOrWhiteSpace([string]$runSummary["benchmark_output_dir"]) -and
+    -not [string]::IsNullOrWhiteSpace([string]$runSummary["regression_output_dir"]) -and
+    -not [string]::IsNullOrWhiteSpace([string]$runSummary["soak_output_dir"])
+)
+$ledgerRendered = $false
+if ($canRenderLedger) {
+    $ledgerRendered = Invoke-LedgerRender -RepoRoot $builderRepoRoot -LatestRunPath $latestRunPath -LedgerPath $ledgerPath
+}
+
 Write-Host ""
 Write-Host "Validation artifacts:"
 Write-Host ("- output root: " + $resolvedOutputRoot)
@@ -206,6 +238,9 @@ if ($runSummary["soak_output_dir"]) {
 }
 Write-Host ("- manifest: " + $summaryPath)
 Write-Host ("- latest pointer: " + $latestRunPath)
+if ($ledgerRendered) {
+    Write-Host ("- failure ledger: " + $ledgerPath)
+}
 
 Write-Host ""
 Write-Host "Validation verdict:"
