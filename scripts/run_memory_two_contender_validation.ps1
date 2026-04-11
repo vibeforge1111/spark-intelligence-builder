@@ -25,6 +25,13 @@ if ([string]::IsNullOrWhiteSpace($resolvedOutputRoot)) {
 New-Item -ItemType Directory -Path $resolvedOutputRoot -Force | Out-Null
 Write-Host "Validation output root: $resolvedOutputRoot"
 
+$runSummary = [ordered]@{
+    output_root = $resolvedOutputRoot
+    benchmark_output_dir = $null
+    regression_output_dir = $null
+    soak_output_dir = $null
+}
+
 function Invoke-ValidationStep {
     param(
         [Parameter(Mandatory = $true)]
@@ -62,6 +69,7 @@ if (-not $SkipBenchmark) {
     $benchmarkOutputDir = Resolve-OutputDir -LeafName "memory-architecture-benchmark"
     if ($benchmarkOutputDir) {
         $benchmarkArgs += @("--output-dir", $benchmarkOutputDir)
+        $runSummary["benchmark_output_dir"] = $benchmarkOutputDir
     }
     Invoke-ValidationStep -Label "Offline ProductMemory Benchmark" -Arguments $benchmarkArgs
 }
@@ -74,6 +82,7 @@ if (-not $SkipRegression) {
     $regressionOutputDir = Resolve-OutputDir -LeafName "telegram-memory-regression"
     if ($regressionOutputDir) {
         $regressionArgs += @("--output-dir", $regressionOutputDir)
+        $runSummary["regression_output_dir"] = $regressionOutputDir
     }
     Invoke-ValidationStep -Label "Live Telegram Regression" -Arguments $regressionArgs
 }
@@ -88,6 +97,24 @@ if (-not $SkipSoak) {
     $soakOutputDir = Resolve-OutputDir -LeafName "telegram-memory-architecture-soak"
     if ($soakOutputDir) {
         $soakArgs += @("--output-dir", $soakOutputDir)
+        $runSummary["soak_output_dir"] = $soakOutputDir
     }
     Invoke-ValidationStep -Label "Live Telegram Soak" -Arguments $soakArgs
 }
+
+$summaryPath = Join-Path $resolvedOutputRoot "run-summary.json"
+$runSummary | ConvertTo-Json | Set-Content -Path $summaryPath -Encoding utf8
+
+Write-Host ""
+Write-Host "Validation artifacts:"
+Write-Host ("- output root: " + $resolvedOutputRoot)
+if ($runSummary["benchmark_output_dir"]) {
+    Write-Host ("- offline benchmark: " + $runSummary["benchmark_output_dir"])
+}
+if ($runSummary["regression_output_dir"]) {
+    Write-Host ("- live regression: " + $runSummary["regression_output_dir"])
+}
+if ($runSummary["soak_output_dir"]) {
+    Write-Host ("- live soak: " + $runSummary["soak_output_dir"])
+}
+Write-Host ("- manifest: " + $summaryPath)
