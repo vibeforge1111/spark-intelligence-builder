@@ -36,7 +36,7 @@ The live suite is now stricter in the places that were still underreporting ambi
 
 - `temporal_conflict_gauntlet`: `dual_store_event_calendar_hybrid` wins the pack tie-break at `4/10` vs `4/10`
 - `explanation_pressure_suite`: `dual_store_event_calendar_hybrid` wins the pack tie-break at `2/5` vs `2/5`
-- `identity_under_recency_pressure`: still a true tie at `2/8` vs `2/8`
+- `identity_under_recency_pressure`: the latest targeted rerun is now a full `11/11` tie after chip-side extraction and profile-query routing fixes
 
 ## Targeted Pack Validation
 
@@ -47,8 +47,10 @@ The benchmark-pack CLI path now runs custom Telegram variants directly:
 - the follow-up routing fix widened identity-summary detection for explicit prompts like `Summarize my profile in one sentence.` and `Give me a full profile summary with my latest location too.`
 - the corrected targeted rerun is now `21/21` matched on live Telegram with `48/48` current-state and `48/48` evidence probe hits
 - the shadow-replay contract now also preserves the original profile-summary prompt text for benchmark reconstruction instead of flattening every identity-summary query to `What do you remember about me?`
-- the live architecture comparison for the same targeted pack still compared `11` cases and still tied `summary_synthesis_memory` vs `dual_store_event_calendar_hybrid` at `2/11`
-- this means the Telegram runtime routing bug is fixed, and the remaining architecture tie is now a real synthesis weakness rather than a replay-prompt bug
+- the latest chip-side scorecard extraction fix now captures `preferred_name`, `timezone`, `home_country`, cleaned `location`, and profile-mission routing for benchmark replay too
+- the newest targeted rerun at `telegram-memory-regression-identity-pack-v9` still matched `21/21` on live Telegram with `48/48` current-state and `48/48` evidence hits
+- the live architecture comparison for the same targeted pack now compares `11` cases and ties `summary_synthesis_memory` vs `dual_store_event_calendar_hybrid` at `11/11`
+- this is a materially better tie than the earlier `2/11`: the targeted identity pack is no longer exposing synthesis misses, but it also no longer separates the two contenders on its own
 
 ## Interpretation
 
@@ -73,3 +75,5 @@ The Builder runtime contract now explicitly reports `summary_synthesis_memory` a
 - `.spark-intelligence/artifacts/telegram-memory-regression-identity-pack-v2/architecture-live-comparison/telegram-memory-architecture-live-comparison.json`
 - `.spark-intelligence/artifacts/telegram-memory-regression-identity-pack-v3/telegram-memory-regression.json`
 - `.spark-intelligence/artifacts/telegram-memory-regression-identity-pack-v3/architecture-live-comparison/telegram-memory-architecture-live-comparison.json`
+- `.spark-intelligence/artifacts/telegram-memory-regression-identity-pack-v9/telegram-memory-regression.json`
+- `.spark-intelligence/artifacts/telegram-memory-regression-identity-pack-v9/architecture-live-comparison/telegram-memory-architecture-live-comparison.json`
