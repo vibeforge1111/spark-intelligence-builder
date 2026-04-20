@@ -401,6 +401,86 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             ],
         )
 
+    def test_build_browser_search_context_opens_direct_domain_request_without_search_results(self) -> None:
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._execute_browser_hook",
+            side_effect=[
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {
+                            "extension": {
+                                "running": True,
+                            }
+                        },
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {
+                            "origin": "https://example.com",
+                            "tab": {"id": "42"},
+                            "wait_hint": {"target": {"origin": "https://example.com", "tab_id": "42"}},
+                        },
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {},
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {
+                            "title": "Example Domain",
+                            "origin": "https://example.com",
+                            "visible_text": {
+                                "summary": "Example Domain summary",
+                                "excerpt": "More detail from the page.",
+                            },
+                        },
+                    },
+                    "spark-browser",
+                ),
+            ],
+        ) as hook_mock:
+            result = _build_browser_search_context(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                user_message="Browse example.com and tell me the page title and the main link on the page.",
+                request_id="req-browser-direct-open",
+                channel_kind="telegram",
+                agent_id="agent:human:telegram:111",
+                human_id="human:telegram:111",
+                session_id="session:telegram:dm:111",
+            )
+
+        self.assertIn("browser_mode=direct_open", str(result["context"]))
+        self.assertIn("source_url=https://example.com", str(result["context"]))
+        self.assertIn("source_title=Example Domain", str(result["context"]))
+        self.assertIsNone(result["blocked_reply"])
+        self.assertIsNone(result["blocked_code"])
+        called_hooks = [call.kwargs["hook"] for call in hook_mock.call_args_list]
+        self.assertEqual(
+            called_hooks,
+            [
+                "browser.status",
+                "browser.navigate",
+                "browser.tab.wait",
+                "browser.page.text_extract",
+            ],
+        )
+        self.assertEqual(
+            hook_mock.call_args_list[1].kwargs["payload"]["arguments"]["url"],
+            "https://example.com",
+        )
+
     def test_browser_reply_denies_browsing_detects_false_capability_claim(self) -> None:
         self.assertTrue(
             _browser_reply_denies_browsing(

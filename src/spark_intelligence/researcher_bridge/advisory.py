@@ -1114,6 +1114,23 @@ def _build_browser_search_url(query: str) -> str:
     return f"https://duckduckgo.com/?q={quote(query)}&ia=web"
 
 
+def _resolve_direct_browser_target_url(user_message: str, query: str) -> str | None:
+    lowered = str(user_message or "").strip().lower()
+    if not any(
+        signal in lowered
+        for signal in ("browse ", "open ", "go to ", "visit ", "check out ")
+    ):
+        return None
+    candidate = str(query or "").strip()
+    if not candidate or any(char.isspace() for char in candidate):
+        return None
+    if re.match(r"^https?://", candidate, flags=re.IGNORECASE):
+        return candidate
+    if re.match(r"^(?:www\.)?[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?:/[^\s<>\"']*)?$", candidate):
+        return f"https://{candidate}"
+    return None
+
+
 def _truncate_browser_evidence_text(text: str, *, max_chars: int) -> str:
     normalized = re.sub(r"\s+", " ", str(text or "").strip())
     if len(normalized) <= max_chars:
@@ -1384,7 +1401,8 @@ def _build_browser_search_context(
     }
 
     search_query = _normalize_browser_search_query(user_message)
-    search_url = _build_browser_search_url(search_query)
+    direct_target_url = _resolve_direct_browser_target_url(user_message, search_query)
+    search_url = direct_target_url or _build_browser_search_url(search_query)
     status_output, chip_key = _execute_browser_hook(
         config_manager=config_manager,
         state_db=state_db,
@@ -1490,76 +1508,29 @@ def _build_browser_search_context(
     if blocked_reply:
         return {"context": "", "blocked_reply": blocked_reply, "blocked_code": blocked_code}
 
-    dom_output, chip_key = _execute_browser_hook(
-        config_manager=config_manager,
-        state_db=state_db,
-        hook="browser.page.dom_extract",
-        payload=build_browser_page_dom_extract_payload(
-            config_manager=config_manager,
-            origin=search_origin,
-            tab_id=search_tab_id,
-            agent_id=agent_id,
-            request_id=f"{request_id}:browser-search-dom",
-        ),
-        run_id=run_id,
-        request_id=request_id,
-        channel_kind=channel_kind,
-        session_id=session_id,
-        human_id=human_id,
-        agent_id=agent_id,
-    )
-    if not dom_output:
-        return empty
-    blocked_reply, blocked_code = _browser_hook_blocked_reply(dom_output)
-    if blocked_reply:
-        return {"context": "", "blocked_reply": blocked_reply, "blocked_code": blocked_code}
-    if not _browser_hook_succeeded(dom_output):
-        return empty
-    dom_result = dom_output.get("result") if isinstance(dom_output.get("result"), dict) else {}
-    search_nodes = _summarize_dom_outline_nodes((dom_result.get("dom_outline") or {}).get("nodes"))
-    candidate = _select_search_result_candidate(dom_output, search_url=search_url)
-    if not candidate:
-        interactives_output, _ = _execute_browser_hook(
-            config_manager=config_manager,
-            state_db=state_db,
-            hook="browser.page.interactives.list",
-            payload=build_browser_page_interactives_list_payload(
-                config_manager=config_manager,
-                origin=search_origin,
-                tab_id=search_tab_id,
-                agent_id=agent_id,
-                request_id=f"{request_id}:browser-search-interactives",
-                max_items=10,
-            ),
-            run_id=run_id,
-            request_id=request_id,
-            channel_kind=channel_kind,
-            session_id=session_id,
-            human_id=human_id,
-            agent_id=agent_id,
-        )
-        blocked_reply, blocked_code = _browser_hook_blocked_reply(interactives_output or {})
-        if blocked_reply:
-            return {"context": "", "blocked_reply": blocked_reply, "blocked_code": blocked_code}
-        if _browser_hook_succeeded(interactives_output):
-            candidate = _select_search_result_candidate_from_interactives_result(
-                interactives_output,
-                search_url=search_url,
-            )
+    dom_result: dict[str, Any] = {}
+    search_nodes: list[str] = []
+    candidate: dict[str, str] | None = None
     search_text_output = None
-    if not candidate:
-        search_text_output, _ = _execute_browser_hook(
+    browser_mode = "search_results"
+    if direct_target_url:
+        browser_mode = "direct_open"
+        source_url = direct_target_url
+        candidate = {
+            "href": direct_target_url,
+            "text_summary": "Direct page requested by the user",
+        }
+    else:
+        dom_output, chip_key = _execute_browser_hook(
             config_manager=config_manager,
             state_db=state_db,
-            hook="browser.page.text_extract",
-            payload=build_browser_page_text_extract_payload(
+            hook="browser.page.dom_extract",
+            payload=build_browser_page_dom_extract_payload(
                 config_manager=config_manager,
                 origin=search_origin,
                 tab_id=search_tab_id,
                 agent_id=agent_id,
-                request_id=f"{request_id}:browser-search-text",
-                max_text_characters=900,
-                max_controls=6,
+                request_id=f"{request_id}:browser-search-dom",
             ),
             run_id=run_id,
             request_id=request_id,
@@ -1568,16 +1539,75 @@ def _build_browser_search_context(
             human_id=human_id,
             agent_id=agent_id,
         )
-        blocked_reply, blocked_code = _browser_hook_blocked_reply(search_text_output or {})
+        if not dom_output:
+            return empty
+        blocked_reply, blocked_code = _browser_hook_blocked_reply(dom_output)
         if blocked_reply:
             return {"context": "", "blocked_reply": blocked_reply, "blocked_code": blocked_code}
-        if _browser_hook_succeeded(search_text_output):
-            candidate = _select_search_result_candidate_from_text_result(
-                search_text_output,
-                search_url=search_url,
+        if not _browser_hook_succeeded(dom_output):
+            return empty
+        dom_result = dom_output.get("result") if isinstance(dom_output.get("result"), dict) else {}
+        search_nodes = _summarize_dom_outline_nodes((dom_result.get("dom_outline") or {}).get("nodes"))
+        candidate = _select_search_result_candidate(dom_output, search_url=search_url)
+        if not candidate:
+            interactives_output, _ = _execute_browser_hook(
+                config_manager=config_manager,
+                state_db=state_db,
+                hook="browser.page.interactives.list",
+                payload=build_browser_page_interactives_list_payload(
+                    config_manager=config_manager,
+                    origin=search_origin,
+                    tab_id=search_tab_id,
+                    agent_id=agent_id,
+                    request_id=f"{request_id}:browser-search-interactives",
+                    max_items=10,
+                ),
+                run_id=run_id,
+                request_id=request_id,
+                channel_kind=channel_kind,
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
             )
+            blocked_reply, blocked_code = _browser_hook_blocked_reply(interactives_output or {})
+            if blocked_reply:
+                return {"context": "", "blocked_reply": blocked_reply, "blocked_code": blocked_code}
+            if _browser_hook_succeeded(interactives_output):
+                candidate = _select_search_result_candidate_from_interactives_result(
+                    interactives_output,
+                    search_url=search_url,
+                )
+        if not candidate:
+            search_text_output, _ = _execute_browser_hook(
+                config_manager=config_manager,
+                state_db=state_db,
+                hook="browser.page.text_extract",
+                payload=build_browser_page_text_extract_payload(
+                    config_manager=config_manager,
+                    origin=search_origin,
+                    tab_id=search_tab_id,
+                    agent_id=agent_id,
+                    request_id=f"{request_id}:browser-search-text",
+                    max_text_characters=900,
+                    max_controls=6,
+                ),
+                run_id=run_id,
+                request_id=request_id,
+                channel_kind=channel_kind,
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
+            )
+            blocked_reply, blocked_code = _browser_hook_blocked_reply(search_text_output or {})
+            if blocked_reply:
+                return {"context": "", "blocked_reply": blocked_reply, "blocked_code": blocked_code}
+            if _browser_hook_succeeded(search_text_output):
+                candidate = _select_search_result_candidate_from_text_result(
+                    search_text_output,
+                    search_url=search_url,
+                )
 
-    source_url = candidate["href"] if candidate else search_url
+        source_url = candidate["href"] if candidate else search_url
     source_origin = search_origin
     source_tab_id = search_tab_id
     source_navigate_output = None
@@ -1681,6 +1711,7 @@ def _build_browser_search_context(
         "Only cite the source_url field when it is present.",
         "Never cite search_url or a search-engine results page as the source.",
         f"browser_chip_key={chip_key or 'unknown'}",
+        f"browser_mode={browser_mode}",
         f"search_query={search_query}",
         f"search_url={search_url}",
         f"search_results_title={search_results_title}",
