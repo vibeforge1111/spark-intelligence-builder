@@ -329,8 +329,6 @@ def _derive_degraded_surfaces(
         degraded.append("Discord ingress")
     if whatsapp_summary.configured and not whatsapp_summary.ingress_ready():
         degraded.append("WhatsApp ingress")
-    if any(str(record.status or "") == "scheduled" for record in job_records):
-        degraded.append("Scheduled maintenance pending")
     return _dedupe_preserve_order(degraded)
 
 
@@ -361,7 +359,10 @@ def _derive_recommended_actions(
         actions.append("Repair Telegram bot auth and restart the gateway polling loop.")
     if int(telegram_health.consecutive_failures or 0) > 0:
         actions.append("Inspect Telegram poll failures in gateway traces before trusting live delivery health.")
-    if active_loops:
+    scheduler_state = str(
+        ((watchtower.get("health_dimensions") or {}).get("scheduler_freshness") or {}).get("state") or "unknown"
+    )
+    if active_loops and ((not gateway.oauth_maintenance_ok) or scheduler_state == "stalled"):
         actions.append("Run `spark-intelligence jobs tick` to execute due maintenance work.")
     deduped = _dedupe_preserve_order(actions)
     return deduped[:5]

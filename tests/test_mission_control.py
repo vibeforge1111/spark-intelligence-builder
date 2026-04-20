@@ -116,6 +116,31 @@ class MissionControlTests(SparkTestCase):
         self.assertIn(f"active_loops=job:{OAUTH_MAINTENANCE_JOB_ID}", prompt_context)
         self.assertIn("[Reply rule]", prompt_context)
 
+    def test_build_mission_control_snapshot_does_not_flag_healthy_recurring_jobs_as_degraded(self) -> None:
+        with self.state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO job_records (job_id, job_kind, status, schedule_expr, last_run_at, last_result)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    OAUTH_MAINTENANCE_JOB_ID,
+                    "oauth_refresh_maintenance",
+                    "scheduled",
+                    "builtin:oauth_refresh_maintenance",
+                    "2026-04-20T12:26:34.152041Z",
+                    "scanned=0 due=0 refreshed=0 failed=0 skipped=0",
+                ),
+            )
+            conn.commit()
+
+        snapshot = build_mission_control_snapshot(self.config_manager, self.state_db)
+        summary = snapshot.to_payload()["summary"]
+
+        self.assertIn(f"job:{OAUTH_MAINTENANCE_JOB_ID}", summary["active_loops"])
+        self.assertNotIn("Scheduled maintenance pending", summary["degraded_surfaces"])
+        self.assertNotIn("Run `spark-intelligence jobs tick` to execute due maintenance work.", summary["recommended_actions"])
+
     def test_mission_control_query_detection_catches_runtime_health_language(self) -> None:
         self.assertTrue(looks_like_mission_control_query("What is degraded right now?"))
         self.assertTrue(looks_like_mission_control_query("What jobs are running?"))
