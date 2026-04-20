@@ -16,6 +16,7 @@ from spark_intelligence.researcher_bridge.advisory import (
     _load_recent_conversation_context,
     _clean_messaging_reply,
     _normalize_browser_search_query,
+    _select_search_result_candidate,
     _should_collect_browser_search_context,
     _render_direct_provider_chat_fallback,
     _rewrite_browser_search_capability_denial,
@@ -114,6 +115,36 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             {
                 "href": "https://coinmarketcap.com/currencies/bitcoin/",
                 "text_summary": "CoinMarketCap Bitcoin price",
+            },
+        )
+
+    def test_select_search_result_candidate_prefers_query_matching_result_over_generic_homepage(self) -> None:
+        candidate = _select_search_result_candidate(
+            {
+                "result": {
+                    "dom_outline": {
+                        "nodes": [
+                            {
+                                "text_summary": "IANA homepage",
+                                "href": "https://www.iana.org/",
+                            },
+                            {
+                                "text_summary": "IANA-managed Reserved Domains",
+                                "href": "https://www.iana.org/domains/reserved",
+                            },
+                        ]
+                    }
+                }
+            },
+            search_url="https://duckduckgo.com/?q=official%20IANA%20reserved%20example%20domains&ia=web",
+            search_query="official IANA reserved example domains",
+        )
+
+        self.assertEqual(
+            candidate,
+            {
+                "href": "https://www.iana.org/domains/reserved",
+                "text_summary": "IANA-managed Reserved Domains",
             },
         )
 
@@ -438,6 +469,23 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                     {
                         "status": "succeeded",
                         "result": {
+                            "dom_outline": {
+                                "nodes": [
+                                    {
+                                        "text_summary": "Example Domain Learn more",
+                                        "href": "https://www.iana.org/help/example-domains",
+                                    }
+                                ]
+                            },
+                            "title": "Example Domain",
+                        },
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {
                             "interactives": [
                                 {
                                     "label": "More information...",
@@ -482,6 +530,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             "primary_link_href=https://www.iana.org/help/example-domains",
             str(result["context"]),
         )
+        self.assertIn("page_outline=", str(result["context"]))
         self.assertIn(
             "This is a direct page-open request, not a web-search results task.",
             str(result["context"]),
@@ -495,6 +544,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 "browser.status",
                 "browser.navigate",
                 "browser.tab.wait",
+                "browser.page.dom_extract",
                 "browser.page.interactives.list",
                 "browser.page.text_extract",
             ],
@@ -502,6 +552,266 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual(
             hook_mock.call_args_list[1].kwargs["payload"]["arguments"]["url"],
             "https://example.com",
+        )
+
+    def test_build_browser_search_context_uses_snapshot_fallback_when_direct_page_text_extract_fails(self) -> None:
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._execute_browser_hook",
+            side_effect=[
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {
+                            "extension": {
+                                "running": True,
+                            }
+                        },
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {
+                            "origin": "https://www.iana.org",
+                            "tab": {"id": "42"},
+                            "wait_hint": {"target": {"origin": "https://www.iana.org", "tab_id": "42"}},
+                        },
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {},
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {
+                            "dom_outline": {
+                                "nodes": [
+                                    {
+                                        "text_summary": "Example domains example.com example.org example.net",
+                                        "href": "https://www.iana.org/domains/reserved",
+                                    }
+                                ]
+                            },
+                            "title": "IANA-managed Reserved Domains",
+                        },
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {
+                            "interactives": [
+                                {
+                                    "label": "RFC 2606",
+                                    "href": "https://www.rfc-editor.org/rfc/rfc2606",
+                                }
+                            ]
+                        },
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "failed",
+                        "error": {
+                            "code": "CAPTURE_EMPTY",
+                            "message": "No extractable text returned.",
+                        },
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {
+                            "title": "IANA-managed Reserved Domains",
+                            "origin": "https://www.iana.org",
+                            "visible_text": {
+                                "summary": "Reserved domains include example.com, example.org, and example.net.",
+                                "excerpt": "As described in RFC 2606 and RFC 6761, example.com, example.org, and example.net are reserved.",
+                            },
+                        },
+                    },
+                    "spark-browser",
+                ),
+            ],
+        ) as hook_mock:
+            result = _build_browser_search_context(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                user_message="Open https://www.iana.org/domains/reserved and tell me which three example domains are reserved there.",
+                request_id="req-browser-direct-snapshot-fallback",
+                channel_kind="telegram",
+                agent_id="agent:human:telegram:111",
+                human_id="human:telegram:111",
+                session_id="session:telegram:dm:111",
+            )
+
+        self.assertIn("source_title=IANA-managed Reserved Domains", str(result["context"]))
+        self.assertIn("source_summary=Reserved domains include example.com, example.org, and example.net.", str(result["context"]))
+        self.assertIsNone(result["blocked_reply"])
+        self.assertIsNone(result["blocked_code"])
+        called_hooks = [call.kwargs["hook"] for call in hook_mock.call_args_list]
+        self.assertEqual(
+            called_hooks,
+            [
+                "browser.status",
+                "browser.navigate",
+                "browser.tab.wait",
+                "browser.page.dom_extract",
+                "browser.page.interactives.list",
+                "browser.page.text_extract",
+                "browser.page.snapshot",
+            ],
+        )
+
+    def test_build_browser_search_context_recovers_with_standalone_snapshot_after_invalid_live_request(self) -> None:
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._execute_browser_hook",
+            side_effect=[
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {
+                            "extension": {
+                                "running": True,
+                            }
+                        },
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {
+                            "origin": "https://www.iana.org",
+                            "tab": {"id": "42"},
+                            "wait_hint": {"target": {"origin": "https://www.iana.org", "tab_id": "42"}},
+                        },
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {},
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {
+                            "extraction_surface": "page_dom",
+                            "origin": "https://www.iana.org",
+                            "sensitive_surface_hints": {},
+                        },
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {
+                            "interactive_count": 0,
+                            "interactives": [],
+                            "origin": "https://www.iana.org",
+                            "sensitive_surface_hints": {},
+                        },
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "failed",
+                        "error": {
+                            "code": "INVALID_LIVE_BROWSER_REQUEST",
+                            "message": "Tab capture request is invalid.",
+                        },
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "failed",
+                        "error": {
+                            "code": "INVALID_LIVE_BROWSER_REQUEST",
+                            "message": "Snapshot request is invalid.",
+                        },
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {
+                            "origin": "https://www.iana.org",
+                            "tab": {"id": "43"},
+                            "wait_hint": {"target": {"origin": "https://www.iana.org", "tab_id": "43"}},
+                        },
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {},
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {
+                            "title": "IANA-managed Reserved Domains",
+                            "origin": "https://www.iana.org",
+                            "visible_text": {
+                                "summary": "Reserved domains include example.com, example.org, and example.net.",
+                                "excerpt": "As described in RFC 2606 and RFC 6761, example.com, example.org, and example.net are reserved.",
+                            },
+                        },
+                    },
+                    "spark-browser",
+                ),
+            ],
+        ) as hook_mock:
+            result = _build_browser_search_context(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                user_message="Open https://www.iana.org/domains/reserved and tell me which three example domains are reserved there.",
+                request_id="req-browser-direct-standalone-snapshot",
+                channel_kind="telegram",
+                agent_id="agent:human:telegram:111",
+                human_id="human:telegram:111",
+                session_id="session:telegram:dm:111",
+            )
+
+        self.assertIn("browser_mode=direct_open", str(result["context"]))
+        self.assertIn("source_url=https://www.iana.org/domains/reserved", str(result["context"]))
+        self.assertIn("example.com, example.org, and example.net", str(result["context"]))
+        called_hooks = [call.kwargs["hook"] for call in hook_mock.call_args_list]
+        self.assertEqual(
+            called_hooks,
+            [
+                "browser.status",
+                "browser.navigate",
+                "browser.tab.wait",
+                "browser.page.dom_extract",
+                "browser.page.interactives.list",
+                "browser.page.text_extract",
+                "browser.page.snapshot",
+                "browser.navigate",
+                "browser.tab.wait",
+                "browser.page.snapshot",
+            ],
         )
 
     def test_browser_reply_denies_browsing_detects_false_capability_claim(self) -> None:
@@ -587,6 +897,35 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertNotIn("What were you actually trying to get done?", cleaned)
         self.assertIn("Source: https://example.com", cleaned)
         self.assertIn("strip_generic_followup_question", actions)
+
+    def test_sanitize_browser_search_reply_appends_explicit_source_and_strips_search_process_residue(self) -> None:
+        cleaned, actions = _sanitize_browser_search_reply(
+            (
+                "The official source is the IANA itself at https://www.iana.org/domains/reserved.\n\n"
+                "I used a DuckDuckGo search to pull that result, but the authoritative upstream is IANA directly."
+            ),
+            source_url="https://www.iana.org/domains/reserved",
+        )
+
+        self.assertIn("The official source is the IANA itself", cleaned)
+        self.assertNotIn("DuckDuckGo search", cleaned)
+        self.assertIn("Source: https://www.iana.org/domains/reserved", cleaned)
+        self.assertIn("append_external_source_citation", actions)
+        self.assertIn("strip_browser_process_residue", actions)
+
+    def test_sanitize_browser_search_reply_strips_tool_call_markup(self) -> None:
+        cleaned, actions = _sanitize_browser_search_reply(
+            (
+                "[TOOL_CALL]\n"
+                "{tool => \"browser\", args => {--search_term \"IANA reserved example domains\"}}\n"
+                "[/TOOL_CALL]\n\n"
+                "Source: https://www.iana.org/domains/reserved"
+            ),
+            source_url="https://www.iana.org/domains/reserved",
+        )
+
+        self.assertNotIn("[TOOL_CALL]", cleaned)
+        self.assertIn("Source: https://www.iana.org/domains/reserved", cleaned)
 
     def test_clean_messaging_reply_rewrites_structured_chip_memo_for_telegram(self) -> None:
         cleaned = _clean_messaging_reply(

@@ -23,6 +23,7 @@ from spark_intelligence.attachments import (
 from spark_intelligence.auth.runtime import RuntimeProviderResolution, resolve_runtime_provider
 from spark_intelligence.browser.service import (
     build_browser_navigate_payload,
+    build_browser_page_snapshot_payload,
     build_browser_page_interactives_list_payload,
     build_browser_page_dom_extract_payload,
     build_browser_page_text_extract_payload,
@@ -1147,6 +1148,22 @@ _SEARCH_ENGINE_HOST_SUFFIXES = (
     "search.yahoo.com",
 )
 
+_BROWSER_SEARCH_QUERY_STOPWORDS = {
+    "about",
+    "cite",
+    "current",
+    "find",
+    "for",
+    "official",
+    "page",
+    "search",
+    "source",
+    "tell",
+    "the",
+    "used",
+    "web",
+}
+
 
 def _normalize_hostname(host: str) -> str:
     normalized = str(host or "").strip().lower().rstrip(".")
@@ -1279,6 +1296,27 @@ def _normalize_search_result_candidate_href(raw_value: str, *, search_host: str)
     return resolved
 
 
+def _browser_search_query_tokens(query: str) -> list[str]:
+    tokens = re.findall(r"[A-Za-z0-9]+", str(query or "").lower())
+    return [
+        token
+        for token in tokens
+        if len(token) >= 4 and token not in _BROWSER_SEARCH_QUERY_STOPWORDS
+    ]
+
+
+def _score_search_result_candidate(*, search_query: str, href: str, text_summary: str) -> int:
+    tokens = _browser_search_query_tokens(search_query)
+    if not tokens:
+        return 0
+    haystack = f"{href} {text_summary}".lower()
+    score = sum(1 for token in tokens if token in haystack)
+    path = str(urlparse(href).path or "").strip("/")
+    if path:
+        score += 1
+    return score
+
+
 def _summarize_dom_outline_nodes(nodes: Any, *, max_items: int = 5) -> list[str]:
     if not isinstance(nodes, list):
         return []
@@ -1321,11 +1359,15 @@ def _summarize_interactives(items: Any, *, max_items: int = 5) -> list[str]:
     return lines
 
 
-def _select_search_result_candidate(dom_extract_output: dict[str, Any], *, search_url: str) -> dict[str, str] | None:
+def _select_search_result_candidate(
+    dom_extract_output: dict[str, Any], *, search_url: str, search_query: str = ""
+) -> dict[str, str] | None:
     result = dom_extract_output.get("result") if isinstance(dom_extract_output.get("result"), dict) else {}
     dom_outline = result.get("dom_outline") if isinstance(result.get("dom_outline"), dict) else {}
     search_host = _normalize_hostname(str(urlparse(search_url).hostname or ""))
     nodes = dom_outline.get("nodes") if isinstance(dom_outline.get("nodes"), list) else []
+    best_candidate: dict[str, str] | None = None
+    best_score = -1
     for node in nodes:
         if not isinstance(node, dict):
             continue
@@ -1335,11 +1377,19 @@ def _select_search_result_candidate(dom_extract_output: dict[str, Any], *, searc
         candidate_host = _normalize_hostname(str(urlparse(href).hostname or ""))
         if not candidate_host or candidate_host == search_host or _is_search_engine_host(candidate_host):
             continue
-        return {
+        candidate = {
             "href": href,
             "text_summary": str(node.get("text_summary") or "").strip(),
         }
-    return None
+        score = _score_search_result_candidate(
+            search_query=search_query,
+            href=candidate["href"],
+            text_summary=candidate["text_summary"],
+        )
+        if score > best_score:
+            best_candidate = candidate
+            best_score = score
+    return best_candidate
 
 
 def _select_search_result_candidate_from_text_result(
@@ -1374,11 +1424,14 @@ def _select_search_result_candidate_from_interactives_result(
     interactives_output: dict[str, Any],
     *,
     search_url: str,
+    search_query: str = "",
 ) -> dict[str, str] | None:
     result = interactives_output.get("result") if isinstance(interactives_output.get("result"), dict) else {}
     interactives = result.get("interactives") if isinstance(result.get("interactives"), list) else []
     search_host = _normalize_hostname(str(urlparse(search_url).hostname or ""))
     seen: set[str] = set()
+    best_candidate: dict[str, str] | None = None
+    best_score = -1
     for item in interactives:
         if not isinstance(item, dict):
             continue
@@ -1386,11 +1439,19 @@ def _select_search_result_candidate_from_interactives_result(
         if not href or href in seen:
             continue
         seen.add(href)
-        return {
+        candidate = {
             "href": href,
             "text_summary": str(item.get("label") or item.get("text") or item.get("selector") or "").strip(),
         }
-    return None
+        score = _score_search_result_candidate(
+            search_query=search_query,
+            href=candidate["href"],
+            text_summary=candidate["text_summary"],
+        )
+        if score > best_score:
+            best_candidate = candidate
+            best_score = score
+    return best_candidate
 
 
 def _select_primary_page_link_from_interactives_result(
@@ -1408,6 +1469,138 @@ def _select_primary_page_link_from_interactives_result(
         label = str(item.get("label") or item.get("text") or item.get("selector") or "").strip()
         return {"href": href, "label": label}
     return None
+
+
+def _build_direct_browser_snapshot_context(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    direct_target_url: str,
+    search_query: str,
+    request_id: str,
+    channel_kind: str,
+    agent_id: str,
+    human_id: str,
+    session_id: str,
+    run_id: str | None = None,
+) -> dict[str, str | None]:
+    navigate_output, chip_key = _execute_browser_hook(
+        config_manager=config_manager,
+        state_db=state_db,
+        hook="browser.navigate",
+        payload=build_browser_navigate_payload(
+            config_manager=config_manager,
+            url=direct_target_url,
+            agent_id=agent_id,
+            request_id=f"{request_id}:browser-direct-snapshot-navigate",
+        ),
+        run_id=run_id,
+        request_id=request_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+    )
+    blocked_reply, blocked_code = _browser_hook_blocked_reply(navigate_output or {})
+    if blocked_reply:
+        return {"context": "", "blocked_reply": blocked_reply, "blocked_code": blocked_code}
+    if not _browser_hook_succeeded(navigate_output):
+        return {"context": "", "blocked_reply": None, "blocked_code": None}
+    navigate_result = navigate_output.get("result") if isinstance(navigate_output.get("result"), dict) else {}
+    wait_hint = navigate_result.get("wait_hint") if isinstance(navigate_result.get("wait_hint"), dict) else {}
+    wait_target = wait_hint.get("target") if isinstance(wait_hint.get("target"), dict) else {}
+    wait_origin = str(wait_target.get("origin") or navigate_result.get("origin") or direct_target_url).strip()
+    wait_tab_id = str(wait_target.get("tab_id") or ((navigate_result.get("tab") or {}).get("id") if isinstance(navigate_result.get("tab"), dict) else "") or "").strip()
+    if not wait_tab_id:
+        return {"context": "", "blocked_reply": None, "blocked_code": None}
+    wait_output, _ = _execute_browser_hook(
+        config_manager=config_manager,
+        state_db=state_db,
+        hook="browser.tab.wait",
+        payload=build_browser_tab_wait_payload(
+            config_manager=config_manager,
+            origin=wait_origin,
+            tab_id=wait_tab_id,
+            agent_id=agent_id,
+            request_id=f"{request_id}:browser-direct-snapshot-wait",
+        ),
+        run_id=run_id,
+        request_id=request_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+    )
+    blocked_reply, blocked_code = _browser_hook_blocked_reply(wait_output or {})
+    if blocked_reply:
+        return {"context": "", "blocked_reply": blocked_reply, "blocked_code": blocked_code}
+    snapshot_output, chip_key = _execute_browser_hook(
+        config_manager=config_manager,
+        state_db=state_db,
+        hook="browser.page.snapshot",
+        payload=build_browser_page_snapshot_payload(
+            config_manager=config_manager,
+            origin=wait_origin,
+            tab_id=wait_tab_id,
+            agent_id=agent_id,
+            request_id=f"{request_id}:browser-direct-snapshot",
+            max_text_characters=2200,
+            max_controls=10,
+            allowed_domains=[_normalize_hostname(str(urlparse(direct_target_url).hostname or ""))],
+        ),
+        run_id=run_id,
+        request_id=request_id,
+        channel_kind=channel_kind,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+    )
+    blocked_reply, blocked_code = _browser_hook_blocked_reply(snapshot_output or {})
+    if blocked_reply:
+        return {"context": "", "blocked_reply": blocked_reply, "blocked_code": blocked_code}
+    if not _browser_hook_succeeded(snapshot_output):
+        return {"context": "", "blocked_reply": None, "blocked_code": None}
+    snapshot_result = snapshot_output.get("result") if isinstance(snapshot_output.get("result"), dict) else {}
+    visible_text = snapshot_result.get("visible_text") if isinstance(snapshot_result.get("visible_text"), dict) else {}
+    source_summary = _truncate_browser_evidence_text(
+        str(visible_text.get("summary") or ""),
+        max_chars=_BROWSER_SEARCH_SUMMARY_MAX_CHARS,
+    )
+    source_excerpt = _truncate_browser_evidence_text(
+        str(visible_text.get("excerpt") or ""),
+        max_chars=_BROWSER_SEARCH_EXCERPT_MAX_CHARS,
+    )
+    lines = [
+        "[Browser search evidence]",
+        "The user explicitly asked for web/current/source-backed information.",
+        "Use this evidence as the factual basis for the reply instead of asking the user what to optimize for.",
+        "Only cite the source_url field when it is present.",
+        "Never cite search_url or a search-engine results page as the source.",
+        "Do not invent names, counts, URLs, or facts that are not explicitly present in the captured source.",
+        f"browser_chip_key={chip_key or 'unknown'}",
+        "browser_mode=direct_open",
+        f"search_query={search_query}",
+        f"search_url={direct_target_url}",
+        f"search_results_title={snapshot_result.get('title') or 'unknown'}",
+        "external_source_captured=yes",
+        "This is a direct page-open request, not a web-search results task.",
+        "Answer only with the page facts the user asked for.",
+        "Do not add strategy advice, jokes, speculative commentary, or unrelated follow-up questions.",
+        "Keep the reply to 1 to 4 short factual lines.",
+        "If the page excerpt is partial, say that directly instead of guessing.",
+        f"source_url={direct_target_url}",
+        f"source_title={snapshot_result.get('title') or 'unknown'}",
+        f"source_origin={snapshot_result.get('origin') or direct_target_url}",
+        f"source_summary={source_summary}",
+        f"source_excerpt={source_excerpt}",
+        "",
+    ]
+    return {
+        "context": "\n".join(lines),
+        "blocked_reply": None,
+        "blocked_code": None,
+        "source_url": direct_target_url,
+    }
 
 
 def _build_browser_search_context(
@@ -1511,11 +1704,37 @@ def _build_browser_search_context(
         agent_id=agent_id,
     )
     if not navigate_output:
+        if direct_target_url:
+            return _build_direct_browser_snapshot_context(
+                config_manager=config_manager,
+                state_db=state_db,
+                direct_target_url=direct_target_url,
+                search_query=search_query,
+                request_id=request_id,
+                channel_kind=channel_kind,
+                agent_id=agent_id,
+                human_id=human_id,
+                session_id=session_id,
+                run_id=run_id,
+            )
         return empty
     blocked_reply, blocked_code = _browser_hook_blocked_reply(navigate_output)
     if blocked_reply:
         return {"context": "", "blocked_reply": blocked_reply, "blocked_code": blocked_code}
     if not _browser_hook_succeeded(navigate_output):
+        if direct_target_url:
+            return _build_direct_browser_snapshot_context(
+                config_manager=config_manager,
+                state_db=state_db,
+                direct_target_url=direct_target_url,
+                search_query=search_query,
+                request_id=request_id,
+                channel_kind=channel_kind,
+                agent_id=agent_id,
+                human_id=human_id,
+                session_id=session_id,
+                run_id=run_id,
+            )
         return empty
     navigate_result = navigate_output.get("result") if isinstance(navigate_output.get("result"), dict) else {}
     wait_hint = navigate_result.get("wait_hint") if isinstance(navigate_result.get("wait_hint"), dict) else {}
@@ -1523,6 +1742,19 @@ def _build_browser_search_context(
     search_origin = str(wait_target.get("origin") or navigate_result.get("origin") or search_url).strip()
     search_tab_id = str(wait_target.get("tab_id") or ((navigate_result.get("tab") or {}).get("id") if isinstance(navigate_result.get("tab"), dict) else "") or "").strip()
     if not search_tab_id:
+        if direct_target_url:
+            return _build_direct_browser_snapshot_context(
+                config_manager=config_manager,
+                state_db=state_db,
+                direct_target_url=direct_target_url,
+                search_query=search_query,
+                request_id=request_id,
+                channel_kind=channel_kind,
+                agent_id=agent_id,
+                human_id=human_id,
+                session_id=session_id,
+                run_id=run_id,
+            )
         return empty
 
     wait_output, _ = _execute_browser_hook(
@@ -1549,6 +1781,7 @@ def _build_browser_search_context(
 
     dom_result: dict[str, Any] = {}
     search_nodes: list[str] = []
+    page_outline: list[str] = []
     page_interactives: list[str] = []
     candidate: dict[str, str] | None = None
     primary_page_link: dict[str, str] | None = None
@@ -1561,6 +1794,30 @@ def _build_browser_search_context(
             "href": direct_target_url,
             "text_summary": "Direct page requested by the user",
         }
+        dom_output, chip_key = _execute_browser_hook(
+            config_manager=config_manager,
+            state_db=state_db,
+            hook="browser.page.dom_extract",
+            payload=build_browser_page_dom_extract_payload(
+                config_manager=config_manager,
+                origin=search_origin,
+                tab_id=search_tab_id,
+                agent_id=agent_id,
+                request_id=f"{request_id}:browser-direct-dom",
+            ),
+            run_id=run_id,
+            request_id=request_id,
+            channel_kind=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+        )
+        blocked_reply, blocked_code = _browser_hook_blocked_reply(dom_output or {})
+        if blocked_reply:
+            return {"context": "", "blocked_reply": blocked_reply, "blocked_code": blocked_code}
+        if _browser_hook_succeeded(dom_output):
+            dom_result = dom_output.get("result") if isinstance(dom_output.get("result"), dict) else {}
+            page_outline = _summarize_dom_outline_nodes((dom_result.get("dom_outline") or {}).get("nodes"))
         interactives_output, _ = _execute_browser_hook(
             config_manager=config_manager,
             state_db=state_db,
@@ -1617,7 +1874,11 @@ def _build_browser_search_context(
             return empty
         dom_result = dom_output.get("result") if isinstance(dom_output.get("result"), dict) else {}
         search_nodes = _summarize_dom_outline_nodes((dom_result.get("dom_outline") or {}).get("nodes"))
-        candidate = _select_search_result_candidate(dom_output, search_url=search_url)
+        candidate = _select_search_result_candidate(
+            dom_output,
+            search_url=search_url,
+            search_query=search_query,
+        )
         if not candidate:
             interactives_output, _ = _execute_browser_hook(
                 config_manager=config_manager,
@@ -1645,6 +1906,7 @@ def _build_browser_search_context(
                 candidate = _select_search_result_candidate_from_interactives_result(
                     interactives_output,
                     search_url=search_url,
+                    search_query=search_query,
                 )
         if not candidate:
             search_text_output, _ = _execute_browser_hook(
@@ -1747,7 +2009,7 @@ def _build_browser_search_context(
                 tab_id=source_tab_id or None,
                 agent_id=agent_id,
                 request_id=f"{request_id}:browser-source-text",
-                max_text_characters=900,
+                max_text_characters=2200 if browser_mode == "direct_open" else 900,
                 max_controls=6,
             ),
             run_id=run_id,
@@ -1757,14 +2019,59 @@ def _build_browser_search_context(
             human_id=human_id,
             agent_id=agent_id,
         )
-    if not text_output:
-        return empty
-    blocked_reply, blocked_code = _browser_hook_blocked_reply(text_output)
-    if blocked_reply:
-        return {"context": "", "blocked_reply": blocked_reply, "blocked_code": blocked_code}
-    if not _browser_hook_succeeded(text_output):
-        return empty
-    text_result = text_output.get("result") if isinstance(text_output.get("result"), dict) else {}
+    snapshot_output = None
+    if text_output:
+        blocked_reply, blocked_code = _browser_hook_blocked_reply(text_output)
+        if blocked_reply:
+            return {"context": "", "blocked_reply": blocked_reply, "blocked_code": blocked_code}
+    if not text_output or not _browser_hook_succeeded(text_output):
+        snapshot_output, _ = _execute_browser_hook(
+            config_manager=config_manager,
+            state_db=state_db,
+            hook="browser.page.snapshot",
+            payload=build_browser_page_snapshot_payload(
+                config_manager=config_manager,
+                origin=source_origin,
+                tab_id=source_tab_id or None,
+                agent_id=agent_id,
+                request_id=f"{request_id}:browser-source-snapshot",
+                max_text_characters=2200 if browser_mode == "direct_open" else 900,
+                max_controls=10,
+                allowed_domains=[_normalize_hostname(str(urlparse(source_url).hostname or ""))] if source_url else None,
+            ),
+            run_id=run_id,
+            request_id=request_id,
+            channel_kind=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+        )
+        blocked_reply, blocked_code = _browser_hook_blocked_reply(snapshot_output or {})
+        if blocked_reply:
+            return {"context": "", "blocked_reply": blocked_reply, "blocked_code": blocked_code}
+        if not _browser_hook_succeeded(snapshot_output):
+            if direct_target_url:
+                return _build_direct_browser_snapshot_context(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    direct_target_url=direct_target_url,
+                    search_query=search_query,
+                    request_id=request_id,
+                    channel_kind=channel_kind,
+                    agent_id=agent_id,
+                    human_id=human_id,
+                    session_id=session_id,
+                    run_id=run_id,
+                )
+            return empty
+        snapshot_result = snapshot_output.get("result") if isinstance(snapshot_output.get("result"), dict) else {}
+        text_result = {
+            "title": snapshot_result.get("title"),
+            "origin": snapshot_result.get("origin"),
+            "visible_text": snapshot_result.get("visible_text"),
+        }
+    else:
+        text_result = text_output.get("result") if isinstance(text_output.get("result"), dict) else {}
     visible_text = text_result.get("visible_text") if isinstance(text_result.get("visible_text"), dict) else {}
     search_results_title = (
         dom_result.get("title")
@@ -1779,6 +2086,7 @@ def _build_browser_search_context(
         "Use this evidence as the factual basis for the reply instead of asking the user what to optimize for.",
         "Only cite the source_url field when it is present.",
         "Never cite search_url or a search-engine results page as the source.",
+        "Do not invent names, counts, URLs, or facts that are not explicitly present in the captured source.",
         f"browser_chip_key={chip_key or 'unknown'}",
         f"browser_mode={browser_mode}",
         f"search_query={search_query}",
@@ -1793,10 +2101,14 @@ def _build_browser_search_context(
                 "Answer only with the page facts the user asked for.",
                 "Do not add strategy advice, jokes, speculative commentary, or unrelated follow-up questions.",
                 "If the user asks for the main link on the page, use primary_link_href when it is present.",
+                "Keep the reply to 1 to 4 short factual lines.",
+                "If the page excerpt is partial, say that directly instead of guessing.",
             ]
         )
     if search_nodes:
         lines.append("search_result_candidates=" + json.dumps(search_nodes, ensure_ascii=True))
+    if page_outline:
+        lines.append("page_outline=" + json.dumps(page_outline, ensure_ascii=True))
     if page_interactives:
         lines.append("page_interactives=" + json.dumps(page_interactives, ensure_ascii=True))
     if candidate:
@@ -2202,6 +2514,7 @@ def _sanitize_browser_search_reply(
 ) -> tuple[str, list[str]]:
     mutation_actions: list[str] = []
     sanitized = str(text or "").replace("\r\n", "\n")
+    sanitized = re.sub(r"(?is)\[TOOL_CALL\].*?\[/TOOL_CALL\]", "", sanitized).strip()
     stripped_search_markup = re.sub(r"(?is)<search>.*?</search>", "", sanitized)
     stripped_search_markup = re.sub(r"(?im)^\s*</?(?:search|query)>\s*$", "", stripped_search_markup)
     stripped_search_markup = re.sub(r"(?im)^\s*<query>.*?</query>\s*$", "", stripped_search_markup)
@@ -2219,8 +2532,20 @@ def _sanitize_browser_search_reply(
         cleaned_lines.append(raw_line)
     sanitized = "\n".join(cleaned_lines)
     sanitized = re.sub(r"\n{3,}", "\n\n", sanitized).strip()
+    process_residue = sanitized
+    process_residue = re.sub(r"(?is)\n\nI used a DuckDuckGo search.*$", "", process_residue).strip()
+    process_residue = re.sub(r"(?is)\n\nThat is the authoritative upstream.*$", "", process_residue).strip()
+    process_residue = re.sub(r"(?is)\n\nAlso\s*[–-]\s*to answer your earlier question.*$", "", process_residue).strip()
+    process_residue = re.sub(r"(?is)\n\nWhat were you thinking in terms of setup\?.*$", "", process_residue).strip()
+    if process_residue != sanitized:
+        sanitized = process_residue
+        mutation_actions.append("strip_browser_process_residue")
     if source_url and not _is_search_engine_url(source_url):
-        if source_url not in sanitized:
+        has_explicit_source_line = any(
+            line.strip().lower().startswith("source:")
+            for line in sanitized.split("\n")
+        )
+        if not has_explicit_source_line:
             sanitized = f"{sanitized}\n\nSource: {source_url}" if sanitized else f"Source: {source_url}"
             mutation_actions.append("append_external_source_citation")
         sanitized, polish_actions = _polish_browser_grounded_reply(sanitized)
@@ -2312,6 +2637,7 @@ def _polish_browser_grounded_reply(text: str) -> tuple[str, list[str]]:
         r"(?is)\n\nWhat is the actual project context you want to organize around\?.*$",
         r"(?is)\n\nOn your earlier question about tools.*$",
         r"(?is)\n\nWhat were you actually trying to get done\?.*$",
+        r"(?is)\n\nWhat were you thinking in terms of setup\?.*$",
     )
     stripped_followup = body
     for pattern in generic_followup_patterns:
