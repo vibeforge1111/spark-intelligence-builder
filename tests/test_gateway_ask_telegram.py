@@ -79,6 +79,53 @@ class GatewayAskTelegramTests(SparkTestCase):
         self.assertEqual(rendered["message"], "hello")
         self.assertEqual(rendered["result"]["decision"], "allowed")
 
+    def test_gateway_ask_telegram_prefers_single_allowlisted_user_over_stale_recent_trace(self) -> None:
+        self.add_telegram_channel(allowed_users=["111"])
+        self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
+        simulated_result = SimpleNamespace(
+            ok=True,
+            decision="allowed",
+            detail={"response_text": "Spark reply text"},
+        )
+
+        with (
+            patch(
+                "spark_intelligence.gateway.runtime.read_gateway_traces",
+                return_value=[{"channel_id": "telegram", "external_user_id": "7777777"}],
+            ),
+            patch("spark_intelligence.gateway.runtime.read_outbound_audit", return_value=[]),
+            patch(
+                "spark_intelligence.gateway.runtime.simulate_telegram_update",
+                return_value=simulated_result,
+            ) as simulate,
+        ):
+            gateway_ask_telegram(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                message="hello",
+            )
+
+        payload = simulate.call_args.kwargs["update_payload"]
+        self.assertEqual(payload["message"]["from"]["id"], "111")
+
+    def test_gateway_ask_telegram_ignores_recent_trace_outside_allowlist_when_multiple_candidates_exist(self) -> None:
+        self.add_telegram_channel(allowed_users=["111", "222"])
+        self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
+
+        with (
+            patch(
+                "spark_intelligence.gateway.runtime.read_gateway_traces",
+                return_value=[{"channel_id": "telegram", "external_user_id": "7777777"}],
+            ),
+            patch("spark_intelligence.gateway.runtime.read_outbound_audit", return_value=[]),
+        ):
+            with self.assertRaisesRegex(ValueError, "multiple possible Telegram users"):
+                gateway_ask_telegram(
+                    config_manager=self.config_manager,
+                    state_db=self.state_db,
+                    message="hello",
+                )
+
     def test_gateway_ask_telegram_requires_explicit_user_when_multiple_candidates_exist(self) -> None:
         self.add_telegram_channel(allowed_users=["111", "222"])
         self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)

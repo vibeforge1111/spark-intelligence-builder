@@ -619,9 +619,6 @@ def _resolve_gateway_telegram_user_id(
     normalized_user_id = str(user_id or "").strip()
     if normalized_user_id:
         return normalized_user_id
-    recent_user = _latest_gateway_telegram_user_id(config_manager)
-    if recent_user:
-        return recent_user
     config = config_manager.load()
     channel_records = config.get("channels", {}).get("records", {})
     telegram_record = channel_records.get("telegram") if isinstance(channel_records, dict) else None
@@ -636,6 +633,9 @@ def _resolve_gateway_telegram_user_id(
             deduped_allowed_users.append(item)
     if len(deduped_allowed_users) == 1:
         return deduped_allowed_users[0]
+    recent_user = _latest_gateway_telegram_user_id(config_manager)
+    if recent_user and (not deduped_allowed_users or recent_user in deduped_allowed_users):
+        return recent_user
     if not deduped_allowed_users:
         raise ValueError("No Telegram user id was provided and the workspace has no configured allowed Telegram users.")
     raise ValueError(
