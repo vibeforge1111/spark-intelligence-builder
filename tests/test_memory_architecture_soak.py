@@ -502,7 +502,7 @@ class MemoryArchitectureSoakTests(SparkTestCase):
 
     def test_run_regression_subprocess_raises_timeout_error(self) -> None:
         with patch(
-            "spark_intelligence.memory.architecture_soak.subprocess.run",
+            "spark_intelligence.memory.architecture_soak.run_governed_command",
             side_effect=subprocess.TimeoutExpired(cmd=["python"], timeout=30),
         ):
             with self.assertRaisesRegex(TimeoutError, "regression_subprocess_timeout:core_profile_baseline:30s"):

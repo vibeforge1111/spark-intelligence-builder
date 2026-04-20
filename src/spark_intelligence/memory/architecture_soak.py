@@ -11,6 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.execution import run_governed_command
 from spark_intelligence.memory.benchmark_packs import (
     select_telegram_memory_benchmark_packs,
 )
@@ -398,14 +399,11 @@ def _run_regression_subprocess(
             if str(category).strip():
                 command.extend(["--category", str(category)])
     try:
-        completed = subprocess.run(
-            command,
+        completed = run_governed_command(
+            command=command,
             cwd=repo_root,
             env=env,
-            capture_output=True,
-            text=True,
-            timeout=float(run_timeout_seconds),
-            check=False,
+            timeout_seconds=float(run_timeout_seconds),
         )
     except subprocess.TimeoutExpired as exc:
         raise TimeoutError(
@@ -420,7 +418,7 @@ def _run_regression_subprocess(
         return payload
     stderr_tail = ((completed.stderr or completed.stdout or "").strip().splitlines() or [""])[-1]
     raise RuntimeError(
-        f"regression_subprocess_exit:{completed.returncode}:{run_spec.pack_id}:{stderr_tail[:200]}"
+        f"regression_subprocess_exit:{completed.exit_code}:{run_spec.pack_id}:{stderr_tail[:200]}"
     )
 
 

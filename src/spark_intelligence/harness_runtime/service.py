@@ -480,7 +480,7 @@ def _execute_researcher_advisory_harness(
         envelope=envelope,
     )
     artifacts = {
-        "reply_text": result.reply_text,
+        "reply_text": _bridge_result_reply_text(result),
         "evidence_summary": result.evidence_summary,
         "trace_ref": result.trace_ref,
         "mode": result.mode,
@@ -495,6 +495,11 @@ def _execute_researcher_advisory_harness(
         "Executed the researcher advisory harness and captured the reply/result trace.",
         "completed",
     )
+
+
+def _bridge_result_reply_text(result: Any) -> str:
+    value = getattr(result, "reply_text", "")
+    return str(value or "")
 
 
 def _run_researcher_bridge_reply(

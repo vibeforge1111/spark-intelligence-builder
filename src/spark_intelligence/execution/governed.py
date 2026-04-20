@@ -28,6 +28,7 @@ def run_governed_command(
     command: list[str],
     cwd: str | Path,
     env: dict[str, str] | None = None,
+    timeout_seconds: float | None = None,
 ) -> GovernedCommandExecution:
     completed = subprocess.run(
         command,
@@ -35,6 +36,7 @@ def run_governed_command(
         env=env,
         capture_output=True,
         text=True,
+        timeout=timeout_seconds,
     )
     return GovernedCommandExecution(
         command=list(command),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from unittest.mock import patch
 
 from spark_intelligence.execution.governed import (
     record_governed_tool_result,
@@ -22,6 +23,20 @@ class GovernedExecutionTests(SparkTestCase):
         self.assertTrue(execution.ok)
         self.assertEqual(execution.exit_code, 0)
         self.assertEqual(execution.stdout.strip(), "governed-ok")
+
+    def test_run_governed_command_forwards_timeout_seconds(self) -> None:
+        with patch("spark_intelligence.execution.governed.subprocess.run") as run_mock:
+            run_mock.return_value.returncode = 0
+            run_mock.return_value.stdout = ""
+            run_mock.return_value.stderr = ""
+
+            run_governed_command(
+                command=[sys.executable, "-c", "print('governed-ok')"],
+                cwd=self.home,
+                timeout_seconds=12.5,
+            )
+
+        self.assertEqual(run_mock.call_args.kwargs["timeout"], 12.5)
 
     def test_record_governed_tool_result_emits_typed_result_event(self) -> None:
         execution = run_governed_command(
