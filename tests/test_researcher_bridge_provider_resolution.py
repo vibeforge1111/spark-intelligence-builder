@@ -482,6 +482,10 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             "primary_link_href=https://www.iana.org/help/example-domains",
             str(result["context"]),
         )
+        self.assertIn(
+            "This is a direct page-open request, not a web-search results task.",
+            str(result["context"]),
+        )
         self.assertIsNone(result["blocked_reply"])
         self.assertIsNone(result["blocked_code"])
         called_hooks = [call.kwargs["hook"] for call in hook_mock.call_args_list]
@@ -876,6 +880,65 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("latest_user_message=I'm trying to make this agent feel more natural and less scripted.", prompt)
         self.assertIn("[User message]", prompt)
         self.assertIn("Now answer like you actually remember what I just said.", prompt)
+
+    def test_build_researcher_reply_uses_direct_open_browser_route_for_direct_page_requests(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        connect_exit, _, connect_stderr = self.run_cli(
+            "auth",
+            "connect",
+            "custom",
+            "--home",
+            str(self.home),
+            "--api-key",
+            "minimax-secret",
+            "--model",
+            "MiniMax-M2.7",
+            "--base-url",
+            "https://api.minimax.io/v1",
+        )
+        self.assertEqual(connect_exit, 0, connect_stderr)
+
+        captured: dict[str, str] = {}
+
+        def fake_execute_direct_provider_prompt(*, user_prompt, **kwargs):
+            captured["user_prompt"] = user_prompt
+            return {"raw_response": "The page title is Example Domain.\n\nSource: https://example.com"}
+
+        with (
+            patch(
+                "spark_intelligence.researcher_bridge.advisory._build_browser_search_context",
+                return_value={
+                    "context": (
+                        "[Browser search evidence]\n"
+                        "browser_mode=direct_open\n"
+                        "source_url=https://example.com\n"
+                        "primary_link_href=https://iana.org/domains/example\n"
+                    ),
+                    "blocked_reply": None,
+                    "blocked_code": None,
+                    "source_url": "https://example.com",
+                },
+            ),
+            patch(
+                "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+                side_effect=fake_execute_direct_provider_prompt,
+            ),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-browser-direct-route",
+                agent_id="agent:human:telegram:1",
+                human_id="human:telegram:1",
+                session_id="sess-telegram",
+                channel_kind="telegram",
+                user_message="Browse example.com and tell me the page title.",
+            )
+
+        self.assertEqual(result.mode, "browser_evidence")
+        self.assertEqual(result.routing_decision, "browser_direct_open_provider_chat")
+        self.assertIn("browser_mode=direct_open", result.evidence_summary)
+        self.assertIn("primary_link_href=https://iana.org/domains/example", captured["user_prompt"])
 
     def test_build_researcher_reply_cleans_memo_style_execution_reply_for_telegram(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)

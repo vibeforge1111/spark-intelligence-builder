@@ -1786,6 +1786,15 @@ def _build_browser_search_context(
         f"search_results_title={search_results_title}",
         f"external_source_captured={'yes' if external_source_url else 'no'}",
     ]
+    if browser_mode == "direct_open":
+        lines.extend(
+            [
+                "This is a direct page-open request, not a web-search results task.",
+                "Answer only with the page facts the user asked for.",
+                "Do not add strategy advice, jokes, speculative commentary, or unrelated follow-up questions.",
+                "If the user asks for the main link on the page, use primary_link_href when it is present.",
+            ]
+        )
     if search_nodes:
         lines.append("search_result_candidates=" + json.dumps(search_nodes, ensure_ascii=True))
     if page_interactives:
@@ -4320,7 +4329,15 @@ def build_researcher_reply(
         reply_mutation_actions.extend(browser_search_mutations)
         reply_text = cleaned_reply
         trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
-        evidence_summary = "status=browser_evidence provider_fallback=direct_http_chat"
+        browser_mode = "direct_open" if "browser_mode=direct_open" in browser_search_context_extra else "search_results"
+        evidence_summary = (
+            f"status=browser_evidence browser_mode={browser_mode} provider_fallback=direct_http_chat"
+        )
+        initial_routing_decision = (
+            "browser_direct_open_provider_chat"
+            if browser_mode == "direct_open"
+            else "browser_search_provider_chat"
+        )
         reply_text, evidence_summary, escalation_hint, routing_decision = _maybe_apply_swarm_recommendation(
             config_manager=config_manager,
             state_db=state_db,
@@ -4328,7 +4345,7 @@ def build_researcher_reply(
             channel_kind=channel_kind,
             reply_text=reply_text,
             evidence_summary=evidence_summary,
-            routing_decision="browser_search_provider_chat",
+            routing_decision=initial_routing_decision,
             run_id=run_id,
             request_id=request_id,
             trace_ref=trace_ref,
@@ -4355,7 +4372,7 @@ def build_researcher_reply(
             human_id=human_id,
             agent_id=agent_id,
             actor_id="researcher_bridge",
-            reason_code="browser_search_provider_chat",
+            reason_code=initial_routing_decision,
             facts=_bridge_event_facts(
                 routing_decision=routing_decision,
                 bridge_mode="browser_evidence",
