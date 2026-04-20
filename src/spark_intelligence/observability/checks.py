@@ -10,6 +10,7 @@ from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.memory_contracts import (
+    effective_memory_role,
     is_memory_contract_reason,
     memory_contract_reason,
     normalize_memory_role,
@@ -729,23 +730,45 @@ def _memory_contract_issue(state_db: StateDB) -> StopShipIssue:
                     break
             continue
         reason = str(facts.get("reason") or "")
-        if is_memory_contract_reason(reason):
-            invalid_events.append(event)
-            continue
         raw_role = facts.get("memory_role")
-        if "method" in facts and memory_contract_reason(
-            memory_role=raw_role,
-            method=str(facts.get("method") or ""),
-            allow_unknown=int(facts.get("record_count") or 0) == 0,
-        ):
+        violation_reason: str | None = None
+        if "operation" in facts:
+            allow_unknown = int(facts.get("accepted_count") or 0) == 0
+            normalized_role = normalize_memory_role(raw_role, allow_unknown=allow_unknown)
+            effective_role = effective_memory_role(
+                raw_role,
+                allow_unknown=allow_unknown,
+                provenance=event.get("provenance_json"),
+            )
+            if is_memory_contract_reason(reason) and effective_role == normalized_role:
+                violation_reason = reason
+            else:
+                violation_reason = memory_contract_reason(
+                    memory_role=effective_role,
+                    operation=str(facts.get("operation") or ""),
+                    allow_unknown=allow_unknown,
+                )
+        elif "method" in facts:
+            allow_unknown = int(facts.get("record_count") or 0) == 0
+            normalized_role = normalize_memory_role(raw_role, allow_unknown=allow_unknown)
+            effective_role = effective_memory_role(
+                raw_role,
+                allow_unknown=allow_unknown,
+                provenance=event.get("provenance_json"),
+            )
+            if is_memory_contract_reason(reason) and effective_role == normalized_role:
+                violation_reason = reason
+            else:
+                violation_reason = memory_contract_reason(
+                    memory_role=effective_role,
+                    method=str(facts.get("method") or ""),
+                    allow_unknown=allow_unknown,
+                )
+        elif is_memory_contract_reason(reason):
+            violation_reason = reason
+        if violation_reason:
             invalid_events.append(event)
             continue
-        if "operation" in facts and memory_contract_reason(
-            memory_role=raw_role,
-            operation=str(facts.get("operation") or ""),
-            allow_unknown=int(facts.get("accepted_count") or 0) == 0,
-        ):
-            invalid_events.append(event)
     if invalid_events:
         return StopShipIssue(
             name="stop_ship_memory_contract",

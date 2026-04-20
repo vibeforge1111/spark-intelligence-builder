@@ -943,6 +943,50 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("watchtower-memory-contract", checks)
         self.assertFalse(checks["watchtower-memory-contract"].ok)
 
+    def test_stop_ship_ignores_reconciled_memory_role_from_sdk_provenance(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="memory_read_abstained",
+            component="memory_orchestrator",
+            summary="retrieval evidence reconciled from sdk provenance",
+            request_id="req-memory-contract-reconciled",
+            session_id="session:test",
+            human_id="human:test",
+            actor_id="memory_orchestrator",
+            facts={
+                "method": "retrieve_evidence",
+                "memory_role": "unknown",
+                "record_count": 0,
+                "reason": "invalid_memory_role",
+            },
+            provenance={
+                "memory_role": "unknown",
+                "sdk_provenance": [
+                    {
+                        "memory_role": "unknown",
+                        "metadata": {"memory_role": "current_state"},
+                    }
+                ],
+            },
+        )
+
+        snapshot = build_watchtower_snapshot(self.state_db)
+        memory_panel = snapshot["panels"]["memory_shadow"]
+        observer_panel = snapshot["panels"]["observer_incidents"]
+        issues = {
+            issue.name: issue
+            for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)
+        }
+        report = run_doctor(self.config_manager, self.state_db)
+        checks = {check.name: check for check in report.checks}
+
+        self.assertEqual(memory_panel["counts"]["contract_violations"], 0)
+        self.assertEqual(memory_panel["counts"]["invalid_role_events"], 0)
+        self.assertNotIn("memory_contract_drift", observer_panel["counts_by_class"])
+        self.assertTrue(issues["stop_ship_memory_contract"].ok)
+        self.assertIn("watchtower-memory-contract", checks)
+        self.assertTrue(checks["watchtower-memory-contract"].ok)
+
     def test_build_researcher_reply_records_chip_influence_provenance(self) -> None:
         self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
         self.config_manager.set_path("spark.specialization_paths.active_path_key", "startup-operator")

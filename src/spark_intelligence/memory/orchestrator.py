@@ -13,6 +13,7 @@ from typing import Any
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.memory_contracts import (
     annotate_contract_trace,
+    effective_memory_role,
     memory_contract_reason,
     normalize_memory_role,
 )
@@ -1786,16 +1787,21 @@ def _normalize_domain_retrieval_result(*, result: Any, method: str) -> dict[str,
 
 
 def _domain_record_to_dict(record: Any) -> dict[str, Any]:
+    metadata = dict(getattr(record, "metadata", {}) or {})
     return {
-        "memory_role": normalize_memory_role(getattr(record, "memory_role", "unknown"), allow_unknown=True),
+        "memory_role": effective_memory_role(
+            getattr(record, "memory_role", "unknown"),
+            allow_unknown=True,
+            metadata=metadata,
+        ),
         "subject": _optional_string(getattr(record, "subject", None)),
         "predicate": _optional_string(getattr(record, "predicate", None)),
         "text": _optional_string(getattr(record, "text", None)),
         "session_id": _optional_string(getattr(record, "session_id", None)),
         "turn_ids": list(getattr(record, "turn_ids", []) or []),
         "timestamp": _optional_string(getattr(record, "timestamp", None)),
-        "metadata": dict(getattr(record, "metadata", {}) or {}),
-        "value": getattr(record, "metadata", {}).get("value") if isinstance(getattr(record, "metadata", {}), dict) else None,
+        "metadata": metadata,
+        "value": metadata.get("value"),
     }
 
 

@@ -1231,6 +1231,33 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertFalse(checks["watchtower-memory-contract"].ok)
         self.assertIn("contract_violations=2", checks["watchtower-memory-contract"].detail)
 
+    def test_retrieve_evidence_uses_metadata_memory_role_when_sdk_record_is_unknown(self) -> None:
+        result = SimpleNamespace(
+            items=[
+                SimpleNamespace(
+                    memory_role="unknown",
+                    subject="human:test",
+                    predicate="profile.city",
+                    text="I moved to Dubai.",
+                    session_id="session:test",
+                    turn_ids=["turn:test"],
+                    timestamp="2026-04-20T12:00:00Z",
+                    metadata={"memory_role": "current_state", "value": "Dubai"},
+                )
+            ],
+            trace={"trace_id": "trace:test"},
+        )
+
+        normalized = memory_orchestrator._normalize_domain_retrieval_result(
+            result=result,
+            method="retrieve_evidence",
+        )
+
+        self.assertEqual(normalized["status"], "supported")
+        self.assertEqual(normalized["memory_role"], "current_state")
+        self.assertEqual(normalized["records"][0]["memory_role"], "current_state")
+        self.assertEqual(normalized["records"][0]["value"], "Dubai")
+
     def test_shadow_replay_payload_uses_real_turns_and_memory_observation_probes(self) -> None:
         with self.state_db.connect() as conn:
             conn.execute(

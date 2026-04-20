@@ -32,6 +32,24 @@ def normalize_memory_role(value: Any, *, allow_unknown: bool = False) -> str:
     return "unknown"
 
 
+def effective_memory_role(
+    value: Any,
+    *,
+    allow_unknown: bool = False,
+    metadata: Any = None,
+    provenance: Any = None,
+) -> str:
+    role = normalize_memory_role(value, allow_unknown=allow_unknown)
+    raw_role = str(value or "").strip().lower()
+    if role != "unknown" or raw_role not in {"", "unknown"}:
+        return role
+    for candidate in _fallback_memory_role_candidates(metadata=metadata, provenance=provenance):
+        candidate_role = normalize_memory_role(candidate, allow_unknown=False)
+        if candidate_role != "unknown":
+            return candidate_role
+    return role
+
+
 def expected_memory_role(*, operation: str | None = None, method: str | None = None) -> str | None:
     if operation:
         return WRITE_OPERATION_EXPECTED_MEMORY_ROLE.get(str(operation).strip().lower())
@@ -84,3 +102,25 @@ def annotate_contract_trace(
 
 def is_memory_contract_reason(value: Any) -> bool:
     return str(value or "").strip().lower() in MEMORY_CONTRACT_REASONS
+
+
+def _fallback_memory_role_candidates(*, metadata: Any, provenance: Any) -> list[Any]:
+    candidates: list[Any] = []
+    if isinstance(metadata, dict):
+        candidates.append(metadata.get("memory_role"))
+    candidates.extend(_provenance_memory_role_candidates(provenance))
+    return candidates
+
+
+def _provenance_memory_role_candidates(provenance: Any) -> list[Any]:
+    if isinstance(provenance, dict):
+        candidates: list[Any] = [provenance.get("memory_role")]
+        candidates.extend(_provenance_memory_role_candidates(provenance.get("metadata")))
+        candidates.extend(_provenance_memory_role_candidates(provenance.get("sdk_provenance")))
+        return candidates
+    if isinstance(provenance, list):
+        candidates: list[Any] = []
+        for item in provenance:
+            candidates.extend(_provenance_memory_role_candidates(item))
+        return candidates
+    return []
