@@ -190,6 +190,19 @@ class SwarmSyncTests(SparkTestCase):
         self.assertTrue(influence_events)
         self.assertEqual(influence_events[0]["facts_json"]["keepability"], "ephemeral_context")
 
+    def test_evaluate_swarm_escalation_does_not_recommend_from_multi_chip_context_alone(self) -> None:
+        self.config_manager.set_path("spark.chips.active_keys", ["startup-yc", "quality-gate"])
+
+        result = evaluate_swarm_escalation(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="Browse example.com and tell me the page title.",
+        )
+
+        self.assertTrue(result.ok)
+        self.assertFalse(result.escalate)
+        self.assertEqual(result.mode, "hold_local")
+
     def test_record_swarm_failure_state_persists_http_error_response_body(self) -> None:
         _record_swarm_failure_state(
             self.state_db,

@@ -1308,6 +1308,7 @@ def evaluate_swarm_escalation(
         triggers.append("long_task")
     if len(status.attachment_context.get("active_chip_keys", [])) >= 2:
         triggers.append("multi_chip_context")
+    recommendation_triggers = [trigger for trigger in triggers if trigger != "multi_chip_context"]
 
     if not status.payload_ready:
         result = SwarmDecisionResult(
@@ -1334,7 +1335,7 @@ def evaluate_swarm_escalation(
             agent_id=agent_id,
             actor_id=actor_id,
         )
-    elif triggers and auto_recommend_enabled:
+    elif recommendation_triggers and auto_recommend_enabled:
         result = SwarmDecisionResult(
             ok=True,
             escalate=True,
