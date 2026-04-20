@@ -5,7 +5,12 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from spark_intelligence.attachments import attachment_status, build_attachment_context
+from spark_intelligence.attachments import (
+    attachment_status,
+    build_attachment_context,
+    run_first_active_chip_hook,
+)
+from spark_intelligence.browser.service import build_browser_status_payload
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.state.db import StateDB
 
@@ -35,6 +40,7 @@ _KNOWN_CHIP_ROLE_HINTS: dict[str, str] = {
     "spark-swarm": "Swarm bridge and identity/escalation chip for collective or deep-work execution.",
     "domain-chip-voice-comms": "Speech I/O chip for STT and TTS around the Builder-owned personality.",
 }
+_BROWSER_STATUS_HOOK = "browser.status"
 
 
 @dataclass(frozen=True)
@@ -147,6 +153,7 @@ def build_system_registry(config_manager: ConfigManager, state_db: StateDB) -> S
     researcher = researcher_bridge_status(config_manager=config_manager, state_db=state_db)
     swarm = swarm_status(config_manager, state_db)
     auth_report = build_auth_status_report(config_manager=config_manager, state_db=state_db)
+    browser = _collect_browser_registry_payload(config_manager)
     config = config_manager.load()
     active_chip_keys = set(str(item) for item in (attachment_context.get("active_chip_keys") or []) if str(item))
     pinned_chip_keys = set(str(item) for item in (attachment_context.get("pinned_chip_keys") or []) if str(item))
@@ -160,11 +167,10 @@ def build_system_registry(config_manager: ConfigManager, state_db: StateDB) -> S
             _build_builder_record(gateway=gateway),
             _build_researcher_record(researcher=researcher),
             _build_swarm_record(swarm=swarm, attachment_context=attachment_context),
-            _build_chip_backed_system_record(
-                system_key="spark_browser",
-                chip_key="spark-browser",
+            _build_browser_record(
                 active_chip_keys=active_chip_keys,
                 attachment_context=attachment_context,
+                browser_payload=browser,
             ),
             _build_chip_backed_system_record(
                 system_key="spark_voice",
@@ -253,6 +259,77 @@ def build_system_registry_prompt_context(
             "When the user asks what Spark is, what it is connected to, what it can do, which chips are active, or which system should handle work, answer from this system registry and the attached inventory. Do not claim missing verified knowledge when the runtime registry already answers the question.",
         ]
     )
+    return "\n".join(lines)
+
+
+def build_system_registry_direct_reply(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    user_message: str,
+) -> str:
+    if not looks_like_system_registry_query(user_message):
+        return ""
+    payload = build_system_registry(config_manager, state_db).to_payload()
+    records = {
+        str(record.get("key") or ""): record
+        for record in (payload.get("records") or [])
+        if isinstance(record, dict) and str(record.get("kind") or "") == "system"
+    }
+    adapter_labels = [
+        str(record.get("label") or "").strip()
+        for record in (payload.get("records") or [])
+        if isinstance(record, dict)
+        and str(record.get("kind") or "") == "adapter"
+        and bool(record.get("active"))
+        and str(record.get("label") or "").strip()
+    ]
+    provider_labels = [
+        str(record.get("label") or "").strip()
+        for record in (payload.get("records") or [])
+        if isinstance(record, dict)
+        and str(record.get("kind") or "") == "provider"
+        and bool(record.get("active"))
+        and str(record.get("label") or "").strip()
+    ]
+    active_chips = [
+        str(record.get("key") or "").strip()
+        for record in (payload.get("records") or [])
+        if isinstance(record, dict)
+        and str(record.get("kind") or "") == "chip"
+        and bool(record.get("active"))
+        and str(record.get("key") or "").strip()
+    ]
+    active_paths = [
+        str(record.get("key") or "").strip()
+        for record in (payload.get("records") or [])
+        if isinstance(record, dict)
+        and str(record.get("kind") or "") == "path"
+        and bool(record.get("active"))
+        and str(record.get("key") or "").strip()
+    ]
+
+    lines = ["Here's what is connected right now:"]
+    for system_key in (
+        "spark_intelligence_builder",
+        "spark_researcher",
+        "spark_swarm",
+        "spark_browser",
+        "spark_voice",
+        "spark_memory",
+    ):
+        record = records.get(system_key)
+        if not isinstance(record, dict):
+            continue
+        lines.append(_format_system_registry_direct_reply_line(record))
+    if adapter_labels:
+        lines.append(f"Channels: {', '.join(adapter_labels)}.")
+    if provider_labels:
+        lines.append(f"Providers: {', '.join(provider_labels)}.")
+    if active_chips:
+        lines.append(f"Active chips: {', '.join(active_chips[:10])}.")
+    if active_paths:
+        lines.append(f"Active paths: {', '.join(active_paths[:5])}.")
     return "\n".join(lines)
 
 
@@ -377,6 +454,63 @@ def _build_chip_backed_system_record(
         capabilities=_SYSTEM_CAPABILITY_HINTS[system_key],
         limitations=limitations,
         metadata={"chip_key": chip_key},
+    )
+
+
+def _build_browser_record(
+    *,
+    active_chip_keys: set[str],
+    attachment_context: dict[str, Any],
+    browser_payload: dict[str, Any] | None,
+) -> SystemRegistryRecord:
+    attached_chip_keys = set(str(item) for item in (attachment_context.get("attached_chip_keys") or []) if str(item))
+    attached = "spark-browser" in attached_chip_keys
+    if isinstance(browser_payload, dict) and browser_payload:
+        error_code = str(browser_payload.get("error_code") or "").strip()
+        error_message = str(browser_payload.get("error_message") or "").strip()
+        if str(browser_payload.get("status") or "") == "completed":
+            status = "ready"
+            active = True
+            available = True
+            degraded = False
+            limitations: list[str] = []
+        elif error_code == "BROWSER_SESSION_STALE":
+            status = "standby"
+            active = False
+            available = attached
+            degraded = False
+            limitations = [
+                error_message or "Live browser session is not currently connected.",
+                "Reconnect the Spark Browser extension session to restore live search and page inspection.",
+            ]
+        else:
+            status = "degraded"
+            active = False
+            available = attached
+            degraded = True
+            limitations = [error_message or "Browser hook failed or is unavailable."]
+        return SystemRegistryRecord(
+            record_id="system:spark_browser",
+            kind="system",
+            key="spark_browser",
+            label="Spark Browser",
+            role=_SYSTEM_ROLE_HINTS["spark_browser"],
+            status=status,
+            attached=attached,
+            active=active,
+            pinned=False,
+            available=available,
+            degraded=degraded,
+            requires_restart=False,
+            capabilities=_SYSTEM_CAPABILITY_HINTS["spark_browser"],
+            limitations=limitations,
+            metadata=browser_payload,
+        )
+    return _build_chip_backed_system_record(
+        system_key="spark_browser",
+        chip_key="spark-browser",
+        active_chip_keys=active_chip_keys,
+        attachment_context=attachment_context,
     )
 
 
@@ -579,6 +713,82 @@ def _derive_current_capabilities(records: list[SystemRegistryRecord]) -> list[st
     if active_paths:
         capabilities.append(f"active specialization paths: {', '.join(active_paths)}")
     return capabilities
+
+
+def _collect_browser_registry_payload(config_manager: ConfigManager) -> dict[str, Any] | None:
+    payload = build_browser_status_payload(
+        config_manager=config_manager,
+        browser_family="brave",
+        profile_key="spark-default",
+        profile_mode="dedicated",
+        agent_id=None,
+    )
+    try:
+        execution = run_first_active_chip_hook(config_manager, hook=_BROWSER_STATUS_HOOK, payload=payload)
+    except ValueError as exc:
+        return {
+            "status": "unavailable",
+            "chip_key": "browser",
+            "error_code": "BROWSER_STATUS_INVALID",
+            "error_message": str(exc),
+        }
+    if execution is None:
+        return None
+    hook_output = execution.output if isinstance(execution.output, dict) else {}
+    hook_status = _normalize_browser_hook_status(hook_output)
+    hook_error = hook_output.get("error") if isinstance(hook_output.get("error"), dict) else {}
+    hook_failed = (not execution.ok) or bool(hook_error) or (
+        hook_status is not None and hook_status not in {"succeeded", "completed", "ok", "success"}
+    )
+    return {
+        "status": "failed" if hook_failed else "completed",
+        "chip_key": execution.chip_key,
+        "hook_status": hook_status or ("failed" if hook_failed else "succeeded"),
+        "approval_state": hook_output.get("approval_state") if isinstance(hook_output.get("approval_state"), str) else None,
+        "error_code": str(hook_error.get("code") or "").strip() or None,
+        "error_message": str(hook_error.get("message") or "").strip() or None,
+        "provenance": hook_output.get("provenance") if isinstance(hook_output.get("provenance"), dict) else {},
+    }
+
+
+def _format_system_registry_direct_reply_line(record: dict[str, Any]) -> str:
+    label = str(record.get("label") or record.get("key") or "system")
+    key = str(record.get("key") or "")
+    status = str(record.get("status") or "unknown")
+    limitations = [str(item).strip() for item in (record.get("limitations") or []) if str(item).strip()]
+    if key == "spark_intelligence_builder":
+        detail = "Telegram delivery, routing, and operator controls are live." if status == "ready" else limitations[:1]
+    elif key == "spark_researcher":
+        detail = "Provider-backed advisory is available." if status == "ready" else limitations[:1]
+    elif key == "spark_swarm":
+        detail = "Escalation and collective sync are available." if status in {"ready", "configured"} else limitations[:1]
+    elif key == "spark_browser":
+        if status == "ready":
+            detail = "Live search and page inspection are available."
+        elif status == "standby":
+            detail = limitations[:1] or ["Reconnect the extension session to restore live browser grounding."]
+        else:
+            detail = limitations[:1]
+    elif key == "spark_voice":
+        detail = "Speech I/O is attached." if status in {"ready", "available"} else limitations[:1]
+    elif key == "spark_memory":
+        detail = "Persistent memory and observability are active."
+    else:
+        detail = limitations[:1]
+    suffix = ""
+    if isinstance(detail, list) and detail:
+        suffix = f"; {detail[0]}"
+    elif isinstance(detail, str) and detail:
+        suffix = f"; {detail}"
+    return f"- {label}: {status}{suffix}"
+
+
+def _normalize_browser_hook_status(hook_output: dict[str, Any]) -> str | None:
+    value = hook_output.get("status")
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    return normalized or None
 
 
 def _prompt_section_lines(records: list[dict[str, Any]], *, kind: str, title: str) -> list[str]:

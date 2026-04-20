@@ -84,6 +84,7 @@ from spark_intelligence.personality.loader import (
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_runtime_state
 from spark_intelligence.system_registry import (
+    build_system_registry_direct_reply,
     build_system_registry_prompt_context,
     looks_like_system_registry_query,
 )
@@ -3642,6 +3643,61 @@ def build_researcher_reply(
             config_path=None,
             attachment_context=attachment_context,
             routing_decision="memory_profile_identity_summary",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+    if looks_like_system_registry_query(user_message):
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="system_registry_direct",
+            routing_decision="system_registry_direct",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = build_system_registry_direct_reply(
+            config_manager=config_manager,
+            state_db=state_db,
+            user_message=user_message,
+        )
+        evidence_summary = "status=system_registry_direct source=verified_registry"
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered a self-knowledge query directly from the verified system registry.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="system_registry_direct",
+            facts=_bridge_event_facts(
+                routing_decision="system_registry_direct",
+                bridge_mode="system_registry_direct",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={"query_text": str(user_message or "").strip()},
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="system_registry_direct",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="system_registry_direct",
             active_chip_key=None,
             active_chip_task_type=None,
             active_chip_evaluate_used=False,

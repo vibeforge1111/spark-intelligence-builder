@@ -3022,6 +3022,39 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("Swarm: recommended for this task", result.reply_text)
         self.assertIn("swarm=manual_recommended", result.evidence_summary)
 
+    def test_build_researcher_reply_answers_system_registry_queries_directly(self) -> None:
+        create_fake_hook_chip(self.home, chip_key="spark-browser")
+        self.config_manager.set_path("spark.chips.roots", [str(self.home)])
+        self.config_manager.set_path("spark.chips.active_keys", ["spark-browser"])
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("system registry queries should not call the provider"),
+        ), patch(
+            "spark_intelligence.system_registry.registry._collect_browser_registry_payload",
+            return_value={
+                "status": "failed",
+                "chip_key": "spark-browser",
+                "error_code": "BROWSER_SESSION_STALE",
+                "error_message": "Live browser session is not currently connected.",
+            },
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-system-registry",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-1",
+                channel_kind="telegram",
+                user_message="What are you connected to right now?",
+            )
+
+        self.assertEqual(result.mode, "system_registry_direct")
+        self.assertEqual(result.routing_decision, "system_registry_direct")
+        self.assertIn("Spark Browser: standby", result.reply_text)
+        self.assertIn("Live browser session is not currently connected.", result.reply_text)
+
     def test_build_researcher_reply_respects_disabled_conversational_fallback_policy(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.researcher.routing.conversational_fallback_enabled", False)

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from spark_intelligence.system_registry import (
     build_system_registry,
+    build_system_registry_direct_reply,
     build_system_registry_prompt_context,
     looks_like_system_registry_query,
 )
@@ -53,6 +56,61 @@ class SystemRegistryTests(SparkTestCase):
         self.assertIn("Spark Intelligence Builder: status=", prompt_context)
         self.assertIn("[Current capabilities]", prompt_context)
         self.assertIn("1:1 conversational work through Builder", prompt_context)
+
+    def test_build_system_registry_marks_browser_standby_when_session_is_stale(self) -> None:
+        create_fake_hook_chip(self.home, chip_key="spark-browser")
+        self.config_manager.set_path("spark.chips.roots", [str(self.home)])
+        self.config_manager.set_path("spark.chips.active_keys", ["spark-browser"])
+
+        with patch(
+            "spark_intelligence.system_registry.registry._collect_browser_registry_payload",
+            return_value={
+                "status": "failed",
+                "chip_key": "spark-browser",
+                "error_code": "BROWSER_SESSION_STALE",
+                "error_message": "Live browser session is not currently connected.",
+            },
+        ):
+            payload = build_system_registry(self.config_manager, self.state_db).to_payload()
+
+        records = {str(record["key"]): record for record in payload["records"]}
+        self.assertEqual(records["spark_browser"]["status"], "standby")
+        self.assertFalse(records["spark_browser"]["active"])
+        self.assertNotIn(
+            "governed browser search and page inspection",
+            payload["summary"]["current_capabilities"],
+        )
+
+    def test_build_system_registry_direct_reply_uses_verified_registry_state(self) -> None:
+        create_fake_hook_chip(self.home, chip_key="startup-yc")
+        create_fake_hook_chip(self.home, chip_key="spark-browser")
+        self.config_manager.set_path("spark.chips.roots", [str(self.home)])
+        self.config_manager.set_path("spark.chips.active_keys", ["startup-yc", "spark-browser"])
+        self.config_manager.set_path("spark.chips.pinned_keys", ["startup-yc"])
+
+        with patch(
+            "spark_intelligence.system_registry.registry._collect_browser_registry_payload",
+            return_value={
+                "status": "failed",
+                "chip_key": "spark-browser",
+                "error_code": "BROWSER_SESSION_STALE",
+                "error_message": "Live browser session is not currently connected.",
+            },
+        ):
+            reply = build_system_registry_direct_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                user_message="What are you connected to right now?",
+            )
+
+        self.assertIn("Here's what is connected right now:", reply)
+        self.assertIn("Spark Intelligence Builder:", reply)
+        self.assertIn("Spark Researcher:", reply)
+        self.assertIn("Spark Browser: standby", reply)
+        self.assertIn("Live browser session is not currently connected.", reply)
+        self.assertIn("Active chips:", reply)
+        self.assertIn("startup-yc", reply)
+        self.assertIn("spark-browser", reply)
 
     def test_system_registry_query_detection_covers_capability_and_surroundings_questions(self) -> None:
         self.assertTrue(looks_like_system_registry_query("What can you do right now?"))
