@@ -1456,6 +1456,20 @@ def build_parser() -> argparse.ArgumentParser:
     channel_test_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     channel_test_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
+    drafts_parser = subparsers.add_parser("drafts", help="Inspect bot drafts saved per user/channel")
+    drafts_subparsers = drafts_parser.add_subparsers(dest="drafts_command", required=True)
+    drafts_list_parser = drafts_subparsers.add_parser("list", help="List recent drafts for a user")
+    drafts_list_parser.add_argument("--user-id", required=True, help="External user id")
+    drafts_list_parser.add_argument("--channel", default="telegram", help="Channel kind (default: telegram)")
+    drafts_list_parser.add_argument("--limit", type=int, default=10, help="Max drafts to show")
+    drafts_list_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    drafts_list_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    drafts_show_parser = drafts_subparsers.add_parser("show", help="Show a specific draft by handle")
+    drafts_show_parser.add_argument("--user-id", required=True, help="External user id")
+    drafts_show_parser.add_argument("--channel", default="telegram", help="Channel kind (default: telegram)")
+    drafts_show_parser.add_argument("handle", help="Draft handle (e.g. D-7f3a)")
+    drafts_show_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+
     instr_parser = subparsers.add_parser("instructions", help="Manage persistent per-user instructions injected into prompts")
     instr_subparsers = instr_parser.add_subparsers(dest="instructions_command", required=True)
 
@@ -3497,6 +3511,58 @@ def handle_attachments_status(args: argparse.Namespace) -> int:
     config_manager.bootstrap()
     result = attachment_status(config_manager)
     print(result.to_json() if args.json else result.to_text())
+    return 0
+
+
+def handle_drafts_list(args: argparse.Namespace) -> int:
+    from spark_intelligence.bot_drafts import list_recent_drafts
+
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    state_db = StateDB(config_manager.paths.state_db)
+    state_db.initialize()
+    drafts = list_recent_drafts(
+        state_db,
+        external_user_id=args.user_id,
+        channel_kind=args.channel,
+        limit=args.limit,
+    )
+    if args.json:
+        import json as _json
+        print(_json.dumps([d.to_dict() for d in drafts], indent=2))
+        return 0
+    if not drafts:
+        print(f"No drafts for user={args.user_id} channel={args.channel}")
+        return 0
+    print(f"Recent drafts for user={args.user_id} channel={args.channel}:")
+    for d in drafts:
+        print(f"- {d.handle}  {d.created_at}  len={d.content_length}  chip={d.chip_used or '-'}  topic={d.topic_hint or '-'}")
+    return 0
+
+
+def handle_drafts_show(args: argparse.Namespace) -> int:
+    from spark_intelligence.bot_drafts import find_draft_by_handle
+
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    state_db = StateDB(config_manager.paths.state_db)
+    state_db.initialize()
+    draft = find_draft_by_handle(
+        state_db,
+        external_user_id=args.user_id,
+        channel_kind=args.channel,
+        handle_or_id=args.handle,
+    )
+    if draft is None:
+        print(f"No draft matching {args.handle} for user={args.user_id} channel={args.channel}")
+        return 1
+    print(f"=== Draft {draft.handle} ===")
+    print(f"created_at: {draft.created_at}")
+    print(f"length: {draft.content_length}")
+    print(f"chip_used: {draft.chip_used or '-'}")
+    print(f"topic_hint: {draft.topic_hint or '-'}")
+    print("--- content ---")
+    print(draft.content)
     return 0
 
 
@@ -6287,6 +6353,10 @@ def main(argv: list[str] | None = None) -> int:
         return handle_channel_test(args)
     if args.command == "chips" and args.chips_command == "why":
         return handle_chips_why(args)
+    if args.command == "drafts" and args.drafts_command == "list":
+        return handle_drafts_list(args)
+    if args.command == "drafts" and args.drafts_command == "show":
+        return handle_drafts_show(args)
     if args.command == "instructions" and args.instructions_command == "list":
         return handle_instructions_list(args)
     if args.command == "instructions" and args.instructions_command == "add":

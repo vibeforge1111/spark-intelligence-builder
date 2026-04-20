@@ -246,6 +246,69 @@ def _build_verbatim_chip_block(raw_chip_metrics: list[dict]) -> str:
     return "\n".join(lines) if len(lines) > 3 else ""
 
 
+def _maybe_save_long_reply_as_draft(
+    *,
+    state_db,
+    external_user_id: str,
+    session_id: str | None,
+    chip_used: str | None,
+    reply_text: str,
+    user_message: str = "",
+) -> str:
+    if not reply_text or not external_user_id:
+        return reply_text
+    try:
+        from spark_intelligence.bot_drafts import (
+            find_draft_for_iteration,
+            save_draft,
+            update_draft_content,
+            DRAFT_MIN_LENGTH,
+        )
+    except Exception:
+        return reply_text
+    if len(reply_text) < DRAFT_MIN_LENGTH:
+        return reply_text
+    source_draft = None
+    if user_message:
+        try:
+            source_draft = find_draft_for_iteration(
+                state_db,
+                external_user_id=str(external_user_id),
+                channel_kind="telegram",
+                user_message=user_message,
+            )
+        except Exception:
+            source_draft = None
+    if source_draft is not None:
+        try:
+            ok = update_draft_content(
+                state_db,
+                draft_id=source_draft.draft_id,
+                content=reply_text,
+                chip_used=chip_used,
+            )
+        except Exception:
+            ok = False
+        if ok:
+            base = reply_text.rstrip()
+            return f"{base}\n\n_(draft updated: {source_draft.handle} — same handle, content replaced; say \"optimize this\" again to keep iterating)_"
+    try:
+        draft = save_draft(
+            state_db,
+            external_user_id=str(external_user_id),
+            channel_kind="telegram",
+            content=reply_text,
+            session_id=session_id,
+            chip_used=chip_used,
+        )
+    except Exception:
+        return reply_text
+    if draft is None:
+        return reply_text
+    base = reply_text.rstrip()
+    return f"{base}\n\n_(draft: {draft.handle} — say \"iterate {draft.handle}\" or \"optimize this\" to revise this exact text)_"
+
+
 def _maybe_capture_user_instruction(
     *,
     state_db,
@@ -897,6 +960,14 @@ def simulate_telegram_update(
                     user_message=effective_text,
                     external_user_id=normalized.telegram_user_id,
                     reply_text=outbound_text,
+                )
+                outbound_text = _maybe_save_long_reply_as_draft(
+                    state_db=state_db,
+                    external_user_id=normalized.telegram_user_id,
+                    session_id=resolution.session_id,
+                    chip_used=bridge_result.active_chip_key,
+                    reply_text=outbound_text,
+                    user_message=effective_text,
                 )
         outbound_text = _apply_think_visibility(
             state_db=state_db,

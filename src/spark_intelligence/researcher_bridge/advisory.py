@@ -96,6 +96,7 @@ from spark_intelligence.system_registry import (
     looks_like_system_registry_query,
 )
 from spark_intelligence.user_instructions import list_active_instructions
+from spark_intelligence.bot_drafts import find_draft_for_iteration
 
 _BROWSER_SEARCH_SUMMARY_MAX_CHARS = 280
 _BROWSER_SEARCH_EXCERPT_MAX_CHARS = 480
@@ -2263,6 +2264,7 @@ def _build_contextual_task(
     capability_router_context: str = "",
     harness_context: str = "",
     user_instructions_context: str = "",
+    iteration_draft_context: str = "",
 ) -> str:
     active_chip_keys = attachment_context.get("active_chip_keys") or []
     pinned_chip_keys = attachment_context.get("pinned_chip_keys") or []
@@ -2318,6 +2320,8 @@ def _build_contextual_task(
         lines.extend([user_instructions_context, ""])
     if browser_search_context_extra:
         lines.extend([browser_search_context_extra, ""])
+    if iteration_draft_context:
+        lines.extend([iteration_draft_context, ""])
     if active_chip_evaluate:
         chip_guidance = _summarize_active_chip_guidance(str(active_chip_evaluate.get("analysis") or ""))
         lines.extend(
@@ -2357,6 +2361,49 @@ def _build_contextual_task(
         ]
     )
     return "\n".join(lines)
+
+
+def _build_iteration_draft_context(
+    *,
+    state_db: StateDB,
+    human_id: str,
+    channel_kind: str,
+    user_message: str,
+) -> str:
+    external_user_id = ""
+    raw = str(human_id or "").strip()
+    if raw:
+        external_user_id = raw.split(":")[-1].strip()
+    if not external_user_id or not channel_kind:
+        return ""
+    try:
+        draft = find_draft_for_iteration(
+            state_db,
+            external_user_id=external_user_id,
+            channel_kind=channel_kind,
+            user_message=user_message,
+        )
+    except Exception:
+        return ""
+    if draft is None:
+        return ""
+    body = draft.content
+    if len(body) > 6000:
+        body = body[:6000].rstrip() + "\n…[truncated for context, full draft is in storage]"
+    return "\n".join([
+        f"[GROUND TRUTH OVERRIDE — draft to iterate, handle {draft.handle}, created {draft.created_at}]",
+        "This block overrides any earlier topic, hook, or artifact mentioned in conversation history.",
+        "If recent conversation history references a different draft (e.g. an earlier 3am-founder thread,",
+        "an unrelated test article, or any prior topic), IGNORE THAT. The user is iterating THIS exact draft.",
+        "Apply chip recommendations and your edits ONLY to the text between BEGIN DRAFT / END DRAFT.",
+        "Do NOT switch to a different topic. Do NOT invent fresh subject matter. Do NOT generate a new artifact.",
+        "Your reply should be a revised version of the draft below, with the chip's recommendations applied.",
+        f"Topic of this draft: {draft.topic_hint or '(no topic captured)'}",
+        f"Chip used originally: {draft.chip_used or '(none)'}",
+        "--- BEGIN DRAFT ---",
+        body,
+        "--- END DRAFT ---",
+    ])
 
 
 def _build_user_instructions_context(
@@ -4525,6 +4572,12 @@ def build_researcher_reply(
         human_id=human_id,
         channel_kind=channel_kind,
     )
+    iteration_draft_context = _build_iteration_draft_context(
+        state_db=state_db,
+        human_id=human_id,
+        channel_kind=channel_kind,
+        user_message=user_message,
+    )
     contextual_task = _build_contextual_task(
         user_message=user_message,
         channel_kind=channel_kind,
@@ -4539,6 +4592,7 @@ def build_researcher_reply(
         capability_router_context=capability_router_context,
         harness_context=harness_context,
         user_instructions_context=user_instructions_context,
+        iteration_draft_context=iteration_draft_context,
     )
     active_chip_key = str(active_chip_evaluate.get("chip_key")) if active_chip_evaluate else None
     active_chip_task_type = str(active_chip_evaluate.get("task_type")) if active_chip_evaluate and active_chip_evaluate.get("task_type") else None

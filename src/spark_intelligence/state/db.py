@@ -769,6 +769,20 @@ SCHEMA_STATEMENTS = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_user_instructions_lookup ON user_instructions(external_user_id, channel_kind, status, created_at)",
+    """
+    CREATE TABLE IF NOT EXISTS bot_drafts (
+        draft_id TEXT PRIMARY KEY,
+        external_user_id TEXT NOT NULL,
+        channel_kind TEXT NOT NULL,
+        session_id TEXT,
+        content TEXT NOT NULL,
+        content_length INTEGER NOT NULL,
+        chip_used TEXT,
+        topic_hint TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_bot_drafts_lookup ON bot_drafts(external_user_id, channel_kind, created_at)",
 ]
 
 
