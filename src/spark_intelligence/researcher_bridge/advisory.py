@@ -1299,6 +1299,28 @@ def _summarize_dom_outline_nodes(nodes: Any, *, max_items: int = 5) -> list[str]
     return lines
 
 
+def _summarize_interactives(items: Any, *, max_items: int = 5) -> list[str]:
+    if not isinstance(items, list):
+        return []
+    lines: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        label = str(
+            item.get("label") or item.get("text") or item.get("selector") or ""
+        ).strip()
+        href = str(item.get("href") or "").strip()
+        if not label and not href:
+            continue
+        line = label or href
+        if href:
+            line = f"{line} | href={href}"
+        lines.append(line)
+        if len(lines) >= max_items:
+            break
+    return lines
+
+
 def _select_search_result_candidate(dom_extract_output: dict[str, Any], *, search_url: str) -> dict[str, str] | None:
     result = dom_extract_output.get("result") if isinstance(dom_extract_output.get("result"), dict) else {}
     dom_outline = result.get("dom_outline") if isinstance(result.get("dom_outline"), dict) else {}
@@ -1368,6 +1390,23 @@ def _select_search_result_candidate_from_interactives_result(
             "href": href,
             "text_summary": str(item.get("label") or item.get("text") or item.get("selector") or "").strip(),
         }
+    return None
+
+
+def _select_primary_page_link_from_interactives_result(
+    interactives_output: dict[str, Any],
+) -> dict[str, str] | None:
+    result = interactives_output.get("result") if isinstance(interactives_output.get("result"), dict) else {}
+    interactives = result.get("interactives") if isinstance(result.get("interactives"), list) else []
+    for item in interactives:
+        if not isinstance(item, dict):
+            continue
+        href = str(item.get("href") or "").strip()
+        parsed = urlparse(href)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            continue
+        label = str(item.get("label") or item.get("text") or item.get("selector") or "").strip()
+        return {"href": href, "label": label}
     return None
 
 
@@ -1510,7 +1549,9 @@ def _build_browser_search_context(
 
     dom_result: dict[str, Any] = {}
     search_nodes: list[str] = []
+    page_interactives: list[str] = []
     candidate: dict[str, str] | None = None
+    primary_page_link: dict[str, str] | None = None
     search_text_output = None
     browser_mode = "search_results"
     if direct_target_url:
@@ -1520,6 +1561,34 @@ def _build_browser_search_context(
             "href": direct_target_url,
             "text_summary": "Direct page requested by the user",
         }
+        interactives_output, _ = _execute_browser_hook(
+            config_manager=config_manager,
+            state_db=state_db,
+            hook="browser.page.interactives.list",
+            payload=build_browser_page_interactives_list_payload(
+                config_manager=config_manager,
+                origin=search_origin,
+                tab_id=search_tab_id,
+                agent_id=agent_id,
+                request_id=f"{request_id}:browser-direct-interactives",
+                max_items=10,
+            ),
+            run_id=run_id,
+            request_id=request_id,
+            channel_kind=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+        )
+        blocked_reply, blocked_code = _browser_hook_blocked_reply(interactives_output or {})
+        if blocked_reply:
+            return {"context": "", "blocked_reply": blocked_reply, "blocked_code": blocked_code}
+        if _browser_hook_succeeded(interactives_output):
+            interactives_result = interactives_output.get("result") if isinstance(interactives_output.get("result"), dict) else {}
+            page_interactives = _summarize_interactives(interactives_result.get("interactives"))
+            primary_page_link = _select_primary_page_link_from_interactives_result(
+                interactives_output
+            )
     else:
         dom_output, chip_key = _execute_browser_hook(
             config_manager=config_manager,
@@ -1719,8 +1788,13 @@ def _build_browser_search_context(
     ]
     if search_nodes:
         lines.append("search_result_candidates=" + json.dumps(search_nodes, ensure_ascii=True))
+    if page_interactives:
+        lines.append("page_interactives=" + json.dumps(page_interactives, ensure_ascii=True))
     if candidate:
         lines.append(f"selected_result_hint={candidate.get('text_summary') or 'unknown'}")
+    if primary_page_link:
+        lines.append(f"primary_link_label={primary_page_link.get('label') or 'unknown'}")
+        lines.append(f"primary_link_href={primary_page_link.get('href') or 'unknown'}")
     source_summary = _truncate_browser_evidence_text(
         str(visible_text.get("summary") or ""),
         max_chars=_BROWSER_SEARCH_SUMMARY_MAX_CHARS,
@@ -2225,6 +2299,10 @@ def _polish_browser_grounded_reply(text: str) -> tuple[str, list[str]]:
         r"(?is)\n\nWhat problem are you trying to solve with this\?\s*$",
         r"(?is)\n\nWhat problem are you trying to solve\?\s*$",
         r"(?is)\n\nWhat are you trying to solve with this\?\s*$",
+        r"(?is)\n\nWhat's the actual project context you want to organize around\?.*$",
+        r"(?is)\n\nWhat is the actual project context you want to organize around\?.*$",
+        r"(?is)\n\nOn your earlier question about tools.*$",
+        r"(?is)\n\nWhat were you actually trying to get done\?.*$",
     )
     stripped_followup = body
     for pattern in generic_followup_patterns:

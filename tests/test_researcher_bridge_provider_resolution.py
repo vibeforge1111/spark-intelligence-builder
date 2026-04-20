@@ -438,6 +438,20 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                     {
                         "status": "succeeded",
                         "result": {
+                            "interactives": [
+                                {
+                                    "label": "More information...",
+                                    "href": "https://www.iana.org/help/example-domains",
+                                }
+                            ]
+                        },
+                    },
+                    "spark-browser",
+                ),
+                (
+                    {
+                        "status": "succeeded",
+                        "result": {
                             "title": "Example Domain",
                             "origin": "https://example.com",
                             "visible_text": {
@@ -464,6 +478,10 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("browser_mode=direct_open", str(result["context"]))
         self.assertIn("source_url=https://example.com", str(result["context"]))
         self.assertIn("source_title=Example Domain", str(result["context"]))
+        self.assertIn(
+            "primary_link_href=https://www.iana.org/help/example-domains",
+            str(result["context"]),
+        )
         self.assertIsNone(result["blocked_reply"])
         self.assertIsNone(result["blocked_code"])
         called_hooks = [call.kwargs["hook"] for call in hook_mock.call_args_list]
@@ -473,6 +491,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 "browser.status",
                 "browser.navigate",
                 "browser.tab.wait",
+                "browser.page.interactives.list",
                 "browser.page.text_extract",
             ],
         )
@@ -529,6 +548,41 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("repair_quote_spacing", actions)
         self.assertIn("strip_generic_followup_question", actions)
         self.assertIn("append_external_source_citation", actions)
+
+    def test_sanitize_browser_search_reply_strips_project_context_followup_tail(self) -> None:
+        cleaned, actions = _sanitize_browser_search_reply(
+            (
+                "The page title is Example Domain, and the main link points to Learn more.\n\n"
+                "What's the actual project context you want to organize around? "
+                "Once I know what we're actually building or working on, I can make a sharper call.\n\n"
+                "Source: https://example.com"
+            ),
+            source_url="https://example.com",
+        )
+
+        self.assertIn("The page title is Example Domain", cleaned)
+        self.assertNotIn("actual project context", cleaned)
+        self.assertNotIn("sharper call", cleaned)
+        self.assertIn("Source: https://example.com", cleaned)
+        self.assertIn("strip_generic_followup_question", actions)
+
+    def test_sanitize_browser_search_reply_strips_tooling_context_tail(self) -> None:
+        cleaned, actions = _sanitize_browser_search_reply(
+            (
+                "The page title is Example Domain and the main link is https://www.iana.org/help/example-domains.\n\n"
+                "On your earlier question about tools for working together more organized - you're right to push on that. "
+                "The gap right now is that this workspace doesn't have an external runtime configured.\n\n"
+                "What were you actually trying to get done? If it's research, planning, or iterating on an idea, tell me the project.\n\n"
+                "Source: https://example.com"
+            ),
+            source_url="https://example.com",
+        )
+
+        self.assertIn("The page title is Example Domain", cleaned)
+        self.assertNotIn("earlier question about tools", cleaned)
+        self.assertNotIn("What were you actually trying to get done?", cleaned)
+        self.assertIn("Source: https://example.com", cleaned)
+        self.assertIn("strip_generic_followup_question", actions)
 
     def test_clean_messaging_reply_rewrites_structured_chip_memo_for_telegram(self) -> None:
         cleaned = _clean_messaging_reply(
