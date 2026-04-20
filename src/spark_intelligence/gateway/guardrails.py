@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any
 
@@ -163,13 +164,98 @@ def prepare_outbound_text(
             )
         cleaned = "Spark Intelligence withheld this reply because it appeared to contain sensitive credential material. The operator can inspect local traces."
         actions.append("block_secret_like_reply")
-    if len(cleaned) > max(max_reply_chars, 32):
-        cleaned = f"{cleaned[: max(max_reply_chars, 32) - 28].rstrip()}\n\n[truncated for delivery]"
-        actions.append("truncate_reply")
     if not cleaned:
         cleaned = "Spark Intelligence produced an empty reply."
         actions.append("replace_empty_reply")
-    return {"text": cleaned, "actions": actions}
+
+    rewritten = _normalize_score_decimals_to_percent(cleaned)
+    if rewritten != cleaned:
+        cleaned = rewritten
+        actions.append("normalize_score_percentages")
+
+    chunk_size = max(max_reply_chars, 32)
+    max_chunks = 5
+    chunks = _split_text_for_delivery(cleaned, chunk_size=chunk_size, max_chunks=max_chunks)
+    if len(chunks) > 1:
+        actions.append(f"split_into_{len(chunks)}_messages")
+    delivered_text = "\n\n".join(chunks)
+    return {"text": delivered_text, "chunks": chunks, "actions": actions}
+
+
+_SCORE_LABEL_PATTERN = re.compile(
+    r"(?P<label>"
+    r"engagement[ _-]?quality(?:[ _-]?score)?|"
+    r"useful[ _-]?reach(?:[ _-]?score)?|"
+    r"grok[ _-]?relevance(?:[ _-]?score)?|"
+    r"verdict[ _-]?confidence|"
+    r"confidence|"
+    r"score"
+    r")"
+    r"(?P<sep>\s*(?:=|:)?\s*\(?\s*)"
+    r"(?P<value>(?:0|1)?\.\d{1,3}|1\.0+)"
+    r"(?P<trail>\s*\)?)",
+    flags=re.IGNORECASE,
+)
+
+
+def _normalize_score_decimals_to_percent(text: str) -> str:
+    if not text:
+        return text
+
+    def _repl(match: re.Match[str]) -> str:
+        try:
+            value = float(match.group("value"))
+        except ValueError:
+            return match.group(0)
+        if value < 0 or value > 1:
+            return match.group(0)
+        pct = round(value * 100)
+        sep = match.group("sep")
+        trail = match.group("trail")
+        opens = sep.count("(")
+        closes = trail.count(")")
+        if opens > closes:
+            extra = opens - closes
+            trail = trail + (")" * extra)
+        return f"{match.group('label')}{sep}{pct}%{trail}"
+
+    return _SCORE_LABEL_PATTERN.sub(_repl, text)
+
+
+def _split_text_for_delivery(text: str, *, chunk_size: int, max_chunks: int) -> list[str]:
+    if len(text) <= chunk_size:
+        return [text]
+    chunks: list[str] = []
+    remaining = text
+    while remaining and len(chunks) < max_chunks:
+        if len(remaining) <= chunk_size:
+            chunks.append(remaining)
+            remaining = ""
+            break
+        cut = _find_split_point(remaining, chunk_size)
+        chunks.append(remaining[:cut].rstrip())
+        remaining = remaining[cut:].lstrip()
+    if remaining:
+        suffix_note = f"\n\n[content trimmed — chat capped at {max_chunks} parts; ask for the rest or request file delivery]"
+        last = chunks[-1]
+        keep = chunk_size - len(suffix_note)
+        if keep < 0:
+            keep = chunk_size // 2
+        chunks[-1] = last[:keep].rstrip() + suffix_note
+    if len(chunks) > 1:
+        chunks = [f"({i+1}/{len(chunks)}) {c}" for i, c in enumerate(chunks)]
+    return chunks
+
+
+def _find_split_point(text: str, chunk_size: int) -> int:
+    if len(text) <= chunk_size:
+        return len(text)
+    window = text[:chunk_size]
+    for boundary in ("\n\n", "\n", ". ", "! ", "? ", " "):
+        idx = window.rfind(boundary)
+        if idx >= chunk_size // 2:
+            return idx + len(boundary)
+    return chunk_size
 def set_runtime_state_value(
     *,
     state_db: StateDB,

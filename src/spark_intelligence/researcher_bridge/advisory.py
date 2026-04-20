@@ -8,18 +8,21 @@ import sys
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, urlparse
 
 from spark_intelligence.attachments import (
     build_attachment_context,
+    list_active_chip_records,
     record_chip_hook_execution,
+    run_chip_hook,
     run_first_active_chip_hook,
     run_first_chip_hook_supporting,
     screen_chip_hook_text,
 )
+from spark_intelligence.chip_router import select_chips_for_message
 from spark_intelligence.auth.runtime import RuntimeProviderResolution, resolve_runtime_provider
 from spark_intelligence.browser.service import (
     build_browser_navigate_payload,
@@ -92,6 +95,7 @@ from spark_intelligence.system_registry import (
     build_system_registry_prompt_context,
     looks_like_system_registry_query,
 )
+from spark_intelligence.user_instructions import list_active_instructions
 
 _BROWSER_SEARCH_SUMMARY_MAX_CHARS = 280
 _BROWSER_SEARCH_EXCERPT_MAX_CHARS = 480
@@ -130,6 +134,7 @@ class ResearcherBridgeResult:
     active_chip_key: str | None = None
     active_chip_task_type: str | None = None
     active_chip_evaluate_used: bool = False
+    raw_chip_metrics: list[dict[str, Any]] = field(default_factory=list)
     output_keepability: str = "ephemeral_context"
     promotion_disposition: str = "not_promotable"
 
@@ -1096,6 +1101,8 @@ def _normalize_browser_search_query(user_message: str) -> str:
     query = re.sub(r"^\s*tell me\s+", "", query, flags=re.IGNORECASE)
     query = re.sub(r"^\s*the\s+", "", query, flags=re.IGNORECASE)
     query = re.sub(r"\s+with the source you used\.?\s*$", "", query, flags=re.IGNORECASE)
+    query = re.sub(r"\s+and tell me the source you used\.?\s*$", "", query, flags=re.IGNORECASE)
+    query = re.sub(r"\s+tell me the source you used\.?\s*$", "", query, flags=re.IGNORECASE)
     query = re.sub(r"\s+(?:and\s+)?cite (?:the )?source(?:s)?(?: you used)?\.?\s*$", "", query, flags=re.IGNORECASE)
     query = re.sub(r"\s+(?:and\s+)?cite your source\.?\s*$", "", query, flags=re.IGNORECASE)
     query = re.sub(r"\s+(?:and\s+)?with sources?\.?\s*$", "", query, flags=re.IGNORECASE)
@@ -1163,6 +1170,8 @@ _BROWSER_SEARCH_QUERY_STOPWORDS = {
     "used",
     "web",
 }
+
+_BROWSER_DIRECT_OPEN_MAX_TEXT_CHARACTERS = 1500
 
 
 def _normalize_hostname(host: str) -> str:
@@ -1484,6 +1493,7 @@ def _build_direct_browser_snapshot_context(
     session_id: str,
     run_id: str | None = None,
 ) -> dict[str, str | None]:
+    direct_target_host = str(urlparse(direct_target_url).hostname or "").strip().lower()
     navigate_output, chip_key = _execute_browser_hook(
         config_manager=config_manager,
         state_db=state_db,
@@ -1544,9 +1554,9 @@ def _build_direct_browser_snapshot_context(
             tab_id=wait_tab_id,
             agent_id=agent_id,
             request_id=f"{request_id}:browser-direct-snapshot",
-            max_text_characters=2200,
+            max_text_characters=_BROWSER_DIRECT_OPEN_MAX_TEXT_CHARACTERS,
             max_controls=10,
-            allowed_domains=[_normalize_hostname(str(urlparse(direct_target_url).hostname or ""))],
+            allowed_domains=[direct_target_host] if direct_target_host else None,
         ),
         run_id=run_id,
         request_id=request_id,
@@ -2009,7 +2019,7 @@ def _build_browser_search_context(
                 tab_id=source_tab_id or None,
                 agent_id=agent_id,
                 request_id=f"{request_id}:browser-source-text",
-                max_text_characters=2200 if browser_mode == "direct_open" else 900,
+                max_text_characters=_BROWSER_DIRECT_OPEN_MAX_TEXT_CHARACTERS if browser_mode == "direct_open" else 900,
                 max_controls=6,
             ),
             run_id=run_id,
@@ -2035,9 +2045,9 @@ def _build_browser_search_context(
                 tab_id=source_tab_id or None,
                 agent_id=agent_id,
                 request_id=f"{request_id}:browser-source-snapshot",
-                max_text_characters=2200 if browser_mode == "direct_open" else 900,
+                max_text_characters=_BROWSER_DIRECT_OPEN_MAX_TEXT_CHARACTERS if browser_mode == "direct_open" else 900,
                 max_controls=10,
-                allowed_domains=[_normalize_hostname(str(urlparse(source_url).hostname or ""))] if source_url else None,
+                allowed_domains=[str(urlparse(source_url).hostname or "").strip().lower()] if source_url and str(urlparse(source_url).hostname or "").strip() else None,
             ),
             run_id=run_id,
             request_id=request_id,
@@ -2252,6 +2262,7 @@ def _build_contextual_task(
     mission_control_context: str = "",
     capability_router_context: str = "",
     harness_context: str = "",
+    user_instructions_context: str = "",
 ) -> str:
     active_chip_keys = attachment_context.get("active_chip_keys") or []
     pinned_chip_keys = attachment_context.get("pinned_chip_keys") or []
@@ -2267,9 +2278,6 @@ def _build_contextual_task(
         f"active_path_key={active_path_key or 'none'}",
         "",
     ]
-    attachment_inventory_context = _build_attachment_inventory_context(attachment_context=attachment_context)
-    if attachment_inventory_context:
-        lines.extend([attachment_inventory_context, ""])
     spark_self_knowledge_context = _build_spark_self_knowledge_context(
         user_message=user_message,
         attachment_context=attachment_context,
@@ -2296,6 +2304,18 @@ def _build_contextual_task(
         lines.extend([personality_context_extra, ""])
     if recent_conversation_context:
         lines.extend([recent_conversation_context, ""])
+    attachment_inventory_context = _build_attachment_inventory_context(attachment_context=attachment_context)
+    if attachment_inventory_context:
+        lines.extend([
+            "[GROUND TRUTH — runtime inventory below overrides any conflicting claim from earlier in this conversation]",
+            "If you previously told the user a chip was unwired, not invokable, missing connectors, or stub-only,",
+            "and the inventory below contradicts that, the inventory is correct and your prior claim was wrong.",
+            "Quote from the inventory verbatim if asked, do not paraphrase from memory.",
+            attachment_inventory_context,
+            "",
+        ])
+    if user_instructions_context:
+        lines.extend([user_instructions_context, ""])
     if browser_search_context_extra:
         lines.extend([browser_search_context_extra, ""])
     if active_chip_evaluate:
@@ -2307,8 +2327,13 @@ def _build_contextual_task(
                 f"task_type={active_chip_evaluate.get('task_type') or 'unknown'}",
                 f"stage={active_chip_evaluate.get('stage') or 'unknown'}",
                 (
-                    "Use this guidance as background context only. "
-                    "Do not copy its headings, confidence labels, packet ids, or memo structure into the user-visible reply."
+                    "GROUND-TRUTH RULE for chip output: "
+                    "You may paraphrase the chip's prose explanation freely, "
+                    "BUT any verdict, score, percentage, or confidence value MUST be quoted EXACTLY as the chip emitted it. "
+                    "Never round, re-estimate, average, or substitute your own assessment for the chip's numeric scores. "
+                    "If the chip says verdict=reject confidence=50%, you say verdict=reject confidence=50% — "
+                    "even if your prose interpretation suggests a more favourable read. "
+                    "Do not copy headings, packet ids, or memo formatting structure — those are paraphrasable."
                 ),
             ]
         )
@@ -2334,12 +2359,69 @@ def _build_contextual_task(
     return "\n".join(lines)
 
 
+def _build_user_instructions_context(
+    *,
+    state_db: StateDB,
+    human_id: str,
+    channel_kind: str,
+) -> str:
+    external_user_id = ""
+    raw = str(human_id or "").strip()
+    if raw:
+        external_user_id = raw.split(":")[-1].strip()
+    if not external_user_id or not channel_kind:
+        return ""
+    try:
+        instructions = list_active_instructions(
+            state_db,
+            external_user_id=external_user_id,
+            channel_kind=channel_kind,
+            limit=20,
+        )
+    except Exception:
+        return ""
+    if not instructions:
+        return ""
+    lines = [
+        "[Persistent user instructions — saved by the user, must be honoured]",
+        "These are durable instructions this user has explicitly given. Treat them as standing rules.",
+        "If a current request conflicts with one, follow the instruction unless the user is overriding it now.",
+    ]
+    for inst in instructions:
+        lines.append(f"- {inst.instruction_text}")
+    return "\n".join(lines)
+
+
 def _build_attachment_inventory_context(*, attachment_context: dict[str, object]) -> str:
     chip_records = attachment_context.get("attached_chip_records") or []
     if not isinstance(chip_records, list) or not chip_records:
         return ""
-    lines = ["[Attached chip inventory]"]
-    for record in chip_records[:_ATTACHMENT_PROMPT_CHIP_LIMIT]:
+    lines = [
+        "[Attached chip inventory]",
+        "Note: Chips marked router_invokable=yes are wired through the live chip router.",
+        "When an incoming user message matches a chip's task_topics/task_keywords,",
+        "the router calls that chip's evaluate hook BEFORE generating your reply, and",
+        "the chip's analysis is injected into your prompt. So you should describe",
+        "router_invokable chips as actively callable — not as inventory-only stubs.",
+    ]
+
+    def _priority(rec: dict) -> int:
+        if not isinstance(rec, dict):
+            return 9
+        if rec.get("router_invokable"):
+            return 0
+        mode = str(rec.get("attachment_mode") or "").strip()
+        if mode == "pinned":
+            return 1
+        if mode == "active":
+            return 2
+        return 3
+
+    sorted_records = sorted(
+        (r for r in chip_records if isinstance(r, dict)),
+        key=lambda r: (_priority(r), str(r.get("key") or "")),
+    )
+    for record in sorted_records[:_ATTACHMENT_PROMPT_CHIP_LIMIT]:
         if not isinstance(record, dict):
             continue
         key = str(record.get("key") or "").strip()
@@ -2348,9 +2430,13 @@ def _build_attachment_inventory_context(*, attachment_context: dict[str, object]
         attachment_mode = str(record.get("attachment_mode") or "available").strip() or "available"
         hook_names = [str(item) for item in (record.get("hook_names") or []) if str(item)]
         description = str(record.get("description") or "").strip() or _KNOWN_CHIP_ROLE_HINTS.get(key, "")
-        line = f"- {key} mode={attachment_mode}"
+        topics = [str(item) for item in (record.get("task_topics") or []) if str(item)]
+        invokable = bool(record.get("router_invokable"))
+        line = f"- {key} mode={attachment_mode} router_invokable={'yes' if invokable else 'no'}"
         if hook_names:
             line += f" hooks={','.join(hook_names[:8])}"
+        if topics:
+            line += f" topics={','.join(topics[:6])}"
         if description:
             line += f" :: {description}"
         lines.append(line)
@@ -2387,6 +2473,55 @@ def _build_spark_self_knowledge_context(
         "- Treat this as Spark-owned runtime context about currently attached tools and paths, not as user memory."
     )
     return "\n".join(lines)
+
+
+def _load_recent_active_chip_keys(
+    *,
+    state_db: StateDB,
+    session_id: str,
+    channel_kind: str,
+    request_id: str | None,
+    turn_limit: int = 4,
+) -> list[str]:
+    if not session_id or not channel_kind or turn_limit <= 0:
+        return []
+    keys: list[str] = []
+    seen: set[str] = set()
+    try:
+        with state_db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT request_id, facts_json
+                FROM builder_events
+                WHERE component = 'researcher_bridge'
+                  AND channel_id = ?
+                  AND session_id = ?
+                  AND reason_code = 'active_chip_evaluate'
+                ORDER BY created_at DESC, rowid DESC
+                LIMIT ?
+                """,
+                (channel_kind, session_id, turn_limit * 4),
+            ).fetchall()
+    except Exception:
+        return []
+    for row in rows:
+        if request_id and str(row["request_id"] or "") == request_id:
+            continue
+        try:
+            facts = json.loads(row["facts_json"] or "{}")
+        except Exception:
+            continue
+        chip_key_raw = str(facts.get("chip_key") or "").strip()
+        if not chip_key_raw:
+            continue
+        for chip_key in chip_key_raw.split(","):
+            chip_key = chip_key.strip()
+            if chip_key and chip_key not in seen:
+                seen.add(chip_key)
+                keys.append(chip_key)
+        if len(keys) >= turn_limit:
+            break
+    return keys[:turn_limit]
 
 
 def _load_recent_conversation_context(
@@ -2507,6 +2642,30 @@ def _contains_search_engine_url(text: str) -> bool:
     return False
 
 
+def _prefer_more_specific_same_host_source_url(text: str, source_url: str | None) -> str | None:
+    candidate_source = str(source_url or "").strip()
+    if not candidate_source:
+        return None
+    parsed_source = urlparse(candidate_source)
+    source_host = _normalize_hostname(str(parsed_source.hostname or ""))
+    source_path = str(parsed_source.path or "").strip("/")
+    if not source_host or source_path:
+        return candidate_source
+    best_url = candidate_source
+    best_path_length = -1
+    for match in re.finditer(r"https?://[^\s<>()]+", str(text or "")):
+        url = match.group(0).rstrip(".,);:]>}")
+        parsed = urlparse(url)
+        host = _normalize_hostname(str(parsed.hostname or ""))
+        path = str(parsed.path or "").strip("/")
+        if host != source_host or not path:
+            continue
+        if len(path) > best_path_length:
+            best_url = url
+            best_path_length = len(path)
+    return best_url
+
+
 def _sanitize_browser_search_reply(
     text: str,
     *,
@@ -2536,11 +2695,16 @@ def _sanitize_browser_search_reply(
     process_residue = re.sub(r"(?is)\n\nI used a DuckDuckGo search.*$", "", process_residue).strip()
     process_residue = re.sub(r"(?is)\n\nThat is the authoritative upstream.*$", "", process_residue).strip()
     process_residue = re.sub(r"(?is)\n\nAlso\s*[–-]\s*to answer your earlier question.*$", "", process_residue).strip()
+    process_residue = re.sub(r"(?is)\n\nThe user asked me to give sources using the `source_url` field.*$", "", process_residue).strip()
     process_residue = re.sub(r"(?is)\n\nWhat were you thinking in terms of setup\?.*$", "", process_residue).strip()
     if process_residue != sanitized:
         sanitized = process_residue
         mutation_actions.append("strip_browser_process_residue")
+    effective_source_url = _prefer_more_specific_same_host_source_url(sanitized, source_url)
     if source_url and not _is_search_engine_url(source_url):
+        if effective_source_url and effective_source_url != source_url:
+            source_url = effective_source_url
+            mutation_actions.append("promote_specific_same_host_source_url")
         has_explicit_source_line = any(
             line.strip().lower().startswith("source:")
             for line in sanitized.split("\n")
@@ -2882,66 +3046,131 @@ def _run_active_chip_evaluate(
         "attachment_context": attachment_context,
     }
     try:
-        execution = run_first_active_chip_hook(config_manager, hook="evaluate", payload=payload)
+        active_records = list_active_chip_records(config_manager)
     except Exception:
-        return None
-    if not execution or not execution.ok:
-        return None
-    record_chip_hook_execution(
-        state_db,
-        execution=execution,
-        component="researcher_bridge",
-        actor_id="researcher_bridge",
-        summary="Researcher bridge executed an active chip hook before bridge execution.",
-        reason_code="active_chip_evaluate",
-        keepability="ephemeral_context",
-        run_id=run_id,
-        request_id=request_id,
-        channel_id=channel_kind,
-        session_id=session_id,
-        human_id=human_id,
-        agent_id=agent_id,
-    )
-    result = execution.output.get("result")
-    if not isinstance(result, dict):
-        return None
-    analysis = str(result.get("analysis") or "").strip()
-    if not analysis:
-        return None
-    screened = screen_chip_hook_text(
+        active_records = []
+
+    recent_chip_keys = _load_recent_active_chip_keys(
         state_db=state_db,
-        execution=execution,
-        text=analysis,
-        summary="Chip guidance was quarantined before model-visible prompt assembly.",
-        reason_code="chip_guidance_secret_like",
-        policy_domain="researcher_bridge",
-        blocked_stage="pre_model",
-        run_id=run_id,
+        session_id=session_id,
+        channel_kind=channel_kind,
         request_id=request_id,
-        trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
     )
-    if not screened["allowed"]:
-        return {
-            "chip_key": execution.chip_key,
-            "analysis": "",
-            "task_type": result.get("task_type"),
-            "stage": result.get("stage"),
-            "context_packet_ids": result.get("context_packet_ids") or [],
-            "activations": result.get("activations") or [],
-            "detected_state_updates": result.get("detected_state_updates") or [],
-            "stage_transition_suggested": result.get("stage_transition_suggested"),
-            "quarantined": True,
-            "quarantine_id": screened["quarantine_id"],
-        }
+    decision = select_chips_for_message(
+        user_message,
+        active_records,
+        conversation_history=conversation_history,
+        recent_active_chip_keys=recent_chip_keys,
+    )
+    if not decision.selected:
+        return None
+
+    selected_keys = [s.chip_key for s in decision.selected]
+    selected_records = [r for r in active_records if r.key in selected_keys and "evaluate" in r.commands]
+    if not selected_records:
+        return None
+
+    analyses: list[str] = []
+    primary_result: dict[str, Any] = {}
+    primary_chip_key: str | None = None
+    merged_context_packet_ids: list[Any] = []
+    merged_activations: list[Any] = []
+    merged_state_updates: list[Any] = []
+    chips_used: list[str] = []
+    quarantined_keys: list[str] = []
+    last_quarantine_id: str | None = None
+    raw_metrics_per_chip: list[dict[str, Any]] = []
+
+    for record in selected_records:
+        try:
+            execution = run_chip_hook(config_manager, chip_key=record.key, hook="evaluate", payload=payload)
+        except Exception:
+            continue
+        if not execution or not execution.ok:
+            continue
+        record_chip_hook_execution(
+            state_db,
+            execution=execution,
+            component="researcher_bridge",
+            actor_id="researcher_bridge",
+            summary="Researcher bridge executed an active chip hook before bridge execution.",
+            reason_code="active_chip_evaluate",
+            keepability="ephemeral_context",
+            run_id=run_id,
+            request_id=request_id,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+        )
+        result = execution.output.get("result") if isinstance(execution.output, dict) else None
+        if not isinstance(result, dict):
+            continue
+        analysis = str(result.get("analysis") or "").strip()
+        if not analysis:
+            continue
+        screened = screen_chip_hook_text(
+            state_db=state_db,
+            execution=execution,
+            text=analysis,
+            summary="Chip guidance was quarantined before model-visible prompt assembly.",
+            reason_code="chip_guidance_secret_like",
+            policy_domain="researcher_bridge",
+            blocked_stage="pre_model",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+        )
+        if not screened["allowed"]:
+            quarantined_keys.append(record.key)
+            last_quarantine_id = screened.get("quarantine_id")
+            continue
+        analyses.append(f"[{record.key}] {analysis}")
+        chips_used.append(record.key)
+        if not primary_chip_key:
+            primary_chip_key = record.key
+            primary_result = result
+        merged_context_packet_ids.extend(result.get("context_packet_ids") or [])
+        merged_activations.extend(result.get("activations") or [])
+        merged_state_updates.extend(result.get("detected_state_updates") or [])
+        chip_metrics_payload = execution.output.get("metrics") if isinstance(execution.output, dict) else None
+        raw_metrics_per_chip.append({
+            "chip_key": record.key,
+            "verdict": result.get("verdict"),
+            "verdict_confidence": result.get("verdict_confidence"),
+            "metrics": chip_metrics_payload if isinstance(chip_metrics_payload, dict) else {},
+            "claim": result.get("claim"),
+            "recommended_next_step": result.get("recommended_next_step"),
+        })
+
+    if not analyses:
+        if quarantined_keys:
+            return {
+                "chip_key": ",".join(quarantined_keys),
+                "analysis": "",
+                "task_type": None,
+                "stage": None,
+                "context_packet_ids": [],
+                "activations": [],
+                "detected_state_updates": [],
+                "stage_transition_suggested": None,
+                "quarantined": True,
+                "quarantine_id": last_quarantine_id,
+                "router_decision": decision.to_dict(),
+            }
+        return None
+
     return {
-        "chip_key": execution.chip_key,
-        "analysis": analysis,
-        "task_type": result.get("task_type"),
-        "stage": result.get("stage"),
-        "context_packet_ids": result.get("context_packet_ids") or [],
-        "activations": result.get("activations") or [],
-        "detected_state_updates": result.get("detected_state_updates") or [],
-        "stage_transition_suggested": result.get("stage_transition_suggested"),
+        "chip_key": ",".join(chips_used),
+        "analysis": "\n\n".join(analyses),
+        "task_type": primary_result.get("task_type"),
+        "stage": primary_result.get("stage"),
+        "context_packet_ids": merged_context_packet_ids,
+        "activations": merged_activations,
+        "detected_state_updates": merged_state_updates,
+        "stage_transition_suggested": primary_result.get("stage_transition_suggested"),
+        "router_decision": decision.to_dict(),
+        "raw_chip_metrics": raw_metrics_per_chip,
     }
 
 
@@ -2976,6 +3205,7 @@ def _bridge_event_facts(
     active_chip_key: str | None = None,
     active_chip_task_type: str | None = None,
     active_chip_evaluate_used: bool | None = None,
+    raw_chip_metrics: list[dict[str, Any]] | None = None,
     keepability: str | None = None,
     promotion_disposition: str | None = None,
     extra: dict[str, Any] | None = None,
@@ -4290,6 +4520,11 @@ def build_researcher_reply(
         state_db=state_db,
         user_message=user_message,
     )
+    user_instructions_context = _build_user_instructions_context(
+        state_db=state_db,
+        human_id=human_id,
+        channel_kind=channel_kind,
+    )
     contextual_task = _build_contextual_task(
         user_message=user_message,
         channel_kind=channel_kind,
@@ -4303,10 +4538,12 @@ def build_researcher_reply(
         mission_control_context=mission_control_context,
         capability_router_context=capability_router_context,
         harness_context=harness_context,
+        user_instructions_context=user_instructions_context,
     )
     active_chip_key = str(active_chip_evaluate.get("chip_key")) if active_chip_evaluate else None
     active_chip_task_type = str(active_chip_evaluate.get("task_type")) if active_chip_evaluate and active_chip_evaluate.get("task_type") else None
     active_chip_evaluate_used = active_chip_evaluate is not None
+    raw_chip_metrics = (active_chip_evaluate or {}).get("raw_chip_metrics") or []
     screened_context = screen_model_visible_text(
         state_db=state_db,
         source_kind="contextual_task",
@@ -4351,6 +4588,7 @@ def build_researcher_reply(
                 active_chip_key=active_chip_key,
                 active_chip_task_type=active_chip_task_type,
                 active_chip_evaluate_used=active_chip_evaluate_used,
+            raw_chip_metrics=raw_chip_metrics,
                 keepability=output_keepability,
                 promotion_disposition=promotion_disposition,
                 extra={
@@ -4376,6 +4614,7 @@ def build_researcher_reply(
             active_chip_key=active_chip_key,
             active_chip_task_type=active_chip_task_type,
             active_chip_evaluate_used=active_chip_evaluate_used,
+            raw_chip_metrics=raw_chip_metrics,
             output_keepability=output_keepability,
             promotion_disposition=promotion_disposition,
         )
@@ -4439,6 +4678,7 @@ def build_researcher_reply(
                 active_chip_key=active_chip_key,
                 active_chip_task_type=active_chip_task_type,
                 active_chip_evaluate_used=active_chip_evaluate_used,
+            raw_chip_metrics=raw_chip_metrics,
                 keepability=output_keepability,
                 promotion_disposition=promotion_disposition,
             ),
@@ -4467,6 +4707,7 @@ def build_researcher_reply(
             active_chip_key=active_chip_key,
             active_chip_task_type=active_chip_task_type,
             active_chip_evaluate_used=active_chip_evaluate_used,
+            raw_chip_metrics=raw_chip_metrics,
             output_keepability=output_keepability,
             promotion_disposition=promotion_disposition,
         )
@@ -4504,6 +4745,7 @@ def build_researcher_reply(
                 active_chip_key=active_chip_key,
                 active_chip_task_type=active_chip_task_type,
                 active_chip_evaluate_used=active_chip_evaluate_used,
+            raw_chip_metrics=raw_chip_metrics,
                 keepability=output_keepability,
                 promotion_disposition=promotion_disposition,
                 extra={"error": provider_selection.error},
@@ -4533,6 +4775,7 @@ def build_researcher_reply(
             active_chip_key=active_chip_key,
             active_chip_task_type=active_chip_task_type,
             active_chip_evaluate_used=active_chip_evaluate_used,
+            raw_chip_metrics=raw_chip_metrics,
             output_keepability=output_keepability,
             promotion_disposition=promotion_disposition,
         )
@@ -4574,6 +4817,7 @@ def build_researcher_reply(
                 active_chip_key=active_chip_key,
                 active_chip_task_type=active_chip_task_type,
                 active_chip_evaluate_used=active_chip_evaluate_used,
+            raw_chip_metrics=raw_chip_metrics,
                 keepability=output_keepability,
                 promotion_disposition=promotion_disposition,
                 extra={"blocked_code": browser_search_blocked_code},
@@ -4603,6 +4847,7 @@ def build_researcher_reply(
             active_chip_key=active_chip_key,
             active_chip_task_type=active_chip_task_type,
             active_chip_evaluate_used=active_chip_evaluate_used,
+            raw_chip_metrics=raw_chip_metrics,
             output_keepability=output_keepability,
             promotion_disposition=promotion_disposition,
         )
@@ -4715,6 +4960,7 @@ def build_researcher_reply(
                 active_chip_key=active_chip_key,
                 active_chip_task_type=active_chip_task_type,
                 active_chip_evaluate_used=active_chip_evaluate_used,
+            raw_chip_metrics=raw_chip_metrics,
                 keepability=output_keepability,
                 promotion_disposition=promotion_disposition,
                 extra=_bridge_reply_mutation_facts(
@@ -4746,6 +4992,7 @@ def build_researcher_reply(
             active_chip_key=active_chip_key,
             active_chip_task_type=active_chip_task_type,
             active_chip_evaluate_used=active_chip_evaluate_used,
+            raw_chip_metrics=raw_chip_metrics,
             output_keepability=output_keepability,
             promotion_disposition=promotion_disposition,
         )
@@ -4782,6 +5029,7 @@ def build_researcher_reply(
                         active_chip_key=active_chip_key,
                         active_chip_task_type=active_chip_task_type,
                         active_chip_evaluate_used=active_chip_evaluate_used,
+            raw_chip_metrics=raw_chip_metrics,
                         extra={"runtime_source": runtime_source},
                     ),
                 )
@@ -4882,6 +5130,7 @@ def build_researcher_reply(
                             active_chip_key=active_chip_key,
                             active_chip_task_type=active_chip_task_type,
                             active_chip_evaluate_used=active_chip_evaluate_used,
+            raw_chip_metrics=raw_chip_metrics,
                             keepability=output_keepability,
                             promotion_disposition=promotion_disposition,
                             extra=_bridge_reply_mutation_facts(
@@ -4913,6 +5162,7 @@ def build_researcher_reply(
                         active_chip_key=active_chip_key,
                         active_chip_task_type=active_chip_task_type,
                         active_chip_evaluate_used=active_chip_evaluate_used,
+            raw_chip_metrics=raw_chip_metrics,
                         output_keepability=output_keepability,
                         promotion_disposition=promotion_disposition,
                     )
@@ -5073,6 +5323,7 @@ def build_researcher_reply(
                             active_chip_key=active_chip_key,
                             active_chip_task_type=active_chip_task_type,
                             active_chip_evaluate_used=active_chip_evaluate_used,
+            raw_chip_metrics=raw_chip_metrics,
                             keepability=output_keepability,
                             promotion_disposition=promotion_disposition,
                             extra=_bridge_reply_mutation_facts(
@@ -5104,6 +5355,7 @@ def build_researcher_reply(
                         active_chip_key=active_chip_key,
                         active_chip_task_type=active_chip_task_type,
                         active_chip_evaluate_used=active_chip_evaluate_used,
+            raw_chip_metrics=raw_chip_metrics,
                         output_keepability=output_keepability,
                         promotion_disposition=promotion_disposition,
                     )
@@ -5203,6 +5455,7 @@ def build_researcher_reply(
                         active_chip_key=active_chip_key,
                         active_chip_task_type=active_chip_task_type,
                         active_chip_evaluate_used=active_chip_evaluate_used,
+            raw_chip_metrics=raw_chip_metrics,
                         keepability=output_keepability,
                         promotion_disposition=promotion_disposition,
                         extra=_bridge_reply_mutation_facts(
@@ -5236,6 +5489,7 @@ def build_researcher_reply(
                     active_chip_key=active_chip_key,
                     active_chip_task_type=active_chip_task_type,
                     active_chip_evaluate_used=active_chip_evaluate_used,
+            raw_chip_metrics=raw_chip_metrics,
                     output_keepability=output_keepability,
                     promotion_disposition=promotion_disposition,
                 )
@@ -5275,6 +5529,7 @@ def build_researcher_reply(
                         active_chip_key=active_chip_key,
                         active_chip_task_type=active_chip_task_type,
                         active_chip_evaluate_used=active_chip_evaluate_used,
+            raw_chip_metrics=raw_chip_metrics,
                         keepability=output_keepability,
                         promotion_disposition=promotion_disposition,
                         extra={"error": str(exc)},
@@ -5304,6 +5559,7 @@ def build_researcher_reply(
                     active_chip_key=active_chip_key,
                     active_chip_task_type=active_chip_task_type,
                     active_chip_evaluate_used=active_chip_evaluate_used,
+            raw_chip_metrics=raw_chip_metrics,
                     output_keepability=output_keepability,
                     promotion_disposition=promotion_disposition,
                 )
@@ -5341,6 +5597,7 @@ def build_researcher_reply(
             active_chip_key=active_chip_key,
             active_chip_task_type=active_chip_task_type,
             active_chip_evaluate_used=active_chip_evaluate_used,
+            raw_chip_metrics=raw_chip_metrics,
             keepability=output_keepability,
             promotion_disposition=promotion_disposition,
         ),
@@ -5373,6 +5630,7 @@ def build_researcher_reply(
         active_chip_key=active_chip_key,
         active_chip_task_type=active_chip_task_type,
         active_chip_evaluate_used=active_chip_evaluate_used,
+            raw_chip_metrics=raw_chip_metrics,
         output_keepability=output_keepability,
         promotion_disposition=promotion_disposition,
     )

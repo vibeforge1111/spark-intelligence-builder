@@ -756,6 +756,19 @@ SCHEMA_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_observer_packet_records_kind ON observer_packet_records(packet_kind, last_seen_at)",
     "CREATE INDEX IF NOT EXISTS idx_observer_handoff_records_created_at ON observer_handoff_records(created_at, handoff_id)",
     "CREATE INDEX IF NOT EXISTS idx_observer_handoff_records_chip_status ON observer_handoff_records(chip_key, status, created_at)",
+    """
+    CREATE TABLE IF NOT EXISTS user_instructions (
+        instruction_id TEXT PRIMARY KEY,
+        external_user_id TEXT NOT NULL,
+        channel_kind TEXT NOT NULL,
+        instruction_text TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'explicit',
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        archived_at TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_user_instructions_lookup ON user_instructions(external_user_id, channel_kind, status, created_at)",
 ]
 
 

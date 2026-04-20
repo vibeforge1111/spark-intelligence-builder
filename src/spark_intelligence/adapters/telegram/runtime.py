@@ -192,6 +192,139 @@ class TelegramPollResult:
         )
 
 
+_SCORE_INTENT_PATTERN = re.compile(
+    r"\b(score|rate|evaluate|grade|assess|critique|review|judge|rank)\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _looks_like_score_request(message: str) -> bool:
+    if not message:
+        return False
+    return bool(_SCORE_INTENT_PATTERN.search(message))
+
+
+def _format_chip_metric_value(value: object) -> str:
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, (int,)):
+        return str(value)
+    if isinstance(value, float):
+        if 0.0 <= value <= 1.0:
+            return f"{round(value * 100)}%"
+        return f"{value:.2f}"
+    if value is None:
+        return "n/a"
+    return str(value)
+
+
+def _build_verbatim_chip_block(raw_chip_metrics: list[dict]) -> str:
+    lines = ["", "—", "Chip output (verbatim, not paraphrased):"]
+    for entry in raw_chip_metrics:
+        if not isinstance(entry, dict):
+            continue
+        chip_key = str(entry.get("chip_key") or "unknown")
+        verdict = entry.get("verdict")
+        confidence = entry.get("verdict_confidence")
+        metrics = entry.get("metrics") or {}
+        parts: list[str] = []
+        if verdict is not None:
+            parts.append(f"verdict={verdict}")
+        if confidence is not None:
+            parts.append(f"confidence={_format_chip_metric_value(confidence)}")
+        if isinstance(metrics, dict):
+            for label, value in metrics.items():
+                if label in ("verdict_confidence",):
+                    continue
+                clean_label = str(label).replace("_score", "").replace("_", " ")
+                parts.append(f"{clean_label}={_format_chip_metric_value(value)}")
+        recommended = entry.get("recommended_next_step")
+        if recommended:
+            parts.append(f"next={recommended}")
+        if parts:
+            lines.append(f"- {chip_key}: " + ", ".join(parts))
+    return "\n".join(lines) if len(lines) > 3 else ""
+
+
+def _maybe_capture_user_instruction(
+    *,
+    state_db,
+    user_message: str,
+    external_user_id: str,
+    reply_text: str,
+) -> str:
+    try:
+        from spark_intelligence.user_instructions import (
+            add_instruction,
+            archive_instruction,
+            detect_instruction_intent,
+            matching_instructions_to_archive,
+        )
+    except Exception:
+        return reply_text
+    if not user_message or not external_user_id:
+        return reply_text
+    intent = detect_instruction_intent(user_message)
+    if not intent:
+        return reply_text
+    base = (reply_text or "").rstrip()
+    text_value = str(intent.get("instruction_text") or "").strip()
+    if not text_value:
+        return reply_text
+    if intent.get("action") == "forget":
+        try:
+            matches = matching_instructions_to_archive(
+                state_db,
+                external_user_id=str(external_user_id),
+                channel_kind="telegram",
+                needle=text_value,
+                limit=3,
+            )
+        except Exception:
+            return reply_text
+        if not matches:
+            return f"{base}\n\n_(no matching saved instruction to forget for: \"{text_value[:120]}\")_\n"
+        archived_texts: list[str] = []
+        for inst in matches:
+            try:
+                if archive_instruction(state_db, instruction_id=inst.instruction_id):
+                    archived_texts.append(inst.instruction_text)
+            except Exception:
+                continue
+        if not archived_texts:
+            return reply_text
+        joined = "; ".join(t[:120] for t in archived_texts)
+        return f"{base}\n\n_(forgot {len(archived_texts)} saved instruction(s): {joined})_\n"
+    try:
+        saved = add_instruction(
+            state_db,
+            external_user_id=str(external_user_id),
+            channel_kind="telegram",
+            instruction_text=text_value,
+            source="explicit",
+        )
+    except Exception:
+        return reply_text
+    return f"{base}\n\n_(saved instruction: \"{saved.instruction_text[:160]}\" — will apply to future replies)_\n"
+
+
+def _maybe_append_verbatim_chip_block(
+    *,
+    user_message: str,
+    reply_text: str,
+    raw_chip_metrics: list[dict],
+) -> str:
+    if not raw_chip_metrics:
+        return reply_text
+    if not _looks_like_score_request(user_message):
+        return reply_text
+    block = _build_verbatim_chip_block(raw_chip_metrics)
+    if not block:
+        return reply_text
+    base = (reply_text or "").rstrip()
+    return f"{base}\n{block}\n"
+
+
 def _shape_telegram_bridge_reply(reply_text: str, *, bridge_mode: str | None, routing_decision: str | None) -> str:
     text = str(reply_text or "").strip()
     mode = str(bridge_mode or "").strip()
@@ -754,6 +887,17 @@ def simulate_telegram_update(
                 active_chip_task_type = bridge_result.active_chip_task_type
                 active_chip_evaluate_used = bridge_result.active_chip_evaluate_used
                 evidence_summary = bridge_result.evidence_summary
+                outbound_text = _maybe_append_verbatim_chip_block(
+                    user_message=effective_text,
+                    reply_text=outbound_text,
+                    raw_chip_metrics=getattr(bridge_result, "raw_chip_metrics", []) or [],
+                )
+                outbound_text = _maybe_capture_user_instruction(
+                    state_db=state_db,
+                    user_message=effective_text,
+                    external_user_id=normalized.telegram_user_id,
+                    reply_text=outbound_text,
+                )
         outbound_text = _apply_think_visibility(
             state_db=state_db,
             external_user_id=normalized.telegram_user_id,
@@ -1802,14 +1946,16 @@ def _send_telegram_reply(
                     caption=guarded["text"] if len(guarded["text"]) <= 1024 else None,
                 )
         else:
-            client.send_message(chat_id=chat_id, text=guarded["text"])
+            for _chunk in (guarded.get("chunks") or [guarded["text"]]):
+                client.send_message(chat_id=chat_id, text=_chunk)
     except (RuntimeError, HTTPError, URLError) as exc:
         if voice_payload is not None:
             voice_error = _describe_telegram_delivery_exception(exc)
             guarded["actions"] = ["voice_delivery_fallback_to_text", *list(guarded["actions"])]
             delivery_medium = "text"
             try:
-                client.send_message(chat_id=chat_id, text=guarded["text"])
+                for _chunk in (guarded.get("chunks") or [guarded["text"]]):
+                    client.send_message(chat_id=chat_id, text=_chunk)
             except (RuntimeError, HTTPError, URLError) as fallback_exc:
                 ok = False
                 error = _describe_telegram_delivery_exception(fallback_exc)

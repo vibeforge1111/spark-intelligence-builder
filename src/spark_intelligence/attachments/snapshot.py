@@ -192,6 +192,10 @@ def build_attachment_context(config_manager: ConfigManager) -> dict[str, Any]:
                 "capabilities": [str(item) for item in (record.get("capabilities") or []) if str(item)],
                 "hook_names": sorted(str(item) for item in ((record.get("commands") or {}).keys()) if str(item)),
                 "repo_root": str(record.get("repo_root") or ""),
+                "task_topics": [str(item) for item in (record.get("task_topics") or []) if str(item)],
+                "task_keywords": [str(item) for item in (record.get("task_keywords") or []) if str(item)],
+                "combine_with": [str(item) for item in (record.get("combine_with") or []) if str(item)],
+                "router_invokable": bool(record.get("attachment_mode") in ("active", "pinned")) and bool((record.get("task_topics") or []) or (record.get("task_keywords") or [])),
             }
             for record in chip_records
         ],

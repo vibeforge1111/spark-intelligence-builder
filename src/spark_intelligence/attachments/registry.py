@@ -24,6 +24,9 @@ class AttachmentRecord:
     commands: dict[str, list[str]]
     description: str | None
     frontier: dict[str, Any] | None
+    task_topics: list[str]
+    task_keywords: list[str]
+    combine_with: list[str]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -41,6 +44,9 @@ class AttachmentRecord:
             "commands": self.commands,
             "description": self.description,
             "frontier": self.frontier,
+            "task_topics": self.task_topics,
+            "task_keywords": self.task_keywords,
+            "combine_with": self.combine_with,
         }
 
 
@@ -205,6 +211,9 @@ def _scan_chip_roots(roots: list[Path], source: str, warnings: list[str]) -> lis
                 commands=_normalize_commands(payload.get("commands")),
                 description=str(payload.get("description") or "").strip() or None,
                 frontier=payload.get("frontier") if isinstance(payload.get("frontier"), dict) else None,
+                task_topics=_normalize_string_list(payload.get("task_topics")),
+                task_keywords=_normalize_string_list(payload.get("task_keywords")),
+                combine_with=_normalize_string_list(payload.get("combine_with")),
             )
         )
     return records
@@ -243,9 +252,18 @@ def _scan_path_roots(roots: list[Path], source: str, warnings: list[str]) -> lis
                 commands=_normalize_commands(hook_manifest.get("commands")),
                 description=None,
                 frontier=hook_manifest.get("frontier") if isinstance(hook_manifest.get("frontier"), dict) else None,
+                task_topics=_normalize_string_list(hook_manifest.get("task_topics")),
+                task_keywords=_normalize_string_list(hook_manifest.get("task_keywords")),
+                combine_with=_normalize_string_list(hook_manifest.get("combine_with")),
             )
         )
     return records
+
+
+def _normalize_string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item or "").strip()]
 
 
 def _expand_repo_roots(roots: Iterable[Path], *, manifest_name: str) -> list[Path]:

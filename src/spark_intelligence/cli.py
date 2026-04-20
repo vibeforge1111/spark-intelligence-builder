@@ -175,7 +175,8 @@ class SystemStatus:
                 lines.append(f"- browser: connected via {chip_key}")
             else:
                 error_code = str(browser.get("error_code") or browser_state)
-                lines.append(f"- browser: {browser_state} via {chip_key} {error_code}")
+                browser_label = "standby" if error_code == "BROWSER_SESSION_STALE" else browser_state
+                lines.append(f"- browser: {browser_label} via {chip_key} {error_code}")
                 if browser.get("error_message"):
                     lines.append(f"- browser detail: {browser['error_message']}")
                 repair_hint = _browser_status_repair_hint(browser)
@@ -1454,6 +1455,35 @@ def build_parser() -> argparse.ArgumentParser:
     channel_test_parser.add_argument("channel_kind", choices=["telegram"], help="Configured channel to test")
     channel_test_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     channel_test_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+
+    instr_parser = subparsers.add_parser("instructions", help="Manage persistent per-user instructions injected into prompts")
+    instr_subparsers = instr_parser.add_subparsers(dest="instructions_command", required=True)
+
+    instr_list_parser = instr_subparsers.add_parser("list", help="List active instructions for a user")
+    instr_list_parser.add_argument("--user-id", required=True, help="External user id (e.g. telegram user id)")
+    instr_list_parser.add_argument("--channel", default="telegram", help="Channel kind (default: telegram)")
+    instr_list_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    instr_list_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+
+    instr_add_parser = instr_subparsers.add_parser("add", help="Add an instruction for a user")
+    instr_add_parser.add_argument("--user-id", required=True, help="External user id")
+    instr_add_parser.add_argument("--channel", default="telegram", help="Channel kind (default: telegram)")
+    instr_add_parser.add_argument("--text", required=True, help="The instruction text")
+    instr_add_parser.add_argument("--source", default="explicit", help="Source label (default: explicit)")
+    instr_add_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+
+    instr_archive_parser = instr_subparsers.add_parser("archive", help="Archive a single instruction by id")
+    instr_archive_parser.add_argument("instruction_id", help="The instruction id to archive")
+    instr_archive_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+
+    chips_parser = subparsers.add_parser("chips", help="Inspect chip routing decisions for a given message")
+    chips_subparsers = chips_parser.add_subparsers(dest="chips_command", required=True)
+    chips_why_parser = chips_subparsers.add_parser("why", help="Show which active chips would fire for a message and why")
+    chips_why_parser.add_argument("message", help="The user message to classify")
+    chips_why_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    chips_why_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    chips_why_parser.add_argument("--history", default="", help="Recent conversation history text to score against (lower weight)")
+    chips_why_parser.add_argument("--recent-chip", action="append", default=[], help="Chip key recently selected (sticky boost). Repeat for multiple.")
 
     attachments_parser = subparsers.add_parser("attachments", help="Inspect and manage chip/path attachment roots")
     attachments_subparsers = attachments_parser.add_subparsers(dest="attachments_command", required=True)
@@ -3467,6 +3497,86 @@ def handle_attachments_status(args: argparse.Namespace) -> int:
     config_manager.bootstrap()
     result = attachment_status(config_manager)
     print(result.to_json() if args.json else result.to_text())
+    return 0
+
+
+def handle_instructions_list(args: argparse.Namespace) -> int:
+    from spark_intelligence.user_instructions import list_active_instructions
+
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    state_db = StateDB(config_manager.paths.state_db)
+    state_db.initialize()
+    items = list_active_instructions(
+        state_db,
+        external_user_id=args.user_id,
+        channel_kind=args.channel,
+        limit=100,
+    )
+    if args.json:
+        import json as _json
+        print(_json.dumps([i.to_dict() for i in items], indent=2))
+        return 0
+    if not items:
+        print(f"No active instructions for user={args.user_id} channel={args.channel}")
+        return 0
+    print(f"Active instructions for user={args.user_id} channel={args.channel}:")
+    for i in items:
+        print(f"- [{i.instruction_id}] ({i.source}) {i.instruction_text}")
+    return 0
+
+
+def handle_instructions_add(args: argparse.Namespace) -> int:
+    from spark_intelligence.user_instructions import add_instruction
+
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    state_db = StateDB(config_manager.paths.state_db)
+    state_db.initialize()
+    saved = add_instruction(
+        state_db,
+        external_user_id=args.user_id,
+        channel_kind=args.channel,
+        instruction_text=args.text,
+        source=args.source,
+    )
+    print(f"Saved instruction {saved.instruction_id}: {saved.instruction_text}")
+    return 0
+
+
+def handle_instructions_archive(args: argparse.Namespace) -> int:
+    from spark_intelligence.user_instructions import archive_instruction
+
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    state_db = StateDB(config_manager.paths.state_db)
+    state_db.initialize()
+    ok = archive_instruction(state_db, instruction_id=args.instruction_id)
+    if ok:
+        print(f"Archived instruction {args.instruction_id}")
+        return 0
+    print(f"No active instruction with id {args.instruction_id}")
+    return 1
+
+
+def handle_chips_why(args: argparse.Namespace) -> int:
+    from spark_intelligence.attachments import list_active_chip_records
+    from spark_intelligence.chip_router import explain_routing, select_chips_for_message
+
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    active = list_active_chip_records(config_manager)
+    decision = select_chips_for_message(
+        args.message,
+        active,
+        conversation_history=getattr(args, "history", "") or "",
+        recent_active_chip_keys=getattr(args, "recent_chip", []) or [],
+    )
+    if args.json:
+        import json as _json
+        print(_json.dumps(decision.to_dict(), indent=2))
+    else:
+        print(explain_routing(decision))
     return 0
 
 
@@ -6175,6 +6285,14 @@ def main(argv: list[str] | None = None) -> int:
         return handle_channel_telegram_onboard(args)
     if args.command == "channel" and args.channel_command == "test":
         return handle_channel_test(args)
+    if args.command == "chips" and args.chips_command == "why":
+        return handle_chips_why(args)
+    if args.command == "instructions" and args.instructions_command == "list":
+        return handle_instructions_list(args)
+    if args.command == "instructions" and args.instructions_command == "add":
+        return handle_instructions_add(args)
+    if args.command == "instructions" and args.instructions_command == "archive":
+        return handle_instructions_archive(args)
     if args.command == "attachments" and args.attachments_command == "status":
         return handle_attachments_status(args)
     if args.command == "attachments" and args.attachments_command == "list":
