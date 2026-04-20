@@ -2760,13 +2760,18 @@ def _normalize_environment_snapshot_field(field: str, value: Any) -> Any:
         return value
     if field not in {"runtime_root", "config_path", "python_executable"}:
         return normalized
-    translated = _translate_windows_path_for_posix(normalized)
+    translated = _canonicalize_runtime_snapshot_path(normalized)
     return translated or normalized
 
 
-def _translate_windows_path_for_posix(value: str) -> str | None:
+def _canonicalize_runtime_snapshot_path(value: str) -> str | None:
+    wsl_match = re.match(r"^/mnt/([A-Za-z])/(.*)$", value)
+    if wsl_match:
+        drive = wsl_match.group(1).lower()
+        remainder = wsl_match.group(2).replace("\\", "/")
+        return str(Path("/mnt") / drive / remainder)
     match = re.match(r"^([A-Za-z]):[\\/](.*)$", value)
-    if not match or os.name == "nt":
+    if not match:
         return None
     drive = match.group(1).lower()
     remainder = match.group(2).replace("\\", "/")

@@ -156,6 +156,13 @@ class ConfigManager:
         path = Path(raw).expanduser()
         if path.exists():
             return path
+        wsl_match = re.match(r"^/mnt/([A-Za-z])/(.*)$", raw)
+        if wsl_match and os.name == "nt":
+            drive = wsl_match.group(1).upper()
+            remainder = wsl_match.group(2).replace("/", "\\")
+            translated = Path(f"{drive}:\\{remainder}")
+            if translated.exists():
+                return translated
         windows_match = re.match(r"^([A-Za-z]):[\\/](.*)$", raw)
         if windows_match and os.name != "nt":
             drive = windows_match.group(1).lower()

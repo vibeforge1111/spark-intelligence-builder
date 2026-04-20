@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.attachments.registry import list_attachments
 from spark_intelligence.researcher_bridge.advisory import (
@@ -13,21 +16,43 @@ from tests.test_support import SparkTestCase
 
 
 class RuntimePathNormalizationTests(SparkTestCase):
-    def test_normalize_runtime_path_translates_windows_path_under_wsl(self) -> None:
+    def test_normalize_runtime_path_prefers_local_runtime_surface(self) -> None:
         normalized = self.config_manager.normalize_runtime_path(r"C:\Users\USER\Desktop\spark-intelligence-builder")
 
         self.assertIsNotNone(normalized)
         assert normalized is not None
-        self.assertEqual(str(normalized), "/mnt/c/Users/USER/Desktop/spark-intelligence-builder")
+        expected = (
+            Path(r"C:\Users\USER\Desktop\spark-intelligence-builder")
+            if os.name == "nt"
+            else Path("/mnt/c/Users/USER/Desktop/spark-intelligence-builder")
+        )
+        self.assertEqual(normalized, expected)
         self.assertTrue(normalized.exists())
 
     def test_discover_researcher_runtime_root_uses_translated_windows_path(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
-        self.config_manager.set_path("spark.researcher.runtime_root", r"C:\Users\USER\Desktop\spark-researcher")
-        self.config_manager.set_path(
-            "spark.researcher.config_path",
-            r"C:\Users\USER\Desktop\spark-researcher\spark-researcher.project.json",
+        configured_runtime_root = (
+            "/mnt/c/Users/USER/Desktop/spark-researcher"
+            if os.name == "nt"
+            else r"C:\Users\USER\Desktop\spark-researcher"
         )
+        configured_config_path = (
+            "/mnt/c/Users/USER/Desktop/spark-researcher/spark-researcher.project.json"
+            if os.name == "nt"
+            else r"C:\Users\USER\Desktop\spark-researcher\spark-researcher.project.json"
+        )
+        expected_runtime_root = (
+            Path(r"C:\Users\USER\Desktop\spark-researcher")
+            if os.name == "nt"
+            else Path("/mnt/c/Users/USER/Desktop/spark-researcher")
+        )
+        expected_config_path = (
+            Path(r"C:\Users\USER\Desktop\spark-researcher\spark-researcher.project.json")
+            if os.name == "nt"
+            else Path("/mnt/c/Users/USER/Desktop/spark-researcher/spark-researcher.project.json")
+        )
+        self.config_manager.set_path("spark.researcher.runtime_root", configured_runtime_root)
+        self.config_manager.set_path("spark.researcher.config_path", configured_config_path)
 
         runtime_root, source = discover_researcher_runtime_root(self.config_manager)
         resolved_config = resolve_researcher_config_path(self.config_manager, runtime_root)  # type: ignore[arg-type]
@@ -35,12 +60,9 @@ class RuntimePathNormalizationTests(SparkTestCase):
         self.assertEqual(source, "configured")
         self.assertIsNotNone(runtime_root)
         assert runtime_root is not None
-        self.assertEqual(str(runtime_root), "/mnt/c/Users/USER/Desktop/spark-researcher")
+        self.assertEqual(runtime_root, expected_runtime_root)
         self.assertTrue(runtime_root.exists())
-        self.assertEqual(
-            str(resolved_config),
-            "/mnt/c/Users/USER/Desktop/spark-researcher/spark-researcher.project.json",
-        )
+        self.assertEqual(resolved_config, expected_config_path)
         self.assertTrue(resolved_config.exists())
 
     def test_discover_swarm_runtime_root_uses_translated_windows_path(self) -> None:
@@ -51,7 +73,12 @@ class RuntimePathNormalizationTests(SparkTestCase):
         self.assertEqual(source, "configured")
         self.assertIsNotNone(runtime_root)
         assert runtime_root is not None
-        self.assertEqual(str(runtime_root), "/mnt/c/Users/USER/Desktop/spark-swarm")
+        expected = (
+            Path(r"C:\Users\USER\Desktop\spark-swarm")
+            if os.name == "nt"
+            else Path("/mnt/c/Users/USER/Desktop/spark-swarm")
+        )
+        self.assertEqual(runtime_root, expected)
         self.assertTrue(runtime_root.exists())
 
     def test_local_swarm_bridge_runtime_root_uses_translated_windows_path(self) -> None:
@@ -59,7 +86,12 @@ class RuntimePathNormalizationTests(SparkTestCase):
 
         runtime_root = _resolve_swarm_runtime_root(self.config_manager)
 
-        self.assertEqual(str(runtime_root), "/mnt/c/Users/USER/Desktop/spark-swarm")
+        expected = (
+            Path(r"C:\Users\USER\Desktop\spark-swarm")
+            if os.name == "nt"
+            else Path("/mnt/c/Users/USER/Desktop/spark-swarm")
+        )
+        self.assertEqual(runtime_root, expected)
         self.assertTrue(runtime_root.exists())
 
     def test_attachment_registry_uses_translated_windows_roots(self) -> None:

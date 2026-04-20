@@ -422,7 +422,7 @@ def discover_researcher_runtime_root(config_manager: ConfigManager) -> tuple[Pat
     config = config_manager.load()
     configured_root = config.get("spark", {}).get("researcher", {}).get("runtime_root")
     if configured_root:
-        path = Path(str(configured_root)).expanduser()
+        path = config_manager.normalize_runtime_path(configured_root) or Path(str(configured_root)).expanduser()
         return (path if path.exists() else None, "configured")
 
     autodetect = Path.home() / "Desktop" / "spark-researcher"
@@ -435,7 +435,7 @@ def resolve_researcher_config_path(config_manager: ConfigManager, runtime_root: 
     config = config_manager.load()
     configured_path = config.get("spark", {}).get("researcher", {}).get("config_path")
     if configured_path:
-        return Path(str(configured_path)).expanduser()
+        return config_manager.normalize_runtime_path(configured_path) or Path(str(configured_path)).expanduser()
     return runtime_root / "spark-researcher.project.json"
 
 
