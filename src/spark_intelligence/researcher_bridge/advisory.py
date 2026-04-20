@@ -52,7 +52,11 @@ from spark_intelligence.memory.profile_facts import (
     detect_profile_fact_observation,
     detect_profile_fact_query,
 )
-from spark_intelligence.mission_control import build_mission_control_prompt_context
+from spark_intelligence.mission_control import (
+    build_mission_control_direct_reply,
+    build_mission_control_prompt_context,
+    looks_like_mission_control_query,
+)
 from spark_intelligence.observability.policy import screen_model_visible_text
 from spark_intelligence.llm.direct_provider import (
     DirectProviderGovernance,
@@ -66,7 +70,6 @@ from spark_intelligence.observability.store import (
     record_quarantine,
 )
 from spark_intelligence.observability.store import latest_events_by_type, latest_snapshots_by_surface
-from spark_intelligence.mission_control import build_mission_control_prompt_context
 from spark_intelligence.personality import (
     build_personality_context,
     build_preference_acknowledgment,
@@ -3643,6 +3646,61 @@ def build_researcher_reply(
             config_path=None,
             attachment_context=attachment_context,
             routing_decision="memory_profile_identity_summary",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+    if looks_like_mission_control_query(user_message):
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="mission_control_direct",
+            routing_decision="mission_control_direct",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = build_mission_control_direct_reply(
+            config_manager=config_manager,
+            state_db=state_db,
+            user_message=user_message,
+        )
+        evidence_summary = "status=mission_control_direct source=verified_runtime_health"
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered a runtime-health query directly from mission control.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="mission_control_direct",
+            facts=_bridge_event_facts(
+                routing_decision="mission_control_direct",
+                bridge_mode="mission_control_direct",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={"query_text": str(user_message or "").strip()},
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="mission_control_direct",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="mission_control_direct",
             active_chip_key=None,
             active_chip_task_type=None,
             active_chip_evaluate_used=False,

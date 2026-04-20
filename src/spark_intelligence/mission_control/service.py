@@ -43,6 +43,12 @@ def looks_like_mission_control_query(message: str) -> bool:
         return False
     direct_signals = (
         "mission control",
+        "health check",
+        "launch health",
+        "launch ready",
+        "launch status",
+        "is telegram ready",
+        "telegram health",
         "what are you doing right now",
         "what is active right now",
         "what is degraded",
@@ -264,6 +270,37 @@ def build_mission_control_prompt_context(
             "When the user asks what is active right now, what is degraded, what loops or jobs are running, what needs attention, or what the operator should look at next, answer from this mission-control snapshot instead of guessing.",
         ]
     )
+    return "\n".join(lines)
+
+
+def build_mission_control_direct_reply(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    user_message: str,
+) -> str:
+    if not looks_like_mission_control_query(user_message):
+        return ""
+    payload = build_mission_control_snapshot(config_manager, state_db).to_payload()
+    summary = payload.get("summary") or {}
+    lines = [f"Runtime health: {summary.get('top_level_state') or 'unknown'}."]
+    current_focus = str(summary.get("current_focus") or "").strip()
+    if current_focus:
+        lines.append(f"Focus: {current_focus}")
+    active_channels = [str(item) for item in (summary.get("active_channels") or []) if str(item)]
+    if active_channels:
+        lines.append(f"Active channels: {', '.join(active_channels)}.")
+    active_loops = [str(item) for item in (summary.get("active_loops") or []) if str(item)]
+    if active_loops:
+        lines.append(f"Active loops: {', '.join(active_loops[:5])}.")
+    degraded_surfaces = [str(item) for item in (summary.get("degraded_surfaces") or []) if str(item)]
+    if degraded_surfaces:
+        lines.append(f"Degraded surfaces: {', '.join(degraded_surfaces[:5])}.")
+    else:
+        lines.append("Degraded surfaces: none.")
+    recommended_actions = [str(item) for item in (summary.get("recommended_actions") or []) if str(item)]
+    if recommended_actions:
+        lines.append(f"Next: {recommended_actions[0]}")
     return "\n".join(lines)
 
 

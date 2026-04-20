@@ -3055,6 +3055,26 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("Spark Browser: standby", result.reply_text)
         self.assertIn("Live browser session is not currently connected.", result.reply_text)
 
+    def test_build_researcher_reply_answers_mission_control_queries_directly(self) -> None:
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("mission control queries should not call the provider"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-mission-control",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-1",
+                channel_kind="telegram",
+                user_message="Give me a one-line Telegram launch health check.",
+            )
+
+        self.assertEqual(result.mode, "mission_control_direct")
+        self.assertEqual(result.routing_decision, "mission_control_direct")
+        self.assertIn("Runtime health:", result.reply_text)
+
     def test_build_researcher_reply_respects_disabled_conversational_fallback_policy(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.researcher.routing.conversational_fallback_enabled", False)

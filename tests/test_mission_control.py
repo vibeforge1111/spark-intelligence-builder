@@ -5,6 +5,7 @@ import json
 from spark_intelligence.gateway.guardrails import set_runtime_state_value
 from spark_intelligence.jobs.service import OAUTH_MAINTENANCE_JOB_ID
 from spark_intelligence.mission_control import (
+    build_mission_control_direct_reply,
     build_mission_control_prompt_context,
     build_mission_control_snapshot,
     looks_like_mission_control_query,
@@ -116,6 +117,33 @@ class MissionControlTests(SparkTestCase):
         self.assertIn(f"active_loops=job:{OAUTH_MAINTENANCE_JOB_ID}", prompt_context)
         self.assertIn("[Reply rule]", prompt_context)
 
+    def test_build_mission_control_direct_reply_summarizes_runtime_health(self) -> None:
+        with self.state_db.connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO job_records (job_id, job_kind, status, schedule_expr, last_run_at, last_result)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    OAUTH_MAINTENANCE_JOB_ID,
+                    "oauth_refresh_maintenance",
+                    "scheduled",
+                    "*/15 * * * *",
+                    None,
+                    None,
+                ),
+            )
+            conn.commit()
+
+        reply = build_mission_control_direct_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="Give me a one-line Telegram launch health check.",
+        )
+
+        self.assertIn("Runtime health:", reply)
+        self.assertIn("Active loops:", reply)
+
     def test_build_mission_control_snapshot_does_not_flag_healthy_recurring_jobs_as_degraded(self) -> None:
         with self.state_db.connect() as conn:
             conn.execute(
@@ -145,4 +173,5 @@ class MissionControlTests(SparkTestCase):
         self.assertTrue(looks_like_mission_control_query("What is degraded right now?"))
         self.assertTrue(looks_like_mission_control_query("What jobs are running?"))
         self.assertTrue(looks_like_mission_control_query("Show me mission control."))
+        self.assertTrue(looks_like_mission_control_query("Give me a one-line Telegram launch health check."))
         self.assertFalse(looks_like_mission_control_query("Write me a cold outbound email."))
