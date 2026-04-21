@@ -1,5 +1,11 @@
 # Spark Intelligence Telegram Operator Runbook 2026-03-26
 
+Historical note:
+
+- this runbook documents the older Builder-owned Telegram polling flow
+- the current stable production path uses the dedicated `spark-telegram-bot` webhook gateway as Telegram ingress owner
+- keep this document for Builder runtime and operator-recovery context, not as the current ingress-ownership source of truth
+
 ## 1. Purpose
 
 This runbook captures the practical Telegram operator flow that was validated live on 2026-03-26.

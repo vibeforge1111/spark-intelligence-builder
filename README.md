@@ -332,15 +332,15 @@ For local recovery on Windows, use [`start-telegram.ps1`](C:/Users/USER/Desktop/
 .\start-telegram.ps1
 ```
 
-Production ingress ownership rule:
+Historical Builder polling rule:
 
 - only one runtime may long-poll one Telegram bot token at a time
-- today, the implemented production Telegram ingress is still `spark-intelligence` Builder, not `spark-swarm`
+- the older live path used `spark-intelligence` Builder as the Telegram poller
 - do not run a second Telegram poller against the same bot token from another runtime, browser automation surface, or test harness
-- if `spark-swarm` later gains real Telegram ingress ownership, Builder must stop polling that same bot token and remain downstream for reasoning, chips, and governed browser execution
-- if direct Builder Telegram testing is needed alongside another ingress owner later, use a separate staging bot token instead of dual-polling the production bot
+- the current stable production path should use the dedicated `spark-telegram-bot` webhook gateway instead of Builder-owned polling
+- if direct Builder Telegram testing is needed alongside another ingress owner, use a separate staging bot token instead of dual-polling the production bot
 
-Live Telegram system shape:
+Historical Builder-owned Telegram system shape:
 
 - Telegram DMs land in Builder's Telegram runtime first
 - Builder owns pairing, identity, operator controls, channel delivery, and bot-token polling

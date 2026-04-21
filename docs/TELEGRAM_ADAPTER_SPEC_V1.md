@@ -4,6 +4,12 @@
 
 This document defines the v1 Telegram adapter for `Spark Intelligence`.
 
+Historical note:
+
+- this spec captures the original Builder-first Telegram adapter shape
+- the newer stable production path uses a dedicated webhook-owned Telegram gateway in `spark-telegram-bot`
+- use this document mainly for Builder-side adapter behavior, identity, pairing, and session rules rather than as the current production ingress ownership spec
+
 The Telegram adapter is the first recommended channel because it is usually the fastest path to:
 
 - one working persistent agent
@@ -25,9 +31,9 @@ v1 should optimize for direct-message usage, not shared groups.
 
 The adapter should be translation and delivery glue, not a second runtime.
 
-### 2.4 No Public Webhook Requirement
+### 2.4 Local-First Setup
 
-v1 should not require public HTTPS or webhook hosting.
+the original Builder-first v1 path should not require public HTTPS or webhook hosting for local setup.
 
 ### 2.5 Secure By Default
 
@@ -35,7 +41,7 @@ Unknown Telegram users should not get full runtime access by accident.
 
 ## 3. Core Decision
 
-The Telegram adapter should use long polling in v1.
+The original Builder-first Telegram adapter should use long polling in v1 for local setup.
 
 Why:
 
@@ -44,7 +50,7 @@ Why:
 - avoids public webhook exposure
 - keeps the first-run path much lighter
 
-Webhook support can come later if needed.
+For the newer stable production path, webhook ownership now lives in `spark-telegram-bot` instead of Builder.
 
 ## 4. Ownership Boundary
 
@@ -55,6 +61,8 @@ The Telegram adapter owns:
 - update normalization
 - Telegram-specific delivery quirks
 - basic adapter health
+
+In the current split architecture, Builder-owned logic still owns session, identity, and adapter behavior, but the dedicated Telegram gateway owns live webhook ingress.
 
 The Telegram adapter does not own:
 
@@ -341,7 +349,7 @@ Then:
 
 ## 17. Final Decision
 
-The Telegram adapter should be:
+The original Builder-first Telegram adapter should be:
 
 - long-polling based
 - DM-first
@@ -350,4 +358,6 @@ The Telegram adapter should be:
 - thin
 - easy to run locally
 
-It should be the simplest production-shaped adapter in Spark Intelligence v1.
+It should be the simplest local Builder adapter in Spark Intelligence v1.
+
+For stable production Telegram ownership, prefer the dedicated webhook gateway path instead of direct Builder polling.

@@ -1,5 +1,11 @@
 # Telegram To Spark Swarm Integration Plan 2026-04-08
 
+Historical note:
+
+- this plan reflects the Builder-owned Telegram runtime shape that was current when it was written
+- the current stable production path uses `spark-telegram-bot` as the Telegram ingress owner
+- the trust-boundary guidance in this document is still useful, but ingress ownership statements should be read in that older context
+
 ## 1. Purpose
 
 This note defines the correct integration shape between:
@@ -16,7 +22,7 @@ The goal is to expand Telegram-accessible Swarm functionality without creating o
 
 As of 2026-04-08:
 
-- Builder is the production Telegram ingress owner.
+- Builder was the production Telegram ingress owner at that time.
 - Builder already exposes bounded Telegram runtime commands for Swarm:
   - `/swarm`
   - `/swarm status`
@@ -39,7 +45,7 @@ As of 2026-04-08:
 - `spark-browser-extension` is the governed browser runtime used downstream through Builder.
 - `spark-researcher` remains the heavy local runtime behind Builder and Swarm.
 
-That means the right architecture is:
+That meant the right architecture was:
 
 `Telegram -> Builder -> Swarm / Browser / Researcher`
 
