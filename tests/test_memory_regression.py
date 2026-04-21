@@ -21,12 +21,12 @@ class MemoryRegressionTests(SparkTestCase):
         return {
             "summary": {
                 "runtime_sdk_class": "SparkMemorySDK",
-                "runtime_memory_architecture": "summary_synthesis_memory",
+                "runtime_memory_architecture": "dual_store_event_calendar_hybrid",
                 "baseline_names": [
                     "summary_synthesis_memory",
                     "dual_store_event_calendar_hybrid",
                 ],
-                "documented_frontier_architecture": "summary_synthesis_memory",
+                "documented_frontier_architecture": "dual_store_event_calendar_hybrid",
                 "runtime_matches_documented_frontier": True,
                 "product_memory_leader_names": ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
             },
@@ -49,9 +49,9 @@ class MemoryRegressionTests(SparkTestCase):
                     "dual_store_event_calendar_hybrid",
                 ],
                 "case_count": 8,
-                "leader_names": ["summary_synthesis_memory"],
-                "recommended_runtime_architecture": "summary_synthesis_memory",
-                "current_runtime_memory_architecture": "summary_synthesis_memory",
+                "leader_names": ["dual_store_event_calendar_hybrid"],
+                "recommended_runtime_architecture": "dual_store_event_calendar_hybrid",
+                "current_runtime_memory_architecture": "dual_store_event_calendar_hybrid",
                 "runtime_matches_live_leader": True,
             },
             "artifact_paths": {
@@ -328,7 +328,7 @@ class MemoryRegressionTests(SparkTestCase):
         self.assertIn("## Quality Lanes", summary_text)
         self.assertIn("## Current Memory Snapshot", summary_text)
         self.assertIn("## Recommended Next Actions", summary_text)
-        self.assertIn("Keep `summary_synthesis_memory` pinned while expanding benchmark coverage.", summary_text)
+        self.assertIn("Keep `dual_store_event_calendar_hybrid` pinned while expanding benchmark coverage.", summary_text)
         self.assertIn("Only promote a memory change after it stays green", summary_text)
         self.assertIn("`profile.startup_name`: `Seedify`", summary_text)
         self.assertIn("startup_query_after_founder", summary_text)
@@ -354,7 +354,7 @@ class MemoryRegressionTests(SparkTestCase):
         self.assertTrue(result.payload["summary"]["quality_lanes"]["overwrite"])
         self.assertEqual(
             result.payload["summary"]["architecture_documented_frontier"],
-            "summary_synthesis_memory",
+            "dual_store_event_calendar_hybrid",
         )
         self.assertEqual(
             result.payload["summary"]["architecture_compared_baselines"],
@@ -362,7 +362,7 @@ class MemoryRegressionTests(SparkTestCase):
         )
         self.assertEqual(
             result.payload["summary"]["architecture_runtime_memory_architecture"],
-            "summary_synthesis_memory",
+            "dual_store_event_calendar_hybrid",
         )
         self.assertTrue(result.payload["summary"]["architecture_runtime_matches_documented_frontier"])
         self.assertEqual(
@@ -376,11 +376,11 @@ class MemoryRegressionTests(SparkTestCase):
         )
         self.assertEqual(
             result.payload["summary"]["live_architecture_leaders"],
-            ["summary_synthesis_memory"],
+            ["dual_store_event_calendar_hybrid"],
         )
         self.assertEqual(
             result.payload["summary"]["live_architecture_recommended_runtime"],
-            "summary_synthesis_memory",
+            "dual_store_event_calendar_hybrid",
         )
         self.assertTrue(result.payload["summary"]["live_architecture_runtime_matches_leader"])
         self.assertEqual(result.payload["summary"]["issue_labels"], [])

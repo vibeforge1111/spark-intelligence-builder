@@ -26,7 +26,7 @@ ACTIVE_MEMORY_ARCHITECTURE_CONTENDERS: tuple[str, ...] = (
     "summary_synthesis_memory",
     "dual_store_event_calendar_hybrid",
 )
-DOCUMENTED_FRONTIER_ARCHITECTURE = "summary_synthesis_memory"
+DOCUMENTED_FRONTIER_ARCHITECTURE = "dual_store_event_calendar_hybrid"
 DOCUMENTED_FRONTIER_PROVIDER = "heuristic_v1"
 
 
