@@ -17,6 +17,7 @@ from spark_intelligence.memory import (
     retrieve_memory_events_in_memory,
     run_memory_sdk_smoke_test,
     write_profile_fact_to_memory,
+    write_raw_episode_to_memory,
     write_structured_evidence_to_memory,
     write_telegram_event_to_memory,
 )
@@ -61,10 +62,11 @@ class _FakeMemoryClient:
 
     def write_observation(self, **payload):
         self.observation_calls.append(payload)
+        memory_role = str(payload.get("memory_role") or "current_state")
         return {
             "status": "accepted",
-            "memory_role": "current_state",
-            "provenance": [{"memory_role": "current_state", "source": "fake_sdk"}],
+            "memory_role": memory_role,
+            "provenance": [{"memory_role": memory_role, "source": "fake_sdk"}],
             "retrieval_trace": {"trace_id": "mem-trace-write"},
         }
 
@@ -229,6 +231,37 @@ class MemoryOrchestratorTests(SparkTestCase):
         observations = (events[0]["facts_json"] or {}).get("observations") or []
         self.assertEqual(events[0]["facts_json"].get("memory_role"), "structured_evidence")
         self.assertEqual(observations[0]["predicate"], "evidence.telegram.evidence")
+        self.assertEqual(observations[0]["retention_class"], "episodic_archive")
+
+    def test_raw_episode_writes_use_raw_turn_predicate_and_archive_retention(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            result = write_raw_episode_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                episode_text="The pricing page felt confusing during the demo.",
+                domain_pack="raw_episode",
+                session_id="session:raw",
+                turn_id="turn:raw",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        self.assertEqual(len(fake_client.observation_calls), 1)
+        call = fake_client.observation_calls[0]
+        self.assertEqual(call["predicate"], "raw_turn")
+        self.assertEqual(call["memory_role"], "episodic")
+        self.assertEqual(call["retention_class"], "episodic_archive")
+        self.assertTrue(call["metadata"]["raw_episode"])
+        events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(events)
+        observations = (events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(events[0]["facts_json"].get("memory_role"), "episodic")
+        self.assertEqual(observations[0]["predicate"], "raw_turn")
         self.assertEqual(observations[0]["retention_class"], "episodic_archive")
 
     def test_telegram_event_detection_write_and_answer_use_event_memory_lane(self) -> None:

@@ -45,6 +45,7 @@ from spark_intelligence.memory import (
     retrieve_memory_evidence_in_memory,
     retrieve_memory_events_in_memory,
     write_profile_fact_to_memory,
+    write_raw_episode_to_memory,
     write_structured_evidence_to_memory,
     write_telegram_event_to_memory,
 )
@@ -3660,6 +3661,21 @@ def build_researcher_reply(
                 )
             except Exception:
                 pass
+        elif assessed_generic_memory_candidate.outcome == "raw_episode":
+            try:
+                write_raw_episode_to_memory(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    human_id=human_id,
+                    episode_text=assessed_generic_memory_candidate.evidence_text,
+                    domain_pack=str(assessed_generic_memory_candidate.domain_pack or "raw_episode"),
+                    session_id=session_id,
+                    turn_id=request_id,
+                    channel_kind=channel_kind,
+                    actor_id="telegram_raw_episode_loader",
+                )
+            except Exception:
+                pass
         record_event(
             state_db,
             event_type="memory_candidate_assessed",
@@ -4312,6 +4328,7 @@ def build_researcher_reply(
         related_predicates = _profile_fact_query_related_predicates(detected_profile_fact_query.predicate)
         primary_records: list[dict[str, Any]] = []
         related_records: list[dict[str, Any]] = []
+        current_fact_deleted = False
         if target_predicate == "profile.startup_name":
             direct_fact_lookup = lookup_current_state_in_memory(
                 config_manager=config_manager,
@@ -4320,13 +4337,14 @@ def build_researcher_reply(
                 predicate="profile.startup_name",
                 actor_id="researcher_bridge",
             )
+            current_fact_deleted = direct_fact_lookup.read_result.memory_role == "state_deletion"
             if not direct_fact_lookup.read_result.abstained and direct_fact_lookup.read_result.records:
                 primary_records = [
                     record
                     for record in direct_fact_lookup.read_result.records
                     if _profile_fact_record_value(record)
                 ]
-            if not primary_records:
+            if not primary_records and not current_fact_deleted:
                 founder_lookup = lookup_current_state_in_memory(
                     config_manager=config_manager,
                     state_db=state_db,
@@ -4340,7 +4358,7 @@ def build_researcher_reply(
                         for record in founder_lookup.read_result.records
                         if _profile_fact_record_value(record)
                     ]
-            if not primary_records and not related_records:
+            if not current_fact_deleted and not primary_records and not related_records:
                 primary_records, related_records = _inspect_profile_fact_records(
                     config_manager=config_manager,
                     state_db=state_db,
@@ -4366,13 +4384,14 @@ def build_researcher_reply(
                 predicate=str(detected_profile_fact_query.predicate or ""),
                 actor_id="researcher_bridge",
             )
+            current_fact_deleted = direct_fact_lookup.read_result.memory_role == "state_deletion"
             if not direct_fact_lookup.read_result.abstained and direct_fact_lookup.read_result.records:
                 primary_records = [
                     record
                     for record in direct_fact_lookup.read_result.records
                     if _profile_fact_record_value(record)
                 ]
-            if not primary_records:
+            if not primary_records and not current_fact_deleted:
                 primary_records, related_records = _inspect_profile_fact_records(
                     config_manager=config_manager,
                     state_db=state_db,
@@ -4380,7 +4399,7 @@ def build_researcher_reply(
                     predicate=detected_profile_fact_query.predicate,
                     actor_id="researcher_bridge",
                 )
-        if not primary_records and not related_records:
+        if not current_fact_deleted and not primary_records and not related_records:
             evidence_lookup = retrieve_memory_evidence_in_memory(
                 config_manager=config_manager,
                 state_db=state_db,

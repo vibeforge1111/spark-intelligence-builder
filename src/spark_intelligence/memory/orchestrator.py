@@ -377,7 +377,11 @@ class _DomainChipMemoryClientAdapter:
         )
         result = self._sdk.write_observation(request)
         self._persist_manual_state()
-        return _normalize_domain_write_result(result=result, default_role=str(payload.get("memory_role") or "current_state"))
+        return _normalize_domain_write_result(
+            result=result,
+            operation=str(payload.get("operation") or "update"),
+            default_role=str(payload.get("memory_role") or "current_state"),
+        )
 
     def write_event(self, **payload: Any) -> dict[str, Any]:
         request = self._module.MemoryWriteRequest(
@@ -402,7 +406,11 @@ class _DomainChipMemoryClientAdapter:
         )
         result = self._sdk.write_event(request)
         self._persist_manual_state()
-        return _normalize_domain_write_result(result=result, default_role="event")
+        return _normalize_domain_write_result(
+            result=result,
+            operation=str(payload.get("operation") or "event"),
+            default_role="event",
+        )
 
     def get_current_state(self, **payload: Any) -> dict[str, Any]:
         subject = _optional_string(payload.get("subject"))
@@ -1363,6 +1371,131 @@ def write_structured_evidence_to_memory(
     return result
 
 
+def write_raw_episode_to_memory(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str,
+    episode_text: str,
+    domain_pack: str,
+    session_id: str | None,
+    turn_id: str | None,
+    channel_kind: str | None,
+    actor_id: str = "raw_episode_loader",
+) -> MemoryWriteResult:
+    normalized_text = str(episode_text or "").strip()
+    if not normalized_text:
+        return MemoryWriteResult(
+            status="skipped",
+            operation="create",
+            method="write_observation",
+            memory_role="episodic",
+            accepted_count=0,
+            rejected_count=0,
+            skipped_count=1,
+            abstained=False,
+            retrieval_trace=None,
+            provenance=[],
+            reason="no_raw_episode_text",
+        )
+    if not _memory_enabled(config_manager):
+        return _disabled_write_result(
+            operation="create",
+            method="write_observation",
+            default_role="episodic",
+        )
+    client = _load_sdk_client(config_manager)
+    if client is None:
+        result = MemoryWriteResult(
+            status="abstained",
+            operation="create",
+            method="write_observation",
+            memory_role="episodic",
+            accepted_count=0,
+            rejected_count=0,
+            skipped_count=1,
+            abstained=True,
+            retrieval_trace=None,
+            provenance=[],
+            reason="sdk_unavailable",
+        )
+        _record_memory_write_event(
+            state_db=state_db,
+            result=result,
+            human_id=human_id,
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=actor_id,
+        )
+        return result
+    subject = _subject_for_human_id(human_id)
+    timestamp = _now_iso()
+    normalized_pack = re.sub(r"[^a-z0-9]+", "_", str(domain_pack or "raw_episode").strip().lower()).strip("_") or "raw_episode"
+    observation = {
+        "subject": subject,
+        "predicate": "raw_turn",
+        "value": normalized_text,
+        "operation": "create",
+        "memory_role": "episodic",
+        "retention_class": "episodic_archive",
+        "text": normalized_text,
+    }
+    _record_memory_write_requested_observations(
+        state_db=state_db,
+        operation="create",
+        human_id=human_id,
+        observations=[observation],
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+        memory_role="episodic",
+        summary="Spark memory write requested for raw episode capture.",
+    )
+    raw = _call_sdk_method(
+        client,
+        "write_observation",
+        {
+            "operation": "create",
+            "subject": subject,
+            "predicate": "raw_turn",
+            "value": normalized_text,
+            "text": normalized_text,
+            "memory_role": "episodic",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "timestamp": timestamp,
+            "retention_class": "episodic_archive",
+            "document_time": timestamp,
+            "valid_from": timestamp,
+            "metadata": {
+                "entity_type": "human",
+                "channel_kind": channel_kind,
+                "memory_role": "episodic",
+                "source_surface": "researcher_bridge",
+                "domain_pack": normalized_pack,
+                "raw_episode": True,
+                "normalized_value": normalized_text,
+                "value": normalized_text,
+            },
+        },
+    )
+    result = _normalize_write_result(
+        raw=raw,
+        operation="create",
+        method="write_observation",
+        default_role="episodic",
+    )
+    _record_memory_write_event(
+        state_db=state_db,
+        result=result,
+        human_id=human_id,
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+    )
+    return result
+
+
 def delete_profile_fact_from_memory(
     *,
     config_manager: ConfigManager,
@@ -2234,21 +2367,23 @@ def _get_historical_state_with_subject_fallback(
     return last_subject, last_result
 
 
-def _normalize_domain_write_result(*, result: Any, default_role: str) -> dict[str, Any]:
+def _normalize_domain_write_result(*, result: Any, operation: str, default_role: str) -> dict[str, Any]:
     provenance = [
         _domain_record_to_dict(item)
         for item in [*list(getattr(result, "observations", []) or []), *list(getattr(result, "events", []) or [])]
     ]
     accepted = bool(getattr(result, "accepted", False))
     unsupported_reason = _optional_string(getattr(result, "unsupported_reason", None))
-    operation = default_role if default_role == "event" else str(getattr(result, "operation", None) or "update")
+    normalized_operation = str(operation or ("event" if default_role == "event" else "update")).strip().lower() or (
+        "event" if default_role == "event" else "update"
+    )
     memory_role = provenance[0]["memory_role"] if provenance else "unknown"
     if memory_role == "unknown" and accepted:
         memory_role = default_role
     retrieval_trace = dict(getattr(result, "trace", {}) or {})
     contract_reason = memory_contract_reason(
         memory_role=memory_role,
-        operation=operation,
+        operation=normalized_operation,
         allow_unknown=not accepted,
     )
     if contract_reason:
@@ -2261,7 +2396,7 @@ def _normalize_domain_write_result(*, result: Any, default_role: str) -> dict[st
                 scope="domain_write_result",
                 reason=contract_reason,
                 observed_role=memory_role,
-                operation=operation,
+                operation=normalized_operation,
             ),
             "reason": contract_reason,
             "accepted_count": 0,
