@@ -1190,6 +1190,144 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertFalse(constraint_result.read_result.abstained)
         self.assertEqual(constraint_result.read_result.records[0]["value"], "budget for one engineer")
 
+    def test_domain_chip_persistence_merges_concurrent_current_state_and_event_writes(self) -> None:
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+        client_a = memory_orchestrator._load_sdk_client_for_module(
+            module_name="domain_chip_memory",
+            home_path=self.config_manager.paths.home,
+        )
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+        client_b = memory_orchestrator._load_sdk_client_for_module(
+            module_name="domain_chip_memory",
+            home_path=self.config_manager.paths.home,
+        )
+        self.assertIsNotNone(client_a)
+        self.assertIsNotNone(client_b)
+
+        client_a.write_observation(
+            operation="update",
+            subject="human:merge:test:mixed",
+            predicate="profile.current_owner",
+            value="Nadia",
+            text="The current owner is Nadia.",
+            session_id="session:merge:test:mixed:owner",
+            turn_id="turn:merge:test:mixed:owner",
+            timestamp="2026-04-21T10:01:00+00:00",
+            metadata={
+                "entity_type": "human",
+                "field_name": "current_owner",
+                "memory_role": "current_state",
+                "source_surface": "test",
+                "fact_name": "current_owner",
+                "normalized_value": "Nadia",
+            },
+        )
+        client_b.write_event(
+            operation="event",
+            subject="human:merge:test:mixed",
+            predicate="telegram.event.meeting",
+            value="meeting with Omar on May 3",
+            text="My meeting with Omar is on May 3.",
+            session_id="session:merge:test:mixed:event",
+            turn_id="turn:merge:test:mixed:event",
+            timestamp="2026-04-21T10:01:01+00:00",
+            metadata={
+                "entity_type": "human",
+                "memory_role": "event",
+                "source_surface": "test",
+                "event_name": "telegram_event_meeting",
+                "normalized_value": "meeting with Omar on May 3",
+                "value": "meeting with Omar on May 3",
+            },
+        )
+
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+
+        owner_result = lookup_current_state_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject="human:merge:test:mixed",
+            predicate="profile.current_owner",
+            sdk_module="domain_chip_memory",
+        )
+        event_result = retrieve_memory_events_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            query="What event did I mention?",
+            subject="human:merge:test:mixed",
+            predicate="telegram.event.meeting",
+            sdk_module="domain_chip_memory",
+        )
+
+        self.assertFalse(owner_result.read_result.abstained)
+        self.assertEqual(owner_result.read_result.records[0]["value"], "Nadia")
+        self.assertFalse(event_result.read_result.abstained)
+        self.assertEqual(len(event_result.read_result.records), 1)
+        self.assertEqual(event_result.read_result.records[0]["value"], "meeting with Omar on May 3")
+
+    def test_domain_chip_persistence_preserves_stale_client_delete(self) -> None:
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+        client_a = memory_orchestrator._load_sdk_client_for_module(
+            module_name="domain_chip_memory",
+            home_path=self.config_manager.paths.home,
+        )
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+        client_b = memory_orchestrator._load_sdk_client_for_module(
+            module_name="domain_chip_memory",
+            home_path=self.config_manager.paths.home,
+        )
+        self.assertIsNotNone(client_a)
+        self.assertIsNotNone(client_b)
+
+        client_a.write_observation(
+            operation="update",
+            subject="human:merge:test:delete",
+            predicate="profile.current_owner",
+            value="Omar",
+            text="Our owner is Omar.",
+            session_id="session:merge:test:delete:write",
+            turn_id="turn:merge:test:delete:write",
+            timestamp="2026-04-21T10:02:00+00:00",
+            metadata={
+                "entity_type": "human",
+                "field_name": "current_owner",
+                "memory_role": "current_state",
+                "source_surface": "test",
+                "fact_name": "current_owner",
+                "normalized_value": "Omar",
+            },
+        )
+        client_b.write_observation(
+            operation="delete",
+            subject="human:merge:test:delete",
+            predicate="profile.current_owner",
+            value=None,
+            text="Forget our owner.",
+            session_id="session:merge:test:delete:delete",
+            turn_id="turn:merge:test:delete:delete",
+            timestamp="2026-04-21T10:02:01+00:00",
+            metadata={
+                "entity_type": "human",
+                "field_name": "current_owner",
+                "memory_role": "current_state",
+                "source_surface": "test",
+                "fact_name": "current_owner",
+            },
+        )
+
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+
+        current_result = lookup_current_state_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject="human:merge:test:delete",
+            predicate="profile.current_owner",
+            sdk_module="domain_chip_memory",
+        )
+
+        self.assertTrue(current_result.read_result.abstained)
+        self.assertEqual(current_result.read_result.records, [])
+
     def test_lookup_historical_state_in_memory_reads_prior_value_after_overwrite(self) -> None:
         expected_read_result = memory_orchestrator.MemoryReadResult(
             status="supported",
