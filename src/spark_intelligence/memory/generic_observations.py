@@ -100,6 +100,15 @@ _CONSTRAINT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^the\s+main\s+constraint\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
 )
 
+_ASSUMPTION_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^our\s+assumption\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^the\s+assumption\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^our\s+current\s+assumption\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^the\s+current\s+assumption\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^our\s+main\s+assumption\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^the\s+main\s+assumption\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+)
+
 
 @dataclass(frozen=True)
 class TelegramGenericObservation:
@@ -276,6 +285,20 @@ def detect_telegram_generic_observation(user_message: str) -> TelegramGenericObs
                 evidence_text=text,
                 fact_name="current_constraint",
                 label="current constraint",
+            )
+
+    for pattern in _ASSUMPTION_PATTERNS:
+        match = pattern.fullmatch(normalized)
+        if match is None:
+            continue
+        value = _clean_value(match.group(1))
+        if value:
+            return TelegramGenericObservation(
+                predicate="profile.current_assumption",
+                value=value,
+                evidence_text=text,
+                fact_name="current_assumption",
+                label="current assumption",
             )
 
     return None
@@ -575,6 +598,33 @@ def detect_telegram_generic_deletion(user_message: str) -> TelegramGenericDeleti
             label="current constraint",
         )
 
+    if lowered in {
+        "forget my current assumption.",
+        "forget my current assumption",
+        "delete my current assumption.",
+        "delete my current assumption",
+        "remove my current assumption.",
+        "remove my current assumption",
+        "forget our assumption.",
+        "forget our assumption",
+        "delete our assumption.",
+        "delete our assumption",
+        "remove our assumption.",
+        "remove our assumption",
+        "forget the assumption.",
+        "forget the assumption",
+        "delete the assumption.",
+        "delete the assumption",
+        "remove the assumption.",
+        "remove the assumption",
+    }:
+        return TelegramGenericDeletion(
+            predicate="profile.current_assumption",
+            evidence_text=text,
+            fact_name="current_assumption",
+            label="current assumption",
+        )
+
     return None
 
 
@@ -602,6 +652,8 @@ def build_telegram_generic_observation_answer(*, observation: TelegramGenericObs
         return f"I'll remember that your current dependency is {value}."
     if observation.predicate == "profile.current_constraint":
         return f"I'll remember that your current constraint is {value}."
+    if observation.predicate == "profile.current_assumption":
+        return f"I'll remember that your current assumption is {value}."
     return f"I'll remember that your {observation.label} is {value}."
 
 
@@ -626,6 +678,8 @@ def build_telegram_generic_deletion_answer(*, deletion: TelegramGenericDeletion)
         return "I'll forget your current dependency."
     if deletion.predicate == "profile.current_constraint":
         return "I'll forget your current constraint."
+    if deletion.predicate == "profile.current_assumption":
+        return "I'll forget your current assumption."
     return f"I'll forget your {deletion.label}."
 
 

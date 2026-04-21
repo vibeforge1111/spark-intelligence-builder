@@ -369,6 +369,39 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(recorded_observations[0]["predicate"], "profile.current_constraint")
         self.assertEqual(recorded_observations[0]["value"], "limited founder bandwidth")
 
+    def test_build_researcher_reply_persists_generic_assumption_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for generic memory observations"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for generic memory observations"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-generic-assumption-update",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-generic-assumption-update",
+                channel_kind="telegram",
+                user_message="Our assumption is users will self-serve after onboarding.",
+            )
+
+        self.assertEqual(
+            result.reply_text,
+            "I'll remember that your current assumption is users will self-serve after onboarding.",
+        )
+        self.assertEqual(result.mode, "memory_generic_observation_update")
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(write_events)
+        recorded_observations = (write_events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(recorded_observations[0]["predicate"], "profile.current_assumption")
+        self.assertEqual(recorded_observations[0]["value"], "users will self-serve after onboarding")
+
     def test_build_researcher_reply_persists_generic_manager_relationship_memory(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
@@ -818,6 +851,43 @@ class TelegramGenericMemoryTests(SparkTestCase):
             )
 
         self.assertEqual(result.reply_text, "Your current constraint is limited founder bandwidth.")
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+
+    def test_build_researcher_reply_answers_generic_assumption_query_from_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-assumption-write-query-seed",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-assumption-write-query-seed",
+            channel_kind="telegram",
+            user_message="Our assumption is users will self-serve after onboarding.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for generic memory queries"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for generic memory queries"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-generic-assumption-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-generic-assumption-query",
+                channel_kind="telegram",
+                user_message="What is our assumption?",
+            )
+
+        self.assertEqual(result.reply_text, "Your current assumption is users will self-serve after onboarding.")
         self.assertEqual(result.mode, "memory_profile_fact")
         self.assertEqual(result.routing_decision, "memory_profile_fact_query")
 
@@ -1774,6 +1844,111 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(
             history_after_delete_result.reply_text,
             "An earlier saved current constraint was budget for only one engineer.",
+        )
+
+    def test_build_researcher_reply_preserves_generic_assumption_history_and_delete_lifecycle(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-assumption-history-seed-1",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-assumption-history",
+            channel_kind="telegram",
+            user_message="Our assumption is users will self-serve after onboarding.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-assumption-history-seed-2",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-assumption-history",
+            channel_kind="telegram",
+            user_message="The current assumption is enterprise teams need hands-on setup first.",
+        )
+
+        current_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-assumption-current",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-assumption-history",
+            channel_kind="telegram",
+            user_message="What is our assumption?",
+        )
+        history_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-assumption-history",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-assumption-history",
+            channel_kind="telegram",
+            user_message="What was the assumption before?",
+        )
+        event_history_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-assumption-event-history",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-assumption-history",
+            channel_kind="telegram",
+            user_message="Show our assumption history.",
+        )
+        delete_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-assumption-delete",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-assumption-history",
+            channel_kind="telegram",
+            user_message="Forget our assumption.",
+        )
+        current_after_delete_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-assumption-current-after-delete",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-assumption-history",
+            channel_kind="telegram",
+            user_message="What is our assumption?",
+        )
+        history_after_delete_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-assumption-history-after-delete",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-assumption-history",
+            channel_kind="telegram",
+            user_message="What was the assumption before?",
+        )
+
+        self.assertEqual(
+            current_result.reply_text,
+            "Your current assumption is enterprise teams need hands-on setup first.",
+        )
+        self.assertEqual(
+            history_result.reply_text,
+            "Before your current assumption was enterprise teams need hands-on setup first, it was users will self-serve after onboarding.",
+        )
+        self.assertEqual(
+            event_history_result.reply_text,
+            "I have 2 saved current assumption events: users will self-serve after onboarding then enterprise teams need hands-on setup first.",
+        )
+        self.assertEqual(delete_result.reply_text, "I'll forget your current assumption.")
+        self.assertEqual(current_after_delete_result.reply_text, "I don't currently have that saved.")
+        self.assertEqual(
+            history_after_delete_result.reply_text,
+            "An earlier saved current assumption was enterprise teams need hands-on setup first.",
         )
 
     def test_build_researcher_reply_does_not_persist_hypothetical_generic_memory_text(self) -> None:
