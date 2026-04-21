@@ -1373,6 +1373,7 @@ def build_parser() -> argparse.ArgumentParser:
     gateway_shadow_telegram_pack_parser.add_argument("--user-id", help="Default Telegram user id to simulate")
     gateway_shadow_telegram_pack_parser.add_argument("--username", help="Default Telegram username to simulate")
     gateway_shadow_telegram_pack_parser.add_argument("--chat-id", help="Default explicit Telegram chat id override")
+    gateway_shadow_telegram_pack_parser.add_argument("--output", help="Optional JSON file path to persist the shadow-validation results")
     gateway_shadow_telegram_pack_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     gateway_simulate_discord_parser = gateway_subparsers.add_parser(
         "simulate-discord-message",
@@ -3377,23 +3378,25 @@ def handle_gateway_shadow_telegram_pack(args: argparse.Namespace) -> int:
                 "result": parsed.get("result"),
             }
         )
+    payload = {
+        "ingress_owner": "spark-telegram-bot",
+        "migration_status": "builder_shadow_validation_only",
+        "pack_file": str(Path(args.pack_file)),
+        "results": results,
+    }
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     if args.json:
-        print(
-            json.dumps(
-                {
-                    "ingress_owner": "spark-telegram-bot",
-                    "migration_status": "builder_shadow_validation_only",
-                    "pack_file": str(Path(args.pack_file)),
-                    "results": results,
-                },
-                indent=2,
-            )
-        )
+        print(json.dumps(payload, indent=2))
         return 0
     print("Builder Telegram shadow validation pack")
     print("- ingress_owner: spark-telegram-bot")
     print("- migration_status: builder_shadow_validation_only")
     print(f"- pack_file: {Path(args.pack_file)}")
+    if args.output:
+        print(f"- output: {Path(args.output)}")
     for item in results:
         result = item.get("result") if isinstance(item.get("result"), dict) else {}
         print("")
