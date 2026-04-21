@@ -840,6 +840,7 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
             cases=(
                 *_existing(
                     "belief_write_onboarding",
+                    "belief_refresh_onboarding",
                     "belief_recall_onboarding",
                 ),
             ),

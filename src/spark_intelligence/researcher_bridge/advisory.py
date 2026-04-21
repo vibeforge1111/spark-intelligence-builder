@@ -472,7 +472,24 @@ def _filter_belief_recall_records(records: list[dict[str, Any]]) -> list[dict[st
         role = str(record.get("memory_role") or "").strip()
         if role == "belief" or predicate.startswith("belief.telegram."):
             filtered.append(record)
-    return filtered
+    if not filtered:
+        return filtered
+    superseded_ids: set[str] = set()
+    for record in filtered:
+        lifecycle = record.get("lifecycle") if isinstance(record.get("lifecycle"), dict) else {}
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        supersedes = str(lifecycle.get("supersedes") or metadata.get("supersedes") or "").strip()
+        if supersedes:
+            superseded_ids.add(supersedes)
+    active = [
+        record
+        for record in filtered
+        if str(record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or "").strip()
+        not in superseded_ids
+    ]
+    if not active:
+        return filtered
+    return active
 
 
 def _build_belief_recall_answer(*, query: BeliefRecallQuery, records: list[dict[str, Any]]) -> str:

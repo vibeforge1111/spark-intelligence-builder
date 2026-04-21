@@ -1384,6 +1384,48 @@ def write_belief_to_memory(
     channel_kind: str | None,
     actor_id: str = "belief_loader",
 ) -> MemoryWriteResult:
+    def _belief_record_observation_id(record: dict[str, Any]) -> str | None:
+        return _optional_string(record.get("observation_id")) or _optional_string(
+            (record.get("metadata") or {}).get("observation_id")
+        )
+
+    def _belief_record_supersedes(record: dict[str, Any]) -> str | None:
+        lifecycle = record.get("lifecycle") if isinstance(record.get("lifecycle"), dict) else {}
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        return _optional_string(lifecycle.get("supersedes")) or _optional_string(metadata.get("supersedes"))
+
+    def _belief_record_text(record: dict[str, Any]) -> str:
+        text = str(record.get("text") or "").strip()
+        if text:
+            return text
+        return str((record.get("metadata") or {}).get("value") or record.get("value") or "").strip()
+
+    def _belief_record_sort_key(record: dict[str, Any]) -> tuple[str, str]:
+        return (
+            str(record.get("timestamp") or ""),
+            str(_belief_record_observation_id(record) or ""),
+        )
+
+    def _select_latest_active_belief_record(records: list[dict[str, Any]]) -> dict[str, Any] | None:
+        matching = [
+            record
+            for record in records
+            if str(record.get("predicate") or "").strip() == predicate
+            and str(record.get("memory_role") or "").strip() == "belief"
+        ]
+        if not matching:
+            return None
+        superseded_ids = {
+            superseded_id
+            for superseded_id in (_belief_record_supersedes(record) for record in matching)
+            if superseded_id
+        }
+        active = [
+            record for record in matching if (_belief_record_observation_id(record) or "") not in superseded_ids
+        ]
+        candidates = active or matching
+        return sorted(candidates, key=_belief_record_sort_key)[-1]
+
     normalized_text = str(belief_text or "").strip()
     if not normalized_text:
         return MemoryWriteResult(
@@ -1433,6 +1475,25 @@ def write_belief_to_memory(
     timestamp = _now_iso()
     normalized_pack = re.sub(r"[^a-z0-9]+", "_", str(domain_pack or "belief").strip().lower()).strip("_") or "belief"
     predicate = f"belief.telegram.{normalized_pack}"
+    existing_beliefs = retrieve_memory_evidence_in_memory(
+        config_manager=config_manager,
+        state_db=state_db,
+        query=normalized_pack,
+        subject=subject,
+        predicate=predicate,
+        limit=10,
+        actor_id=actor_id,
+    )
+    prior_belief = None
+    if not existing_beliefs.read_result.abstained and existing_beliefs.read_result.records:
+        prior_belief = _select_latest_active_belief_record(existing_beliefs.read_result.records)
+    supersedes = _belief_record_observation_id(prior_belief) if prior_belief else None
+    prior_belief_text = _belief_record_text(prior_belief) if prior_belief else ""
+    conflicts_with = (
+        [supersedes]
+        if supersedes and prior_belief_text and prior_belief_text.casefold() != normalized_text.casefold()
+        else []
+    )
     observation = {
         "subject": subject,
         "predicate": predicate,
@@ -1442,6 +1503,10 @@ def write_belief_to_memory(
         "retention_class": "derived_belief",
         "text": normalized_text,
     }
+    if supersedes:
+        observation["supersedes"] = supersedes
+    if conflicts_with:
+        observation["conflicts_with"] = list(conflicts_with)
     _record_memory_write_requested_observations(
         state_db=state_db,
         operation="create",
@@ -1466,6 +1531,8 @@ def write_belief_to_memory(
             "session_id": session_id,
             "turn_id": turn_id,
             "timestamp": timestamp,
+            "supersedes": supersedes,
+            "conflicts_with": conflicts_with,
             "retention_class": "derived_belief",
             "document_time": timestamp,
             "valid_from": timestamp,
@@ -1478,6 +1545,8 @@ def write_belief_to_memory(
                 "domain_pack": normalized_pack,
                 "normalized_value": normalized_text,
                 "value": normalized_text,
+                "supersedes_previous_belief": bool(supersedes),
+                "previous_belief_text": prior_belief_text or None,
             },
         },
     )
@@ -2633,6 +2702,10 @@ def _domain_record_to_dict(record: Any) -> dict[str, Any]:
         "session_id": _optional_string(getattr(record, "session_id", None)),
         "turn_ids": list(getattr(record, "turn_ids", []) or []),
         "timestamp": _optional_string(getattr(record, "timestamp", None)),
+        "observation_id": _optional_string(getattr(record, "observation_id", None)),
+        "event_id": _optional_string(getattr(record, "event_id", None)),
+        "retention_class": _optional_string(getattr(record, "retention_class", None)),
+        "lifecycle": dict(getattr(record, "lifecycle", {}) or {}),
         "metadata": metadata,
         "value": metadata.get("value"),
     }

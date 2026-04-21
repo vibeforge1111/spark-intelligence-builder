@@ -226,6 +226,53 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(facts.get("bridge_mode"), "memory_belief_recall")
         self.assertIn("belief", facts.get("retrieved_memory_roles") or [])
 
+    def test_build_researcher_reply_belief_recall_prefers_latest_unsuperseded_belief(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-belief-write-1",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-belief-write-1",
+            channel_kind="telegram",
+            user_message="I think self-serve onboarding will work.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-belief-write-2",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-belief-write-2",
+            channel_kind="telegram",
+            user_message="I think enterprise teams need hands-on onboarding.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for belief recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for belief recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-belief-refresh-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-belief-refresh-read",
+                channel_kind="telegram",
+                user_message="What is your current belief about onboarding?",
+            )
+
+        self.assertEqual(result.mode, "memory_belief_recall")
+        self.assertIn("hands-on onboarding", result.reply_text)
+        self.assertNotIn("self-serve onboarding will work", result.reply_text)
+
     def test_build_researcher_reply_returns_empty_belief_recall_when_nothing_saved(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

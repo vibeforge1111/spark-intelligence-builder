@@ -297,6 +297,54 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(observations[0]["predicate"], "belief.telegram.beliefs_and_inferences")
         self.assertEqual(observations[0]["retention_class"], "derived_belief")
 
+    def test_belief_writes_supersede_latest_active_belief_for_same_pack(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        prior_records = [
+            {
+                "memory_role": "belief",
+                "predicate": "belief.telegram.beliefs_and_inferences",
+                "text": "I think self-serve onboarding will work.",
+                "timestamp": "2025-03-01T09:00:00Z",
+                "observation_id": "obs-belief-1",
+                "metadata": {"value": "I think self-serve onboarding will work."},
+                "lifecycle": {},
+            }
+        ]
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.retrieve_memory_evidence_in_memory",
+            return_value=SimpleNamespace(
+                read_result=SimpleNamespace(
+                    abstained=False,
+                    records=prior_records,
+                )
+            ),
+        ):
+            result = write_belief_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                belief_text="I think enterprise teams need hands-on onboarding.",
+                domain_pack="beliefs_and_inferences",
+                belief_kind="belief_marker",
+                session_id="session:belief:2",
+                turn_id="turn:belief:2",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        call = fake_client.observation_calls[0]
+        self.assertEqual(call["supersedes"], "obs-belief-1")
+        self.assertEqual(call["conflicts_with"], ["obs-belief-1"])
+        self.assertEqual(call["metadata"]["previous_belief_text"], "I think self-serve onboarding will work.")
+        events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(events)
+        observations = (events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(observations[0]["supersedes"], "obs-belief-1")
+        self.assertEqual(observations[0]["conflicts_with"], ["obs-belief-1"])
+
     def test_telegram_event_detection_write_and_answer_use_event_memory_lane(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
