@@ -1354,6 +1354,16 @@ def build_parser() -> argparse.ArgumentParser:
     gateway_ask_telegram_parser.add_argument("--username", help="Telegram username to simulate")
     gateway_ask_telegram_parser.add_argument("--chat-id", help="Explicit Telegram chat id override")
     gateway_ask_telegram_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    gateway_shadow_telegram_parser = gateway_subparsers.add_parser(
+        "shadow-telegram",
+        help="Run one Builder-side Telegram shadow-validation turn while spark-telegram-bot remains the live ingress owner",
+    )
+    gateway_shadow_telegram_parser.add_argument("message", help="Telegram DM text to inject into the runtime")
+    gateway_shadow_telegram_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    gateway_shadow_telegram_parser.add_argument("--user-id", help="Telegram user id to simulate")
+    gateway_shadow_telegram_parser.add_argument("--username", help="Telegram username to simulate")
+    gateway_shadow_telegram_parser.add_argument("--chat-id", help="Explicit Telegram chat id override")
+    gateway_shadow_telegram_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     gateway_simulate_discord_parser = gateway_subparsers.add_parser(
         "simulate-discord-message",
         help="Simulate one Discord DM message through normalization and authorization routing",
@@ -3245,6 +3255,44 @@ def handle_gateway_ask_telegram(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    return 0
+
+
+def handle_gateway_shadow_telegram(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    try:
+        result = gateway_ask_telegram(
+            config_manager=config_manager,
+            state_db=state_db,
+            message=args.message,
+            user_id=args.user_id,
+            username=args.username,
+            chat_id=args.chat_id,
+            as_json=args.json,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "ingress_owner": "spark-telegram-bot",
+                    "migration_status": "builder_shadow_validation_only",
+                    "result": json.loads(result),
+                },
+                indent=2,
+            )
+        )
+        return 0
+    print("Builder Telegram shadow validation")
+    print("- ingress_owner: spark-telegram-bot")
+    print("- migration_status: builder_shadow_validation_only")
+    print("")
+    print(result)
     return 0
 
 
@@ -6354,6 +6402,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_gateway_simulate_telegram_update(args)
     if args.command == "gateway" and args.gateway_command == "ask-telegram":
         return handle_gateway_ask_telegram(args)
+    if args.command == "gateway" and args.gateway_command == "shadow-telegram":
+        return handle_gateway_shadow_telegram(args)
     if args.command == "gateway" and args.gateway_command == "simulate-discord-message":
         return handle_gateway_simulate_discord_message(args)
     if args.command == "gateway" and args.gateway_command == "simulate-whatsapp-message":
