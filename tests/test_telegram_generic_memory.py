@@ -2123,6 +2123,130 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "An earlier saved current owner was Sara.",
         )
 
+    def test_build_researcher_reply_preserves_long_run_generic_memory_churn_across_lanes(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        seed_messages = (
+            "Our owner is Omar.",
+            "Our main risk is enterprise churn during onboarding.",
+            "The current owner is Sara.",
+            "Our dependency is Stripe approval.",
+            "Forget our owner.",
+            "The current owner is Nadia.",
+            "The biggest risk is delayed product instrumentation.",
+            "Forget our risk.",
+            "Our main risk is model drift in onboarding scoring.",
+        )
+        for index, message in enumerate(seed_messages, start=1):
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id=f"req-generic-long-run-{index}",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-generic-long-run",
+                channel_kind="telegram",
+                user_message=message,
+            )
+
+        owner_current_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-long-run-owner-current",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-long-run",
+            channel_kind="telegram",
+            user_message="Who is the owner?",
+        )
+        owner_history_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-long-run-owner-history",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-long-run",
+            channel_kind="telegram",
+            user_message="What was the owner before?",
+        )
+        owner_event_history_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-long-run-owner-events",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-long-run",
+            channel_kind="telegram",
+            user_message="Show our owner history.",
+        )
+        risk_current_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-long-run-risk-current",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-long-run",
+            channel_kind="telegram",
+            user_message="What is our risk?",
+        )
+        risk_history_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-long-run-risk-history",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-long-run",
+            channel_kind="telegram",
+            user_message="What was the risk before?",
+        )
+        risk_event_history_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-long-run-risk-events",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-long-run",
+            channel_kind="telegram",
+            user_message="Show our risk history.",
+        )
+        dependency_current_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-long-run-dependency-current",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-long-run",
+            channel_kind="telegram",
+            user_message="What is our dependency?",
+        )
+
+        self.assertEqual(owner_current_result.reply_text, "Your current owner is Nadia.")
+        self.assertEqual(
+            owner_history_result.reply_text,
+            "Before your current owner was Nadia, it was Sara.",
+        )
+        self.assertEqual(
+            owner_event_history_result.reply_text,
+            "I have 3 saved current owner events: Omar then Sara then Nadia.",
+        )
+        self.assertEqual(
+            risk_current_result.reply_text,
+            "Your current risk is model drift in onboarding scoring.",
+        )
+        self.assertEqual(
+            risk_history_result.reply_text,
+            "Before your current risk was model drift in onboarding scoring, it was delayed product instrumentation.",
+        )
+        self.assertEqual(
+            risk_event_history_result.reply_text,
+            "I have 3 saved current risk events: enterprise churn during onboarding then delayed product instrumentation then model drift in onboarding scoring.",
+        )
+        self.assertEqual(
+            dependency_current_result.reply_text,
+            "Your current dependency is Stripe approval.",
+        )
+
     def test_build_researcher_reply_does_not_persist_hypothetical_generic_memory_text(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)
