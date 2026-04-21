@@ -304,6 +304,19 @@ class TelegramGenericMemoryTests(SparkTestCase):
             channel_kind="telegram",
             user_message="Users keep needing hands-on onboarding support because enterprise teams ask for setup help.",
         )
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(write_events)
+        evidence_write = next(
+            (
+                (event["facts_json"] or {})
+                for event in write_events
+                if (event["facts_json"] or {}).get("memory_role") == "structured_evidence"
+            ),
+            {},
+        )
+        evidence_observations = evidence_write.get("observations") or []
+        self.assertEqual(evidence_observations[0].get("belief_lifecycle_action"), "invalidated")
+        self.assertTrue(evidence_observations[0].get("conflicts_with"))
 
         with patch(
             "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",

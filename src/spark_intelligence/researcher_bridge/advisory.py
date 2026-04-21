@@ -502,6 +502,17 @@ def _filter_structured_evidence_records(records: list[dict[str, Any]]) -> list[d
     return filtered
 
 
+def _structured_evidence_invalidated_belief_ids(records: list[dict[str, Any]]) -> set[str]:
+    invalidated_ids: set[str] = set()
+    for record in _filter_structured_evidence_records(records):
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        for belief_id in list(metadata.get("invalidated_belief_ids") or []):
+            normalized = str(belief_id or "").strip()
+            if normalized:
+                invalidated_ids.add(normalized)
+    return invalidated_ids
+
+
 def _memory_record_timestamp(record: dict[str, Any]) -> str:
     metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
     return str(record.get("timestamp") or metadata.get("document_time") or "").strip()
@@ -5303,10 +5314,25 @@ def build_researcher_reply(
         read_method = "retrieve_evidence"
         if not evidence_lookup.read_result.abstained and evidence_lookup.read_result.records:
             belief_records = _filter_belief_recall_records(evidence_lookup.read_result.records)
-            newer_evidence_records = _newer_evidence_than_beliefs(
-                belief_records=belief_records,
-                evidence_records=_filter_structured_evidence_records(evidence_lookup.read_result.records),
-            )
+            invalidated_belief_ids = _structured_evidence_invalidated_belief_ids(evidence_lookup.read_result.records)
+            if invalidated_belief_ids:
+                evidence_records = _filter_structured_evidence_records(evidence_lookup.read_result.records)
+                newer_evidence_records = [
+                    record
+                    for record in evidence_records
+                    if set((record.get("metadata") or {}).get("invalidated_belief_ids") or []) & invalidated_belief_ids
+                ]
+                belief_records = [
+                    record
+                    for record in belief_records
+                    if str(record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or "").strip()
+                    not in invalidated_belief_ids
+                ]
+            if belief_records:
+                newer_evidence_records = _newer_evidence_than_beliefs(
+                    belief_records=belief_records,
+                    evidence_records=newer_evidence_records or _filter_structured_evidence_records(evidence_lookup.read_result.records),
+                )
         direct_inspection = None
         if belief_records and not newer_evidence_records:
             direct_inspection = inspect_human_memory_in_memory(
@@ -5316,17 +5342,33 @@ def build_researcher_reply(
                 actor_id="researcher_bridge",
             )
             if not direct_inspection.read_result.abstained and direct_inspection.read_result.records:
-                newer_evidence_records = [
-                    record
-                    for record in _newer_evidence_than_beliefs(
-                        belief_records=belief_records,
-                        evidence_records=_filter_structured_evidence_records(direct_inspection.read_result.records),
-                    )
-                    if _record_matches_open_memory_topic(
-                        record=record,
-                        topic=detected_belief_recall_query.topic,
-                    )
-                ]
+                invalidated_belief_ids = _structured_evidence_invalidated_belief_ids(direct_inspection.read_result.records)
+                if invalidated_belief_ids:
+                    evidence_records = _filter_structured_evidence_records(direct_inspection.read_result.records)
+                    newer_evidence_records = [
+                        record
+                        for record in evidence_records
+                        if set((record.get("metadata") or {}).get("invalidated_belief_ids") or []) & invalidated_belief_ids
+                    ]
+                    belief_records = [
+                        record
+                        for record in belief_records
+                        if str(record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or "").strip()
+                        not in invalidated_belief_ids
+                    ]
+                if belief_records:
+                    newer_evidence_records = [
+                        record
+                        for record in _newer_evidence_than_beliefs(
+                            belief_records=belief_records,
+                            evidence_records=newer_evidence_records
+                            or _filter_structured_evidence_records(direct_inspection.read_result.records),
+                        )
+                        if _record_matches_open_memory_topic(
+                            record=record,
+                            topic=detected_belief_recall_query.topic,
+                        )
+                    ]
                 if newer_evidence_records:
                     read_method = "inspect_memory_records"
         if not belief_records:

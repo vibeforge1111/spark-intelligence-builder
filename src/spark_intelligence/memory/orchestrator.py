@@ -1257,6 +1257,90 @@ def write_structured_evidence_to_memory(
     channel_kind: str | None,
     actor_id: str = "structured_evidence_loader",
 ) -> MemoryWriteResult:
+    def _belief_record_observation_id(record: dict[str, Any]) -> str | None:
+        return _optional_string(record.get("observation_id")) or _optional_string(
+            (record.get("metadata") or {}).get("observation_id")
+        )
+
+    def _belief_record_supersedes(record: dict[str, Any]) -> str | None:
+        lifecycle = record.get("lifecycle") if isinstance(record.get("lifecycle"), dict) else {}
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        return _optional_string(lifecycle.get("supersedes")) or _optional_string(metadata.get("supersedes"))
+
+    def _belief_record_text(record: dict[str, Any]) -> str:
+        text = str(record.get("text") or "").strip()
+        if text:
+            return text
+        return str((record.get("metadata") or {}).get("value") or record.get("value") or "").strip()
+
+    def _belief_record_sort_key(record: dict[str, Any]) -> tuple[str, str]:
+        return (
+            str(record.get("timestamp") or ""),
+            str(_belief_record_observation_id(record) or ""),
+        )
+
+    def _select_active_belief_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        matching = [
+            record
+            for record in records
+            if str(record.get("memory_role") or "").strip() == "belief"
+            or str(record.get("predicate") or "").strip().startswith("belief.telegram.")
+        ]
+        if not matching:
+            return []
+        superseded_ids = {
+            superseded_id
+            for superseded_id in (_belief_record_supersedes(record) for record in matching)
+            if superseded_id
+        }
+        active = [
+            record for record in matching if (_belief_record_observation_id(record) or "") not in superseded_ids
+        ]
+        return sorted(active or matching, key=_belief_record_sort_key)
+
+    def _overlap_tokens(text: str) -> set[str]:
+        stopwords = {
+            "the",
+            "and",
+            "for",
+            "with",
+            "that",
+            "this",
+            "from",
+            "they",
+            "have",
+            "need",
+            "during",
+            "because",
+            "users",
+            "user",
+            "keep",
+            "asked",
+            "asks",
+            "help",
+            "support",
+            "said",
+            "says",
+            "think",
+            "belief",
+            "about",
+            "current",
+            "will",
+        }
+        return {
+            token
+            for token in re.findall(r"[a-z0-9]+", text.casefold())
+            if len(token) >= 4 and token not in stopwords
+        }
+
+    def _evidence_invalidates_belief(evidence: str, belief: str) -> bool:
+        evidence_tokens = _overlap_tokens(evidence)
+        belief_tokens = _overlap_tokens(belief)
+        if not evidence_tokens or not belief_tokens:
+            return False
+        overlap = evidence_tokens & belief_tokens
+        return len(overlap) >= 2 or any(len(token) >= 8 for token in overlap)
+
     normalized_text = str(evidence_text or "").strip()
     if not normalized_text:
         return MemoryWriteResult(
@@ -1306,6 +1390,31 @@ def write_structured_evidence_to_memory(
     timestamp = _now_iso()
     normalized_pack = re.sub(r"[^a-z0-9]+", "_", str(domain_pack or "generic").strip().lower()).strip("_") or "generic"
     predicate = f"evidence.telegram.{normalized_pack}"
+    existing_beliefs = retrieve_memory_evidence_in_memory(
+        config_manager=config_manager,
+        state_db=state_db,
+        query=normalized_text,
+        subject=subject,
+        limit=10,
+        actor_id=actor_id,
+    )
+    active_beliefs: list[dict[str, Any]] = []
+    if not existing_beliefs.read_result.abstained and existing_beliefs.read_result.records:
+        active_beliefs = _select_active_belief_records(existing_beliefs.read_result.records)
+    invalidated_belief_ids = [
+        belief_id
+        for belief_id in (
+            _belief_record_observation_id(record)
+            for record in active_beliefs
+            if _evidence_invalidates_belief(normalized_text, _belief_record_text(record))
+        )
+        if belief_id
+    ]
+    invalidated_belief_texts = [
+        _belief_record_text(record)
+        for record in active_beliefs
+        if (_belief_record_observation_id(record) or "") in invalidated_belief_ids
+    ]
     observation = {
         "subject": subject,
         "predicate": predicate,
@@ -1315,6 +1424,9 @@ def write_structured_evidence_to_memory(
         "retention_class": "episodic_archive",
         "text": normalized_text,
     }
+    if invalidated_belief_ids:
+        observation["conflicts_with"] = list(invalidated_belief_ids)
+        observation["belief_lifecycle_action"] = "invalidated"
     _record_memory_write_requested_observations(
         state_db=state_db,
         operation="create",
@@ -1339,6 +1451,7 @@ def write_structured_evidence_to_memory(
             "session_id": session_id,
             "turn_id": turn_id,
             "timestamp": timestamp,
+            "conflicts_with": list(invalidated_belief_ids),
             "retention_class": "episodic_archive",
             "document_time": timestamp,
             "valid_from": timestamp,
@@ -1351,6 +1464,9 @@ def write_structured_evidence_to_memory(
                 "domain_pack": normalized_pack,
                 "normalized_value": normalized_text,
                 "value": normalized_text,
+                "belief_lifecycle_action": "invalidated" if invalidated_belief_ids else None,
+                "invalidated_belief_ids": list(invalidated_belief_ids),
+                "invalidated_belief_texts": list(invalidated_belief_texts),
             },
         },
     )
