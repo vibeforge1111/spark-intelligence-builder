@@ -140,18 +140,29 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        result = build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
-            request_id="req-generic-belief",
-            agent_id="agent-1",
-            human_id="human-1",
-            session_id="session-generic-belief",
-            channel_kind="telegram",
-            user_message="I think enterprise teams need hands-on onboarding.",
-        )
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for belief observations"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for belief observations"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-generic-belief",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-generic-belief",
+                channel_kind="telegram",
+                user_message="I think enterprise teams need hands-on onboarding.",
+            )
 
         self.assertTrue(result.reply_text)
+        self.assertEqual(result.mode, "memory_belief_update")
+        self.assertEqual(result.routing_decision, "memory_belief_observation")
+        self.assertIn("save that as a belief", result.reply_text.lower())
+        self.assertIn("hands-on onboarding", result.reply_text)
         assessment_events = latest_events_by_type(self.state_db, event_type="memory_candidate_assessed", limit=10)
         self.assertTrue(assessment_events)
         facts = assessment_events[0]["facts_json"] or {}
@@ -164,6 +175,12 @@ class TelegramGenericMemoryTests(SparkTestCase):
         recorded_observations = write_facts.get("observations") or []
         self.assertEqual(recorded_observations[0]["predicate"], "belief.telegram.beliefs_and_inferences")
         self.assertEqual(recorded_observations[0]["retention_class"], "derived_belief")
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(tool_events)
+        tool_facts = tool_events[0]["facts_json"] or {}
+        self.assertEqual(tool_facts.get("bridge_mode"), "memory_belief_update")
+        self.assertEqual(tool_facts.get("routing_decision"), "memory_belief_observation")
+        self.assertEqual(tool_facts.get("memory_role"), "belief_candidate")
 
     def test_build_researcher_reply_answers_belief_recall_from_memory(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

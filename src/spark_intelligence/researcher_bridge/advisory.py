@@ -499,6 +499,13 @@ def _build_belief_recall_answer(*, query: BeliefRecallQuery, records: list[dict[
     )
 
 
+def _build_belief_observation_answer(*, belief_text: str) -> str:
+    snippet = str(belief_text or "").strip()
+    if not snippet:
+        return "I'll save that as a belief."
+    return f"I'll save that as a belief: \"{snippet}\""
+
+
 @dataclass
 class ResearcherBridgeStatus:
     enabled: bool
@@ -4372,6 +4379,74 @@ def build_researcher_reply(
             config_path=None,
             attachment_context=attachment_context,
             routing_decision="memory_generic_observation_delete",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+
+    if (
+        assessed_generic_memory_candidate is not None
+        and assessed_generic_memory_candidate.outcome == "belief_candidate"
+    ):
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_belief_update",
+            routing_decision="memory_belief_observation",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = _build_belief_observation_answer(
+            belief_text=assessed_generic_memory_candidate.evidence_text,
+        )
+        evidence_summary = (
+            "status=memory_belief_update "
+            f"domain_pack={assessed_generic_memory_candidate.domain_pack or 'belief'} "
+            f"belief_kind={assessed_generic_memory_candidate.reason or 'belief_candidate'}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge acknowledged a Telegram belief observation directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_belief_observation",
+            facts=_bridge_event_facts(
+                routing_decision="memory_belief_observation",
+                bridge_mode="memory_belief_update",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "memory_role": assessed_generic_memory_candidate.memory_role,
+                    "retention_class": assessed_generic_memory_candidate.retention_class,
+                    "domain_pack": assessed_generic_memory_candidate.domain_pack,
+                    "belief_kind": assessed_generic_memory_candidate.reason,
+                    "belief_text": assessed_generic_memory_candidate.evidence_text,
+                    "operation": assessed_generic_memory_candidate.operation,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_belief_update",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_belief_observation",
             active_chip_key=None,
             active_chip_task_type=None,
             active_chip_evaluate_used=False,
