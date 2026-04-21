@@ -864,6 +864,22 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
             ),
         ),
         TelegramMemoryBenchmarkPack(
+            pack_id="telegram_evidence_current_state_consolidation",
+            title="Telegram Evidence To Current-State Consolidation",
+            description=(
+                "Seeds repeated structured evidence about an ongoing issue and verifies that Builder promotes "
+                "the corroborated signal into explicit current-state memory that can be queried directly."
+            ),
+            focus_areas=("structured_evidence", "current_state", "evidence_consolidation"),
+            cases=(
+                *_existing(
+                    "evidence_current_state_write_onboarding_initial",
+                    "evidence_current_state_write_onboarding_repeat",
+                    "evidence_current_state_query_onboarding_blocker",
+                ),
+            ),
+        ),
+        TelegramMemoryBenchmarkPack(
             pack_id="telegram_mixed_memory_session_churn",
             title="Telegram Mixed Memory Session Churn",
             description=(

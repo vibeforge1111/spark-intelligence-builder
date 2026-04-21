@@ -1300,6 +1300,27 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         benchmark_tags=("belief", "belief_consolidation_recall"),
     ),
     TelegramMemoryRegressionCase(
+        case_id="evidence_current_state_write_onboarding_initial",
+        category="evidence_current_state_consolidation",
+        message="Users keep dropping during onboarding because Stripe verification fails.",
+        benchmark_tags=("structured_evidence", "current_state_consolidation_seed"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_current_state_write_onboarding_repeat",
+        category="evidence_current_state_consolidation",
+        message="Users still drop during onboarding because Stripe verification fails and the retry flow is confusing.",
+        benchmark_tags=("structured_evidence", "current_state_consolidation_repeat"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_current_state_query_onboarding_blocker",
+        category="evidence_current_state_consolidation",
+        message="What are we blocked on?",
+        expected_bridge_mode="memory_profile_fact",
+        expected_routing_decision="memory_profile_fact_query",
+        expected_response_contains=("current blocker", "Stripe verification fails"),
+        benchmark_tags=("current_state", "current_state_consolidation_recall"),
+    ),
+    TelegramMemoryRegressionCase(
         case_id="mixed_session_owner_write_initial",
         category="mixed_memory_churn",
         message="Our owner is Omar.",

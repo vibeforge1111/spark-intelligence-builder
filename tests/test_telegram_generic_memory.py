@@ -573,6 +573,54 @@ class TelegramGenericMemoryTests(SparkTestCase):
         )
         self.assertIn("belief", facts.get("retrieved_memory_roles") or [])
 
+    def test_build_researcher_reply_promotes_repeated_evidence_into_current_blocker(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-blocker-seed-1",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-blocker-seed-1",
+            channel_kind="telegram",
+            user_message="Users keep dropping during onboarding because Stripe verification fails.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-blocker-seed-2",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-blocker-seed-2",
+            channel_kind="telegram",
+            user_message="Users still drop during onboarding because Stripe verification fails and the retry flow is confusing.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for current blocker recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for current blocker recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-evidence-blocker-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-evidence-blocker-read",
+                channel_kind="telegram",
+                user_message="What are we blocked on?",
+            )
+
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+        self.assertIn("current blocker", result.reply_text.lower())
+        self.assertIn("stripe verification fails", result.reply_text.lower())
+
     def test_build_researcher_reply_archives_stale_structured_evidence_when_newer_evidence_exists(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

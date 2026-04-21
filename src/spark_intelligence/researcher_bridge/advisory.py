@@ -520,6 +520,55 @@ def _filter_structured_evidence_records(records: list[dict[str, Any]]) -> list[d
     return filtered
 
 
+def _filter_current_state_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+    for record in records:
+        predicate = str(record.get("predicate") or "").strip()
+        role = str(record.get("memory_role") or "").strip()
+        if role == "current_state" or predicate.startswith("profile.current_"):
+            filtered.append(record)
+    return filtered
+
+
+def _synthesize_belief_records_from_consolidated_memory(
+    *,
+    records: list[dict[str, Any]],
+    topic: str,
+) -> list[dict[str, Any]]:
+    matching_evidence = [
+        record
+        for record in _filter_structured_evidence_records(records)
+        if _record_matches_open_memory_topic(record=record, topic=topic)
+    ]
+    if not matching_evidence:
+        return []
+    current_state_records = _filter_current_state_records(records)
+    if not current_state_records:
+        return []
+    latest_current_state = sorted(current_state_records, key=_memory_record_timestamp)[-1]
+    source_value = str(latest_current_state.get("value") or "").strip()
+    if not source_value:
+        source_value = _memory_record_text(latest_current_state).strip()
+    if not source_value:
+        return []
+    belief_text = source_value if source_value.casefold().startswith("i think ") else f"I think {source_value[0].lower() + source_value[1:] if len(source_value) > 1 else source_value.lower()}"
+    topic_slug = re.sub(r"[^a-z0-9]+", "_", str(topic or "synthetic").strip().lower()).strip("_") or "synthetic"
+    return [
+        {
+            "memory_role": "belief",
+            "predicate": f"belief.synthetic.{topic_slug}",
+            "text": belief_text,
+            "value": belief_text,
+            "timestamp": _memory_record_timestamp(latest_current_state),
+            "metadata": {
+                "synthetic_from_current_state": True,
+                "source_predicate": str(latest_current_state.get("predicate") or "").strip(),
+                "source_topic": topic,
+            },
+        }
+    ]
+
+
 def _structured_evidence_invalidated_belief_ids(records: list[dict[str, Any]]) -> set[str]:
     invalidated_ids: set[str] = set()
     for record in _filter_structured_evidence_records(records):
@@ -5864,6 +5913,55 @@ def build_researcher_reply(
                         stale_belief_records = _belief_records_past_revalidation(belief_records)
                 if newer_evidence_records:
                     read_method = "inspect_memory_records"
+        if not belief_records and detected_belief_recall_query.topic:
+            focused_belief_lookup = retrieve_memory_evidence_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                query=detected_belief_recall_query.topic,
+                subject=memory_subject,
+                limit=12,
+                actor_id="researcher_bridge_belief_focus",
+                record_activity=False,
+            )
+            if not focused_belief_lookup.read_result.abstained and focused_belief_lookup.read_result.records:
+                belief_records = _filter_belief_recall_records(focused_belief_lookup.read_result.records)
+                if belief_records:
+                    invalidated_belief_ids = _structured_evidence_invalidated_belief_ids(
+                        focused_belief_lookup.read_result.records
+                    )
+                    if invalidated_belief_ids:
+                        evidence_records = _filter_structured_evidence_records(focused_belief_lookup.read_result.records)
+                        newer_evidence_records = [
+                            record
+                            for record in evidence_records
+                            if set((record.get("metadata") or {}).get("invalidated_belief_ids") or [])
+                            & invalidated_belief_ids
+                        ]
+                        belief_records = [
+                            record
+                            for record in belief_records
+                            if str(
+                                record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                            ).strip()
+                            not in invalidated_belief_ids
+                        ]
+                    if belief_records and not newer_evidence_records:
+                        newer_evidence_records = [
+                            record
+                            for record in _newer_evidence_than_beliefs(
+                                belief_records=belief_records,
+                                evidence_records=_filter_structured_evidence_records(
+                                    focused_belief_lookup.read_result.records
+                                ),
+                            )
+                            if _record_matches_open_memory_topic(
+                                record=record,
+                                topic=detected_belief_recall_query.topic,
+                            )
+                        ]
+                        if not newer_evidence_records:
+                            stale_belief_records = _belief_records_past_revalidation(belief_records)
+                    read_method = "retrieve_evidence(topic_focus)"
         if not belief_records:
             if direct_inspection is None:
                 direct_inspection = inspect_human_memory_in_memory(
@@ -5883,6 +5981,18 @@ def build_researcher_reply(
                 ]
                 if belief_records:
                     read_method = "inspect_memory_records"
+        if not belief_records:
+            synthetic_source_records: list[dict[str, Any]] = []
+            if not evidence_lookup.read_result.abstained and evidence_lookup.read_result.records:
+                synthetic_source_records.extend(evidence_lookup.read_result.records)
+            if direct_inspection is not None and not direct_inspection.read_result.abstained and direct_inspection.read_result.records:
+                synthetic_source_records.extend(direct_inspection.read_result.records)
+            belief_records = _synthesize_belief_records_from_consolidated_memory(
+                records=synthetic_source_records,
+                topic=detected_belief_recall_query.topic,
+            )
+            if belief_records:
+                read_method = "synthesized_from_current_state"
         retrieved_memory_roles = sorted(
             {
                 str(record.get("memory_role") or "").strip()

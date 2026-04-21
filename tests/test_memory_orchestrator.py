@@ -349,6 +349,68 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(belief_kwargs["domain_pack"], "evidence_onboarding_stripe_verification")
         self.assertIn("I think users still drop during onboarding", belief_kwargs["belief_text"])
 
+    def test_structured_evidence_write_promotes_corroborated_current_blocker(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        prior_evidence_records = [
+            {
+                "memory_role": "structured_evidence",
+                "predicate": "evidence.telegram.evidence",
+                "text": "Users keep dropping during onboarding because Stripe verification fails.",
+                "timestamp": "2025-03-01T09:00:00Z",
+                "observation_id": "obs-evidence-1",
+                "metadata": {"value": "Users keep dropping during onboarding because Stripe verification fails."},
+                "lifecycle": {},
+            }
+        ]
+        retrieve_results = [
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[])),
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=prior_evidence_records)),
+        ]
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.retrieve_memory_evidence_in_memory",
+            side_effect=retrieve_results,
+        ), patch(
+            "spark_intelligence.memory.orchestrator.write_belief_to_memory",
+            return_value=memory_orchestrator.MemoryWriteResult(
+                status="succeeded",
+                operation="create",
+                method="write_observation",
+                memory_role="belief",
+                accepted_count=1,
+                rejected_count=0,
+                skipped_count=0,
+                abstained=False,
+                retrieval_trace=None,
+                provenance=[],
+                reason=None,
+            ),
+        ):
+            result = write_structured_evidence_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                evidence_text="Users still drop during onboarding because Stripe verification fails and the retry flow is confusing.",
+                domain_pack="evidence",
+                evidence_kind="evidence_marker",
+                session_id="session:evidence:current-state",
+                turn_id="turn:evidence:current-state",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        current_state_calls = [
+            call for call in fake_client.observation_calls if call.get("predicate") == "profile.current_blocker"
+        ]
+        self.assertEqual(len(current_state_calls), 1)
+        promoted_call = current_state_calls[0]
+        self.assertEqual(promoted_call["memory_role"], "current_state")
+        self.assertEqual(promoted_call["retention_class"], "active_state")
+        self.assertEqual(promoted_call["value"], "Stripe verification fails and the retry flow is confusing")
+        self.assertEqual(promoted_call["metadata"]["fact_name"], "current_blocker")
+
     def test_raw_episode_writes_use_raw_turn_predicate_and_archive_retention(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
