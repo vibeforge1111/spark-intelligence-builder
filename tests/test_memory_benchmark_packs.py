@@ -84,6 +84,10 @@ def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
     assert "generic_blocker_history_query_after_overwrite" in generic_profile_case_ids
     assert "generic_blocker_delete" in generic_profile_case_ids
     assert "generic_blocker_event_history_query_after_delete" in generic_profile_case_ids
+    assert "generic_status_write" in generic_profile_case_ids
+    assert "generic_status_history_query_after_overwrite" in generic_profile_case_ids
+    assert "generic_status_delete" in generic_profile_case_ids
+    assert "generic_status_event_history_query_after_delete" in generic_profile_case_ids
 
     identity_case_ids = {case.case_id for case in packs["identity_under_recency_pressure"].cases}
     assert "name_query_after_recency_pressure" in identity_case_ids
@@ -148,6 +152,10 @@ def test_select_generic_profile_lifecycle_pack_exposes_overwrite_and_delete_case
     assert "generic_blocker_history_query_after_overwrite" in case_ids
     assert "generic_blocker_delete" in case_ids
     assert "generic_blocker_current_query_after_delete" in case_ids
+    assert "generic_status_overwrite" in case_ids
+    assert "generic_status_history_query_after_overwrite" in case_ids
+    assert "generic_status_delete" in case_ids
+    assert "generic_status_current_query_after_delete" in case_ids
 
 
 def test_select_benchmark_packs_rejects_unknown_pack_ids() -> None:
