@@ -570,6 +570,28 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
             ),
         ),
         TelegramMemoryBenchmarkPack(
+            pack_id="telegram_generic_profile_lifecycle",
+            title="Telegram Generic Profile Lifecycle",
+            description=(
+                "Exercises the generic Telegram profile-memory lane through update, overwrite, current recall, "
+                "previous-state recall, explicit deletion, and post-delete history so mutable profile memory "
+                "behaves like a governed lifecycle instead of a one-shot fact store."
+            ),
+            focus_areas=("generic_profile_memory", "overwrite", "delete", "native_history", "current_state"),
+            cases=(
+                *_existing(
+                    "generic_cofounder_write",
+                    "generic_cofounder_overwrite",
+                    "generic_cofounder_current_query_after_overwrite",
+                    "generic_cofounder_history_query_after_overwrite",
+                    "generic_cofounder_delete",
+                    "generic_cofounder_current_query_after_delete",
+                    "generic_cofounder_history_query_after_delete",
+                    "generic_cofounder_event_history_query_after_delete",
+                ),
+            ),
+        ),
+        TelegramMemoryBenchmarkPack(
             pack_id="explanation_pressure_suite",
             title="Explanation Pressure Suite",
             description=(

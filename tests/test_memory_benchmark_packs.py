@@ -14,6 +14,7 @@ def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
     assert "temporal_conflict_gauntlet" in packs
     assert "event_calendar_lineage_proxy" in packs
     assert "telegram_event_overwrite_lineage" in packs
+    assert "telegram_generic_profile_lifecycle" in packs
     assert "explanation_pressure_suite" in packs
     assert "identity_under_recency_pressure" in packs
 
@@ -25,6 +26,8 @@ def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
     assert "native_history" in packs["event_calendar_lineage_proxy"].focus_areas
     assert "telegram_events" in packs["telegram_event_overwrite_lineage"].focus_areas
     assert "current_state" in packs["telegram_event_overwrite_lineage"].focus_areas
+    assert "delete" in packs["telegram_generic_profile_lifecycle"].focus_areas
+    assert "native_history" in packs["telegram_generic_profile_lifecycle"].focus_areas
     assert "provenance" in packs["explanation_pressure_suite"].focus_areas
     assert packs["long_horizon_recall"].selection_role == "health_gate"
     assert packs["boundary_abstention"].selection_role == "health_gate"
@@ -67,6 +70,12 @@ def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
     assert "flight_overwrite" in telegram_event_case_ids
     assert "latest_flight_query_after_overwrite" in telegram_event_case_ids
     assert "flight_history_query_after_overwrite" in telegram_event_case_ids
+
+    generic_profile_case_ids = {case.case_id for case in packs["telegram_generic_profile_lifecycle"].cases}
+    assert "generic_cofounder_write" in generic_profile_case_ids
+    assert "generic_cofounder_history_query_after_overwrite" in generic_profile_case_ids
+    assert "generic_cofounder_delete" in generic_profile_case_ids
+    assert "generic_cofounder_event_history_query_after_delete" in generic_profile_case_ids
 
     identity_case_ids = {case.case_id for case in packs["identity_under_recency_pressure"].cases}
     assert "name_query_after_recency_pressure" in identity_case_ids
@@ -111,6 +120,18 @@ def test_select_telegram_event_overwrite_pack_exposes_latest_and_history_cases()
     assert "event_query_after_meeting_write" in case_ids
     assert "latest_flight_query_after_overwrite" in case_ids
     assert "flight_history_query_after_overwrite" in case_ids
+
+
+def test_select_generic_profile_lifecycle_pack_exposes_overwrite_and_delete_cases() -> None:
+    packs = select_telegram_memory_benchmark_packs(["telegram_generic_profile_lifecycle"])
+
+    assert [pack.pack_id for pack in packs] == ["telegram_generic_profile_lifecycle"]
+
+    case_ids = {case.case_id for case in flatten_benchmark_pack_cases(packs)}
+    assert "generic_cofounder_overwrite" in case_ids
+    assert "generic_cofounder_history_query_after_overwrite" in case_ids
+    assert "generic_cofounder_delete" in case_ids
+    assert "generic_cofounder_current_query_after_delete" in case_ids
 
 
 def test_select_benchmark_packs_rejects_unknown_pack_ids() -> None:
