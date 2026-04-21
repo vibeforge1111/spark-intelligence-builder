@@ -105,6 +105,39 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(recorded_observations[0]["predicate"], "profile.current_focus")
         self.assertEqual(recorded_observations[0]["value"], "fixing onboarding retention")
 
+    def test_build_researcher_reply_persists_generic_decision_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for generic memory observations"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for generic memory observations"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-generic-decision-update",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-generic-decision-update",
+                channel_kind="telegram",
+                user_message="We decided to launch Atlas through agency partners first.",
+            )
+
+        self.assertEqual(
+            result.reply_text,
+            "I'll remember that your current decision is launch Atlas through agency partners first.",
+        )
+        self.assertEqual(result.mode, "memory_generic_observation_update")
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(write_events)
+        recorded_observations = (write_events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(recorded_observations[0]["predicate"], "profile.current_decision")
+        self.assertEqual(recorded_observations[0]["value"], "launch Atlas through agency partners first")
+
     def test_build_researcher_reply_persists_generic_manager_relationship_memory(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
@@ -246,6 +279,46 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(result.mode, "memory_profile_fact")
         self.assertEqual(result.routing_decision, "memory_profile_fact_query")
 
+    def test_build_researcher_reply_answers_generic_decision_query_from_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-decision-write-query-seed",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-decision-write-query-seed",
+            channel_kind="telegram",
+            user_message="We decided to launch Atlas through agency partners first.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for generic memory queries"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for generic memory queries"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-generic-decision-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-generic-decision-query",
+                channel_kind="telegram",
+                user_message="What did we decide?",
+            )
+
+        self.assertEqual(
+            result.reply_text,
+            "Your current decision is launch Atlas through agency partners first.",
+        )
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+
     def test_build_researcher_reply_preserves_generic_relationship_history_across_overwrites(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
@@ -369,6 +442,111 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(current_result.reply_text, "I don't currently have that saved.")
         self.assertEqual(history_result.reply_text, "An earlier saved cofounder was Omar.")
         self.assertEqual(event_history_result.reply_text, "I only have one saved cofounder event: Omar.")
+
+    def test_build_researcher_reply_preserves_generic_decision_history_and_delete_lifecycle(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-decision-history-seed-1",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-decision-history",
+            channel_kind="telegram",
+            user_message="We decided to launch Atlas through agency partners first.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-decision-history-seed-2",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-decision-history",
+            channel_kind="telegram",
+            user_message="Update: we're going with self-serve onboarding first.",
+        )
+
+        current_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-decision-current",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-decision-history",
+            channel_kind="telegram",
+            user_message="What did we decide?",
+        )
+        history_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-decision-history",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-decision-history",
+            channel_kind="telegram",
+            user_message="What did we decide before?",
+        )
+        event_history_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-decision-event-history",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-decision-history",
+            channel_kind="telegram",
+            user_message="Show our decision history.",
+        )
+        delete_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-decision-delete",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-decision-history",
+            channel_kind="telegram",
+            user_message="Forget our decision.",
+        )
+        current_after_delete_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-decision-current-after-delete",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-decision-history",
+            channel_kind="telegram",
+            user_message="What did we decide?",
+        )
+        history_after_delete_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-decision-history-after-delete",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-decision-history",
+            channel_kind="telegram",
+            user_message="What did we decide before?",
+        )
+
+        self.assertEqual(
+            current_result.reply_text,
+            "Your current decision is self-serve onboarding first.",
+        )
+        self.assertEqual(
+            history_result.reply_text,
+            "Before your current decision was self-serve onboarding first, it was launch Atlas through agency partners first.",
+        )
+        self.assertEqual(
+            event_history_result.reply_text,
+            "I have 2 saved current decision events: launch Atlas through agency partners first then self-serve onboarding first.",
+        )
+        self.assertEqual(delete_result.reply_text, "I'll forget your current decision.")
+        self.assertEqual(current_after_delete_result.reply_text, "I don't currently have that saved.")
+        self.assertEqual(
+            history_after_delete_result.reply_text,
+            "An earlier saved current decision was self-serve onboarding first.",
+        )
 
     def test_build_researcher_reply_does_not_persist_hypothetical_generic_memory_text(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)

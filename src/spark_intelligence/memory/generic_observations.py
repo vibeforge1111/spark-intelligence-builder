@@ -36,7 +36,15 @@ _PLAN_PATTERNS: tuple[re.Pattern[str], ...] = (
 _FOCUS_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^(?:i(?:'m| am)|we(?:'re| are))\s+focusing\s+on\s+(.+?)[.!]?$", re.IGNORECASE),
     re.compile(r"^our\s+priority\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+)
+
+_DECISION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^(?:i|we)\s+decided\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^(?:i|we)\s+decided\s+that\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^our\s+decision\s+is\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^our\s+decision\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^(?:i|we)(?:'re| are)\s+going\s+with\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^(?:i|we)\s+chose\s+(.+?)[.!]?$", re.IGNORECASE),
 )
 
 
@@ -103,6 +111,20 @@ def detect_telegram_generic_observation(user_message: str) -> TelegramGenericObs
                 evidence_text=text,
                 fact_name="current_focus",
                 label="current focus",
+            )
+
+    for pattern in _DECISION_PATTERNS:
+        match = pattern.fullmatch(normalized)
+        if match is None:
+            continue
+        value = _clean_value(match.group(1))
+        if value:
+            return TelegramGenericObservation(
+                predicate="profile.current_decision",
+                value=value,
+                evidence_text=text,
+                fact_name="current_decision",
+                label="current decision",
             )
 
     return None
@@ -192,6 +214,27 @@ def detect_telegram_generic_deletion(user_message: str) -> TelegramGenericDeleti
             label="current focus",
         )
 
+    if lowered in {
+        "forget my current decision.",
+        "forget my current decision",
+        "delete my current decision.",
+        "delete my current decision",
+        "remove my current decision.",
+        "remove my current decision",
+        "forget our decision.",
+        "forget our decision",
+        "delete our decision.",
+        "delete our decision",
+        "remove our decision.",
+        "remove our decision",
+    }:
+        return TelegramGenericDeletion(
+            predicate="profile.current_decision",
+            evidence_text=text,
+            fact_name="current_decision",
+            label="current decision",
+        )
+
     return None
 
 
@@ -203,6 +246,8 @@ def build_telegram_generic_observation_answer(*, observation: TelegramGenericObs
         return f"I'll remember that your current plan is to {value}."
     if observation.predicate == "profile.current_focus":
         return f"I'll remember that your current focus is {value}."
+    if observation.predicate == "profile.current_decision":
+        return f"I'll remember that your current decision is {value}."
     return f"I'll remember that your {observation.label} is {value}."
 
 
@@ -211,6 +256,8 @@ def build_telegram_generic_deletion_answer(*, deletion: TelegramGenericDeletion)
         return "I'll forget your current plan."
     if deletion.predicate == "profile.current_focus":
         return "I'll forget your current focus."
+    if deletion.predicate == "profile.current_decision":
+        return "I'll forget your current decision."
     return f"I'll forget your {deletion.label}."
 
 
