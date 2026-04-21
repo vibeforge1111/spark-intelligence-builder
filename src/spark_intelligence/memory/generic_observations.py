@@ -61,6 +61,12 @@ _STATUS_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^the\s+current\s+status\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
 )
 
+_COMMITMENT_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^(?:i|we)\s+committed\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^our\s+commitment\s+is\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^the\s+commitment\s+is\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
+)
+
 
 @dataclass(frozen=True)
 class TelegramGenericObservation:
@@ -167,6 +173,20 @@ def detect_telegram_generic_observation(user_message: str) -> TelegramGenericObs
                 evidence_text=text,
                 fact_name="current_status",
                 label="current status",
+            )
+
+    for pattern in _COMMITMENT_PATTERNS:
+        match = pattern.fullmatch(normalized)
+        if match is None:
+            continue
+        value = _clean_value(match.group(1))
+        if value:
+            return TelegramGenericObservation(
+                predicate="profile.current_commitment",
+                value=value,
+                evidence_text=text,
+                fact_name="current_commitment",
+                label="current commitment",
             )
 
     return None
@@ -331,6 +351,33 @@ def detect_telegram_generic_deletion(user_message: str) -> TelegramGenericDeleti
             label="current status",
         )
 
+    if lowered in {
+        "forget my current commitment.",
+        "forget my current commitment",
+        "delete my current commitment.",
+        "delete my current commitment",
+        "remove my current commitment.",
+        "remove my current commitment",
+        "forget our commitment.",
+        "forget our commitment",
+        "delete our commitment.",
+        "delete our commitment",
+        "remove our commitment.",
+        "remove our commitment",
+        "forget the commitment.",
+        "forget the commitment",
+        "delete the commitment.",
+        "delete the commitment",
+        "remove the commitment.",
+        "remove the commitment",
+    }:
+        return TelegramGenericDeletion(
+            predicate="profile.current_commitment",
+            evidence_text=text,
+            fact_name="current_commitment",
+            label="current commitment",
+        )
+
     return None
 
 
@@ -348,6 +395,8 @@ def build_telegram_generic_observation_answer(*, observation: TelegramGenericObs
         return f"I'll remember that your current blocker is {value}."
     if observation.predicate == "profile.current_status":
         return f"I'll remember that your current status is {value}."
+    if observation.predicate == "profile.current_commitment":
+        return f"I'll remember that your current commitment is to {value}."
     return f"I'll remember that your {observation.label} is {value}."
 
 
@@ -362,6 +411,8 @@ def build_telegram_generic_deletion_answer(*, deletion: TelegramGenericDeletion)
         return "I'll forget your current blocker."
     if deletion.predicate == "profile.current_status":
         return "I'll forget your current status."
+    if deletion.predicate == "profile.current_commitment":
+        return "I'll forget your current commitment."
     return f"I'll forget your {deletion.label}."
 
 

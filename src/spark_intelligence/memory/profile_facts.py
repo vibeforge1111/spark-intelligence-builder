@@ -546,6 +546,21 @@ def _detect_profile_fact_history_query(text: str) -> ProfileFactQuery | None:
             label="current status",
             query_kind="fact_history",
         )
+    if any(
+        phrase in text
+        for phrase in (
+            "what was my previous commitment",
+            "what was our previous commitment",
+            "what did we commit to before",
+            "what was the commitment before",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_commitment",
+            fact_name="profile_current_commitment",
+            label="current commitment",
+            query_kind="fact_history",
+        )
     return None
 
 
@@ -673,6 +688,22 @@ def _detect_profile_fact_event_history_query(text: str) -> ProfileFactQuery | No
             predicate="profile.current_status",
             fact_name="profile_current_status",
             label="current status",
+            query_kind="event_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what memory events do you have about my current commitment",
+            "what memory events do you have about our commitment",
+            "show my commitment history",
+            "show our commitment history",
+            "show the commitment history",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_commitment",
+            fact_name="profile_current_commitment",
+            label="current commitment",
             query_kind="event_history",
         )
     return None
@@ -1032,6 +1063,24 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
             fact_name="profile_current_status",
             label="current status",
         )
+    if any(
+        phrase in text
+        for phrase in (
+            "what is my current commitment",
+            "what's my current commitment",
+            "what is our current commitment",
+            "what's our current commitment",
+            "what is our commitment",
+            "what's our commitment",
+            "what did we commit to",
+            "what commitment do we have",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_commitment",
+            fact_name="profile_current_commitment",
+            label="current commitment",
+        )
     if normalized_question in {
         "what startup did i create",
         "what company did i found",
@@ -1242,6 +1291,12 @@ def build_profile_fact_history_answer(
                 f"Before your current status was {normalized_current}, it was {normalized_previous}"
             )
         return _ensure_sentence(f"An earlier saved current status was {normalized_previous}")
+    if predicate == "profile.current_commitment":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(
+                f"Before your current commitment was to {normalized_current}, it was to {normalized_previous}"
+            )
+        return _ensure_sentence(f"An earlier saved current commitment was to {normalized_previous}")
     if predicate == "profile.cofounder_name":
         if normalized_current and normalized_current != normalized_previous:
             return _ensure_sentence(f"Before {normalized_current}, your cofounder was {normalized_previous}")
@@ -1353,6 +1408,8 @@ def _build_profile_fact_concise_answer(*, query: ProfileFactQuery, value: str) -
         return _ensure_sentence(f"Your current blocker is {normalized_value}")
     if predicate == "profile.current_status":
         return _ensure_sentence(f"Your current status is {normalized_value}")
+    if predicate == "profile.current_commitment":
+        return _ensure_sentence(f"Your current commitment is to {normalized_value}")
     if predicate == "profile.cofounder_name":
         return _ensure_sentence(f"Your cofounder is {normalized_value}")
     if predicate == "profile.mentor_name":
@@ -1422,6 +1479,7 @@ def build_profile_identity_summary_context(*, records: list[dict[str, str]]) -> 
         "profile.current_decision",
         "profile.current_blocker",
         "profile.current_status",
+        "profile.current_commitment",
         "profile.cofounder_name",
         "profile.mentor_name",
         "profile.manager_name",
@@ -1448,6 +1506,7 @@ def build_profile_identity_summary_context(*, records: list[dict[str, str]]) -> 
         "profile.current_decision": "current decision",
         "profile.current_blocker": "current blocker",
         "profile.current_status": "current status",
+        "profile.current_commitment": "current commitment",
         "profile.cofounder_name": "cofounder",
         "profile.mentor_name": "mentor",
         "profile.manager_name": "manager",

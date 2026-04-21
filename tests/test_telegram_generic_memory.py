@@ -204,6 +204,39 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(recorded_observations[0]["predicate"], "profile.current_status")
         self.assertEqual(recorded_observations[0]["value"], "private beta is live with 14 design partners")
 
+    def test_build_researcher_reply_persists_generic_commitment_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for generic memory observations"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for generic memory observations"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-generic-commitment-update",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-generic-commitment-update",
+                channel_kind="telegram",
+                user_message="We committed to closing the pilot by June 1.",
+            )
+
+        self.assertEqual(
+            result.reply_text,
+            "I'll remember that your current commitment is to closing the pilot by June 1.",
+        )
+        self.assertEqual(result.mode, "memory_generic_observation_update")
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(write_events)
+        recorded_observations = (write_events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(recorded_observations[0]["predicate"], "profile.current_commitment")
+        self.assertEqual(recorded_observations[0]["value"], "closing the pilot by June 1")
+
     def test_build_researcher_reply_persists_generic_manager_relationship_memory(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
@@ -461,6 +494,46 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(
             result.reply_text,
             "Your current status is private beta is live with 14 design partners.",
+        )
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+
+    def test_build_researcher_reply_answers_generic_commitment_query_from_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-commitment-write-query-seed",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-commitment-write-query-seed",
+            channel_kind="telegram",
+            user_message="We committed to closing the pilot by June 1.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for generic memory queries"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for generic memory queries"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-generic-commitment-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-generic-commitment-query",
+                channel_kind="telegram",
+                user_message="What is our commitment?",
+            )
+
+        self.assertEqual(
+            result.reply_text,
+            "Your current commitment is to closing the pilot by June 1.",
         )
         self.assertEqual(result.mode, "memory_profile_fact")
         self.assertEqual(result.routing_decision, "memory_profile_fact_query")
@@ -902,6 +975,111 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(
             history_after_delete_result.reply_text,
             "An earlier saved current status was onboarding activation is above 40 percent.",
+        )
+
+    def test_build_researcher_reply_preserves_generic_commitment_history_and_delete_lifecycle(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-commitment-history-seed-1",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-commitment-history",
+            channel_kind="telegram",
+            user_message="We committed to closing the pilot by June 1.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-commitment-history-seed-2",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-commitment-history",
+            channel_kind="telegram",
+            user_message="Update: our commitment is to close the pilot by June 10.",
+        )
+
+        current_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-commitment-current",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-commitment-history",
+            channel_kind="telegram",
+            user_message="What did we commit to?",
+        )
+        history_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-commitment-history",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-commitment-history",
+            channel_kind="telegram",
+            user_message="What did we commit to before?",
+        )
+        event_history_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-commitment-event-history",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-commitment-history",
+            channel_kind="telegram",
+            user_message="Show our commitment history.",
+        )
+        delete_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-commitment-delete",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-commitment-history",
+            channel_kind="telegram",
+            user_message="Forget our commitment.",
+        )
+        current_after_delete_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-commitment-current-after-delete",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-commitment-history",
+            channel_kind="telegram",
+            user_message="What is our commitment?",
+        )
+        history_after_delete_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-commitment-history-after-delete",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-commitment-history",
+            channel_kind="telegram",
+            user_message="What did we commit to before?",
+        )
+
+        self.assertEqual(
+            current_result.reply_text,
+            "Your current commitment is to close the pilot by June 10.",
+        )
+        self.assertEqual(
+            history_result.reply_text,
+            "Before your current commitment was to close the pilot by June 10, it was to closing the pilot by June 1.",
+        )
+        self.assertEqual(
+            event_history_result.reply_text,
+            "I have 2 saved current commitment events: closing the pilot by June 1 then close the pilot by June 10.",
+        )
+        self.assertEqual(delete_result.reply_text, "I'll forget your current commitment.")
+        self.assertEqual(current_after_delete_result.reply_text, "I don't currently have that saved.")
+        self.assertEqual(
+            history_after_delete_result.reply_text,
+            "An earlier saved current commitment was to close the pilot by June 10.",
         )
 
     def test_build_researcher_reply_does_not_persist_hypothetical_generic_memory_text(self) -> None:
