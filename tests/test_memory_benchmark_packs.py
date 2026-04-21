@@ -15,6 +15,7 @@ def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
     assert "event_calendar_lineage_proxy" in packs
     assert "telegram_event_overwrite_lineage" in packs
     assert "telegram_generic_profile_lifecycle" in packs
+    assert "telegram_mixed_memory_session_churn" in packs
     assert "explanation_pressure_suite" in packs
     assert "identity_under_recency_pressure" in packs
 
@@ -28,6 +29,8 @@ def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
     assert "current_state" in packs["telegram_event_overwrite_lineage"].focus_areas
     assert "delete" in packs["telegram_generic_profile_lifecycle"].focus_areas
     assert "native_history" in packs["telegram_generic_profile_lifecycle"].focus_areas
+    assert "mixed_session" in packs["telegram_mixed_memory_session_churn"].focus_areas
+    assert "telegram_events" in packs["telegram_mixed_memory_session_churn"].focus_areas
     assert "provenance" in packs["explanation_pressure_suite"].focus_areas
     assert packs["long_horizon_recall"].selection_role == "health_gate"
     assert packs["boundary_abstention"].selection_role == "health_gate"
@@ -115,6 +118,14 @@ def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
     assert "generic_long_run_risk_rewrite" in churn_case_ids
     assert "generic_long_run_owner_event_history_query" in churn_case_ids
     assert "generic_long_run_dependency_current_query" in churn_case_ids
+
+    mixed_session_case_ids = {case.case_id for case in packs["telegram_mixed_memory_session_churn"].cases}
+    assert "mixed_session_owner_write_initial" in mixed_session_case_ids
+    assert "mixed_session_flight_overwrite" in mixed_session_case_ids
+    assert "mixed_session_owner_delete" in mixed_session_case_ids
+    assert "mixed_session_owner_event_history_query" in mixed_session_case_ids
+    assert "mixed_session_latest_flight_query" in mixed_session_case_ids
+    assert "mixed_session_flight_history_query" in mixed_session_case_ids
 
     identity_case_ids = {case.case_id for case in packs["identity_under_recency_pressure"].cases}
     assert "name_query_after_recency_pressure" in identity_case_ids
@@ -226,6 +237,20 @@ def test_select_generic_profile_churn_pack_exposes_long_run_cases() -> None:
     assert "generic_long_run_risk_rewrite" in case_ids
     assert "generic_long_run_risk_event_history_query" in case_ids
     assert "generic_long_run_dependency_current_query" in case_ids
+
+
+def test_select_mixed_memory_session_churn_pack_exposes_interleaved_cases() -> None:
+    packs = select_telegram_memory_benchmark_packs(["telegram_mixed_memory_session_churn"])
+
+    assert [pack.pack_id for pack in packs] == ["telegram_mixed_memory_session_churn"]
+
+    case_ids = {case.case_id for case in flatten_benchmark_pack_cases(packs)}
+    assert "mixed_session_meeting_write" in case_ids
+    assert "mixed_session_flight_overwrite" in case_ids
+    assert "mixed_session_owner_rewrite" in case_ids
+    assert "mixed_session_owner_event_history_query" in case_ids
+    assert "mixed_session_risk_current_query" in case_ids
+    assert "mixed_session_latest_flight_query" in case_ids
 
 
 def test_select_benchmark_packs_rejects_unknown_pack_ids() -> None:

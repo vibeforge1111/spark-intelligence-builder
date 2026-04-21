@@ -812,6 +812,42 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
                 ),
             ),
         ),
+        TelegramMemoryBenchmarkPack(
+            pack_id="telegram_mixed_memory_session_churn",
+            title="Telegram Mixed Memory Session Churn",
+            description=(
+                "Exercises a realistic mixed Telegram session where generic profile churn and dedicated event-memory "
+                "updates interleave, so current-state answers, native history, event history, and latest-event "
+                "queries all stay coherent in one conversation."
+            ),
+            focus_areas=(
+                "telegram_events",
+                "mixed_session",
+                "long_run_churn",
+                "native_history",
+                "current_state",
+            ),
+            cases=(
+                *_existing(
+                    "mixed_session_owner_write_initial",
+                    "mixed_session_meeting_write",
+                    "mixed_session_owner_overwrite",
+                    "mixed_session_flight_write",
+                    "mixed_session_dependency_write",
+                    "mixed_session_flight_overwrite",
+                    "mixed_session_owner_delete",
+                    "mixed_session_owner_rewrite",
+                    "mixed_session_risk_write",
+                    "mixed_session_owner_current_query",
+                    "mixed_session_owner_history_query",
+                    "mixed_session_owner_event_history_query",
+                    "mixed_session_dependency_current_query",
+                    "mixed_session_risk_current_query",
+                    "mixed_session_latest_flight_query",
+                    "mixed_session_flight_history_query",
+                ),
+            ),
+        ),
     )
 
 
