@@ -74,6 +74,15 @@ _MILESTONE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^the\s+current\s+milestone\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
 )
 
+_RISK_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^our\s+current\s+risk\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^the\s+current\s+risk\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^our\s+main\s+risk\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^the\s+main\s+risk\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^our\s+biggest\s+risk\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^the\s+biggest\s+risk\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+)
+
 
 @dataclass(frozen=True)
 class TelegramGenericObservation:
@@ -208,6 +217,20 @@ def detect_telegram_generic_observation(user_message: str) -> TelegramGenericObs
                 evidence_text=text,
                 fact_name="current_milestone",
                 label="current milestone",
+            )
+
+    for pattern in _RISK_PATTERNS:
+        match = pattern.fullmatch(normalized)
+        if match is None:
+            continue
+        value = _clean_value(match.group(1))
+        if value:
+            return TelegramGenericObservation(
+                predicate="profile.current_risk",
+                value=value,
+                evidence_text=text,
+                fact_name="current_risk",
+                label="current risk",
             )
 
     return None
@@ -426,6 +449,33 @@ def detect_telegram_generic_deletion(user_message: str) -> TelegramGenericDeleti
             label="current milestone",
         )
 
+    if lowered in {
+        "forget my current risk.",
+        "forget my current risk",
+        "delete my current risk.",
+        "delete my current risk",
+        "remove my current risk.",
+        "remove my current risk",
+        "forget our risk.",
+        "forget our risk",
+        "delete our risk.",
+        "delete our risk",
+        "remove our risk.",
+        "remove our risk",
+        "forget the risk.",
+        "forget the risk",
+        "delete the risk.",
+        "delete the risk",
+        "remove the risk.",
+        "remove the risk",
+    }:
+        return TelegramGenericDeletion(
+            predicate="profile.current_risk",
+            evidence_text=text,
+            fact_name="current_risk",
+            label="current risk",
+        )
+
     return None
 
 
@@ -447,6 +497,8 @@ def build_telegram_generic_observation_answer(*, observation: TelegramGenericObs
         return f"I'll remember that your current commitment is to {value}."
     if observation.predicate == "profile.current_milestone":
         return f"I'll remember that your current milestone is {value}."
+    if observation.predicate == "profile.current_risk":
+        return f"I'll remember that your current risk is {value}."
     return f"I'll remember that your {observation.label} is {value}."
 
 
@@ -465,6 +517,8 @@ def build_telegram_generic_deletion_answer(*, deletion: TelegramGenericDeletion)
         return "I'll forget your current commitment."
     if deletion.predicate == "profile.current_milestone":
         return "I'll forget your current milestone."
+    if deletion.predicate == "profile.current_risk":
+        return "I'll forget your current risk."
     return f"I'll forget your {deletion.label}."
 
 

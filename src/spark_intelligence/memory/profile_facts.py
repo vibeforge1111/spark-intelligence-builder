@@ -576,6 +576,21 @@ def _detect_profile_fact_history_query(text: str) -> ProfileFactQuery | None:
             label="current milestone",
             query_kind="fact_history",
         )
+    if any(
+        phrase in text
+        for phrase in (
+            "what was my previous risk",
+            "what was our previous risk",
+            "what was the risk before",
+            "what risk did we have before",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_risk",
+            fact_name="profile_current_risk",
+            label="current risk",
+            query_kind="fact_history",
+        )
     return None
 
 
@@ -735,6 +750,22 @@ def _detect_profile_fact_event_history_query(text: str) -> ProfileFactQuery | No
             predicate="profile.current_milestone",
             fact_name="profile_current_milestone",
             label="current milestone",
+            query_kind="event_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what memory events do you have about my current risk",
+            "what memory events do you have about our risk",
+            "show my risk history",
+            "show our risk history",
+            "show the risk history",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_risk",
+            fact_name="profile_current_risk",
+            label="current risk",
             query_kind="event_history",
         )
     return None
@@ -1130,6 +1161,24 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
             fact_name="profile_current_milestone",
             label="current milestone",
         )
+    if any(
+        phrase in text
+        for phrase in (
+            "what is my current risk",
+            "what's my current risk",
+            "what is our current risk",
+            "what's our current risk",
+            "what is our risk",
+            "what's our risk",
+            "what is the risk",
+            "what's the risk",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_risk",
+            fact_name="profile_current_risk",
+            label="current risk",
+        )
     if normalized_question in {
         "what startup did i create",
         "what company did i found",
@@ -1352,6 +1401,10 @@ def build_profile_fact_history_answer(
                 f"Before your current milestone was {normalized_current}, it was {normalized_previous}"
             )
         return _ensure_sentence(f"An earlier saved current milestone was {normalized_previous}")
+    if predicate == "profile.current_risk":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before your current risk was {normalized_current}, it was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved current risk was {normalized_previous}")
     if predicate == "profile.cofounder_name":
         if normalized_current and normalized_current != normalized_previous:
             return _ensure_sentence(f"Before {normalized_current}, your cofounder was {normalized_previous}")
@@ -1467,6 +1520,8 @@ def _build_profile_fact_concise_answer(*, query: ProfileFactQuery, value: str) -
         return _ensure_sentence(f"Your current commitment is to {normalized_value}")
     if predicate == "profile.current_milestone":
         return _ensure_sentence(f"Your current milestone is {normalized_value}")
+    if predicate == "profile.current_risk":
+        return _ensure_sentence(f"Your current risk is {normalized_value}")
     if predicate == "profile.cofounder_name":
         return _ensure_sentence(f"Your cofounder is {normalized_value}")
     if predicate == "profile.mentor_name":
@@ -1538,6 +1593,7 @@ def build_profile_identity_summary_context(*, records: list[dict[str, str]]) -> 
         "profile.current_status",
         "profile.current_commitment",
         "profile.current_milestone",
+        "profile.current_risk",
         "profile.cofounder_name",
         "profile.mentor_name",
         "profile.manager_name",
@@ -1566,6 +1622,7 @@ def build_profile_identity_summary_context(*, records: list[dict[str, str]]) -> 
         "profile.current_status": "current status",
         "profile.current_commitment": "current commitment",
         "profile.current_milestone": "current milestone",
+        "profile.current_risk": "current risk",
         "profile.cofounder_name": "cofounder",
         "profile.mentor_name": "mentor",
         "profile.manager_name": "manager",
