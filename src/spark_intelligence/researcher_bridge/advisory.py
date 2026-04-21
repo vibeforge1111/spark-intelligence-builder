@@ -70,6 +70,7 @@ from spark_intelligence.memory.generic_observations import (
     detect_telegram_generic_observation,
 )
 from spark_intelligence.memory.profile_facts import (
+    active_state_records_past_revalidation,
     build_profile_fact_explanation_answer,
     build_profile_fact_event_history_answer,
     build_profile_fact_history_answer,
@@ -5149,11 +5150,30 @@ def build_researcher_reply(
                     predicate=detected_profile_fact_query.predicate,
                     related_predicates=related_predicates,
                 )
+        if (
+            str(detected_profile_fact_query.predicate or "").startswith("profile.current_")
+            and primary_records
+            and not current_fact_deleted
+        ):
+            inspected_primary_records, inspected_related_records = _inspect_profile_fact_records(
+                config_manager=config_manager,
+                state_db=state_db,
+                human_id=human_id,
+                predicate=detected_profile_fact_query.predicate,
+                related_predicates=related_predicates,
+                actor_id="researcher_bridge",
+            )
+            if inspected_primary_records:
+                primary_records = inspected_primary_records
+            if inspected_related_records:
+                related_records = inspected_related_records
         direct_fact_value = _select_profile_fact_query_value(
             predicate=detected_profile_fact_query.predicate,
             primary_records=primary_records,
             related_records=related_records,
         )
+        stale_primary_records = active_state_records_past_revalidation(primary_records)
+        stale_current_fact = bool(primary_records) and len(stale_primary_records) == len(primary_records)
         output_keepability, promotion_disposition = _bridge_output_classification(
             mode="memory_profile_fact",
             routing_decision="memory_profile_fact_query",
@@ -5162,11 +5182,13 @@ def build_researcher_reply(
         reply_text = build_profile_fact_query_answer(
             query=detected_profile_fact_query,
             value=direct_fact_value,
+            stale=stale_current_fact,
         )
         evidence_summary = (
             "status=memory_profile_fact "
             f"predicate={detected_profile_fact_query.predicate or 'unknown'} "
-            f"value_found={'yes' if direct_fact_value else 'no'}"
+            f"value_found={'yes' if direct_fact_value else 'no'} "
+            f"stale_current_fact={'yes' if stale_current_fact else 'no'}"
         )
         record_event(
             state_db,
@@ -5196,6 +5218,7 @@ def build_researcher_reply(
                     "predicate": detected_profile_fact_query.predicate,
                     "label": detected_profile_fact_query.label,
                     "value_found": bool(direct_fact_value),
+                    "stale_current_fact": stale_current_fact,
                 },
             ),
         )

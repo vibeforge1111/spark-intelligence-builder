@@ -15,6 +15,10 @@ from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.memory.generic_observations import detect_telegram_generic_observation
+from spark_intelligence.memory.profile_facts import (
+    active_state_revalidate_at,
+    active_state_revalidation_days,
+)
 from spark_intelligence.memory_contracts import (
     annotate_contract_trace,
     effective_memory_role,
@@ -2605,6 +2609,20 @@ def _write_profile_fact_memory_operation(
     subject = _subject_for_human_id(human_id)
     timestamp = _now_iso()
     retention_class = _profile_fact_retention_class(predicate)
+    revalidate_after_days = active_state_revalidation_days(predicate)
+    revalidate_at = active_state_revalidate_at(predicate=predicate, timestamp=timestamp)
+    metadata = {
+        "entity_type": "human",
+        "field_name": predicate.rsplit(".", 1)[-1],
+        "channel_kind": channel_kind,
+        "memory_role": "current_state",
+        "source_surface": "researcher_bridge",
+        "fact_name": fact_name,
+        "normalized_value": value,
+    }
+    if operation != "delete" and revalidate_after_days is not None and revalidate_at:
+        metadata["revalidate_after_days"] = revalidate_after_days
+        metadata["revalidate_at"] = revalidate_at
     observation = {
         "subject": subject,
         "predicate": predicate,
@@ -2641,15 +2659,7 @@ def _write_profile_fact_memory_operation(
             "valid_from": None if operation == "delete" else timestamp,
             "valid_to": timestamp if operation == "delete" else None,
             "deleted_at": timestamp if operation == "delete" else None,
-            "metadata": {
-                "entity_type": "human",
-                "field_name": predicate.rsplit(".", 1)[-1],
-                "channel_kind": channel_kind,
-                "memory_role": "current_state",
-                "source_surface": "researcher_bridge",
-                "fact_name": fact_name,
-                "normalized_value": value,
-            },
+            "metadata": metadata,
         },
     )
     result = _normalize_write_result(raw=raw, operation=operation)

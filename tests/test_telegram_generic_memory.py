@@ -994,6 +994,50 @@ class TelegramGenericMemoryTests(SparkTestCase):
                 self.assertIn(expected_label, result.reply_text.lower())
                 self.assertIn(expected_value.lower(), result.reply_text.lower())
 
+    def test_build_researcher_reply_downgrades_stale_current_plan_recall(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.memory.orchestrator._now_iso",
+            return_value="2025-03-01T09:00:00Z",
+        ):
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-stale-plan-seed",
+                agent_id="agent-1",
+                human_id="human-stale-plan",
+                session_id="session-stale-plan",
+                channel_kind="telegram",
+                user_message="Our current plan is to simplify onboarding approvals.",
+            )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for stale current-state recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for stale current-state recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-stale-plan-read",
+                agent_id="agent-1",
+                human_id="human-stale-plan",
+                session_id="session-stale-plan",
+                channel_kind="telegram",
+                user_message="What is our plan?",
+            )
+
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+        self.assertEqual(
+            result.reply_text,
+            'I have an older saved current plan: "simplify onboarding approvals" but it has not been revalidated recently, so I would not treat it as current.',
+        )
+
     def test_build_researcher_reply_archives_stale_structured_evidence_when_newer_evidence_exists(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

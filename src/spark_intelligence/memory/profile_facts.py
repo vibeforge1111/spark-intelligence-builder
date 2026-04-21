@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
+from typing import Any
 
 
 _CITY_PATTERNS = [
@@ -9,6 +11,24 @@ _CITY_PATTERNS = [
     re.compile(r"\bi\s+live\s+in\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
     re.compile(r"\bi(?:'m| am)\s+in\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
 ]
+
+_ACTIVE_STATE_REVALIDATION_DAYS_BY_PREDICATE = {
+    "profile.current_plan": 30,
+    "profile.current_focus": 21,
+    "profile.current_decision": 30,
+    "profile.current_blocker": 14,
+    "profile.current_status": 14,
+    "profile.current_commitment": 21,
+    "profile.current_milestone": 21,
+    "profile.current_risk": 14,
+    "profile.current_dependency": 14,
+    "profile.current_constraint": 14,
+    "profile.current_assumption": 30,
+    "profile.current_owner": 21,
+    "telegram.summary.latest_meeting": 14,
+    "telegram.summary.latest_deadline": 14,
+    "telegram.summary.latest_shipped": 14,
+}
 _STARTUP_PATTERNS = [
     re.compile(r"\bmy\s+startup\s+is\s+([A-Za-z][A-Za-z0-9\s\-'`.&_]{1,60})", re.I),
     re.compile(r"\b([A-Za-z][A-Za-z0-9\s\-'`.&_]{1,60})\s+is\s+my\s+startup", re.I),
@@ -1520,10 +1540,67 @@ def build_profile_fact_query_context(*, query: ProfileFactQuery, value: str | No
     )
 
 
-def build_profile_fact_query_answer(*, query: ProfileFactQuery, value: str | None) -> str:
+def active_state_revalidation_days(predicate: str | None) -> int | None:
+    normalized = str(predicate or "").strip().lower()
+    return _ACTIVE_STATE_REVALIDATION_DAYS_BY_PREDICATE.get(normalized)
+
+
+def active_state_revalidate_at(*, predicate: str | None, timestamp: str | None) -> str | None:
+    revalidation_days = active_state_revalidation_days(predicate)
+    if revalidation_days is None:
+        return None
+    normalized_timestamp = str(timestamp or "").strip()
+    if not normalized_timestamp:
+        return None
+    try:
+        parsed = datetime.fromisoformat(normalized_timestamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    else:
+        parsed = parsed.astimezone(timezone.utc)
+    return (parsed + timedelta(days=revalidation_days)).isoformat()
+
+
+def active_state_records_past_revalidation(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    now = datetime.now(timezone.utc)
+    stale_records: list[dict[str, Any]] = []
+    for record in records:
+        predicate = str(record.get("predicate") or "").strip()
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        revalidate_at = str(metadata.get("revalidate_at") or "").strip()
+        if not revalidate_at:
+            timestamp = str(record.get("timestamp") or record.get("document_time") or "").strip()
+            revalidate_at = active_state_revalidate_at(predicate=predicate, timestamp=timestamp) or ""
+        if not revalidate_at:
+            continue
+        try:
+            parsed = datetime.fromisoformat(revalidate_at.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        else:
+            parsed = parsed.astimezone(timezone.utc)
+        if parsed <= now:
+            stale_records.append(record)
+    return stale_records
+
+
+def _build_profile_fact_stale_answer(*, query: ProfileFactQuery, value: str) -> str:
+    return (
+        f'I have an older saved {query.label}: "{value}" '
+        "but it has not been revalidated recently, so I would not treat it as current."
+    )
+
+
+def build_profile_fact_query_answer(*, query: ProfileFactQuery, value: str | None, stale: bool = False) -> str:
     normalized_value = str(value or "").strip()
     if not normalized_value:
         return "I don't currently have that saved."
+    if stale:
+        return _build_profile_fact_stale_answer(query=query, value=normalized_value)
     return _build_profile_fact_concise_answer(query=query, value=normalized_value)
 
 

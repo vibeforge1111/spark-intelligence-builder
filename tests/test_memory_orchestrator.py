@@ -208,6 +208,33 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(result.status, "succeeded")
         self.assertEqual(fake_client.observation_calls[0]["retention_class"], "active_state")
 
+    def test_profile_current_state_predicates_store_revalidation_metadata(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator._now_iso",
+            return_value="2025-03-01T09:00:00Z",
+        ):
+            result = write_profile_fact_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                predicate="profile.current_plan",
+                value="launch Atlas in enterprise first",
+                evidence_text="Our current plan is to launch Atlas in enterprise first.",
+                fact_name="current_plan",
+                session_id="session:plan:stale",
+                turn_id="turn:plan:stale",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        metadata = fake_client.observation_calls[0]["metadata"]
+        self.assertEqual(metadata["revalidate_after_days"], 30)
+        self.assertEqual(metadata["revalidate_at"], "2025-03-31T09:00:00+00:00")
+
     def test_structured_evidence_writes_use_evidence_role_and_archive_retention(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
