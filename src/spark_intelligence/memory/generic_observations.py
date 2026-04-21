@@ -91,6 +91,15 @@ _DEPENDENCY_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^(?:i|we)(?:'re| are)\s+dependent\s+on\s+(.+?)[.!]?$", re.IGNORECASE),
 )
 
+_CONSTRAINT_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^our\s+constraint\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^the\s+constraint\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^our\s+current\s+constraint\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^the\s+current\s+constraint\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^our\s+main\s+constraint\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^the\s+main\s+constraint\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+)
+
 
 @dataclass(frozen=True)
 class TelegramGenericObservation:
@@ -253,6 +262,20 @@ def detect_telegram_generic_observation(user_message: str) -> TelegramGenericObs
                 evidence_text=text,
                 fact_name="current_dependency",
                 label="current dependency",
+            )
+
+    for pattern in _CONSTRAINT_PATTERNS:
+        match = pattern.fullmatch(normalized)
+        if match is None:
+            continue
+        value = _clean_value(match.group(1))
+        if value:
+            return TelegramGenericObservation(
+                predicate="profile.current_constraint",
+                value=value,
+                evidence_text=text,
+                fact_name="current_constraint",
+                label="current constraint",
             )
 
     return None
@@ -525,6 +548,33 @@ def detect_telegram_generic_deletion(user_message: str) -> TelegramGenericDeleti
             label="current dependency",
         )
 
+    if lowered in {
+        "forget my current constraint.",
+        "forget my current constraint",
+        "delete my current constraint.",
+        "delete my current constraint",
+        "remove my current constraint.",
+        "remove my current constraint",
+        "forget our constraint.",
+        "forget our constraint",
+        "delete our constraint.",
+        "delete our constraint",
+        "remove our constraint.",
+        "remove our constraint",
+        "forget the constraint.",
+        "forget the constraint",
+        "delete the constraint.",
+        "delete the constraint",
+        "remove the constraint.",
+        "remove the constraint",
+    }:
+        return TelegramGenericDeletion(
+            predicate="profile.current_constraint",
+            evidence_text=text,
+            fact_name="current_constraint",
+            label="current constraint",
+        )
+
     return None
 
 
@@ -550,6 +600,8 @@ def build_telegram_generic_observation_answer(*, observation: TelegramGenericObs
         return f"I'll remember that your current risk is {value}."
     if observation.predicate == "profile.current_dependency":
         return f"I'll remember that your current dependency is {value}."
+    if observation.predicate == "profile.current_constraint":
+        return f"I'll remember that your current constraint is {value}."
     return f"I'll remember that your {observation.label} is {value}."
 
 
@@ -572,6 +624,8 @@ def build_telegram_generic_deletion_answer(*, deletion: TelegramGenericDeletion)
         return "I'll forget your current risk."
     if deletion.predicate == "profile.current_dependency":
         return "I'll forget your current dependency."
+    if deletion.predicate == "profile.current_constraint":
+        return "I'll forget your current constraint."
     return f"I'll forget your {deletion.label}."
 
 

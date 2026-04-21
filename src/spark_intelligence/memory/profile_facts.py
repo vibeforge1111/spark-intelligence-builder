@@ -606,6 +606,21 @@ def _detect_profile_fact_history_query(text: str) -> ProfileFactQuery | None:
             label="current dependency",
             query_kind="fact_history",
         )
+    if any(
+        phrase in text
+        for phrase in (
+            "what was my previous constraint",
+            "what was our previous constraint",
+            "what was the constraint before",
+            "what constraint did we have before",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_constraint",
+            fact_name="profile_current_constraint",
+            label="current constraint",
+            query_kind="fact_history",
+        )
     return None
 
 
@@ -797,6 +812,22 @@ def _detect_profile_fact_event_history_query(text: str) -> ProfileFactQuery | No
             predicate="profile.current_dependency",
             fact_name="profile_current_dependency",
             label="current dependency",
+            query_kind="event_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what memory events do you have about my current constraint",
+            "what memory events do you have about our constraint",
+            "show my constraint history",
+            "show our constraint history",
+            "show the constraint history",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_constraint",
+            fact_name="profile_current_constraint",
+            label="current constraint",
             query_kind="event_history",
         )
     return None
@@ -1228,6 +1259,24 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
             fact_name="profile_current_dependency",
             label="current dependency",
         )
+    if any(
+        phrase in text
+        for phrase in (
+            "what is my current constraint",
+            "what's my current constraint",
+            "what is our current constraint",
+            "what's our current constraint",
+            "what is our constraint",
+            "what's our constraint",
+            "what is the constraint",
+            "what's the constraint",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_constraint",
+            fact_name="profile_current_constraint",
+            label="current constraint",
+        )
     if normalized_question in {
         "what startup did i create",
         "what company did i found",
@@ -1460,6 +1509,12 @@ def build_profile_fact_history_answer(
                 f"Before your current dependency was {normalized_current}, it was {normalized_previous}"
             )
         return _ensure_sentence(f"An earlier saved current dependency was {normalized_previous}")
+    if predicate == "profile.current_constraint":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(
+                f"Before your current constraint was {normalized_current}, it was {normalized_previous}"
+            )
+        return _ensure_sentence(f"An earlier saved current constraint was {normalized_previous}")
     if predicate == "profile.cofounder_name":
         if normalized_current and normalized_current != normalized_previous:
             return _ensure_sentence(f"Before {normalized_current}, your cofounder was {normalized_previous}")
@@ -1579,6 +1634,8 @@ def _build_profile_fact_concise_answer(*, query: ProfileFactQuery, value: str) -
         return _ensure_sentence(f"Your current risk is {normalized_value}")
     if predicate == "profile.current_dependency":
         return _ensure_sentence(f"Your current dependency is {normalized_value}")
+    if predicate == "profile.current_constraint":
+        return _ensure_sentence(f"Your current constraint is {normalized_value}")
     if predicate == "profile.cofounder_name":
         return _ensure_sentence(f"Your cofounder is {normalized_value}")
     if predicate == "profile.mentor_name":
@@ -1652,6 +1709,7 @@ def build_profile_identity_summary_context(*, records: list[dict[str, str]]) -> 
         "profile.current_milestone",
         "profile.current_risk",
         "profile.current_dependency",
+        "profile.current_constraint",
         "profile.cofounder_name",
         "profile.mentor_name",
         "profile.manager_name",
@@ -1682,6 +1740,7 @@ def build_profile_identity_summary_context(*, records: list[dict[str, str]]) -> 
         "profile.current_milestone": "current milestone",
         "profile.current_risk": "current risk",
         "profile.current_dependency": "current dependency",
+        "profile.current_constraint": "current constraint",
         "profile.cofounder_name": "cofounder",
         "profile.mentor_name": "mentor",
         "profile.manager_name": "manager",
