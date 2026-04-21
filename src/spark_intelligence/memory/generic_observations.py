@@ -106,6 +106,15 @@ _OWNER_PATTERNS: tuple[re.Pattern[str], ...] = (
 
 TelegramGenericMemoryRole = Literal["current_state", "structured_evidence", "event", "belief_candidate"]
 TelegramGenericOperation = Literal["update", "delete"]
+TelegramGenericAssessmentOutcome = Literal[
+    "drop",
+    "raw_episode",
+    "structured_evidence",
+    "current_state",
+    "event",
+    "belief_candidate",
+]
+TelegramAssessmentMemoryRole = Literal["raw_episode", "current_state", "structured_evidence", "event", "belief_candidate"]
 
 
 @dataclass(frozen=True)
@@ -382,6 +391,88 @@ _GENERIC_PACKS: tuple[TelegramGenericPack, ...] = (
 )
 
 _GENERIC_PACKS_BY_PREDICATE = {pack.predicate: pack for pack in _GENERIC_PACKS}
+
+_BELIEF_PREFIX_PATTERN = re.compile(
+    r"^(?:i think|we think|i believe|we believe|it seems|it looks like|probably|likely)\b",
+    re.IGNORECASE,
+)
+_STRUCTURED_EVIDENCE_PATTERN = re.compile(
+    r"\b(?:because|customer said|users? said|we saw|i saw|we found|i found|metrics show|data show|observed|learned that)\b",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class TelegramGenericAssessment:
+    outcome: TelegramGenericAssessmentOutcome
+    evidence_text: str
+    reason: str
+    memory_role: TelegramAssessmentMemoryRole | None = None
+    retention_class: str | None = None
+    domain_pack: str | None = None
+    predicate: str | None = None
+    value: str | None = None
+    operation: TelegramGenericOperation | None = None
+    fact_name: str | None = None
+    label: str | None = None
+
+
+def assess_telegram_generic_memory_candidate(user_message: str) -> TelegramGenericAssessment:
+    text = _clean_text(user_message)
+    if not text:
+        return TelegramGenericAssessment(outcome="drop", evidence_text=text, reason="empty")
+
+    candidate = classify_telegram_generic_memory_candidate(user_message)
+    if candidate is not None:
+        return TelegramGenericAssessment(
+            outcome="current_state",
+            evidence_text=candidate.evidence_text,
+            reason="domain_pack_match",
+            memory_role="current_state",
+            retention_class=candidate.retention_class,
+            domain_pack=candidate.domain_pack,
+            predicate=candidate.predicate,
+            value=candidate.value,
+            operation=candidate.operation,
+            fact_name=candidate.fact_name,
+            label=candidate.label,
+        )
+
+    if not _is_memoryworthy_text(text):
+        return TelegramGenericAssessment(outcome="drop", evidence_text=text, reason="not_memoryworthy")
+
+    normalized = _strip_correction_prefix(text)
+    if _BELIEF_PREFIX_PATTERN.search(normalized):
+        return TelegramGenericAssessment(
+            outcome="belief_candidate",
+            evidence_text=text,
+            reason="belief_marker",
+            memory_role="belief_candidate",
+            retention_class="derived_belief",
+            domain_pack="beliefs_and_inferences",
+            value=normalized,
+        )
+
+    if _STRUCTURED_EVIDENCE_PATTERN.search(normalized):
+        return TelegramGenericAssessment(
+            outcome="structured_evidence",
+            evidence_text=text,
+            reason="evidence_marker",
+            memory_role="structured_evidence",
+            retention_class="episodic_archive",
+            domain_pack="evidence",
+            value=normalized,
+        )
+
+    return TelegramGenericAssessment(
+        outcome="raw_episode",
+        evidence_text=text,
+        reason="meaningful_but_unpromoted",
+        memory_role="raw_episode",
+        retention_class="episodic_archive",
+        domain_pack="raw_episode",
+        value=normalized,
+    )
 
 
 def classify_telegram_generic_memory_candidate(user_message: str) -> TelegramGenericCandidate | None:

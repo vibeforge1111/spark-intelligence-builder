@@ -56,6 +56,7 @@ from spark_intelligence.memory.episodic_events import (
     telegram_event_summary_predicate,
 )
 from spark_intelligence.memory.generic_observations import (
+    assess_telegram_generic_memory_candidate,
     classify_telegram_generic_memory_candidate,
     build_telegram_generic_deletion_answer,
     build_telegram_generic_observation_answer,
@@ -3448,6 +3449,7 @@ def build_researcher_reply(
     detected_memory_event = None
     detected_memory_event_query = None
     detected_generic_memory_candidate = None
+    assessed_generic_memory_candidate = None
     detected_generic_memory_deletion = None
     detected_generic_memory_observation = None
     try:
@@ -3629,8 +3631,45 @@ def build_researcher_reply(
                                 if generic_write_result.accepted_count <= 0:
                                     detected_generic_memory_candidate = None
                                     detected_generic_memory_observation = None
+                    if (
+                        detected_generic_memory_candidate is None
+                        and detected_memory_event is None
+                        and detected_profile_fact is None
+                    ):
+                        assessed_generic_memory_candidate = assess_telegram_generic_memory_candidate(user_message)
+                        if assessed_generic_memory_candidate.outcome == "drop":
+                            assessed_generic_memory_candidate = None
         except Exception:
             pass
+
+    if assessed_generic_memory_candidate is not None:
+        record_event(
+            state_db,
+            event_type="memory_candidate_assessed",
+            component="researcher_bridge",
+            summary="Researcher bridge assessed a Telegram memory candidate without promoting it to a direct memory write.",
+            run_id=run_id,
+            request_id=request_id,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code=f"memory_candidate_{assessed_generic_memory_candidate.outcome}",
+            facts={
+                "message_text": str(user_message or "").strip(),
+                "outcome": assessed_generic_memory_candidate.outcome,
+                "reason": assessed_generic_memory_candidate.reason,
+                "memory_role": assessed_generic_memory_candidate.memory_role,
+                "retention_class": assessed_generic_memory_candidate.retention_class,
+                "domain_pack": assessed_generic_memory_candidate.domain_pack,
+                "predicate": assessed_generic_memory_candidate.predicate,
+                "value": assessed_generic_memory_candidate.value,
+                "operation": assessed_generic_memory_candidate.operation,
+                "fact_name": assessed_generic_memory_candidate.fact_name,
+                "label": assessed_generic_memory_candidate.label,
+            },
+        )
 
     # Periodically trigger self-evolution based on accumulated observations
     try:
@@ -3661,6 +3700,7 @@ def build_researcher_reply(
         or detected_profile_fact_query
         or detected_memory_event
         or detected_memory_event_query
+        or assessed_generic_memory_candidate
         or detected_generic_memory_deletion
         or detected_generic_memory_observation
     ):
@@ -3677,6 +3717,8 @@ def build_researcher_reply(
             source_kind = "telegram_event_update"
         elif detected_memory_event_query is not None:
             source_kind = "telegram_event_query"
+        elif assessed_generic_memory_candidate is not None:
+            source_kind = f"generic_memory_candidate_{assessed_generic_memory_candidate.outcome}"
         elif detected_generic_memory_deletion is not None:
             source_kind = "generic_memory_deletion"
         elif detected_generic_memory_observation is not None:
@@ -3758,6 +3800,23 @@ def build_researcher_reply(
                         "message_text": str(user_message or "").strip(),
                     }
                     if detected_memory_event_query is not None
+                    else None
+                ),
+                "assessed_generic_memory_candidate": (
+                    {
+                        "outcome": assessed_generic_memory_candidate.outcome,
+                        "reason": assessed_generic_memory_candidate.reason,
+                        "memory_role": assessed_generic_memory_candidate.memory_role,
+                        "retention_class": assessed_generic_memory_candidate.retention_class,
+                        "domain_pack": assessed_generic_memory_candidate.domain_pack,
+                        "predicate": assessed_generic_memory_candidate.predicate,
+                        "value": assessed_generic_memory_candidate.value,
+                        "operation": assessed_generic_memory_candidate.operation,
+                        "fact_name": assessed_generic_memory_candidate.fact_name,
+                        "label": assessed_generic_memory_candidate.label,
+                        "message_text": str(user_message or "").strip(),
+                    }
+                    if assessed_generic_memory_candidate is not None
                     else None
                 ),
                 "detected_generic_memory_observation": (

@@ -1,7 +1,10 @@
 from pathlib import Path
 from unittest.mock import patch
 
-from spark_intelligence.memory.generic_observations import classify_telegram_generic_memory_candidate
+from spark_intelligence.memory.generic_observations import (
+    assess_telegram_generic_memory_candidate,
+    classify_telegram_generic_memory_candidate,
+)
 from spark_intelligence.observability.store import latest_events_by_type
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
 
@@ -74,6 +77,57 @@ class TelegramGenericMemoryTests(SparkTestCase):
         candidate = classify_telegram_generic_memory_candidate("thanks")
 
         self.assertIsNone(candidate)
+
+    def test_assess_telegram_generic_memory_candidate_assigns_structured_evidence(self) -> None:
+        assessment = assess_telegram_generic_memory_candidate(
+            "Users keep dropping during onboarding because Stripe verification fails."
+        )
+
+        self.assertEqual(assessment.outcome, "structured_evidence")
+        self.assertEqual(assessment.reason, "evidence_marker")
+        self.assertEqual(assessment.memory_role, "structured_evidence")
+        self.assertEqual(assessment.retention_class, "episodic_archive")
+
+    def test_assess_telegram_generic_memory_candidate_assigns_belief_candidate(self) -> None:
+        assessment = assess_telegram_generic_memory_candidate(
+            "I think enterprise teams need hands-on onboarding."
+        )
+
+        self.assertEqual(assessment.outcome, "belief_candidate")
+        self.assertEqual(assessment.reason, "belief_marker")
+        self.assertEqual(assessment.memory_role, "belief_candidate")
+        self.assertEqual(assessment.retention_class, "derived_belief")
+
+    def test_assess_telegram_generic_memory_candidate_assigns_raw_episode(self) -> None:
+        assessment = assess_telegram_generic_memory_candidate(
+            "The pricing page felt confusing during the demo."
+        )
+
+        self.assertEqual(assessment.outcome, "raw_episode")
+        self.assertEqual(assessment.memory_role, "raw_episode")
+
+    def test_build_researcher_reply_records_uncaptured_memory_candidate_assessment(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-candidate-assessment",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-candidate-assessment",
+            channel_kind="telegram",
+            user_message="Users keep dropping during onboarding because Stripe verification fails.",
+        )
+
+        self.assertTrue(result.reply_text)
+        assessment_events = latest_events_by_type(self.state_db, event_type="memory_candidate_assessed", limit=10)
+        self.assertTrue(assessment_events)
+        facts = assessment_events[0]["facts_json"] or {}
+        self.assertEqual(facts.get("outcome"), "structured_evidence")
+        self.assertEqual(facts.get("memory_role"), "structured_evidence")
+        self.assertEqual(facts.get("retention_class"), "episodic_archive")
 
     def test_build_researcher_reply_persists_generic_plan_memory_before_provider_resolution(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
