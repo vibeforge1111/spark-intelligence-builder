@@ -1078,6 +1078,7 @@ def retrieve_memory_evidence_in_memory(
     limit: int = 5,
     sdk_module: str | None = None,
     actor_id: str = "memory_cli",
+    record_activity: bool = True,
 ) -> MemoryRetrievalQueryResult:
     return _retrieve_memory_query_in_memory(
         config_manager=config_manager,
@@ -1089,6 +1090,7 @@ def retrieve_memory_evidence_in_memory(
         limit=limit,
         sdk_module=sdk_module,
         actor_id=actor_id,
+        record_activity=record_activity,
     )
 
 
@@ -1102,6 +1104,7 @@ def retrieve_memory_events_in_memory(
     limit: int = 5,
     sdk_module: str | None = None,
     actor_id: str = "memory_cli",
+    record_activity: bool = True,
 ) -> MemoryRetrievalQueryResult:
     return _retrieve_memory_query_in_memory(
         config_manager=config_manager,
@@ -1113,6 +1116,7 @@ def retrieve_memory_events_in_memory(
         limit=limit,
         sdk_module=sdk_module,
         actor_id=actor_id,
+        record_activity=record_activity,
     )
 
 
@@ -1841,6 +1845,7 @@ def write_belief_to_memory(
         predicate=predicate,
         limit=10,
         actor_id=actor_id,
+        record_activity=False,
     )
     prior_belief = None
     if not existing_beliefs.read_result.abstained and existing_beliefs.read_result.records:
@@ -3495,6 +3500,7 @@ def _retrieve_memory_query_in_memory(
     limit: int,
     sdk_module: str | None,
     actor_id: str,
+    record_activity: bool,
 ) -> MemoryRetrievalQueryResult:
     module_name = str(sdk_module or config_manager.get_path("spark.memory.sdk_module", default=DEFAULT_SDK_MODULE) or DEFAULT_SDK_MODULE)
     runtime = inspect_memory_sdk_runtime(config_manager=config_manager, sdk_module=module_name)
@@ -3502,6 +3508,8 @@ def _retrieve_memory_query_in_memory(
     normalized_query = str(query or "").strip()
     normalized_subject = _optional_string(subject)
     normalized_predicate = _optional_string(predicate)
+    session_id = f"{'memory-retrieval' if record_activity else 'memory-internal'}:{actor_id}"
+    turn_id = f"{actor_id}:{method}"
     if client is None:
         read_result = MemoryReadResult(
             status="abstained",
@@ -3515,14 +3523,15 @@ def _retrieve_memory_query_in_memory(
             reason="sdk_unavailable",
             shadow_only=False,
         )
-        _record_memory_read_event(
-            state_db=state_db,
-            result=read_result,
-            human_id=_human_id_from_subject(normalized_subject or ""),
-            session_id=f"memory-retrieval:{actor_id}",
-            turn_id=f"{actor_id}:{method}",
-            actor_id=actor_id,
-        )
+        if record_activity:
+            _record_memory_read_event(
+                state_db=state_db,
+                result=read_result,
+                human_id=_human_id_from_subject(normalized_subject or ""),
+                session_id=session_id,
+                turn_id=turn_id,
+                actor_id=actor_id,
+            )
         return MemoryRetrievalQueryResult(
             sdk_module=module_name,
             method=method,
@@ -3533,16 +3542,17 @@ def _retrieve_memory_query_in_memory(
             runtime=runtime,
             read_result=read_result,
         )
-    _record_memory_read_requested_subject(
-        state_db=state_db,
-        method=method,
-        subject=normalized_subject or "",
-        predicate=normalized_predicate,
-        query=normalized_query,
-        session_id=f"memory-retrieval:{actor_id}",
-        turn_id=f"{actor_id}:{method}",
-        actor_id=actor_id,
-    )
+    if record_activity:
+        _record_memory_read_requested_subject(
+            state_db=state_db,
+            method=method,
+            subject=normalized_subject or "",
+            predicate=normalized_predicate,
+            query=normalized_query,
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=actor_id,
+        )
     raw = _call_sdk_method(
         client,
         method,
@@ -3551,21 +3561,26 @@ def _retrieve_memory_query_in_memory(
             "subject": normalized_subject,
             "predicate": normalized_predicate,
             "limit": limit,
-            "session_id": f"memory-retrieval:{actor_id}",
-            "turn_id": f"{actor_id}:{method}",
+            "session_id": session_id,
+            "turn_id": turn_id,
             "timestamp": _now_iso(),
-            "metadata": {"source_surface": f"memory_cli_{method}"},
+            "metadata": {
+                "source_surface": (
+                    f"memory_cli_{method}" if record_activity else f"memory_internal_{method}"
+                )
+            },
         },
     )
     read_result = _normalize_read_result(raw=raw, method=method, shadow_only=False)
-    _record_memory_read_event(
-        state_db=state_db,
-        result=read_result,
-        human_id=_human_id_from_subject(normalized_subject or ""),
-        session_id=f"memory-retrieval:{actor_id}",
-        turn_id=f"{actor_id}:{method}",
-        actor_id=actor_id,
-    )
+    if record_activity:
+        _record_memory_read_event(
+            state_db=state_db,
+            result=read_result,
+            human_id=_human_id_from_subject(normalized_subject or ""),
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=actor_id,
+        )
     return MemoryRetrievalQueryResult(
         sdk_module=module_name,
         method=method,

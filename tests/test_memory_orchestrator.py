@@ -504,7 +504,7 @@ class MemoryOrchestratorTests(SparkTestCase):
                     records=prior_records,
                 )
             ),
-        ):
+        ) as retrieve_mock:
             result = write_belief_to_memory(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
@@ -518,6 +518,7 @@ class MemoryOrchestratorTests(SparkTestCase):
             )
 
         self.assertEqual(result.status, "succeeded")
+        self.assertFalse(retrieve_mock.call_args.kwargs["record_activity"])
         call = fake_client.observation_calls[0]
         self.assertEqual(call["supersedes"], "obs-belief-1")
         self.assertEqual(call["conflicts_with"], ["obs-belief-1"])
