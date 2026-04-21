@@ -153,6 +153,10 @@ def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
     assert "evidence_current_state_query_constraint" in evidence_active_state_case_ids
     assert "evidence_current_state_write_risk_initial" in evidence_active_state_case_ids
     assert "evidence_current_state_query_risk" in evidence_active_state_case_ids
+    assert "evidence_current_state_write_status_initial" in evidence_active_state_case_ids
+    assert "evidence_current_state_query_status" in evidence_active_state_case_ids
+    assert "evidence_current_state_write_owner_initial" in evidence_active_state_case_ids
+    assert "evidence_current_state_query_owner" in evidence_active_state_case_ids
 
     mixed_session_case_ids = {case.case_id for case in packs["telegram_mixed_memory_session_churn"].cases}
     assert "mixed_session_owner_write_initial" in mixed_session_case_ids

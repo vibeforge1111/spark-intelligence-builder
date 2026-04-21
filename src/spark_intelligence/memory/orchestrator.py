@@ -1494,6 +1494,17 @@ def write_structured_evidence_to_memory(
         )
         if explicit_status:
             return detect_telegram_generic_observation(f"Our current status is {explicit_status}.")
+        explicit_owner = _extract_first_value(
+            normalized,
+            (
+                re.compile(r"\bowner\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+                re.compile(r"\bowned\s+by\s+(.+?)(?:\s+because|(?:\s+during\b)|[.!]?$)", re.IGNORECASE),
+                re.compile(r"\bhandled\s+by\s+(.+?)(?:\s+because|(?:\s+during\b)|[.!]?$)", re.IGNORECASE),
+                re.compile(r"\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*)\s+owns\b", re.IGNORECASE),
+            ),
+        )
+        if explicit_owner:
+            return detect_telegram_generic_observation(f"Our current owner is {explicit_owner}.")
         explicit_blocker = _extract_first_value(
             normalized,
             (
@@ -1702,6 +1713,12 @@ def write_structured_evidence_to_memory(
         turn_id=turn_id,
         actor_id=actor_id,
     )
+    current_state_observation = _derive_current_state_observation_from_evidence(normalized_text)
+    high_confidence_current_state = bool(
+        current_state_observation is not None
+        and str(current_state_observation.value or "").strip()
+        and str(current_state_observation.fact_name or "").strip() in {"current_status", "current_owner"}
+    )
     if result.accepted_count > 0 and corroborating_evidence_records:
         try:
             write_belief_to_memory(
@@ -1718,7 +1735,9 @@ def write_structured_evidence_to_memory(
             )
         except Exception:
             pass
-        current_state_observation = _derive_current_state_observation_from_evidence(normalized_text)
+    if result.accepted_count > 0 and (
+        corroborating_evidence_records or high_confidence_current_state
+    ):
         if current_state_observation is not None and str(current_state_observation.value or "").strip():
             try:
                 write_profile_fact_to_memory(

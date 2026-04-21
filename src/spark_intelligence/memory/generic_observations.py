@@ -102,6 +102,9 @@ _OWNER_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^our\s+current\s+owner\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
     re.compile(r"^the\s+current\s+owner\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
     re.compile(r"^the\s+owner\s+for\s+this\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^.+?\s+is\s+(?:currently\s+)?owned\s+by\s+(.+?)(?:\s+during\b|[.!]?$)", re.IGNORECASE),
+    re.compile(r"^.+?\s+is\s+handled\s+by\s+(.+?)(?:\s+during\b|[.!]?$)", re.IGNORECASE),
+    re.compile(r"^([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*)\s+owns\s+.+?[.!]?$", re.IGNORECASE),
 )
 
 TelegramGenericMemoryRole = Literal["current_state", "structured_evidence", "event", "belief_candidate"]

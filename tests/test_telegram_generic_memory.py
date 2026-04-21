@@ -765,6 +765,101 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertIn("current risk", result.reply_text.lower())
         self.assertIn("enterprise churn during onboarding", result.reply_text.lower())
 
+    def test_build_researcher_reply_promotes_repeated_evidence_into_current_status(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-status-seed-1",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-status-seed-1",
+            channel_kind="telegram",
+            user_message="Status update: pending security review for the onboarding rollout.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-status-seed-2",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-status-seed-2",
+            channel_kind="telegram",
+            user_message="Status update: still pending security review for the onboarding rollout.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for current status recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for current status recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-evidence-status-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-evidence-status-read",
+                channel_kind="telegram",
+                user_message="What is our status?",
+            )
+
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+        self.assertIn("current status", result.reply_text.lower())
+        self.assertIn("pending security review", result.reply_text.lower())
+
+    def test_build_researcher_reply_promotes_repeated_evidence_into_current_owner(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-owner-seed-1",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-owner-seed-1",
+            channel_kind="telegram",
+            user_message="The onboarding rollout is currently owned by Nadia.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-owner-seed-2",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-owner-seed-2",
+            channel_kind="telegram",
+            user_message="The onboarding rollout is still owned by Nadia during security review.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for current owner recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for current owner recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-evidence-owner-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-evidence-owner-read",
+                channel_kind="telegram",
+                user_message="Who is the owner?",
+            )
+
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+        self.assertEqual(result.reply_text, "Your current owner is Nadia.")
+
     def test_build_researcher_reply_archives_stale_structured_evidence_when_newer_evidence_exists(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
