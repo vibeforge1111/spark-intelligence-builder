@@ -136,6 +136,35 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(recorded_observations[0]["predicate"], "evidence.telegram.evidence")
         self.assertEqual(recorded_observations[0]["retention_class"], "episodic_archive")
 
+    def test_build_researcher_reply_persists_belief_candidate_as_derived_belief(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-belief",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-belief",
+            channel_kind="telegram",
+            user_message="I think enterprise teams need hands-on onboarding.",
+        )
+
+        self.assertTrue(result.reply_text)
+        assessment_events = latest_events_by_type(self.state_db, event_type="memory_candidate_assessed", limit=10)
+        self.assertTrue(assessment_events)
+        facts = assessment_events[0]["facts_json"] or {}
+        self.assertEqual(facts.get("outcome"), "belief_candidate")
+        self.assertEqual(facts.get("retention_class"), "derived_belief")
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(write_events)
+        write_facts = write_events[0]["facts_json"] or {}
+        self.assertEqual(write_facts.get("memory_role"), "belief")
+        recorded_observations = write_facts.get("observations") or []
+        self.assertEqual(recorded_observations[0]["predicate"], "belief.telegram.beliefs_and_inferences")
+        self.assertEqual(recorded_observations[0]["retention_class"], "derived_belief")
+
     def test_build_researcher_reply_persists_raw_episode_for_meaningful_unpromoted_turn(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

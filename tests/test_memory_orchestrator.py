@@ -16,6 +16,7 @@ from spark_intelligence.memory import (
     lookup_historical_state_in_memory,
     retrieve_memory_events_in_memory,
     run_memory_sdk_smoke_test,
+    write_belief_to_memory,
     write_profile_fact_to_memory,
     write_raw_episode_to_memory,
     write_structured_evidence_to_memory,
@@ -263,6 +264,38 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(events[0]["facts_json"].get("memory_role"), "episodic")
         self.assertEqual(observations[0]["predicate"], "raw_turn")
         self.assertEqual(observations[0]["retention_class"], "episodic_archive")
+
+    def test_belief_writes_use_belief_role_and_derived_retention(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            result = write_belief_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                belief_text="I think enterprise teams need hands-on onboarding.",
+                domain_pack="beliefs_and_inferences",
+                belief_kind="belief_marker",
+                session_id="session:belief",
+                turn_id="turn:belief",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        self.assertEqual(len(fake_client.observation_calls), 1)
+        call = fake_client.observation_calls[0]
+        self.assertEqual(call["predicate"], "belief.telegram.beliefs_and_inferences")
+        self.assertEqual(call["memory_role"], "belief")
+        self.assertEqual(call["retention_class"], "derived_belief")
+        self.assertEqual(call["metadata"]["belief_kind"], "belief_marker")
+        events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(events)
+        observations = (events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(events[0]["facts_json"].get("memory_role"), "belief")
+        self.assertEqual(observations[0]["predicate"], "belief.telegram.beliefs_and_inferences")
+        self.assertEqual(observations[0]["retention_class"], "derived_belief")
 
     def test_telegram_event_detection_write_and_answer_use_event_memory_lane(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

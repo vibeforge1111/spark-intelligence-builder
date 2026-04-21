@@ -44,6 +44,7 @@ from spark_intelligence.memory import (
     lookup_historical_state_in_memory,
     retrieve_memory_evidence_in_memory,
     retrieve_memory_events_in_memory,
+    write_belief_to_memory,
     write_profile_fact_to_memory,
     write_raw_episode_to_memory,
     write_structured_evidence_to_memory,
@@ -3775,6 +3776,22 @@ def build_researcher_reply(
                     turn_id=request_id,
                     channel_kind=channel_kind,
                     actor_id="telegram_raw_episode_loader",
+                )
+            except Exception:
+                pass
+        elif assessed_generic_memory_candidate.outcome == "belief_candidate":
+            try:
+                write_belief_to_memory(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    human_id=human_id,
+                    belief_text=assessed_generic_memory_candidate.evidence_text,
+                    domain_pack=str(assessed_generic_memory_candidate.domain_pack or "belief"),
+                    belief_kind=str(assessed_generic_memory_candidate.reason or "belief_candidate"),
+                    session_id=session_id,
+                    turn_id=request_id,
+                    channel_kind=channel_kind,
+                    actor_id="telegram_belief_loader",
                 )
             except Exception:
                 pass

@@ -1371,6 +1371,133 @@ def write_structured_evidence_to_memory(
     return result
 
 
+def write_belief_to_memory(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str,
+    belief_text: str,
+    domain_pack: str,
+    belief_kind: str,
+    session_id: str | None,
+    turn_id: str | None,
+    channel_kind: str | None,
+    actor_id: str = "belief_loader",
+) -> MemoryWriteResult:
+    normalized_text = str(belief_text or "").strip()
+    if not normalized_text:
+        return MemoryWriteResult(
+            status="skipped",
+            operation="create",
+            method="write_observation",
+            memory_role="belief",
+            accepted_count=0,
+            rejected_count=0,
+            skipped_count=1,
+            abstained=False,
+            retrieval_trace=None,
+            provenance=[],
+            reason="no_belief_text",
+        )
+    if not _memory_enabled(config_manager):
+        return _disabled_write_result(
+            operation="create",
+            method="write_observation",
+            default_role="belief",
+        )
+    client = _load_sdk_client(config_manager)
+    if client is None:
+        result = MemoryWriteResult(
+            status="abstained",
+            operation="create",
+            method="write_observation",
+            memory_role="belief",
+            accepted_count=0,
+            rejected_count=0,
+            skipped_count=1,
+            abstained=True,
+            retrieval_trace=None,
+            provenance=[],
+            reason="sdk_unavailable",
+        )
+        _record_memory_write_event(
+            state_db=state_db,
+            result=result,
+            human_id=human_id,
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=actor_id,
+        )
+        return result
+    subject = _subject_for_human_id(human_id)
+    timestamp = _now_iso()
+    normalized_pack = re.sub(r"[^a-z0-9]+", "_", str(domain_pack or "belief").strip().lower()).strip("_") or "belief"
+    predicate = f"belief.telegram.{normalized_pack}"
+    observation = {
+        "subject": subject,
+        "predicate": predicate,
+        "value": normalized_text,
+        "operation": "create",
+        "memory_role": "belief",
+        "retention_class": "derived_belief",
+        "text": normalized_text,
+    }
+    _record_memory_write_requested_observations(
+        state_db=state_db,
+        operation="create",
+        human_id=human_id,
+        observations=[observation],
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+        memory_role="belief",
+        summary="Spark memory write requested for derived belief capture.",
+    )
+    raw = _call_sdk_method(
+        client,
+        "write_observation",
+        {
+            "operation": "create",
+            "subject": subject,
+            "predicate": predicate,
+            "value": normalized_text,
+            "text": normalized_text,
+            "memory_role": "belief",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "timestamp": timestamp,
+            "retention_class": "derived_belief",
+            "document_time": timestamp,
+            "valid_from": timestamp,
+            "metadata": {
+                "entity_type": "human",
+                "channel_kind": channel_kind,
+                "memory_role": "belief",
+                "source_surface": "researcher_bridge",
+                "belief_kind": belief_kind,
+                "domain_pack": normalized_pack,
+                "normalized_value": normalized_text,
+                "value": normalized_text,
+            },
+        },
+    )
+    result = _normalize_write_result(
+        raw=raw,
+        operation="create",
+        method="write_observation",
+        default_role="belief",
+    )
+    _record_memory_write_event(
+        state_db=state_db,
+        result=result,
+        human_id=human_id,
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+    )
+    return result
+
+
 def write_raw_episode_to_memory(
     *,
     config_manager: ConfigManager,
