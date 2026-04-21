@@ -56,6 +56,7 @@ from spark_intelligence.memory.episodic_events import (
     telegram_event_summary_predicate,
 )
 from spark_intelligence.memory.generic_observations import (
+    classify_telegram_generic_memory_candidate,
     build_telegram_generic_deletion_answer,
     build_telegram_generic_observation_answer,
     detect_telegram_generic_deletion,
@@ -3446,6 +3447,7 @@ def build_researcher_reply(
     detected_profile_fact_query = None
     detected_memory_event = None
     detected_memory_event_query = None
+    detected_generic_memory_candidate = None
     detected_generic_memory_deletion = None
     detected_generic_memory_observation = None
     try:
@@ -3588,40 +3590,45 @@ def build_researcher_reply(
                         channel_kind=channel_kind,
                     )
                 else:
-                    detected_generic_memory_deletion = detect_telegram_generic_deletion(user_message)
-                    if detected_generic_memory_deletion is not None:
-                        generic_delete_result = delete_profile_fact_from_memory(
-                            config_manager=config_manager,
-                            state_db=state_db,
-                            human_id=human_id,
-                            predicate=detected_generic_memory_deletion.predicate,
-                            evidence_text=detected_generic_memory_deletion.evidence_text,
-                            fact_name=detected_generic_memory_deletion.fact_name,
-                            session_id=session_id,
-                            turn_id=request_id,
-                            channel_kind=channel_kind,
-                            actor_id="telegram_generic_observation_loader",
-                        )
-                        if generic_delete_result.accepted_count <= 0:
-                            detected_generic_memory_deletion = None
-                    else:
-                        detected_generic_memory_observation = detect_telegram_generic_observation(user_message)
-                    if detected_generic_memory_observation is not None:
-                        generic_write_result = write_profile_fact_to_memory(
-                            config_manager=config_manager,
-                            state_db=state_db,
-                            human_id=human_id,
-                            predicate=detected_generic_memory_observation.predicate,
-                            value=detected_generic_memory_observation.value,
-                            evidence_text=detected_generic_memory_observation.evidence_text,
-                            fact_name=detected_generic_memory_observation.fact_name,
-                            session_id=session_id,
-                            turn_id=request_id,
-                            channel_kind=channel_kind,
-                            actor_id="telegram_generic_observation_loader",
-                        )
-                        if generic_write_result.accepted_count <= 0:
-                            detected_generic_memory_observation = None
+                    detected_generic_memory_candidate = classify_telegram_generic_memory_candidate(user_message)
+                    if detected_generic_memory_candidate is not None:
+                        if detected_generic_memory_candidate.operation == "delete":
+                            detected_generic_memory_deletion = detect_telegram_generic_deletion(user_message)
+                            if detected_generic_memory_deletion is not None:
+                                generic_delete_result = delete_profile_fact_from_memory(
+                                    config_manager=config_manager,
+                                    state_db=state_db,
+                                    human_id=human_id,
+                                    predicate=detected_generic_memory_deletion.predicate,
+                                    evidence_text=detected_generic_memory_deletion.evidence_text,
+                                    fact_name=detected_generic_memory_deletion.fact_name,
+                                    session_id=session_id,
+                                    turn_id=request_id,
+                                    channel_kind=channel_kind,
+                                    actor_id="telegram_generic_observation_loader",
+                                )
+                                if generic_delete_result.accepted_count <= 0:
+                                    detected_generic_memory_candidate = None
+                                    detected_generic_memory_deletion = None
+                        else:
+                            detected_generic_memory_observation = detect_telegram_generic_observation(user_message)
+                            if detected_generic_memory_observation is not None:
+                                generic_write_result = write_profile_fact_to_memory(
+                                    config_manager=config_manager,
+                                    state_db=state_db,
+                                    human_id=human_id,
+                                    predicate=detected_generic_memory_observation.predicate,
+                                    value=detected_generic_memory_observation.value,
+                                    evidence_text=detected_generic_memory_observation.evidence_text,
+                                    fact_name=detected_generic_memory_observation.fact_name,
+                                    session_id=session_id,
+                                    turn_id=request_id,
+                                    channel_kind=channel_kind,
+                                    actor_id="telegram_generic_observation_loader",
+                                )
+                                if generic_write_result.accepted_count <= 0:
+                                    detected_generic_memory_candidate = None
+                                    detected_generic_memory_observation = None
         except Exception:
             pass
 
@@ -3772,6 +3779,21 @@ def build_researcher_reply(
                         "message_text": str(user_message or "").strip(),
                     }
                     if detected_generic_memory_deletion is not None
+                    else None
+                ),
+                "detected_generic_memory_candidate": (
+                    {
+                        "predicate": detected_generic_memory_candidate.predicate,
+                        "value": detected_generic_memory_candidate.value,
+                        "fact_name": detected_generic_memory_candidate.fact_name,
+                        "label": detected_generic_memory_candidate.label,
+                        "operation": detected_generic_memory_candidate.operation,
+                        "memory_role": detected_generic_memory_candidate.memory_role,
+                        "retention_class": detected_generic_memory_candidate.retention_class,
+                        "domain_pack": detected_generic_memory_candidate.domain_pack,
+                        "message_text": str(user_message or "").strip(),
+                    }
+                    if detected_generic_memory_candidate is not None
                     else None
                 ),
                 "evolved_deltas": evolved_deltas or {},
@@ -3954,6 +3976,22 @@ def build_researcher_reply(
                     "predicate": detected_generic_memory_observation.predicate,
                     "value": detected_generic_memory_observation.value,
                     "label": detected_generic_memory_observation.label,
+                    "memory_role": (
+                        detected_generic_memory_candidate.memory_role
+                        if detected_generic_memory_candidate is not None
+                        else "current_state"
+                    ),
+                    "retention_class": (
+                        detected_generic_memory_candidate.retention_class
+                        if detected_generic_memory_candidate is not None
+                        else None
+                    ),
+                    "domain_pack": (
+                        detected_generic_memory_candidate.domain_pack
+                        if detected_generic_memory_candidate is not None
+                        else None
+                    ),
+                    "operation": "update",
                 },
             ),
         )
@@ -4015,6 +4053,21 @@ def build_researcher_reply(
                     "fact_name": detected_generic_memory_deletion.fact_name,
                     "predicate": detected_generic_memory_deletion.predicate,
                     "label": detected_generic_memory_deletion.label,
+                    "memory_role": (
+                        detected_generic_memory_candidate.memory_role
+                        if detected_generic_memory_candidate is not None
+                        else "current_state"
+                    ),
+                    "retention_class": (
+                        detected_generic_memory_candidate.retention_class
+                        if detected_generic_memory_candidate is not None
+                        else None
+                    ),
+                    "domain_pack": (
+                        detected_generic_memory_candidate.domain_pack
+                        if detected_generic_memory_candidate is not None
+                        else None
+                    ),
                     "operation": "delete",
                 },
             ),

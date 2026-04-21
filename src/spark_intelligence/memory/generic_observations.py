@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Literal
 
 
 _CORRECTION_PREFIX_PATTERN = re.compile(r"^(?:actually|update|correction)[:,]?\s+", re.IGNORECASE)
@@ -12,20 +13,6 @@ _HYPOTHETICAL_PREFIX_PATTERN = re.compile(
 _SMALL_TALK_PATTERN = re.compile(
     r"^(?:hi|hello|hey|thanks|thank you|ok|okay|cool|lol|noted|got it)[.!]?$",
     re.IGNORECASE,
-)
-
-_RELATIONSHIP_PATTERNS: tuple[tuple[str, str, re.Pattern[str]], ...] = (
-    ("profile.cofounder_name", "cofounder", re.compile(r"^my\s+cofounder\s+is\s+(.+?)[.!]?$", re.IGNORECASE)),
-    ("profile.mentor_name", "mentor", re.compile(r"^my\s+mentor\s+is\s+(.+?)[.!]?$", re.IGNORECASE)),
-    ("profile.manager_name", "manager", re.compile(r"^my\s+manager\s+is\s+(.+?)[.!]?$", re.IGNORECASE)),
-    ("profile.assistant_name", "assistant", re.compile(r"^my\s+assistant\s+is\s+(.+?)[.!]?$", re.IGNORECASE)),
-    ("profile.partner_name", "partner", re.compile(r"^my\s+partner\s+is\s+(.+?)[.!]?$", re.IGNORECASE)),
-    ("profile.partner_name", "wife", re.compile(r"^my\s+wife\s+is\s+(.+?)[.!]?$", re.IGNORECASE)),
-    ("profile.partner_name", "husband", re.compile(r"^my\s+husband\s+is\s+(.+?)[.!]?$", re.IGNORECASE)),
-    ("profile.mother_name", "mother", re.compile(r"^my\s+mother\s+is\s+(.+?)[.!]?$", re.IGNORECASE)),
-    ("profile.father_name", "father", re.compile(r"^my\s+father\s+is\s+(.+?)[.!]?$", re.IGNORECASE)),
-    ("profile.sister_name", "sister", re.compile(r"^my\s+sister\s+is\s+(.+?)[.!]?$", re.IGNORECASE)),
-    ("profile.brother_name", "brother", re.compile(r"^my\s+brother\s+is\s+(.+?)[.!]?$", re.IGNORECASE)),
 )
 
 _PLAN_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -117,6 +104,9 @@ _OWNER_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^the\s+owner\s+for\s+this\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
 )
 
+TelegramGenericMemoryRole = Literal["current_state", "structured_evidence", "event", "belief_candidate"]
+TelegramGenericOperation = Literal["update", "delete"]
+
 
 @dataclass(frozen=True)
 class TelegramGenericObservation:
@@ -135,604 +125,347 @@ class TelegramGenericDeletion:
     label: str
 
 
-def detect_telegram_generic_observation(user_message: str) -> TelegramGenericObservation | None:
-    text = _clean_text(user_message)
-    if not _is_memoryworthy_text(text):
-        return None
-    normalized = _strip_correction_prefix(text)
-
-    for predicate, label, pattern in _RELATIONSHIP_PATTERNS:
-        match = pattern.fullmatch(normalized)
-        if match is None:
-            continue
-        value = _clean_value(match.group(1))
-        if value:
-            return TelegramGenericObservation(
-                predicate=predicate,
-                value=value,
-                evidence_text=text,
-                fact_name=label,
-                label=label,
-            )
-
-    for pattern in _PLAN_PATTERNS:
-        match = pattern.fullmatch(normalized)
-        if match is None:
-            continue
-        value = _clean_value(match.group(1))
-        if value:
-            return TelegramGenericObservation(
-                predicate="profile.current_plan",
-                value=value,
-                evidence_text=text,
-                fact_name="current_plan",
-                label="current plan",
-            )
-
-    for pattern in _FOCUS_PATTERNS:
-        match = pattern.fullmatch(normalized)
-        if match is None:
-            continue
-        value = _clean_value(match.group(1))
-        if value:
-            return TelegramGenericObservation(
-                predicate="profile.current_focus",
-                value=value,
-                evidence_text=text,
-                fact_name="current_focus",
-                label="current focus",
-            )
-
-    for pattern in _DECISION_PATTERNS:
-        match = pattern.fullmatch(normalized)
-        if match is None:
-            continue
-        value = _clean_value(match.group(1))
-        if value:
-            return TelegramGenericObservation(
-                predicate="profile.current_decision",
-                value=value,
-                evidence_text=text,
-                fact_name="current_decision",
-                label="current decision",
-            )
-
-    for pattern in _BLOCKER_PATTERNS:
-        match = pattern.fullmatch(normalized)
-        if match is None:
-            continue
-        value = _clean_value(match.group(1))
-        if value:
-            return TelegramGenericObservation(
-                predicate="profile.current_blocker",
-                value=value,
-                evidence_text=text,
-                fact_name="current_blocker",
-                label="current blocker",
-            )
-
-    for pattern in _STATUS_PATTERNS:
-        match = pattern.fullmatch(normalized)
-        if match is None:
-            continue
-        value = _clean_value(match.group(1))
-        if value:
-            return TelegramGenericObservation(
-                predicate="profile.current_status",
-                value=value,
-                evidence_text=text,
-                fact_name="current_status",
-                label="current status",
-            )
-
-    for pattern in _COMMITMENT_PATTERNS:
-        match = pattern.fullmatch(normalized)
-        if match is None:
-            continue
-        value = _clean_value(match.group(1))
-        if value:
-            return TelegramGenericObservation(
-                predicate="profile.current_commitment",
-                value=value,
-                evidence_text=text,
-                fact_name="current_commitment",
-                label="current commitment",
-            )
-
-    for pattern in _MILESTONE_PATTERNS:
-        match = pattern.fullmatch(normalized)
-        if match is None:
-            continue
-        value = _clean_value(match.group(1))
-        if value:
-            return TelegramGenericObservation(
-                predicate="profile.current_milestone",
-                value=value,
-                evidence_text=text,
-                fact_name="current_milestone",
-                label="current milestone",
-            )
-
-    for pattern in _RISK_PATTERNS:
-        match = pattern.fullmatch(normalized)
-        if match is None:
-            continue
-        value = _clean_value(match.group(1))
-        if value:
-            return TelegramGenericObservation(
-                predicate="profile.current_risk",
-                value=value,
-                evidence_text=text,
-                fact_name="current_risk",
-                label="current risk",
-            )
-
-    for pattern in _DEPENDENCY_PATTERNS:
-        match = pattern.fullmatch(normalized)
-        if match is None:
-            continue
-        value = _clean_value(match.group(1))
-        if value:
-            return TelegramGenericObservation(
-                predicate="profile.current_dependency",
-                value=value,
-                evidence_text=text,
-                fact_name="current_dependency",
-                label="current dependency",
-            )
-
-    for pattern in _CONSTRAINT_PATTERNS:
-        match = pattern.fullmatch(normalized)
-        if match is None:
-            continue
-        value = _clean_value(match.group(1))
-        if value:
-            return TelegramGenericObservation(
-                predicate="profile.current_constraint",
-                value=value,
-                evidence_text=text,
-                fact_name="current_constraint",
-                label="current constraint",
-            )
-
-    for pattern in _ASSUMPTION_PATTERNS:
-        match = pattern.fullmatch(normalized)
-        if match is None:
-            continue
-        value = _clean_value(match.group(1))
-        if value:
-            return TelegramGenericObservation(
-                predicate="profile.current_assumption",
-                value=value,
-                evidence_text=text,
-                fact_name="current_assumption",
-                label="current assumption",
-            )
-
-    for pattern in _OWNER_PATTERNS:
-        match = pattern.fullmatch(normalized)
-        if match is None:
-            continue
-        value = _clean_value(match.group(1))
-        if value:
-            return TelegramGenericObservation(
-                predicate="profile.current_owner",
-                value=value,
-                evidence_text=text,
-                fact_name="current_owner",
-                label="current owner",
-            )
-
-    return None
+@dataclass(frozen=True)
+class TelegramGenericCandidate:
+    predicate: str
+    value: str | None
+    evidence_text: str
+    fact_name: str
+    label: str
+    operation: TelegramGenericOperation
+    memory_role: TelegramGenericMemoryRole
+    retention_class: str
+    domain_pack: str
 
 
-def detect_telegram_generic_deletion(user_message: str) -> TelegramGenericDeletion | None:
+@dataclass(frozen=True)
+class TelegramGenericPack:
+    domain_pack: str
+    predicate: str
+    fact_name: str
+    label: str
+    retention_class: str
+    update_patterns: tuple[re.Pattern[str], ...]
+    delete_phrases: tuple[str, ...]
+    observation_answer_template: str | None = None
+    deletion_answer_template: str | None = None
+
+
+def _simple_delete_phrases(*targets: str) -> tuple[str, ...]:
+    phrases: list[str] = []
+    for target in targets:
+        for verb in ("forget", "delete", "remove"):
+            phrases.append(f"{verb} {target}.")
+            phrases.append(f"{verb} {target}")
+    return tuple(phrases)
+
+
+def _relationship_delete_phrases(*aliases: str) -> tuple[str, ...]:
+    phrases = list(_simple_delete_phrases(*(f"my {alias}" for alias in aliases)))
+    for alias in aliases:
+        for article in ("a", "an"):
+            phrases.append(f"i no longer have {article} {alias}.")
+            phrases.append(f"i no longer have {article} {alias}")
+            phrases.append(f"i don't have {article} {alias} anymore.")
+            phrases.append(f"i don't have {article} {alias} anymore")
+    return tuple(phrases)
+
+
+_GENERIC_PACKS: tuple[TelegramGenericPack, ...] = (
+    TelegramGenericPack(
+        domain_pack="relationships",
+        predicate="profile.cofounder_name",
+        fact_name="cofounder",
+        label="cofounder",
+        retention_class="durable_profile",
+        update_patterns=(re.compile(r"^my\s+cofounder\s+is\s+(.+?)[.!]?$", re.IGNORECASE),),
+        delete_phrases=_relationship_delete_phrases("cofounder"),
+    ),
+    TelegramGenericPack(
+        domain_pack="relationships",
+        predicate="profile.mentor_name",
+        fact_name="mentor",
+        label="mentor",
+        retention_class="durable_profile",
+        update_patterns=(re.compile(r"^my\s+mentor\s+is\s+(.+?)[.!]?$", re.IGNORECASE),),
+        delete_phrases=_relationship_delete_phrases("mentor"),
+    ),
+    TelegramGenericPack(
+        domain_pack="relationships",
+        predicate="profile.manager_name",
+        fact_name="manager",
+        label="manager",
+        retention_class="durable_profile",
+        update_patterns=(re.compile(r"^my\s+manager\s+is\s+(.+?)[.!]?$", re.IGNORECASE),),
+        delete_phrases=_relationship_delete_phrases("manager"),
+    ),
+    TelegramGenericPack(
+        domain_pack="relationships",
+        predicate="profile.assistant_name",
+        fact_name="assistant",
+        label="assistant",
+        retention_class="durable_profile",
+        update_patterns=(re.compile(r"^my\s+assistant\s+is\s+(.+?)[.!]?$", re.IGNORECASE),),
+        delete_phrases=_relationship_delete_phrases("assistant"),
+    ),
+    TelegramGenericPack(
+        domain_pack="relationships",
+        predicate="profile.partner_name",
+        fact_name="partner",
+        label="partner",
+        retention_class="durable_profile",
+        update_patterns=(
+            re.compile(r"^my\s+partner\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"^my\s+wife\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"^my\s+husband\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+        ),
+        delete_phrases=_relationship_delete_phrases("partner", "wife", "husband"),
+    ),
+    TelegramGenericPack(
+        domain_pack="relationships",
+        predicate="profile.mother_name",
+        fact_name="mother",
+        label="mother",
+        retention_class="durable_profile",
+        update_patterns=(re.compile(r"^my\s+mother\s+is\s+(.+?)[.!]?$", re.IGNORECASE),),
+        delete_phrases=_relationship_delete_phrases("mother"),
+    ),
+    TelegramGenericPack(
+        domain_pack="relationships",
+        predicate="profile.father_name",
+        fact_name="father",
+        label="father",
+        retention_class="durable_profile",
+        update_patterns=(re.compile(r"^my\s+father\s+is\s+(.+?)[.!]?$", re.IGNORECASE),),
+        delete_phrases=_relationship_delete_phrases("father"),
+    ),
+    TelegramGenericPack(
+        domain_pack="relationships",
+        predicate="profile.sister_name",
+        fact_name="sister",
+        label="sister",
+        retention_class="durable_profile",
+        update_patterns=(re.compile(r"^my\s+sister\s+is\s+(.+?)[.!]?$", re.IGNORECASE),),
+        delete_phrases=_relationship_delete_phrases("sister"),
+    ),
+    TelegramGenericPack(
+        domain_pack="relationships",
+        predicate="profile.brother_name",
+        fact_name="brother",
+        label="brother",
+        retention_class="durable_profile",
+        update_patterns=(re.compile(r"^my\s+brother\s+is\s+(.+?)[.!]?$", re.IGNORECASE),),
+        delete_phrases=_relationship_delete_phrases("brother"),
+    ),
+    TelegramGenericPack(
+        domain_pack="goals_and_priorities",
+        predicate="profile.current_plan",
+        fact_name="current_plan",
+        label="current plan",
+        retention_class="active_state",
+        update_patterns=_PLAN_PATTERNS,
+        delete_phrases=_simple_delete_phrases("my current plan", "the plan"),
+        observation_answer_template="I'll remember that your current plan is to {value}.",
+        deletion_answer_template="I'll forget your current plan.",
+    ),
+    TelegramGenericPack(
+        domain_pack="goals_and_priorities",
+        predicate="profile.current_focus",
+        fact_name="current_focus",
+        label="current focus",
+        retention_class="active_state",
+        update_patterns=_FOCUS_PATTERNS,
+        delete_phrases=_simple_delete_phrases("my current focus", "our priority"),
+        deletion_answer_template="I'll forget your current focus.",
+    ),
+    TelegramGenericPack(
+        domain_pack="plans_and_commitments",
+        predicate="profile.current_commitment",
+        fact_name="current_commitment",
+        label="current commitment",
+        retention_class="active_state",
+        update_patterns=_COMMITMENT_PATTERNS,
+        delete_phrases=_simple_delete_phrases("my current commitment", "our commitment", "the commitment"),
+        observation_answer_template="I'll remember that your current commitment is to {value}.",
+        deletion_answer_template="I'll forget your current commitment.",
+    ),
+    TelegramGenericPack(
+        domain_pack="plans_and_commitments",
+        predicate="profile.current_milestone",
+        fact_name="current_milestone",
+        label="current milestone",
+        retention_class="active_state",
+        update_patterns=_MILESTONE_PATTERNS,
+        delete_phrases=_simple_delete_phrases("my current milestone", "our milestone", "the milestone"),
+        deletion_answer_template="I'll forget your current milestone.",
+    ),
+    TelegramGenericPack(
+        domain_pack="project_state",
+        predicate="profile.current_decision",
+        fact_name="current_decision",
+        label="current decision",
+        retention_class="active_state",
+        update_patterns=_DECISION_PATTERNS,
+        delete_phrases=_simple_delete_phrases("my current decision", "our decision"),
+        deletion_answer_template="I'll forget your current decision.",
+    ),
+    TelegramGenericPack(
+        domain_pack="project_state",
+        predicate="profile.current_blocker",
+        fact_name="current_blocker",
+        label="current blocker",
+        retention_class="active_state",
+        update_patterns=_BLOCKER_PATTERNS,
+        delete_phrases=_simple_delete_phrases("my current blocker", "our blocker", "our bottleneck"),
+        deletion_answer_template="I'll forget your current blocker.",
+    ),
+    TelegramGenericPack(
+        domain_pack="project_state",
+        predicate="profile.current_status",
+        fact_name="current_status",
+        label="current status",
+        retention_class="active_state",
+        update_patterns=_STATUS_PATTERNS,
+        delete_phrases=_simple_delete_phrases("my current status", "our status", "the project status"),
+        deletion_answer_template="I'll forget your current status.",
+    ),
+    TelegramGenericPack(
+        domain_pack="project_state",
+        predicate="profile.current_risk",
+        fact_name="current_risk",
+        label="current risk",
+        retention_class="active_state",
+        update_patterns=_RISK_PATTERNS,
+        delete_phrases=_simple_delete_phrases("my current risk", "our risk", "the risk"),
+        deletion_answer_template="I'll forget your current risk.",
+    ),
+    TelegramGenericPack(
+        domain_pack="project_state",
+        predicate="profile.current_dependency",
+        fact_name="current_dependency",
+        label="current dependency",
+        retention_class="active_state",
+        update_patterns=_DEPENDENCY_PATTERNS,
+        delete_phrases=_simple_delete_phrases("my current dependency", "our dependency", "the dependency"),
+        deletion_answer_template="I'll forget your current dependency.",
+    ),
+    TelegramGenericPack(
+        domain_pack="project_state",
+        predicate="profile.current_constraint",
+        fact_name="current_constraint",
+        label="current constraint",
+        retention_class="active_state",
+        update_patterns=_CONSTRAINT_PATTERNS,
+        delete_phrases=_simple_delete_phrases("my current constraint", "our constraint", "the constraint"),
+        deletion_answer_template="I'll forget your current constraint.",
+    ),
+    TelegramGenericPack(
+        domain_pack="project_state",
+        predicate="profile.current_assumption",
+        fact_name="current_assumption",
+        label="current assumption",
+        retention_class="active_state",
+        update_patterns=_ASSUMPTION_PATTERNS,
+        delete_phrases=_simple_delete_phrases("my current assumption", "our assumption", "the assumption"),
+        deletion_answer_template="I'll forget your current assumption.",
+    ),
+    TelegramGenericPack(
+        domain_pack="project_state",
+        predicate="profile.current_owner",
+        fact_name="current_owner",
+        label="current owner",
+        retention_class="active_state",
+        update_patterns=_OWNER_PATTERNS,
+        delete_phrases=_simple_delete_phrases("my current owner", "our owner", "the owner"),
+        deletion_answer_template="I'll forget your current owner.",
+    ),
+)
+
+_GENERIC_PACKS_BY_PREDICATE = {pack.predicate: pack for pack in _GENERIC_PACKS}
+
+
+def classify_telegram_generic_memory_candidate(user_message: str) -> TelegramGenericCandidate | None:
     text = _clean_text(user_message)
     if not _is_memoryworthy_text(text):
         return None
     normalized = _strip_correction_prefix(text)
     lowered = normalized.lower()
 
-    relationship_deletions: tuple[tuple[str, str, tuple[str, ...]], ...] = (
-        ("profile.cofounder_name", "cofounder", ("cofounder",)),
-        ("profile.mentor_name", "mentor", ("mentor",)),
-        ("profile.manager_name", "manager", ("manager",)),
-        ("profile.assistant_name", "assistant", ("assistant",)),
-        ("profile.partner_name", "partner", ("partner", "wife", "husband")),
-        ("profile.mother_name", "mother", ("mother",)),
-        ("profile.father_name", "father", ("father",)),
-        ("profile.sister_name", "sister", ("sister",)),
-        ("profile.brother_name", "brother", ("brother",)),
-    )
-    for predicate, label, aliases in relationship_deletions:
-        if any(
-            lowered == phrase
-            for alias in aliases
-            for phrase in (
-                f"forget my {alias}.",
-                f"forget my {alias}",
-                f"delete my {alias}.",
-                f"delete my {alias}",
-                f"remove my {alias}.",
-                f"remove my {alias}",
-                f"i no longer have a {alias}.",
-                f"i no longer have a {alias}",
-                f"i no longer have an {alias}.",
-                f"i no longer have an {alias}",
-                f"i don't have a {alias} anymore.",
-                f"i don't have a {alias} anymore",
-                f"i don't have an {alias} anymore.",
-                f"i don't have an {alias} anymore",
-            )
-        ):
-            return TelegramGenericDeletion(
-                predicate=predicate,
+    for pack in _GENERIC_PACKS:
+        if lowered in pack.delete_phrases:
+            return TelegramGenericCandidate(
+                predicate=pack.predicate,
+                value=None,
                 evidence_text=text,
-                fact_name=label,
-                label=label,
+                fact_name=pack.fact_name,
+                label=pack.label,
+                operation="delete",
+                memory_role="current_state",
+                retention_class=pack.retention_class,
+                domain_pack=pack.domain_pack,
             )
 
-    if lowered in {
-        "forget my current plan.",
-        "forget my current plan",
-        "delete my current plan.",
-        "delete my current plan",
-        "remove my current plan.",
-        "remove my current plan",
-        "forget the plan.",
-        "forget the plan",
-    }:
-        return TelegramGenericDeletion(
-            predicate="profile.current_plan",
-            evidence_text=text,
-            fact_name="current_plan",
-            label="current plan",
-        )
-
-    if lowered in {
-        "forget my current focus.",
-        "forget my current focus",
-        "delete my current focus.",
-        "delete my current focus",
-        "remove my current focus.",
-        "remove my current focus",
-        "forget our priority.",
-        "forget our priority",
-        "delete our priority.",
-        "delete our priority",
-        "remove our priority.",
-        "remove our priority",
-    }:
-        return TelegramGenericDeletion(
-            predicate="profile.current_focus",
-            evidence_text=text,
-            fact_name="current_focus",
-            label="current focus",
-        )
-
-    if lowered in {
-        "forget my current decision.",
-        "forget my current decision",
-        "delete my current decision.",
-        "delete my current decision",
-        "remove my current decision.",
-        "remove my current decision",
-        "forget our decision.",
-        "forget our decision",
-        "delete our decision.",
-        "delete our decision",
-        "remove our decision.",
-        "remove our decision",
-    }:
-        return TelegramGenericDeletion(
-            predicate="profile.current_decision",
-            evidence_text=text,
-            fact_name="current_decision",
-            label="current decision",
-        )
-
-    if lowered in {
-        "forget my current blocker.",
-        "forget my current blocker",
-        "delete my current blocker.",
-        "delete my current blocker",
-        "remove my current blocker.",
-        "remove my current blocker",
-        "forget our blocker.",
-        "forget our blocker",
-        "delete our blocker.",
-        "delete our blocker",
-        "remove our blocker.",
-        "remove our blocker",
-        "forget our bottleneck.",
-        "forget our bottleneck",
-        "delete our bottleneck.",
-        "delete our bottleneck",
-        "remove our bottleneck.",
-        "remove our bottleneck",
-    }:
-        return TelegramGenericDeletion(
-            predicate="profile.current_blocker",
-            evidence_text=text,
-            fact_name="current_blocker",
-            label="current blocker",
-        )
-
-    if lowered in {
-        "forget my current status.",
-        "forget my current status",
-        "delete my current status.",
-        "delete my current status",
-        "remove my current status.",
-        "remove my current status",
-        "forget our status.",
-        "forget our status",
-        "delete our status.",
-        "delete our status",
-        "remove our status.",
-        "remove our status",
-        "forget the project status.",
-        "forget the project status",
-        "delete the project status.",
-        "delete the project status",
-        "remove the project status.",
-        "remove the project status",
-    }:
-        return TelegramGenericDeletion(
-            predicate="profile.current_status",
-            evidence_text=text,
-            fact_name="current_status",
-            label="current status",
-        )
-
-    if lowered in {
-        "forget my current commitment.",
-        "forget my current commitment",
-        "delete my current commitment.",
-        "delete my current commitment",
-        "remove my current commitment.",
-        "remove my current commitment",
-        "forget our commitment.",
-        "forget our commitment",
-        "delete our commitment.",
-        "delete our commitment",
-        "remove our commitment.",
-        "remove our commitment",
-        "forget the commitment.",
-        "forget the commitment",
-        "delete the commitment.",
-        "delete the commitment",
-        "remove the commitment.",
-        "remove the commitment",
-    }:
-        return TelegramGenericDeletion(
-            predicate="profile.current_commitment",
-            evidence_text=text,
-            fact_name="current_commitment",
-            label="current commitment",
-        )
-
-    if lowered in {
-        "forget my current milestone.",
-        "forget my current milestone",
-        "delete my current milestone.",
-        "delete my current milestone",
-        "remove my current milestone.",
-        "remove my current milestone",
-        "forget our milestone.",
-        "forget our milestone",
-        "delete our milestone.",
-        "delete our milestone",
-        "remove our milestone.",
-        "remove our milestone",
-        "forget the milestone.",
-        "forget the milestone",
-        "delete the milestone.",
-        "delete the milestone",
-        "remove the milestone.",
-        "remove the milestone",
-    }:
-        return TelegramGenericDeletion(
-            predicate="profile.current_milestone",
-            evidence_text=text,
-            fact_name="current_milestone",
-            label="current milestone",
-        )
-
-    if lowered in {
-        "forget my current risk.",
-        "forget my current risk",
-        "delete my current risk.",
-        "delete my current risk",
-        "remove my current risk.",
-        "remove my current risk",
-        "forget our risk.",
-        "forget our risk",
-        "delete our risk.",
-        "delete our risk",
-        "remove our risk.",
-        "remove our risk",
-        "forget the risk.",
-        "forget the risk",
-        "delete the risk.",
-        "delete the risk",
-        "remove the risk.",
-        "remove the risk",
-    }:
-        return TelegramGenericDeletion(
-            predicate="profile.current_risk",
-            evidence_text=text,
-            fact_name="current_risk",
-            label="current risk",
-        )
-
-    if lowered in {
-        "forget my current dependency.",
-        "forget my current dependency",
-        "delete my current dependency.",
-        "delete my current dependency",
-        "remove my current dependency.",
-        "remove my current dependency",
-        "forget our dependency.",
-        "forget our dependency",
-        "delete our dependency.",
-        "delete our dependency",
-        "remove our dependency.",
-        "remove our dependency",
-        "forget the dependency.",
-        "forget the dependency",
-        "delete the dependency.",
-        "delete the dependency",
-        "remove the dependency.",
-        "remove the dependency",
-    }:
-        return TelegramGenericDeletion(
-            predicate="profile.current_dependency",
-            evidence_text=text,
-            fact_name="current_dependency",
-            label="current dependency",
-        )
-
-    if lowered in {
-        "forget my current constraint.",
-        "forget my current constraint",
-        "delete my current constraint.",
-        "delete my current constraint",
-        "remove my current constraint.",
-        "remove my current constraint",
-        "forget our constraint.",
-        "forget our constraint",
-        "delete our constraint.",
-        "delete our constraint",
-        "remove our constraint.",
-        "remove our constraint",
-        "forget the constraint.",
-        "forget the constraint",
-        "delete the constraint.",
-        "delete the constraint",
-        "remove the constraint.",
-        "remove the constraint",
-    }:
-        return TelegramGenericDeletion(
-            predicate="profile.current_constraint",
-            evidence_text=text,
-            fact_name="current_constraint",
-            label="current constraint",
-        )
-
-    if lowered in {
-        "forget my current assumption.",
-        "forget my current assumption",
-        "delete my current assumption.",
-        "delete my current assumption",
-        "remove my current assumption.",
-        "remove my current assumption",
-        "forget our assumption.",
-        "forget our assumption",
-        "delete our assumption.",
-        "delete our assumption",
-        "remove our assumption.",
-        "remove our assumption",
-        "forget the assumption.",
-        "forget the assumption",
-        "delete the assumption.",
-        "delete the assumption",
-        "remove the assumption.",
-        "remove the assumption",
-    }:
-        return TelegramGenericDeletion(
-            predicate="profile.current_assumption",
-            evidence_text=text,
-            fact_name="current_assumption",
-            label="current assumption",
-        )
-
-    if lowered in {
-        "forget my current owner.",
-        "forget my current owner",
-        "delete my current owner.",
-        "delete my current owner",
-        "remove my current owner.",
-        "remove my current owner",
-        "forget our owner.",
-        "forget our owner",
-        "delete our owner.",
-        "delete our owner",
-        "remove our owner.",
-        "remove our owner",
-        "forget the owner.",
-        "forget the owner",
-        "delete the owner.",
-        "delete the owner",
-        "remove the owner.",
-        "remove the owner",
-    }:
-        return TelegramGenericDeletion(
-            predicate="profile.current_owner",
-            evidence_text=text,
-            fact_name="current_owner",
-            label="current owner",
-        )
-
+    for pack in _GENERIC_PACKS:
+        for pattern in pack.update_patterns:
+            match = pattern.fullmatch(normalized)
+            if match is None:
+                continue
+            value = _clean_value(match.group(1))
+            if not value:
+                continue
+            return TelegramGenericCandidate(
+                predicate=pack.predicate,
+                value=value,
+                evidence_text=text,
+                fact_name=pack.fact_name,
+                label=pack.label,
+                operation="update",
+                memory_role="current_state",
+                retention_class=pack.retention_class,
+                domain_pack=pack.domain_pack,
+            )
     return None
+
+
+def detect_telegram_generic_observation(user_message: str) -> TelegramGenericObservation | None:
+    candidate = classify_telegram_generic_memory_candidate(user_message)
+    if candidate is None or candidate.operation != "update" or not candidate.value:
+        return None
+    return TelegramGenericObservation(
+        predicate=candidate.predicate,
+        value=candidate.value,
+        evidence_text=candidate.evidence_text,
+        fact_name=candidate.fact_name,
+        label=candidate.label,
+    )
+
+
+def detect_telegram_generic_deletion(user_message: str) -> TelegramGenericDeletion | None:
+    candidate = classify_telegram_generic_memory_candidate(user_message)
+    if candidate is None or candidate.operation != "delete":
+        return None
+    return TelegramGenericDeletion(
+        predicate=candidate.predicate,
+        evidence_text=candidate.evidence_text,
+        fact_name=candidate.fact_name,
+        label=candidate.label,
+    )
 
 
 def build_telegram_generic_observation_answer(*, observation: TelegramGenericObservation) -> str:
     value = str(observation.value or "").strip()
     if not value:
         return "I'll remember that."
-    if observation.predicate == "profile.current_plan":
-        return f"I'll remember that your current plan is to {value}."
-    if observation.predicate == "profile.current_focus":
-        return f"I'll remember that your current focus is {value}."
-    if observation.predicate == "profile.current_decision":
-        return f"I'll remember that your current decision is {value}."
-    if observation.predicate == "profile.current_blocker":
-        return f"I'll remember that your current blocker is {value}."
-    if observation.predicate == "profile.current_status":
-        return f"I'll remember that your current status is {value}."
-    if observation.predicate == "profile.current_commitment":
-        return f"I'll remember that your current commitment is to {value}."
-    if observation.predicate == "profile.current_milestone":
-        return f"I'll remember that your current milestone is {value}."
-    if observation.predicate == "profile.current_risk":
-        return f"I'll remember that your current risk is {value}."
-    if observation.predicate == "profile.current_dependency":
-        return f"I'll remember that your current dependency is {value}."
-    if observation.predicate == "profile.current_constraint":
-        return f"I'll remember that your current constraint is {value}."
-    if observation.predicate == "profile.current_assumption":
-        return f"I'll remember that your current assumption is {value}."
-    if observation.predicate == "profile.current_owner":
-        return f"I'll remember that your current owner is {value}."
+    pack = _GENERIC_PACKS_BY_PREDICATE.get(observation.predicate)
+    if pack is not None and pack.observation_answer_template:
+        return pack.observation_answer_template.format(label=observation.label, value=value)
     return f"I'll remember that your {observation.label} is {value}."
 
 
 def build_telegram_generic_deletion_answer(*, deletion: TelegramGenericDeletion) -> str:
-    if deletion.predicate == "profile.current_plan":
-        return "I'll forget your current plan."
-    if deletion.predicate == "profile.current_focus":
-        return "I'll forget your current focus."
-    if deletion.predicate == "profile.current_decision":
-        return "I'll forget your current decision."
-    if deletion.predicate == "profile.current_blocker":
-        return "I'll forget your current blocker."
-    if deletion.predicate == "profile.current_status":
-        return "I'll forget your current status."
-    if deletion.predicate == "profile.current_commitment":
-        return "I'll forget your current commitment."
-    if deletion.predicate == "profile.current_milestone":
-        return "I'll forget your current milestone."
-    if deletion.predicate == "profile.current_risk":
-        return "I'll forget your current risk."
-    if deletion.predicate == "profile.current_dependency":
-        return "I'll forget your current dependency."
-    if deletion.predicate == "profile.current_constraint":
-        return "I'll forget your current constraint."
-    if deletion.predicate == "profile.current_assumption":
-        return "I'll forget your current assumption."
-    if deletion.predicate == "profile.current_owner":
-        return "I'll forget your current owner."
+    pack = _GENERIC_PACKS_BY_PREDICATE.get(deletion.predicate)
+    if pack is not None and pack.deletion_answer_template:
+        return pack.deletion_answer_template.format(label=deletion.label)
     return f"I'll forget your {deletion.label}."
 
 

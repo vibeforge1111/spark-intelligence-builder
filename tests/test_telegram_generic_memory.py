@@ -1,6 +1,7 @@
 from pathlib import Path
 from unittest.mock import patch
 
+from spark_intelligence.memory.generic_observations import classify_telegram_generic_memory_candidate
 from spark_intelligence.observability.store import latest_events_by_type
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
 
@@ -38,6 +39,41 @@ class TelegramGenericMemoryTests(SparkTestCase):
         recorded_observations = (write_events[0]["facts_json"] or {}).get("observations") or []
         self.assertEqual(recorded_observations[0]["predicate"], "profile.cofounder_name")
         self.assertEqual(recorded_observations[0]["value"], "Omar")
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(tool_events)
+        facts = tool_events[0]["facts_json"] or {}
+        self.assertEqual(facts.get("domain_pack"), "relationships")
+        self.assertEqual(facts.get("memory_role"), "current_state")
+        self.assertEqual(facts.get("retention_class"), "durable_profile")
+
+    def test_classify_telegram_generic_memory_candidate_assigns_project_state_metadata(self) -> None:
+        candidate = classify_telegram_generic_memory_candidate(
+            "Actually, the biggest risk is delayed product instrumentation."
+        )
+
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        self.assertEqual(candidate.predicate, "profile.current_risk")
+        self.assertEqual(candidate.operation, "update")
+        self.assertEqual(candidate.memory_role, "current_state")
+        self.assertEqual(candidate.retention_class, "active_state")
+        self.assertEqual(candidate.domain_pack, "project_state")
+
+    def test_classify_telegram_generic_memory_candidate_detects_delete_operation(self) -> None:
+        candidate = classify_telegram_generic_memory_candidate("Forget our owner.")
+
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        self.assertEqual(candidate.predicate, "profile.current_owner")
+        self.assertEqual(candidate.operation, "delete")
+        self.assertEqual(candidate.memory_role, "current_state")
+        self.assertEqual(candidate.retention_class, "active_state")
+        self.assertEqual(candidate.domain_pack, "project_state")
+
+    def test_classify_telegram_generic_memory_candidate_rejects_small_talk(self) -> None:
+        candidate = classify_telegram_generic_memory_candidate("thanks")
+
+        self.assertIsNone(candidate)
 
     def test_build_researcher_reply_persists_generic_plan_memory_before_provider_resolution(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
