@@ -813,6 +813,23 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
             ),
         ),
         TelegramMemoryBenchmarkPack(
+            pack_id="telegram_open_memory_recall",
+            title="Telegram Open Memory Recall",
+            description=(
+                "Seeds structured evidence and raw episodic turns, then verifies that open-ended recall questions "
+                "are answered directly from memory rather than falling back to provider-only chat."
+            ),
+            focus_areas=("structured_evidence", "raw_episode", "open_recall", "direct_memory_query"),
+            cases=(
+                *_existing(
+                    "open_evidence_write_onboarding",
+                    "open_evidence_recall_onboarding",
+                    "open_episode_write_demo",
+                    "open_episode_recall_demo",
+                ),
+            ),
+        ),
+        TelegramMemoryBenchmarkPack(
             pack_id="telegram_mixed_memory_session_churn",
             title="Telegram Mixed Memory Session Churn",
             description=(

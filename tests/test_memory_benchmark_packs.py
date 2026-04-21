@@ -119,6 +119,12 @@ def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
     assert "generic_long_run_owner_event_history_query" in churn_case_ids
     assert "generic_long_run_dependency_current_query" in churn_case_ids
 
+    open_recall_case_ids = {case.case_id for case in packs["telegram_open_memory_recall"].cases}
+    assert "open_evidence_write_onboarding" in open_recall_case_ids
+    assert "open_evidence_recall_onboarding" in open_recall_case_ids
+    assert "open_episode_write_demo" in open_recall_case_ids
+    assert "open_episode_recall_demo" in open_recall_case_ids
+
     mixed_session_case_ids = {case.case_id for case in packs["telegram_mixed_memory_session_churn"].cases}
     assert "mixed_session_owner_write_initial" in mixed_session_case_ids
     assert "mixed_session_flight_overwrite" in mixed_session_case_ids
