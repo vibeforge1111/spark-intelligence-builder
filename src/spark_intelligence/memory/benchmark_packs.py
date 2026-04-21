@@ -830,6 +830,21 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
             ),
         ),
         TelegramMemoryBenchmarkPack(
+            pack_id="telegram_belief_memory_recall",
+            title="Telegram Belief Memory Recall",
+            description=(
+                "Seeds derived belief memory and verifies that belief-specific recall questions are answered "
+                "directly from memory while staying clearly marked as inferred rather than fact."
+            ),
+            focus_areas=("belief", "derived_memory", "direct_memory_query"),
+            cases=(
+                *_existing(
+                    "belief_write_onboarding",
+                    "belief_recall_onboarding",
+                ),
+            ),
+        ),
+        TelegramMemoryBenchmarkPack(
             pack_id="telegram_mixed_memory_session_churn",
             title="Telegram Mixed Memory Session Churn",
             description=(
