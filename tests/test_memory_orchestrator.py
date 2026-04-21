@@ -810,6 +810,18 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(event_history_query.predicate, "profile.city")
         self.assertEqual(event_history_query.query_kind, "event_history")
 
+        cofounder_history_query = detect_profile_fact_query("Who was my cofounder before?")
+        self.assertIsNotNone(cofounder_history_query)
+        assert cofounder_history_query is not None
+        self.assertEqual(cofounder_history_query.predicate, "profile.cofounder_name")
+        self.assertEqual(cofounder_history_query.query_kind, "fact_history")
+
+        cofounder_event_history_query = detect_profile_fact_query("Show my cofounder history.")
+        self.assertIsNotNone(cofounder_event_history_query)
+        assert cofounder_event_history_query is not None
+        self.assertEqual(cofounder_event_history_query.predicate, "profile.cofounder_name")
+        self.assertEqual(cofounder_event_history_query.query_kind, "event_history")
+
     def test_profile_fact_history_and_event_answers_are_grounded_and_compact(self) -> None:
         history_query = detect_profile_fact_query("Where did I live before?")
         self.assertIsNotNone(history_query)
@@ -846,6 +858,18 @@ class MemoryOrchestratorTests(SparkTestCase):
                 ],
             ),
             "I have 2 saved city events: Dubai then Abu Dhabi.",
+        )
+
+        cofounder_history_query = detect_profile_fact_query("Who was my cofounder before?")
+        self.assertIsNotNone(cofounder_history_query)
+        assert cofounder_history_query is not None
+        self.assertEqual(
+            build_profile_fact_history_answer(
+                query=cofounder_history_query,
+                previous_value="Omar",
+                current_value="Sara",
+            ),
+            "Before Sara, your cofounder was Omar.",
         )
 
     def test_telegram_event_query_detection_filtering_and_answers_are_compact(self) -> None:

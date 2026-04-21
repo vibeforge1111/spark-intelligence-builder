@@ -293,6 +293,19 @@ class ProfileFactQuery:
     predicate_prefix: str | None = None
 
 
+_GENERIC_PROFILE_QUERY_SPECS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
+    ("profile.cofounder_name", "profile_cofounder_name", "cofounder", ("cofounder",)),
+    ("profile.mentor_name", "profile_mentor_name", "mentor", ("mentor",)),
+    ("profile.manager_name", "profile_manager_name", "manager", ("manager",)),
+    ("profile.assistant_name", "profile_assistant_name", "assistant", ("assistant",)),
+    ("profile.partner_name", "profile_partner_name", "partner", ("partner", "wife", "husband")),
+    ("profile.mother_name", "profile_mother_name", "mother", ("mother",)),
+    ("profile.father_name", "profile_father_name", "father", ("father",)),
+    ("profile.sister_name", "profile_sister_name", "sister", ("sister",)),
+    ("profile.brother_name", "profile_brother_name", "brother", ("brother",)),
+)
+
+
 def _history_fact_query(
     *,
     predicate: str,
@@ -306,6 +319,81 @@ def _history_fact_query(
         label=label,
         query_kind=query_kind,
     )
+
+
+def _generic_profile_fact_query(
+    *,
+    predicate: str,
+    fact_name: str,
+    label: str,
+    query_kind: str = "single_fact",
+) -> ProfileFactQuery:
+    return ProfileFactQuery(
+        predicate=predicate,
+        fact_name=fact_name,
+        label=label,
+        query_kind=query_kind,
+    )
+
+
+def _match_generic_profile_history_query(text: str) -> ProfileFactQuery | None:
+    for predicate, fact_name, label, aliases in _GENERIC_PROFILE_QUERY_SPECS:
+        if any(
+            phrase in text
+            for alias in aliases
+            for phrase in (
+                f"who was my {alias} before",
+                f"what was my previous {alias}",
+                f"what {alias} did you have for me before",
+            )
+        ):
+            return _generic_profile_fact_query(
+                predicate=predicate,
+                fact_name=fact_name,
+                label=label,
+                query_kind="fact_history",
+            )
+    return None
+
+
+def _match_generic_profile_event_history_query(text: str) -> ProfileFactQuery | None:
+    for predicate, fact_name, label, aliases in _GENERIC_PROFILE_QUERY_SPECS:
+        if any(
+            phrase in text
+            for alias in aliases
+            for phrase in (
+                f"what memory events do you have about my {alias}",
+                f"show my {alias} history",
+                f"what {alias} history do you have for me",
+            )
+        ):
+            return _generic_profile_fact_query(
+                predicate=predicate,
+                fact_name=fact_name,
+                label=label,
+                query_kind="event_history",
+            )
+    return None
+
+
+def _match_generic_profile_current_query(text: str) -> ProfileFactQuery | None:
+    for predicate, fact_name, label, aliases in _GENERIC_PROFILE_QUERY_SPECS:
+        if any(
+            phrase in text
+            for alias in aliases
+            for phrase in (
+                f"who is my {alias}",
+                f"what is my {alias} name",
+                f"what's my {alias} name",
+                f"what {alias} do you have for me",
+            )
+        ):
+            return _generic_profile_fact_query(
+                predicate=predicate,
+                fact_name=fact_name,
+                label=label,
+            )
+    return None
 
 
 def _detect_profile_fact_history_query(text: str) -> ProfileFactQuery | None:
@@ -382,6 +470,37 @@ def _detect_profile_fact_history_query(text: str) -> ProfileFactQuery | None:
             label="company you founded",
             query_kind="fact_history",
         )
+    generic_history_query = _match_generic_profile_history_query(text)
+    if generic_history_query is not None:
+        return generic_history_query
+    if any(
+        phrase in text
+        for phrase in (
+            "what was my previous plan",
+            "what plan did i have before",
+            "what was our previous plan",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_plan",
+            fact_name="profile_current_plan",
+            label="current plan",
+            query_kind="fact_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what was my previous focus",
+            "what was our previous priority",
+            "what priority did we have before",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_focus",
+            fact_name="profile_current_focus",
+            label="current focus",
+            query_kind="fact_history",
+        )
     return None
 
 
@@ -427,6 +546,38 @@ def _detect_profile_fact_event_history_query(text: str) -> ProfileFactQuery | No
             predicate="profile.timezone",
             fact_name="profile_timezone",
             label="timezone",
+            query_kind="event_history",
+        )
+    generic_event_history_query = _match_generic_profile_event_history_query(text)
+    if generic_event_history_query is not None:
+        return generic_event_history_query
+    if any(
+        phrase in text
+        for phrase in (
+            "what memory events do you have about my current plan",
+            "show my plan history",
+            "what plan history do you have for me",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_plan",
+            fact_name="profile_current_plan",
+            label="current plan",
+            query_kind="event_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what memory events do you have about my current focus",
+            "what memory events do you have about our priority",
+            "show my focus history",
+            "show our priority history",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_focus",
+            fact_name="profile_current_focus",
+            label="current focus",
             query_kind="event_history",
         )
     return None
@@ -699,76 +850,9 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
             fact_name="profile_current_mission",
             label="current mission",
         )
-    if any(
-        phrase in text
-        for phrase in (
-            "who is my cofounder",
-            "what is my cofounder name",
-            "what's my cofounder name",
-            "what cofounder do you have for me",
-        )
-    ):
-        return ProfileFactQuery(
-            predicate="profile.cofounder_name",
-            fact_name="profile_cofounder_name",
-            label="cofounder",
-        )
-    if any(
-        phrase in text
-        for phrase in (
-            "who is my mentor",
-            "what is my mentor name",
-            "what's my mentor name",
-            "what mentor do you have for me",
-        )
-    ):
-        return ProfileFactQuery(
-            predicate="profile.mentor_name",
-            fact_name="profile_mentor_name",
-            label="mentor",
-        )
-    if any(
-        phrase in text
-        for phrase in (
-            "who is my manager",
-            "what is my manager name",
-            "what's my manager name",
-            "what manager do you have for me",
-        )
-    ):
-        return ProfileFactQuery(
-            predicate="profile.manager_name",
-            fact_name="profile_manager_name",
-            label="manager",
-        )
-    if any(
-        phrase in text
-        for phrase in (
-            "who is my assistant",
-            "what is my assistant name",
-            "what's my assistant name",
-            "what assistant do you have for me",
-        )
-    ):
-        return ProfileFactQuery(
-            predicate="profile.assistant_name",
-            fact_name="profile_assistant_name",
-            label="assistant",
-        )
-    if any(
-        phrase in text
-        for phrase in (
-            "who is my partner",
-            "what is my partner name",
-            "what's my partner name",
-            "what partner do you have for me",
-        )
-    ):
-        return ProfileFactQuery(
-            predicate="profile.partner_name",
-            fact_name="profile_partner_name",
-            label="partner",
-        )
+    generic_current_query = _match_generic_profile_current_query(text)
+    if generic_current_query is not None:
+        return generic_current_query
     if any(
         phrase in text
         for phrase in (
@@ -985,6 +1069,50 @@ def build_profile_fact_history_answer(
         if normalized_current and normalized_current != normalized_previous:
             return _ensure_sentence(f"Before {normalized_current}, your timezone was {normalized_previous}")
         return _ensure_sentence(f"An earlier saved timezone was {normalized_previous}")
+    if predicate == "profile.current_plan":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before your current plan was to {normalized_current}, it was to {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved current plan was to {normalized_previous}")
+    if predicate == "profile.current_focus":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before your current focus was {normalized_current}, it was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved current focus was {normalized_previous}")
+    if predicate == "profile.cofounder_name":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before {normalized_current}, your cofounder was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved cofounder was {normalized_previous}")
+    if predicate == "profile.mentor_name":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before {normalized_current}, your mentor was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved mentor was {normalized_previous}")
+    if predicate == "profile.manager_name":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before {normalized_current}, your manager was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved manager was {normalized_previous}")
+    if predicate == "profile.assistant_name":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before {normalized_current}, your assistant was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved assistant was {normalized_previous}")
+    if predicate == "profile.partner_name":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before {normalized_current}, your partner was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved partner was {normalized_previous}")
+    if predicate == "profile.mother_name":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before {normalized_current}, your mother was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved mother was {normalized_previous}")
+    if predicate == "profile.father_name":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before {normalized_current}, your father was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved father was {normalized_previous}")
+    if predicate == "profile.sister_name":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before {normalized_current}, your sister was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved sister was {normalized_previous}")
+    if predicate == "profile.brother_name":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before {normalized_current}, your brother was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved brother was {normalized_previous}")
     return _ensure_sentence(f"An earlier saved {query.label} was {normalized_previous}")
 
 
@@ -1064,6 +1192,14 @@ def _build_profile_fact_concise_answer(*, query: ProfileFactQuery, value: str) -
         return _ensure_sentence(f"Your assistant is {normalized_value}")
     if predicate == "profile.partner_name":
         return _ensure_sentence(f"Your partner is {normalized_value}")
+    if predicate == "profile.mother_name":
+        return _ensure_sentence(f"Your mother is {normalized_value}")
+    if predicate == "profile.father_name":
+        return _ensure_sentence(f"Your father is {normalized_value}")
+    if predicate == "profile.sister_name":
+        return _ensure_sentence(f"Your sister is {normalized_value}")
+    if predicate == "profile.brother_name":
+        return _ensure_sentence(f"Your brother is {normalized_value}")
     if predicate == "profile.spark_role":
         return _ensure_sentence(_spark_role_sentence(normalized_value))
     if predicate == "profile.home_country":
@@ -1117,6 +1253,10 @@ def build_profile_identity_summary_context(*, records: list[dict[str, str]]) -> 
         "profile.manager_name",
         "profile.assistant_name",
         "profile.partner_name",
+        "profile.mother_name",
+        "profile.father_name",
+        "profile.sister_name",
+        "profile.brother_name",
         "profile.spark_role",
         "profile.city",
         "profile.home_country",
@@ -1136,6 +1276,10 @@ def build_profile_identity_summary_context(*, records: list[dict[str, str]]) -> 
         "profile.manager_name": "manager",
         "profile.assistant_name": "assistant",
         "profile.partner_name": "partner",
+        "profile.mother_name": "mother",
+        "profile.father_name": "father",
+        "profile.sister_name": "sister",
+        "profile.brother_name": "brother",
         "profile.spark_role": "Spark role",
         "profile.city": "city",
         "profile.home_country": "country",

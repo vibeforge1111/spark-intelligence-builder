@@ -1241,6 +1241,18 @@ def write_profile_fact_to_memory(
         },
     )
     result = _normalize_write_result(raw=raw, operation="update")
+    if result.accepted_count > 0:
+        _write_profile_fact_history_event(
+            client=client,
+            human_id=human_id,
+            predicate=predicate,
+            value=value,
+            evidence_text=evidence_text,
+            fact_name=fact_name,
+            session_id=session_id,
+            turn_id=turn_id,
+            channel_kind=channel_kind,
+        )
     _record_memory_write_event(
         state_db=state_db,
         result=result,
@@ -1383,6 +1395,45 @@ def write_telegram_event_to_memory(
         actor_id=actor_id,
     )
     return result
+
+
+def _write_profile_fact_history_event(
+    *,
+    client: Any,
+    human_id: str,
+    predicate: str,
+    value: str,
+    evidence_text: str,
+    fact_name: str,
+    session_id: str | None,
+    turn_id: str | None,
+    channel_kind: str | None,
+) -> None:
+    _call_sdk_method(
+        client,
+        "write_event",
+        {
+            "operation": "event",
+            "subject": _subject_for_human_id(human_id),
+            "predicate": predicate,
+            "value": value,
+            "text": evidence_text,
+            "memory_role": "event",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "timestamp": _now_iso(),
+            "metadata": {
+                "entity_type": "human",
+                "channel_kind": channel_kind,
+                "memory_role": "event",
+                "source_surface": "profile_fact_history_capture",
+                "fact_name": fact_name,
+                "normalized_value": value,
+                "value": value,
+                "source_predicate": predicate,
+            },
+        },
+    )
 
 
 def _consolidate_telegram_event_summary_observation(
