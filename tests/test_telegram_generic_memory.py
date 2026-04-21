@@ -165,6 +165,76 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(recorded_observations[0]["predicate"], "belief.telegram.beliefs_and_inferences")
         self.assertEqual(recorded_observations[0]["retention_class"], "derived_belief")
 
+    def test_build_researcher_reply_answers_belief_recall_from_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-belief-write",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-belief-write",
+            channel_kind="telegram",
+            user_message="I think enterprise teams need hands-on onboarding.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for belief recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for belief recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-belief-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-belief-read",
+                channel_kind="telegram",
+                user_message="What is your current belief about onboarding?",
+            )
+
+        self.assertEqual(result.mode, "memory_belief_recall")
+        self.assertEqual(result.routing_decision, "memory_belief_recall_query")
+        self.assertIn("onboarding", result.reply_text.lower())
+        self.assertIn("hands-on onboarding", result.reply_text)
+        self.assertIn("inferred belief", result.reply_text.lower())
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(tool_events)
+        facts = tool_events[0]["facts_json"] or {}
+        self.assertEqual(facts.get("bridge_mode"), "memory_belief_recall")
+        self.assertIn("belief", facts.get("retrieved_memory_roles") or [])
+
+    def test_build_researcher_reply_returns_empty_belief_recall_when_nothing_saved(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for empty belief recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for empty belief recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-belief-empty-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-belief-empty-read",
+                channel_kind="telegram",
+                user_message="What belief do you have about pricing?",
+            )
+
+        self.assertEqual(result.mode, "memory_belief_recall")
+        self.assertEqual(result.routing_decision, "memory_belief_recall_query")
+        self.assertEqual(result.reply_text, "I don't currently have a saved belief about that.")
+
     def test_build_researcher_reply_persists_raw_episode_for_meaningful_unpromoted_turn(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
