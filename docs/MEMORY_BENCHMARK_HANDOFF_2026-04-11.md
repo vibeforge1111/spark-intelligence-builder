@@ -4,6 +4,8 @@ Date: 2026-04-11
 Repo: `spark-intelligence-builder`
 Related memory substrate repo: `C:\Users\USER\Desktop\domain-chip-memory`
 
+> Historical snapshot note, updated April 21, 2026: this handoff captures the April 11 runtime decision context. The current live Builder runtime is now pinned to `dual_store_event_calendar_hybrid`, and the latest clean mixed-session live regression is `16/16` matched with the runtime contract aligned to that leader.
+
 ## Current state
 
 - Builder is now pinned to `summary_synthesis_memory` as the named runtime architecture in the SDK contract summary.

@@ -4,6 +4,8 @@ Date: 2026-04-12
 Primary repo: `C:\Users\USER\Desktop\spark-intelligence-builder`
 Related substrate repo: `C:\Users\USER\Desktop\domain-chip-memory`
 
+> Historical snapshot note, updated April 21, 2026: this handoff reflects the April 12 operating state. The current pinned runtime has since moved to `dual_store_event_calendar_hybrid`, with the live mixed-session regression green at `16/16`.
+
 ## What We Are Trying To Achieve
 
 The goal is not to win offline memory benchmarks in isolation.

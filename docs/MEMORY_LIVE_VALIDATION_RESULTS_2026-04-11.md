@@ -1,5 +1,7 @@
 # Memory Live Validation Results 2026-04-11
 
+> Historical snapshot note, updated April 21, 2026: this file records the April 11 validation results. The current active runtime is `dual_store_event_calendar_hybrid`, and the latest clean live mixed-session regression is `16/16` matched with `issue_labels: []`.
+
 ## Scope
 
 This run validated the active two-contender program:

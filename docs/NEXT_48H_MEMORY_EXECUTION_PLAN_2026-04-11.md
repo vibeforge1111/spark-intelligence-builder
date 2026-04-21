@@ -5,6 +5,8 @@ Repo: `spark-intelligence-builder`
 Related substrate repo: `C:\Users\USER\Desktop\domain-chip-memory`
 Status: active execution plan
 
+> Historical execution-plan note, updated April 21, 2026: this plan captured the April 11 starting point. The current runtime is no longer `summary_synthesis_memory`; it is now pinned to `dual_store_event_calendar_hybrid` after the later live comparison and runtime-contract promotion work.
+
 ## Objective
 
 Over the next 48 hours, make the current Builder-connected memory system:

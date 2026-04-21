@@ -105,10 +105,10 @@ This repo currently includes:
 Current memory benchmarking program:
 
 - default contenders are `summary_synthesis_memory` and `dual_store_event_calendar_hybrid`
-- current pinned runtime selector is `summary_synthesis_memory`
-- latest clean live `14/14` soak favors `summary_synthesis_memory` at `92/92` overall and `64/64` on selector packs
+- current pinned runtime selector is `dual_store_event_calendar_hybrid`
+- as of April 21, 2026, the latest clean live mixed-session regression (`telegram_mixed_memory_session_churn`) is `16/16` matched with `dual_store_event_calendar_hybrid` as both the declared runtime and the live recommended architecture
 - the latest offline ProductMemory benchmark is tied between `summary_synthesis_memory` and `dual_store_event_calendar_hybrid` at `1156/1266`
-- the runtime is now pinned to `summary_synthesis_memory` because it leads live Telegram and no longer trails offline ProductMemory on accuracy
+- the runtime is now pinned to `dual_store_event_calendar_hybrid` because the live Telegram comparison now recommends it and the active runtime contract matches that leader
 - soak runs now enforce a per-pack timeout so one hung Telegram regression cannot freeze the full benchmark suite
 - benchmark upgrades are not promoted on offline scorecards alone
 - the same contenders must also stay green on live Telegram regression and soak runs
