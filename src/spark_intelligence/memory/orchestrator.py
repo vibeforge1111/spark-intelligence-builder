@@ -1400,13 +1400,14 @@ def _consolidate_telegram_event_summary_observation(
     suffix = str(predicate or "").strip().removeprefix("telegram.event.")
     if not suffix:
         return
+    summary_predicate = f"telegram.summary.latest_{suffix}"
     _call_sdk_method(
         client,
         "write_observation",
         {
             "operation": "update",
             "subject": subject,
-            "predicate": f"telegram.summary.latest_{suffix}",
+            "predicate": summary_predicate,
             "value": value,
             "text": evidence_text,
             "memory_role": "current_state",
@@ -1420,6 +1421,7 @@ def _consolidate_telegram_event_summary_observation(
                 "source_surface": "telegram_event_consolidation",
                 "event_name": event_name,
                 "source_event_predicate": predicate,
+                "entity_key": summary_predicate,
                 "normalized_value": value,
                 "value": value,
                 "consolidated_from_event": True,

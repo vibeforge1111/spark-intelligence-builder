@@ -14,6 +14,7 @@ from spark_intelligence.memory import (
     inspect_human_memory_in_memory,
     lookup_current_state_in_memory,
     lookup_historical_state_in_memory,
+    retrieve_memory_events_in_memory,
     run_memory_sdk_smoke_test,
     write_profile_fact_to_memory,
     write_telegram_event_to_memory,
@@ -205,6 +206,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         summary_call = fake_client.observation_calls[0]
         self.assertEqual(summary_call["predicate"], "telegram.summary.latest_meeting")
         self.assertEqual(summary_call["value"], "meeting with Omar on May 3")
+        self.assertEqual(summary_call["metadata"]["entity_key"], "telegram.summary.latest_meeting")
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(write_events)
         recorded_events = (write_events[0]["facts_json"] or {}).get("events") or []
@@ -214,6 +216,73 @@ class MemoryOrchestratorTests(SparkTestCase):
             build_telegram_memory_event_observation_answer(observation=detected),
             "I'll remember your meeting with Omar on May 3.",
         )
+
+    def test_telegram_event_summary_current_state_overwrites_while_event_history_is_preserved(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        write_telegram_event_to_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human:test",
+            predicate="telegram.event.flight",
+            value="flight to London on May 6",
+            evidence_text="My flight to London is on May 6.",
+            event_name="telegram_event_flight",
+            session_id="session:flight:1",
+            turn_id="turn:flight:1",
+            channel_kind="telegram",
+        )
+        write_telegram_event_to_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human:test",
+            predicate="telegram.event.flight",
+            value="flight to Paris on May 9",
+            evidence_text="My flight to Paris is on May 9.",
+            event_name="telegram_event_flight",
+            session_id="session:flight:2",
+            turn_id="turn:flight:2",
+            channel_kind="telegram",
+        )
+
+        latest_lookup = lookup_current_state_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject="human:test",
+            predicate="telegram.summary.latest_flight",
+            sdk_module="domain_chip_memory",
+        )
+        history_lookup = retrieve_memory_events_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            query="What flight did I mention?",
+            subject="human:test",
+            predicate="telegram.event.flight",
+            sdk_module="domain_chip_memory",
+        )
+        inspection = inspect_human_memory_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="test",
+            sdk_module="domain_chip_memory",
+        )
+
+        self.assertFalse(latest_lookup.read_result.abstained)
+        self.assertEqual(len(latest_lookup.read_result.records), 1)
+        self.assertEqual(latest_lookup.read_result.records[0]["value"], "flight to Paris on May 9")
+        self.assertEqual(len(history_lookup.read_result.records), 2)
+        self.assertEqual(
+            [record["value"] for record in history_lookup.read_result.records],
+            ["flight to Paris on May 9", "flight to London on May 6"],
+        )
+        summary_records = [
+            record
+            for record in inspection.read_result.records
+            if record.get("predicate") == "telegram.summary.latest_flight"
+        ]
+        self.assertEqual(len(summary_records), 1)
+        self.assertEqual(summary_records[0]["value"], "flight to Paris on May 9")
 
     def test_telegram_event_detection_rejects_hypothetical_and_non_temporal_phrasing(self) -> None:
         self.assertIsNone(
