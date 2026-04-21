@@ -1328,6 +1328,130 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertTrue(current_result.read_result.abstained)
         self.assertEqual(current_result.read_result.records, [])
 
+    def test_domain_chip_persistence_preserves_repeated_stale_client_overwrites_across_predicates(self) -> None:
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+        client_a = memory_orchestrator._load_sdk_client_for_module(
+            module_name="domain_chip_memory",
+            home_path=self.config_manager.paths.home,
+        )
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+        client_b = memory_orchestrator._load_sdk_client_for_module(
+            module_name="domain_chip_memory",
+            home_path=self.config_manager.paths.home,
+        )
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+        client_c = memory_orchestrator._load_sdk_client_for_module(
+            module_name="domain_chip_memory",
+            home_path=self.config_manager.paths.home,
+        )
+        self.assertIsNotNone(client_a)
+        self.assertIsNotNone(client_b)
+        self.assertIsNotNone(client_c)
+
+        client_a.write_observation(
+            operation="update",
+            subject="human:merge:test:multi",
+            predicate="profile.current_owner",
+            value="Omar",
+            text="Our owner is Omar.",
+            session_id="session:merge:test:multi:owner:1",
+            turn_id="turn:merge:test:multi:owner:1",
+            timestamp="2026-04-21T10:03:00+00:00",
+            metadata={
+                "entity_type": "human",
+                "field_name": "current_owner",
+                "memory_role": "current_state",
+                "source_surface": "test",
+                "fact_name": "current_owner",
+                "normalized_value": "Omar",
+            },
+        )
+        client_b.write_observation(
+            operation="update",
+            subject="human:merge:test:multi",
+            predicate="profile.current_risk",
+            value="delayed instrumentation",
+            text="Our main risk is delayed instrumentation.",
+            session_id="session:merge:test:multi:risk",
+            turn_id="turn:merge:test:multi:risk",
+            timestamp="2026-04-21T10:03:01+00:00",
+            metadata={
+                "entity_type": "human",
+                "field_name": "current_risk",
+                "memory_role": "current_state",
+                "source_surface": "test",
+                "fact_name": "current_risk",
+                "normalized_value": "delayed instrumentation",
+            },
+        )
+        client_c.write_observation(
+            operation="update",
+            subject="human:merge:test:multi",
+            predicate="profile.current_dependency",
+            value="partner API access",
+            text="Our dependency is partner API access.",
+            session_id="session:merge:test:multi:dependency",
+            turn_id="turn:merge:test:multi:dependency",
+            timestamp="2026-04-21T10:03:02+00:00",
+            metadata={
+                "entity_type": "human",
+                "field_name": "current_dependency",
+                "memory_role": "current_state",
+                "source_surface": "test",
+                "fact_name": "current_dependency",
+                "normalized_value": "partner API access",
+            },
+        )
+        client_a.write_observation(
+            operation="update",
+            subject="human:merge:test:multi",
+            predicate="profile.current_owner",
+            value="Sara",
+            text="The current owner is Sara.",
+            session_id="session:merge:test:multi:owner:2",
+            turn_id="turn:merge:test:multi:owner:2",
+            timestamp="2026-04-21T10:03:03+00:00",
+            metadata={
+                "entity_type": "human",
+                "field_name": "current_owner",
+                "memory_role": "current_state",
+                "source_surface": "test",
+                "fact_name": "current_owner",
+                "normalized_value": "Sara",
+            },
+        )
+
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+
+        owner_result = lookup_current_state_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject="human:merge:test:multi",
+            predicate="profile.current_owner",
+            sdk_module="domain_chip_memory",
+        )
+        risk_result = lookup_current_state_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject="human:merge:test:multi",
+            predicate="profile.current_risk",
+            sdk_module="domain_chip_memory",
+        )
+        dependency_result = lookup_current_state_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject="human:merge:test:multi",
+            predicate="profile.current_dependency",
+            sdk_module="domain_chip_memory",
+        )
+
+        self.assertFalse(owner_result.read_result.abstained)
+        self.assertEqual(owner_result.read_result.records[0]["value"], "Sara")
+        self.assertFalse(risk_result.read_result.abstained)
+        self.assertEqual(risk_result.read_result.records[0]["value"], "delayed instrumentation")
+        self.assertFalse(dependency_result.read_result.abstained)
+        self.assertEqual(dependency_result.read_result.records[0]["value"], "partner API access")
+
     def test_lookup_historical_state_in_memory_reads_prior_value_after_overwrite(self) -> None:
         expected_read_result = memory_orchestrator.MemoryReadResult(
             status="supported",
