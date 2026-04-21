@@ -54,6 +54,10 @@ from spark_intelligence.memory.episodic_events import (
     filter_telegram_memory_event_records,
     telegram_event_summary_predicate,
 )
+from spark_intelligence.memory.generic_observations import (
+    build_telegram_generic_observation_answer,
+    detect_telegram_generic_observation,
+)
 from spark_intelligence.memory.profile_facts import (
     build_profile_fact_explanation_answer,
     build_profile_fact_event_history_answer,
@@ -3439,6 +3443,7 @@ def build_researcher_reply(
     detected_profile_fact_query = None
     detected_memory_event = None
     detected_memory_event_query = None
+    detected_generic_memory_observation = None
     try:
         personality_profile = load_personality_profile(
             human_id=human_id,
@@ -3578,6 +3583,24 @@ def build_researcher_reply(
                         turn_id=request_id,
                         channel_kind=channel_kind,
                     )
+                else:
+                    detected_generic_memory_observation = detect_telegram_generic_observation(user_message)
+                    if detected_generic_memory_observation is not None:
+                        generic_write_result = write_profile_fact_to_memory(
+                            config_manager=config_manager,
+                            state_db=state_db,
+                            human_id=human_id,
+                            predicate=detected_generic_memory_observation.predicate,
+                            value=detected_generic_memory_observation.value,
+                            evidence_text=detected_generic_memory_observation.evidence_text,
+                            fact_name=detected_generic_memory_observation.fact_name,
+                            session_id=session_id,
+                            turn_id=request_id,
+                            channel_kind=channel_kind,
+                            actor_id="telegram_generic_observation_loader",
+                        )
+                        if generic_write_result.accepted_count <= 0:
+                            detected_generic_memory_observation = None
         except Exception:
             pass
 
@@ -3610,6 +3633,7 @@ def build_researcher_reply(
         or detected_profile_fact_query
         or detected_memory_event
         or detected_memory_event_query
+        or detected_generic_memory_observation
     ):
         source_kind = "personality_profile"
         if detected_deltas:
@@ -3624,6 +3648,8 @@ def build_researcher_reply(
             source_kind = "telegram_event_update"
         elif detected_memory_event_query is not None:
             source_kind = "telegram_event_query"
+        elif detected_generic_memory_observation is not None:
+            source_kind = "generic_memory_observation"
         elif personality_query_kind != "none":
             source_kind = f"personality_query_{personality_query_kind}"
         elif evolved_deltas:
@@ -3701,6 +3727,17 @@ def build_researcher_reply(
                         "message_text": str(user_message or "").strip(),
                     }
                     if detected_memory_event_query is not None
+                    else None
+                ),
+                "detected_generic_memory_observation": (
+                    {
+                        "predicate": detected_generic_memory_observation.predicate,
+                        "value": detected_generic_memory_observation.value,
+                        "fact_name": detected_generic_memory_observation.fact_name,
+                        "label": detected_generic_memory_observation.label,
+                        "message_text": str(user_message or "").strip(),
+                    }
+                    if detected_generic_memory_observation is not None
                     else None
                 ),
                 "evolved_deltas": evolved_deltas or {},
@@ -3835,6 +3872,68 @@ def build_researcher_reply(
             config_path=None,
             attachment_context=attachment_context,
             routing_decision="memory_telegram_event_observation",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+
+    if detected_generic_memory_observation is not None:
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_generic_observation_update",
+            routing_decision="memory_generic_observation",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = build_telegram_generic_observation_answer(
+            observation=detected_generic_memory_observation
+        )
+        evidence_summary = (
+            "status=memory_generic_observation_update "
+            f"predicate={detected_generic_memory_observation.predicate or 'unknown'}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge acknowledged a generic Telegram memory observation directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_generic_observation",
+            facts=_bridge_event_facts(
+                routing_decision="memory_generic_observation",
+                bridge_mode="memory_generic_observation_update",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "fact_name": detected_generic_memory_observation.fact_name,
+                    "predicate": detected_generic_memory_observation.predicate,
+                    "value": detected_generic_memory_observation.value,
+                    "label": detected_generic_memory_observation.label,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_generic_observation_update",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_generic_observation",
             active_chip_key=None,
             active_chip_task_type=None,
             active_chip_evaluate_used=False,
