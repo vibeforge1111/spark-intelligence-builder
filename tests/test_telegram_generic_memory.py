@@ -165,6 +165,92 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(recorded_observations[0]["predicate"], "raw_turn")
         self.assertEqual(recorded_observations[0]["retention_class"], "episodic_archive")
 
+    def test_build_researcher_reply_answers_open_structured_evidence_recall_from_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-open-evidence-write",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-open-evidence-write",
+            channel_kind="telegram",
+            user_message="Users keep dropping during onboarding because Stripe verification fails.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for open memory recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for open memory recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-open-evidence-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-open-evidence-read",
+                channel_kind="telegram",
+                user_message="What evidence do you have about onboarding?",
+            )
+
+        self.assertEqual(result.mode, "memory_open_recall")
+        self.assertEqual(result.routing_decision, "memory_open_recall_query")
+        self.assertIn("onboarding", result.reply_text.lower())
+        self.assertIn("Stripe verification fails", result.reply_text)
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(tool_events)
+        facts = tool_events[0]["facts_json"] or {}
+        self.assertEqual(facts.get("bridge_mode"), "memory_open_recall")
+        self.assertIn("structured_evidence", facts.get("retrieved_memory_roles") or [])
+
+    def test_build_researcher_reply_answers_open_raw_episode_recall_from_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-open-episode-write",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-open-episode-write",
+            channel_kind="telegram",
+            user_message="The pricing page felt confusing during the demo.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for open memory recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for open memory recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-open-episode-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-open-episode-read",
+                channel_kind="telegram",
+                user_message="What happened during the demo?",
+            )
+
+        self.assertEqual(result.mode, "memory_open_recall")
+        self.assertEqual(result.routing_decision, "memory_open_recall_query")
+        self.assertIn("demo", result.reply_text.lower())
+        self.assertIn("pricing page felt confusing during the demo", result.reply_text.lower())
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(tool_events)
+        facts = tool_events[0]["facts_json"] or {}
+        self.assertEqual(facts.get("bridge_mode"), "memory_open_recall")
+        self.assertIn("episodic", facts.get("retrieved_memory_roles") or [])
+
     def test_build_researcher_reply_persists_generic_plan_memory_before_provider_resolution(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

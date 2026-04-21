@@ -333,6 +333,101 @@ def _profile_fact_explanation_has_content(payload: dict[str, Any] | None) -> boo
     return False
 
 
+@dataclass(frozen=True)
+class OpenMemoryRecallQuery:
+    topic: str
+    query_kind: str = "evidence_recall"
+
+
+_OPEN_MEMORY_RECALL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "evidence_recall",
+        re.compile(
+            r"^(?:what|which)\s+(?:evidence|saved memory|memory)\s+do you have about\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "evidence_recall",
+        re.compile(
+            r"^(?:what|which)\s+do you\s+(?:remember|know|have saved)\s+about\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "episodic_recall",
+        re.compile(
+            r"^(?:what|tell me what)\s+happened\s+(?:during|in|around|at)\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
+
+def _detect_open_memory_recall_query(user_message: str) -> OpenMemoryRecallQuery | None:
+    normalized = " ".join(str(user_message or "").strip().split())
+    if not normalized:
+        return None
+    for query_kind, pattern in _OPEN_MEMORY_RECALL_PATTERNS:
+        match = pattern.match(normalized)
+        if not match:
+            continue
+        topic = str(match.group(1) or "").strip(" \t\r\n?!.\"'")
+        if not topic or topic in {"me", "my profile"}:
+            return None
+        return OpenMemoryRecallQuery(topic=topic, query_kind=query_kind)
+    return None
+
+
+def _memory_record_text(record: dict[str, Any]) -> str:
+    text = str(record.get("text") or "").strip()
+    if text:
+        return text
+    return str(record.get("value") or "").strip()
+
+
+def _filter_open_memory_recall_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+    for record in records:
+        predicate = str(record.get("predicate") or "").strip()
+        role = str(record.get("memory_role") or "").strip()
+        if role in {"structured_evidence", "episodic"}:
+            filtered.append(record)
+            continue
+        if predicate == "raw_turn" or predicate.startswith("evidence.telegram."):
+            filtered.append(record)
+    return filtered
+
+
+def _record_matches_open_memory_topic(*, record: dict[str, Any], topic: str) -> bool:
+    normalized_topic = str(topic or "").strip().casefold()
+    if not normalized_topic:
+        return False
+    haystack = _memory_record_text(record).casefold()
+    return bool(haystack) and normalized_topic in haystack
+
+
+def _build_open_memory_recall_answer(*, query: OpenMemoryRecallQuery, records: list[dict[str, Any]]) -> str:
+    snippets: list[str] = []
+    seen: set[str] = set()
+    for record in records:
+        snippet = _memory_record_text(record)
+        if not snippet:
+            continue
+        normalized = snippet.casefold()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        snippets.append(snippet)
+        if len(snippets) >= 2:
+            break
+    if not snippets:
+        return "I don't currently have saved memory about that."
+    if len(snippets) == 1:
+        return f'I have saved memory about {query.topic}: "{snippets[0]}"'
+    return f'I have saved memory about {query.topic}: "{snippets[0]}" Also: "{snippets[1]}"'
+
+
 @dataclass
 class ResearcherBridgeStatus:
     enabled: bool
@@ -3450,6 +3545,7 @@ def build_researcher_reply(
     detected_profile_fact_query = None
     detected_memory_event = None
     detected_memory_event_query = None
+    detected_open_memory_recall_query = None
     detected_generic_memory_candidate = None
     assessed_generic_memory_candidate = None
     detected_generic_memory_deletion = None
@@ -3532,6 +3628,12 @@ def build_researcher_reply(
                 )
             elif detected_memory_event_query is None:
                 detected_memory_event_query = detect_telegram_memory_event_query(user_message)
+            if (
+                detected_profile_fact_query is None
+                and detected_memory_event_query is None
+                and detected_open_memory_recall_query is None
+            ):
+                detected_open_memory_recall_query = _detect_open_memory_recall_query(user_message)
         except Exception:
             pass
 
@@ -4824,6 +4926,110 @@ def build_researcher_reply(
             config_path=None,
             attachment_context=attachment_context,
             routing_decision="memory_profile_identity_summary",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+    if detected_open_memory_recall_query is not None:
+        memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
+        evidence_lookup = retrieve_memory_evidence_in_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            query=str(user_message or "").strip() or detected_open_memory_recall_query.topic,
+            subject=memory_subject,
+            limit=6,
+            actor_id="researcher_bridge",
+        )
+        recall_records: list[dict[str, Any]] = []
+        read_method = "retrieve_evidence"
+        if not evidence_lookup.read_result.abstained and evidence_lookup.read_result.records:
+            recall_records = _filter_open_memory_recall_records(evidence_lookup.read_result.records)
+        if not recall_records:
+            direct_inspection = inspect_human_memory_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                human_id=human_id,
+                actor_id="researcher_bridge",
+            )
+            if not direct_inspection.read_result.abstained and direct_inspection.read_result.records:
+                recall_records = [
+                    record
+                    for record in _filter_open_memory_recall_records(direct_inspection.read_result.records)
+                    if _record_matches_open_memory_topic(
+                        record=record,
+                        topic=detected_open_memory_recall_query.topic,
+                    )
+                ]
+                if recall_records:
+                    read_method = "inspect_memory_records"
+        retrieved_memory_roles = sorted(
+            {
+                str(record.get("memory_role") or "").strip()
+                for record in recall_records
+                if str(record.get("memory_role") or "").strip()
+            }
+        )
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_open_recall",
+            routing_decision="memory_open_recall_query",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = _build_open_memory_recall_answer(
+            query=detected_open_memory_recall_query,
+            records=recall_records,
+        )
+        evidence_summary = (
+            "status=memory_open_recall "
+            f"topic={detected_open_memory_recall_query.topic or 'unknown'} "
+            f"record_count={len(recall_records)} "
+            f"read_method={read_method} "
+            f"retrieved_roles={','.join(retrieved_memory_roles) if retrieved_memory_roles else 'none'}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered an open memory recall query directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_open_recall_query",
+            facts=_bridge_event_facts(
+                routing_decision="memory_open_recall_query",
+                bridge_mode="memory_open_recall",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "topic": detected_open_memory_recall_query.topic,
+                    "query_kind": detected_open_memory_recall_query.query_kind,
+                    "record_count": len(recall_records),
+                    "read_method": read_method,
+                    "retrieved_memory_roles": retrieved_memory_roles,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_open_recall",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_open_recall_query",
             active_chip_key=None,
             active_chip_task_type=None,
             active_chip_evaluate_used=False,
