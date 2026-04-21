@@ -303,6 +303,39 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(recorded_observations[0]["predicate"], "profile.current_risk")
         self.assertEqual(recorded_observations[0]["value"], "enterprise churn during onboarding")
 
+    def test_build_researcher_reply_persists_generic_dependency_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for generic memory observations"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for generic memory observations"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-generic-dependency-update",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-generic-dependency-update",
+                channel_kind="telegram",
+                user_message="Our dependency is Stripe approval.",
+            )
+
+        self.assertEqual(
+            result.reply_text,
+            "I'll remember that your current dependency is Stripe approval.",
+        )
+        self.assertEqual(result.mode, "memory_generic_observation_update")
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(write_events)
+        recorded_observations = (write_events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(recorded_observations[0]["predicate"], "profile.current_dependency")
+        self.assertEqual(recorded_observations[0]["value"], "Stripe approval")
+
     def test_build_researcher_reply_persists_generic_manager_relationship_memory(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
@@ -678,6 +711,43 @@ class TelegramGenericMemoryTests(SparkTestCase):
             )
 
         self.assertEqual(result.reply_text, "Your current risk is enterprise churn during onboarding.")
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+
+    def test_build_researcher_reply_answers_generic_dependency_query_from_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-dependency-write-query-seed",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-dependency-write-query-seed",
+            channel_kind="telegram",
+            user_message="Our dependency is Stripe approval.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for generic memory queries"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for generic memory queries"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-generic-dependency-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-generic-dependency-query",
+                channel_kind="telegram",
+                user_message="What is our dependency?",
+            )
+
+        self.assertEqual(result.reply_text, "Your current dependency is Stripe approval.")
         self.assertEqual(result.mode, "memory_profile_fact")
         self.assertEqual(result.routing_decision, "memory_profile_fact_query")
 
@@ -1430,6 +1500,108 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(
             history_after_delete_result.reply_text,
             "An earlier saved current risk was delayed product instrumentation.",
+        )
+
+    def test_build_researcher_reply_preserves_generic_dependency_history_and_delete_lifecycle(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-dependency-history-seed-1",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-dependency-history",
+            channel_kind="telegram",
+            user_message="Our dependency is Stripe approval.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-dependency-history-seed-2",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-dependency-history",
+            channel_kind="telegram",
+            user_message="The current dependency is partner API access.",
+        )
+
+        current_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-dependency-current",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-dependency-history",
+            channel_kind="telegram",
+            user_message="What is our dependency?",
+        )
+        history_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-dependency-history",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-dependency-history",
+            channel_kind="telegram",
+            user_message="What was the dependency before?",
+        )
+        event_history_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-dependency-event-history",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-dependency-history",
+            channel_kind="telegram",
+            user_message="Show our dependency history.",
+        )
+        delete_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-dependency-delete",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-dependency-history",
+            channel_kind="telegram",
+            user_message="Forget our dependency.",
+        )
+        current_after_delete_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-dependency-current-after-delete",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-dependency-history",
+            channel_kind="telegram",
+            user_message="What is our dependency?",
+        )
+        history_after_delete_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-dependency-history-after-delete",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-dependency-history",
+            channel_kind="telegram",
+            user_message="What was the dependency before?",
+        )
+
+        self.assertEqual(current_result.reply_text, "Your current dependency is partner API access.")
+        self.assertEqual(
+            history_result.reply_text,
+            "Before your current dependency was partner API access, it was Stripe approval.",
+        )
+        self.assertEqual(
+            event_history_result.reply_text,
+            "I have 2 saved current dependency events: Stripe approval then partner API access.",
+        )
+        self.assertEqual(delete_result.reply_text, "I'll forget your current dependency.")
+        self.assertEqual(current_after_delete_result.reply_text, "I don't currently have that saved.")
+        self.assertEqual(
+            history_after_delete_result.reply_text,
+            "An earlier saved current dependency was partner API access.",
         )
 
     def test_build_researcher_reply_does_not_persist_hypothetical_generic_memory_text(self) -> None:

@@ -83,6 +83,14 @@ _RISK_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^the\s+biggest\s+risk\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
 )
 
+_DEPENDENCY_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^our\s+dependency\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^the\s+dependency\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^our\s+current\s+dependency\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^the\s+current\s+dependency\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^(?:i|we)(?:'re| are)\s+dependent\s+on\s+(.+?)[.!]?$", re.IGNORECASE),
+)
+
 
 @dataclass(frozen=True)
 class TelegramGenericObservation:
@@ -231,6 +239,20 @@ def detect_telegram_generic_observation(user_message: str) -> TelegramGenericObs
                 evidence_text=text,
                 fact_name="current_risk",
                 label="current risk",
+            )
+
+    for pattern in _DEPENDENCY_PATTERNS:
+        match = pattern.fullmatch(normalized)
+        if match is None:
+            continue
+        value = _clean_value(match.group(1))
+        if value:
+            return TelegramGenericObservation(
+                predicate="profile.current_dependency",
+                value=value,
+                evidence_text=text,
+                fact_name="current_dependency",
+                label="current dependency",
             )
 
     return None
@@ -476,6 +498,33 @@ def detect_telegram_generic_deletion(user_message: str) -> TelegramGenericDeleti
             label="current risk",
         )
 
+    if lowered in {
+        "forget my current dependency.",
+        "forget my current dependency",
+        "delete my current dependency.",
+        "delete my current dependency",
+        "remove my current dependency.",
+        "remove my current dependency",
+        "forget our dependency.",
+        "forget our dependency",
+        "delete our dependency.",
+        "delete our dependency",
+        "remove our dependency.",
+        "remove our dependency",
+        "forget the dependency.",
+        "forget the dependency",
+        "delete the dependency.",
+        "delete the dependency",
+        "remove the dependency.",
+        "remove the dependency",
+    }:
+        return TelegramGenericDeletion(
+            predicate="profile.current_dependency",
+            evidence_text=text,
+            fact_name="current_dependency",
+            label="current dependency",
+        )
+
     return None
 
 
@@ -499,6 +548,8 @@ def build_telegram_generic_observation_answer(*, observation: TelegramGenericObs
         return f"I'll remember that your current milestone is {value}."
     if observation.predicate == "profile.current_risk":
         return f"I'll remember that your current risk is {value}."
+    if observation.predicate == "profile.current_dependency":
+        return f"I'll remember that your current dependency is {value}."
     return f"I'll remember that your {observation.label} is {value}."
 
 
@@ -519,6 +570,8 @@ def build_telegram_generic_deletion_answer(*, deletion: TelegramGenericDeletion)
         return "I'll forget your current milestone."
     if deletion.predicate == "profile.current_risk":
         return "I'll forget your current risk."
+    if deletion.predicate == "profile.current_dependency":
+        return "I'll forget your current dependency."
     return f"I'll forget your {deletion.label}."
 
 

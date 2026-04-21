@@ -591,6 +591,21 @@ def _detect_profile_fact_history_query(text: str) -> ProfileFactQuery | None:
             label="current risk",
             query_kind="fact_history",
         )
+    if any(
+        phrase in text
+        for phrase in (
+            "what was my previous dependency",
+            "what was our previous dependency",
+            "what was the dependency before",
+            "what dependency did we have before",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_dependency",
+            fact_name="profile_current_dependency",
+            label="current dependency",
+            query_kind="fact_history",
+        )
     return None
 
 
@@ -766,6 +781,22 @@ def _detect_profile_fact_event_history_query(text: str) -> ProfileFactQuery | No
             predicate="profile.current_risk",
             fact_name="profile_current_risk",
             label="current risk",
+            query_kind="event_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what memory events do you have about my current dependency",
+            "what memory events do you have about our dependency",
+            "show my dependency history",
+            "show our dependency history",
+            "show the dependency history",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_dependency",
+            fact_name="profile_current_dependency",
+            label="current dependency",
             query_kind="event_history",
         )
     return None
@@ -1179,6 +1210,24 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
             fact_name="profile_current_risk",
             label="current risk",
         )
+    if any(
+        phrase in text
+        for phrase in (
+            "what is my current dependency",
+            "what's my current dependency",
+            "what is our current dependency",
+            "what's our current dependency",
+            "what is our dependency",
+            "what's our dependency",
+            "what is the dependency",
+            "what's the dependency",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_dependency",
+            fact_name="profile_current_dependency",
+            label="current dependency",
+        )
     if normalized_question in {
         "what startup did i create",
         "what company did i found",
@@ -1405,6 +1454,12 @@ def build_profile_fact_history_answer(
         if normalized_current and normalized_current != normalized_previous:
             return _ensure_sentence(f"Before your current risk was {normalized_current}, it was {normalized_previous}")
         return _ensure_sentence(f"An earlier saved current risk was {normalized_previous}")
+    if predicate == "profile.current_dependency":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(
+                f"Before your current dependency was {normalized_current}, it was {normalized_previous}"
+            )
+        return _ensure_sentence(f"An earlier saved current dependency was {normalized_previous}")
     if predicate == "profile.cofounder_name":
         if normalized_current and normalized_current != normalized_previous:
             return _ensure_sentence(f"Before {normalized_current}, your cofounder was {normalized_previous}")
@@ -1522,6 +1577,8 @@ def _build_profile_fact_concise_answer(*, query: ProfileFactQuery, value: str) -
         return _ensure_sentence(f"Your current milestone is {normalized_value}")
     if predicate == "profile.current_risk":
         return _ensure_sentence(f"Your current risk is {normalized_value}")
+    if predicate == "profile.current_dependency":
+        return _ensure_sentence(f"Your current dependency is {normalized_value}")
     if predicate == "profile.cofounder_name":
         return _ensure_sentence(f"Your cofounder is {normalized_value}")
     if predicate == "profile.mentor_name":
@@ -1594,6 +1651,7 @@ def build_profile_identity_summary_context(*, records: list[dict[str, str]]) -> 
         "profile.current_commitment",
         "profile.current_milestone",
         "profile.current_risk",
+        "profile.current_dependency",
         "profile.cofounder_name",
         "profile.mentor_name",
         "profile.manager_name",
@@ -1623,6 +1681,7 @@ def build_profile_identity_summary_context(*, records: list[dict[str, str]]) -> 
         "profile.current_commitment": "current commitment",
         "profile.current_milestone": "current milestone",
         "profile.current_risk": "current risk",
+        "profile.current_dependency": "current dependency",
         "profile.cofounder_name": "cofounder",
         "profile.mentor_name": "mentor",
         "profile.manager_name": "manager",
