@@ -1687,6 +1687,113 @@ def write_belief_to_memory(
     return result
 
 
+def archive_belief_from_memory(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str,
+    predicate: str,
+    belief_text: str,
+    belief_observation_id: str | None,
+    archive_reason: str,
+    session_id: str | None,
+    turn_id: str | None,
+    channel_kind: str | None,
+    actor_id: str = "belief_archiver",
+) -> MemoryWriteResult:
+    if not _memory_enabled(config_manager):
+        return _disabled_write_result(operation="delete", default_role="belief")
+    client = _load_sdk_client(config_manager)
+    if client is None:
+        result = MemoryWriteResult(
+            status="abstained",
+            operation="delete",
+            method="write_observation",
+            memory_role="belief",
+            accepted_count=0,
+            rejected_count=0,
+            skipped_count=1,
+            abstained=True,
+            retrieval_trace=None,
+            provenance=[],
+            reason="sdk_unavailable",
+        )
+        _record_memory_write_event(
+            state_db=state_db,
+            result=result,
+            human_id=human_id,
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=actor_id,
+        )
+        return result
+    subject = _subject_for_human_id(human_id)
+    timestamp = _now_iso()
+    observation = {
+        "subject": subject,
+        "predicate": predicate,
+        "value": belief_text,
+        "operation": "delete",
+        "memory_role": "belief",
+        "retention_class": "derived_belief",
+        "text": belief_text,
+        "belief_lifecycle_action": "archived",
+    }
+    if belief_observation_id:
+        observation["supersedes"] = belief_observation_id
+    _record_memory_write_requested_observations(
+        state_db=state_db,
+        operation="delete",
+        human_id=human_id,
+        observations=[observation],
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+        memory_role="belief",
+        summary="Spark memory write requested for belief archive.",
+    )
+    raw = _call_sdk_method(
+        client,
+        "write_observation",
+        {
+            "operation": "delete",
+            "subject": subject,
+            "predicate": predicate,
+            "value": belief_text,
+            "text": belief_text,
+            "memory_role": "belief",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "timestamp": timestamp,
+            "retention_class": "derived_belief",
+            "document_time": timestamp,
+            "valid_to": timestamp,
+            "deleted_at": timestamp,
+            "supersedes": belief_observation_id,
+            "metadata": {
+                "entity_type": "human",
+                "channel_kind": channel_kind,
+                "memory_role": "belief",
+                "source_surface": "researcher_bridge",
+                "archive_reason": archive_reason,
+                "belief_lifecycle_action": "archived",
+                "archived_belief_observation_id": belief_observation_id,
+                "value": belief_text,
+            },
+        },
+    )
+    result = _normalize_write_result(raw=raw, operation="delete", default_role="belief")
+    _record_memory_write_event(
+        state_db=state_db,
+        result=result,
+        human_id=human_id,
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+    )
+    return result
+
+
 def write_raw_episode_to_memory(
     *,
     config_manager: ConfigManager,

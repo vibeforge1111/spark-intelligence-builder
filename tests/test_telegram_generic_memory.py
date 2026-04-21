@@ -352,6 +352,19 @@ class TelegramGenericMemoryTests(SparkTestCase):
         )
         self.assertTrue(facts.get("belief_stale_due_to_evidence"))
         self.assertEqual(facts.get("newer_evidence_count"), 1)
+        post_recall_write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=20)
+        archive_write = next(
+            (
+                (event["facts_json"] or {})
+                for event in post_recall_write_events
+                if (event["facts_json"] or {}).get("memory_role") == "belief"
+                and ((event["facts_json"] or {}).get("observations") or [{}])[0].get("operation") == "delete"
+            ),
+            {},
+        )
+        archive_observations = archive_write.get("observations") or []
+        if archive_observations:
+            self.assertEqual(archive_observations[0].get("belief_lifecycle_action"), "archived")
 
     def test_build_researcher_reply_returns_empty_belief_recall_when_nothing_saved(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

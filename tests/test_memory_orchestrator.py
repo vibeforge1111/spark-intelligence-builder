@@ -8,6 +8,7 @@ from unittest.mock import patch
 from spark_intelligence.doctor.checks import run_doctor
 from spark_intelligence.memory import orchestrator as memory_orchestrator
 from spark_intelligence.memory import (
+    archive_belief_from_memory,
     build_sdk_maintenance_payload,
     build_shadow_replay_payload,
     export_shadow_replay_batch,
@@ -63,7 +64,11 @@ class _FakeMemoryClient:
 
     def write_observation(self, **payload):
         self.observation_calls.append(payload)
-        memory_role = str(payload.get("memory_role") or "current_state")
+        memory_role = (
+            "state_deletion"
+            if str(payload.get("operation") or "").strip().lower() == "delete"
+            else str(payload.get("memory_role") or "current_state")
+        )
         return {
             "status": "accepted",
             "memory_role": memory_role,
@@ -394,6 +399,38 @@ class MemoryOrchestratorTests(SparkTestCase):
         observations = (events[0]["facts_json"] or {}).get("observations") or []
         self.assertEqual(observations[0]["supersedes"], "obs-belief-1")
         self.assertEqual(observations[0]["conflicts_with"], ["obs-belief-1"])
+
+    def test_archive_belief_from_memory_writes_delete_tombstone(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            result = archive_belief_from_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                predicate="belief.telegram.beliefs_and_inferences",
+                belief_text="I think enterprise teams need hands-on onboarding.",
+                belief_observation_id="obs-belief-1",
+                archive_reason="invalidated_and_past_revalidation",
+                session_id="session:belief:archive",
+                turn_id="turn:belief:archive",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        call = fake_client.observation_calls[0]
+        self.assertEqual(call["operation"], "delete")
+        self.assertEqual(call["predicate"], "belief.telegram.beliefs_and_inferences")
+        self.assertEqual(call["supersedes"], "obs-belief-1")
+        self.assertEqual(call["metadata"]["belief_lifecycle_action"], "archived")
+        self.assertEqual(call["metadata"]["archive_reason"], "invalidated_and_past_revalidation")
+        events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(events)
+        observations = (events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(observations[0]["operation"], "delete")
+        self.assertEqual(observations[0]["belief_lifecycle_action"], "archived")
 
     def test_telegram_event_detection_write_and_answer_use_event_memory_lane(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

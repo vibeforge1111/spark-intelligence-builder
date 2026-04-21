@@ -37,6 +37,7 @@ from spark_intelligence.capability_router import build_capability_router_prompt_
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.harness_registry import build_harness_prompt_context
 from spark_intelligence.memory import (
+    archive_belief_from_memory,
     delete_profile_fact_from_memory,
     explain_memory_answer_in_memory,
     inspect_human_memory_in_memory,
@@ -511,6 +512,17 @@ def _structured_evidence_invalidated_belief_ids(records: list[dict[str, Any]]) -
             if normalized:
                 invalidated_ids.add(normalized)
     return invalidated_ids
+
+
+def _filter_records_by_observation_ids(records: list[dict[str, Any]], observation_ids: set[str]) -> list[dict[str, Any]]:
+    if not observation_ids:
+        return []
+    filtered: list[dict[str, Any]] = []
+    for record in records:
+        record_id = str(record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or "").strip()
+        if record_id and record_id in observation_ids:
+            filtered.append(record)
+    return filtered
 
 
 def _memory_record_timestamp(record: dict[str, Any]) -> str:
@@ -5366,11 +5378,37 @@ def build_researcher_reply(
         belief_records: list[dict[str, Any]] = []
         newer_evidence_records: list[dict[str, Any]] = []
         stale_belief_records: list[dict[str, Any]] = []
+        archived_belief_count = 0
         read_method = "retrieve_evidence"
         if not evidence_lookup.read_result.abstained and evidence_lookup.read_result.records:
             belief_records = _filter_belief_recall_records(evidence_lookup.read_result.records)
             invalidated_belief_ids = _structured_evidence_invalidated_belief_ids(evidence_lookup.read_result.records)
             if invalidated_belief_ids:
+                archivable_belief_records = _filter_records_by_observation_ids(
+                    _belief_records_past_revalidation(belief_records),
+                    invalidated_belief_ids,
+                )
+                for record in archivable_belief_records:
+                    try:
+                        archive_belief_from_memory(
+                            config_manager=config_manager,
+                            state_db=state_db,
+                            human_id=human_id,
+                            predicate=str(record.get("predicate") or ""),
+                            belief_text=_memory_record_text(record),
+                            belief_observation_id=str(
+                                record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                            ).strip()
+                            or None,
+                            archive_reason="invalidated_and_past_revalidation",
+                            session_id=session_id,
+                            turn_id=request_id,
+                            channel_kind=channel_kind,
+                            actor_id="telegram_belief_archiver",
+                        )
+                        archived_belief_count += 1
+                    except Exception:
+                        pass
                 evidence_records = _filter_structured_evidence_records(evidence_lookup.read_result.records)
                 newer_evidence_records = [
                     record
@@ -5401,6 +5439,31 @@ def build_researcher_reply(
             if not direct_inspection.read_result.abstained and direct_inspection.read_result.records:
                 invalidated_belief_ids = _structured_evidence_invalidated_belief_ids(direct_inspection.read_result.records)
                 if invalidated_belief_ids:
+                    archivable_belief_records = _filter_records_by_observation_ids(
+                        _belief_records_past_revalidation(belief_records),
+                        invalidated_belief_ids,
+                    )
+                    for record in archivable_belief_records:
+                        try:
+                            archive_belief_from_memory(
+                                config_manager=config_manager,
+                                state_db=state_db,
+                                human_id=human_id,
+                                predicate=str(record.get("predicate") or ""),
+                                belief_text=_memory_record_text(record),
+                                belief_observation_id=str(
+                                    record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                                ).strip()
+                                or None,
+                                archive_reason="invalidated_and_past_revalidation",
+                                session_id=session_id,
+                                turn_id=request_id,
+                                channel_kind=channel_kind,
+                                actor_id="telegram_belief_archiver",
+                            )
+                            archived_belief_count += 1
+                        except Exception:
+                            pass
                     evidence_records = _filter_structured_evidence_records(direct_inspection.read_result.records)
                     newer_evidence_records = [
                         record
@@ -5473,6 +5536,7 @@ def build_researcher_reply(
             f"record_count={len(belief_records)} "
             f"newer_evidence_count={len(newer_evidence_records)} "
             f"stale_belief_count={len(stale_belief_records)} "
+            f"archived_belief_count={archived_belief_count} "
             f"read_method={read_method} "
             f"retrieved_roles={','.join(retrieved_memory_roles) if retrieved_memory_roles else 'none'}"
         )
@@ -5506,6 +5570,7 @@ def build_researcher_reply(
                     "belief_stale_due_to_evidence": bool(newer_evidence_records),
                     "belief_stale_due_to_age": bool(stale_belief_records),
                     "stale_belief_count": len(stale_belief_records),
+                    "archived_belief_count": archived_belief_count,
                     "read_method": read_method,
                     "retrieved_memory_roles": retrieved_memory_roles,
                 },
