@@ -821,6 +821,20 @@ def _build_belief_observation_answer(*, belief_text: str) -> str:
     return f"I'll save that as a belief: \"{snippet}\""
 
 
+def _build_structured_evidence_observation_answer(*, evidence_text: str) -> str:
+    snippet = str(evidence_text or "").strip()
+    if not snippet:
+        return "I'll save that as structured evidence."
+    return f"I'll save that as structured evidence: \"{snippet}\""
+
+
+def _build_raw_episode_observation_answer(*, episode_text: str) -> str:
+    snippet = str(episode_text or "").strip()
+    if not snippet:
+        return "I'll save that as a raw episode."
+    return f"I'll save that as a raw episode: \"{snippet}\""
+
+
 @dataclass
 class ResearcherBridgeStatus:
     enabled: bool
@@ -4694,6 +4708,140 @@ def build_researcher_reply(
             config_path=None,
             attachment_context=attachment_context,
             routing_decision="memory_generic_observation_delete",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+
+    if (
+        assessed_generic_memory_candidate is not None
+        and assessed_generic_memory_candidate.outcome == "structured_evidence"
+    ):
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_structured_evidence_update",
+            routing_decision="memory_structured_evidence_observation",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = _build_structured_evidence_observation_answer(
+            evidence_text=assessed_generic_memory_candidate.evidence_text,
+        )
+        evidence_summary = (
+            "status=memory_structured_evidence_update "
+            f"domain_pack={assessed_generic_memory_candidate.domain_pack or 'evidence'} "
+            f"evidence_kind={assessed_generic_memory_candidate.reason or 'structured_evidence'}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge acknowledged structured evidence directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_structured_evidence_observation",
+            facts=_bridge_event_facts(
+                routing_decision="memory_structured_evidence_observation",
+                bridge_mode="memory_structured_evidence_update",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "memory_role": assessed_generic_memory_candidate.memory_role,
+                    "retention_class": assessed_generic_memory_candidate.retention_class,
+                    "domain_pack": assessed_generic_memory_candidate.domain_pack,
+                    "evidence_kind": assessed_generic_memory_candidate.reason,
+                    "evidence_text": assessed_generic_memory_candidate.evidence_text,
+                    "operation": assessed_generic_memory_candidate.operation,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_structured_evidence_update",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_structured_evidence_observation",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+
+    if (
+        assessed_generic_memory_candidate is not None
+        and assessed_generic_memory_candidate.outcome == "raw_episode"
+    ):
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_raw_episode_update",
+            routing_decision="memory_raw_episode_observation",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = _build_raw_episode_observation_answer(
+            episode_text=assessed_generic_memory_candidate.evidence_text,
+        )
+        evidence_summary = (
+            "status=memory_raw_episode_update "
+            f"domain_pack={assessed_generic_memory_candidate.domain_pack or 'raw_episode'}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge acknowledged a raw episode directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_raw_episode_observation",
+            facts=_bridge_event_facts(
+                routing_decision="memory_raw_episode_observation",
+                bridge_mode="memory_raw_episode_update",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "memory_role": assessed_generic_memory_candidate.memory_role,
+                    "retention_class": assessed_generic_memory_candidate.retention_class,
+                    "domain_pack": assessed_generic_memory_candidate.domain_pack,
+                    "episode_text": assessed_generic_memory_candidate.evidence_text,
+                    "operation": assessed_generic_memory_candidate.operation,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_raw_episode_update",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_raw_episode_observation",
             active_chip_key=None,
             active_chip_task_type=None,
             active_chip_evaluate_used=False,

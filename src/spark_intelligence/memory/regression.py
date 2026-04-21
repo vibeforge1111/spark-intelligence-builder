@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -1303,12 +1304,18 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         case_id="evidence_current_state_write_onboarding_initial",
         category="evidence_current_state_consolidation",
         message="Users keep dropping during onboarding because Stripe verification fails.",
+        expected_bridge_mode="memory_structured_evidence_update",
+        expected_routing_decision="memory_structured_evidence_observation",
+        expected_response_contains=("structured evidence", "Stripe verification fails"),
         benchmark_tags=("structured_evidence", "current_state_consolidation_seed"),
     ),
     TelegramMemoryRegressionCase(
         case_id="evidence_current_state_write_onboarding_repeat",
         category="evidence_current_state_consolidation",
         message="Users still drop during onboarding because Stripe verification fails and the retry flow is confusing.",
+        expected_bridge_mode="memory_structured_evidence_update",
+        expected_routing_decision="memory_structured_evidence_observation",
+        expected_response_contains=("structured evidence", "retry flow is confusing"),
         benchmark_tags=("structured_evidence", "current_state_consolidation_repeat"),
     ),
     TelegramMemoryRegressionCase(
@@ -1324,12 +1331,18 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         case_id="evidence_current_state_write_dependency_initial",
         category="evidence_active_state_consolidation",
         message="Users keep getting stuck during onboarding because we're waiting on Stripe approval.",
+        expected_bridge_mode="memory_structured_evidence_update",
+        expected_routing_decision="memory_structured_evidence_observation",
+        expected_response_contains=("structured evidence", "waiting on Stripe approval"),
         benchmark_tags=("structured_evidence", "current_dependency_consolidation_seed"),
     ),
     TelegramMemoryRegressionCase(
         case_id="evidence_current_state_write_dependency_repeat",
         category="evidence_active_state_consolidation",
         message="Users still get stuck during onboarding because we're waiting on Stripe approval and review is slow.",
+        expected_bridge_mode="memory_structured_evidence_update",
+        expected_routing_decision="memory_structured_evidence_observation",
+        expected_response_contains=("structured evidence", "review is slow"),
         benchmark_tags=("structured_evidence", "current_dependency_consolidation_repeat"),
     ),
     TelegramMemoryRegressionCase(
@@ -1345,12 +1358,18 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         case_id="evidence_current_state_write_constraint_initial",
         category="evidence_active_state_consolidation",
         message="Users keep waiting during onboarding because we're limited by founder bandwidth.",
+        expected_bridge_mode="memory_structured_evidence_update",
+        expected_routing_decision="memory_structured_evidence_observation",
+        expected_response_contains=("structured evidence", "founder bandwidth"),
         benchmark_tags=("structured_evidence", "current_constraint_consolidation_seed"),
     ),
     TelegramMemoryRegressionCase(
         case_id="evidence_current_state_write_constraint_repeat",
         category="evidence_active_state_consolidation",
         message="Users still wait during onboarding because we're limited by founder bandwidth.",
+        expected_bridge_mode="memory_structured_evidence_update",
+        expected_routing_decision="memory_structured_evidence_observation",
+        expected_response_contains=("structured evidence", "founder bandwidth"),
         benchmark_tags=("structured_evidence", "current_constraint_consolidation_repeat"),
     ),
     TelegramMemoryRegressionCase(
@@ -1366,12 +1385,18 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         case_id="evidence_current_state_write_risk_initial",
         category="evidence_active_state_consolidation",
         message="There is still a risk of enterprise churn during onboarding because activation is weak.",
+        expected_bridge_mode="memory_structured_evidence_update",
+        expected_routing_decision="memory_structured_evidence_observation",
+        expected_response_contains=("structured evidence", "activation is weak"),
         benchmark_tags=("structured_evidence", "current_risk_consolidation_seed"),
     ),
     TelegramMemoryRegressionCase(
         case_id="evidence_current_state_write_risk_repeat",
         category="evidence_active_state_consolidation",
         message="There is still a risk of enterprise churn during onboarding because activation is weak and teams are delaying rollout.",
+        expected_bridge_mode="memory_structured_evidence_update",
+        expected_routing_decision="memory_structured_evidence_observation",
+        expected_response_contains=("structured evidence", "teams are delaying rollout"),
         benchmark_tags=("structured_evidence", "current_risk_consolidation_repeat"),
     ),
     TelegramMemoryRegressionCase(
@@ -1387,12 +1412,18 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         case_id="evidence_current_state_write_status_initial",
         category="evidence_active_state_consolidation",
         message="Status update: pending security review for the onboarding rollout.",
+        expected_bridge_mode="memory_generic_observation_update",
+        expected_routing_decision="memory_generic_observation",
+        expected_response_contains=("current status", "pending security review"),
         benchmark_tags=("structured_evidence", "current_status_consolidation_seed"),
     ),
     TelegramMemoryRegressionCase(
         case_id="evidence_current_state_write_status_repeat",
         category="evidence_active_state_consolidation",
         message="Status update: still pending security review for the onboarding rollout.",
+        expected_bridge_mode="memory_generic_observation_update",
+        expected_routing_decision="memory_generic_observation",
+        expected_response_contains=("current status", "still pending security review"),
         benchmark_tags=("structured_evidence", "current_status_consolidation_repeat"),
     ),
     TelegramMemoryRegressionCase(
@@ -1408,12 +1439,18 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         case_id="evidence_current_state_write_owner_initial",
         category="evidence_active_state_consolidation",
         message="The onboarding rollout is currently owned by Nadia.",
+        expected_bridge_mode="memory_generic_observation_update",
+        expected_routing_decision="memory_generic_observation",
+        expected_response_contains=("current owner", "Nadia"),
         benchmark_tags=("structured_evidence", "current_owner_consolidation_seed"),
     ),
     TelegramMemoryRegressionCase(
         case_id="evidence_current_state_write_owner_repeat",
         category="evidence_active_state_consolidation",
         message="The onboarding rollout is still owned by Nadia during security review.",
+        expected_bridge_mode="memory_generic_observation_update",
+        expected_routing_decision="memory_generic_observation",
+        expected_response_contains=("current owner", "Nadia"),
         benchmark_tags=("structured_evidence", "current_owner_consolidation_repeat"),
     ),
     TelegramMemoryRegressionCase(
@@ -1614,6 +1651,12 @@ def run_telegram_memory_regression(
 ) -> TelegramMemoryRegressionResult:
     from spark_intelligence.gateway.runtime import gateway_ask_telegram
 
+    def _emit_progress(stage: str) -> None:
+        print(f"[memory-regression] {stage}", file=sys.stderr, flush=True)
+
+    def _is_focused_slice() -> bool:
+        return bool(requested_case_ids or requested_categories or requested_benchmark_pack_ids)
+
     resolved_output_dir = Path(output_dir) if output_dir else _default_output_dir(config_manager)
     resolved_output_dir.mkdir(parents=True, exist_ok=True)
     resolved_kb_output_dir = resolved_output_dir / "kb"
@@ -1705,7 +1748,9 @@ def run_telegram_memory_regression(
         resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return TelegramMemoryRegressionResult(output_dir=resolved_output_dir, payload=payload)
 
+    _emit_progress(f"running {len(selected_cases)} selected Telegram regression cases")
     for case in selected_cases:
+        _emit_progress(f"case:{case.case_id}")
         case_user_id = selected_user_id
         case_chat_id = selected_chat_id
         if case.isolate_memory and selected_user_id:
@@ -1780,6 +1825,7 @@ def run_telegram_memory_regression(
     resolved_human_id = f"human:telegram:{selected_user_id}" if selected_user_id else None
     inspection_payload: dict[str, Any] | None = None
     if resolved_human_id:
+        _emit_progress("inspecting current memory state")
         inspection_result = inspect_human_memory_in_memory(
             config_manager=config_manager,
             state_db=state_db,
@@ -1788,32 +1834,47 @@ def run_telegram_memory_regression(
         )
         inspection_payload = _parse_json_object(inspection_result.to_json())
 
-    architecture_benchmark_result = benchmark_memory_architectures(
-        config_manager=config_manager,
-        output_dir=architecture_benchmark_output_dir,
-        validator_root=validator_root,
-        baseline_names=requested_baseline_names or None,
-    )
-    architecture_benchmark_payload = architecture_benchmark_result.payload
-    architecture_summary_path = (
-        (architecture_benchmark_payload.get("artifact_paths") or {}).get("summary_markdown")
-        if isinstance(architecture_benchmark_payload, dict)
-        else None
-    )
-    architecture_live_comparison_result = compare_telegram_memory_architectures(
-        config_manager=config_manager,
-        case_payloads=case_payloads,
-        selected_cases=selected_cases,
-        output_dir=architecture_live_comparison_output_dir,
-        validator_root=validator_root,
-        baseline_names=requested_baseline_names or None,
-    )
-    architecture_live_comparison_payload = architecture_live_comparison_result.payload
-    architecture_live_comparison_summary_path = (
-        (architecture_live_comparison_payload.get("artifact_paths") or {}).get("summary_markdown")
-        if isinstance(architecture_live_comparison_payload, dict)
-        else None
-    )
+    architecture_benchmark_payload: dict[str, Any] | None = None
+    architecture_live_comparison_payload: dict[str, Any] | None = None
+    architecture_summary_path: str | None = None
+    architecture_live_comparison_summary_path: str | None = None
+    skipped_post_analysis_labels: list[str] = []
+    if _is_focused_slice():
+        skipped_post_analysis_labels.extend(
+            [
+                "architecture_benchmark_skipped_for_focused_slice",
+                "architecture_live_comparison_skipped_for_focused_slice",
+            ]
+        )
+    else:
+        _emit_progress("running architecture benchmark")
+        architecture_benchmark_result = benchmark_memory_architectures(
+            config_manager=config_manager,
+            output_dir=architecture_benchmark_output_dir,
+            validator_root=validator_root,
+            baseline_names=requested_baseline_names or None,
+        )
+        architecture_benchmark_payload = architecture_benchmark_result.payload
+        architecture_summary_path = (
+            (architecture_benchmark_payload.get("artifact_paths") or {}).get("summary_markdown")
+            if isinstance(architecture_benchmark_payload, dict)
+            else None
+        )
+        _emit_progress("running live architecture comparison")
+        architecture_live_comparison_result = compare_telegram_memory_architectures(
+            config_manager=config_manager,
+            case_payloads=case_payloads,
+            selected_cases=selected_cases,
+            output_dir=architecture_live_comparison_output_dir,
+            validator_root=validator_root,
+            baseline_names=requested_baseline_names or None,
+        )
+        architecture_live_comparison_payload = architecture_live_comparison_result.payload
+        architecture_live_comparison_summary_path = (
+            (architecture_live_comparison_payload.get("artifact_paths") or {}).get("summary_markdown")
+            if isinstance(architecture_live_comparison_payload, dict)
+            else None
+        )
     regression_summary_markdown_path.write_text(
         _build_regression_summary_markdown(
             selected_user_id=selected_user_id,
@@ -1848,6 +1909,7 @@ def run_telegram_memory_regression(
         repo_sources.append(str(architecture_summary_path))
     if architecture_live_comparison_summary_path:
         repo_sources.append(str(architecture_live_comparison_summary_path))
+    _emit_progress("compiling Telegram KB snapshot")
     kb_result = build_telegram_state_knowledge_base(
         config_manager=config_manager,
         output_dir=resolved_kb_output_dir,
@@ -1856,6 +1918,7 @@ def run_telegram_memory_regression(
         repo_sources=repo_sources,
         write_path=kb_write_path,
         validator_root=validator_root,
+        timeout_seconds=120.0,
     )
     kb_payload = kb_result.payload
     current_probe = _probe_row(kb_payload, "current_state")
@@ -1864,6 +1927,9 @@ def run_telegram_memory_regression(
         kb_payload=kb_payload,
         architecture_live_comparison_payload=architecture_live_comparison_payload,
     )
+    for skipped_label in skipped_post_analysis_labels:
+        if skipped_label not in issue_labels:
+            issue_labels.append(skipped_label)
     summary = {
         "status": "ok",
         "case_count": len(case_payloads),
@@ -1873,6 +1939,7 @@ def run_telegram_memory_regression(
         "selected_chat_id": selected_chat_id,
         "human_id": resolved_human_id,
         "issue_labels": issue_labels,
+        "skipped_post_analysis_labels": skipped_post_analysis_labels,
         "architecture_runtime_sdk_class": _nested_get(
             architecture_benchmark_payload,
             "summary",

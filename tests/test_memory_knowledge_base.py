@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -276,3 +277,20 @@ class TelegramStateKnowledgeBaseTests(SparkTestCase):
         self.assertEqual(command[4], str(relative_home.resolve()))
         self.assertEqual(command[5], str(relative_output_dir.resolve()))
         self.assertEqual(command[-1], str(relative_write_path.resolve()))
+
+    def test_build_telegram_state_knowledge_base_reports_validator_timeout(self) -> None:
+        with patch(
+            "spark_intelligence.memory.knowledge_base.run_governed_command",
+            side_effect=subprocess.TimeoutExpired(cmd=["python"], timeout=120),
+        ):
+            result = build_telegram_state_knowledge_base(
+                config_manager=self.config_manager,
+                validator_root=self.home,
+                timeout_seconds=120,
+            )
+
+        self.assertFalse(result.payload["valid"])
+        self.assertEqual(
+            result.payload["errors"],
+            ["validator_timeout:run-spark-builder-state-telegram-intake:120s"],
+        )

@@ -1498,8 +1498,8 @@ def write_structured_evidence_to_memory(
             normalized,
             (
                 re.compile(r"\bowner\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
-                re.compile(r"\bowned\s+by\s+(.+?)(?:\s+because|(?:\s+during\b)|[.!]?$)", re.IGNORECASE),
-                re.compile(r"\bhandled\s+by\s+(.+?)(?:\s+because|(?:\s+during\b)|[.!]?$)", re.IGNORECASE),
+                re.compile(r"\bowned\s+by\s+(.+?)(?:\s+because\b.+?|\s+during\b.+?)?[.!]?$", re.IGNORECASE),
+                re.compile(r"\bhandled\s+by\s+(.+?)(?:\s+because\b.+?|\s+during\b.+?)?[.!]?$", re.IGNORECASE),
                 re.compile(r"\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*)\s+owns\b", re.IGNORECASE),
             ),
         )
