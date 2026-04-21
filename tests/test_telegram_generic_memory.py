@@ -308,6 +308,68 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(history_result.mode, "memory_profile_fact_history")
         self.assertEqual(event_history_result.mode, "memory_profile_event_history")
 
+    def test_build_researcher_reply_deletes_generic_relationship_memory_but_keeps_history(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-cofounder-delete-seed",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-cofounder-delete",
+            channel_kind="telegram",
+            user_message="My cofounder is Omar.",
+        )
+
+        delete_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-cofounder-delete",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-cofounder-delete",
+            channel_kind="telegram",
+            user_message="Forget my cofounder.",
+        )
+        current_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-cofounder-after-delete",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-cofounder-delete",
+            channel_kind="telegram",
+            user_message="Who is my cofounder?",
+        )
+        history_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-cofounder-history-after-delete",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-cofounder-delete",
+            channel_kind="telegram",
+            user_message="Who was my cofounder before?",
+        )
+        event_history_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-cofounder-event-history-after-delete",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-cofounder-delete",
+            channel_kind="telegram",
+            user_message="Show my cofounder history.",
+        )
+
+        self.assertEqual(delete_result.reply_text, "I'll forget your cofounder.")
+        self.assertEqual(delete_result.mode, "memory_generic_observation_delete")
+        self.assertEqual(current_result.reply_text, "I don't currently have that saved.")
+        self.assertEqual(history_result.reply_text, "An earlier saved cofounder was Omar.")
+        self.assertEqual(event_history_result.reply_text, "I only have one saved cofounder event: Omar.")
+
     def test_build_researcher_reply_does_not_persist_hypothetical_generic_memory_text(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)

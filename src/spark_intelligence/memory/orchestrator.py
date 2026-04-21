@@ -1170,15 +1170,89 @@ def write_profile_fact_to_memory(
             provenance=[],
             reason="no_durable_profile_fact",
         )
+    return _write_profile_fact_memory_operation(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=human_id,
+        predicate=predicate,
+        value=value,
+        evidence_text=evidence_text,
+        fact_name=fact_name,
+        session_id=session_id,
+        turn_id=turn_id,
+        channel_kind=channel_kind,
+        actor_id=actor_id,
+        operation="update",
+    )
+
+
+def delete_profile_fact_from_memory(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str,
+    predicate: str,
+    evidence_text: str,
+    fact_name: str,
+    session_id: str | None,
+    turn_id: str | None,
+    channel_kind: str | None,
+    actor_id: str = "profile_fact_deleter",
+) -> MemoryWriteResult:
+    if not predicate:
+        return MemoryWriteResult(
+            status="skipped",
+            operation="delete",
+            method="write_observation",
+            memory_role="current_state",
+            accepted_count=0,
+            rejected_count=0,
+            skipped_count=1,
+            abstained=False,
+            retrieval_trace=None,
+            provenance=[],
+            reason="no_profile_fact_predicate",
+        )
+    return _write_profile_fact_memory_operation(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=human_id,
+        predicate=predicate,
+        value=None,
+        evidence_text=evidence_text,
+        fact_name=fact_name,
+        session_id=session_id,
+        turn_id=turn_id,
+        channel_kind=channel_kind,
+        actor_id=actor_id,
+        operation="delete",
+    )
+
+
+def _write_profile_fact_memory_operation(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str,
+    predicate: str,
+    value: str | None,
+    evidence_text: str,
+    fact_name: str,
+    session_id: str | None,
+    turn_id: str | None,
+    channel_kind: str | None,
+    actor_id: str,
+    operation: str,
+) -> MemoryWriteResult:
     if not _memory_enabled(config_manager):
-        return _disabled_write_result(operation="update")
+        return _disabled_write_result(operation=operation)
     if not bool(config_manager.get_path("spark.memory.write_profile_facts", default=True)):
-        return _disabled_write_result(operation="update", reason="profile_fact_memory_writes_disabled")
+        return _disabled_write_result(operation=operation, reason="profile_fact_memory_writes_disabled")
     client = _load_sdk_client(config_manager)
     if client is None:
         result = MemoryWriteResult(
             status="abstained",
-            operation="update",
+            operation=operation,
             method="write_observation",
             memory_role="current_state",
             accepted_count=0,
@@ -1203,13 +1277,13 @@ def write_profile_fact_to_memory(
         "subject": subject,
         "predicate": predicate,
         "value": value,
-        "operation": "update",
+        "operation": operation,
         "memory_role": "current_state",
         "text": evidence_text,
     }
     _record_memory_write_requested_observations(
         state_db=state_db,
-        operation="update",
+        operation=operation,
         human_id=human_id,
         observations=[observation],
         session_id=session_id,
@@ -1220,7 +1294,7 @@ def write_profile_fact_to_memory(
         client,
         "write_observation",
         {
-            "operation": "update",
+            "operation": operation,
             "subject": subject,
             "predicate": predicate,
             "value": value,
@@ -1240,8 +1314,8 @@ def write_profile_fact_to_memory(
             },
         },
     )
-    result = _normalize_write_result(raw=raw, operation="update")
-    if result.accepted_count > 0:
+    result = _normalize_write_result(raw=raw, operation=operation)
+    if result.accepted_count > 0 and operation == "update":
         _write_profile_fact_history_event(
             client=client,
             human_id=human_id,

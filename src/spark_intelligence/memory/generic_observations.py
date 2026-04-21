@@ -49,6 +49,14 @@ class TelegramGenericObservation:
     label: str
 
 
+@dataclass(frozen=True)
+class TelegramGenericDeletion:
+    predicate: str
+    evidence_text: str
+    fact_name: str
+    label: str
+
+
 def detect_telegram_generic_observation(user_message: str) -> TelegramGenericObservation | None:
     text = _clean_text(user_message)
     if not _is_memoryworthy_text(text):
@@ -100,6 +108,93 @@ def detect_telegram_generic_observation(user_message: str) -> TelegramGenericObs
     return None
 
 
+def detect_telegram_generic_deletion(user_message: str) -> TelegramGenericDeletion | None:
+    text = _clean_text(user_message)
+    if not _is_memoryworthy_text(text):
+        return None
+    normalized = _strip_correction_prefix(text)
+    lowered = normalized.lower()
+
+    relationship_deletions: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+        ("profile.cofounder_name", "cofounder", ("cofounder",)),
+        ("profile.mentor_name", "mentor", ("mentor",)),
+        ("profile.manager_name", "manager", ("manager",)),
+        ("profile.assistant_name", "assistant", ("assistant",)),
+        ("profile.partner_name", "partner", ("partner", "wife", "husband")),
+        ("profile.mother_name", "mother", ("mother",)),
+        ("profile.father_name", "father", ("father",)),
+        ("profile.sister_name", "sister", ("sister",)),
+        ("profile.brother_name", "brother", ("brother",)),
+    )
+    for predicate, label, aliases in relationship_deletions:
+        if any(
+            lowered == phrase
+            for alias in aliases
+            for phrase in (
+                f"forget my {alias}.",
+                f"forget my {alias}",
+                f"delete my {alias}.",
+                f"delete my {alias}",
+                f"remove my {alias}.",
+                f"remove my {alias}",
+                f"i no longer have a {alias}.",
+                f"i no longer have a {alias}",
+                f"i no longer have an {alias}.",
+                f"i no longer have an {alias}",
+                f"i don't have a {alias} anymore.",
+                f"i don't have a {alias} anymore",
+                f"i don't have an {alias} anymore.",
+                f"i don't have an {alias} anymore",
+            )
+        ):
+            return TelegramGenericDeletion(
+                predicate=predicate,
+                evidence_text=text,
+                fact_name=label,
+                label=label,
+            )
+
+    if lowered in {
+        "forget my current plan.",
+        "forget my current plan",
+        "delete my current plan.",
+        "delete my current plan",
+        "remove my current plan.",
+        "remove my current plan",
+        "forget the plan.",
+        "forget the plan",
+    }:
+        return TelegramGenericDeletion(
+            predicate="profile.current_plan",
+            evidence_text=text,
+            fact_name="current_plan",
+            label="current plan",
+        )
+
+    if lowered in {
+        "forget my current focus.",
+        "forget my current focus",
+        "delete my current focus.",
+        "delete my current focus",
+        "remove my current focus.",
+        "remove my current focus",
+        "forget our priority.",
+        "forget our priority",
+        "delete our priority.",
+        "delete our priority",
+        "remove our priority.",
+        "remove our priority",
+    }:
+        return TelegramGenericDeletion(
+            predicate="profile.current_focus",
+            evidence_text=text,
+            fact_name="current_focus",
+            label="current focus",
+        )
+
+    return None
+
+
 def build_telegram_generic_observation_answer(*, observation: TelegramGenericObservation) -> str:
     value = str(observation.value or "").strip()
     if not value:
@@ -109,6 +204,14 @@ def build_telegram_generic_observation_answer(*, observation: TelegramGenericObs
     if observation.predicate == "profile.current_focus":
         return f"I'll remember that your current focus is {value}."
     return f"I'll remember that your {observation.label} is {value}."
+
+
+def build_telegram_generic_deletion_answer(*, deletion: TelegramGenericDeletion) -> str:
+    if deletion.predicate == "profile.current_plan":
+        return "I'll forget your current plan."
+    if deletion.predicate == "profile.current_focus":
+        return "I'll forget your current focus."
+    return f"I'll forget your {deletion.label}."
 
 
 def _clean_text(value: str) -> str:
