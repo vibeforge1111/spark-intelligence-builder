@@ -621,6 +621,150 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertIn("current blocker", result.reply_text.lower())
         self.assertIn("stripe verification fails", result.reply_text.lower())
 
+    def test_build_researcher_reply_promotes_repeated_evidence_into_current_dependency(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-dependency-seed-1",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-dependency-seed-1",
+            channel_kind="telegram",
+            user_message="Users keep getting stuck during onboarding because we're waiting on Stripe approval.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-dependency-seed-2",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-dependency-seed-2",
+            channel_kind="telegram",
+            user_message="Users still get stuck during onboarding because we're waiting on Stripe approval and review is slow.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for current dependency recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for current dependency recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-evidence-dependency-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-evidence-dependency-read",
+                channel_kind="telegram",
+                user_message="What is our dependency?",
+            )
+
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+        self.assertIn("current dependency", result.reply_text.lower())
+        self.assertIn("stripe approval", result.reply_text.lower())
+
+    def test_build_researcher_reply_promotes_repeated_evidence_into_current_constraint(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-constraint-seed-1",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-constraint-seed-1",
+            channel_kind="telegram",
+            user_message="Users keep waiting during onboarding because we're limited by founder bandwidth.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-constraint-seed-2",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-constraint-seed-2",
+            channel_kind="telegram",
+            user_message="Users still wait during onboarding because we're limited by founder bandwidth.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for current constraint recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for current constraint recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-evidence-constraint-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-evidence-constraint-read",
+                channel_kind="telegram",
+                user_message="What is our constraint?",
+            )
+
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+        self.assertIn("current constraint", result.reply_text.lower())
+        self.assertIn("founder bandwidth", result.reply_text.lower())
+
+    def test_build_researcher_reply_promotes_repeated_evidence_into_current_risk(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-risk-seed-1",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-risk-seed-1",
+            channel_kind="telegram",
+            user_message="There is still a risk of enterprise churn during onboarding because activation is weak.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-risk-seed-2",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-risk-seed-2",
+            channel_kind="telegram",
+            user_message="There is still a risk of enterprise churn during onboarding because activation is weak and teams are delaying rollout.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for current risk recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for current risk recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-evidence-risk-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-evidence-risk-read",
+                channel_kind="telegram",
+                user_message="What is our risk?",
+            )
+
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+        self.assertIn("current risk", result.reply_text.lower())
+        self.assertIn("enterprise churn during onboarding", result.reply_text.lower())
+
     def test_build_researcher_reply_archives_stale_structured_evidence_when_newer_evidence_exists(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

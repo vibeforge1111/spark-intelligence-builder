@@ -144,6 +144,16 @@ def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
     assert "evidence_current_state_write_onboarding_repeat" in evidence_current_state_case_ids
     assert "evidence_current_state_query_onboarding_blocker" in evidence_current_state_case_ids
 
+    evidence_active_state_case_ids = {
+        case.case_id for case in packs["telegram_evidence_active_state_consolidation"].cases
+    }
+    assert "evidence_current_state_write_dependency_initial" in evidence_active_state_case_ids
+    assert "evidence_current_state_query_dependency" in evidence_active_state_case_ids
+    assert "evidence_current_state_write_constraint_initial" in evidence_active_state_case_ids
+    assert "evidence_current_state_query_constraint" in evidence_active_state_case_ids
+    assert "evidence_current_state_write_risk_initial" in evidence_active_state_case_ids
+    assert "evidence_current_state_query_risk" in evidence_active_state_case_ids
+
     mixed_session_case_ids = {case.case_id for case in packs["telegram_mixed_memory_session_churn"].cases}
     assert "mixed_session_owner_write_initial" in mixed_session_case_ids
     assert "mixed_session_flight_overwrite" in mixed_session_case_ids

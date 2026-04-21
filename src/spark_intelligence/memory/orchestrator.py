@@ -1455,6 +1455,9 @@ def write_structured_evidence_to_memory(
             (
                 re.compile(r"\bdependency\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
                 re.compile(r"\bdependent\s+on\s+(.+?)[.!]?$", re.IGNORECASE),
+                re.compile(r"\bwaiting\s+on\s+(.+?)[.!]?$", re.IGNORECASE),
+                re.compile(r"\bpending\s+(.+?)[.!]?$", re.IGNORECASE),
+                re.compile(r"\bdepends\s+on\s+(.+?)[.!]?$", re.IGNORECASE),
             ),
         )
         if explicit_dependency:
@@ -1464,6 +1467,9 @@ def write_structured_evidence_to_memory(
             (
                 re.compile(r"\bconstraint\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
                 re.compile(r"\blimited\s+by\s+(.+?)[.!]?$", re.IGNORECASE),
+                re.compile(r"\bbudget\s+only\s+lets\s+us\s+(.+?)[.!]?$", re.IGNORECASE),
+                re.compile(r"\bonly\s+have\s+bandwidth\s+for\s+(.+?)[.!]?$", re.IGNORECASE),
+                re.compile(r"\b(limited\s+founder\s+bandwidth)\b", re.IGNORECASE),
             ),
         )
         if explicit_constraint:
@@ -1473,6 +1479,8 @@ def write_structured_evidence_to_memory(
             (
                 re.compile(r"\b(?:current|main|biggest)\s+risk\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
                 re.compile(r"\brisk\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+                re.compile(r"\brisk\s+of\s+(.+?)(?:\s+because|[.!]?$)", re.IGNORECASE),
+                re.compile(r"\bat\s+risk\s+of\s+(.+?)(?:\s+because|[.!]?$)", re.IGNORECASE),
             ),
         )
         if explicit_risk:

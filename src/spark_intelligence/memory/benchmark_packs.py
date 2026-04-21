@@ -880,6 +880,28 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
             ),
         ),
         TelegramMemoryBenchmarkPack(
+            pack_id="telegram_evidence_active_state_consolidation",
+            title="Telegram Evidence To Active-State Consolidation",
+            description=(
+                "Seeds repeated structured evidence that clearly describes an ongoing dependency, constraint, or risk "
+                "and verifies that Builder promotes those signals into explicit current-state memory."
+            ),
+            focus_areas=("structured_evidence", "current_state", "dependency", "constraint", "risk"),
+            cases=(
+                *_existing(
+                    "evidence_current_state_write_dependency_initial",
+                    "evidence_current_state_write_dependency_repeat",
+                    "evidence_current_state_query_dependency",
+                    "evidence_current_state_write_constraint_initial",
+                    "evidence_current_state_write_constraint_repeat",
+                    "evidence_current_state_query_constraint",
+                    "evidence_current_state_write_risk_initial",
+                    "evidence_current_state_write_risk_repeat",
+                    "evidence_current_state_query_risk",
+                ),
+            ),
+        ),
+        TelegramMemoryBenchmarkPack(
             pack_id="telegram_mixed_memory_session_churn",
             title="Telegram Mixed Memory Session Churn",
             description=(
