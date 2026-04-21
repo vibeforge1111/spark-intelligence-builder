@@ -156,6 +156,10 @@ def test_select_generic_profile_lifecycle_pack_exposes_overwrite_and_delete_case
     assert "generic_status_history_query_after_overwrite" in case_ids
     assert "generic_status_delete" in case_ids
     assert "generic_status_current_query_after_delete" in case_ids
+    assert "generic_commitment_overwrite" in case_ids
+    assert "generic_commitment_history_query_after_overwrite" in case_ids
+    assert "generic_commitment_delete" in case_ids
+    assert "generic_commitment_current_query_after_delete" in case_ids
 
 
 def test_select_benchmark_packs_rejects_unknown_pack_ids() -> None:
