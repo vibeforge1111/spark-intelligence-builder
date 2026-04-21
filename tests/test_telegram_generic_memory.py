@@ -128,6 +128,13 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(facts.get("outcome"), "structured_evidence")
         self.assertEqual(facts.get("memory_role"), "structured_evidence")
         self.assertEqual(facts.get("retention_class"), "episodic_archive")
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(write_events)
+        write_facts = write_events[0]["facts_json"] or {}
+        self.assertEqual(write_facts.get("memory_role"), "structured_evidence")
+        recorded_observations = write_facts.get("observations") or []
+        self.assertEqual(recorded_observations[0]["predicate"], "evidence.telegram.evidence")
+        self.assertEqual(recorded_observations[0]["retention_class"], "episodic_archive")
 
     def test_build_researcher_reply_persists_generic_plan_memory_before_provider_resolution(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

@@ -45,6 +45,7 @@ from spark_intelligence.memory import (
     retrieve_memory_evidence_in_memory,
     retrieve_memory_events_in_memory,
     write_profile_fact_to_memory,
+    write_structured_evidence_to_memory,
     write_telegram_event_to_memory,
 )
 from spark_intelligence.memory.episodic_events import (
@@ -3643,6 +3644,22 @@ def build_researcher_reply(
             pass
 
     if assessed_generic_memory_candidate is not None:
+        if assessed_generic_memory_candidate.outcome == "structured_evidence":
+            try:
+                write_structured_evidence_to_memory(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    human_id=human_id,
+                    evidence_text=assessed_generic_memory_candidate.evidence_text,
+                    domain_pack=str(assessed_generic_memory_candidate.domain_pack or "evidence"),
+                    evidence_kind=str(assessed_generic_memory_candidate.reason or "structured_evidence"),
+                    session_id=session_id,
+                    turn_id=request_id,
+                    channel_kind=channel_kind,
+                    actor_id="telegram_structured_evidence_loader",
+                )
+            except Exception:
+                pass
         record_event(
             state_db,
             event_type="memory_candidate_assessed",

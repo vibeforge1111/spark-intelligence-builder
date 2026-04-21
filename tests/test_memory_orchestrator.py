@@ -17,6 +17,7 @@ from spark_intelligence.memory import (
     retrieve_memory_events_in_memory,
     run_memory_sdk_smoke_test,
     write_profile_fact_to_memory,
+    write_structured_evidence_to_memory,
     write_telegram_event_to_memory,
 )
 from spark_intelligence.memory.episodic_events import (
@@ -196,6 +197,39 @@ class MemoryOrchestratorTests(SparkTestCase):
 
         self.assertEqual(result.status, "succeeded")
         self.assertEqual(fake_client.observation_calls[0]["retention_class"], "active_state")
+
+    def test_structured_evidence_writes_use_evidence_role_and_archive_retention(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            result = write_structured_evidence_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                evidence_text="Users keep dropping during onboarding because Stripe verification fails.",
+                domain_pack="evidence",
+                evidence_kind="evidence_marker",
+                session_id="session:evidence",
+                turn_id="turn:evidence",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        self.assertEqual(len(fake_client.observation_calls), 1)
+        call = fake_client.observation_calls[0]
+        self.assertEqual(call["predicate"], "evidence.telegram.evidence")
+        self.assertEqual(call["memory_role"], "structured_evidence")
+        self.assertEqual(call["retention_class"], "episodic_archive")
+        self.assertEqual(call["metadata"]["evidence_kind"], "evidence_marker")
+        self.assertEqual(call["metadata"]["domain_pack"], "evidence")
+        events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(events)
+        observations = (events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(events[0]["facts_json"].get("memory_role"), "structured_evidence")
+        self.assertEqual(observations[0]["predicate"], "evidence.telegram.evidence")
+        self.assertEqual(observations[0]["retention_class"], "episodic_archive")
 
     def test_telegram_event_detection_write_and_answer_use_event_memory_lane(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
