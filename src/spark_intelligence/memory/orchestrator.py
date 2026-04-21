@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import sys
+import time
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -521,15 +523,45 @@ class _DomainChipMemoryClientAdapter:
     def _persist_manual_state(self) -> None:
         if self._persistence_path is None:
             return
-        payload = {
-            "manual_observations": [asdict(entry) for entry in list(getattr(self._sdk, "_manual_observations", []) or [])],
-            "manual_events": [asdict(entry) for entry in list(getattr(self._sdk, "_manual_events", []) or [])],
-            "manual_current_state_snapshot": [
-                asdict(entry) for entry in list(getattr(self._sdk, "_manual_current_state_snapshot", []) or [])
-            ],
-        }
         self._persistence_path.parent.mkdir(parents=True, exist_ok=True)
-        self._persistence_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        lock_path = self._persistence_path.with_name(f"{self._persistence_path.name}.lock")
+        with _exclusive_path_lock(lock_path):
+            existing_payload = _load_domain_chip_memory_payload(self._persistence_path)
+            merged_observation_payloads = _merge_domain_entry_payloads(
+                existing_payload.get("manual_observations"),
+                [asdict(entry) for entry in list(getattr(self._sdk, "_manual_observations", []) or [])],
+            )
+            merged_event_payloads = _merge_domain_entry_payloads(
+                existing_payload.get("manual_events"),
+                [asdict(entry) for entry in list(getattr(self._sdk, "_manual_events", []) or [])],
+            )
+            observation_cls = getattr(self._sdk_module, "ObservationEntry", None)
+            event_cls = getattr(self._sdk_module, "EventCalendarEntry", None)
+            merged_observations = _hydrate_domain_entries(merged_observation_payloads, observation_cls) if observation_cls else []
+            merged_events = _hydrate_domain_entries(merged_event_payloads, event_cls) if event_cls else []
+            current_snapshot = []
+            build_snapshot = getattr(self._sdk, "_build_manual_current_state_snapshot", None)
+            if callable(build_snapshot):
+                try:
+                    current_snapshot = list(build_snapshot(merged_observations) or [])
+                except Exception:
+                    current_snapshot = []
+            elif observation_cls:
+                current_snapshot = _hydrate_domain_entries(
+                    existing_payload.get("manual_current_state_snapshot"),
+                    observation_cls,
+                )
+            self._sdk._manual_observations = merged_observations
+            self._sdk._manual_events = merged_events
+            self._sdk._manual_current_state_snapshot = current_snapshot
+            payload = {
+                "manual_observations": [asdict(entry) for entry in merged_observations],
+                "manual_events": [asdict(entry) for entry in merged_events],
+                "manual_current_state_snapshot": [asdict(entry) for entry in current_snapshot],
+            }
+            temp_path = self._persistence_path.with_name(f"{self._persistence_path.name}.{os.getpid()}.tmp")
+            temp_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            temp_path.replace(self._persistence_path)
 
 
 def run_memory_sdk_smoke_test(
@@ -1793,6 +1825,67 @@ def _supports_domain_chip_memory_adapter(module: ModuleType) -> bool:
 
 def _domain_chip_memory_persistence_path(home_path: Any) -> Path:
     return Path(str(home_path)) / "artifacts" / "domain_chip_memory_sdk_state.json"
+
+
+@contextmanager
+def _exclusive_path_lock(lock_path: Path, *, timeout_seconds: float = 15.0, poll_seconds: float = 0.05):
+    fd: int | None = None
+    deadline = time.monotonic() + timeout_seconds
+    while fd is None:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
+        except FileExistsError:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"timed out waiting for persistence lock: {lock_path}")
+            time.sleep(poll_seconds)
+    try:
+        yield
+    finally:
+        try:
+            if fd is not None:
+                os.close(fd)
+        finally:
+            try:
+                lock_path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def _load_domain_chip_memory_payload(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return payload
+
+
+def _merge_domain_entry_payloads(existing_entries: Any, new_entries: Any) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for raw_entry in list(existing_entries or []) + list(new_entries or []):
+        if not isinstance(raw_entry, dict):
+            continue
+        merged[_domain_entry_payload_key(raw_entry)] = raw_entry
+    return sorted(
+        merged.values(),
+        key=lambda entry: (
+            str(entry.get("timestamp") or ""),
+            str(entry.get("observation_id") or entry.get("event_id") or ""),
+        ),
+    )
+
+
+def _domain_entry_payload_key(entry: dict[str, Any]) -> str:
+    observation_id = _optional_string(entry.get("observation_id"))
+    if observation_id:
+        return f"observation:{observation_id}"
+    event_id = _optional_string(entry.get("event_id"))
+    if event_id:
+        return f"event:{event_id}"
+    return json.dumps(entry, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
 def _hydrate_domain_chip_memory_sdk(*, client: Any, module: ModuleType, persistence_path: Path) -> None:

@@ -1117,6 +1117,79 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(result.read_result.records[0]["predicate"], "system.memory.persisted")
         self.assertEqual(result.read_result.records[0]["value"], "ok")
 
+    def test_domain_chip_persistence_merges_concurrent_client_writes(self) -> None:
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+        client_a = memory_orchestrator._load_sdk_client_for_module(
+            module_name="domain_chip_memory",
+            home_path=self.config_manager.paths.home,
+        )
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+        client_b = memory_orchestrator._load_sdk_client_for_module(
+            module_name="domain_chip_memory",
+            home_path=self.config_manager.paths.home,
+        )
+        self.assertIsNotNone(client_a)
+        self.assertIsNotNone(client_b)
+
+        client_a.write_observation(
+            operation="update",
+            subject="human:merge:test:a",
+            predicate="profile.current_owner",
+            value="Omar",
+            text="Our owner is Omar.",
+            session_id="session:merge:test:a",
+            turn_id="turn:merge:test:a",
+            timestamp="2026-04-21T10:00:00+00:00",
+            metadata={
+                "entity_type": "human",
+                "field_name": "current_owner",
+                "memory_role": "current_state",
+                "source_surface": "test",
+                "fact_name": "current_owner",
+                "normalized_value": "Omar",
+            },
+        )
+        client_b.write_observation(
+            operation="update",
+            subject="human:merge:test:b",
+            predicate="profile.current_constraint",
+            value="budget for one engineer",
+            text="Our constraint is budget for only one engineer.",
+            session_id="session:merge:test:b",
+            turn_id="turn:merge:test:b",
+            timestamp="2026-04-21T10:00:01+00:00",
+            metadata={
+                "entity_type": "human",
+                "field_name": "current_constraint",
+                "memory_role": "current_state",
+                "source_surface": "test",
+                "fact_name": "current_constraint",
+                "normalized_value": "budget for one engineer",
+            },
+        )
+
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+
+        owner_result = lookup_current_state_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject="human:merge:test:a",
+            predicate="profile.current_owner",
+            sdk_module="domain_chip_memory",
+        )
+        constraint_result = lookup_current_state_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject="human:merge:test:b",
+            predicate="profile.current_constraint",
+            sdk_module="domain_chip_memory",
+        )
+
+        self.assertFalse(owner_result.read_result.abstained)
+        self.assertEqual(owner_result.read_result.records[0]["value"], "Omar")
+        self.assertFalse(constraint_result.read_result.abstained)
+        self.assertEqual(constraint_result.read_result.records[0]["value"], "budget for one engineer")
+
     def test_lookup_historical_state_in_memory_reads_prior_value_after_overwrite(self) -> None:
         expected_read_result = memory_orchestrator.MemoryReadResult(
             status="supported",
