@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import patch
 
 from spark_intelligence.memory import write_telegram_event_to_memory
@@ -40,6 +41,79 @@ class TelegramEpisodicMemoryTests(SparkTestCase):
         recorded_events = (write_events[0]["facts_json"] or {}).get("events") or []
         self.assertEqual(recorded_events[0]["predicate"], "telegram.event.meeting")
         self.assertEqual(recorded_events[0]["value"], "meeting with Omar on May 3")
+
+    def test_build_researcher_reply_does_not_persist_hypothetical_event_text(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        connect_exit, _, connect_stderr = self.run_cli(
+            "auth",
+            "connect",
+            "custom",
+            "--home",
+            str(self.home),
+            "--api-key",
+            "minimax-secret",
+            "--model",
+            "MiniMax-M2.7",
+            "--base-url",
+            "https://api.minimax.io/v1",
+        )
+        self.assertEqual(connect_exit, 0, connect_stderr)
+
+        runtime_root = self.home / "fake-researcher"
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        config_path = runtime_root / "spark-researcher.project.json"
+        config_path.write_text("{}", encoding="utf-8")
+
+        def fake_build_advisory(path: Path, task: str, *, model: str = "generic", limit: int = 4, domain: str | None = None):
+            return {
+                "guidance": [],
+                "epistemic_status": {
+                    "status": "under_supported",
+                    "packet_stability": {"status": "no_belief_packets"},
+                },
+                "selected_packet_ids": [],
+                "trace_path": "trace:hypothetical-event-under-supported",
+            }
+
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
+            return {"raw_response": "Noted."}
+
+        def fail_execute_with_research(*args, **kwargs):
+            raise AssertionError("execute_with_research should not run for direct conversational fallback")
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
+            return_value=(runtime_root, "configured"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
+            return_value=config_path,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_build_advisory",
+            return_value=fake_build_advisory,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._import_execute_with_research",
+            return_value=fail_execute_with_research,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=fake_direct_provider_prompt,
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-hypothetical-event",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-hypothetical-event",
+                channel_kind="telegram",
+                user_message="Maybe my meeting with Omar is on May 3.",
+            )
+
+        self.assertEqual(result.reply_text, "Noted.")
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertFalse(write_events)
 
     def test_build_researcher_reply_answers_saved_telegram_event_query_directly_from_memory(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

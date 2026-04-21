@@ -210,6 +210,17 @@ class MemoryOrchestratorTests(SparkTestCase):
             "I'll remember your meeting with Omar on May 3.",
         )
 
+    def test_telegram_event_detection_rejects_hypothetical_and_non_temporal_phrasing(self) -> None:
+        self.assertIsNone(
+            detect_telegram_memory_event_observation("Maybe my meeting with Omar is on May 3.")
+        )
+        self.assertIsNone(
+            detect_telegram_memory_event_observation("What if my meeting with Omar is on May 3?")
+        )
+        self.assertIsNone(
+            detect_telegram_memory_event_observation("My meeting with Omar is on track.")
+        )
+
     def test_profile_city_detection_strips_temporal_tail_words(self) -> None:
         detected = detect_profile_fact_observation("I live in Abu Dhabi now.")
         self.assertIsNotNone(detected)
@@ -805,6 +816,19 @@ class MemoryOrchestratorTests(SparkTestCase):
             ),
             "I have 2 saved events: meeting with Omar on May 3 then call with Sarah on May 4.",
         )
+
+    def test_telegram_event_detection_supports_flight_and_deadline_types(self) -> None:
+        flight = detect_telegram_memory_event_observation("My flight to London is on May 6.")
+        self.assertIsNotNone(flight)
+        assert flight is not None
+        self.assertEqual(flight.predicate, "telegram.event.flight")
+        self.assertEqual(flight.value, "flight to London on May 6")
+
+        deadline = detect_telegram_memory_event_observation("My deadline for the proposal is by Friday.")
+        self.assertIsNotNone(deadline)
+        assert deadline is not None
+        self.assertEqual(deadline.predicate, "telegram.event.deadline")
+        self.assertEqual(deadline.value, "deadline for the proposal by Friday")
 
     def test_build_profile_identity_summary_context_lists_saved_facts(self) -> None:
         context = build_profile_identity_summary_context(
