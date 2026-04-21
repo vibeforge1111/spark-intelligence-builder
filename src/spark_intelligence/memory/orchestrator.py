@@ -1282,6 +1282,47 @@ def write_structured_evidence_to_memory(
             str(_belief_record_observation_id(record) or ""),
         )
 
+    def _evidence_record_observation_id(record: dict[str, Any]) -> str | None:
+        return _optional_string(record.get("observation_id")) or _optional_string(
+            (record.get("metadata") or {}).get("observation_id")
+        )
+
+    def _evidence_record_supersedes(record: dict[str, Any]) -> str | None:
+        lifecycle = record.get("lifecycle") if isinstance(record.get("lifecycle"), dict) else {}
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        return _optional_string(lifecycle.get("supersedes")) or _optional_string(metadata.get("supersedes"))
+
+    def _evidence_record_text(record: dict[str, Any]) -> str:
+        text = str(record.get("text") or "").strip()
+        if text:
+            return text
+        return str((record.get("metadata") or {}).get("value") or record.get("value") or "").strip()
+
+    def _evidence_record_sort_key(record: dict[str, Any]) -> tuple[str, str]:
+        return (
+            str(record.get("timestamp") or ""),
+            str(_evidence_record_observation_id(record) or ""),
+        )
+
+    def _select_active_evidence_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        matching = [
+            record
+            for record in records
+            if str(record.get("memory_role") or "").strip() == "structured_evidence"
+            or str(record.get("predicate") or "").strip() == predicate
+        ]
+        if not matching:
+            return []
+        superseded_ids = {
+            superseded_id
+            for superseded_id in (_evidence_record_supersedes(record) for record in matching)
+            if superseded_id
+        }
+        active = [
+            record for record in matching if (_evidence_record_observation_id(record) or "") not in superseded_ids
+        ]
+        return sorted(active or matching, key=_evidence_record_sort_key)
+
     def _select_active_belief_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         matching = [
             record
@@ -1344,6 +1385,52 @@ def write_structured_evidence_to_memory(
         overlap = evidence_tokens & belief_tokens
         return len(overlap) >= 2 or any(len(token) >= 8 for token in overlap)
 
+    def _derive_belief_pack_from_evidence(text: str, corroborating_records: list[dict[str, Any]]) -> str:
+        overlap_candidates: set[str] = set()
+        for record in corroborating_records:
+            overlap_candidates.update(_overlap_tokens(text) & _overlap_tokens(_evidence_record_text(record)))
+        tokens = [token for token in re.findall(r"[a-z0-9]+", text.casefold()) if len(token) >= 4]
+        topic_tokens: list[str] = []
+        for token in tokens:
+            if token in {
+                "this",
+                "that",
+                "with",
+                "from",
+                "because",
+                "during",
+                "they",
+                "have",
+                "users",
+                "user",
+                "keep",
+                "need",
+                "still",
+                "drop",
+                "drops",
+                "fails",
+                "flow",
+                "retry",
+            }:
+                continue
+            if overlap_candidates and token not in overlap_candidates:
+                continue
+            if token not in topic_tokens:
+                topic_tokens.append(token)
+            if len(topic_tokens) >= 3:
+                break
+        suffix = "_".join(topic_tokens).strip("_")
+        return f"evidence_{suffix}" if suffix else "beliefs_and_inferences"
+
+    def _belief_text_from_evidence(text: str) -> str:
+        normalized = str(text or "").strip()
+        if not normalized:
+            return normalized
+        if normalized.casefold().startswith("i think "):
+            return normalized
+        lowered_initial = normalized[0].lower() + normalized[1:] if len(normalized) > 1 else normalized.lower()
+        return f"I think {lowered_initial}"
+
     normalized_text = str(evidence_text or "").strip()
     if not normalized_text:
         return MemoryWriteResult(
@@ -1404,9 +1491,26 @@ def write_structured_evidence_to_memory(
         limit=10,
         actor_id=actor_id,
     )
+    existing_evidence = retrieve_memory_evidence_in_memory(
+        config_manager=config_manager,
+        state_db=state_db,
+        query=normalized_pack,
+        subject=subject,
+        predicate=predicate,
+        limit=10,
+        actor_id=actor_id,
+    )
     active_beliefs: list[dict[str, Any]] = []
     if not existing_beliefs.read_result.abstained and existing_beliefs.read_result.records:
         active_beliefs = _select_active_belief_records(existing_beliefs.read_result.records)
+    active_evidence: list[dict[str, Any]] = []
+    if not existing_evidence.read_result.abstained and existing_evidence.read_result.records:
+        active_evidence = _select_active_evidence_records(existing_evidence.read_result.records)
+    corroborating_evidence_records = [
+        record
+        for record in active_evidence
+        if _evidence_invalidates_belief(normalized_text, _evidence_record_text(record))
+    ]
     invalidated_belief_ids = [
         belief_id
         for belief_id in (
@@ -1492,6 +1596,22 @@ def write_structured_evidence_to_memory(
         turn_id=turn_id,
         actor_id=actor_id,
     )
+    if result.accepted_count > 0 and corroborating_evidence_records:
+        try:
+            write_belief_to_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                human_id=human_id,
+                belief_text=_belief_text_from_evidence(normalized_text),
+                domain_pack=_derive_belief_pack_from_evidence(normalized_text, corroborating_evidence_records),
+                belief_kind="evidence_consolidation",
+                session_id=session_id,
+                turn_id=turn_id,
+                channel_kind=channel_kind,
+                actor_id=f"{actor_id}_belief_consolidator",
+            )
+        except Exception:
+            pass
     return result
 
 

@@ -542,6 +542,22 @@ def _filter_records_by_observation_ids(records: list[dict[str, Any]], observatio
     return filtered
 
 
+def _merge_memory_records(primary: list[dict[str, Any]], supplemental: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for record in [*primary, *supplemental]:
+        key = (
+            str(record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or "").strip(),
+            str(record.get("predicate") or "").strip(),
+            _memory_record_text(record).strip().casefold(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(record)
+    return merged
+
+
 def _memory_record_timestamp(record: dict[str, Any]) -> str:
     metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
     return str(record.get("timestamp") or metadata.get("document_time") or "").strip()
@@ -5356,6 +5372,7 @@ def build_researcher_reply(
         memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
         archived_raw_episode_count = 0
         archived_structured_evidence_count = 0
+        direct_inspection = None
         evidence_lookup = retrieve_memory_evidence_in_memory(
             config_manager=config_manager,
             state_db=state_db,
@@ -5375,22 +5392,48 @@ def build_researcher_reply(
                     topic=detected_open_memory_recall_query.topic,
                 )
             ]
+            direct_inspection = inspect_human_memory_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                human_id=human_id,
+                actor_id="researcher_bridge",
+            )
+            if not direct_inspection.read_result.abstained and direct_inspection.read_result.records:
+                supplemental_records = [
+                    record
+                    for record in _filter_open_memory_recall_records(direct_inspection.read_result.records)
+                    if _record_matches_open_memory_topic(
+                        record=record,
+                        topic=detected_open_memory_recall_query.topic,
+                    )
+                ]
+                merged_records = _merge_memory_records(recall_records, supplemental_records)
+                if merged_records != recall_records:
+                    recall_records = merged_records
+                    read_method = "retrieve_evidence+inspect_memory_records"
             structured_evidence_records = _filter_structured_evidence_records(recall_records)
             archivable_structured_evidence_records = _structured_evidence_records_past_archive(structured_evidence_records)
             if len(structured_evidence_records) >= 2 and archivable_structured_evidence_records:
                 older_evidence_records = _newer_structured_evidence_records(evidence_records=structured_evidence_records)
                 archived_structured_evidence_ids: set[str] = set()
+                archived_structured_evidence_texts: set[str] = set()
                 for record in archivable_structured_evidence_records:
                     record_id = str(
                         record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
                     ).strip()
+                    record_text = _memory_record_text(record).strip().casefold()
                     if not record_id:
-                        continue
+                        if not record_text:
+                            continue
                     if not any(
-                        str(
-                            candidate.get("observation_id") or (candidate.get("metadata") or {}).get("observation_id") or ""
-                        ).strip()
-                        == record_id
+                        (
+                            str(
+                                candidate.get("observation_id") or (candidate.get("metadata") or {}).get("observation_id") or ""
+                            ).strip()
+                            == record_id
+                            if record_id
+                            else _memory_record_text(candidate).strip().casefold() == record_text
+                        )
                         for candidate in older_evidence_records
                     ):
                         continue
@@ -5409,25 +5452,34 @@ def build_researcher_reply(
                             actor_id="telegram_structured_evidence_archiver",
                         )
                         archived_structured_evidence_count += 1
-                        archived_structured_evidence_ids.add(record_id)
+                        if record_id:
+                            archived_structured_evidence_ids.add(record_id)
+                        if record_text:
+                            archived_structured_evidence_texts.add(record_text)
                     except Exception:
                         pass
-                if archived_structured_evidence_ids:
+                if archived_structured_evidence_ids or archived_structured_evidence_texts:
                     recall_records = [
                         record
                         for record in recall_records
-                        if str(
-                            record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
-                        ).strip()
-                        not in archived_structured_evidence_ids
+                        if (
+                            str(
+                                record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                            ).strip()
+                            not in archived_structured_evidence_ids
+                            and _memory_record_text(record).strip().casefold() not in archived_structured_evidence_texts
+                        )
                     ]
                     structured_evidence_records = [
                         record
                         for record in structured_evidence_records
-                        if str(
-                            record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
-                        ).strip()
-                        not in archived_structured_evidence_ids
+                        if (
+                            str(
+                                record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                            ).strip()
+                            not in archived_structured_evidence_ids
+                            and _memory_record_text(record).strip().casefold() not in archived_structured_evidence_texts
+                        )
                     ]
             raw_episode_records = _filter_raw_episode_records(recall_records)
             archivable_raw_episode_records = _raw_episode_records_past_archive(raw_episode_records)
@@ -5475,12 +5527,13 @@ def build_researcher_reply(
                         not in archived_raw_episode_ids
                     ]
         if not recall_records:
-            direct_inspection = inspect_human_memory_in_memory(
-                config_manager=config_manager,
-                state_db=state_db,
-                human_id=human_id,
-                actor_id="researcher_bridge",
-            )
+            if direct_inspection is None:
+                direct_inspection = inspect_human_memory_in_memory(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    human_id=human_id,
+                    actor_id="researcher_bridge",
+                )
             if not direct_inspection.read_result.abstained and direct_inspection.read_result.records:
                 recall_records = [
                     record
@@ -5495,17 +5548,24 @@ def build_researcher_reply(
                 if len(structured_evidence_records) >= 2 and archivable_structured_evidence_records:
                     older_evidence_records = _newer_structured_evidence_records(evidence_records=structured_evidence_records)
                     archived_structured_evidence_ids: set[str] = set()
+                    archived_structured_evidence_texts: set[str] = set()
                     for record in archivable_structured_evidence_records:
                         record_id = str(
                             record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
                         ).strip()
+                        record_text = _memory_record_text(record).strip().casefold()
                         if not record_id:
-                            continue
+                            if not record_text:
+                                continue
                         if not any(
-                            str(
-                                candidate.get("observation_id") or (candidate.get("metadata") or {}).get("observation_id") or ""
-                            ).strip()
-                            == record_id
+                            (
+                                str(
+                                    candidate.get("observation_id") or (candidate.get("metadata") or {}).get("observation_id") or ""
+                                ).strip()
+                                == record_id
+                                if record_id
+                                else _memory_record_text(candidate).strip().casefold() == record_text
+                            )
                             for candidate in older_evidence_records
                         ):
                             continue
@@ -5524,25 +5584,34 @@ def build_researcher_reply(
                                 actor_id="telegram_structured_evidence_archiver",
                             )
                             archived_structured_evidence_count += 1
-                            archived_structured_evidence_ids.add(record_id)
+                            if record_id:
+                                archived_structured_evidence_ids.add(record_id)
+                            if record_text:
+                                archived_structured_evidence_texts.add(record_text)
                         except Exception:
                             pass
-                    if archived_structured_evidence_ids:
+                    if archived_structured_evidence_ids or archived_structured_evidence_texts:
                         recall_records = [
                             record
                             for record in recall_records
-                            if str(
-                                record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
-                            ).strip()
-                            not in archived_structured_evidence_ids
+                            if (
+                                str(
+                                    record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                                ).strip()
+                                not in archived_structured_evidence_ids
+                                and _memory_record_text(record).strip().casefold() not in archived_structured_evidence_texts
+                            )
                         ]
                         structured_evidence_records = [
                             record
                             for record in structured_evidence_records
-                            if str(
-                                record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
-                            ).strip()
-                            not in archived_structured_evidence_ids
+                            if (
+                                str(
+                                    record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                                ).strip()
+                                not in archived_structured_evidence_ids
+                                and _memory_record_text(record).strip().casefold() not in archived_structured_evidence_texts
+                            )
                         ]
                 raw_episode_records = _filter_raw_episode_records(recall_records)
                 archivable_raw_episode_records = _raw_episode_records_past_archive(raw_episode_records)

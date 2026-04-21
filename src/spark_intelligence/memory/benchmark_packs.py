@@ -848,6 +848,22 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
             ),
         ),
         TelegramMemoryBenchmarkPack(
+            pack_id="telegram_evidence_consolidation",
+            title="Telegram Evidence Consolidation",
+            description=(
+                "Seeds repeated structured evidence on the same topic and verifies that Builder promotes "
+                "the corroborated signal into a derived belief that can be recalled explicitly."
+            ),
+            focus_areas=("structured_evidence", "belief_consolidation", "derived_memory"),
+            cases=(
+                *_existing(
+                    "evidence_consolidation_write_onboarding_initial",
+                    "evidence_consolidation_write_onboarding_repeat",
+                    "evidence_consolidation_belief_recall_onboarding",
+                ),
+            ),
+        ),
+        TelegramMemoryBenchmarkPack(
             pack_id="telegram_mixed_memory_session_churn",
             title="Telegram Mixed Memory Session Churn",
             description=(
