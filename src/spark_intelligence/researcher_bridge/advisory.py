@@ -7,7 +7,7 @@ import re
 import sys
 import time
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -518,6 +518,34 @@ def _memory_record_timestamp(record: dict[str, Any]) -> str:
     return str(record.get("timestamp") or metadata.get("document_time") or "").strip()
 
 
+def _parse_memory_timestamp(value: str | None) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _belief_records_past_revalidation(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    now = datetime.now(timezone.utc)
+    stale_records: list[dict[str, Any]] = []
+    for record in records:
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        revalidate_at = _parse_memory_timestamp(metadata.get("revalidate_at"))
+        if revalidate_at is None:
+            timestamp = _parse_memory_timestamp(_memory_record_timestamp(record))
+            if timestamp is not None:
+                revalidate_at = timestamp + timedelta(days=30)
+        if revalidate_at is not None and revalidate_at <= now:
+            stale_records.append(record)
+    return stale_records
+
+
 def _newer_evidence_than_beliefs(
     *,
     belief_records: list[dict[str, Any]],
@@ -540,6 +568,7 @@ def _build_belief_recall_answer(
     query: BeliefRecallQuery,
     records: list[dict[str, Any]],
     newer_evidence_records: list[dict[str, Any]] | None = None,
+    stale_belief_records: list[dict[str, Any]] | None = None,
 ) -> str:
     if newer_evidence_records:
         snippets: list[str] = []
@@ -569,6 +598,31 @@ def _build_belief_recall_answer(
             f"I have older inferred beliefs about {query.topic}, but newer direct evidence exists, "
             "so I would not treat the older belief as current."
         )
+    if stale_belief_records:
+        snippets: list[str] = []
+        seen: set[str] = set()
+        for record in stale_belief_records:
+            snippet = _memory_record_text(record)
+            if not snippet:
+                continue
+            normalized = snippet.casefold()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            snippets.append(snippet)
+            if len(snippets) >= 2:
+                break
+        if snippets:
+            if len(snippets) == 1:
+                return (
+                    f'I have an older inferred belief about {query.topic}: "{snippets[0]}" '
+                    "but it has not been revalidated recently, so I would not treat it as current."
+                )
+            return (
+                f'I have older inferred beliefs about {query.topic}: "{snippets[0]}" Also: "{snippets[1]}" '
+                "but they have not been revalidated recently, so I would not treat them as current."
+            )
+        return f"I have an older inferred belief about {query.topic}, but it has not been revalidated recently."
     snippets: list[str] = []
     seen: set[str] = set()
     for record in records:
@@ -5311,6 +5365,7 @@ def build_researcher_reply(
         )
         belief_records: list[dict[str, Any]] = []
         newer_evidence_records: list[dict[str, Any]] = []
+        stale_belief_records: list[dict[str, Any]] = []
         read_method = "retrieve_evidence"
         if not evidence_lookup.read_result.abstained and evidence_lookup.read_result.records:
             belief_records = _filter_belief_recall_records(evidence_lookup.read_result.records)
@@ -5333,8 +5388,10 @@ def build_researcher_reply(
                     belief_records=belief_records,
                     evidence_records=newer_evidence_records or _filter_structured_evidence_records(evidence_lookup.read_result.records),
                 )
+                if not newer_evidence_records:
+                    stale_belief_records = _belief_records_past_revalidation(belief_records)
         direct_inspection = None
-        if belief_records and not newer_evidence_records:
+        if belief_records and not newer_evidence_records and not stale_belief_records:
             direct_inspection = inspect_human_memory_in_memory(
                 config_manager=config_manager,
                 state_db=state_db,
@@ -5369,6 +5426,8 @@ def build_researcher_reply(
                             topic=detected_belief_recall_query.topic,
                         )
                     ]
+                    if not newer_evidence_records:
+                        stale_belief_records = _belief_records_past_revalidation(belief_records)
                 if newer_evidence_records:
                     read_method = "inspect_memory_records"
         if not belief_records:
@@ -5406,12 +5465,14 @@ def build_researcher_reply(
             query=detected_belief_recall_query,
             records=belief_records,
             newer_evidence_records=newer_evidence_records,
+            stale_belief_records=stale_belief_records,
         )
         evidence_summary = (
             "status=memory_belief_recall "
             f"topic={detected_belief_recall_query.topic or 'unknown'} "
             f"record_count={len(belief_records)} "
             f"newer_evidence_count={len(newer_evidence_records)} "
+            f"stale_belief_count={len(stale_belief_records)} "
             f"read_method={read_method} "
             f"retrieved_roles={','.join(retrieved_memory_roles) if retrieved_memory_roles else 'none'}"
         )
@@ -5443,6 +5504,8 @@ def build_researcher_reply(
                     "record_count": len(belief_records),
                     "newer_evidence_count": len(newer_evidence_records),
                     "belief_stale_due_to_evidence": bool(newer_evidence_records),
+                    "belief_stale_due_to_age": bool(stale_belief_records),
+                    "stale_belief_count": len(stale_belief_records),
                     "read_method": read_method,
                     "retrieved_memory_roles": retrieved_memory_roles,
                 },

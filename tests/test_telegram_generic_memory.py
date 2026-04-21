@@ -379,6 +379,56 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(result.routing_decision, "memory_belief_recall_query")
         self.assertEqual(result.reply_text, "I don't currently have a saved belief about that.")
 
+    def test_build_researcher_reply_belief_recall_downgrades_stale_unrevalidated_belief(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch("spark_intelligence.memory.orchestrator._now_iso", return_value="2025-02-01T00:00:00+00:00"):
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-belief-old-write",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-belief-old-write",
+                channel_kind="telegram",
+                user_message="I think enterprise teams need hands-on onboarding.",
+            )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for stale belief recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for stale belief recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-belief-old-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-belief-old-read",
+                channel_kind="telegram",
+                user_message="What is your current belief about onboarding?",
+            )
+
+        self.assertEqual(result.mode, "memory_belief_recall")
+        self.assertIn("not been revalidated recently", result.reply_text.lower())
+        self.assertIn("hands-on onboarding", result.reply_text)
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(tool_events)
+        facts = next(
+            (
+                (event["facts_json"] or {})
+                for event in tool_events
+                if (event["facts_json"] or {}).get("bridge_mode") == "memory_belief_recall"
+            ),
+            {},
+        )
+        self.assertTrue(facts.get("belief_stale_due_to_age"))
+        self.assertEqual(facts.get("stale_belief_count"), 1)
+
     def test_build_researcher_reply_persists_raw_episode_for_meaningful_unpromoted_turn(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

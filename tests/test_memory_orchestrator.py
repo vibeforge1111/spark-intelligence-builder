@@ -338,6 +338,8 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(call["memory_role"], "belief")
         self.assertEqual(call["retention_class"], "derived_belief")
         self.assertEqual(call["metadata"]["belief_kind"], "belief_marker")
+        self.assertEqual(call["metadata"]["revalidate_after_days"], 30)
+        self.assertTrue(call["metadata"]["revalidate_at"])
         events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(events)
         observations = (events[0]["facts_json"] or {}).get("observations") or []

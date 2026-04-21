@@ -8,7 +8,7 @@ import sys
 import time
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -27,6 +27,7 @@ from spark_intelligence.state.db import StateDB
 DEFAULT_SDK_MODULE = "domain_chip_memory"
 DEFAULT_DOMAIN_CHIP_MEMORY_ROOT = Path.home() / "Desktop" / "domain-chip-memory"
 PREFERENCE_PREDICATE_PREFIX = "personality.preference."
+BELIEF_REVALIDATION_DAYS = 30
 _SDK_CLIENT_CACHE: dict[tuple[str, str], Any] = {}
 
 
@@ -1589,6 +1590,7 @@ def write_belief_to_memory(
         return result
     subject = _subject_for_human_id(human_id)
     timestamp = _now_iso()
+    revalidate_at = (datetime.fromisoformat(timestamp.replace("Z", "+00:00")) + timedelta(days=BELIEF_REVALIDATION_DAYS)).isoformat()
     normalized_pack = re.sub(r"[^a-z0-9]+", "_", str(domain_pack or "belief").strip().lower()).strip("_") or "belief"
     predicate = f"belief.telegram.{normalized_pack}"
     existing_beliefs = retrieve_memory_evidence_in_memory(
@@ -1663,6 +1665,8 @@ def write_belief_to_memory(
                 "value": normalized_text,
                 "supersedes_previous_belief": bool(supersedes),
                 "previous_belief_text": prior_belief_text or None,
+                "revalidate_after_days": BELIEF_REVALIDATION_DAYS,
+                "revalidate_at": revalidate_at,
             },
         },
     )
