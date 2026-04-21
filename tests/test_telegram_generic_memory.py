@@ -135,6 +135,117 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(recorded_observations[0]["predicate"], "profile.manager_name")
         self.assertEqual(recorded_observations[0]["value"], "Leila")
 
+    def test_build_researcher_reply_answers_generic_relationship_query_from_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-memory-write-query-seed",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-memory-write-query-seed",
+            channel_kind="telegram",
+            user_message="My cofounder is Omar.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for generic memory queries"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for generic memory queries"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-generic-memory-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-generic-memory-query",
+                channel_kind="telegram",
+                user_message="Who is my cofounder?",
+            )
+
+        self.assertEqual(result.reply_text, "Your cofounder is Omar.")
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+
+    def test_build_researcher_reply_answers_generic_plan_query_from_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-plan-write-query-seed",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-plan-write-query-seed",
+            channel_kind="telegram",
+            user_message="We plan to launch Atlas in enterprise first.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for generic memory queries"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for generic memory queries"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-generic-plan-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-generic-plan-query",
+                channel_kind="telegram",
+                user_message="What is my current plan?",
+            )
+
+        self.assertEqual(result.reply_text, "Your current plan is to launch Atlas in enterprise first.")
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+
+    def test_build_researcher_reply_answers_generic_focus_query_from_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-focus-write-query-seed",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-focus-write-query-seed",
+            channel_kind="telegram",
+            user_message="Actually, our priority is fixing onboarding retention.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for generic memory queries"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for generic memory queries"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-generic-focus-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-generic-focus-query",
+                channel_kind="telegram",
+                user_message="What is our priority?",
+            )
+
+        self.assertEqual(result.reply_text, "Your current focus is fixing onboarding retention.")
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+
     def test_build_researcher_reply_does_not_persist_hypothetical_generic_memory_text(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)

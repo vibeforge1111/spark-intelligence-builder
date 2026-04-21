@@ -699,6 +699,108 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
             fact_name="profile_current_mission",
             label="current mission",
         )
+    if any(
+        phrase in text
+        for phrase in (
+            "who is my cofounder",
+            "what is my cofounder name",
+            "what's my cofounder name",
+            "what cofounder do you have for me",
+        )
+    ):
+        return ProfileFactQuery(
+            predicate="profile.cofounder_name",
+            fact_name="profile_cofounder_name",
+            label="cofounder",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "who is my mentor",
+            "what is my mentor name",
+            "what's my mentor name",
+            "what mentor do you have for me",
+        )
+    ):
+        return ProfileFactQuery(
+            predicate="profile.mentor_name",
+            fact_name="profile_mentor_name",
+            label="mentor",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "who is my manager",
+            "what is my manager name",
+            "what's my manager name",
+            "what manager do you have for me",
+        )
+    ):
+        return ProfileFactQuery(
+            predicate="profile.manager_name",
+            fact_name="profile_manager_name",
+            label="manager",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "who is my assistant",
+            "what is my assistant name",
+            "what's my assistant name",
+            "what assistant do you have for me",
+        )
+    ):
+        return ProfileFactQuery(
+            predicate="profile.assistant_name",
+            fact_name="profile_assistant_name",
+            label="assistant",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "who is my partner",
+            "what is my partner name",
+            "what's my partner name",
+            "what partner do you have for me",
+        )
+    ):
+        return ProfileFactQuery(
+            predicate="profile.partner_name",
+            fact_name="profile_partner_name",
+            label="partner",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what is my current plan",
+            "what's my current plan",
+            "what do you have as my current plan",
+            "what plan do you have for me",
+            "what are we planning",
+            "what do we plan to do",
+        )
+    ):
+        return ProfileFactQuery(
+            predicate="profile.current_plan",
+            fact_name="profile_current_plan",
+            label="current plan",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what is my current focus",
+            "what's my current focus",
+            "what is our priority",
+            "what's our priority",
+            "what are we focusing on",
+            "what do you have as my current focus",
+        )
+    ):
+        return ProfileFactQuery(
+            predicate="profile.current_focus",
+            fact_name="profile_current_focus",
+            label="current focus",
+        )
     if normalized_question in {
         "what startup did i create",
         "what company did i found",
@@ -948,6 +1050,20 @@ def _build_profile_fact_concise_answer(*, query: ProfileFactQuery, value: str) -
         return _ensure_sentence(f"The hack actor was {normalized_value}")
     if predicate == "profile.current_mission":
         return _ensure_sentence(f"Right now you're trying to {normalized_value}")
+    if predicate == "profile.current_plan":
+        return _ensure_sentence(f"Your current plan is to {normalized_value}")
+    if predicate == "profile.current_focus":
+        return _ensure_sentence(f"Your current focus is {normalized_value}")
+    if predicate == "profile.cofounder_name":
+        return _ensure_sentence(f"Your cofounder is {normalized_value}")
+    if predicate == "profile.mentor_name":
+        return _ensure_sentence(f"Your mentor is {normalized_value}")
+    if predicate == "profile.manager_name":
+        return _ensure_sentence(f"Your manager is {normalized_value}")
+    if predicate == "profile.assistant_name":
+        return _ensure_sentence(f"Your assistant is {normalized_value}")
+    if predicate == "profile.partner_name":
+        return _ensure_sentence(f"Your partner is {normalized_value}")
     if predicate == "profile.spark_role":
         return _ensure_sentence(_spark_role_sentence(normalized_value))
     if predicate == "profile.home_country":
@@ -994,6 +1110,13 @@ def build_profile_identity_summary_context(*, records: list[dict[str, str]]) -> 
         "profile.founder_of",
         "profile.hack_actor",
         "profile.current_mission",
+        "profile.current_plan",
+        "profile.current_focus",
+        "profile.cofounder_name",
+        "profile.mentor_name",
+        "profile.manager_name",
+        "profile.assistant_name",
+        "profile.partner_name",
         "profile.spark_role",
         "profile.city",
         "profile.home_country",
@@ -1006,6 +1129,13 @@ def build_profile_identity_summary_context(*, records: list[dict[str, str]]) -> 
         "profile.founder_of": "founder of",
         "profile.hack_actor": "hacked by",
         "profile.current_mission": "current mission",
+        "profile.current_plan": "current plan",
+        "profile.current_focus": "current focus",
+        "profile.cofounder_name": "cofounder",
+        "profile.mentor_name": "mentor",
+        "profile.manager_name": "manager",
+        "profile.assistant_name": "assistant",
+        "profile.partner_name": "partner",
         "profile.spark_role": "Spark role",
         "profile.city": "city",
         "profile.home_country": "country",
