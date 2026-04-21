@@ -47,6 +47,7 @@ This repo currently includes:
 - [docs/OPENCLAW_HERMES_DEEP_COMPARATIVE_ANALYSIS_2026-03-25.md](./docs/OPENCLAW_HERMES_DEEP_COMPARATIVE_ANALYSIS_2026-03-25.md)
 - [docs/SECURITY_HISTORY_THEME_APPENDIX_2026-03-25.md](./docs/SECURITY_HISTORY_THEME_APPENDIX_2026-03-25.md)
 - [docs/TELEGRAM_ADAPTER_SPEC_V1.md](./docs/TELEGRAM_ADAPTER_SPEC_V1.md)
+- [docs/TELEGRAM_GATEWAY_MIGRATION_PLAN_2026-04-21.md](./docs/TELEGRAM_GATEWAY_MIGRATION_PLAN_2026-04-21.md)
 - [docs/TELEGRAM_OPERATOR_RUNBOOK_2026-03-26.md](./docs/TELEGRAM_OPERATOR_RUNBOOK_2026-03-26.md)
 - [docs/TELEGRAM_COMMAND_REFERENCE_2026-04-09.md](./docs/TELEGRAM_COMMAND_REFERENCE_2026-04-09.md)
 - [docs/PERSONALITY_VOICE_SYSTEM_BOUNDARY_2026-04-09.md](./docs/PERSONALITY_VOICE_SYSTEM_BOUNDARY_2026-04-09.md)
@@ -281,6 +282,9 @@ Telegram runtime verification is available in two forms:
 ```bash
 spark-intelligence gateway simulate-telegram-update ./sample-update.json
 spark-intelligence gateway ask-telegram "What are you connected to right now?"
+spark-intelligence gateway shadow-telegram "What are you connected to right now?"
+spark-intelligence gateway shadow-telegram-pack .\scenario-packs\telegram-shadow-basic.txt --home .tmp-home-live-telegram-real
+spark-intelligence gateway shadow-telegram-pack .\scenario-packs\telegram-shadow-basic.txt --home .tmp-home-live-telegram-real --output .\logs\telegram-shadow-basic.json
 spark-intelligence gateway simulate-discord-message ./sample-discord-message.json
 spark-intelligence gateway simulate-whatsapp-message ./sample-whatsapp-message.json
 spark-intelligence gateway start --once --poll-timeout-seconds 0
@@ -293,6 +297,7 @@ spark-intelligence gateway outbound --channel-id telegram --delivery failed
 
 There is also an internal operator-only terminal-to-Telegram bridge for probing the Telegram runtime directly from the CLI, but it should remain disabled by default and should not be treated as a normal end-user surface.
 `gateway ask-telegram` sends one synthetic private Telegram message through Builder's real Telegram runtime path and prints Spark's reply locally. It remains an internal operator-only bridge and should stay disabled by default. Pass `--user-id` when the home has multiple Telegram users; otherwise the command will reuse the most recent Telegram user or the single configured allowlisted user when it can infer one safely.
+`gateway shadow-telegram` and `gateway shadow-telegram-pack` are the explicit migration-parity variants of that same internal bridge. They keep the current ingress truth visible in output: `spark-telegram-bot` remains the live ingress owner while Builder is only in shadow-validation mode. Use `--output <file>` on pack runs when you want a persistent JSON artifact for parity review.
 
 For local recovery on Windows, use [`start-telegram.ps1`](C:/Users/USER/Desktop/spark-intelligence-builder/start-telegram.ps1). It uses the same native Windows Python path as the supported autostart wrapper, tests Telegram auth against `.tmp-home-live-telegram-real`, and then starts the continuous gateway:
 

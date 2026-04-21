@@ -266,9 +266,18 @@ class SystemStatus:
                 lines.append(f"- {name}: {detail}")
             lines.append(f"- {name} repair: {repair_hint}")
         runtime_payload = self.payload.get("runtime") or {}
+        telegram_gateway_payload = self.payload.get("telegram_gateway") or {}
         autostart_payload = runtime_payload.get("autostart") or {}
         lines.append(f"- install profile: {runtime_payload.get('install_profile') or 'none'}")
         lines.append(f"- default gateway mode: {runtime_payload.get('default_gateway_mode') or 'none'}")
+        if telegram_gateway_payload:
+            lines.append(f"- telegram ingress owner: {telegram_gateway_payload.get('owner') or 'unknown'}")
+            lines.append(f"- telegram ingress mode: {telegram_gateway_payload.get('mode') or 'unknown'}")
+            lines.append(f"- telegram ingress contract: {telegram_gateway_payload.get('contract') or 'unknown'}")
+            lines.append(f"- telegram migration status: {telegram_gateway_payload.get('migration_status') or 'unknown'}")
+            lines.append(
+                f"- telegram shadow validation: {telegram_gateway_payload.get('shadow_validation_command') or 'none'}"
+            )
         if autostart_payload.get("enabled"):
             lines.append(
                 f"- autostart: enabled {autostart_payload.get('platform') or 'unknown'} "
@@ -1345,6 +1354,27 @@ def build_parser() -> argparse.ArgumentParser:
     gateway_ask_telegram_parser.add_argument("--username", help="Telegram username to simulate")
     gateway_ask_telegram_parser.add_argument("--chat-id", help="Explicit Telegram chat id override")
     gateway_ask_telegram_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    gateway_shadow_telegram_parser = gateway_subparsers.add_parser(
+        "shadow-telegram",
+        help="Run one Builder-side Telegram shadow-validation turn while spark-telegram-bot remains the live ingress owner",
+    )
+    gateway_shadow_telegram_parser.add_argument("message", help="Telegram DM text to inject into the runtime")
+    gateway_shadow_telegram_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    gateway_shadow_telegram_parser.add_argument("--user-id", help="Telegram user id to simulate")
+    gateway_shadow_telegram_parser.add_argument("--username", help="Telegram username to simulate")
+    gateway_shadow_telegram_parser.add_argument("--chat-id", help="Explicit Telegram chat id override")
+    gateway_shadow_telegram_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    gateway_shadow_telegram_pack_parser = gateway_subparsers.add_parser(
+        "shadow-telegram-pack",
+        help="Run a repeatable pack of Builder-side Telegram shadow-validation prompts",
+    )
+    gateway_shadow_telegram_pack_parser.add_argument("pack_file", help="Path to a .json or line-delimited prompt pack")
+    gateway_shadow_telegram_pack_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    gateway_shadow_telegram_pack_parser.add_argument("--user-id", help="Default Telegram user id to simulate")
+    gateway_shadow_telegram_pack_parser.add_argument("--username", help="Default Telegram username to simulate")
+    gateway_shadow_telegram_pack_parser.add_argument("--chat-id", help="Default explicit Telegram chat id override")
+    gateway_shadow_telegram_pack_parser.add_argument("--output", help="Optional JSON file path to persist the shadow-validation results")
+    gateway_shadow_telegram_pack_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     gateway_simulate_discord_parser = gateway_subparsers.add_parser(
         "simulate-discord-message",
         help="Simulate one Discord DM message through normalization and authorization routing",
@@ -2995,6 +3025,13 @@ def handle_status(args: argparse.Namespace) -> int:
         "task_name": config_manager.get_path("runtime.autostart.task_name"),
         "command": config_manager.get_path("runtime.autostart.command"),
     }
+    telegram_gateway_payload = {
+        "owner": "spark-telegram-bot",
+        "mode": "external_webhook_gateway",
+        "contract": "single_owner_webhook",
+        "migration_status": "builder_shadow_validation_only",
+        "shadow_validation_command": "spark-intelligence gateway ask-telegram \"hello\" --home <home>",
+    }
 
     payload = {
         "doctor": {"ok": doctor_report.ok, "checks": [{"name": check.name, "ok": check.ok, "detail": check.detail} for check in doctor_report.checks]},
@@ -3008,6 +3045,7 @@ def handle_status(args: argparse.Namespace) -> int:
             "default_gateway_mode": config_manager.get_path("runtime.run.default_gateway_mode"),
             "autostart": autostart_payload,
         },
+        "telegram_gateway": telegram_gateway_payload,
         "system_registry": system_registry.to_payload(),
         "mission_control": mission_control.to_payload(),
         "harness_registry": harness_registry.to_payload(),
@@ -3228,6 +3266,156 @@ def handle_gateway_ask_telegram(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    return 0
+
+
+def handle_gateway_shadow_telegram(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    try:
+        result = gateway_ask_telegram(
+            config_manager=config_manager,
+            state_db=state_db,
+            message=args.message,
+            user_id=args.user_id,
+            username=args.username,
+            chat_id=args.chat_id,
+            as_json=args.json,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "ingress_owner": "spark-telegram-bot",
+                    "migration_status": "builder_shadow_validation_only",
+                    "result": json.loads(result),
+                },
+                indent=2,
+            )
+        )
+        return 0
+    print("Builder Telegram shadow validation")
+    print("- ingress_owner: spark-telegram-bot")
+    print("- migration_status: builder_shadow_validation_only")
+    print("")
+    print(result)
+    return 0
+
+
+def _load_shadow_telegram_pack(path: Path) -> list[dict[str, str | None]]:
+    if path.suffix.lower() == ".json":
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        if not isinstance(payload, list):
+            raise ValueError("Shadow Telegram pack JSON must be a list.")
+        entries: list[dict[str, str | None]] = []
+        for item in payload:
+            if isinstance(item, str):
+                entries.append({"message": item, "user_id": None, "username": None, "chat_id": None})
+                continue
+            if not isinstance(item, dict):
+                raise ValueError("Shadow Telegram pack entries must be strings or objects.")
+            message = str(item.get("message") or "").strip()
+            if not message:
+                raise ValueError("Shadow Telegram pack entries must include a non-empty message.")
+            entries.append(
+                {
+                    "message": message,
+                    "user_id": str(item.get("user_id")).strip() if item.get("user_id") is not None else None,
+                    "username": str(item.get("username")).strip() if item.get("username") is not None else None,
+                    "chat_id": str(item.get("chat_id")).strip() if item.get("chat_id") is not None else None,
+                }
+            )
+        return entries
+    entries = []
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        message = line.strip()
+        if not message or message.startswith("#"):
+            continue
+        entries.append({"message": message, "user_id": None, "username": None, "chat_id": None})
+    if not entries:
+        raise ValueError("Shadow Telegram pack did not contain any prompts.")
+    return entries
+
+
+def handle_gateway_shadow_telegram_pack(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    try:
+        pack_entries = _load_shadow_telegram_pack(Path(args.pack_file))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    results: list[dict[str, object]] = []
+    for index, entry in enumerate(pack_entries, start=1):
+        try:
+            raw = gateway_ask_telegram(
+                config_manager=config_manager,
+                state_db=state_db,
+                message=str(entry["message"] or ""),
+                user_id=str(entry["user_id"] or args.user_id or "").strip() or None,
+                username=str(entry["username"] or args.username or "").strip() or None,
+                chat_id=str(entry["chat_id"] or args.chat_id or "").strip() or None,
+                as_json=True,
+            )
+        except ValueError as exc:
+            print(f"Pack entry {index} failed: {exc}", file=sys.stderr)
+            return 1
+        parsed = json.loads(raw)
+        results.append(
+            {
+                "index": index,
+                "message": entry["message"],
+                "user_id": parsed.get("user_id"),
+                "username": parsed.get("username"),
+                "chat_id": parsed.get("chat_id"),
+                "result": parsed.get("result"),
+            }
+        )
+    payload = {
+        "ingress_owner": "spark-telegram-bot",
+        "migration_status": "builder_shadow_validation_only",
+        "pack_file": str(Path(args.pack_file)),
+        "results": results,
+    }
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    if args.json:
+        print(json.dumps(payload, indent=2))
+        return 0
+    print("Builder Telegram shadow validation pack")
+    print("- ingress_owner: spark-telegram-bot")
+    print("- migration_status: builder_shadow_validation_only")
+    print(f"- pack_file: {Path(args.pack_file)}")
+    if args.output:
+        print(f"- output: {Path(args.output)}")
+    for item in results:
+        result = item.get("result") if isinstance(item.get("result"), dict) else {}
+        print("")
+        print(f"[{item['index']}] {item['message']}")
+        print(f"- decision: {result.get('decision') or 'unknown'}")
+        detail = result.get("detail") if isinstance(result, dict) else {}
+        if isinstance(detail, dict):
+            bridge_mode = str(detail.get("bridge_mode") or "").strip()
+            routing_decision = str(detail.get("routing_decision") or "").strip()
+            trace_ref = str(detail.get("trace_ref") or "").strip()
+            response_text = str(detail.get("response_text") or "").strip()
+            if bridge_mode:
+                print(f"- mode: {bridge_mode}")
+            if routing_decision:
+                print(f"- route: {routing_decision}")
+            if trace_ref:
+                print(f"- trace_ref: {trace_ref}")
+            if response_text:
+                print(response_text)
     return 0
 
 
@@ -6337,6 +6525,10 @@ def main(argv: list[str] | None = None) -> int:
         return handle_gateway_simulate_telegram_update(args)
     if args.command == "gateway" and args.gateway_command == "ask-telegram":
         return handle_gateway_ask_telegram(args)
+    if args.command == "gateway" and args.gateway_command == "shadow-telegram":
+        return handle_gateway_shadow_telegram(args)
+    if args.command == "gateway" and args.gateway_command == "shadow-telegram-pack":
+        return handle_gateway_shadow_telegram_pack(args)
     if args.command == "gateway" and args.gateway_command == "simulate-discord-message":
         return handle_gateway_simulate_discord_message(args)
     if args.command == "gateway" and args.gateway_command == "simulate-whatsapp-message":
