@@ -72,6 +72,69 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(recorded_observations[0]["predicate"], "profile.current_plan")
         self.assertEqual(recorded_observations[0]["value"], "launch Atlas in enterprise first")
 
+    def test_build_researcher_reply_persists_generic_focus_memory_with_correction_prefix(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for generic memory observations"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for generic memory observations"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-generic-focus-update",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-generic-focus-update",
+                channel_kind="telegram",
+                user_message="Actually, our priority is fixing onboarding retention.",
+            )
+
+        self.assertEqual(
+            result.reply_text,
+            "I'll remember that your current focus is fixing onboarding retention.",
+        )
+        self.assertEqual(result.mode, "memory_generic_observation_update")
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(write_events)
+        recorded_observations = (write_events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(recorded_observations[0]["predicate"], "profile.current_focus")
+        self.assertEqual(recorded_observations[0]["value"], "fixing onboarding retention")
+
+    def test_build_researcher_reply_persists_generic_manager_relationship_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for generic memory observations"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for generic memory observations"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-generic-manager-update",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-generic-manager-update",
+                channel_kind="telegram",
+                user_message="My manager is Leila.",
+            )
+
+        self.assertEqual(result.reply_text, "I'll remember that your manager is Leila.")
+        self.assertEqual(result.mode, "memory_generic_observation_update")
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(write_events)
+        recorded_observations = (write_events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(recorded_observations[0]["predicate"], "profile.manager_name")
+        self.assertEqual(recorded_observations[0]["value"], "Leila")
+
     def test_build_researcher_reply_does_not_persist_hypothetical_generic_memory_text(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)

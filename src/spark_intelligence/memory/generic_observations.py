@@ -17,9 +17,15 @@ _SMALL_TALK_PATTERN = re.compile(
 _RELATIONSHIP_PATTERNS: tuple[tuple[str, str, re.Pattern[str]], ...] = (
     ("profile.cofounder_name", "cofounder", re.compile(r"^my\s+cofounder\s+is\s+(.+?)[.!]?$", re.IGNORECASE)),
     ("profile.mentor_name", "mentor", re.compile(r"^my\s+mentor\s+is\s+(.+?)[.!]?$", re.IGNORECASE)),
+    ("profile.manager_name", "manager", re.compile(r"^my\s+manager\s+is\s+(.+?)[.!]?$", re.IGNORECASE)),
+    ("profile.assistant_name", "assistant", re.compile(r"^my\s+assistant\s+is\s+(.+?)[.!]?$", re.IGNORECASE)),
     ("profile.partner_name", "partner", re.compile(r"^my\s+partner\s+is\s+(.+?)[.!]?$", re.IGNORECASE)),
     ("profile.partner_name", "wife", re.compile(r"^my\s+wife\s+is\s+(.+?)[.!]?$", re.IGNORECASE)),
     ("profile.partner_name", "husband", re.compile(r"^my\s+husband\s+is\s+(.+?)[.!]?$", re.IGNORECASE)),
+    ("profile.mother_name", "mother", re.compile(r"^my\s+mother\s+is\s+(.+?)[.!]?$", re.IGNORECASE)),
+    ("profile.father_name", "father", re.compile(r"^my\s+father\s+is\s+(.+?)[.!]?$", re.IGNORECASE)),
+    ("profile.sister_name", "sister", re.compile(r"^my\s+sister\s+is\s+(.+?)[.!]?$", re.IGNORECASE)),
+    ("profile.brother_name", "brother", re.compile(r"^my\s+brother\s+is\s+(.+?)[.!]?$", re.IGNORECASE)),
 )
 
 _PLAN_PATTERNS: tuple[re.Pattern[str], ...] = (
