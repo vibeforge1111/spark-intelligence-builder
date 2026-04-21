@@ -153,3 +153,42 @@ class TelegramEpisodicMemoryTests(SparkTestCase):
         self.assertEqual(result.reply_text, "I have 1 saved event: meeting with Omar on May 3.")
         self.assertEqual(result.mode, "memory_telegram_event_history")
         self.assertEqual(result.routing_decision, "memory_telegram_event_query")
+
+    def test_build_researcher_reply_answers_latest_flight_query_from_consolidated_state(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        write_telegram_event_to_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human-1",
+            predicate="telegram.event.flight",
+            value="flight to London on May 6",
+            evidence_text="My flight to London is on May 6.",
+            event_name="telegram_event_flight",
+            session_id="session-flight-query-write",
+            turn_id="turn-flight-query-write",
+            channel_kind="telegram",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for latest Telegram event replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for latest Telegram event replies"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-flight-latest-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-flight-latest-query",
+                channel_kind="telegram",
+                user_message="What flight do I have?",
+            )
+
+        self.assertEqual(result.reply_text, "Your latest saved flight is flight to London on May 6.")
+        self.assertEqual(result.mode, "memory_telegram_event_latest")
+        self.assertEqual(result.routing_decision, "memory_telegram_event_latest_query")

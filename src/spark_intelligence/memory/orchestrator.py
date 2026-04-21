@@ -1360,6 +1360,20 @@ def write_telegram_event_to_memory(
         method="write_event",
         default_role="event",
     )
+    if result.accepted_count > 0 and bool(
+        config_manager.get_path("spark.memory.consolidate_telegram_events", default=True)
+    ):
+        _consolidate_telegram_event_summary_observation(
+            client=client,
+            predicate=predicate,
+            value=value,
+            evidence_text=evidence_text,
+            session_id=session_id,
+            turn_id=turn_id,
+            channel_kind=channel_kind,
+            event_name=event_name,
+            subject=subject,
+        )
     _record_memory_write_event(
         state_db=state_db,
         result=result,
@@ -1369,6 +1383,49 @@ def write_telegram_event_to_memory(
         actor_id=actor_id,
     )
     return result
+
+
+def _consolidate_telegram_event_summary_observation(
+    *,
+    client: Any,
+    predicate: str,
+    value: str,
+    evidence_text: str,
+    session_id: str | None,
+    turn_id: str | None,
+    channel_kind: str | None,
+    event_name: str,
+    subject: str,
+) -> None:
+    suffix = str(predicate or "").strip().removeprefix("telegram.event.")
+    if not suffix:
+        return
+    _call_sdk_method(
+        client,
+        "write_observation",
+        {
+            "operation": "update",
+            "subject": subject,
+            "predicate": f"telegram.summary.latest_{suffix}",
+            "value": value,
+            "text": evidence_text,
+            "memory_role": "current_state",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "timestamp": _now_iso(),
+            "metadata": {
+                "entity_type": "human",
+                "channel_kind": channel_kind,
+                "memory_role": "current_state",
+                "source_surface": "telegram_event_consolidation",
+                "event_name": event_name,
+                "source_event_predicate": predicate,
+                "normalized_value": value,
+                "value": value,
+                "consolidated_from_event": True,
+            },
+        },
+    )
 
 
 def read_personality_preferences_from_memory(

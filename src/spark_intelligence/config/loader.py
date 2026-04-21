@@ -125,6 +125,7 @@ class ConfigManager:
                     "write_personality_preferences": True,
                     "write_profile_facts": True,
                     "write_telegram_events": True,
+                    "consolidate_telegram_events": True,
                     "read_personality_preferences": True,
                 },
             },

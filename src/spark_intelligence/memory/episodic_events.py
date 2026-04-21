@@ -96,6 +96,7 @@ class TelegramMemoryEventQuery:
     predicate: str | None
     label: str
     query_kind: str = "recent_events"
+    summary_predicate: str | None = None
 
 
 def detect_telegram_memory_event_observation(user_message: str) -> TelegramMemoryEventObservation | None:
@@ -133,6 +134,9 @@ def detect_telegram_memory_event_query(user_message: str) -> TelegramMemoryEvent
     for label, pattern in _EVENT_TYPE_QUERY_PATTERNS:
         if not pattern.search(text):
             continue
+        latest_query = _detect_latest_event_query(text=text, label=label)
+        if latest_query is not None:
+            return latest_query
         if _EVENT_QUERY_INTENT_PATTERN.search(text) or any(
             query_pattern.search(text) for query_pattern in _GENERIC_EVENT_QUERY_PATTERNS
         ):
@@ -158,6 +162,10 @@ def build_telegram_memory_event_query_answer(
     *, query: TelegramMemoryEventQuery, records: list[dict[str, Any]]
 ) -> str:
     ordered_values = _ordered_unique_event_values(records)
+    if query.query_kind == "latest_event":
+        if not ordered_values:
+            return f"I don't currently have a saved {query.label}."
+        return f"Your latest saved {query.label} is {ordered_values[-1]}."
     if not ordered_values:
         return "I don't currently have any saved events from this chat."
     if len(ordered_values) == 1:
@@ -267,3 +275,30 @@ def _build_event_value(*, label: str, match: re.Match[str], date_text: str) -> s
             return None
         return f"deadline for {item} by {date_text}"
     return None
+
+
+def telegram_event_summary_predicate(predicate: str | None) -> str | None:
+    normalized = _clean_text(str(predicate or ""))
+    if not normalized.startswith(_TELEGRAM_EVENT_PREDICATE_PREFIX):
+        return None
+    suffix = normalized[len(_TELEGRAM_EVENT_PREDICATE_PREFIX) :]
+    if not suffix:
+        return None
+    return f"telegram.summary.latest_{suffix}"
+
+
+def _detect_latest_event_query(*, text: str, label: str) -> TelegramMemoryEventQuery | None:
+    pattern = re.compile(
+        rf"^(?:what(?:'s| is)?\s+(?:my\s+|the\s+)?(?:next\s+)?{re.escape(label)}\??|"
+        rf"what\s+{re.escape(label)}\s+do\s+i\s+have\??)$",
+        re.IGNORECASE,
+    )
+    if not pattern.fullmatch(text):
+        return None
+    predicate = f"{_TELEGRAM_EVENT_PREDICATE_PREFIX}{label}"
+    return TelegramMemoryEventQuery(
+        predicate=predicate,
+        label=label,
+        query_kind="latest_event",
+        summary_predicate=telegram_event_summary_predicate(predicate),
+    )

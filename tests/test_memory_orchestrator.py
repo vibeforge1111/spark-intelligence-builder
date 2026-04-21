@@ -24,6 +24,7 @@ from spark_intelligence.memory.episodic_events import (
     detect_telegram_memory_event_observation,
     detect_telegram_memory_event_query,
     filter_telegram_memory_event_records,
+    telegram_event_summary_predicate,
 )
 from spark_intelligence.memory.profile_facts import (
     build_profile_fact_event_history_answer,
@@ -195,11 +196,15 @@ class MemoryOrchestratorTests(SparkTestCase):
 
         self.assertEqual(result.status, "succeeded")
         self.assertEqual(len(fake_client.event_calls), 1)
+        self.assertEqual(len(fake_client.observation_calls), 1)
         call = fake_client.event_calls[0]
         self.assertEqual(call["subject"], "human:test")
         self.assertEqual(call["predicate"], "telegram.event.meeting")
         self.assertEqual(call["value"], "meeting with Omar on May 3")
         self.assertEqual(call["text"], "My meeting with Omar is on May 3.")
+        summary_call = fake_client.observation_calls[0]
+        self.assertEqual(summary_call["predicate"], "telegram.summary.latest_meeting")
+        self.assertEqual(summary_call["value"], "meeting with Omar on May 3")
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(write_events)
         recorded_events = (write_events[0]["facts_json"] or {}).get("events") or []
@@ -785,6 +790,17 @@ class MemoryOrchestratorTests(SparkTestCase):
         assert meeting_query is not None
         self.assertEqual(meeting_query.predicate, "telegram.event.meeting")
 
+        latest_query = detect_telegram_memory_event_query("What flight do I have?")
+        self.assertIsNotNone(latest_query)
+        assert latest_query is not None
+        self.assertEqual(latest_query.query_kind, "latest_event")
+        self.assertEqual(latest_query.predicate, "telegram.event.flight")
+        self.assertEqual(latest_query.summary_predicate, "telegram.summary.latest_flight")
+        self.assertEqual(
+            telegram_event_summary_predicate("telegram.event.deadline"),
+            "telegram.summary.latest_deadline",
+        )
+
         filtered = filter_telegram_memory_event_records(
             query=query,
             records=[
@@ -815,6 +831,20 @@ class MemoryOrchestratorTests(SparkTestCase):
                 records=filtered,
             ),
             "I have 2 saved events: meeting with Omar on May 3 then call with Sarah on May 4.",
+        )
+        self.assertEqual(
+            build_telegram_memory_event_query_answer(
+                query=latest_query,
+                records=[
+                    {
+                        "predicate": "telegram.summary.latest_flight",
+                        "value": "flight to London on May 6",
+                        "timestamp": "2026-04-10T12:00:00+00:00",
+                        "turn_ids": ["turn-4"],
+                    }
+                ],
+            ),
+            "Your latest saved flight is flight to London on May 6.",
         )
 
     def test_telegram_event_detection_supports_flight_and_deadline_types(self) -> None:

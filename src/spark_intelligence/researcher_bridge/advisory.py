@@ -52,6 +52,7 @@ from spark_intelligence.memory.episodic_events import (
     detect_telegram_memory_event_observation,
     detect_telegram_memory_event_query,
     filter_telegram_memory_event_records,
+    telegram_event_summary_predicate,
 )
 from spark_intelligence.memory.profile_facts import (
     build_profile_fact_explanation_answer,
@@ -4480,6 +4481,103 @@ def build_researcher_reply(
             config_path=None,
             attachment_context=attachment_context,
             routing_decision="memory_profile_identity_summary",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+    if detected_memory_event_query is not None and detected_memory_event_query.query_kind == "latest_event":
+        memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
+        summary_predicate = detected_memory_event_query.summary_predicate or telegram_event_summary_predicate(
+            detected_memory_event_query.predicate
+        )
+        latest_records: list[dict[str, Any]] = []
+        latest_read_method = "retrieve_events"
+        if summary_predicate:
+            latest_lookup = lookup_current_state_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                subject=memory_subject,
+                predicate=summary_predicate,
+                actor_id="researcher_bridge",
+            )
+            if not latest_lookup.read_result.abstained and latest_lookup.read_result.records:
+                latest_records = list(latest_lookup.read_result.records)
+                latest_read_method = "get_current_state"
+        if not latest_records:
+            event_lookup = retrieve_memory_events_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                query=str(user_message or "").strip() or f"What {detected_memory_event_query.label} do I have?",
+                subject=memory_subject,
+                predicate=detected_memory_event_query.predicate,
+                limit=8,
+                actor_id="researcher_bridge",
+            )
+            if not event_lookup.read_result.abstained and event_lookup.read_result.records:
+                latest_records = filter_telegram_memory_event_records(
+                    query=detected_memory_event_query,
+                    records=list(event_lookup.read_result.records),
+                )
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_telegram_event_latest",
+            routing_decision="memory_telegram_event_latest_query",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = build_telegram_memory_event_query_answer(
+            query=detected_memory_event_query,
+            records=latest_records,
+        )
+        evidence_summary = (
+            "status=memory_telegram_event_latest "
+            f"predicate={detected_memory_event_query.predicate or 'telegram.event.*'} "
+            f"record_count={len(latest_records)} "
+            f"read_method={latest_read_method}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered a latest Telegram event query directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_telegram_event_latest_query",
+            facts=_bridge_event_facts(
+                routing_decision="memory_telegram_event_latest_query",
+                bridge_mode="memory_telegram_event_latest",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "predicate": detected_memory_event_query.predicate,
+                    "summary_predicate": summary_predicate,
+                    "label": detected_memory_event_query.label,
+                    "record_count": len(latest_records),
+                    "read_method": latest_read_method,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_telegram_event_latest",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_telegram_event_latest_query",
             active_chip_key=None,
             active_chip_task_type=None,
             active_chip_evaluate_used=False,
