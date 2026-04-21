@@ -328,6 +328,7 @@ class MemoryRegressionTests(SparkTestCase):
         self.assertIn("## Quality Lanes", summary_text)
         self.assertIn("## Current Memory Snapshot", summary_text)
         self.assertIn("## Recommended Next Actions", summary_text)
+        self.assertIn("Keep `summary_synthesis_memory` pinned while expanding benchmark coverage.", summary_text)
         self.assertIn("Only promote a memory change after it stays green", summary_text)
         self.assertIn("`profile.startup_name`: `Seedify`", summary_text)
         self.assertIn("startup_query_after_founder", summary_text)
@@ -382,6 +383,7 @@ class MemoryRegressionTests(SparkTestCase):
             "summary_synthesis_memory",
         )
         self.assertTrue(result.payload["summary"]["live_architecture_runtime_matches_leader"])
+        self.assertEqual(result.payload["summary"]["issue_labels"], [])
         self.assertEqual(
             Path(result.payload["artifact_paths"]["regression_report_markdown"]),
             summary_path,
@@ -398,6 +400,66 @@ class MemoryRegressionTests(SparkTestCase):
             Path(result.payload["artifact_paths"]["architecture_live_comparison_markdown"]),
             live_comparison_markdown_path,
         )
+
+    def test_run_telegram_memory_regression_surfaces_architecture_promotion_gap(self) -> None:
+        output_dir = self.home / "artifacts" / "telegram-memory-regression-architecture-gap"
+        allowed_payload = {
+            "message": "ok",
+            "user_id": "12345",
+            "chat_id": "12345",
+            "result": {
+                "ok": True,
+                "decision": "allowed",
+                "detail": {
+                    "response_text": "ok",
+                    "bridge_mode": "memory_profile_fact",
+                    "routing_decision": "memory_profile_fact_query",
+                    "trace_ref": "trace:test",
+                },
+            },
+        }
+        kb_payload = {
+            "failure_taxonomy": {"summary": {"has_probe_coverage": True, "issue_labels": []}},
+            "probe_rows": [],
+        }
+        live_payload = self._live_comparison_payload(output_dir)
+        live_payload["summary"]["leader_names"] = ["dual_store_event_calendar_hybrid"]
+        live_payload["summary"]["recommended_runtime_architecture"] = "dual_store_event_calendar_hybrid"
+        live_payload["summary"]["current_runtime_memory_architecture"] = "summary_synthesis_memory"
+        live_payload["summary"]["runtime_matches_live_leader"] = False
+
+        with patch(
+            "spark_intelligence.gateway.runtime.gateway_ask_telegram",
+            return_value=json.dumps(allowed_payload),
+        ), patch(
+            "spark_intelligence.memory.regression.inspect_human_memory_in_memory",
+            return_value=SimpleNamespace(to_json=lambda: json.dumps({"read_result": {"records": []}})),
+        ), patch(
+            "spark_intelligence.memory.regression.build_telegram_state_knowledge_base",
+            return_value=SimpleNamespace(payload=kb_payload),
+        ), patch(
+            "spark_intelligence.memory.regression.benchmark_memory_architectures",
+            return_value=SimpleNamespace(payload=self._benchmark_payload(output_dir)),
+        ), patch(
+            "spark_intelligence.memory.regression.compare_telegram_memory_architectures",
+            return_value=SimpleNamespace(payload=live_payload),
+        ):
+            result = run_telegram_memory_regression(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                output_dir=output_dir,
+                user_id="12345",
+                chat_id="12345",
+                benchmark_pack_ids=["identity_under_recency_pressure"],
+                case_ids=["identity_summary_after_recency_pressure_rich"],
+            )
+
+        self.assertEqual(result.payload["summary"]["issue_labels"], ["architecture_promotion_gap"])
+        summary_text = Path(result.payload["artifact_paths"]["regression_report_markdown"]).read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Promote `dual_store_event_calendar_hybrid` into the Builder runtime selector", summary_text)
+        self.assertIn("Treat `architecture_promotion_gap` as unresolved", summary_text)
 
     def test_run_telegram_memory_regression_filters_cases_by_category(self) -> None:
         output_dir = self.home / "artifacts" / "telegram-memory-regression-overwrite-only"

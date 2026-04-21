@@ -29,6 +29,7 @@ class TelegramMemoryRegressionCase:
 
 
 QUALITY_LANE_KEYS: tuple[str, ...] = ("staleness", "overwrite", "abstention")
+ARCHITECTURE_PROMOTION_GAP_LABEL = "architecture_promotion_gap"
 
 
 DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ...] = (
@@ -1458,6 +1459,7 @@ def run_telegram_memory_regression(
                 "selected_user_id": selected_user_id,
                 "selected_chat_id": selected_chat_id,
                 "human_id": f"human:telegram:{selected_user_id}" if selected_user_id else None,
+                "issue_labels": [],
                 "kb_has_probe_coverage": False,
                 "kb_issue_labels": [],
                 "kb_current_state_hits": 0,
@@ -1526,6 +1528,7 @@ def run_telegram_memory_regression(
                     "selected_user_id": selected_user_id,
                     "selected_chat_id": selected_chat_id,
                     "human_id": f"human:telegram:{selected_user_id}" if selected_user_id else None,
+                    "issue_labels": [],
                     "kb_has_probe_coverage": False,
                     "kb_issue_labels": [],
                     "kb_current_state_hits": 0,
@@ -1637,6 +1640,10 @@ def run_telegram_memory_regression(
     kb_payload = kb_result.payload
     current_probe = _probe_row(kb_payload, "current_state")
     evidence_probe = _probe_row(kb_payload, "evidence")
+    issue_labels = _build_regression_issue_labels(
+        kb_payload=kb_payload,
+        architecture_live_comparison_payload=architecture_live_comparison_payload,
+    )
     summary = {
         "status": "ok",
         "case_count": len(case_payloads),
@@ -1645,6 +1652,7 @@ def run_telegram_memory_regression(
         "selected_user_id": selected_user_id,
         "selected_chat_id": selected_chat_id,
         "human_id": resolved_human_id,
+        "issue_labels": issue_labels,
         "architecture_runtime_sdk_class": _nested_get(
             architecture_benchmark_payload,
             "summary",
@@ -1992,9 +2000,18 @@ def _build_regression_summary_markdown(
     else:
         lines.append("- Keep this regression bundle as a green baseline and add the next benchmark-style lane.")
     lines.append("- Only promote a memory change after it stays green on both ProductMemory scorecards and live Telegram regression packs.")
-    if live_architecture_summary.get("recommended_runtime_architecture"):
+    if live_architecture_summary.get("recommended_runtime_architecture") and not live_architecture_summary.get(
+        "runtime_matches_live_leader"
+    ):
         lines.append(
             f"- Promote `{live_architecture_summary.get('recommended_runtime_architecture')}` into the Builder runtime selector and rerun this bundle."
+        )
+        lines.append(
+            f"- Treat `{ARCHITECTURE_PROMOTION_GAP_LABEL}` as unresolved until the declared runtime matches the live leader."
+        )
+    elif live_architecture_summary.get("recommended_runtime_architecture"):
+        lines.append(
+            f"- Keep `{live_architecture_summary.get('recommended_runtime_architecture')}` pinned while expanding benchmark coverage."
         )
     elif live_architecture_summary.get("leader_names"):
         lines.append("- Break the live architecture tie with more cases before pinning the Builder runtime selector.")
@@ -2029,6 +2046,37 @@ def _build_regression_summary_markdown(
             lines.append(f"- Mismatches: `{rendered}`")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _build_regression_issue_labels(
+    *,
+    kb_payload: dict[str, Any] | None,
+    architecture_live_comparison_payload: dict[str, Any] | None,
+) -> list[str]:
+    labels: list[str] = []
+    kb_issue_labels = _nested_get(kb_payload, "failure_taxonomy", "summary", "issue_labels", default=[])
+    if isinstance(kb_issue_labels, list):
+        for label in kb_issue_labels:
+            normalized = str(label or "").strip()
+            if normalized and normalized not in labels:
+                labels.append(normalized)
+    recommended_runtime = _nested_get(
+        architecture_live_comparison_payload,
+        "summary",
+        "recommended_runtime_architecture",
+        default=None,
+    )
+    runtime_matches_live_leader = bool(
+        _nested_get(
+            architecture_live_comparison_payload,
+            "summary",
+            "runtime_matches_live_leader",
+            default=False,
+        )
+    )
+    if recommended_runtime and not runtime_matches_live_leader and ARCHITECTURE_PROMOTION_GAP_LABEL not in labels:
+        labels.append(ARCHITECTURE_PROMOTION_GAP_LABEL)
+    return labels
 
 
 def _build_category_counts(categories: Any) -> dict[str, int]:
