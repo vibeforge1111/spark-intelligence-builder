@@ -67,6 +67,13 @@ _COMMITMENT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^the\s+commitment\s+is\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
 )
 
+_MILESTONE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^our\s+next\s+milestone\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^the\s+next\s+milestone\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^our\s+current\s+milestone\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^the\s+current\s+milestone\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+)
+
 
 @dataclass(frozen=True)
 class TelegramGenericObservation:
@@ -187,6 +194,20 @@ def detect_telegram_generic_observation(user_message: str) -> TelegramGenericObs
                 evidence_text=text,
                 fact_name="current_commitment",
                 label="current commitment",
+            )
+
+    for pattern in _MILESTONE_PATTERNS:
+        match = pattern.fullmatch(normalized)
+        if match is None:
+            continue
+        value = _clean_value(match.group(1))
+        if value:
+            return TelegramGenericObservation(
+                predicate="profile.current_milestone",
+                value=value,
+                evidence_text=text,
+                fact_name="current_milestone",
+                label="current milestone",
             )
 
     return None
@@ -378,6 +399,33 @@ def detect_telegram_generic_deletion(user_message: str) -> TelegramGenericDeleti
             label="current commitment",
         )
 
+    if lowered in {
+        "forget my current milestone.",
+        "forget my current milestone",
+        "delete my current milestone.",
+        "delete my current milestone",
+        "remove my current milestone.",
+        "remove my current milestone",
+        "forget our milestone.",
+        "forget our milestone",
+        "delete our milestone.",
+        "delete our milestone",
+        "remove our milestone.",
+        "remove our milestone",
+        "forget the milestone.",
+        "forget the milestone",
+        "delete the milestone.",
+        "delete the milestone",
+        "remove the milestone.",
+        "remove the milestone",
+    }:
+        return TelegramGenericDeletion(
+            predicate="profile.current_milestone",
+            evidence_text=text,
+            fact_name="current_milestone",
+            label="current milestone",
+        )
+
     return None
 
 
@@ -397,6 +445,8 @@ def build_telegram_generic_observation_answer(*, observation: TelegramGenericObs
         return f"I'll remember that your current status is {value}."
     if observation.predicate == "profile.current_commitment":
         return f"I'll remember that your current commitment is to {value}."
+    if observation.predicate == "profile.current_milestone":
+        return f"I'll remember that your current milestone is {value}."
     return f"I'll remember that your {observation.label} is {value}."
 
 
@@ -413,6 +463,8 @@ def build_telegram_generic_deletion_answer(*, deletion: TelegramGenericDeletion)
         return "I'll forget your current status."
     if deletion.predicate == "profile.current_commitment":
         return "I'll forget your current commitment."
+    if deletion.predicate == "profile.current_milestone":
+        return "I'll forget your current milestone."
     return f"I'll forget your {deletion.label}."
 
 
