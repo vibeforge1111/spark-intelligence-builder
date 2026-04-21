@@ -47,6 +47,13 @@ _DECISION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^(?:i|we)\s+chose\s+(.+?)[.!]?$", re.IGNORECASE),
 )
 
+_BLOCKER_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^(?:i|we)(?:'re| are)\s+blocked\s+on\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^our\s+blocker\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^the\s+main\s+blocker\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^our\s+bottleneck\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+)
+
 
 @dataclass(frozen=True)
 class TelegramGenericObservation:
@@ -125,6 +132,20 @@ def detect_telegram_generic_observation(user_message: str) -> TelegramGenericObs
                 evidence_text=text,
                 fact_name="current_decision",
                 label="current decision",
+            )
+
+    for pattern in _BLOCKER_PATTERNS:
+        match = pattern.fullmatch(normalized)
+        if match is None:
+            continue
+        value = _clean_value(match.group(1))
+        if value:
+            return TelegramGenericObservation(
+                predicate="profile.current_blocker",
+                value=value,
+                evidence_text=text,
+                fact_name="current_blocker",
+                label="current blocker",
             )
 
     return None
@@ -235,6 +256,33 @@ def detect_telegram_generic_deletion(user_message: str) -> TelegramGenericDeleti
             label="current decision",
         )
 
+    if lowered in {
+        "forget my current blocker.",
+        "forget my current blocker",
+        "delete my current blocker.",
+        "delete my current blocker",
+        "remove my current blocker.",
+        "remove my current blocker",
+        "forget our blocker.",
+        "forget our blocker",
+        "delete our blocker.",
+        "delete our blocker",
+        "remove our blocker.",
+        "remove our blocker",
+        "forget our bottleneck.",
+        "forget our bottleneck",
+        "delete our bottleneck.",
+        "delete our bottleneck",
+        "remove our bottleneck.",
+        "remove our bottleneck",
+    }:
+        return TelegramGenericDeletion(
+            predicate="profile.current_blocker",
+            evidence_text=text,
+            fact_name="current_blocker",
+            label="current blocker",
+        )
+
     return None
 
 
@@ -248,6 +296,8 @@ def build_telegram_generic_observation_answer(*, observation: TelegramGenericObs
         return f"I'll remember that your current focus is {value}."
     if observation.predicate == "profile.current_decision":
         return f"I'll remember that your current decision is {value}."
+    if observation.predicate == "profile.current_blocker":
+        return f"I'll remember that your current blocker is {value}."
     return f"I'll remember that your {observation.label} is {value}."
 
 
@@ -258,6 +308,8 @@ def build_telegram_generic_deletion_answer(*, deletion: TelegramGenericDeletion)
         return "I'll forget your current focus."
     if deletion.predicate == "profile.current_decision":
         return "I'll forget your current decision."
+    if deletion.predicate == "profile.current_blocker":
+        return "I'll forget your current blocker."
     return f"I'll forget your {deletion.label}."
 
 

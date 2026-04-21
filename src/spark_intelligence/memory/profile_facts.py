@@ -516,6 +516,21 @@ def _detect_profile_fact_history_query(text: str) -> ProfileFactQuery | None:
             label="current decision",
             query_kind="fact_history",
         )
+    if any(
+        phrase in text
+        for phrase in (
+            "what was my previous blocker",
+            "what was our previous blocker",
+            "what was our previous bottleneck",
+            "what were we blocked on before",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_blocker",
+            fact_name="profile_current_blocker",
+            label="current blocker",
+            query_kind="fact_history",
+        )
     return None
 
 
@@ -609,6 +624,23 @@ def _detect_profile_fact_event_history_query(text: str) -> ProfileFactQuery | No
             predicate="profile.current_decision",
             fact_name="profile_current_decision",
             label="current decision",
+            query_kind="event_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what memory events do you have about my current blocker",
+            "what memory events do you have about our blocker",
+            "what memory events do you have about our bottleneck",
+            "show my blocker history",
+            "show our blocker history",
+            "show our bottleneck history",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_blocker",
+            fact_name="profile_current_blocker",
+            label="current blocker",
             query_kind="event_history",
         )
     return None
@@ -934,6 +966,23 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
             fact_name="profile_current_decision",
             label="current decision",
         )
+    if any(
+        phrase in text
+        for phrase in (
+            "what is my current blocker",
+            "what's my current blocker",
+            "what is our current blocker",
+            "what's our current blocker",
+            "what is our bottleneck",
+            "what's our bottleneck",
+            "what are we blocked on",
+        )
+    ):
+        return ProfileFactQuery(
+            predicate="profile.current_blocker",
+            fact_name="profile_current_blocker",
+            label="current blocker",
+        )
     if normalized_question in {
         "what startup did i create",
         "what company did i found",
@@ -1132,6 +1181,12 @@ def build_profile_fact_history_answer(
                 f"Before your current decision was {normalized_current}, it was {normalized_previous}"
             )
         return _ensure_sentence(f"An earlier saved current decision was {normalized_previous}")
+    if predicate == "profile.current_blocker":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(
+                f"Before your current blocker was {normalized_current}, it was {normalized_previous}"
+            )
+        return _ensure_sentence(f"An earlier saved current blocker was {normalized_previous}")
     if predicate == "profile.cofounder_name":
         if normalized_current and normalized_current != normalized_previous:
             return _ensure_sentence(f"Before {normalized_current}, your cofounder was {normalized_previous}")
@@ -1239,6 +1294,8 @@ def _build_profile_fact_concise_answer(*, query: ProfileFactQuery, value: str) -
         return _ensure_sentence(f"Your current focus is {normalized_value}")
     if predicate == "profile.current_decision":
         return _ensure_sentence(f"Your current decision is {normalized_value}")
+    if predicate == "profile.current_blocker":
+        return _ensure_sentence(f"Your current blocker is {normalized_value}")
     if predicate == "profile.cofounder_name":
         return _ensure_sentence(f"Your cofounder is {normalized_value}")
     if predicate == "profile.mentor_name":
@@ -1306,6 +1363,7 @@ def build_profile_identity_summary_context(*, records: list[dict[str, str]]) -> 
         "profile.current_plan",
         "profile.current_focus",
         "profile.current_decision",
+        "profile.current_blocker",
         "profile.cofounder_name",
         "profile.mentor_name",
         "profile.manager_name",
@@ -1330,6 +1388,7 @@ def build_profile_identity_summary_context(*, records: list[dict[str, str]]) -> 
         "profile.current_plan": "current plan",
         "profile.current_focus": "current focus",
         "profile.current_decision": "current decision",
+        "profile.current_blocker": "current blocker",
         "profile.cofounder_name": "cofounder",
         "profile.mentor_name": "mentor",
         "profile.manager_name": "manager",

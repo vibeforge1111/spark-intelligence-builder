@@ -138,6 +138,39 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(recorded_observations[0]["predicate"], "profile.current_decision")
         self.assertEqual(recorded_observations[0]["value"], "launch Atlas through agency partners first")
 
+    def test_build_researcher_reply_persists_generic_blocker_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for generic memory observations"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for generic memory observations"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-generic-blocker-update",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-generic-blocker-update",
+                channel_kind="telegram",
+                user_message="We're blocked on onboarding instrumentation.",
+            )
+
+        self.assertEqual(
+            result.reply_text,
+            "I'll remember that your current blocker is onboarding instrumentation.",
+        )
+        self.assertEqual(result.mode, "memory_generic_observation_update")
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(write_events)
+        recorded_observations = (write_events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(recorded_observations[0]["predicate"], "profile.current_blocker")
+        self.assertEqual(recorded_observations[0]["value"], "onboarding instrumentation")
+
     def test_build_researcher_reply_persists_generic_manager_relationship_memory(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
@@ -315,6 +348,46 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(
             result.reply_text,
             "Your current decision is launch Atlas through agency partners first.",
+        )
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+
+    def test_build_researcher_reply_answers_generic_blocker_query_from_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-blocker-write-query-seed",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-blocker-write-query-seed",
+            channel_kind="telegram",
+            user_message="We're blocked on onboarding instrumentation.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for generic memory queries"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for generic memory queries"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-generic-blocker-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-generic-blocker-query",
+                channel_kind="telegram",
+                user_message="What are we blocked on?",
+            )
+
+        self.assertEqual(
+            result.reply_text,
+            "Your current blocker is onboarding instrumentation.",
         )
         self.assertEqual(result.mode, "memory_profile_fact")
         self.assertEqual(result.routing_decision, "memory_profile_fact_query")
@@ -546,6 +619,111 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(
             history_after_delete_result.reply_text,
             "An earlier saved current decision was self-serve onboarding first.",
+        )
+
+    def test_build_researcher_reply_preserves_generic_blocker_history_and_delete_lifecycle(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-blocker-history-seed-1",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-blocker-history",
+            channel_kind="telegram",
+            user_message="We're blocked on onboarding instrumentation.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-blocker-history-seed-2",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-blocker-history",
+            channel_kind="telegram",
+            user_message="Our bottleneck is enterprise lead volume.",
+        )
+
+        current_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-blocker-current",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-blocker-history",
+            channel_kind="telegram",
+            user_message="What are we blocked on?",
+        )
+        history_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-blocker-history",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-blocker-history",
+            channel_kind="telegram",
+            user_message="What were we blocked on before?",
+        )
+        event_history_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-blocker-event-history",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-blocker-history",
+            channel_kind="telegram",
+            user_message="Show our blocker history.",
+        )
+        delete_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-blocker-delete",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-blocker-history",
+            channel_kind="telegram",
+            user_message="Forget our blocker.",
+        )
+        current_after_delete_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-blocker-current-after-delete",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-blocker-history",
+            channel_kind="telegram",
+            user_message="What are we blocked on?",
+        )
+        history_after_delete_result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-generic-blocker-history-after-delete",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-generic-blocker-history",
+            channel_kind="telegram",
+            user_message="What were we blocked on before?",
+        )
+
+        self.assertEqual(
+            current_result.reply_text,
+            "Your current blocker is enterprise lead volume.",
+        )
+        self.assertEqual(
+            history_result.reply_text,
+            "Before your current blocker was enterprise lead volume, it was onboarding instrumentation.",
+        )
+        self.assertEqual(
+            event_history_result.reply_text,
+            "I have 2 saved current blocker events: onboarding instrumentation then enterprise lead volume.",
+        )
+        self.assertEqual(delete_result.reply_text, "I'll forget your current blocker.")
+        self.assertEqual(current_after_delete_result.reply_text, "I don't currently have that saved.")
+        self.assertEqual(
+            history_after_delete_result.reply_text,
+            "An earlier saved current blocker was enterprise lead volume.",
         )
 
     def test_build_researcher_reply_does_not_persist_hypothetical_generic_memory_text(self) -> None:
