@@ -636,6 +636,21 @@ def _detect_profile_fact_history_query(text: str) -> ProfileFactQuery | None:
             label="current assumption",
             query_kind="fact_history",
         )
+    if any(
+        phrase in text
+        for phrase in (
+            "what was my previous owner",
+            "what was our previous owner",
+            "what was the owner before",
+            "who owned this before",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_owner",
+            fact_name="profile_current_owner",
+            label="current owner",
+            query_kind="fact_history",
+        )
     return None
 
 
@@ -859,6 +874,22 @@ def _detect_profile_fact_event_history_query(text: str) -> ProfileFactQuery | No
             predicate="profile.current_assumption",
             fact_name="profile_current_assumption",
             label="current assumption",
+            query_kind="event_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what memory events do you have about my current owner",
+            "what memory events do you have about our owner",
+            "show my owner history",
+            "show our owner history",
+            "show the owner history",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_owner",
+            fact_name="profile_current_owner",
+            label="current owner",
             query_kind="event_history",
         )
     return None
@@ -1326,6 +1357,24 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
             fact_name="profile_current_assumption",
             label="current assumption",
         )
+    if any(
+        phrase in text
+        for phrase in (
+            "what is my current owner",
+            "what's my current owner",
+            "what is our current owner",
+            "what's our current owner",
+            "what is our owner",
+            "what's our owner",
+            "who is the owner",
+            "who owns this",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_owner",
+            fact_name="profile_current_owner",
+            label="current owner",
+        )
     if normalized_question in {
         "what startup did i create",
         "what company did i found",
@@ -1570,6 +1619,10 @@ def build_profile_fact_history_answer(
                 f"Before your current assumption was {normalized_current}, it was {normalized_previous}"
             )
         return _ensure_sentence(f"An earlier saved current assumption was {normalized_previous}")
+    if predicate == "profile.current_owner":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before your current owner was {normalized_current}, it was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved current owner was {normalized_previous}")
     if predicate == "profile.cofounder_name":
         if normalized_current and normalized_current != normalized_previous:
             return _ensure_sentence(f"Before {normalized_current}, your cofounder was {normalized_previous}")
@@ -1693,6 +1746,8 @@ def _build_profile_fact_concise_answer(*, query: ProfileFactQuery, value: str) -
         return _ensure_sentence(f"Your current constraint is {normalized_value}")
     if predicate == "profile.current_assumption":
         return _ensure_sentence(f"Your current assumption is {normalized_value}")
+    if predicate == "profile.current_owner":
+        return _ensure_sentence(f"Your current owner is {normalized_value}")
     if predicate == "profile.cofounder_name":
         return _ensure_sentence(f"Your cofounder is {normalized_value}")
     if predicate == "profile.mentor_name":
@@ -1768,6 +1823,7 @@ def build_profile_identity_summary_context(*, records: list[dict[str, str]]) -> 
         "profile.current_dependency",
         "profile.current_constraint",
         "profile.current_assumption",
+        "profile.current_owner",
         "profile.cofounder_name",
         "profile.mentor_name",
         "profile.manager_name",
@@ -1800,6 +1856,7 @@ def build_profile_identity_summary_context(*, records: list[dict[str, str]]) -> 
         "profile.current_dependency": "current dependency",
         "profile.current_constraint": "current constraint",
         "profile.current_assumption": "current assumption",
+        "profile.current_owner": "current owner",
         "profile.cofounder_name": "cofounder",
         "profile.mentor_name": "mentor",
         "profile.manager_name": "manager",

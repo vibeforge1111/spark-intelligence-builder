@@ -109,6 +109,14 @@ _ASSUMPTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^the\s+main\s+assumption\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
 )
 
+_OWNER_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^our\s+owner\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^the\s+owner\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^our\s+current\s+owner\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^the\s+current\s+owner\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^the\s+owner\s+for\s+this\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+)
+
 
 @dataclass(frozen=True)
 class TelegramGenericObservation:
@@ -299,6 +307,20 @@ def detect_telegram_generic_observation(user_message: str) -> TelegramGenericObs
                 evidence_text=text,
                 fact_name="current_assumption",
                 label="current assumption",
+            )
+
+    for pattern in _OWNER_PATTERNS:
+        match = pattern.fullmatch(normalized)
+        if match is None:
+            continue
+        value = _clean_value(match.group(1))
+        if value:
+            return TelegramGenericObservation(
+                predicate="profile.current_owner",
+                value=value,
+                evidence_text=text,
+                fact_name="current_owner",
+                label="current owner",
             )
 
     return None
@@ -625,6 +647,33 @@ def detect_telegram_generic_deletion(user_message: str) -> TelegramGenericDeleti
             label="current assumption",
         )
 
+    if lowered in {
+        "forget my current owner.",
+        "forget my current owner",
+        "delete my current owner.",
+        "delete my current owner",
+        "remove my current owner.",
+        "remove my current owner",
+        "forget our owner.",
+        "forget our owner",
+        "delete our owner.",
+        "delete our owner",
+        "remove our owner.",
+        "remove our owner",
+        "forget the owner.",
+        "forget the owner",
+        "delete the owner.",
+        "delete the owner",
+        "remove the owner.",
+        "remove the owner",
+    }:
+        return TelegramGenericDeletion(
+            predicate="profile.current_owner",
+            evidence_text=text,
+            fact_name="current_owner",
+            label="current owner",
+        )
+
     return None
 
 
@@ -654,6 +703,8 @@ def build_telegram_generic_observation_answer(*, observation: TelegramGenericObs
         return f"I'll remember that your current constraint is {value}."
     if observation.predicate == "profile.current_assumption":
         return f"I'll remember that your current assumption is {value}."
+    if observation.predicate == "profile.current_owner":
+        return f"I'll remember that your current owner is {value}."
     return f"I'll remember that your {observation.label} is {value}."
 
 
@@ -680,6 +731,8 @@ def build_telegram_generic_deletion_answer(*, deletion: TelegramGenericDeletion)
         return "I'll forget your current constraint."
     if deletion.predicate == "profile.current_assumption":
         return "I'll forget your current assumption."
+    if deletion.predicate == "profile.current_owner":
+        return "I'll forget your current owner."
     return f"I'll forget your {deletion.label}."
 
 
