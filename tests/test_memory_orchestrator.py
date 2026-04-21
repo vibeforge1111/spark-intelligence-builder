@@ -659,6 +659,128 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(promoted_call["value"], "Nadia")
         self.assertEqual(promoted_call["metadata"]["fact_name"], "current_owner")
 
+    def test_structured_evidence_write_does_not_promote_uncorroborated_current_dependency(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        retrieve_results = [
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[])),
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[])),
+        ]
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.retrieve_memory_evidence_in_memory",
+            side_effect=retrieve_results,
+        ), patch(
+            "spark_intelligence.memory.orchestrator.write_belief_to_memory",
+            return_value=memory_orchestrator.MemoryWriteResult(
+                status="succeeded",
+                operation="create",
+                method="write_observation",
+                memory_role="belief",
+                accepted_count=1,
+                rejected_count=0,
+                skipped_count=0,
+                abstained=False,
+                retrieval_trace=None,
+                provenance=[],
+                reason=None,
+            ),
+        ) as mocked_belief_write, patch(
+            "spark_intelligence.memory.orchestrator.write_profile_fact_to_memory",
+            return_value=memory_orchestrator.MemoryWriteResult(
+                status="succeeded",
+                operation="update",
+                method="write_observation",
+                memory_role="current_state",
+                accepted_count=1,
+                rejected_count=0,
+                skipped_count=0,
+                abstained=False,
+                retrieval_trace=None,
+                provenance=[],
+                reason=None,
+            ),
+        ) as mocked_profile_write:
+            result = write_structured_evidence_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                evidence_text="Users keep getting stuck during onboarding because we're waiting on Stripe approval.",
+                domain_pack="evidence",
+                evidence_kind="evidence_marker",
+                session_id="session:evidence:dependency:single",
+                turn_id="turn:evidence:dependency:single",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        mocked_belief_write.assert_not_called()
+        mocked_profile_write.assert_not_called()
+
+    def test_structured_evidence_write_promotes_high_confidence_current_status_without_corroboration(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        retrieve_results = [
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[])),
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[])),
+        ]
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.retrieve_memory_evidence_in_memory",
+            side_effect=retrieve_results,
+        ), patch(
+            "spark_intelligence.memory.orchestrator.write_belief_to_memory",
+            return_value=memory_orchestrator.MemoryWriteResult(
+                status="succeeded",
+                operation="create",
+                method="write_observation",
+                memory_role="belief",
+                accepted_count=1,
+                rejected_count=0,
+                skipped_count=0,
+                abstained=False,
+                retrieval_trace=None,
+                provenance=[],
+                reason=None,
+            ),
+        ) as mocked_belief_write, patch(
+            "spark_intelligence.memory.orchestrator.write_profile_fact_to_memory",
+            return_value=memory_orchestrator.MemoryWriteResult(
+                status="succeeded",
+                operation="update",
+                method="write_observation",
+                memory_role="current_state",
+                accepted_count=1,
+                rejected_count=0,
+                skipped_count=0,
+                abstained=False,
+                retrieval_trace=None,
+                provenance=[],
+                reason=None,
+            ),
+        ) as mocked_profile_write:
+            result = write_structured_evidence_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                evidence_text="Status update: pending security review for the onboarding rollout.",
+                domain_pack="evidence",
+                evidence_kind="evidence_marker",
+                session_id="session:evidence:status:single",
+                turn_id="turn:evidence:status:single",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        mocked_belief_write.assert_not_called()
+        mocked_profile_write.assert_called_once()
+        promoted_kwargs = mocked_profile_write.call_args.kwargs
+        self.assertEqual(promoted_kwargs["predicate"], "profile.current_status")
+        self.assertEqual(promoted_kwargs["value"], "pending security review for the onboarding rollout")
+        self.assertEqual(promoted_kwargs["fact_name"], "current_status")
+
     def test_raw_episode_writes_use_raw_turn_predicate_and_archive_retention(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

@@ -351,6 +351,152 @@ class MemoryRetrievalQueryResult:
         return "\n".join(lines)
 
 
+@dataclass(frozen=True)
+class StructuredEvidenceCurrentStateRule:
+    fact_name: str
+    canonical_template: str
+    extract_patterns: tuple[re.Pattern[str], ...]
+    direct_promotion_without_corroboration: bool = False
+
+
+_STRUCTURED_EVIDENCE_CURRENT_STATE_RULES: tuple[StructuredEvidenceCurrentStateRule, ...] = (
+    StructuredEvidenceCurrentStateRule(
+        fact_name="current_status",
+        canonical_template="Our current status is {value}.",
+        extract_patterns=(
+            re.compile(r"^status\s+update[:,-]?\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bcurrent\s+status\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+        ),
+        direct_promotion_without_corroboration=True,
+    ),
+    StructuredEvidenceCurrentStateRule(
+        fact_name="current_owner",
+        canonical_template="Our current owner is {value}.",
+        extract_patterns=(
+            re.compile(r"\bowner\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bowned\s+by\s+(.+?)(?:\s+because\b.+?|\s+during\b.+?)?[.!]?$", re.IGNORECASE),
+            re.compile(r"\bhandled\s+by\s+(.+?)(?:\s+because\b.+?|\s+during\b.+?)?[.!]?$", re.IGNORECASE),
+            re.compile(r"\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*)\s+owns\b", re.IGNORECASE),
+        ),
+        direct_promotion_without_corroboration=True,
+    ),
+    StructuredEvidenceCurrentStateRule(
+        fact_name="current_dependency",
+        canonical_template="Our current dependency is {value}.",
+        extract_patterns=(
+            re.compile(r"\bdependency\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bdependent\s+on\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bwaiting\s+on\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bpending\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bdepends\s+on\s+(.+?)[.!]?$", re.IGNORECASE),
+        ),
+    ),
+    StructuredEvidenceCurrentStateRule(
+        fact_name="current_constraint",
+        canonical_template="Our current constraint is {value}.",
+        extract_patterns=(
+            re.compile(r"\bconstraint\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\blimited\s+by\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bbudget\s+only\s+lets\s+us\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bonly\s+have\s+bandwidth\s+for\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\b(limited\s+founder\s+bandwidth)\b", re.IGNORECASE),
+        ),
+    ),
+    StructuredEvidenceCurrentStateRule(
+        fact_name="current_risk",
+        canonical_template="Our current risk is {value}.",
+        extract_patterns=(
+            re.compile(r"\b(?:current|main|biggest)\s+risk\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\brisk\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\brisk\s+of\s+(.+?)(?:\s+because|[.!]?$)", re.IGNORECASE),
+            re.compile(r"\bat\s+risk\s+of\s+(.+?)(?:\s+because|[.!]?$)", re.IGNORECASE),
+        ),
+    ),
+    StructuredEvidenceCurrentStateRule(
+        fact_name="current_blocker",
+        canonical_template="Our blocker is {value}.",
+        extract_patterns=(
+            re.compile(r"\b(?:current|main)\s+blocker\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bbottleneck\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bblocked\s+on\s+(.+?)[.!]?$", re.IGNORECASE),
+        ),
+    ),
+)
+
+_STRUCTURED_EVIDENCE_CURRENT_STATE_RULES_BY_FACT = {
+    rule.fact_name: rule for rule in _STRUCTURED_EVIDENCE_CURRENT_STATE_RULES
+}
+
+
+def _extract_first_value(text: str, patterns: tuple[re.Pattern[str], ...]) -> str | None:
+    for pattern in patterns:
+        match = pattern.search(text)
+        if not match:
+            continue
+        value = str(match.group(1) or "").strip().rstrip(".,! ")
+        if value:
+            return value
+    return None
+
+
+def _derive_current_state_observation_from_evidence(text: str) -> Any | None:
+    normalized = str(text or "").strip()
+    if not normalized:
+        return None
+    for rule in _STRUCTURED_EVIDENCE_CURRENT_STATE_RULES:
+        explicit_value = _extract_first_value(normalized, rule.extract_patterns)
+        if explicit_value:
+            return detect_telegram_generic_observation(rule.canonical_template.format(value=explicit_value))
+    lowered = normalized.casefold()
+    ongoing_issue_signal = any(
+        token in lowered
+        for token in (
+            "keep ",
+            "keeps ",
+            "still ",
+            "dropping",
+            "drop ",
+            "drops ",
+            "fail",
+            "fails",
+            "failure",
+            "blocked",
+            "bottleneck",
+            "retry flow",
+            "friction",
+        )
+    )
+    if not ongoing_issue_signal:
+        return None
+    blocker_value = _extract_first_value(
+        normalized,
+        (
+            re.compile(r"\bbecause\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bdue\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bfrom\s+(.+?)[.!]?$", re.IGNORECASE),
+        ),
+    )
+    if not blocker_value:
+        blocker_value = normalized.rstrip(".,! ")
+    return detect_telegram_generic_observation("Our blocker is {value}.".format(value=blocker_value))
+
+
+def _should_promote_current_state_from_evidence(
+    *,
+    observation: Any | None,
+    corroborating_evidence_records: list[dict[str, Any]],
+) -> bool:
+    if observation is None or not str(getattr(observation, "value", "") or "").strip():
+        return False
+    fact_name = str(getattr(observation, "fact_name", "") or "").strip()
+    if not fact_name:
+        return False
+    rule = _STRUCTURED_EVIDENCE_CURRENT_STATE_RULES_BY_FACT.get(fact_name)
+    if rule is None:
+        return False
+    return bool(corroborating_evidence_records) or rule.direct_promotion_without_corroboration
+
+
 class _DomainChipMemoryClientAdapter:
     def __init__(self, sdk: Any, module: ModuleType, *, persistence_path: Path | None = None) -> None:
         self._sdk = sdk
@@ -1436,118 +1582,6 @@ def write_structured_evidence_to_memory(
         lowered_initial = normalized[0].lower() + normalized[1:] if len(normalized) > 1 else normalized.lower()
         return f"I think {lowered_initial}"
 
-    def _extract_first_value(text: str, patterns: tuple[re.Pattern[str], ...]) -> str | None:
-        for pattern in patterns:
-            match = pattern.search(text)
-            if not match:
-                continue
-            value = str(match.group(1) or "").strip().rstrip(".,! ")
-            if value:
-                return value
-        return None
-
-    def _derive_current_state_observation_from_evidence(text: str) -> Any | None:
-        normalized = str(text or "").strip()
-        if not normalized:
-            return None
-        explicit_dependency = _extract_first_value(
-            normalized,
-            (
-                re.compile(r"\bdependency\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
-                re.compile(r"\bdependent\s+on\s+(.+?)[.!]?$", re.IGNORECASE),
-                re.compile(r"\bwaiting\s+on\s+(.+?)[.!]?$", re.IGNORECASE),
-                re.compile(r"\bpending\s+(.+?)[.!]?$", re.IGNORECASE),
-                re.compile(r"\bdepends\s+on\s+(.+?)[.!]?$", re.IGNORECASE),
-            ),
-        )
-        if explicit_dependency:
-            return detect_telegram_generic_observation(f"Our current dependency is {explicit_dependency}.")
-        explicit_constraint = _extract_first_value(
-            normalized,
-            (
-                re.compile(r"\bconstraint\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
-                re.compile(r"\blimited\s+by\s+(.+?)[.!]?$", re.IGNORECASE),
-                re.compile(r"\bbudget\s+only\s+lets\s+us\s+(.+?)[.!]?$", re.IGNORECASE),
-                re.compile(r"\bonly\s+have\s+bandwidth\s+for\s+(.+?)[.!]?$", re.IGNORECASE),
-                re.compile(r"\b(limited\s+founder\s+bandwidth)\b", re.IGNORECASE),
-            ),
-        )
-        if explicit_constraint:
-            return detect_telegram_generic_observation(f"Our current constraint is {explicit_constraint}.")
-        explicit_risk = _extract_first_value(
-            normalized,
-            (
-                re.compile(r"\b(?:current|main|biggest)\s+risk\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
-                re.compile(r"\brisk\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
-                re.compile(r"\brisk\s+of\s+(.+?)(?:\s+because|[.!]?$)", re.IGNORECASE),
-                re.compile(r"\bat\s+risk\s+of\s+(.+?)(?:\s+because|[.!]?$)", re.IGNORECASE),
-            ),
-        )
-        if explicit_risk:
-            return detect_telegram_generic_observation(f"Our current risk is {explicit_risk}.")
-        explicit_status = _extract_first_value(
-            normalized,
-            (
-                re.compile(r"^status\s+update[:,-]?\s+(.+?)[.!]?$", re.IGNORECASE),
-                re.compile(r"\bcurrent\s+status\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
-            ),
-        )
-        if explicit_status:
-            return detect_telegram_generic_observation(f"Our current status is {explicit_status}.")
-        explicit_owner = _extract_first_value(
-            normalized,
-            (
-                re.compile(r"\bowner\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
-                re.compile(r"\bowned\s+by\s+(.+?)(?:\s+because\b.+?|\s+during\b.+?)?[.!]?$", re.IGNORECASE),
-                re.compile(r"\bhandled\s+by\s+(.+?)(?:\s+because\b.+?|\s+during\b.+?)?[.!]?$", re.IGNORECASE),
-                re.compile(r"\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*)\s+owns\b", re.IGNORECASE),
-            ),
-        )
-        if explicit_owner:
-            return detect_telegram_generic_observation(f"Our current owner is {explicit_owner}.")
-        explicit_blocker = _extract_first_value(
-            normalized,
-            (
-                re.compile(r"\b(?:current|main)\s+blocker\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
-                re.compile(r"\bbottleneck\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
-                re.compile(r"\bblocked\s+on\s+(.+?)[.!]?$", re.IGNORECASE),
-            ),
-        )
-        if explicit_blocker:
-            return detect_telegram_generic_observation(f"Our blocker is {explicit_blocker}.")
-        lowered = normalized.casefold()
-        ongoing_issue_signal = any(
-            token in lowered
-            for token in (
-                "keep ",
-                "keeps ",
-                "still ",
-                "dropping",
-                "drop ",
-                "drops ",
-                "fail",
-                "fails",
-                "failure",
-                "blocked",
-                "bottleneck",
-                "retry flow",
-                "friction",
-            )
-        )
-        if not ongoing_issue_signal:
-            return None
-        blocker_value = _extract_first_value(
-            normalized,
-            (
-                re.compile(r"\bbecause\s+(.+?)[.!]?$", re.IGNORECASE),
-                re.compile(r"\bdue\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
-                re.compile(r"\bfrom\s+(.+?)[.!]?$", re.IGNORECASE),
-            ),
-        )
-        if not blocker_value:
-            blocker_value = normalized.rstrip(".,! ")
-        return detect_telegram_generic_observation(f"Our blocker is {blocker_value}.")
-
     normalized_text = str(evidence_text or "").strip()
     if not normalized_text:
         return MemoryWriteResult(
@@ -1714,11 +1748,6 @@ def write_structured_evidence_to_memory(
         actor_id=actor_id,
     )
     current_state_observation = _derive_current_state_observation_from_evidence(normalized_text)
-    high_confidence_current_state = bool(
-        current_state_observation is not None
-        and str(current_state_observation.value or "").strip()
-        and str(current_state_observation.fact_name or "").strip() in {"current_status", "current_owner"}
-    )
     if result.accepted_count > 0 and corroborating_evidence_records:
         try:
             write_belief_to_memory(
@@ -1735,8 +1764,9 @@ def write_structured_evidence_to_memory(
             )
         except Exception:
             pass
-    if result.accepted_count > 0 and (
-        corroborating_evidence_records or high_confidence_current_state
+    if result.accepted_count > 0 and _should_promote_current_state_from_evidence(
+        observation=current_state_observation,
+        corroborating_evidence_records=corroborating_evidence_records,
     ):
         if current_state_observation is not None and str(current_state_observation.value or "").strip():
             try:
