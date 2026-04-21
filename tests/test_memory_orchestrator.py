@@ -16,6 +16,14 @@ from spark_intelligence.memory import (
     lookup_historical_state_in_memory,
     run_memory_sdk_smoke_test,
     write_profile_fact_to_memory,
+    write_telegram_event_to_memory,
+)
+from spark_intelligence.memory.episodic_events import (
+    build_telegram_memory_event_observation_answer,
+    build_telegram_memory_event_query_answer,
+    detect_telegram_memory_event_observation,
+    detect_telegram_memory_event_query,
+    filter_telegram_memory_event_records,
 )
 from spark_intelligence.memory.profile_facts import (
     build_profile_fact_event_history_answer,
@@ -45,6 +53,7 @@ from tests.test_support import SparkTestCase
 class _FakeMemoryClient:
     def __init__(self) -> None:
         self.observation_calls: list[dict[str, object]] = []
+        self.event_calls: list[dict[str, object]] = []
         self.current_state_calls: list[dict[str, object]] = []
 
     def write_observation(self, **payload):
@@ -54,6 +63,15 @@ class _FakeMemoryClient:
             "memory_role": "current_state",
             "provenance": [{"memory_role": "current_state", "source": "fake_sdk"}],
             "retrieval_trace": {"trace_id": "mem-trace-write"},
+        }
+
+    def write_event(self, **payload):
+        self.event_calls.append(payload)
+        return {
+            "status": "accepted",
+            "memory_role": "event",
+            "provenance": [{"memory_role": "event", "source": "fake_sdk"}],
+            "retrieval_trace": {"trace_id": "mem-trace-event-write"},
         }
 
     def get_current_state(self, **payload):
@@ -150,6 +168,47 @@ class MemoryOrchestratorTests(SparkTestCase):
         observations = (events[0]["facts_json"] or {}).get("observations") or []
         self.assertEqual(observations[0]["predicate"], "profile.city")
         self.assertEqual(observations[0]["value"], "Dubai")
+
+    def test_telegram_event_detection_write_and_answer_use_event_memory_lane(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        detected = detect_telegram_memory_event_observation("My meeting with Omar is on May 3.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "telegram.event.meeting")
+        self.assertEqual(detected.value, "meeting with Omar on May 3")
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            result = write_telegram_event_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                predicate=detected.predicate,
+                value=detected.value,
+                evidence_text=detected.evidence_text,
+                event_name=detected.event_name,
+                session_id="session:event",
+                turn_id="turn:event",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        self.assertEqual(len(fake_client.event_calls), 1)
+        call = fake_client.event_calls[0]
+        self.assertEqual(call["subject"], "human:test")
+        self.assertEqual(call["predicate"], "telegram.event.meeting")
+        self.assertEqual(call["value"], "meeting with Omar on May 3")
+        self.assertEqual(call["text"], "My meeting with Omar is on May 3.")
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(write_events)
+        recorded_events = (write_events[0]["facts_json"] or {}).get("events") or []
+        self.assertEqual(recorded_events[0]["predicate"], "telegram.event.meeting")
+        self.assertEqual(recorded_events[0]["value"], "meeting with Omar on May 3")
+        self.assertEqual(
+            build_telegram_memory_event_observation_answer(observation=detected),
+            "I'll remember your meeting with Omar on May 3.",
+        )
 
     def test_profile_city_detection_strips_temporal_tail_words(self) -> None:
         detected = detect_profile_fact_observation("I live in Abu Dhabi now.")
@@ -702,6 +761,49 @@ class MemoryOrchestratorTests(SparkTestCase):
                 ],
             ),
             "I have 2 saved city events: Dubai then Abu Dhabi.",
+        )
+
+    def test_telegram_event_query_detection_filtering_and_answers_are_compact(self) -> None:
+        query = detect_telegram_memory_event_query("What event did I mention?")
+        self.assertIsNotNone(query)
+        assert query is not None
+        self.assertIsNone(query.predicate)
+
+        meeting_query = detect_telegram_memory_event_query("What meetings did I mention?")
+        self.assertIsNotNone(meeting_query)
+        assert meeting_query is not None
+        self.assertEqual(meeting_query.predicate, "telegram.event.meeting")
+
+        filtered = filter_telegram_memory_event_records(
+            query=query,
+            records=[
+                {
+                    "predicate": "telegram.event.meeting",
+                    "value": "meeting with Omar on May 3",
+                    "timestamp": "2026-04-10T10:00:00+00:00",
+                    "turn_ids": ["turn-1"],
+                },
+                {
+                    "predicate": "profile.city",
+                    "value": "Dubai",
+                    "timestamp": "2026-04-10T11:00:00+00:00",
+                    "turn_ids": ["turn-2"],
+                },
+                {
+                    "predicate": "telegram.event.call",
+                    "value": "call with Sarah on May 4",
+                    "timestamp": "2026-04-10T12:00:00+00:00",
+                    "turn_ids": ["turn-3"],
+                },
+            ],
+        )
+        self.assertEqual([record["predicate"] for record in filtered], ["telegram.event.meeting", "telegram.event.call"])
+        self.assertEqual(
+            build_telegram_memory_event_query_answer(
+                query=query,
+                records=filtered,
+            ),
+            "I have 2 saved events: meeting with Omar on May 3 then call with Sarah on May 4.",
         )
 
     def test_build_profile_identity_summary_context_lists_saved_facts(self) -> None:

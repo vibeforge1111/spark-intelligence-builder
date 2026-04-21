@@ -1252,6 +1252,125 @@ def write_profile_fact_to_memory(
     return result
 
 
+def write_telegram_event_to_memory(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str,
+    predicate: str,
+    value: str,
+    evidence_text: str,
+    event_name: str,
+    session_id: str | None,
+    turn_id: str | None,
+    channel_kind: str | None,
+    actor_id: str = "telegram_event_loader",
+) -> MemoryWriteResult:
+    if not predicate or not str(value or "").strip():
+        return MemoryWriteResult(
+            status="skipped",
+            operation="event",
+            method="write_event",
+            memory_role="event",
+            accepted_count=0,
+            rejected_count=0,
+            skipped_count=1,
+            abstained=False,
+            retrieval_trace=None,
+            provenance=[],
+            reason="no_durable_telegram_event",
+        )
+    if not _memory_enabled(config_manager):
+        return _disabled_write_result(operation="event", method="write_event", default_role="event")
+    if not bool(config_manager.get_path("spark.memory.write_telegram_events", default=True)):
+        return _disabled_write_result(
+            operation="event",
+            method="write_event",
+            default_role="event",
+            reason="telegram_event_memory_writes_disabled",
+        )
+    client = _load_sdk_client(config_manager)
+    if client is None:
+        result = MemoryWriteResult(
+            status="abstained",
+            operation="event",
+            method="write_event",
+            memory_role="event",
+            accepted_count=0,
+            rejected_count=0,
+            skipped_count=1,
+            abstained=True,
+            retrieval_trace=None,
+            provenance=[],
+            reason="sdk_unavailable",
+        )
+        _record_memory_write_event(
+            state_db=state_db,
+            result=result,
+            human_id=human_id,
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=actor_id,
+        )
+        return result
+    subject = _subject_for_human_id(human_id)
+    event_payload = {
+        "subject": subject,
+        "predicate": predicate,
+        "value": value,
+        "operation": "event",
+        "memory_role": "event",
+        "text": evidence_text,
+    }
+    _record_memory_write_requested_events(
+        state_db=state_db,
+        human_id=human_id,
+        events=[event_payload],
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+    )
+    raw = _call_sdk_method(
+        client,
+        "write_event",
+        {
+            "operation": "event",
+            "subject": subject,
+            "predicate": predicate,
+            "value": value,
+            "text": evidence_text,
+            "memory_role": "event",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "timestamp": _now_iso(),
+            "metadata": {
+                "entity_type": "human",
+                "channel_kind": channel_kind,
+                "memory_role": "event",
+                "source_surface": "researcher_bridge",
+                "event_name": event_name,
+                "normalized_value": value,
+                "value": value,
+            },
+        },
+    )
+    result = _normalize_write_result(
+        raw=raw,
+        operation="event",
+        method="write_event",
+        default_role="event",
+    )
+    _record_memory_write_event(
+        state_db=state_db,
+        result=result,
+        human_id=human_id,
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+    )
+    return result
+
+
 def read_personality_preferences_from_memory(
     *,
     config_manager: ConfigManager,
@@ -2161,6 +2280,38 @@ def _record_memory_write_requested_observations(
             "observations": observations,
         },
         provenance={"memory_role": "current_state"},
+    )
+
+
+def _record_memory_write_requested_events(
+    *,
+    state_db: StateDB,
+    human_id: str,
+    events: list[dict[str, Any]],
+    session_id: str | None,
+    turn_id: str | None,
+    actor_id: str,
+) -> None:
+    subject = _subject_for_human_id(human_id)
+    record_event(
+        state_db,
+        event_type="memory_write_requested",
+        component="memory_orchestrator",
+        summary="Spark memory event write requested for durable Telegram events.",
+        request_id=turn_id,
+        session_id=session_id,
+        human_id=human_id,
+        actor_id=actor_id,
+        facts={
+            "operation": "event",
+            "method": "write_event",
+            "memory_role": "event",
+            "subject": subject,
+            "predicate_count": len(events),
+            "predicates": [str(item.get("predicate") or "") for item in events if item.get("predicate")],
+            "events": events,
+        },
+        provenance={"memory_role": "event"},
     )
 
 
