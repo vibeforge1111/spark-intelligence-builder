@@ -783,6 +783,35 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
                 ),
             ),
         ),
+        TelegramMemoryBenchmarkPack(
+            pack_id="telegram_generic_profile_churn",
+            title="Telegram Generic Profile Churn",
+            description=(
+                "Exercises longer session-like churn across generic profile lanes so overwrite, delete, rewrite, "
+                "current-state recall, history recall, and event-history recall are all checked together."
+            ),
+            focus_areas=("overwrite", "delete", "native_history", "event_history", "long_run_churn"),
+            cases=(
+                *_existing(
+                    "generic_long_run_owner_write_initial",
+                    "generic_long_run_risk_write_initial",
+                    "generic_long_run_owner_overwrite",
+                    "generic_long_run_dependency_write",
+                    "generic_long_run_owner_delete",
+                    "generic_long_run_owner_rewrite",
+                    "generic_long_run_risk_overwrite",
+                    "generic_long_run_risk_delete",
+                    "generic_long_run_risk_rewrite",
+                    "generic_long_run_owner_current_query",
+                    "generic_long_run_owner_history_query",
+                    "generic_long_run_owner_event_history_query",
+                    "generic_long_run_risk_current_query",
+                    "generic_long_run_risk_history_query",
+                    "generic_long_run_risk_event_history_query",
+                    "generic_long_run_dependency_current_query",
+                ),
+            ),
+        ),
     )
 
 

@@ -109,6 +109,13 @@ def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
     assert "generic_owner_delete" in generic_profile_case_ids
     assert "generic_owner_event_history_query_after_delete" in generic_profile_case_ids
 
+    churn_case_ids = {case.case_id for case in packs["telegram_generic_profile_churn"].cases}
+    assert "generic_long_run_owner_write_initial" in churn_case_ids
+    assert "generic_long_run_owner_rewrite" in churn_case_ids
+    assert "generic_long_run_risk_rewrite" in churn_case_ids
+    assert "generic_long_run_owner_event_history_query" in churn_case_ids
+    assert "generic_long_run_dependency_current_query" in churn_case_ids
+
     identity_case_ids = {case.case_id for case in packs["identity_under_recency_pressure"].cases}
     assert "name_query_after_recency_pressure" in identity_case_ids
     assert "occupation_query_after_recency_pressure" in identity_case_ids
@@ -204,6 +211,21 @@ def test_select_generic_profile_lifecycle_pack_exposes_overwrite_and_delete_case
     assert "generic_owner_history_query_after_overwrite" in case_ids
     assert "generic_owner_delete" in case_ids
     assert "generic_owner_current_query_after_delete" in case_ids
+
+
+def test_select_generic_profile_churn_pack_exposes_long_run_cases() -> None:
+    packs = select_telegram_memory_benchmark_packs(["telegram_generic_profile_churn"])
+
+    assert [pack.pack_id for pack in packs] == ["telegram_generic_profile_churn"]
+
+    case_ids = {case.case_id for case in flatten_benchmark_pack_cases(packs)}
+    assert "generic_long_run_owner_write_initial" in case_ids
+    assert "generic_long_run_owner_delete" in case_ids
+    assert "generic_long_run_owner_rewrite" in case_ids
+    assert "generic_long_run_owner_history_query" in case_ids
+    assert "generic_long_run_risk_rewrite" in case_ids
+    assert "generic_long_run_risk_event_history_query" in case_ids
+    assert "generic_long_run_dependency_current_query" in case_ids
 
 
 def test_select_benchmark_packs_rejects_unknown_pack_ids() -> None:
