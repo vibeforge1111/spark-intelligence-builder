@@ -247,6 +247,7 @@ That command reuses the proven pieces already in this repo: config/state bootstr
 For first-time operator setup, the same bootstrap command now also supports:
 
 - `--guide` to print provider choices, BotFather onboarding steps, and discovered chip/path inventory
+- `--interactive` to walk through primary/fallback providers, Telegram onboarding, and chip/path selection
 - `--fallback-provider <provider>` plus matching fallback API/model flags for an explicit backup model path
 - `--activate-chip <chip_key>` and `--pin-chip <chip_key>` during bootstrap
 - `--set-path <path_key>` during bootstrap
@@ -256,6 +257,7 @@ Example:
 
 ```bash
 spark-intelligence bootstrap telegram-agent --home .tmp-home-live-telegram-real --guide
+spark-intelligence bootstrap telegram-agent --home .tmp-home-live-telegram-real --interactive
 spark-intelligence bootstrap telegram-agent \
   --provider minimax \
   --api-key-env MINIMAX_API_KEY \

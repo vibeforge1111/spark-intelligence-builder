@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
 import subprocess
@@ -28,7 +29,7 @@ from spark_intelligence.attachments import (
     sync_attachment_snapshot,
     unpin_chip,
 )
-from spark_intelligence.auth.providers import list_api_key_provider_ids, list_oauth_provider_ids, list_provider_specs
+from spark_intelligence.auth.providers import get_provider_spec, list_api_key_provider_ids, list_oauth_provider_ids, list_provider_specs
 from spark_intelligence.auth.runtime import build_auth_status_report
 from spark_intelligence.auth.service import complete_oauth_login, connect_provider, logout_provider, refresh_provider, start_oauth_login
 from spark_intelligence.browser import (
@@ -1168,6 +1169,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print the installer guide with provider choices, BotFather steps, and discovered chips/paths",
     )
     bootstrap_telegram_parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Prompt for provider, Telegram, and chip/path choices instead of requiring every flag upfront",
+    )
+    bootstrap_telegram_parser.add_argument(
         "--skip-validate",
         action="store_true",
         help="Skip remote Telegram token validation during bootstrap",
@@ -2211,6 +2217,223 @@ def _build_bootstrap_provider_choices() -> list[dict[str, str | None]]:
     return choices
 
 
+def _prompt_bootstrap_text(
+    label: str,
+    *,
+    default: str | None = None,
+    allow_blank: bool = False,
+) -> str | None:
+    suffix = f" [{default}]" if default else ""
+    while True:
+        value = input(f"{label}{suffix}: ").strip()
+        if value:
+            return value
+        if default is not None:
+            return default
+        if allow_blank:
+            return None
+        print("A value is required.")
+
+
+def _prompt_bootstrap_choice(
+    label: str,
+    choices: list[str],
+    *,
+    default: str | None = None,
+    allow_blank: bool = False,
+) -> str | None:
+    choice_text = "/".join(choices)
+    while True:
+        value = _prompt_bootstrap_text(
+            f"{label} ({choice_text})",
+            default=default,
+            allow_blank=allow_blank,
+        )
+        if value is None:
+            return None
+        if value in choices:
+            return value
+        print(f"Choose one of: {', '.join(choices)}")
+
+
+def _prompt_bootstrap_multi_choice(
+    label: str,
+    choices: list[str],
+    *,
+    default_values: list[str] | None = None,
+) -> list[str]:
+    default_text = ",".join(default_values or [])
+    while True:
+        raw = _prompt_bootstrap_text(
+            label,
+            default=default_text or None,
+            allow_blank=not bool(default_values),
+        )
+        if raw is None:
+            return []
+        values = [item.strip() for item in raw.split(",") if item.strip()]
+        invalid = [item for item in values if item not in choices]
+        if not invalid:
+            return values
+        print(f"Unknown choices: {', '.join(invalid)}")
+        print(f"Available choices: {', '.join(choices)}")
+
+
+def _prompt_bootstrap_secret(
+    label: str,
+    *,
+    default_env_name: str | None,
+    existing_value: str | None,
+    existing_env_name: str | None,
+) -> tuple[str | None, str | None]:
+    default_source = "direct" if existing_value else "env"
+    source = _prompt_bootstrap_choice(
+        f"{label} source",
+        ["env", "direct"],
+        default=default_source,
+    )
+    if source == "env":
+        env_name = _prompt_bootstrap_text(
+            f"{label} env var",
+            default=existing_env_name or default_env_name,
+        )
+        return None, env_name
+    prompt = f"{label}: "
+    while True:
+        secret_value = getpass.getpass(prompt).strip()
+        if secret_value:
+            return secret_value, None
+        if existing_value:
+            return existing_value, None
+        print("A value is required.")
+
+
+def _configure_interactive_provider(
+    *,
+    provider_label: str,
+    provider_id: str,
+    existing_api_key: str | None,
+    existing_api_key_env: str | None,
+    existing_model: str | None,
+    existing_base_url: str | None,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    spec = get_provider_spec(provider_id)
+    api_key, api_key_env = _prompt_bootstrap_secret(
+        f"{provider_label} API key",
+        default_env_name=spec.default_api_key_env,
+        existing_value=existing_api_key,
+        existing_env_name=existing_api_key_env,
+    )
+    model = _prompt_bootstrap_text(
+        f"{provider_label} model",
+        default=existing_model or spec.default_model,
+        allow_blank=existing_model is None and spec.default_model is None,
+    )
+    prompt_for_base_url = provider_id == "custom" or bool(existing_base_url or spec.default_base_url)
+    base_url = existing_base_url
+    if prompt_for_base_url:
+        base_url = _prompt_bootstrap_text(
+            f"{provider_label} base URL",
+            default=existing_base_url or spec.default_base_url,
+            allow_blank=provider_id != "custom",
+        )
+    return api_key, api_key_env, model, base_url
+
+
+def _collect_interactive_bootstrap_answers(
+    *,
+    args: argparse.Namespace,
+    attachment_snapshot: object,
+) -> None:
+    provider_choices = [choice["provider_id"] for choice in _build_bootstrap_provider_choices()]
+    configured_default_provider = None
+    if getattr(args, "provider", None) and args.provider != "custom":
+        configured_default_provider = args.provider
+    default_provider = configured_default_provider or ("minimax" if "minimax" in provider_choices else provider_choices[0])
+    args.provider = _prompt_bootstrap_choice("Primary provider", provider_choices, default=default_provider) or default_provider
+    args.api_key, args.api_key_env, args.model, args.base_url = _configure_interactive_provider(
+        provider_label="Primary provider",
+        provider_id=args.provider,
+        existing_api_key=args.api_key,
+        existing_api_key_env=args.api_key_env,
+        existing_model=args.model,
+        existing_base_url=args.base_url,
+    )
+
+    fallback_default = args.fallback_provider if getattr(args, "fallback_provider", None) else None
+    args.fallback_provider = _prompt_bootstrap_choice(
+        "Fallback provider",
+        provider_choices,
+        default=fallback_default,
+        allow_blank=True,
+    )
+    if args.fallback_provider:
+        args.fallback_api_key, args.fallback_api_key_env, args.fallback_model, args.fallback_base_url = _configure_interactive_provider(
+            provider_label="Fallback provider",
+            provider_id=args.fallback_provider,
+            existing_api_key=args.fallback_api_key,
+            existing_api_key_env=args.fallback_api_key_env,
+            existing_model=args.fallback_model,
+            existing_base_url=args.fallback_base_url,
+        )
+    else:
+        args.fallback_api_key = None
+        args.fallback_api_key_env = None
+        args.fallback_model = None
+        args.fallback_base_url = None
+
+    args.pairing_mode = _prompt_bootstrap_choice(
+        "Telegram pairing mode",
+        ["pairing", "allowlist"],
+        default=args.pairing_mode,
+    ) or args.pairing_mode
+    setup_mode = _prompt_bootstrap_choice(
+        "Telegram bot setup",
+        ["existing", "new"],
+        default="existing",
+    )
+    if setup_mode == "new":
+        print("")
+        print(render_telegram_botfather_guide(allowed_users=args.allowed_user, pairing_mode=args.pairing_mode))
+        print("")
+    args.bot_token, args.bot_token_env = _prompt_bootstrap_secret(
+        "Telegram bot token",
+        default_env_name="TELEGRAM_BOT_TOKEN",
+        existing_value=args.bot_token,
+        existing_env_name=args.bot_token_env,
+    )
+    allowed_users = _prompt_bootstrap_text(
+        "Allowed Telegram user IDs (comma-separated, leave blank for none)",
+        default=",".join(args.allowed_user) or None,
+        allow_blank=not bool(args.allowed_user),
+    )
+    args.allowed_user = [item.strip() for item in (allowed_users or "").split(",") if item.strip()]
+
+    discovered_chip_keys = [record["key"] for record in attachment_snapshot.records if str(record.get("kind")) == "chip"]
+    discovered_path_keys = [record["key"] for record in attachment_snapshot.records if str(record.get("kind")) == "path"]
+    if discovered_chip_keys:
+        print(f"Discovered chips: {', '.join(discovered_chip_keys)}")
+        args.activate_chip = _prompt_bootstrap_multi_choice(
+            "Active chips (comma-separated, leave blank for none)",
+            discovered_chip_keys,
+            default_values=args.activate_chip,
+        )
+        args.pin_chip = _prompt_bootstrap_multi_choice(
+            "Pinned chips (comma-separated, leave blank for none)",
+            discovered_chip_keys,
+            default_values=args.pin_chip,
+        )
+    if discovered_path_keys:
+        print(f"Discovered specialization paths: {', '.join(discovered_path_keys)}")
+        active_path_default = args.set_path if args.set_path in discovered_path_keys else None
+        args.set_path = _prompt_bootstrap_choice(
+            "Active specialization path",
+            discovered_path_keys,
+            default=active_path_default,
+            allow_blank=True,
+        )
+
+
 def _configure_bootstrap_fallback_provider(
     *,
     config_manager: ConfigManager,
@@ -2255,9 +2478,9 @@ def handle_bootstrap_telegram_agent(args: argparse.Namespace) -> int:
         state_db,
         chip_roots=args.chip_root,
         path_roots=args.path_root,
-        activate_chip_keys=args.activate_chip,
-        pin_chip_keys=args.pin_chip,
-        active_path_key=args.set_path,
+        activate_chip_keys=[] if args.interactive else args.activate_chip,
+        pin_chip_keys=[] if args.interactive else args.pin_chip,
+        active_path_key=None if args.interactive else args.set_path,
     )
     setup_notes.extend(attachment_notes)
     if created:
@@ -2297,6 +2520,22 @@ def handle_bootstrap_telegram_agent(args: argparse.Namespace) -> int:
         )
         print(guide.to_json() if args.json else guide.to_text())
         return 0
+
+    if args.interactive:
+        _collect_interactive_bootstrap_answers(
+            args=args,
+            attachment_snapshot=attachment_snapshot,
+        )
+        attachment_notes, attachment_snapshot = _apply_bootstrap_attachment_preferences(
+            config_manager,
+            state_db,
+            chip_roots=[],
+            path_roots=[],
+            activate_chip_keys=args.activate_chip,
+            pin_chip_keys=args.pin_chip,
+            active_path_key=args.set_path,
+        )
+        setup_notes.extend(attachment_notes)
 
     try:
         bot_token = _resolve_bootstrap_secret(
