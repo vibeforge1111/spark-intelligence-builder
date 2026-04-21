@@ -96,6 +96,10 @@ def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
     assert "generic_dependency_history_query_after_overwrite" in generic_profile_case_ids
     assert "generic_dependency_delete" in generic_profile_case_ids
     assert "generic_dependency_event_history_query_after_delete" in generic_profile_case_ids
+    assert "generic_constraint_write" in generic_profile_case_ids
+    assert "generic_constraint_history_query_after_overwrite" in generic_profile_case_ids
+    assert "generic_constraint_delete" in generic_profile_case_ids
+    assert "generic_constraint_event_history_query_after_delete" in generic_profile_case_ids
 
     identity_case_ids = {case.case_id for case in packs["identity_under_recency_pressure"].cases}
     assert "name_query_after_recency_pressure" in identity_case_ids
@@ -180,6 +184,10 @@ def test_select_generic_profile_lifecycle_pack_exposes_overwrite_and_delete_case
     assert "generic_dependency_history_query_after_overwrite" in case_ids
     assert "generic_dependency_delete" in case_ids
     assert "generic_dependency_current_query_after_delete" in case_ids
+    assert "generic_constraint_overwrite" in case_ids
+    assert "generic_constraint_history_query_after_overwrite" in case_ids
+    assert "generic_constraint_delete" in case_ids
+    assert "generic_constraint_current_query_after_delete" in case_ids
 
 
 def test_select_benchmark_packs_rejects_unknown_pack_ids() -> None:
