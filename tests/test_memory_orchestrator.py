@@ -781,6 +781,110 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(promoted_kwargs["value"], "pending security review for the onboarding rollout")
         self.assertEqual(promoted_kwargs["fact_name"], "current_status")
 
+    def test_structured_evidence_write_promotes_high_confidence_project_state_fields_without_corroboration(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        cases = (
+            (
+                "Customer interviews confirm our plan is to simplify onboarding approvals.",
+                "profile.current_plan",
+                "simplify onboarding approvals",
+                "current_plan",
+            ),
+            (
+                "Interview notes show our priority is onboarding reliability.",
+                "profile.current_focus",
+                "onboarding reliability",
+                "current_focus",
+            ),
+            (
+                "After testing both flows, our decision is to keep human onboarding support.",
+                "profile.current_decision",
+                "keep human onboarding support",
+                "current_decision",
+            ),
+            (
+                "The weekly review says our commitment is to ship onboarding fixes this week.",
+                "profile.current_commitment",
+                "ship onboarding fixes this week",
+                "current_commitment",
+            ),
+            (
+                "Roadmap notes confirm our next milestone is launch the self-serve onboarding beta.",
+                "profile.current_milestone",
+                "launch the self-serve onboarding beta",
+                "current_milestone",
+            ),
+            (
+                "Interview notes suggest our assumption is enterprise teams want hands-on onboarding.",
+                "profile.current_assumption",
+                "enterprise teams want hands-on onboarding",
+                "current_assumption",
+            ),
+        )
+
+        for index, (evidence_text, expected_predicate, expected_value, expected_fact_name) in enumerate(cases, start=1):
+            with self.subTest(predicate=expected_predicate):
+                fake_client = _FakeMemoryClient()
+                retrieve_results = [
+                    SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[])),
+                    SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[])),
+                ]
+                with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client), patch(
+                    "spark_intelligence.memory.orchestrator.retrieve_memory_evidence_in_memory",
+                    side_effect=retrieve_results,
+                ), patch(
+                    "spark_intelligence.memory.orchestrator.write_belief_to_memory",
+                    return_value=memory_orchestrator.MemoryWriteResult(
+                        status="succeeded",
+                        operation="create",
+                        method="write_observation",
+                        memory_role="belief",
+                        accepted_count=1,
+                        rejected_count=0,
+                        skipped_count=0,
+                        abstained=False,
+                        retrieval_trace=None,
+                        provenance=[],
+                        reason=None,
+                    ),
+                ) as mocked_belief_write, patch(
+                    "spark_intelligence.memory.orchestrator.write_profile_fact_to_memory",
+                    return_value=memory_orchestrator.MemoryWriteResult(
+                        status="succeeded",
+                        operation="update",
+                        method="write_observation",
+                        memory_role="current_state",
+                        accepted_count=1,
+                        rejected_count=0,
+                        skipped_count=0,
+                        abstained=False,
+                        retrieval_trace=None,
+                        provenance=[],
+                        reason=None,
+                    ),
+                ) as mocked_profile_write:
+                    result = write_structured_evidence_to_memory(
+                        config_manager=self.config_manager,
+                        state_db=self.state_db,
+                        human_id=f"human:test:{index}",
+                        evidence_text=evidence_text,
+                        domain_pack="evidence",
+                        evidence_kind="evidence_marker",
+                        session_id=f"session:evidence:project-state:{index}",
+                        turn_id=f"turn:evidence:project-state:{index}",
+                        channel_kind="telegram",
+                    )
+
+                self.assertEqual(result.status, "succeeded")
+                mocked_belief_write.assert_not_called()
+                mocked_profile_write.assert_called_once()
+                promoted_kwargs = mocked_profile_write.call_args.kwargs
+                self.assertEqual(promoted_kwargs["predicate"], expected_predicate)
+                self.assertEqual(promoted_kwargs["value"], expected_value)
+                self.assertEqual(promoted_kwargs["fact_name"], expected_fact_name)
+
     def test_raw_episode_writes_use_raw_turn_predicate_and_archive_retention(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

@@ -18,11 +18,15 @@ _SMALL_TALK_PATTERN = re.compile(
 _PLAN_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^(?:i|we)\s+plan\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
     re.compile(r"^the\s+plan\s+is\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^our\s+current\s+plan\s+is\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^the\s+current\s+plan\s+is\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
 )
 
 _FOCUS_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^(?:i(?:'m| am)|we(?:'re| are))\s+focusing\s+on\s+(.+?)[.!]?$", re.IGNORECASE),
     re.compile(r"^our\s+priority\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^our\s+current\s+focus\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^the\s+current\s+focus\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
 )
 
 _DECISION_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -30,6 +34,10 @@ _DECISION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^(?:i|we)\s+decided\s+that\s+(.+?)[.!]?$", re.IGNORECASE),
     re.compile(r"^our\s+decision\s+is\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
     re.compile(r"^our\s+decision\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^our\s+current\s+decision\s+is\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^our\s+current\s+decision\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^the\s+current\s+decision\s+is\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^the\s+current\s+decision\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
     re.compile(r"^(?:i|we)(?:'re| are)\s+going\s+with\s+(.+?)[.!]?$", re.IGNORECASE),
     re.compile(r"^(?:i|we)\s+chose\s+(.+?)[.!]?$", re.IGNORECASE),
 )
@@ -52,6 +60,8 @@ _COMMITMENT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^(?:i|we)\s+committed\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
     re.compile(r"^our\s+commitment\s+is\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
     re.compile(r"^the\s+commitment\s+is\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^our\s+current\s+commitment\s+is\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^the\s+current\s+commitment\s+is\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
 )
 
 _MILESTONE_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -400,7 +410,12 @@ _BELIEF_PREFIX_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _STRUCTURED_EVIDENCE_PATTERN = re.compile(
-    r"\b(?:because|customer said|users? said|we saw|i saw|we found|i found|metrics show|data show|observed|learned that)\b",
+    r"(?:"
+    r"\b(?:because|customer said|users? said|we saw|i saw|we found|i found|metrics show|data show|observed|learned that)\b"
+    r"|^(?:(?:the\s+)?(?:customer interviews?|interview notes?|weekly review|roadmap notes?|user research|research notes?|call notes?|meeting notes?))\s+"
+    r"(?:confirm|confirms|show|shows|suggest|suggests|say|says)\b"
+    r"|^after testing\b"
+    r")",
     re.IGNORECASE,
 )
 

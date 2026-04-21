@@ -908,6 +908,31 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
             ),
         ),
         TelegramMemoryBenchmarkPack(
+            pack_id="telegram_evidence_project_state_consolidation",
+            title="Telegram Evidence To Project-State Consolidation",
+            description=(
+                "Seeds source-backed structured evidence about plan, focus, decision, commitment, milestone, "
+                "and assumption, then verifies those project-state facts are promoted into explicit current-state memory."
+            ),
+            focus_areas=("structured_evidence", "current_state", "project_state", "planning"),
+            cases=(
+                *_existing(
+                    "evidence_project_state_write_plan",
+                    "evidence_project_state_query_plan",
+                    "evidence_project_state_write_focus",
+                    "evidence_project_state_query_focus",
+                    "evidence_project_state_write_decision",
+                    "evidence_project_state_query_decision",
+                    "evidence_project_state_write_commitment",
+                    "evidence_project_state_query_commitment",
+                    "evidence_project_state_write_milestone",
+                    "evidence_project_state_query_milestone",
+                    "evidence_project_state_write_assumption",
+                    "evidence_project_state_query_assumption",
+                ),
+            ),
+        ),
+        TelegramMemoryBenchmarkPack(
             pack_id="telegram_mixed_memory_session_churn",
             title="Telegram Mixed Memory Session Churn",
             description=(

@@ -158,6 +158,22 @@ def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
     assert "evidence_current_state_write_owner_initial" in evidence_active_state_case_ids
     assert "evidence_current_state_query_owner" in evidence_active_state_case_ids
 
+    evidence_project_state_case_ids = {
+        case.case_id for case in packs["telegram_evidence_project_state_consolidation"].cases
+    }
+    assert "evidence_project_state_write_plan" in evidence_project_state_case_ids
+    assert "evidence_project_state_query_plan" in evidence_project_state_case_ids
+    assert "evidence_project_state_write_focus" in evidence_project_state_case_ids
+    assert "evidence_project_state_query_focus" in evidence_project_state_case_ids
+    assert "evidence_project_state_write_decision" in evidence_project_state_case_ids
+    assert "evidence_project_state_query_decision" in evidence_project_state_case_ids
+    assert "evidence_project_state_write_commitment" in evidence_project_state_case_ids
+    assert "evidence_project_state_query_commitment" in evidence_project_state_case_ids
+    assert "evidence_project_state_write_milestone" in evidence_project_state_case_ids
+    assert "evidence_project_state_query_milestone" in evidence_project_state_case_ids
+    assert "evidence_project_state_write_assumption" in evidence_project_state_case_ids
+    assert "evidence_project_state_query_assumption" in evidence_project_state_case_ids
+
     mixed_session_case_ids = {case.case_id for case in packs["telegram_mixed_memory_session_churn"].cases}
     assert "mixed_session_owner_write_initial" in mixed_session_case_ids
     assert "mixed_session_flight_overwrite" in mixed_session_case_ids

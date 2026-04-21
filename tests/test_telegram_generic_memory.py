@@ -89,6 +89,20 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(assessment.memory_role, "structured_evidence")
         self.assertEqual(assessment.retention_class, "episodic_archive")
 
+    def test_assess_telegram_generic_memory_candidate_assigns_source_backed_structured_evidence(self) -> None:
+        for text in (
+            "Interview notes show our priority is onboarding reliability.",
+            "The weekly review says our commitment is to ship onboarding fixes this week.",
+            "After testing both flows, our decision is to keep human onboarding support.",
+        ):
+            with self.subTest(text=text):
+                assessment = assess_telegram_generic_memory_candidate(text)
+
+                self.assertEqual(assessment.outcome, "structured_evidence")
+                self.assertEqual(assessment.reason, "evidence_marker")
+                self.assertEqual(assessment.memory_role, "structured_evidence")
+                self.assertEqual(assessment.retention_class, "episodic_archive")
+
     def test_assess_telegram_generic_memory_candidate_assigns_belief_candidate(self) -> None:
         assessment = assess_telegram_generic_memory_candidate(
             "I think enterprise teams need hands-on onboarding."
@@ -900,6 +914,85 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(result.mode, "memory_profile_fact")
         self.assertEqual(result.routing_decision, "memory_profile_fact_query")
         self.assertEqual(result.reply_text, "Your current owner is Nadia.")
+
+    def test_build_researcher_reply_promotes_high_confidence_project_state_fields_from_single_evidence_turn(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        cases = (
+            (
+                "Customer interviews confirm our plan is to simplify onboarding approvals.",
+                "What is our plan?",
+                "current plan",
+                "simplify onboarding approvals",
+            ),
+            (
+                "Interview notes show our priority is onboarding reliability.",
+                "What is our priority?",
+                "current focus",
+                "onboarding reliability",
+            ),
+            (
+                "After testing both flows, our decision is to keep human onboarding support.",
+                "What decision did we make?",
+                "current decision",
+                "keep human onboarding support",
+            ),
+            (
+                "The weekly review says our commitment is to ship onboarding fixes this week.",
+                "What is our commitment?",
+                "current commitment",
+                "ship onboarding fixes this week",
+            ),
+            (
+                "Roadmap notes confirm our next milestone is launch the self-serve onboarding beta.",
+                "What is our milestone?",
+                "current milestone",
+                "launch the self-serve onboarding beta",
+            ),
+            (
+                "Interview notes suggest our assumption is enterprise teams want hands-on onboarding.",
+                "What is our assumption?",
+                "current assumption",
+                "enterprise teams want hands-on onboarding",
+            ),
+        )
+
+        for index, (seed_message, query_message, expected_label, expected_value) in enumerate(cases, start=1):
+            with self.subTest(query=query_message):
+                build_researcher_reply(
+                    config_manager=self.config_manager,
+                    state_db=self.state_db,
+                    request_id=f"req-evidence-project-state-seed-{index}",
+                    agent_id="agent-1",
+                    human_id=f"human-project-state-{index}",
+                    session_id=f"session-evidence-project-state-seed-{index}",
+                    channel_kind="telegram",
+                    user_message=seed_message,
+                )
+
+                with patch(
+                    "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+                    side_effect=AssertionError("provider resolution should not run for project-state recall"),
+                ), patch(
+                    "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+                    side_effect=AssertionError("provider execution should not run for project-state recall"),
+                ):
+                    result = build_researcher_reply(
+                        config_manager=self.config_manager,
+                        state_db=self.state_db,
+                        request_id=f"req-evidence-project-state-read-{index}",
+                        agent_id="agent-1",
+                        human_id=f"human-project-state-{index}",
+                        session_id=f"session-evidence-project-state-read-{index}",
+                        channel_kind="telegram",
+                        user_message=query_message,
+                    )
+
+                self.assertEqual(result.mode, "memory_profile_fact")
+                self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+                self.assertIn(expected_label, result.reply_text.lower())
+                self.assertIn(expected_value.lower(), result.reply_text.lower())
 
     def test_build_researcher_reply_archives_stale_structured_evidence_when_newer_evidence_exists(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

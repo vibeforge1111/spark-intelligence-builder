@@ -361,6 +361,38 @@ class StructuredEvidenceCurrentStateRule:
 
 _STRUCTURED_EVIDENCE_CURRENT_STATE_RULES: tuple[StructuredEvidenceCurrentStateRule, ...] = (
     StructuredEvidenceCurrentStateRule(
+        fact_name="current_plan",
+        canonical_template="Our current plan is to {value}.",
+        extract_patterns=(
+            re.compile(r"\b(?:i|we)\s+plan\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bour\s+plan\s+is\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bthe\s+plan\s+is\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
+        ),
+        direct_promotion_without_corroboration=True,
+    ),
+    StructuredEvidenceCurrentStateRule(
+        fact_name="current_focus",
+        canonical_template="Our current focus is {value}.",
+        extract_patterns=(
+            re.compile(r"\b(?:i(?:'m| am)|we(?:'re| are))\s+focusing\s+on\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bour\s+priority\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+        ),
+        direct_promotion_without_corroboration=True,
+    ),
+    StructuredEvidenceCurrentStateRule(
+        fact_name="current_decision",
+        canonical_template="Our current decision is {value}.",
+        extract_patterns=(
+            re.compile(r"\b(?:i|we)\s+decided\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\b(?:i|we)\s+decided\s+that\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bour\s+decision\s+is\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bour\s+decision\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\b(?:i|we)(?:'re| are)\s+going\s+with\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\b(?:i|we)\s+chose\s+(.+?)[.!]?$", re.IGNORECASE),
+        ),
+        direct_promotion_without_corroboration=True,
+    ),
+    StructuredEvidenceCurrentStateRule(
         fact_name="current_status",
         canonical_template="Our current status is {value}.",
         extract_patterns=(
@@ -403,6 +435,27 @@ _STRUCTURED_EVIDENCE_CURRENT_STATE_RULES: tuple[StructuredEvidenceCurrentStateRu
         ),
     ),
     StructuredEvidenceCurrentStateRule(
+        fact_name="current_commitment",
+        canonical_template="Our current commitment is to {value}.",
+        extract_patterns=(
+            re.compile(r"\b(?:i|we)\s+committed\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bour\s+commitment\s+is\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bthe\s+commitment\s+is\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
+        ),
+        direct_promotion_without_corroboration=True,
+    ),
+    StructuredEvidenceCurrentStateRule(
+        fact_name="current_milestone",
+        canonical_template="Our current milestone is {value}.",
+        extract_patterns=(
+            re.compile(r"\bour\s+next\s+milestone\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bthe\s+next\s+milestone\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bour\s+current\s+milestone\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bthe\s+current\s+milestone\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+        ),
+        direct_promotion_without_corroboration=True,
+    ),
+    StructuredEvidenceCurrentStateRule(
         fact_name="current_risk",
         canonical_template="Our current risk is {value}.",
         extract_patterns=(
@@ -411,6 +464,19 @@ _STRUCTURED_EVIDENCE_CURRENT_STATE_RULES: tuple[StructuredEvidenceCurrentStateRu
             re.compile(r"\brisk\s+of\s+(.+?)(?:\s+because|[.!]?$)", re.IGNORECASE),
             re.compile(r"\bat\s+risk\s+of\s+(.+?)(?:\s+because|[.!]?$)", re.IGNORECASE),
         ),
+    ),
+    StructuredEvidenceCurrentStateRule(
+        fact_name="current_assumption",
+        canonical_template="Our current assumption is {value}.",
+        extract_patterns=(
+            re.compile(r"\bour\s+assumption\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bthe\s+assumption\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bour\s+current\s+assumption\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bthe\s+current\s+assumption\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bour\s+main\s+assumption\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"\bthe\s+main\s+assumption\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+        ),
+        direct_promotion_without_corroboration=True,
     ),
     StructuredEvidenceCurrentStateRule(
         fact_name="current_blocker",

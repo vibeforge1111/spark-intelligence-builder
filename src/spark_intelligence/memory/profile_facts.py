@@ -1170,6 +1170,10 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
         for phrase in (
             "what is my current plan",
             "what's my current plan",
+            "what is our plan",
+            "what's our plan",
+            "what is the plan",
+            "what's the plan",
             "what do you have as my current plan",
             "what plan do you have for me",
             "what are we planning",
