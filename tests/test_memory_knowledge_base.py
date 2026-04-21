@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.memory import build_telegram_state_knowledge_base
 
 from tests.test_support import SparkTestCase
@@ -243,3 +244,35 @@ class TelegramStateKnowledgeBaseTests(SparkTestCase):
                 str((self.home / "README.md").resolve()),
             ],
         )
+
+    def test_build_telegram_state_knowledge_base_passes_absolute_builder_paths_to_domain_cli(self) -> None:
+        relative_home = Path("relative-home-fixture")
+        relative_output_dir = relative_home / "artifacts" / "spark-memory-kb"
+        relative_write_path = relative_home / "artifacts" / "spark-memory-kb.json"
+        config_manager = ConfigManager.from_home(str(relative_home))
+
+        with patch(
+            "spark_intelligence.memory.knowledge_base.run_governed_command",
+            return_value=SimpleNamespace(
+                exit_code=0,
+                stdout=json.dumps(
+                    {
+                        "builder_home": str(relative_home.resolve()),
+                        "summary": {"kb_valid": True},
+                        "health_report": {"valid": True, "errors": []},
+                    }
+                ),
+                stderr="",
+            ),
+        ) as governed:
+            build_telegram_state_knowledge_base(
+                config_manager=config_manager,
+                output_dir=relative_output_dir,
+                write_path=relative_write_path,
+                validator_root=self.home,
+            )
+
+        command = governed.call_args.kwargs["command"]
+        self.assertEqual(command[4], str(relative_home.resolve()))
+        self.assertEqual(command[5], str(relative_output_dir.resolve()))
+        self.assertEqual(command[-1], str(relative_write_path.resolve()))

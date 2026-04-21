@@ -61,14 +61,15 @@ def build_telegram_state_knowledge_base(
     write_path: str | Path | None = None,
     validator_root: str | Path | None = None,
 ) -> TelegramStateKnowledgeBaseResult:
-    resolved_output_dir = Path(output_dir) if output_dir else _default_output_dir(config_manager)
+    resolved_builder_home = config_manager.paths.home.resolve(strict=False)
+    resolved_output_dir = (Path(output_dir) if output_dir else _default_output_dir(config_manager)).resolve(strict=False)
     _prepare_output_dir(resolved_output_dir)
     resolved_repo_sources, resolved_repo_source_manifest_files = _resolve_repo_source_inputs(
         repo_sources=repo_sources,
         repo_source_manifest_files=repo_source_manifest_files,
     )
     command_args = [
-        str(config_manager.paths.home),
+        str(resolved_builder_home),
         str(resolved_output_dir),
         "--limit",
         str(max(int(limit), 1)),
@@ -80,7 +81,7 @@ def build_telegram_state_knowledge_base(
     for manifest in resolved_repo_source_manifest_files:
         command_args.extend(["--repo-source-manifest", str(manifest)])
     if write_path:
-        command_args.extend(["--write", str(Path(write_path))])
+        command_args.extend(["--write", str(Path(write_path).resolve(strict=False))])
     payload = _run_domain_chip_memory_cli(
         "run-spark-builder-state-telegram-intake",
         *command_args,
