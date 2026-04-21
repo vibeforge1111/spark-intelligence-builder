@@ -550,6 +550,26 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
             ),
         ),
         TelegramMemoryBenchmarkPack(
+            pack_id="telegram_event_overwrite_lineage",
+            title="Telegram Event Overwrite Lineage",
+            description=(
+                "Exercises the dedicated Telegram event lane directly: event writes, latest-event current-state "
+                "answers, and event-history recall after an overwrite so chronology stays intact while latest-state "
+                "answers stay current."
+            ),
+            focus_areas=("telegram_events", "event_overwrite", "current_state", "native_history"),
+            cases=(
+                *_existing(
+                    "meeting_write",
+                    "event_query_after_meeting_write",
+                    "flight_write",
+                    "flight_overwrite",
+                    "latest_flight_query_after_overwrite",
+                    "flight_history_query_after_overwrite",
+                ),
+            ),
+        ),
+        TelegramMemoryBenchmarkPack(
             pack_id="explanation_pressure_suite",
             title="Explanation Pressure Suite",
             description=(
