@@ -557,6 +557,81 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(facts.get("bridge_mode"), "memory_open_recall")
         self.assertIn("episodic", facts.get("retrieved_memory_roles") or [])
 
+    def test_build_researcher_reply_archives_stale_raw_episode_when_newer_evidence_exists(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch("spark_intelligence.memory.orchestrator._now_iso", return_value="2025-02-01T00:00:00+00:00"):
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-open-episode-old-write",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-open-episode-old-write",
+                channel_kind="telegram",
+                user_message="The pricing page felt confusing during the demo.",
+            )
+
+        with patch("spark_intelligence.memory.orchestrator._now_iso", return_value="2025-03-20T00:00:00+00:00"):
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-open-episode-evidence-write",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-open-episode-evidence-write",
+                channel_kind="telegram",
+                user_message="During the demo, users got confused because the pricing page explanation was unclear.",
+            )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for open memory recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for open memory recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-open-episode-archive-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-open-episode-archive-read",
+                channel_kind="telegram",
+                user_message="What happened during the demo?",
+            )
+
+        self.assertEqual(result.mode, "memory_open_recall")
+        self.assertIn("during the demo", result.reply_text.lower())
+        self.assertIn("pricing page explanation was unclear", result.reply_text.lower())
+        self.assertNotIn("pricing page felt confusing during the demo", result.reply_text.lower())
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(tool_events)
+        facts = next(
+            (
+                (event["facts_json"] or {})
+                for event in tool_events
+                if (event["facts_json"] or {}).get("bridge_mode") == "memory_open_recall"
+            ),
+            {},
+        )
+        self.assertEqual(facts.get("archived_raw_episode_count"), 1)
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=20)
+        archive_write = next(
+            (
+                (event["facts_json"] or {})
+                for event in write_events
+                if (event["facts_json"] or {}).get("memory_role") == "episodic"
+                and ((event["facts_json"] or {}).get("observations") or [{}])[0].get("operation") == "delete"
+            ),
+            {},
+        )
+        archive_observations = archive_write.get("observations") or []
+        self.assertTrue(archive_observations)
+        self.assertEqual(archive_observations[0].get("raw_episode_lifecycle_action"), "archived")
+
     def test_build_researcher_reply_persists_generic_plan_memory_before_provider_resolution(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

@@ -28,6 +28,7 @@ DEFAULT_SDK_MODULE = "domain_chip_memory"
 DEFAULT_DOMAIN_CHIP_MEMORY_ROOT = Path.home() / "Desktop" / "domain-chip-memory"
 PREFERENCE_PREDICATE_PREFIX = "personality.preference."
 BELIEF_REVALIDATION_DAYS = 30
+RAW_EPISODE_ARCHIVE_DAYS = 14
 _SDK_CLIENT_CACHE: dict[tuple[str, str], Any] = {}
 
 
@@ -1794,6 +1795,120 @@ def archive_belief_from_memory(
     return result
 
 
+def archive_raw_episode_from_memory(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str,
+    episode_text: str,
+    raw_episode_observation_id: str | None,
+    archive_reason: str,
+    session_id: str | None,
+    turn_id: str | None,
+    channel_kind: str | None,
+    actor_id: str = "raw_episode_archiver",
+) -> MemoryWriteResult:
+    if not _memory_enabled(config_manager):
+        return _disabled_write_result(operation="delete", default_role="episodic")
+    client = _load_sdk_client(config_manager)
+    if client is None:
+        result = MemoryWriteResult(
+            status="abstained",
+            operation="delete",
+            method="write_observation",
+            memory_role="episodic",
+            accepted_count=0,
+            rejected_count=0,
+            skipped_count=1,
+            abstained=True,
+            retrieval_trace=None,
+            provenance=[],
+            reason="sdk_unavailable",
+        )
+        _record_memory_write_event(
+            state_db=state_db,
+            result=result,
+            human_id=human_id,
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=actor_id,
+        )
+        return result
+    subject = _subject_for_human_id(human_id)
+    timestamp = _now_iso()
+    normalized_text = str(episode_text or "").strip()
+    observation = {
+        "subject": subject,
+        "predicate": "raw_turn",
+        "value": normalized_text,
+        "operation": "delete",
+        "memory_role": "episodic",
+        "retention_class": "episodic_archive",
+        "text": normalized_text,
+        "raw_episode": True,
+        "raw_episode_lifecycle_action": "archived",
+    }
+    if raw_episode_observation_id:
+        observation["supersedes"] = raw_episode_observation_id
+    _record_memory_write_requested_observations(
+        state_db=state_db,
+        operation="delete",
+        human_id=human_id,
+        observations=[observation],
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+        memory_role="episodic",
+        summary="Spark memory write requested for raw episode archive.",
+    )
+    raw = _call_sdk_method(
+        client,
+        "write_observation",
+        {
+            "operation": "delete",
+            "subject": subject,
+            "predicate": "raw_turn",
+            "value": normalized_text,
+            "text": normalized_text,
+            "memory_role": "episodic",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "timestamp": timestamp,
+            "supersedes": raw_episode_observation_id,
+            "retention_class": "episodic_archive",
+            "document_time": timestamp,
+            "valid_to": timestamp,
+            "deleted_at": timestamp,
+            "metadata": {
+                "entity_type": "human",
+                "channel_kind": channel_kind,
+                "memory_role": "episodic",
+                "source_surface": "researcher_bridge",
+                "raw_episode": True,
+                "value": normalized_text,
+                "archive_reason": archive_reason,
+                "raw_episode_lifecycle_action": "archived",
+                "archived_raw_episode_observation_id": raw_episode_observation_id,
+            },
+        },
+    )
+    result = _normalize_write_result(
+        raw=raw,
+        operation="delete",
+        method="write_observation",
+        default_role="episodic",
+    )
+    _record_memory_write_event(
+        state_db=state_db,
+        result=result,
+        human_id=human_id,
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+    )
+    return result
+
+
 def write_raw_episode_to_memory(
     *,
     config_manager: ConfigManager,
@@ -1853,6 +1968,7 @@ def write_raw_episode_to_memory(
         return result
     subject = _subject_for_human_id(human_id)
     timestamp = _now_iso()
+    archive_at = (datetime.fromisoformat(timestamp.replace("Z", "+00:00")) + timedelta(days=RAW_EPISODE_ARCHIVE_DAYS)).isoformat()
     normalized_pack = re.sub(r"[^a-z0-9]+", "_", str(domain_pack or "raw_episode").strip().lower()).strip("_") or "raw_episode"
     observation = {
         "subject": subject,
@@ -1899,6 +2015,8 @@ def write_raw_episode_to_memory(
                 "raw_episode": True,
                 "normalized_value": normalized_text,
                 "value": normalized_text,
+                "archive_after_days": RAW_EPISODE_ARCHIVE_DAYS,
+                "archive_at": archive_at,
             },
         },
     )
