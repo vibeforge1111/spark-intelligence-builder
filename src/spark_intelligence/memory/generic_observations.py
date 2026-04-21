@@ -54,6 +54,13 @@ _BLOCKER_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^our\s+bottleneck\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
 )
 
+_STATUS_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^status\s+update[:,-]?\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^our\s+current\s+status\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^project\s+status\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^the\s+current\s+status\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+)
+
 
 @dataclass(frozen=True)
 class TelegramGenericObservation:
@@ -146,6 +153,20 @@ def detect_telegram_generic_observation(user_message: str) -> TelegramGenericObs
                 evidence_text=text,
                 fact_name="current_blocker",
                 label="current blocker",
+            )
+
+    for pattern in _STATUS_PATTERNS:
+        match = pattern.fullmatch(normalized)
+        if match is None:
+            continue
+        value = _clean_value(match.group(1))
+        if value:
+            return TelegramGenericObservation(
+                predicate="profile.current_status",
+                value=value,
+                evidence_text=text,
+                fact_name="current_status",
+                label="current status",
             )
 
     return None
@@ -283,6 +304,33 @@ def detect_telegram_generic_deletion(user_message: str) -> TelegramGenericDeleti
             label="current blocker",
         )
 
+    if lowered in {
+        "forget my current status.",
+        "forget my current status",
+        "delete my current status.",
+        "delete my current status",
+        "remove my current status.",
+        "remove my current status",
+        "forget our status.",
+        "forget our status",
+        "delete our status.",
+        "delete our status",
+        "remove our status.",
+        "remove our status",
+        "forget the project status.",
+        "forget the project status",
+        "delete the project status.",
+        "delete the project status",
+        "remove the project status.",
+        "remove the project status",
+    }:
+        return TelegramGenericDeletion(
+            predicate="profile.current_status",
+            evidence_text=text,
+            fact_name="current_status",
+            label="current status",
+        )
+
     return None
 
 
@@ -298,6 +346,8 @@ def build_telegram_generic_observation_answer(*, observation: TelegramGenericObs
         return f"I'll remember that your current decision is {value}."
     if observation.predicate == "profile.current_blocker":
         return f"I'll remember that your current blocker is {value}."
+    if observation.predicate == "profile.current_status":
+        return f"I'll remember that your current status is {value}."
     return f"I'll remember that your {observation.label} is {value}."
 
 
@@ -310,6 +360,8 @@ def build_telegram_generic_deletion_answer(*, deletion: TelegramGenericDeletion)
         return "I'll forget your current decision."
     if deletion.predicate == "profile.current_blocker":
         return "I'll forget your current blocker."
+    if deletion.predicate == "profile.current_status":
+        return "I'll forget your current status."
     return f"I'll forget your {deletion.label}."
 
 
