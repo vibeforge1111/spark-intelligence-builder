@@ -15,6 +15,7 @@ from spark_intelligence.attachments import (
     activate_chip,
     add_attachment_root,
     attachment_status,
+    build_attachment_snapshot,
     clear_active_path,
     deactivate_chip,
     list_attachments,
@@ -486,6 +487,9 @@ class BootstrapTelegramAgentStatus:
     provider_result: str
     channel_result: str
     setup_notes: list[str]
+    active_chip_keys: list[str]
+    pinned_chip_keys: list[str]
+    active_path_key: str | None
     gateway_ready: bool
     gateway_detail: str
     repair_hints: list[str]
@@ -500,6 +504,9 @@ class BootstrapTelegramAgentStatus:
                 "provider_result": self.provider_result,
                 "channel_result": self.channel_result,
                 "setup_notes": self.setup_notes,
+                "active_chip_keys": self.active_chip_keys,
+                "pinned_chip_keys": self.pinned_chip_keys,
+                "active_path_key": self.active_path_key,
                 "gateway_ready": self.gateway_ready,
                 "gateway_detail": self.gateway_detail,
                 "repair_hints": self.repair_hints,
@@ -515,6 +522,9 @@ class BootstrapTelegramAgentStatus:
         lines.append(f"- provider: {self.provider_id}")
         lines.append(f"- provider_result: {self.provider_result}")
         lines.append(f"- channel_result: {self.channel_result}")
+        lines.append(f"- active_chip_keys: {', '.join(self.active_chip_keys) if self.active_chip_keys else 'none'}")
+        lines.append(f"- pinned_chip_keys: {', '.join(self.pinned_chip_keys) if self.pinned_chip_keys else 'none'}")
+        lines.append(f"- active_path_key: {self.active_path_key or 'none'}")
         lines.append(f"- gateway_ready: {'yes' if self.gateway_ready else 'no'}")
         lines.append(f"- gateway_detail: {self.gateway_detail}")
         if self.setup_notes:
@@ -526,6 +536,58 @@ class BootstrapTelegramAgentStatus:
         lines.append(f"- run_command: {self.run_command}")
         lines.append("- verify_commands:")
         lines.extend(f"  - {command}" for command in self.verify_commands)
+        return "\n".join(lines)
+
+
+@dataclass
+class BootstrapTelegramAgentGuide:
+    home: str
+    setup_notes: list[str]
+    provider_choices: list[dict[str, str | None]]
+    discovered_chip_keys: list[str]
+    discovered_path_keys: list[str]
+    botfather_guide: str
+    existing_bot_example: str
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "home": self.home,
+                "setup_notes": self.setup_notes,
+                "provider_choices": self.provider_choices,
+                "discovered_chip_keys": self.discovered_chip_keys,
+                "discovered_path_keys": self.discovered_path_keys,
+                "botfather_guide": self.botfather_guide,
+                "existing_bot_example": self.existing_bot_example,
+            },
+            indent=2,
+        )
+
+    def to_text(self) -> str:
+        lines = ["Spark Intelligence install guide: telegram-agent"]
+        lines.append(f"- home: {self.home}")
+        if self.setup_notes:
+            lines.append("- setup_notes:")
+            lines.extend(f"  - {note}" for note in self.setup_notes)
+        lines.append("- provider_choices:")
+        for choice in self.provider_choices:
+            lines.append(
+                "  - "
+                + str(choice["provider_id"])
+                + f" ({choice['display_name']})"
+                + f" model={choice['default_model'] or 'choose_one'}"
+                + f" env={choice['api_key_env'] or 'custom_env'}"
+            )
+        lines.append(
+            f"- discovered_chip_keys: {', '.join(self.discovered_chip_keys) if self.discovered_chip_keys else 'none'}"
+        )
+        lines.append(
+            f"- discovered_path_keys: {', '.join(self.discovered_path_keys) if self.discovered_path_keys else 'none'}"
+        )
+        lines.append("- existing_bot_example:")
+        lines.append(f"  {self.existing_bot_example}")
+        lines.append("- botfather_guide:")
+        lines.extend(f"  {line}" for line in self.botfather_guide.splitlines())
         return "\n".join(lines)
 
 
@@ -1068,12 +1130,22 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap_telegram_parser.add_argument("--base-url", help="Custom provider base URL")
     bootstrap_telegram_parser.add_argument("--bot-token", help="Telegram bot token to store in the home env")
     bootstrap_telegram_parser.add_argument("--bot-token-env", help="Existing env var name holding the Telegram bot token")
+    bootstrap_telegram_parser.add_argument("--chip-root", action="append", default=[], help="Additional domain-chip root to attach during bootstrap")
+    bootstrap_telegram_parser.add_argument("--path-root", action="append", default=[], help="Additional specialization-path root to attach during bootstrap")
+    bootstrap_telegram_parser.add_argument("--activate-chip", action="append", default=[], help="Chip key to activate during bootstrap")
+    bootstrap_telegram_parser.add_argument("--pin-chip", action="append", default=[], help="Chip key to pin during bootstrap")
+    bootstrap_telegram_parser.add_argument("--set-path", help="Specialization path key to activate during bootstrap")
     bootstrap_telegram_parser.add_argument("--allowed-user", action="append", default=[], help="Allowed Telegram user id")
     bootstrap_telegram_parser.add_argument(
         "--pairing-mode",
         choices=["allowlist", "pairing"],
         default="pairing",
         help="Inbound DM authorization mode",
+    )
+    bootstrap_telegram_parser.add_argument(
+        "--guide",
+        action="store_true",
+        help="Print the installer guide with provider choices, BotFather steps, and discovered chips/paths",
     )
     bootstrap_telegram_parser.add_argument(
         "--skip-validate",
@@ -2061,16 +2133,107 @@ def _resolve_bootstrap_secret(
     raise ValueError(f"{label} env '{env_name}' is not set in the home env or process environment.")
 
 
+def _apply_bootstrap_attachment_preferences(
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    *,
+    chip_roots: list[str],
+    path_roots: list[str],
+    activate_chip_keys: list[str],
+    pin_chip_keys: list[str],
+    active_path_key: str | None,
+) -> tuple[list[str], object]:
+    notes: list[str] = []
+    changed = False
+
+    for root in chip_roots:
+        add_attachment_root(config_manager, target="chips", root=root)
+        notes.append(f"added chip root {root}")
+        changed = True
+    for root in path_roots:
+        add_attachment_root(config_manager, target="paths", root=root)
+        notes.append(f"added specialization path root {root}")
+        changed = True
+    for chip_key in activate_chip_keys:
+        activate_chip(config_manager, chip_key=chip_key)
+        notes.append(f"activated chip {chip_key}")
+        changed = True
+    for chip_key in pin_chip_keys:
+        pin_chip(config_manager, chip_key=chip_key)
+        notes.append(f"pinned chip {chip_key}")
+        changed = True
+    if active_path_key:
+        set_active_path(config_manager, path_key=active_path_key)
+        notes.append(f"set active specialization path {active_path_key}")
+        changed = True
+
+    if changed:
+        snapshot = sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
+        notes.append(f"refreshed attachment snapshot at {snapshot.snapshot_path}")
+        return notes, snapshot
+    return notes, build_attachment_snapshot(config_manager)
+
+
+def _build_bootstrap_provider_choices() -> list[dict[str, str | None]]:
+    choices: list[dict[str, str | None]] = []
+    for spec in list_provider_specs():
+        if not spec.supports_api_key_connect:
+            continue
+        choices.append(
+            {
+                "provider_id": spec.id,
+                "display_name": spec.display_name,
+                "default_model": spec.default_model,
+                "default_base_url": spec.default_base_url,
+                "api_key_env": spec.default_api_key_env,
+            }
+        )
+    return choices
+
+
 def handle_bootstrap_telegram_agent(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     created = config_manager.bootstrap()
     state_db = StateDB(config_manager.paths.state_db)
     state_db.initialize()
     setup_notes = _apply_setup_integrations(config_manager, args)
+    attachment_notes, attachment_snapshot = _apply_bootstrap_attachment_preferences(
+        config_manager,
+        state_db,
+        chip_roots=args.chip_root,
+        path_roots=args.path_root,
+        activate_chip_keys=args.activate_chip,
+        pin_chip_keys=args.pin_chip,
+        active_path_key=args.set_path,
+    )
+    setup_notes.extend(attachment_notes)
     if created:
         setup_notes.insert(0, "created config, env, and state bootstrap")
     else:
         setup_notes.insert(0, "verified existing config, env, and state bootstrap")
+
+    if args.guide:
+        existing_bot_example = (
+            "spark-intelligence bootstrap telegram-agent "
+            f"--home {config_manager.paths.home} "
+            "--provider minimax --api-key-env MINIMAX_API_KEY "
+            "--model MiniMax-M2.7 --base-url https://api.minimax.io/v1 "
+            "--bot-token-env TELEGRAM_BOT_TOKEN"
+        )
+        guide = BootstrapTelegramAgentGuide(
+            home=str(config_manager.paths.home),
+            setup_notes=setup_notes,
+            provider_choices=_build_bootstrap_provider_choices(),
+            discovered_chip_keys=[record["key"] for record in attachment_snapshot.records if str(record.get("kind")) == "chip"],
+            discovered_path_keys=[record["key"] for record in attachment_snapshot.records if str(record.get("kind")) == "path"],
+            botfather_guide=render_telegram_botfather_guide(
+                allowed_users=args.allowed_user,
+                pairing_mode=args.pairing_mode,
+            ),
+            existing_bot_example=existing_bot_example,
+        )
+        print(guide.to_json() if args.json else guide.to_text())
+        return 0
 
     try:
         bot_token = _resolve_bootstrap_secret(
@@ -2138,6 +2301,9 @@ def handle_bootstrap_telegram_agent(args: argparse.Namespace) -> int:
         provider_result=provider_result,
         channel_result=channel_result,
         setup_notes=setup_notes,
+        active_chip_keys=attachment_snapshot.active_chip_keys,
+        pinned_chip_keys=attachment_snapshot.pinned_chip_keys,
+        active_path_key=attachment_snapshot.active_path_key,
         gateway_ready=gateway.ready,
         gateway_detail=gateway.provider_runtime_detail or gateway.provider_execution_detail or "ready",
         repair_hints=list(gateway.repair_hints or []),

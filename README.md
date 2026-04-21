@@ -244,6 +244,27 @@ spark-intelligence bootstrap telegram-agent \
 
 That command reuses the proven pieces already in this repo: config/state bootstrap, local Spark repo autodetection, API-key provider connect, Telegram channel setup, and the supported continuous run command. It also records the supported install profile in local config so the productization phase can see whether a home has actually been bootstrapped or only assembled manually.
 
+For first-time operator setup, the same bootstrap command now also supports:
+
+- `--guide` to print provider choices, BotFather onboarding steps, and discovered chip/path inventory
+- `--activate-chip <chip_key>` and `--pin-chip <chip_key>` during bootstrap
+- `--set-path <path_key>` during bootstrap
+- `--chip-root <path>` and `--path-root <path>` when the Spark ecosystem repos are not already in the default autodiscovery locations
+
+Example:
+
+```bash
+spark-intelligence bootstrap telegram-agent --home .tmp-home-live-telegram-real --guide
+spark-intelligence bootstrap telegram-agent \
+  --provider minimax \
+  --api-key-env MINIMAX_API_KEY \
+  --model MiniMax-M2.7 \
+  --base-url https://api.minimax.io/v1 \
+  --bot-token-env TELEGRAM_BOT_TOKEN \
+  --pin-chip startup-yc \
+  --set-path startup-operator
+```
+
 The matching supported always-on run wrapper on Windows is now:
 
 ```bash
@@ -545,6 +566,8 @@ spark-intelligence attachments snapshot --json
 spark-intelligence attachments run-hook evaluate --chip-key startup-yc --payload-json "{\"situation\":\"How should we improve retention?\"}" --json
 spark-intelligence agent inspect
 ```
+
+Those same chip and path choices can now be pulled into the initial Telegram installer path through `bootstrap telegram-agent`, so a new user can land on a ready provider + bot + attachment setup instead of stopping after only token and API configuration.
 
 The attachment snapshot is written to `SPARK_INTELLIGENCE_HOME/attachments.snapshot.json` and mirrored into SQLite runtime state so external Spark repos can consume the current attachment set without importing this repo's internals.
 
