@@ -39,6 +39,7 @@ from spark_intelligence.harness_registry import build_harness_prompt_context
 from spark_intelligence.memory import (
     archive_belief_from_memory,
     archive_raw_episode_from_memory,
+    archive_structured_evidence_from_memory,
     delete_profile_fact_from_memory,
     explain_memory_answer_in_memory,
     inspect_human_memory_in_memory,
@@ -589,6 +590,21 @@ def _raw_episode_records_past_archive(records: list[dict[str, Any]]) -> list[dic
     return stale_records
 
 
+def _structured_evidence_records_past_archive(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    now = datetime.now(timezone.utc)
+    stale_records: list[dict[str, Any]] = []
+    for record in records:
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        archive_at = _parse_memory_timestamp(metadata.get("archive_at"))
+        if archive_at is None:
+            timestamp = _parse_memory_timestamp(_memory_record_timestamp(record))
+            if timestamp is not None:
+                archive_at = timestamp + timedelta(days=30)
+        if archive_at is not None and archive_at <= now:
+            stale_records.append(record)
+    return stale_records
+
+
 def _filter_raw_episode_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     filtered: list[dict[str, Any]] = []
     for record in records:
@@ -631,6 +647,22 @@ def _newer_structured_evidence_than_raw_episodes(
         record
         for record in evidence_records
         if _memory_record_timestamp(record) > latest_raw_episode_timestamp
+    ]
+
+
+def _newer_structured_evidence_records(
+    *,
+    evidence_records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if len(evidence_records) < 2:
+        return []
+    latest_evidence_timestamp = max((_memory_record_timestamp(record) for record in evidence_records), default="")
+    if not latest_evidence_timestamp:
+        return []
+    return [
+        record
+        for record in evidence_records
+        if _memory_record_timestamp(record) < latest_evidence_timestamp
     ]
 
 
@@ -5323,6 +5355,7 @@ def build_researcher_reply(
     if detected_open_memory_recall_query is not None:
         memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
         archived_raw_episode_count = 0
+        archived_structured_evidence_count = 0
         evidence_lookup = retrieve_memory_evidence_in_memory(
             config_manager=config_manager,
             state_db=state_db,
@@ -5343,6 +5376,59 @@ def build_researcher_reply(
                 )
             ]
             structured_evidence_records = _filter_structured_evidence_records(recall_records)
+            archivable_structured_evidence_records = _structured_evidence_records_past_archive(structured_evidence_records)
+            if len(structured_evidence_records) >= 2 and archivable_structured_evidence_records:
+                older_evidence_records = _newer_structured_evidence_records(evidence_records=structured_evidence_records)
+                archived_structured_evidence_ids: set[str] = set()
+                for record in archivable_structured_evidence_records:
+                    record_id = str(
+                        record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                    ).strip()
+                    if not record_id:
+                        continue
+                    if not any(
+                        str(
+                            candidate.get("observation_id") or (candidate.get("metadata") or {}).get("observation_id") or ""
+                        ).strip()
+                        == record_id
+                        for candidate in older_evidence_records
+                    ):
+                        continue
+                    try:
+                        archive_structured_evidence_from_memory(
+                            config_manager=config_manager,
+                            state_db=state_db,
+                            human_id=human_id,
+                            predicate=str(record.get("predicate") or ""),
+                            evidence_text=_memory_record_text(record),
+                            evidence_observation_id=record_id,
+                            archive_reason="eclipsed_by_newer_structured_evidence",
+                            session_id=session_id,
+                            turn_id=request_id,
+                            channel_kind=channel_kind,
+                            actor_id="telegram_structured_evidence_archiver",
+                        )
+                        archived_structured_evidence_count += 1
+                        archived_structured_evidence_ids.add(record_id)
+                    except Exception:
+                        pass
+                if archived_structured_evidence_ids:
+                    recall_records = [
+                        record
+                        for record in recall_records
+                        if str(
+                            record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                        ).strip()
+                        not in archived_structured_evidence_ids
+                    ]
+                    structured_evidence_records = [
+                        record
+                        for record in structured_evidence_records
+                        if str(
+                            record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                        ).strip()
+                        not in archived_structured_evidence_ids
+                    ]
             raw_episode_records = _filter_raw_episode_records(recall_records)
             archivable_raw_episode_records = _raw_episode_records_past_archive(raw_episode_records)
             if structured_evidence_records and archivable_raw_episode_records:
@@ -5405,6 +5491,59 @@ def build_researcher_reply(
                     )
                 ]
                 structured_evidence_records = _filter_structured_evidence_records(recall_records)
+                archivable_structured_evidence_records = _structured_evidence_records_past_archive(structured_evidence_records)
+                if len(structured_evidence_records) >= 2 and archivable_structured_evidence_records:
+                    older_evidence_records = _newer_structured_evidence_records(evidence_records=structured_evidence_records)
+                    archived_structured_evidence_ids: set[str] = set()
+                    for record in archivable_structured_evidence_records:
+                        record_id = str(
+                            record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                        ).strip()
+                        if not record_id:
+                            continue
+                        if not any(
+                            str(
+                                candidate.get("observation_id") or (candidate.get("metadata") or {}).get("observation_id") or ""
+                            ).strip()
+                            == record_id
+                            for candidate in older_evidence_records
+                        ):
+                            continue
+                        try:
+                            archive_structured_evidence_from_memory(
+                                config_manager=config_manager,
+                                state_db=state_db,
+                                human_id=human_id,
+                                predicate=str(record.get("predicate") or ""),
+                                evidence_text=_memory_record_text(record),
+                                evidence_observation_id=record_id,
+                                archive_reason="eclipsed_by_newer_structured_evidence",
+                                session_id=session_id,
+                                turn_id=request_id,
+                                channel_kind=channel_kind,
+                                actor_id="telegram_structured_evidence_archiver",
+                            )
+                            archived_structured_evidence_count += 1
+                            archived_structured_evidence_ids.add(record_id)
+                        except Exception:
+                            pass
+                    if archived_structured_evidence_ids:
+                        recall_records = [
+                            record
+                            for record in recall_records
+                            if str(
+                                record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                            ).strip()
+                            not in archived_structured_evidence_ids
+                        ]
+                        structured_evidence_records = [
+                            record
+                            for record in structured_evidence_records
+                            if str(
+                                record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                            ).strip()
+                            not in archived_structured_evidence_ids
+                        ]
                 raw_episode_records = _filter_raw_episode_records(recall_records)
                 archivable_raw_episode_records = _raw_episode_records_past_archive(raw_episode_records)
                 if structured_evidence_records and archivable_raw_episode_records:
@@ -5472,6 +5611,7 @@ def build_researcher_reply(
             "status=memory_open_recall "
             f"topic={detected_open_memory_recall_query.topic or 'unknown'} "
             f"record_count={len(recall_records)} "
+            f"archived_structured_evidence_count={archived_structured_evidence_count} "
             f"archived_raw_episode_count={archived_raw_episode_count} "
             f"read_method={read_method} "
             f"retrieved_roles={','.join(retrieved_memory_roles) if retrieved_memory_roles else 'none'}"
@@ -5503,6 +5643,7 @@ def build_researcher_reply(
                     "topic": detected_open_memory_recall_query.topic,
                     "query_kind": detected_open_memory_recall_query.query_kind,
                     "record_count": len(recall_records),
+                    "archived_structured_evidence_count": archived_structured_evidence_count,
                     "archived_raw_episode_count": archived_raw_episode_count,
                     "read_method": read_method,
                     "retrieved_memory_roles": retrieved_memory_roles,

@@ -28,6 +28,7 @@ DEFAULT_SDK_MODULE = "domain_chip_memory"
 DEFAULT_DOMAIN_CHIP_MEMORY_ROOT = Path.home() / "Desktop" / "domain-chip-memory"
 PREFERENCE_PREDICATE_PREFIX = "personality.preference."
 BELIEF_REVALIDATION_DAYS = 30
+STRUCTURED_EVIDENCE_ARCHIVE_DAYS = 30
 RAW_EPISODE_ARCHIVE_DAYS = 14
 _SDK_CLIENT_CACHE: dict[tuple[str, str], Any] = {}
 
@@ -1390,6 +1391,9 @@ def write_structured_evidence_to_memory(
         return result
     subject = _subject_for_human_id(human_id)
     timestamp = _now_iso()
+    archive_at = (
+        datetime.fromisoformat(timestamp.replace("Z", "+00:00")) + timedelta(days=STRUCTURED_EVIDENCE_ARCHIVE_DAYS)
+    ).isoformat()
     normalized_pack = re.sub(r"[^a-z0-9]+", "_", str(domain_pack or "generic").strip().lower()).strip("_") or "generic"
     predicate = f"evidence.telegram.{normalized_pack}"
     existing_beliefs = retrieve_memory_evidence_in_memory(
@@ -1469,12 +1473,127 @@ def write_structured_evidence_to_memory(
                 "belief_lifecycle_action": "invalidated" if invalidated_belief_ids else None,
                 "invalidated_belief_ids": list(invalidated_belief_ids),
                 "invalidated_belief_texts": list(invalidated_belief_texts),
+                "archive_after_days": STRUCTURED_EVIDENCE_ARCHIVE_DAYS,
+                "archive_at": archive_at,
             },
         },
     )
     result = _normalize_write_result(
         raw=raw,
         operation="create",
+        method="write_observation",
+        default_role="structured_evidence",
+    )
+    _record_memory_write_event(
+        state_db=state_db,
+        result=result,
+        human_id=human_id,
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+    )
+    return result
+
+
+def archive_structured_evidence_from_memory(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str,
+    predicate: str,
+    evidence_text: str,
+    evidence_observation_id: str | None,
+    archive_reason: str,
+    session_id: str | None,
+    turn_id: str | None,
+    channel_kind: str | None,
+    actor_id: str = "structured_evidence_archiver",
+) -> MemoryWriteResult:
+    if not _memory_enabled(config_manager):
+        return _disabled_write_result(operation="delete", default_role="structured_evidence")
+    client = _load_sdk_client(config_manager)
+    if client is None:
+        result = MemoryWriteResult(
+            status="abstained",
+            operation="delete",
+            method="write_observation",
+            memory_role="structured_evidence",
+            accepted_count=0,
+            rejected_count=0,
+            skipped_count=1,
+            abstained=True,
+            retrieval_trace=None,
+            provenance=[],
+            reason="sdk_unavailable",
+        )
+        _record_memory_write_event(
+            state_db=state_db,
+            result=result,
+            human_id=human_id,
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=actor_id,
+        )
+        return result
+    subject = _subject_for_human_id(human_id)
+    timestamp = _now_iso()
+    normalized_text = str(evidence_text or "").strip()
+    observation = {
+        "subject": subject,
+        "predicate": predicate,
+        "value": normalized_text,
+        "operation": "delete",
+        "memory_role": "structured_evidence",
+        "retention_class": "episodic_archive",
+        "text": normalized_text,
+        "structured_evidence_lifecycle_action": "archived",
+    }
+    if evidence_observation_id:
+        observation["supersedes"] = evidence_observation_id
+    _record_memory_write_requested_observations(
+        state_db=state_db,
+        operation="delete",
+        human_id=human_id,
+        observations=[observation],
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+        memory_role="structured_evidence",
+        summary="Spark memory write requested for structured evidence archive.",
+    )
+    raw = _call_sdk_method(
+        client,
+        "write_observation",
+        {
+            "operation": "delete",
+            "subject": subject,
+            "predicate": predicate,
+            "value": normalized_text,
+            "text": normalized_text,
+            "memory_role": "structured_evidence",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "timestamp": timestamp,
+            "supersedes": evidence_observation_id,
+            "retention_class": "episodic_archive",
+            "document_time": timestamp,
+            "valid_to": timestamp,
+            "deleted_at": timestamp,
+            "metadata": {
+                "entity_type": "human",
+                "channel_kind": channel_kind,
+                "memory_role": "structured_evidence",
+                "source_surface": "researcher_bridge",
+                "value": normalized_text,
+                "archive_reason": archive_reason,
+                "structured_evidence_lifecycle_action": "archived",
+                "archived_structured_evidence_observation_id": evidence_observation_id,
+            },
+        },
+    )
+    result = _normalize_write_result(
+        raw=raw,
+        operation="delete",
         method="write_observation",
         default_role="structured_evidence",
     )

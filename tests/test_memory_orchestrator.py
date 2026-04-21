@@ -10,6 +10,7 @@ from spark_intelligence.memory import orchestrator as memory_orchestrator
 from spark_intelligence.memory import (
     archive_belief_from_memory,
     archive_raw_episode_from_memory,
+    archive_structured_evidence_from_memory,
     build_sdk_maintenance_payload,
     build_shadow_replay_payload,
     export_shadow_replay_batch,
@@ -233,6 +234,8 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(call["retention_class"], "episodic_archive")
         self.assertEqual(call["metadata"]["evidence_kind"], "evidence_marker")
         self.assertEqual(call["metadata"]["domain_pack"], "evidence")
+        self.assertEqual(call["metadata"]["archive_after_days"], 30)
+        self.assertTrue(call["metadata"]["archive_at"])
         events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(events)
         observations = (events[0]["facts_json"] or {}).get("observations") or []
@@ -352,6 +355,38 @@ class MemoryOrchestratorTests(SparkTestCase):
         observations = (events[0]["facts_json"] or {}).get("observations") or []
         self.assertEqual(observations[0]["operation"], "delete")
         self.assertEqual(observations[0]["raw_episode_lifecycle_action"], "archived")
+
+    def test_archive_structured_evidence_from_memory_writes_delete_tombstone(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            result = archive_structured_evidence_from_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                predicate="evidence.telegram.evidence",
+                evidence_text="Users keep dropping during onboarding because Stripe verification fails.",
+                evidence_observation_id="obs-evidence-1",
+                archive_reason="eclipsed_by_newer_structured_evidence",
+                session_id="session:evidence:archive",
+                turn_id="turn:evidence:archive",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        call = fake_client.observation_calls[0]
+        self.assertEqual(call["operation"], "delete")
+        self.assertEqual(call["predicate"], "evidence.telegram.evidence")
+        self.assertEqual(call["supersedes"], "obs-evidence-1")
+        self.assertEqual(call["metadata"]["structured_evidence_lifecycle_action"], "archived")
+        self.assertEqual(call["metadata"]["archive_reason"], "eclipsed_by_newer_structured_evidence")
+        events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(events)
+        observations = (events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(observations[0]["operation"], "delete")
+        self.assertEqual(observations[0]["structured_evidence_lifecycle_action"], "archived")
 
     def test_belief_writes_use_belief_role_and_derived_retention(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
