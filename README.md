@@ -247,6 +247,7 @@ That command reuses the proven pieces already in this repo: config/state bootstr
 For first-time operator setup, the same bootstrap command now also supports:
 
 - `--guide` to print provider choices, BotFather onboarding steps, and discovered chip/path inventory
+- `--fallback-provider <provider>` plus matching fallback API/model flags for an explicit backup model path
 - `--activate-chip <chip_key>` and `--pin-chip <chip_key>` during bootstrap
 - `--set-path <path_key>` during bootstrap
 - `--chip-root <path>` and `--path-root <path>` when the Spark ecosystem repos are not already in the default autodiscovery locations
@@ -260,6 +261,9 @@ spark-intelligence bootstrap telegram-agent \
   --api-key-env MINIMAX_API_KEY \
   --model MiniMax-M2.7 \
   --base-url https://api.minimax.io/v1 \
+  --fallback-provider anthropic \
+  --fallback-api-key-env ANTHROPIC_API_KEY \
+  --fallback-model claude-opus-4-6 \
   --bot-token-env TELEGRAM_BOT_TOKEN \
   --pin-chip startup-yc \
   --set-path startup-operator

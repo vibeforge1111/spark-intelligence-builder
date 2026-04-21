@@ -86,3 +86,76 @@ class BootstrapInstallerTests(SparkTestCase):
         self.assertEqual(self.config_manager.get_path("spark.chips.active_keys"), ["startup-yc"])
         self.assertEqual(self.config_manager.get_path("spark.chips.pinned_keys"), ["startup-yc"])
         self.assertEqual(self.config_manager.get_path("spark.specialization_paths.active_path_key"), "startup-operator")
+
+    def test_bootstrap_telegram_agent_can_configure_fallback_provider(self) -> None:
+        researcher_root = self.home / "spark-researcher"
+        researcher_root.mkdir()
+        researcher_config = researcher_root / "spark-researcher.project.json"
+        researcher_config.write_text("{}", encoding="utf-8")
+
+        exit_code, stdout, stderr = self.run_cli(
+            "bootstrap",
+            "telegram-agent",
+            "--home",
+            str(self.home),
+            "--researcher-root",
+            str(researcher_root),
+            "--researcher-config",
+            str(researcher_config),
+            "--provider",
+            "minimax",
+            "--api-key",
+            "minimax-secret",
+            "--model",
+            "MiniMax-M2.7",
+            "--base-url",
+            "https://api.minimax.io/v1",
+            "--fallback-provider",
+            "anthropic",
+            "--fallback-api-key",
+            "anthropic-secret",
+            "--fallback-model",
+            "claude-opus-4-6",
+            "--bot-token",
+            "telegram-test-token",
+            "--skip-validate",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertIn("- primary_provider: minimax", stdout)
+        self.assertIn("- fallback_provider: anthropic", stdout)
+        self.assertEqual(self.config_manager.get_path("providers.default_provider"), "minimax")
+        self.assertEqual(self.config_manager.get_path("providers.fallback_provider"), "anthropic")
+
+    def test_bootstrap_telegram_agent_rejects_same_fallback_provider(self) -> None:
+        researcher_root = self.home / "spark-researcher"
+        researcher_root.mkdir()
+        researcher_config = researcher_root / "spark-researcher.project.json"
+        researcher_config.write_text("{}", encoding="utf-8")
+
+        exit_code, stdout, stderr = self.run_cli(
+            "bootstrap",
+            "telegram-agent",
+            "--home",
+            str(self.home),
+            "--researcher-root",
+            str(researcher_root),
+            "--researcher-config",
+            str(researcher_config),
+            "--provider",
+            "minimax",
+            "--api-key",
+            "minimax-secret",
+            "--model",
+            "MiniMax-M2.7",
+            "--base-url",
+            "https://api.minimax.io/v1",
+            "--fallback-provider",
+            "minimax",
+            "--bot-token",
+            "telegram-test-token",
+            "--skip-validate",
+        )
+
+        self.assertEqual(exit_code, 2)
+        self.assertIn("Fallback provider must differ from the primary provider.", stderr)

@@ -84,7 +84,7 @@ class ConfigManager:
                 "install": {"profile": None},
                 "run": {"default_gateway_mode": None},
             },
-            "providers": {"default_provider": None, "records": {}},
+            "providers": {"default_provider": None, "fallback_provider": None, "records": {}},
             "channels": {"records": {}},
             "identity": {"default_pairing_mode": "pairing", "shared_surfaces_enabled": False},
             "jobs": {"scheduler": {"enabled": True, "tick_seconds": 60}},

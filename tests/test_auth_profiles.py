@@ -99,6 +99,45 @@ class AuthProfileTests(SparkTestCase):
         self.assertEqual(payload["providers"][0]["secret_ref"]["id"], "WORK_OPENROUTER_KEY")
         self.assertFalse(payload["providers"][0]["secret_present"])
         self.assertEqual(payload["providers"][0]["status"], "pending_secret")
+        self.assertIsNone(payload["fallback_provider"])
+
+    def test_auth_status_reports_fallback_provider_marker(self) -> None:
+        connect_primary_exit, _, connect_primary_stderr = self.run_cli(
+            "auth",
+            "connect",
+            "openai",
+            "--home",
+            str(self.home),
+            "--api-key",
+            "sk-test-openai",
+            "--model",
+            "gpt-5.4",
+        )
+        self.assertEqual(connect_primary_exit, 0, connect_primary_stderr)
+        connect_fallback_exit, _, connect_fallback_stderr = self.run_cli(
+            "auth",
+            "connect",
+            "anthropic",
+            "--home",
+            str(self.home),
+            "--api-key",
+            "anthropic-secret",
+            "--model",
+            "claude-opus-4-6",
+        )
+        self.assertEqual(connect_fallback_exit, 0, connect_fallback_stderr)
+        self.config_manager.set_path("providers.fallback_provider", "anthropic")
+
+        payload = json.loads(
+            build_auth_status_report(config_manager=self.config_manager, state_db=self.state_db).to_json()
+        )
+
+        self.assertEqual(payload["default_provider"], "openai")
+        self.assertEqual(payload["fallback_provider"], "anthropic")
+        provider_flags = {row["provider_id"]: row for row in payload["providers"]}
+        self.assertTrue(provider_flags["openai"]["is_default_provider"])
+        self.assertFalse(provider_flags["openai"]["is_fallback_provider"])
+        self.assertTrue(provider_flags["anthropic"]["is_fallback_provider"])
 
     def test_auth_providers_lists_api_key_and_oauth_options(self) -> None:
         exit_code, stdout, stderr = self.run_cli(

@@ -485,6 +485,8 @@ class BootstrapTelegramAgentStatus:
     home: str
     provider_id: str
     provider_result: str
+    fallback_provider_id: str | None
+    fallback_provider_result: str | None
     channel_result: str
     setup_notes: list[str]
     active_chip_keys: list[str]
@@ -502,6 +504,8 @@ class BootstrapTelegramAgentStatus:
                 "home": self.home,
                 "provider_id": self.provider_id,
                 "provider_result": self.provider_result,
+                "fallback_provider_id": self.fallback_provider_id,
+                "fallback_provider_result": self.fallback_provider_result,
                 "channel_result": self.channel_result,
                 "setup_notes": self.setup_notes,
                 "active_chip_keys": self.active_chip_keys,
@@ -519,8 +523,11 @@ class BootstrapTelegramAgentStatus:
     def to_text(self) -> str:
         lines = ["Spark Intelligence bootstrap: telegram-agent"]
         lines.append(f"- home: {self.home}")
-        lines.append(f"- provider: {self.provider_id}")
-        lines.append(f"- provider_result: {self.provider_result}")
+        lines.append(f"- primary_provider: {self.provider_id}")
+        lines.append(f"- primary_provider_result: {self.provider_result}")
+        lines.append(f"- fallback_provider: {self.fallback_provider_id or 'none'}")
+        if self.fallback_provider_result:
+            lines.append(f"- fallback_provider_result: {self.fallback_provider_result}")
         lines.append(f"- channel_result: {self.channel_result}")
         lines.append(f"- active_chip_keys: {', '.join(self.active_chip_keys) if self.active_chip_keys else 'none'}")
         lines.append(f"- pinned_chip_keys: {', '.join(self.pinned_chip_keys) if self.pinned_chip_keys else 'none'}")
@@ -548,6 +555,7 @@ class BootstrapTelegramAgentGuide:
     discovered_path_keys: list[str]
     botfather_guide: str
     existing_bot_example: str
+    fallback_bot_example: str
 
     def to_json(self) -> str:
         return json.dumps(
@@ -559,6 +567,7 @@ class BootstrapTelegramAgentGuide:
                 "discovered_path_keys": self.discovered_path_keys,
                 "botfather_guide": self.botfather_guide,
                 "existing_bot_example": self.existing_bot_example,
+                "fallback_bot_example": self.fallback_bot_example,
             },
             indent=2,
         )
@@ -586,6 +595,8 @@ class BootstrapTelegramAgentGuide:
         )
         lines.append("- existing_bot_example:")
         lines.append(f"  {self.existing_bot_example}")
+        lines.append("- fallback_bot_example:")
+        lines.append(f"  {self.fallback_bot_example}")
         lines.append("- botfather_guide:")
         lines.extend(f"  {line}" for line in self.botfather_guide.splitlines())
         return "\n".join(lines)
@@ -1122,12 +1133,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--provider",
         choices=list_api_key_provider_ids(),
         default="custom",
-        help="API-key-backed provider to bootstrap",
+        help="Primary API-key-backed provider to bootstrap",
     )
     bootstrap_telegram_parser.add_argument("--api-key", help="Provider API key to store in the home env")
     bootstrap_telegram_parser.add_argument("--api-key-env", help="Provider API key env var name")
     bootstrap_telegram_parser.add_argument("--model", help="Default model id for the provider")
     bootstrap_telegram_parser.add_argument("--base-url", help="Custom provider base URL")
+    bootstrap_telegram_parser.add_argument(
+        "--fallback-provider",
+        choices=list_api_key_provider_ids(),
+        help="Optional fallback API-key-backed provider",
+    )
+    bootstrap_telegram_parser.add_argument("--fallback-api-key", help="Fallback provider API key to store in the home env")
+    bootstrap_telegram_parser.add_argument("--fallback-api-key-env", help="Fallback provider API key env var name")
+    bootstrap_telegram_parser.add_argument("--fallback-model", help="Default model id for the fallback provider")
+    bootstrap_telegram_parser.add_argument("--fallback-base-url", help="Custom fallback provider base URL")
     bootstrap_telegram_parser.add_argument("--bot-token", help="Telegram bot token to store in the home env")
     bootstrap_telegram_parser.add_argument("--bot-token-env", help="Existing env var name holding the Telegram bot token")
     bootstrap_telegram_parser.add_argument("--chip-root", action="append", default=[], help="Additional domain-chip root to attach during bootstrap")
@@ -2191,6 +2211,39 @@ def _build_bootstrap_provider_choices() -> list[dict[str, str | None]]:
     return choices
 
 
+def _configure_bootstrap_fallback_provider(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    provider_id: str | None,
+    api_key: str | None,
+    api_key_env: str | None,
+    model: str | None,
+    base_url: str | None,
+    primary_provider_id: str,
+) -> tuple[str | None, str | None]:
+    if not provider_id:
+        config_manager.set_path("providers.fallback_provider", None)
+        return None, None
+    if provider_id == primary_provider_id:
+        raise ValueError("Fallback provider must differ from the primary provider.")
+    if api_key_env:
+        _sync_secret_from_env_if_present(config_manager, api_key_env)
+    if provider_id == "custom" and not base_url:
+        raise ValueError("Fallback provider 'custom' requires --fallback-base-url.")
+    result = connect_provider(
+        config_manager=config_manager,
+        state_db=state_db,
+        provider=provider_id,
+        api_key=api_key,
+        api_key_env=api_key_env,
+        model=model,
+        base_url=base_url,
+    )
+    config_manager.set_path("providers.fallback_provider", provider_id)
+    return provider_id, result
+
+
 def handle_bootstrap_telegram_agent(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     created = config_manager.bootstrap()
@@ -2220,6 +2273,15 @@ def handle_bootstrap_telegram_agent(args: argparse.Namespace) -> int:
             "--model MiniMax-M2.7 --base-url https://api.minimax.io/v1 "
             "--bot-token-env TELEGRAM_BOT_TOKEN"
         )
+        fallback_bot_example = (
+            "spark-intelligence bootstrap telegram-agent "
+            f"--home {config_manager.paths.home} "
+            "--provider minimax --api-key-env MINIMAX_API_KEY "
+            "--model MiniMax-M2.7 --base-url https://api.minimax.io/v1 "
+            "--fallback-provider anthropic --fallback-api-key-env ANTHROPIC_API_KEY "
+            "--fallback-model claude-opus-4-6 "
+            "--bot-token-env TELEGRAM_BOT_TOKEN"
+        )
         guide = BootstrapTelegramAgentGuide(
             home=str(config_manager.paths.home),
             setup_notes=setup_notes,
@@ -2231,6 +2293,7 @@ def handle_bootstrap_telegram_agent(args: argparse.Namespace) -> int:
                 pairing_mode=args.pairing_mode,
             ),
             existing_bot_example=existing_bot_example,
+            fallback_bot_example=fallback_bot_example,
         )
         print(guide.to_json() if args.json else guide.to_text())
         return 0
@@ -2265,6 +2328,20 @@ def handle_bootstrap_telegram_agent(args: argparse.Namespace) -> int:
         model=args.model,
         base_url=args.base_url,
     )
+    try:
+        fallback_provider_id, fallback_provider_result = _configure_bootstrap_fallback_provider(
+            config_manager=config_manager,
+            state_db=state_db,
+            provider_id=args.fallback_provider,
+            api_key=args.fallback_api_key,
+            api_key_env=args.fallback_api_key_env,
+            model=args.fallback_model,
+            base_url=args.fallback_base_url,
+            primary_provider_id=args.provider,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
 
     profile = None
     if not args.skip_validate:
@@ -2299,6 +2376,8 @@ def handle_bootstrap_telegram_agent(args: argparse.Namespace) -> int:
         home=str(config_manager.paths.home),
         provider_id=args.provider,
         provider_result=provider_result,
+        fallback_provider_id=fallback_provider_id,
+        fallback_provider_result=fallback_provider_result,
         channel_result=channel_result,
         setup_notes=setup_notes,
         active_chip_keys=attachment_snapshot.active_chip_keys,
