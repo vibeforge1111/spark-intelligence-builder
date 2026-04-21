@@ -15,6 +15,12 @@ The goal is not to build a generic chat assistant. The goal is to build a Spark-
 
 This document also captures which patterns we should borrow from `OpenClaw` and `Hermes Agent`, and which parts should remain uniquely Spark-native.
 
+Current live-note:
+
+- this architecture document describes the Spark Intelligence system shape at a product level
+- the current stable Telegram ingress owner is the dedicated `spark-telegram-bot` webhook gateway
+- `spark-intelligence-builder` remains the Builder/runtime logic repo behind that gateway rather than the only live Telegram token owner
+
 ## 2. Design Goals
 
 ### 2.1 Persistent Agent Identity
@@ -123,6 +129,10 @@ Spark Intelligence should combine:
 So the architecture should be:
 
 `channels -> Spark Intelligence Gateway -> Spark Runtime Core -> Spark Swarm / Domain Chips / Specialization Paths`
+
+For the current live Telegram path, that means:
+
+`Telegram -> spark-telegram-bot webhook gateway -> Builder/Spark logic -> downstream Spark systems`
 
 not:
 

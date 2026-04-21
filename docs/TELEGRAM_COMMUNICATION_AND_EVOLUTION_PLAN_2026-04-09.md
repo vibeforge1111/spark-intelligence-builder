@@ -1,5 +1,11 @@
 # Telegram Communication And Evolution Plan 2026-04-09
 
+Historical note:
+
+- this plan was written against the Builder-owned Telegram runtime shape
+- the current stable production path uses `spark-telegram-bot` as the Telegram ingress owner
+- the communication and reply-shaping guidance here is still useful, but ingress ownership statements should be read in that older context
+
 ## 1. Purpose
 
 This note defines one focused workstream for the Telegram operator system:
@@ -25,7 +31,7 @@ The goal is for the Telegram bot to become a real operating console for:
 
 What is already working:
 
-- Builder owns Telegram ingress
+- Builder-owned logic handles the Telegram-facing reply and routing behavior, but the current stable production ingress owner is `spark-telegram-bot`
 - Builder routes natural-language Swarm reads and actions
 - Builder routes local Swarm bridge actions
 - Builder surfaces autoloop pause / continue / session inspection
