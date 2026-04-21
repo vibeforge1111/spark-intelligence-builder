@@ -115,6 +115,44 @@ Spark Intelligence should orchestrate:
 
 Do not rebuild their internals here.
 
+### 4.7 Live Telegram Safety
+
+When working on `@SparkAGI_bot`, protect live bot ownership before any test or runtime change.
+
+Current operational rule:
+
+- one bot token
+- one active receiver
+- all other terminals, tests, and workers stay behind that receiver
+
+Canonical owner:
+
+- repo: `C:\Users\USER\Desktop\spark-telegram-bot`
+- mode is whatever `spark-telegram-bot/.env` currently declares
+- do not assume webhook mode or polling mode from older docs; inspect the live `.env` first
+
+Hard requirements before touching Telegram runtime behavior:
+
+1. inspect `C:\Users\USER\Desktop\spark-telegram-bot\.env`
+2. confirm whether `spark-telegram-bot` is already running
+3. confirm Telegram webhook ownership with `getWebhookInfo`
+4. if a webhook is active, do not start polling
+5. if polling is the active posture, do not start any second Telegram receiver
+
+Never:
+
+- start the old `spark_intelligence` Telegram poller against `@SparkAGI_bot`
+- start a second Telegraf or Telegram receiver with the same token
+- re-enable webhook mode, tunnels, or alternate ingress paths unless explicitly coordinated
+- point Spawner directly at Telegram
+- “just start polling” because the bot looks unhealthy
+
+If Telegram looks broken:
+
+- stop and inspect first
+- diagnose the canonical `spark-telegram-bot` process, local env, and current ingress ownership
+- keep all memory tests and Builder improvements behind the existing receiver instead of competing with it
+
 ## 5. State Rules
 
 ### 5.1 Local-First By Default
