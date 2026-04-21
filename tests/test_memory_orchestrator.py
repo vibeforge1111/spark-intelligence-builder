@@ -165,11 +165,37 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(call["predicate"], "profile.city")
         self.assertEqual(call["value"], "Dubai")
         self.assertEqual(call["text"], "I moved to Dubai.")
+        self.assertEqual(call["retention_class"], "durable_profile")
+        self.assertTrue(call["document_time"])
+        self.assertTrue(call["valid_from"])
         events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(events)
         observations = (events[0]["facts_json"] or {}).get("observations") or []
         self.assertEqual(observations[0]["predicate"], "profile.city")
         self.assertEqual(observations[0]["value"], "Dubai")
+        self.assertEqual(observations[0]["retention_class"], "durable_profile")
+
+    def test_profile_current_state_predicates_request_active_state_retention(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            result = write_profile_fact_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                predicate="profile.current_plan",
+                value="launch Atlas in enterprise first",
+                evidence_text="Our current plan is to launch Atlas in enterprise first.",
+                fact_name="current_plan",
+                session_id="session:plan",
+                turn_id="turn:plan",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        self.assertEqual(fake_client.observation_calls[0]["retention_class"], "active_state")
 
     def test_telegram_event_detection_write_and_answer_use_event_memory_lane(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -203,15 +229,20 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(call["predicate"], "telegram.event.meeting")
         self.assertEqual(call["value"], "meeting with Omar on May 3")
         self.assertEqual(call["text"], "My meeting with Omar is on May 3.")
+        self.assertEqual(call["retention_class"], "time_bound_event")
+        self.assertTrue(call["document_time"])
+        self.assertTrue(call["valid_from"])
         summary_call = fake_client.observation_calls[0]
         self.assertEqual(summary_call["predicate"], "telegram.summary.latest_meeting")
         self.assertEqual(summary_call["value"], "meeting with Omar on May 3")
         self.assertEqual(summary_call["metadata"]["entity_key"], "telegram.summary.latest_meeting")
+        self.assertEqual(summary_call["retention_class"], "active_state")
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(write_events)
         recorded_events = (write_events[0]["facts_json"] or {}).get("events") or []
         self.assertEqual(recorded_events[0]["predicate"], "telegram.event.meeting")
         self.assertEqual(recorded_events[0]["value"], "meeting with Omar on May 3")
+        self.assertEqual(recorded_events[0]["retention_class"], "time_bound_event")
         self.assertEqual(
             build_telegram_memory_event_observation_answer(observation=detected),
             "I'll remember your meeting with Omar on May 3.",
@@ -562,7 +593,7 @@ class MemoryOrchestratorTests(SparkTestCase):
             "def build_sdk_contract_summary():\n"
             "    return {\n"
             "        'runtime_class': 'SparkMemorySDK',\n"
-            "        'runtime_memory_architecture': 'summary_synthesis_memory',\n"
+            "        'runtime_memory_architecture': 'dual_store_event_calendar_hybrid',\n"
             "        'runtime_memory_provider': 'heuristic_v1',\n"
             "    }\n",
             encoding="utf-8",
@@ -584,7 +615,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(runtime["configured_module"], "domain_chip_memory")
         self.assertEqual(runtime["resolved_module"], "domain_chip_memory")
         self.assertEqual(runtime["runtime_class"], "SparkMemorySDK")
-        self.assertEqual(runtime["runtime_memory_architecture"], "summary_synthesis_memory")
+        self.assertEqual(runtime["runtime_memory_architecture"], "dual_store_event_calendar_hybrid")
         self.assertEqual(runtime["runtime_memory_provider"], "heuristic_v1")
 
     def test_lookup_current_state_uses_legacy_double_prefixed_fallback_for_prefixed_subject(self) -> None:

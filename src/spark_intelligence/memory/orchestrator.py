@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import re
 import sys
 import time
 from contextlib import contextmanager
@@ -364,6 +365,14 @@ class _DomainChipMemoryClientAdapter:
             subject=_optional_string(payload.get("subject")),
             predicate=_optional_string(payload.get("predicate")),
             value=None if payload.get("value") is None else str(payload.get("value")),
+            retention_class=_optional_string(payload.get("retention_class")),
+            document_time=_optional_string(payload.get("document_time")),
+            event_time=_optional_string(payload.get("event_time")),
+            valid_from=_optional_string(payload.get("valid_from")),
+            valid_to=_optional_string(payload.get("valid_to")),
+            supersedes=_optional_string(payload.get("supersedes")),
+            conflicts_with=[str(item) for item in list(payload.get("conflicts_with") or [])],
+            deleted_at=_optional_string(payload.get("deleted_at")),
             metadata=dict(payload.get("metadata") or {}),
         )
         result = self._sdk.write_observation(request)
@@ -381,6 +390,14 @@ class _DomainChipMemoryClientAdapter:
             subject=_optional_string(payload.get("subject")),
             predicate=_optional_string(payload.get("predicate")),
             value=None if payload.get("value") is None else str(payload.get("value")),
+            retention_class=_optional_string(payload.get("retention_class")),
+            document_time=_optional_string(payload.get("document_time")),
+            event_time=_optional_string(payload.get("event_time")),
+            valid_from=_optional_string(payload.get("valid_from")),
+            valid_to=_optional_string(payload.get("valid_to")),
+            supersedes=_optional_string(payload.get("supersedes")),
+            conflicts_with=[str(item) for item in list(payload.get("conflicts_with") or [])],
+            deleted_at=_optional_string(payload.get("deleted_at")),
             metadata=dict(payload.get("metadata") or {}),
         )
         result = self._sdk.write_event(request)
@@ -595,10 +612,11 @@ def run_memory_sdk_smoke_test(
         )
         _record_memory_smoke_event(state_db=state_db, result=result, actor_id=actor_id)
         return result
-    session_id = f"memory-smoke:{actor_id}"
-    write_turn_id = f"{actor_id}:write"
-    read_turn_id = f"{actor_id}:read"
-    cleanup_turn_id = f"{actor_id}:cleanup"
+    smoke_token = re.sub(r"[^a-z0-9]+", "_", f"{subject}:{predicate}".lower()).strip("_") or "default"
+    session_id = f"memory-smoke:{actor_id}:{smoke_token}"
+    write_turn_id = f"{actor_id}:write:{smoke_token}"
+    read_turn_id = f"{actor_id}:read:{smoke_token}"
+    cleanup_turn_id = f"{actor_id}:cleanup:{smoke_token}"
     payload = {
         "operation": "update",
         "subject": subject,
@@ -1305,12 +1323,15 @@ def _write_profile_fact_memory_operation(
         )
         return result
     subject = _subject_for_human_id(human_id)
+    timestamp = _now_iso()
+    retention_class = _profile_fact_retention_class(predicate)
     observation = {
         "subject": subject,
         "predicate": predicate,
         "value": value,
         "operation": operation,
         "memory_role": "current_state",
+        "retention_class": retention_class,
         "text": evidence_text,
     }
     _record_memory_write_requested_observations(
@@ -1334,7 +1355,12 @@ def _write_profile_fact_memory_operation(
             "memory_role": "current_state",
             "session_id": session_id,
             "turn_id": turn_id,
-            "timestamp": _now_iso(),
+            "timestamp": timestamp,
+            "retention_class": retention_class,
+            "document_time": timestamp,
+            "valid_from": None if operation == "delete" else timestamp,
+            "valid_to": timestamp if operation == "delete" else None,
+            "deleted_at": timestamp if operation == "delete" else None,
             "metadata": {
                 "entity_type": "human",
                 "field_name": predicate.rsplit(".", 1)[-1],
@@ -1432,12 +1458,14 @@ def write_telegram_event_to_memory(
         )
         return result
     subject = _subject_for_human_id(human_id)
+    timestamp = _now_iso()
     event_payload = {
         "subject": subject,
         "predicate": predicate,
         "value": value,
         "operation": "event",
         "memory_role": "event",
+        "retention_class": "time_bound_event",
         "text": evidence_text,
     }
     _record_memory_write_requested_events(
@@ -1460,7 +1488,10 @@ def write_telegram_event_to_memory(
             "memory_role": "event",
             "session_id": session_id,
             "turn_id": turn_id,
-            "timestamp": _now_iso(),
+            "timestamp": timestamp,
+            "retention_class": "time_bound_event",
+            "document_time": timestamp,
+            "valid_from": timestamp,
             "metadata": {
                 "entity_type": "human",
                 "channel_kind": channel_kind,
@@ -1515,6 +1546,7 @@ def _write_profile_fact_history_event(
     turn_id: str | None,
     channel_kind: str | None,
 ) -> None:
+    timestamp = _now_iso()
     _call_sdk_method(
         client,
         "write_event",
@@ -1527,7 +1559,10 @@ def _write_profile_fact_history_event(
             "memory_role": "event",
             "session_id": session_id,
             "turn_id": turn_id,
-            "timestamp": _now_iso(),
+            "timestamp": timestamp,
+            "retention_class": _profile_fact_retention_class(predicate),
+            "document_time": timestamp,
+            "valid_from": timestamp,
             "metadata": {
                 "entity_type": "human",
                 "channel_kind": channel_kind,
@@ -1558,6 +1593,7 @@ def _consolidate_telegram_event_summary_observation(
     if not suffix:
         return
     summary_predicate = f"telegram.summary.latest_{suffix}"
+    timestamp = _now_iso()
     _call_sdk_method(
         client,
         "write_observation",
@@ -1570,7 +1606,10 @@ def _consolidate_telegram_event_summary_observation(
             "memory_role": "current_state",
             "session_id": session_id,
             "turn_id": turn_id,
-            "timestamp": _now_iso(),
+            "timestamp": timestamp,
+            "retention_class": "active_state",
+            "document_time": timestamp,
+            "valid_from": timestamp,
             "metadata": {
                 "entity_type": "human",
                 "channel_kind": channel_kind,
@@ -1585,6 +1624,15 @@ def _consolidate_telegram_event_summary_observation(
             },
         },
     )
+
+
+def _profile_fact_retention_class(predicate: str | None) -> str:
+    normalized = str(predicate or "").strip().lower()
+    if normalized.startswith("profile.current_"):
+        return "active_state"
+    if normalized.startswith("telegram.summary.latest_"):
+        return "active_state"
+    return "durable_profile"
 
 
 def read_personality_preferences_from_memory(
