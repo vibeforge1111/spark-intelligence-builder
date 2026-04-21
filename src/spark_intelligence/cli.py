@@ -266,9 +266,18 @@ class SystemStatus:
                 lines.append(f"- {name}: {detail}")
             lines.append(f"- {name} repair: {repair_hint}")
         runtime_payload = self.payload.get("runtime") or {}
+        telegram_gateway_payload = self.payload.get("telegram_gateway") or {}
         autostart_payload = runtime_payload.get("autostart") or {}
         lines.append(f"- install profile: {runtime_payload.get('install_profile') or 'none'}")
         lines.append(f"- default gateway mode: {runtime_payload.get('default_gateway_mode') or 'none'}")
+        if telegram_gateway_payload:
+            lines.append(f"- telegram ingress owner: {telegram_gateway_payload.get('owner') or 'unknown'}")
+            lines.append(f"- telegram ingress mode: {telegram_gateway_payload.get('mode') or 'unknown'}")
+            lines.append(f"- telegram ingress contract: {telegram_gateway_payload.get('contract') or 'unknown'}")
+            lines.append(f"- telegram migration status: {telegram_gateway_payload.get('migration_status') or 'unknown'}")
+            lines.append(
+                f"- telegram shadow validation: {telegram_gateway_payload.get('shadow_validation_command') or 'none'}"
+            )
         if autostart_payload.get("enabled"):
             lines.append(
                 f"- autostart: enabled {autostart_payload.get('platform') or 'unknown'} "
@@ -2995,6 +3004,13 @@ def handle_status(args: argparse.Namespace) -> int:
         "task_name": config_manager.get_path("runtime.autostart.task_name"),
         "command": config_manager.get_path("runtime.autostart.command"),
     }
+    telegram_gateway_payload = {
+        "owner": "spark-telegram-bot",
+        "mode": "external_webhook_gateway",
+        "contract": "single_owner_webhook",
+        "migration_status": "builder_shadow_validation_only",
+        "shadow_validation_command": "spark-intelligence gateway ask-telegram \"hello\" --home <home>",
+    }
 
     payload = {
         "doctor": {"ok": doctor_report.ok, "checks": [{"name": check.name, "ok": check.ok, "detail": check.detail} for check in doctor_report.checks]},
@@ -3008,6 +3024,7 @@ def handle_status(args: argparse.Namespace) -> int:
             "default_gateway_mode": config_manager.get_path("runtime.run.default_gateway_mode"),
             "autostart": autostart_payload,
         },
+        "telegram_gateway": telegram_gateway_payload,
         "system_registry": system_registry.to_payload(),
         "mission_control": mission_control.to_payload(),
         "harness_registry": harness_registry.to_payload(),
