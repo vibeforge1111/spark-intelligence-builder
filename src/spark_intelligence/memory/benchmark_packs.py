@@ -842,6 +842,8 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
                     "belief_write_onboarding",
                     "belief_refresh_onboarding",
                     "belief_recall_onboarding",
+                    "belief_evidence_override_onboarding",
+                    "belief_recall_after_evidence_override_onboarding",
                 ),
             ),
         ),

@@ -128,7 +128,9 @@ def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
     belief_recall_case_ids = {case.case_id for case in packs["telegram_belief_memory_recall"].cases}
     assert "belief_write_onboarding" in belief_recall_case_ids
     assert "belief_refresh_onboarding" in belief_recall_case_ids
+    assert "belief_evidence_override_onboarding" in belief_recall_case_ids
     assert "belief_recall_onboarding" in belief_recall_case_ids
+    assert "belief_recall_after_evidence_override_onboarding" in belief_recall_case_ids
 
     mixed_session_case_ids = {case.case_id for case in packs["telegram_mixed_memory_session_churn"].cases}
     assert "mixed_session_owner_write_initial" in mixed_session_case_ids
@@ -272,7 +274,9 @@ def test_select_belief_memory_recall_pack_exposes_belief_cases() -> None:
     case_ids = {case.case_id for case in flatten_benchmark_pack_cases(packs)}
     assert "belief_write_onboarding" in case_ids
     assert "belief_refresh_onboarding" in case_ids
+    assert "belief_evidence_override_onboarding" in case_ids
     assert "belief_recall_onboarding" in case_ids
+    assert "belief_recall_after_evidence_override_onboarding" in case_ids
 
 
 def test_select_benchmark_packs_rejects_unknown_pack_ids() -> None:

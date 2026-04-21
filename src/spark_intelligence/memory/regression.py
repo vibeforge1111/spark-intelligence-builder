@@ -1263,6 +1263,22 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         benchmark_tags=("belief", "belief_recall"),
     ),
     TelegramMemoryRegressionCase(
+        case_id="belief_evidence_override_onboarding",
+        category="belief_memory_recall",
+        message="Users keep needing hands-on onboarding support because enterprise teams ask for setup help.",
+        benchmark_tags=("belief", "belief_evidence_override"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="belief_recall_after_evidence_override_onboarding",
+        category="belief_memory_recall",
+        message="What is your current belief about onboarding?",
+        expected_bridge_mode="memory_belief_recall",
+        expected_routing_decision="memory_belief_recall_query",
+        expected_response_contains=("newer direct evidence", "hands-on onboarding support"),
+        expected_response_excludes=("self-serve onboarding will work",),
+        benchmark_tags=("belief", "belief_recall", "belief_evidence_override"),
+    ),
+    TelegramMemoryRegressionCase(
         case_id="mixed_session_owner_write_initial",
         category="mixed_memory_churn",
         message="Our owner is Omar.",

@@ -222,7 +222,14 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertIn("inferred belief", result.reply_text.lower())
         tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
         self.assertTrue(tool_events)
-        facts = tool_events[0]["facts_json"] or {}
+        facts = next(
+            (
+                (event["facts_json"] or {})
+                for event in tool_events
+                if (event["facts_json"] or {}).get("bridge_mode") == "memory_belief_recall"
+            ),
+            {},
+        )
         self.assertEqual(facts.get("bridge_mode"), "memory_belief_recall")
         self.assertIn("belief", facts.get("retrieved_memory_roles") or [])
 
@@ -272,6 +279,66 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(result.mode, "memory_belief_recall")
         self.assertIn("hands-on onboarding", result.reply_text)
         self.assertNotIn("self-serve onboarding will work", result.reply_text)
+
+    def test_build_researcher_reply_belief_recall_downgrades_when_newer_evidence_exists(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-belief-stale-write",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-belief-stale-write",
+            channel_kind="telegram",
+            user_message="I think self-serve onboarding will work.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-belief-stale-evidence",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-belief-stale-evidence",
+            channel_kind="telegram",
+            user_message="Users keep needing hands-on onboarding support because enterprise teams ask for setup help.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for belief recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for belief recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-belief-stale-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-belief-stale-read",
+                channel_kind="telegram",
+                user_message="What is your current belief about onboarding?",
+            )
+
+        self.assertEqual(result.mode, "memory_belief_recall")
+        self.assertIn("newer direct evidence", result.reply_text.lower())
+        self.assertIn("hands-on onboarding support", result.reply_text)
+        self.assertNotIn("self-serve onboarding will work", result.reply_text)
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(tool_events)
+        facts = next(
+            (
+                (event["facts_json"] or {})
+                for event in tool_events
+                if (event["facts_json"] or {}).get("bridge_mode") == "memory_belief_recall"
+            ),
+            {},
+        )
+        self.assertTrue(facts.get("belief_stale_due_to_evidence"))
+        self.assertEqual(facts.get("newer_evidence_count"), 1)
 
     def test_build_researcher_reply_returns_empty_belief_recall_when_nothing_saved(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
