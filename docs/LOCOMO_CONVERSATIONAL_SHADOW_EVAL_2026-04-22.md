@@ -28,6 +28,7 @@ Artifact:
 - `C:\Users\USER\.spark-intelligence\artifacts\locomo-unseen-slice\2026-04-22-conversational-shadow-eval.json`
 - `C:\Users\USER\.spark-intelligence\artifacts\locomo-unseen-slice\2026-04-22-gated-conversational-shadow-eval.json`
 - `C:\Users\USER\.spark-intelligence\artifacts\locomo-unseen-slice\2026-04-22-exact-turn-shadow-selector.json`
+- `C:\Users\USER\.spark-intelligence\artifacts\locomo-unseen-slice\2026-04-22-exact-turn-shadow-answer-eval.json`
 
 ## What Was Measured
 
@@ -124,6 +125,40 @@ Follow-up implementation status:
 - runtime is still unchanged
 - this means the next pass can measure answer behavior on fused evidence instead of stopping at coverage-only analysis
 
+## Heuristic Answer Eval
+
+The first answer-side shadow check was run with the local deterministic `heuristic_v1` provider over the same unseen `580`-question slice.
+
+Result:
+
+- `summary`: `64/580` (`11.03%`)
+- `exact_turn_hybrid`: `64/580` (`11.03%`)
+- delta: `0`
+- improved rows: `0`
+- regressed rows: `0`
+
+Interpretation:
+
+- the retrieval gain is real
+- the local heuristic answerer is not strong enough to convert the added exact-turn evidence into answer wins
+- this means heuristic-only answer eval is not an adequate promotion signal for the new conversational lane
+
+So the current honest read is:
+
+- retrieval coverage improved
+- answer accuracy did not move under the local heuristic evaluator
+- real-LLM answer-side evaluation is required before any runtime promotion
+
+## Cross-Check From Parallel Review
+
+External architecture and evaluation review was consistent with the local measurements:
+
+- root cause: summary compaction is dropping exact-span support needed for conversational memory
+- additive layers are the right path, not replacing `summary_synthesis_memory`
+- the best next substrate shape is a typed temporal / relationship graph with preserved provenance spans
+- broad-synthesis regression must remain the primary overfit detector
+- promotion should require real-LLM answer evaluation, not heuristic-only shadow passes
+
 ## Architectural Conclusion
 
 The next correct architecture is not:
@@ -153,23 +188,25 @@ Do not promote the conversational lane broadly yet for:
 
 ## Recommended Next Step
 
-Implement answer-side shadow evaluation on top of the exact-turn hybrid packets before touching runtime:
+Implement the next additive substrate layer before touching runtime:
 
 1. Keep current summary retrieval unchanged.
-2. Build fused shadow packets with:
-   - summary packet context
-   - exact-turn conversational additions when the selector fires
-3. Run answer evaluation over those shadow packets.
-4. Compare against current summary-only packets on:
+2. Add a typed temporal / relationship graph sidecar with preserved source spans.
+3. Promote exact-turn evidence as a first-class retrieval lane, not just a shadow metric.
+4. Run real-LLM answer evaluation over:
+   - summary-only packets
+   - exact-turn hybrid packets
+   - later graph/time fused packets
+5. Compare on:
    - unseen `580`-question slice
    - focused `conv-48` / `conv-49` / `conv-50` packs
    - regression and soak guardrails
-5. Only then consider runtime promotion.
+6. Only then consider runtime promotion.
 
 The selector itself should keep scoring whether a question is better served by:
-   - abstract summary evidence
-   - exact conversational-turn evidence
-6. Let the selector consider:
+- abstract summary evidence
+- exact conversational-turn evidence
+7. Let the selector consider:
    - question shape
    - presence of person-specific slot filling
    - summary evidence quality
