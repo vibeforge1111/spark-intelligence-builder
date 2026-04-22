@@ -34,7 +34,7 @@
 |---|---:|---:|---|
 | BEAM public `128K` | `400/400` (`100.00%`) | `66/400` (`16.50%`) | Summary-synthesis is decisively stronger on the first completed external lane |
 | LoCoMo | in progress | `163/1986` (`8.21%`) | Dual-store fresh rerun is complete; summary-synthesis still running |
-| LongMemEval_s | `468/500` (`93.60%`) | in progress | Summary-synthesis fresh rerun is complete; dual-store still running |
+| LongMemEval_s | `468/500` (`93.60%`) | `232/500` (`46.40%`) | Summary-synthesis wins LongMemEval_s by a wide margin |
 | BEAM public `500K` | in progress | in progress | launched after the first LongMemEval slot freed up |
 
 ### Internal regression details
@@ -79,10 +79,9 @@ Observed on this machine during this turn:
 - fresh Phase A external artifacts now exist for:
   - `BEAM` public `128K`
   - `LoCoMo` for `dual_store_event_calendar_hybrid`
-  - `LongMemEval_s` for `summary_synthesis_memory`
+  - `LongMemEval_s` for both contenders
 - fresh reruns are still active for:
   - `LoCoMo` for `summary_synthesis_memory`
-  - `LongMemEval_s` for `dual_store_event_calendar_hybrid`
   - `BEAM` public `500K` for both contenders
 
 Two substrate fixes were required to get the external suite moving on current HEAD:
@@ -102,7 +101,7 @@ Current evidence says:
 - live internal regression still prefers `summary_synthesis_memory`
 - current runtime remains pinned to `dual_store_event_calendar_hybrid`
 - the first completed external lane (`BEAM` public `128K`) strongly favors `summary_synthesis_memory`
-- the next completed external lane (`LongMemEval_s`) currently favors `summary_synthesis_memory`
+- the fully completed `LongMemEval_s` head-to-head strongly favors `summary_synthesis_memory`
 - the only finished LoCoMo lane so far shows `dual_store_event_calendar_hybrid` is very weak on that surface
 - `architecture_promotion_gap` still reproduces on fresh artifacts
 
@@ -136,3 +135,5 @@ That is enough to confirm the gap is real and to increase confidence in `summary
   `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\dual_store_event_calendar_hybrid\locomo10.json`
 - External LongMemEval_s summary-synthesis:
   `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\summary_synthesis_memory\longmemeval_s.json`
+- External LongMemEval_s dual-store:
+  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\dual_store_event_calendar_hybrid\longmemeval_s.json`
