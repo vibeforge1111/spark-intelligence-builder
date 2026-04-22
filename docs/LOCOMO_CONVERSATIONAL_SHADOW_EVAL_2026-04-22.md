@@ -14,6 +14,8 @@ Domain checkpoints used:
   - `Add eval-only conversational retriever`
 - `8dc5f67`
   - `Add conversational shadow coverage eval`
+- `f3f9127`
+  - `Add gated conversational shadow metrics`
 
 Measured lane:
 
@@ -24,6 +26,7 @@ Measured lane:
 Artifact:
 
 - `C:\Users\USER\.spark-intelligence\artifacts\locomo-unseen-slice\2026-04-22-conversational-shadow-eval.json`
+- `C:\Users\USER\.spark-intelligence\artifacts\locomo-unseen-slice\2026-04-22-gated-conversational-shadow-eval.json`
 
 ## What Was Measured
 
@@ -35,6 +38,8 @@ For each question, we compared three retrieval-coverage views:
   - sidecar conversational retriever only
 - `hybrid`
   - coverage from `summary OR conversational`
+- `gated_hybrid`
+  - coverage from `summary OR conversational`, but only when a question-family gate allows the conversational lane
 
 This is retrieval coverage only, not final answer accuracy.
 
@@ -49,7 +54,9 @@ Overall on the unseen `580`-question slice:
 - `summary`: `109/580` (`18.79%`)
 - `conversational`: `60/580` (`10.34%`)
 - `hybrid`: `130/580` (`22.41%`)
+- `gated_hybrid`: `111/580` (`19.14%`)
 - `hybrid_delta_vs_summary`: `+21`
+- `gated_hybrid_delta_vs_summary`: `+2`
 
 Interpretation:
 
@@ -58,14 +65,14 @@ Interpretation:
 
 Per conversation:
 
-- `conv-41`: summary `7/66`, conversational `9/66`, hybrid `14/66`
-- `conv-42`: summary `13/88`, conversational `4/88`, hybrid `13/88`
-- `conv-43`: summary `14/71`, conversational `3/71`, hybrid `15/71`
-- `conv-44`: summary `16/61`, conversational `12/61`, hybrid `19/61`
-- `conv-47`: summary `10/67`, conversational `3/67`, hybrid `11/67`
-- `conv-48`: summary `24/73`, conversational `12/73`, hybrid `26/73`
-- `conv-49`: summary `12/83`, conversational `8/83`, hybrid `15/83`
-- `conv-50`: summary `13/71`, conversational `9/71`, hybrid `17/71`
+- `conv-41`: summary `7/66`, conversational `9/66`, hybrid `14/66`, gated `8/66`
+- `conv-42`: summary `13/88`, conversational `4/88`, hybrid `13/88`, gated `13/88`
+- `conv-43`: summary `14/71`, conversational `3/71`, hybrid `15/71`, gated `14/71`
+- `conv-44`: summary `16/61`, conversational `12/61`, hybrid `19/61`, gated `16/61`
+- `conv-47`: summary `10/67`, conversational `3/67`, hybrid `11/67`, gated `10/67`
+- `conv-48`: summary `24/73`, conversational `12/73`, hybrid `26/73`, gated `25/73`
+- `conv-49`: summary `12/83`, conversational `8/83`, hybrid `15/83`, gated `12/83`
+- `conv-50`: summary `13/71`, conversational `9/71`, hybrid `17/71`, gated `13/71`
 
 ## Main Read
 
@@ -85,6 +92,18 @@ But it does recover missing evidence families that the current summary lane ofte
 
 That is why `hybrid` beats `summary` by `+21` even though `conversational` alone is worse.
 
+The gated experiment matters because it failed in an informative way:
+
+- the first question-family gate only kept `+2` of the available `+21`
+- `19` hybrid wins were left on the table
+- the misses were not random noise; they clustered around exact personal facts that still live in raw conversational turns:
+  - writing classes
+  - who someone went with
+  - what instruments someone plays
+  - how many cars someone has owned
+  - where someone was located
+  - pet / dream / activity facts
+
 ## Architectural Conclusion
 
 The next correct architecture is not:
@@ -95,14 +114,17 @@ The next correct architecture is:
 
 - keep current summary retrieval as the backbone
 - add the conversational index as a second retrieval lane
-- fuse the two lanes for specific question families first
+- do not rely on a shallow regex-style family gate as the selector
+- use the conversational lane where retrieval quality or exact-turn evidence is likely to beat summary abstraction
 
-Best first fusion targets:
+The first attempted gate was too narrow. It mostly captured kinship/support wording but missed many exact conversational facts that were still better served by the conversational index.
 
-- kinship-heavy social memory
-- grief/support questions
-- family-hobby and family-memory questions
-- relationship / shared-activity questions
+That means the next selector should be based less on coarse question family labels and more on answer mode / evidence mode:
+
+- exact personal fact questions
+- location / attendance / ownership / activity questions
+- list/count questions tied to a specific person
+- kinship/support questions
 
 Do not promote the conversational lane broadly yet for:
 
@@ -111,14 +133,17 @@ Do not promote the conversational lane broadly yet for:
 
 ## Recommended Next Step
 
-Implement a gated hybrid retrieval experiment in shadow:
+Implement a stronger shadow selector before touching runtime:
 
 1. Keep current summary retrieval unchanged.
-2. Add conversational retrieval only for:
-   - kinship/social-memory questions
-   - support/peace/grief questions
-   - family-hobby / family-memory questions
-3. Union the evidence sets before answer synthesis.
+2. Score whether a question is better served by:
+   - abstract summary evidence
+   - exact conversational-turn evidence
+3. Let the selector consider:
+   - question shape
+   - presence of person-specific slot filling
+   - summary evidence quality
+   - conversational evidence quality
 4. Re-measure:
    - unseen `580`-question slice
    - focused `conv-48` / `conv-49` / `conv-50` packs
