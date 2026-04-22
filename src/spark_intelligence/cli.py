@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
 import subprocess
@@ -15,6 +16,7 @@ from spark_intelligence.attachments import (
     activate_chip,
     add_attachment_root,
     attachment_status,
+    build_attachment_snapshot,
     clear_active_path,
     deactivate_chip,
     list_attachments,
@@ -27,7 +29,7 @@ from spark_intelligence.attachments import (
     sync_attachment_snapshot,
     unpin_chip,
 )
-from spark_intelligence.auth.providers import list_api_key_provider_ids, list_oauth_provider_ids, list_provider_specs
+from spark_intelligence.auth.providers import get_provider_spec, list_api_key_provider_ids, list_oauth_provider_ids, list_provider_specs
 from spark_intelligence.auth.runtime import build_auth_status_report
 from spark_intelligence.auth.service import complete_oauth_login, connect_provider, logout_provider, refresh_provider, start_oauth_login
 from spark_intelligence.browser import (
@@ -484,8 +486,13 @@ class BootstrapTelegramAgentStatus:
     home: str
     provider_id: str
     provider_result: str
+    fallback_provider_id: str | None
+    fallback_provider_result: str | None
     channel_result: str
     setup_notes: list[str]
+    active_chip_keys: list[str]
+    pinned_chip_keys: list[str]
+    active_path_key: str | None
     gateway_ready: bool
     gateway_detail: str
     repair_hints: list[str]
@@ -498,8 +505,13 @@ class BootstrapTelegramAgentStatus:
                 "home": self.home,
                 "provider_id": self.provider_id,
                 "provider_result": self.provider_result,
+                "fallback_provider_id": self.fallback_provider_id,
+                "fallback_provider_result": self.fallback_provider_result,
                 "channel_result": self.channel_result,
                 "setup_notes": self.setup_notes,
+                "active_chip_keys": self.active_chip_keys,
+                "pinned_chip_keys": self.pinned_chip_keys,
+                "active_path_key": self.active_path_key,
                 "gateway_ready": self.gateway_ready,
                 "gateway_detail": self.gateway_detail,
                 "repair_hints": self.repair_hints,
@@ -512,9 +524,15 @@ class BootstrapTelegramAgentStatus:
     def to_text(self) -> str:
         lines = ["Spark Intelligence bootstrap: telegram-agent"]
         lines.append(f"- home: {self.home}")
-        lines.append(f"- provider: {self.provider_id}")
-        lines.append(f"- provider_result: {self.provider_result}")
+        lines.append(f"- primary_provider: {self.provider_id}")
+        lines.append(f"- primary_provider_result: {self.provider_result}")
+        lines.append(f"- fallback_provider: {self.fallback_provider_id or 'none'}")
+        if self.fallback_provider_result:
+            lines.append(f"- fallback_provider_result: {self.fallback_provider_result}")
         lines.append(f"- channel_result: {self.channel_result}")
+        lines.append(f"- active_chip_keys: {', '.join(self.active_chip_keys) if self.active_chip_keys else 'none'}")
+        lines.append(f"- pinned_chip_keys: {', '.join(self.pinned_chip_keys) if self.pinned_chip_keys else 'none'}")
+        lines.append(f"- active_path_key: {self.active_path_key or 'none'}")
         lines.append(f"- gateway_ready: {'yes' if self.gateway_ready else 'no'}")
         lines.append(f"- gateway_detail: {self.gateway_detail}")
         if self.setup_notes:
@@ -526,6 +544,62 @@ class BootstrapTelegramAgentStatus:
         lines.append(f"- run_command: {self.run_command}")
         lines.append("- verify_commands:")
         lines.extend(f"  - {command}" for command in self.verify_commands)
+        return "\n".join(lines)
+
+
+@dataclass
+class BootstrapTelegramAgentGuide:
+    home: str
+    setup_notes: list[str]
+    provider_choices: list[dict[str, str | None]]
+    discovered_chip_keys: list[str]
+    discovered_path_keys: list[str]
+    botfather_guide: str
+    existing_bot_example: str
+    fallback_bot_example: str
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "home": self.home,
+                "setup_notes": self.setup_notes,
+                "provider_choices": self.provider_choices,
+                "discovered_chip_keys": self.discovered_chip_keys,
+                "discovered_path_keys": self.discovered_path_keys,
+                "botfather_guide": self.botfather_guide,
+                "existing_bot_example": self.existing_bot_example,
+                "fallback_bot_example": self.fallback_bot_example,
+            },
+            indent=2,
+        )
+
+    def to_text(self) -> str:
+        lines = ["Spark Intelligence install guide: telegram-agent"]
+        lines.append(f"- home: {self.home}")
+        if self.setup_notes:
+            lines.append("- setup_notes:")
+            lines.extend(f"  - {note}" for note in self.setup_notes)
+        lines.append("- provider_choices:")
+        for choice in self.provider_choices:
+            lines.append(
+                "  - "
+                + str(choice["provider_id"])
+                + f" ({choice['display_name']})"
+                + f" model={choice['default_model'] or 'choose_one'}"
+                + f" env={choice['api_key_env'] or 'custom_env'}"
+            )
+        lines.append(
+            f"- discovered_chip_keys: {', '.join(self.discovered_chip_keys) if self.discovered_chip_keys else 'none'}"
+        )
+        lines.append(
+            f"- discovered_path_keys: {', '.join(self.discovered_path_keys) if self.discovered_path_keys else 'none'}"
+        )
+        lines.append("- existing_bot_example:")
+        lines.append(f"  {self.existing_bot_example}")
+        lines.append("- fallback_bot_example:")
+        lines.append(f"  {self.fallback_bot_example}")
+        lines.append("- botfather_guide:")
+        lines.extend(f"  {line}" for line in self.botfather_guide.splitlines())
         return "\n".join(lines)
 
 
@@ -1060,20 +1134,44 @@ def build_parser() -> argparse.ArgumentParser:
         "--provider",
         choices=list_api_key_provider_ids(),
         default="custom",
-        help="API-key-backed provider to bootstrap",
+        help="Primary API-key-backed provider to bootstrap",
     )
     bootstrap_telegram_parser.add_argument("--api-key", help="Provider API key to store in the home env")
     bootstrap_telegram_parser.add_argument("--api-key-env", help="Provider API key env var name")
     bootstrap_telegram_parser.add_argument("--model", help="Default model id for the provider")
     bootstrap_telegram_parser.add_argument("--base-url", help="Custom provider base URL")
+    bootstrap_telegram_parser.add_argument(
+        "--fallback-provider",
+        choices=list_api_key_provider_ids(),
+        help="Optional fallback API-key-backed provider",
+    )
+    bootstrap_telegram_parser.add_argument("--fallback-api-key", help="Fallback provider API key to store in the home env")
+    bootstrap_telegram_parser.add_argument("--fallback-api-key-env", help="Fallback provider API key env var name")
+    bootstrap_telegram_parser.add_argument("--fallback-model", help="Default model id for the fallback provider")
+    bootstrap_telegram_parser.add_argument("--fallback-base-url", help="Custom fallback provider base URL")
     bootstrap_telegram_parser.add_argument("--bot-token", help="Telegram bot token to store in the home env")
     bootstrap_telegram_parser.add_argument("--bot-token-env", help="Existing env var name holding the Telegram bot token")
+    bootstrap_telegram_parser.add_argument("--chip-root", action="append", default=[], help="Additional domain-chip root to attach during bootstrap")
+    bootstrap_telegram_parser.add_argument("--path-root", action="append", default=[], help="Additional specialization-path root to attach during bootstrap")
+    bootstrap_telegram_parser.add_argument("--activate-chip", action="append", default=[], help="Chip key to activate during bootstrap")
+    bootstrap_telegram_parser.add_argument("--pin-chip", action="append", default=[], help="Chip key to pin during bootstrap")
+    bootstrap_telegram_parser.add_argument("--set-path", help="Specialization path key to activate during bootstrap")
     bootstrap_telegram_parser.add_argument("--allowed-user", action="append", default=[], help="Allowed Telegram user id")
     bootstrap_telegram_parser.add_argument(
         "--pairing-mode",
         choices=["allowlist", "pairing"],
         default="pairing",
         help="Inbound DM authorization mode",
+    )
+    bootstrap_telegram_parser.add_argument(
+        "--guide",
+        action="store_true",
+        help="Print the installer guide with provider choices, BotFather steps, and discovered chips/paths",
+    )
+    bootstrap_telegram_parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Prompt for provider, Telegram, and chip/path choices instead of requiring every flag upfront",
     )
     bootstrap_telegram_parser.add_argument(
         "--skip-validate",
@@ -2061,16 +2159,383 @@ def _resolve_bootstrap_secret(
     raise ValueError(f"{label} env '{env_name}' is not set in the home env or process environment.")
 
 
+def _apply_bootstrap_attachment_preferences(
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    *,
+    chip_roots: list[str],
+    path_roots: list[str],
+    activate_chip_keys: list[str],
+    pin_chip_keys: list[str],
+    active_path_key: str | None,
+) -> tuple[list[str], object]:
+    notes: list[str] = []
+    changed = False
+
+    for root in chip_roots:
+        add_attachment_root(config_manager, target="chips", root=root)
+        notes.append(f"added chip root {root}")
+        changed = True
+    for root in path_roots:
+        add_attachment_root(config_manager, target="paths", root=root)
+        notes.append(f"added specialization path root {root}")
+        changed = True
+    for chip_key in activate_chip_keys:
+        activate_chip(config_manager, chip_key=chip_key)
+        notes.append(f"activated chip {chip_key}")
+        changed = True
+    for chip_key in pin_chip_keys:
+        pin_chip(config_manager, chip_key=chip_key)
+        notes.append(f"pinned chip {chip_key}")
+        changed = True
+    if active_path_key:
+        set_active_path(config_manager, path_key=active_path_key)
+        notes.append(f"set active specialization path {active_path_key}")
+        changed = True
+
+    if changed:
+        snapshot = sync_attachment_snapshot(config_manager=config_manager, state_db=state_db)
+        notes.append(f"refreshed attachment snapshot at {snapshot.snapshot_path}")
+        return notes, snapshot
+    return notes, build_attachment_snapshot(config_manager)
+
+
+def _build_bootstrap_provider_choices() -> list[dict[str, str | None]]:
+    choices: list[dict[str, str | None]] = []
+    for spec in list_provider_specs():
+        if not spec.supports_api_key_connect:
+            continue
+        choices.append(
+            {
+                "provider_id": spec.id,
+                "display_name": spec.display_name,
+                "default_model": spec.default_model,
+                "default_base_url": spec.default_base_url,
+                "api_key_env": spec.default_api_key_env,
+            }
+        )
+    return choices
+
+
+def _prompt_bootstrap_text(
+    label: str,
+    *,
+    default: str | None = None,
+    allow_blank: bool = False,
+) -> str | None:
+    suffix = f" [{default}]" if default else ""
+    while True:
+        value = input(f"{label}{suffix}: ").strip()
+        if value:
+            return value
+        if default is not None:
+            return default
+        if allow_blank:
+            return None
+        print("A value is required.")
+
+
+def _prompt_bootstrap_choice(
+    label: str,
+    choices: list[str],
+    *,
+    default: str | None = None,
+    allow_blank: bool = False,
+) -> str | None:
+    choice_text = "/".join(choices)
+    while True:
+        value = _prompt_bootstrap_text(
+            f"{label} ({choice_text})",
+            default=default,
+            allow_blank=allow_blank,
+        )
+        if value is None:
+            return None
+        if value in choices:
+            return value
+        print(f"Choose one of: {', '.join(choices)}")
+
+
+def _prompt_bootstrap_multi_choice(
+    label: str,
+    choices: list[str],
+    *,
+    default_values: list[str] | None = None,
+) -> list[str]:
+    default_text = ",".join(default_values or [])
+    while True:
+        raw = _prompt_bootstrap_text(
+            label,
+            default=default_text or None,
+            allow_blank=not bool(default_values),
+        )
+        if raw is None:
+            return []
+        values = [item.strip() for item in raw.split(",") if item.strip()]
+        invalid = [item for item in values if item not in choices]
+        if not invalid:
+            return values
+        print(f"Unknown choices: {', '.join(invalid)}")
+        print(f"Available choices: {', '.join(choices)}")
+
+
+def _prompt_bootstrap_secret(
+    label: str,
+    *,
+    default_env_name: str | None,
+    existing_value: str | None,
+    existing_env_name: str | None,
+) -> tuple[str | None, str | None]:
+    default_source = "direct" if existing_value else "env"
+    source = _prompt_bootstrap_choice(
+        f"{label} source",
+        ["env", "direct"],
+        default=default_source,
+    )
+    if source == "env":
+        env_name = _prompt_bootstrap_text(
+            f"{label} env var",
+            default=existing_env_name or default_env_name,
+        )
+        return None, env_name
+    prompt = f"{label}: "
+    while True:
+        secret_value = getpass.getpass(prompt).strip()
+        if secret_value:
+            return secret_value, None
+        if existing_value:
+            return existing_value, None
+        print("A value is required.")
+
+
+def _configure_interactive_provider(
+    *,
+    provider_label: str,
+    provider_id: str,
+    existing_api_key: str | None,
+    existing_api_key_env: str | None,
+    existing_model: str | None,
+    existing_base_url: str | None,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    spec = get_provider_spec(provider_id)
+    api_key, api_key_env = _prompt_bootstrap_secret(
+        f"{provider_label} API key",
+        default_env_name=spec.default_api_key_env,
+        existing_value=existing_api_key,
+        existing_env_name=existing_api_key_env,
+    )
+    model = _prompt_bootstrap_text(
+        f"{provider_label} model",
+        default=existing_model or spec.default_model,
+        allow_blank=existing_model is None and spec.default_model is None,
+    )
+    prompt_for_base_url = provider_id == "custom" or bool(existing_base_url or spec.default_base_url)
+    base_url = existing_base_url
+    if prompt_for_base_url:
+        base_url = _prompt_bootstrap_text(
+            f"{provider_label} base URL",
+            default=existing_base_url or spec.default_base_url,
+            allow_blank=provider_id != "custom",
+        )
+    return api_key, api_key_env, model, base_url
+
+
+def _collect_interactive_bootstrap_answers(
+    *,
+    args: argparse.Namespace,
+    attachment_snapshot: object,
+) -> None:
+    provider_choices = [choice["provider_id"] for choice in _build_bootstrap_provider_choices()]
+    configured_default_provider = None
+    if getattr(args, "provider", None) and args.provider != "custom":
+        configured_default_provider = args.provider
+    default_provider = configured_default_provider or ("minimax" if "minimax" in provider_choices else provider_choices[0])
+    args.provider = _prompt_bootstrap_choice("Primary provider", provider_choices, default=default_provider) or default_provider
+    args.api_key, args.api_key_env, args.model, args.base_url = _configure_interactive_provider(
+        provider_label="Primary provider",
+        provider_id=args.provider,
+        existing_api_key=args.api_key,
+        existing_api_key_env=args.api_key_env,
+        existing_model=args.model,
+        existing_base_url=args.base_url,
+    )
+
+    fallback_default = args.fallback_provider if getattr(args, "fallback_provider", None) else None
+    args.fallback_provider = _prompt_bootstrap_choice(
+        "Fallback provider",
+        provider_choices,
+        default=fallback_default,
+        allow_blank=True,
+    )
+    if args.fallback_provider:
+        args.fallback_api_key, args.fallback_api_key_env, args.fallback_model, args.fallback_base_url = _configure_interactive_provider(
+            provider_label="Fallback provider",
+            provider_id=args.fallback_provider,
+            existing_api_key=args.fallback_api_key,
+            existing_api_key_env=args.fallback_api_key_env,
+            existing_model=args.fallback_model,
+            existing_base_url=args.fallback_base_url,
+        )
+    else:
+        args.fallback_api_key = None
+        args.fallback_api_key_env = None
+        args.fallback_model = None
+        args.fallback_base_url = None
+
+    args.pairing_mode = _prompt_bootstrap_choice(
+        "Telegram pairing mode",
+        ["pairing", "allowlist"],
+        default=args.pairing_mode,
+    ) or args.pairing_mode
+    setup_mode = _prompt_bootstrap_choice(
+        "Telegram bot setup",
+        ["existing", "new"],
+        default="existing",
+    )
+    if setup_mode == "new":
+        print("")
+        print(render_telegram_botfather_guide(allowed_users=args.allowed_user, pairing_mode=args.pairing_mode))
+        print("")
+    args.bot_token, args.bot_token_env = _prompt_bootstrap_secret(
+        "Telegram bot token",
+        default_env_name="TELEGRAM_BOT_TOKEN",
+        existing_value=args.bot_token,
+        existing_env_name=args.bot_token_env,
+    )
+    allowed_users = _prompt_bootstrap_text(
+        "Allowed Telegram user IDs (comma-separated, leave blank for none)",
+        default=",".join(args.allowed_user) or None,
+        allow_blank=not bool(args.allowed_user),
+    )
+    args.allowed_user = [item.strip() for item in (allowed_users or "").split(",") if item.strip()]
+
+    discovered_chip_keys = [record["key"] for record in attachment_snapshot.records if str(record.get("kind")) == "chip"]
+    discovered_path_keys = [record["key"] for record in attachment_snapshot.records if str(record.get("kind")) == "path"]
+    if discovered_chip_keys:
+        print(f"Discovered chips: {', '.join(discovered_chip_keys)}")
+        args.activate_chip = _prompt_bootstrap_multi_choice(
+            "Active chips (comma-separated, leave blank for none)",
+            discovered_chip_keys,
+            default_values=args.activate_chip,
+        )
+        args.pin_chip = _prompt_bootstrap_multi_choice(
+            "Pinned chips (comma-separated, leave blank for none)",
+            discovered_chip_keys,
+            default_values=args.pin_chip,
+        )
+    if discovered_path_keys:
+        print(f"Discovered specialization paths: {', '.join(discovered_path_keys)}")
+        active_path_default = args.set_path if args.set_path in discovered_path_keys else None
+        args.set_path = _prompt_bootstrap_choice(
+            "Active specialization path",
+            discovered_path_keys,
+            default=active_path_default,
+            allow_blank=True,
+        )
+
+
+def _configure_bootstrap_fallback_provider(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    provider_id: str | None,
+    api_key: str | None,
+    api_key_env: str | None,
+    model: str | None,
+    base_url: str | None,
+    primary_provider_id: str,
+) -> tuple[str | None, str | None]:
+    if not provider_id:
+        config_manager.set_path("providers.fallback_provider", None)
+        return None, None
+    if provider_id == primary_provider_id:
+        raise ValueError("Fallback provider must differ from the primary provider.")
+    if api_key_env:
+        _sync_secret_from_env_if_present(config_manager, api_key_env)
+    if provider_id == "custom" and not base_url:
+        raise ValueError("Fallback provider 'custom' requires --fallback-base-url.")
+    result = connect_provider(
+        config_manager=config_manager,
+        state_db=state_db,
+        provider=provider_id,
+        api_key=api_key,
+        api_key_env=api_key_env,
+        model=model,
+        base_url=base_url,
+    )
+    config_manager.set_path("providers.fallback_provider", provider_id)
+    return provider_id, result
+
+
 def handle_bootstrap_telegram_agent(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     created = config_manager.bootstrap()
     state_db = StateDB(config_manager.paths.state_db)
     state_db.initialize()
     setup_notes = _apply_setup_integrations(config_manager, args)
+    attachment_notes, attachment_snapshot = _apply_bootstrap_attachment_preferences(
+        config_manager,
+        state_db,
+        chip_roots=args.chip_root,
+        path_roots=args.path_root,
+        activate_chip_keys=[] if args.interactive else args.activate_chip,
+        pin_chip_keys=[] if args.interactive else args.pin_chip,
+        active_path_key=None if args.interactive else args.set_path,
+    )
+    setup_notes.extend(attachment_notes)
     if created:
         setup_notes.insert(0, "created config, env, and state bootstrap")
     else:
         setup_notes.insert(0, "verified existing config, env, and state bootstrap")
+
+    if args.guide:
+        existing_bot_example = (
+            "spark-intelligence bootstrap telegram-agent "
+            f"--home {config_manager.paths.home} "
+            "--provider minimax --api-key-env MINIMAX_API_KEY "
+            "--model MiniMax-M2.7 --base-url https://api.minimax.io/v1 "
+            "--bot-token-env TELEGRAM_BOT_TOKEN"
+        )
+        fallback_bot_example = (
+            "spark-intelligence bootstrap telegram-agent "
+            f"--home {config_manager.paths.home} "
+            "--provider minimax --api-key-env MINIMAX_API_KEY "
+            "--model MiniMax-M2.7 --base-url https://api.minimax.io/v1 "
+            "--fallback-provider anthropic --fallback-api-key-env ANTHROPIC_API_KEY "
+            "--fallback-model claude-opus-4-6 "
+            "--bot-token-env TELEGRAM_BOT_TOKEN"
+        )
+        guide = BootstrapTelegramAgentGuide(
+            home=str(config_manager.paths.home),
+            setup_notes=setup_notes,
+            provider_choices=_build_bootstrap_provider_choices(),
+            discovered_chip_keys=[record["key"] for record in attachment_snapshot.records if str(record.get("kind")) == "chip"],
+            discovered_path_keys=[record["key"] for record in attachment_snapshot.records if str(record.get("kind")) == "path"],
+            botfather_guide=render_telegram_botfather_guide(
+                allowed_users=args.allowed_user,
+                pairing_mode=args.pairing_mode,
+            ),
+            existing_bot_example=existing_bot_example,
+            fallback_bot_example=fallback_bot_example,
+        )
+        print(guide.to_json() if args.json else guide.to_text())
+        return 0
+
+    if args.interactive:
+        _collect_interactive_bootstrap_answers(
+            args=args,
+            attachment_snapshot=attachment_snapshot,
+        )
+        attachment_notes, attachment_snapshot = _apply_bootstrap_attachment_preferences(
+            config_manager,
+            state_db,
+            chip_roots=[],
+            path_roots=[],
+            activate_chip_keys=args.activate_chip,
+            pin_chip_keys=args.pin_chip,
+            active_path_key=args.set_path,
+        )
+        setup_notes.extend(attachment_notes)
 
     try:
         bot_token = _resolve_bootstrap_secret(
@@ -2102,6 +2567,20 @@ def handle_bootstrap_telegram_agent(args: argparse.Namespace) -> int:
         model=args.model,
         base_url=args.base_url,
     )
+    try:
+        fallback_provider_id, fallback_provider_result = _configure_bootstrap_fallback_provider(
+            config_manager=config_manager,
+            state_db=state_db,
+            provider_id=args.fallback_provider,
+            api_key=args.fallback_api_key,
+            api_key_env=args.fallback_api_key_env,
+            model=args.fallback_model,
+            base_url=args.fallback_base_url,
+            primary_provider_id=args.provider,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
 
     profile = None
     if not args.skip_validate:
@@ -2136,8 +2615,13 @@ def handle_bootstrap_telegram_agent(args: argparse.Namespace) -> int:
         home=str(config_manager.paths.home),
         provider_id=args.provider,
         provider_result=provider_result,
+        fallback_provider_id=fallback_provider_id,
+        fallback_provider_result=fallback_provider_result,
         channel_result=channel_result,
         setup_notes=setup_notes,
+        active_chip_keys=attachment_snapshot.active_chip_keys,
+        pinned_chip_keys=attachment_snapshot.pinned_chip_keys,
+        active_path_key=attachment_snapshot.active_path_key,
         gateway_ready=gateway.ready,
         gateway_detail=gateway.provider_runtime_detail or gateway.provider_execution_detail or "ready",
         repair_hints=list(gateway.repair_hints or []),

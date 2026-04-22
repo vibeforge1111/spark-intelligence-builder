@@ -4,6 +4,8 @@ Date: 2026-04-11
 Repo: `spark-intelligence-builder`
 Related substrate repo: `C:\Users\USER\Desktop\domain-chip-memory`
 
+> Historical program note, updated April 21, 2026: this document describes the April 11 benchmark program and promotion logic. The current Builder runtime is now pinned to `dual_store_event_calendar_hybrid`; use the latest live regression artifacts and README for current status, not the April 11 winner statements below.
+
 Execution companion:
 
 - `docs/NEXT_48H_MEMORY_EXECUTION_PLAN_2026-04-11.md`

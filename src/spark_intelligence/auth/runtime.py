@@ -39,6 +39,7 @@ class ProviderAuthStatus:
     auth_method: str
     status: str
     is_default_provider: bool
+    is_fallback_provider: bool
     is_default_profile: bool
     default_model: str | None
     base_url: str | None
@@ -55,6 +56,7 @@ class ProviderAuthStatus:
 @dataclass(frozen=True)
 class AuthStatusReport:
     default_provider: str | None
+    fallback_provider: str | None
     providers: list[ProviderAuthStatus]
 
     @property
@@ -65,6 +67,7 @@ class AuthStatusReport:
         payload = {
             "ok": self.ok,
             "default_provider": self.default_provider,
+            "fallback_provider": self.fallback_provider,
             "providers": [
                 {
                     **asdict(provider),
@@ -86,6 +89,7 @@ class AuthStatusReport:
     def to_text(self) -> str:
         lines = ["Auth status"]
         lines.append(f"- default_provider: {self.default_provider or 'none'}")
+        lines.append(f"- fallback_provider: {self.fallback_provider or 'none'}")
         if not self.providers:
             lines.append("- providers: none")
             lines.append("- result: no providers configured yet")
@@ -100,6 +104,8 @@ class AuthStatusReport:
             default_tags: list[str] = []
             if provider.is_default_provider:
                 default_tags.append("default-provider")
+            if provider.is_fallback_provider:
+                default_tags.append("fallback-provider")
             if provider.is_default_profile:
                 default_tags.append("default-profile")
             tags = f" [{' '.join(default_tags)}]" if default_tags else ""
@@ -135,6 +141,7 @@ def build_auth_status_report(*, config_manager: ConfigManager, state_db: StateDB
     config = config_manager.load()
     provider_records = config.get("providers", {}).get("records", {}) or {}
     default_provider = config.get("providers", {}).get("default_provider")
+    fallback_provider = config.get("providers", {}).get("fallback_provider")
     env_map = config_manager.read_env_map()
 
     providers: list[ProviderAuthStatus] = []
@@ -192,6 +199,7 @@ def build_auth_status_report(*, config_manager: ConfigManager, state_db: StateDB
                     auth_method=auth_method,
                     status=_derive_profile_status(profile_row=profile_row, secret_present=secret_present, oauth_row=oauth_row),
                     is_default_provider=provider_id == default_provider,
+                    is_fallback_provider=provider_id == fallback_provider,
                     is_default_profile=bool(profile_row["is_default"]) if profile_row else True,
                     default_model=_optional_string(record.get("default_model")),
                     base_url=_optional_string(record.get("base_url")),
@@ -207,6 +215,7 @@ def build_auth_status_report(*, config_manager: ConfigManager, state_db: StateDB
             )
     return AuthStatusReport(
         default_provider=str(default_provider) if default_provider else None,
+        fallback_provider=str(fallback_provider) if fallback_provider else None,
         providers=providers,
     )
 

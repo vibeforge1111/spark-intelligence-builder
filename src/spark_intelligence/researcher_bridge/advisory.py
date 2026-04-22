@@ -45,6 +45,8 @@ from spark_intelligence.memory import (
     retrieve_memory_evidence_in_memory,
     retrieve_memory_events_in_memory,
     write_profile_fact_to_memory,
+    write_raw_episode_to_memory,
+    write_structured_evidence_to_memory,
     write_telegram_event_to_memory,
 )
 from spark_intelligence.memory.episodic_events import (
@@ -56,6 +58,8 @@ from spark_intelligence.memory.episodic_events import (
     telegram_event_summary_predicate,
 )
 from spark_intelligence.memory.generic_observations import (
+    assess_telegram_generic_memory_candidate,
+    classify_telegram_generic_memory_candidate,
     build_telegram_generic_deletion_answer,
     build_telegram_generic_observation_answer,
     detect_telegram_generic_deletion,
@@ -3446,6 +3450,8 @@ def build_researcher_reply(
     detected_profile_fact_query = None
     detected_memory_event = None
     detected_memory_event_query = None
+    detected_generic_memory_candidate = None
+    assessed_generic_memory_candidate = None
     detected_generic_memory_deletion = None
     detected_generic_memory_observation = None
     try:
@@ -3588,42 +3594,115 @@ def build_researcher_reply(
                         channel_kind=channel_kind,
                     )
                 else:
-                    detected_generic_memory_deletion = detect_telegram_generic_deletion(user_message)
-                    if detected_generic_memory_deletion is not None:
-                        generic_delete_result = delete_profile_fact_from_memory(
-                            config_manager=config_manager,
-                            state_db=state_db,
-                            human_id=human_id,
-                            predicate=detected_generic_memory_deletion.predicate,
-                            evidence_text=detected_generic_memory_deletion.evidence_text,
-                            fact_name=detected_generic_memory_deletion.fact_name,
-                            session_id=session_id,
-                            turn_id=request_id,
-                            channel_kind=channel_kind,
-                            actor_id="telegram_generic_observation_loader",
-                        )
-                        if generic_delete_result.accepted_count <= 0:
-                            detected_generic_memory_deletion = None
-                    else:
-                        detected_generic_memory_observation = detect_telegram_generic_observation(user_message)
-                    if detected_generic_memory_observation is not None:
-                        generic_write_result = write_profile_fact_to_memory(
-                            config_manager=config_manager,
-                            state_db=state_db,
-                            human_id=human_id,
-                            predicate=detected_generic_memory_observation.predicate,
-                            value=detected_generic_memory_observation.value,
-                            evidence_text=detected_generic_memory_observation.evidence_text,
-                            fact_name=detected_generic_memory_observation.fact_name,
-                            session_id=session_id,
-                            turn_id=request_id,
-                            channel_kind=channel_kind,
-                            actor_id="telegram_generic_observation_loader",
-                        )
-                        if generic_write_result.accepted_count <= 0:
-                            detected_generic_memory_observation = None
+                    detected_generic_memory_candidate = classify_telegram_generic_memory_candidate(user_message)
+                    if detected_generic_memory_candidate is not None:
+                        if detected_generic_memory_candidate.operation == "delete":
+                            detected_generic_memory_deletion = detect_telegram_generic_deletion(user_message)
+                            if detected_generic_memory_deletion is not None:
+                                generic_delete_result = delete_profile_fact_from_memory(
+                                    config_manager=config_manager,
+                                    state_db=state_db,
+                                    human_id=human_id,
+                                    predicate=detected_generic_memory_deletion.predicate,
+                                    evidence_text=detected_generic_memory_deletion.evidence_text,
+                                    fact_name=detected_generic_memory_deletion.fact_name,
+                                    session_id=session_id,
+                                    turn_id=request_id,
+                                    channel_kind=channel_kind,
+                                    actor_id="telegram_generic_observation_loader",
+                                )
+                                if generic_delete_result.accepted_count <= 0:
+                                    detected_generic_memory_candidate = None
+                                    detected_generic_memory_deletion = None
+                        else:
+                            detected_generic_memory_observation = detect_telegram_generic_observation(user_message)
+                            if detected_generic_memory_observation is not None:
+                                generic_write_result = write_profile_fact_to_memory(
+                                    config_manager=config_manager,
+                                    state_db=state_db,
+                                    human_id=human_id,
+                                    predicate=detected_generic_memory_observation.predicate,
+                                    value=detected_generic_memory_observation.value,
+                                    evidence_text=detected_generic_memory_observation.evidence_text,
+                                    fact_name=detected_generic_memory_observation.fact_name,
+                                    session_id=session_id,
+                                    turn_id=request_id,
+                                    channel_kind=channel_kind,
+                                    actor_id="telegram_generic_observation_loader",
+                                )
+                                if generic_write_result.accepted_count <= 0:
+                                    detected_generic_memory_candidate = None
+                                    detected_generic_memory_observation = None
+                    if (
+                        detected_generic_memory_candidate is None
+                        and detected_memory_event is None
+                        and detected_profile_fact is None
+                    ):
+                        assessed_generic_memory_candidate = assess_telegram_generic_memory_candidate(user_message)
+                        if assessed_generic_memory_candidate.outcome == "drop":
+                            assessed_generic_memory_candidate = None
         except Exception:
             pass
+
+    if assessed_generic_memory_candidate is not None:
+        if assessed_generic_memory_candidate.outcome == "structured_evidence":
+            try:
+                write_structured_evidence_to_memory(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    human_id=human_id,
+                    evidence_text=assessed_generic_memory_candidate.evidence_text,
+                    domain_pack=str(assessed_generic_memory_candidate.domain_pack or "evidence"),
+                    evidence_kind=str(assessed_generic_memory_candidate.reason or "structured_evidence"),
+                    session_id=session_id,
+                    turn_id=request_id,
+                    channel_kind=channel_kind,
+                    actor_id="telegram_structured_evidence_loader",
+                )
+            except Exception:
+                pass
+        elif assessed_generic_memory_candidate.outcome == "raw_episode":
+            try:
+                write_raw_episode_to_memory(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    human_id=human_id,
+                    episode_text=assessed_generic_memory_candidate.evidence_text,
+                    domain_pack=str(assessed_generic_memory_candidate.domain_pack or "raw_episode"),
+                    session_id=session_id,
+                    turn_id=request_id,
+                    channel_kind=channel_kind,
+                    actor_id="telegram_raw_episode_loader",
+                )
+            except Exception:
+                pass
+        record_event(
+            state_db,
+            event_type="memory_candidate_assessed",
+            component="researcher_bridge",
+            summary="Researcher bridge assessed a Telegram memory candidate without promoting it to a direct memory write.",
+            run_id=run_id,
+            request_id=request_id,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code=f"memory_candidate_{assessed_generic_memory_candidate.outcome}",
+            facts={
+                "message_text": str(user_message or "").strip(),
+                "outcome": assessed_generic_memory_candidate.outcome,
+                "reason": assessed_generic_memory_candidate.reason,
+                "memory_role": assessed_generic_memory_candidate.memory_role,
+                "retention_class": assessed_generic_memory_candidate.retention_class,
+                "domain_pack": assessed_generic_memory_candidate.domain_pack,
+                "predicate": assessed_generic_memory_candidate.predicate,
+                "value": assessed_generic_memory_candidate.value,
+                "operation": assessed_generic_memory_candidate.operation,
+                "fact_name": assessed_generic_memory_candidate.fact_name,
+                "label": assessed_generic_memory_candidate.label,
+            },
+        )
 
     # Periodically trigger self-evolution based on accumulated observations
     try:
@@ -3654,6 +3733,7 @@ def build_researcher_reply(
         or detected_profile_fact_query
         or detected_memory_event
         or detected_memory_event_query
+        or assessed_generic_memory_candidate
         or detected_generic_memory_deletion
         or detected_generic_memory_observation
     ):
@@ -3670,6 +3750,8 @@ def build_researcher_reply(
             source_kind = "telegram_event_update"
         elif detected_memory_event_query is not None:
             source_kind = "telegram_event_query"
+        elif assessed_generic_memory_candidate is not None:
+            source_kind = f"generic_memory_candidate_{assessed_generic_memory_candidate.outcome}"
         elif detected_generic_memory_deletion is not None:
             source_kind = "generic_memory_deletion"
         elif detected_generic_memory_observation is not None:
@@ -3753,6 +3835,23 @@ def build_researcher_reply(
                     if detected_memory_event_query is not None
                     else None
                 ),
+                "assessed_generic_memory_candidate": (
+                    {
+                        "outcome": assessed_generic_memory_candidate.outcome,
+                        "reason": assessed_generic_memory_candidate.reason,
+                        "memory_role": assessed_generic_memory_candidate.memory_role,
+                        "retention_class": assessed_generic_memory_candidate.retention_class,
+                        "domain_pack": assessed_generic_memory_candidate.domain_pack,
+                        "predicate": assessed_generic_memory_candidate.predicate,
+                        "value": assessed_generic_memory_candidate.value,
+                        "operation": assessed_generic_memory_candidate.operation,
+                        "fact_name": assessed_generic_memory_candidate.fact_name,
+                        "label": assessed_generic_memory_candidate.label,
+                        "message_text": str(user_message or "").strip(),
+                    }
+                    if assessed_generic_memory_candidate is not None
+                    else None
+                ),
                 "detected_generic_memory_observation": (
                     {
                         "predicate": detected_generic_memory_observation.predicate,
@@ -3772,6 +3871,21 @@ def build_researcher_reply(
                         "message_text": str(user_message or "").strip(),
                     }
                     if detected_generic_memory_deletion is not None
+                    else None
+                ),
+                "detected_generic_memory_candidate": (
+                    {
+                        "predicate": detected_generic_memory_candidate.predicate,
+                        "value": detected_generic_memory_candidate.value,
+                        "fact_name": detected_generic_memory_candidate.fact_name,
+                        "label": detected_generic_memory_candidate.label,
+                        "operation": detected_generic_memory_candidate.operation,
+                        "memory_role": detected_generic_memory_candidate.memory_role,
+                        "retention_class": detected_generic_memory_candidate.retention_class,
+                        "domain_pack": detected_generic_memory_candidate.domain_pack,
+                        "message_text": str(user_message or "").strip(),
+                    }
+                    if detected_generic_memory_candidate is not None
                     else None
                 ),
                 "evolved_deltas": evolved_deltas or {},
@@ -3954,6 +4068,22 @@ def build_researcher_reply(
                     "predicate": detected_generic_memory_observation.predicate,
                     "value": detected_generic_memory_observation.value,
                     "label": detected_generic_memory_observation.label,
+                    "memory_role": (
+                        detected_generic_memory_candidate.memory_role
+                        if detected_generic_memory_candidate is not None
+                        else "current_state"
+                    ),
+                    "retention_class": (
+                        detected_generic_memory_candidate.retention_class
+                        if detected_generic_memory_candidate is not None
+                        else None
+                    ),
+                    "domain_pack": (
+                        detected_generic_memory_candidate.domain_pack
+                        if detected_generic_memory_candidate is not None
+                        else None
+                    ),
+                    "operation": "update",
                 },
             ),
         )
@@ -4015,6 +4145,21 @@ def build_researcher_reply(
                     "fact_name": detected_generic_memory_deletion.fact_name,
                     "predicate": detected_generic_memory_deletion.predicate,
                     "label": detected_generic_memory_deletion.label,
+                    "memory_role": (
+                        detected_generic_memory_candidate.memory_role
+                        if detected_generic_memory_candidate is not None
+                        else "current_state"
+                    ),
+                    "retention_class": (
+                        detected_generic_memory_candidate.retention_class
+                        if detected_generic_memory_candidate is not None
+                        else None
+                    ),
+                    "domain_pack": (
+                        detected_generic_memory_candidate.domain_pack
+                        if detected_generic_memory_candidate is not None
+                        else None
+                    ),
                     "operation": "delete",
                 },
             ),
@@ -4183,6 +4328,7 @@ def build_researcher_reply(
         related_predicates = _profile_fact_query_related_predicates(detected_profile_fact_query.predicate)
         primary_records: list[dict[str, Any]] = []
         related_records: list[dict[str, Any]] = []
+        current_fact_deleted = False
         if target_predicate == "profile.startup_name":
             direct_fact_lookup = lookup_current_state_in_memory(
                 config_manager=config_manager,
@@ -4191,13 +4337,14 @@ def build_researcher_reply(
                 predicate="profile.startup_name",
                 actor_id="researcher_bridge",
             )
+            current_fact_deleted = direct_fact_lookup.read_result.memory_role == "state_deletion"
             if not direct_fact_lookup.read_result.abstained and direct_fact_lookup.read_result.records:
                 primary_records = [
                     record
                     for record in direct_fact_lookup.read_result.records
                     if _profile_fact_record_value(record)
                 ]
-            if not primary_records:
+            if not primary_records and not current_fact_deleted:
                 founder_lookup = lookup_current_state_in_memory(
                     config_manager=config_manager,
                     state_db=state_db,
@@ -4211,7 +4358,7 @@ def build_researcher_reply(
                         for record in founder_lookup.read_result.records
                         if _profile_fact_record_value(record)
                     ]
-            if not primary_records and not related_records:
+            if not current_fact_deleted and not primary_records and not related_records:
                 primary_records, related_records = _inspect_profile_fact_records(
                     config_manager=config_manager,
                     state_db=state_db,
@@ -4237,13 +4384,14 @@ def build_researcher_reply(
                 predicate=str(detected_profile_fact_query.predicate or ""),
                 actor_id="researcher_bridge",
             )
+            current_fact_deleted = direct_fact_lookup.read_result.memory_role == "state_deletion"
             if not direct_fact_lookup.read_result.abstained and direct_fact_lookup.read_result.records:
                 primary_records = [
                     record
                     for record in direct_fact_lookup.read_result.records
                     if _profile_fact_record_value(record)
                 ]
-            if not primary_records:
+            if not primary_records and not current_fact_deleted:
                 primary_records, related_records = _inspect_profile_fact_records(
                     config_manager=config_manager,
                     state_db=state_db,
@@ -4251,7 +4399,7 @@ def build_researcher_reply(
                     predicate=detected_profile_fact_query.predicate,
                     actor_id="researcher_bridge",
                 )
-        if not primary_records and not related_records:
+        if not current_fact_deleted and not primary_records and not related_records:
             evidence_lookup = retrieve_memory_evidence_in_memory(
                 config_manager=config_manager,
                 state_db=state_db,

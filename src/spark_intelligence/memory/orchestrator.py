@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import re
 import sys
 import time
 from contextlib import contextmanager
@@ -364,11 +365,23 @@ class _DomainChipMemoryClientAdapter:
             subject=_optional_string(payload.get("subject")),
             predicate=_optional_string(payload.get("predicate")),
             value=None if payload.get("value") is None else str(payload.get("value")),
+            retention_class=_optional_string(payload.get("retention_class")),
+            document_time=_optional_string(payload.get("document_time")),
+            event_time=_optional_string(payload.get("event_time")),
+            valid_from=_optional_string(payload.get("valid_from")),
+            valid_to=_optional_string(payload.get("valid_to")),
+            supersedes=_optional_string(payload.get("supersedes")),
+            conflicts_with=[str(item) for item in list(payload.get("conflicts_with") or [])],
+            deleted_at=_optional_string(payload.get("deleted_at")),
             metadata=dict(payload.get("metadata") or {}),
         )
         result = self._sdk.write_observation(request)
         self._persist_manual_state()
-        return _normalize_domain_write_result(result=result, default_role=str(payload.get("memory_role") or "current_state"))
+        return _normalize_domain_write_result(
+            result=result,
+            operation=str(payload.get("operation") or "update"),
+            default_role=str(payload.get("memory_role") or "current_state"),
+        )
 
     def write_event(self, **payload: Any) -> dict[str, Any]:
         request = self._module.MemoryWriteRequest(
@@ -381,11 +394,23 @@ class _DomainChipMemoryClientAdapter:
             subject=_optional_string(payload.get("subject")),
             predicate=_optional_string(payload.get("predicate")),
             value=None if payload.get("value") is None else str(payload.get("value")),
+            retention_class=_optional_string(payload.get("retention_class")),
+            document_time=_optional_string(payload.get("document_time")),
+            event_time=_optional_string(payload.get("event_time")),
+            valid_from=_optional_string(payload.get("valid_from")),
+            valid_to=_optional_string(payload.get("valid_to")),
+            supersedes=_optional_string(payload.get("supersedes")),
+            conflicts_with=[str(item) for item in list(payload.get("conflicts_with") or [])],
+            deleted_at=_optional_string(payload.get("deleted_at")),
             metadata=dict(payload.get("metadata") or {}),
         )
         result = self._sdk.write_event(request)
         self._persist_manual_state()
-        return _normalize_domain_write_result(result=result, default_role="event")
+        return _normalize_domain_write_result(
+            result=result,
+            operation=str(payload.get("operation") or "event"),
+            default_role="event",
+        )
 
     def get_current_state(self, **payload: Any) -> dict[str, Any]:
         subject = _optional_string(payload.get("subject"))
@@ -595,10 +620,11 @@ def run_memory_sdk_smoke_test(
         )
         _record_memory_smoke_event(state_db=state_db, result=result, actor_id=actor_id)
         return result
-    session_id = f"memory-smoke:{actor_id}"
-    write_turn_id = f"{actor_id}:write"
-    read_turn_id = f"{actor_id}:read"
-    cleanup_turn_id = f"{actor_id}:cleanup"
+    smoke_token = re.sub(r"[^a-z0-9]+", "_", f"{subject}:{predicate}".lower()).strip("_") or "default"
+    session_id = f"memory-smoke:{actor_id}:{smoke_token}"
+    write_turn_id = f"{actor_id}:write:{smoke_token}"
+    read_turn_id = f"{actor_id}:read:{smoke_token}"
+    cleanup_turn_id = f"{actor_id}:cleanup:{smoke_token}"
     payload = {
         "operation": "update",
         "subject": subject,
@@ -1218,6 +1244,258 @@ def write_profile_fact_to_memory(
     )
 
 
+def write_structured_evidence_to_memory(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str,
+    evidence_text: str,
+    domain_pack: str,
+    evidence_kind: str,
+    session_id: str | None,
+    turn_id: str | None,
+    channel_kind: str | None,
+    actor_id: str = "structured_evidence_loader",
+) -> MemoryWriteResult:
+    normalized_text = str(evidence_text or "").strip()
+    if not normalized_text:
+        return MemoryWriteResult(
+            status="skipped",
+            operation="create",
+            method="write_observation",
+            memory_role="structured_evidence",
+            accepted_count=0,
+            rejected_count=0,
+            skipped_count=1,
+            abstained=False,
+            retrieval_trace=None,
+            provenance=[],
+            reason="no_structured_evidence_text",
+        )
+    if not _memory_enabled(config_manager):
+        return _disabled_write_result(
+            operation="create",
+            method="write_observation",
+            default_role="structured_evidence",
+        )
+    client = _load_sdk_client(config_manager)
+    if client is None:
+        result = MemoryWriteResult(
+            status="abstained",
+            operation="create",
+            method="write_observation",
+            memory_role="structured_evidence",
+            accepted_count=0,
+            rejected_count=0,
+            skipped_count=1,
+            abstained=True,
+            retrieval_trace=None,
+            provenance=[],
+            reason="sdk_unavailable",
+        )
+        _record_memory_write_event(
+            state_db=state_db,
+            result=result,
+            human_id=human_id,
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=actor_id,
+        )
+        return result
+    subject = _subject_for_human_id(human_id)
+    timestamp = _now_iso()
+    normalized_pack = re.sub(r"[^a-z0-9]+", "_", str(domain_pack or "generic").strip().lower()).strip("_") or "generic"
+    predicate = f"evidence.telegram.{normalized_pack}"
+    observation = {
+        "subject": subject,
+        "predicate": predicate,
+        "value": normalized_text,
+        "operation": "create",
+        "memory_role": "structured_evidence",
+        "retention_class": "episodic_archive",
+        "text": normalized_text,
+    }
+    _record_memory_write_requested_observations(
+        state_db=state_db,
+        operation="create",
+        human_id=human_id,
+        observations=[observation],
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+        memory_role="structured_evidence",
+        summary="Spark memory write requested for structured evidence.",
+    )
+    raw = _call_sdk_method(
+        client,
+        "write_observation",
+        {
+            "operation": "create",
+            "subject": subject,
+            "predicate": predicate,
+            "value": normalized_text,
+            "text": normalized_text,
+            "memory_role": "structured_evidence",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "timestamp": timestamp,
+            "retention_class": "episodic_archive",
+            "document_time": timestamp,
+            "valid_from": timestamp,
+            "metadata": {
+                "entity_type": "human",
+                "channel_kind": channel_kind,
+                "memory_role": "structured_evidence",
+                "source_surface": "researcher_bridge",
+                "evidence_kind": evidence_kind,
+                "domain_pack": normalized_pack,
+                "normalized_value": normalized_text,
+                "value": normalized_text,
+            },
+        },
+    )
+    result = _normalize_write_result(
+        raw=raw,
+        operation="create",
+        method="write_observation",
+        default_role="structured_evidence",
+    )
+    _record_memory_write_event(
+        state_db=state_db,
+        result=result,
+        human_id=human_id,
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+    )
+    return result
+
+
+def write_raw_episode_to_memory(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str,
+    episode_text: str,
+    domain_pack: str,
+    session_id: str | None,
+    turn_id: str | None,
+    channel_kind: str | None,
+    actor_id: str = "raw_episode_loader",
+) -> MemoryWriteResult:
+    normalized_text = str(episode_text or "").strip()
+    if not normalized_text:
+        return MemoryWriteResult(
+            status="skipped",
+            operation="create",
+            method="write_observation",
+            memory_role="episodic",
+            accepted_count=0,
+            rejected_count=0,
+            skipped_count=1,
+            abstained=False,
+            retrieval_trace=None,
+            provenance=[],
+            reason="no_raw_episode_text",
+        )
+    if not _memory_enabled(config_manager):
+        return _disabled_write_result(
+            operation="create",
+            method="write_observation",
+            default_role="episodic",
+        )
+    client = _load_sdk_client(config_manager)
+    if client is None:
+        result = MemoryWriteResult(
+            status="abstained",
+            operation="create",
+            method="write_observation",
+            memory_role="episodic",
+            accepted_count=0,
+            rejected_count=0,
+            skipped_count=1,
+            abstained=True,
+            retrieval_trace=None,
+            provenance=[],
+            reason="sdk_unavailable",
+        )
+        _record_memory_write_event(
+            state_db=state_db,
+            result=result,
+            human_id=human_id,
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=actor_id,
+        )
+        return result
+    subject = _subject_for_human_id(human_id)
+    timestamp = _now_iso()
+    normalized_pack = re.sub(r"[^a-z0-9]+", "_", str(domain_pack or "raw_episode").strip().lower()).strip("_") or "raw_episode"
+    observation = {
+        "subject": subject,
+        "predicate": "raw_turn",
+        "value": normalized_text,
+        "operation": "create",
+        "memory_role": "episodic",
+        "retention_class": "episodic_archive",
+        "text": normalized_text,
+    }
+    _record_memory_write_requested_observations(
+        state_db=state_db,
+        operation="create",
+        human_id=human_id,
+        observations=[observation],
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+        memory_role="episodic",
+        summary="Spark memory write requested for raw episode capture.",
+    )
+    raw = _call_sdk_method(
+        client,
+        "write_observation",
+        {
+            "operation": "create",
+            "subject": subject,
+            "predicate": "raw_turn",
+            "value": normalized_text,
+            "text": normalized_text,
+            "memory_role": "episodic",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "timestamp": timestamp,
+            "retention_class": "episodic_archive",
+            "document_time": timestamp,
+            "valid_from": timestamp,
+            "metadata": {
+                "entity_type": "human",
+                "channel_kind": channel_kind,
+                "memory_role": "episodic",
+                "source_surface": "researcher_bridge",
+                "domain_pack": normalized_pack,
+                "raw_episode": True,
+                "normalized_value": normalized_text,
+                "value": normalized_text,
+            },
+        },
+    )
+    result = _normalize_write_result(
+        raw=raw,
+        operation="create",
+        method="write_observation",
+        default_role="episodic",
+    )
+    _record_memory_write_event(
+        state_db=state_db,
+        result=result,
+        human_id=human_id,
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+    )
+    return result
+
+
 def delete_profile_fact_from_memory(
     *,
     config_manager: ConfigManager,
@@ -1305,12 +1583,15 @@ def _write_profile_fact_memory_operation(
         )
         return result
     subject = _subject_for_human_id(human_id)
+    timestamp = _now_iso()
+    retention_class = _profile_fact_retention_class(predicate)
     observation = {
         "subject": subject,
         "predicate": predicate,
         "value": value,
         "operation": operation,
         "memory_role": "current_state",
+        "retention_class": retention_class,
         "text": evidence_text,
     }
     _record_memory_write_requested_observations(
@@ -1334,7 +1615,12 @@ def _write_profile_fact_memory_operation(
             "memory_role": "current_state",
             "session_id": session_id,
             "turn_id": turn_id,
-            "timestamp": _now_iso(),
+            "timestamp": timestamp,
+            "retention_class": retention_class,
+            "document_time": timestamp,
+            "valid_from": None if operation == "delete" else timestamp,
+            "valid_to": timestamp if operation == "delete" else None,
+            "deleted_at": timestamp if operation == "delete" else None,
             "metadata": {
                 "entity_type": "human",
                 "field_name": predicate.rsplit(".", 1)[-1],
@@ -1432,12 +1718,14 @@ def write_telegram_event_to_memory(
         )
         return result
     subject = _subject_for_human_id(human_id)
+    timestamp = _now_iso()
     event_payload = {
         "subject": subject,
         "predicate": predicate,
         "value": value,
         "operation": "event",
         "memory_role": "event",
+        "retention_class": "time_bound_event",
         "text": evidence_text,
     }
     _record_memory_write_requested_events(
@@ -1460,7 +1748,10 @@ def write_telegram_event_to_memory(
             "memory_role": "event",
             "session_id": session_id,
             "turn_id": turn_id,
-            "timestamp": _now_iso(),
+            "timestamp": timestamp,
+            "retention_class": "time_bound_event",
+            "document_time": timestamp,
+            "valid_from": timestamp,
             "metadata": {
                 "entity_type": "human",
                 "channel_kind": channel_kind,
@@ -1515,6 +1806,7 @@ def _write_profile_fact_history_event(
     turn_id: str | None,
     channel_kind: str | None,
 ) -> None:
+    timestamp = _now_iso()
     _call_sdk_method(
         client,
         "write_event",
@@ -1527,7 +1819,10 @@ def _write_profile_fact_history_event(
             "memory_role": "event",
             "session_id": session_id,
             "turn_id": turn_id,
-            "timestamp": _now_iso(),
+            "timestamp": timestamp,
+            "retention_class": _profile_fact_retention_class(predicate),
+            "document_time": timestamp,
+            "valid_from": timestamp,
             "metadata": {
                 "entity_type": "human",
                 "channel_kind": channel_kind,
@@ -1558,6 +1853,7 @@ def _consolidate_telegram_event_summary_observation(
     if not suffix:
         return
     summary_predicate = f"telegram.summary.latest_{suffix}"
+    timestamp = _now_iso()
     _call_sdk_method(
         client,
         "write_observation",
@@ -1570,7 +1866,10 @@ def _consolidate_telegram_event_summary_observation(
             "memory_role": "current_state",
             "session_id": session_id,
             "turn_id": turn_id,
-            "timestamp": _now_iso(),
+            "timestamp": timestamp,
+            "retention_class": "active_state",
+            "document_time": timestamp,
+            "valid_from": timestamp,
             "metadata": {
                 "entity_type": "human",
                 "channel_kind": channel_kind,
@@ -1585,6 +1884,15 @@ def _consolidate_telegram_event_summary_observation(
             },
         },
     )
+
+
+def _profile_fact_retention_class(predicate: str | None) -> str:
+    normalized = str(predicate or "").strip().lower()
+    if normalized.startswith("profile.current_"):
+        return "active_state"
+    if normalized.startswith("telegram.summary.latest_"):
+        return "active_state"
+    return "durable_profile"
 
 
 def read_personality_preferences_from_memory(
@@ -2059,21 +2367,23 @@ def _get_historical_state_with_subject_fallback(
     return last_subject, last_result
 
 
-def _normalize_domain_write_result(*, result: Any, default_role: str) -> dict[str, Any]:
+def _normalize_domain_write_result(*, result: Any, operation: str, default_role: str) -> dict[str, Any]:
     provenance = [
         _domain_record_to_dict(item)
         for item in [*list(getattr(result, "observations", []) or []), *list(getattr(result, "events", []) or [])]
     ]
     accepted = bool(getattr(result, "accepted", False))
     unsupported_reason = _optional_string(getattr(result, "unsupported_reason", None))
-    operation = default_role if default_role == "event" else str(getattr(result, "operation", None) or "update")
+    normalized_operation = str(operation or ("event" if default_role == "event" else "update")).strip().lower() or (
+        "event" if default_role == "event" else "update"
+    )
     memory_role = provenance[0]["memory_role"] if provenance else "unknown"
     if memory_role == "unknown" and accepted:
         memory_role = default_role
     retrieval_trace = dict(getattr(result, "trace", {}) or {})
     contract_reason = memory_contract_reason(
         memory_role=memory_role,
-        operation=operation,
+        operation=normalized_operation,
         allow_unknown=not accepted,
     )
     if contract_reason:
@@ -2086,7 +2396,7 @@ def _normalize_domain_write_result(*, result: Any, default_role: str) -> dict[st
                 scope="domain_write_result",
                 reason=contract_reason,
                 observed_role=memory_role,
-                operation=operation,
+                operation=normalized_operation,
             ),
             "reason": contract_reason,
             "accepted_count": 0,
@@ -2536,13 +2846,15 @@ def _record_memory_write_requested_observations(
     session_id: str | None,
     turn_id: str | None,
     actor_id: str,
+    memory_role: str = "current_state",
+    summary: str = "Spark memory write requested for durable structured facts.",
 ) -> None:
     subject = _subject_for_human_id(human_id)
     record_event(
         state_db,
         event_type="memory_write_requested",
         component="memory_orchestrator",
-        summary="Spark memory write requested for durable structured facts.",
+        summary=summary,
         request_id=turn_id,
         session_id=session_id,
         human_id=human_id,
@@ -2550,13 +2862,13 @@ def _record_memory_write_requested_observations(
         facts={
             "operation": operation,
             "method": "write_observation",
-            "memory_role": "current_state",
+            "memory_role": memory_role,
             "subject": subject,
             "predicate_count": len(observations),
             "predicates": [str(item.get("predicate") or "") for item in observations if item.get("predicate")],
             "observations": observations,
         },
-        provenance={"memory_role": "current_state"},
+        provenance={"memory_role": memory_role},
     )
 
 

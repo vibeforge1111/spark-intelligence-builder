@@ -105,10 +105,10 @@ This repo currently includes:
 Current memory benchmarking program:
 
 - default contenders are `summary_synthesis_memory` and `dual_store_event_calendar_hybrid`
-- current pinned runtime selector is `summary_synthesis_memory`
-- latest clean live `14/14` soak favors `summary_synthesis_memory` at `92/92` overall and `64/64` on selector packs
+- current pinned runtime selector is `dual_store_event_calendar_hybrid`
+- as of April 21, 2026, the latest clean live mixed-session regression (`telegram_mixed_memory_session_churn`) is `16/16` matched with `dual_store_event_calendar_hybrid` as both the declared runtime and the live recommended architecture
 - the latest offline ProductMemory benchmark is tied between `summary_synthesis_memory` and `dual_store_event_calendar_hybrid` at `1156/1266`
-- the runtime is now pinned to `summary_synthesis_memory` because it leads live Telegram and no longer trails offline ProductMemory on accuracy
+- the runtime is now pinned to `dual_store_event_calendar_hybrid` because the live Telegram comparison now recommends it and the active runtime contract matches that leader
 - soak runs now enforce a per-pack timeout so one hung Telegram regression cannot freeze the full benchmark suite
 - benchmark upgrades are not promoted on offline scorecards alone
 - the same contenders must also stay green on live Telegram regression and soak runs
@@ -244,6 +244,33 @@ spark-intelligence bootstrap telegram-agent \
 
 That command reuses the proven pieces already in this repo: config/state bootstrap, local Spark repo autodetection, API-key provider connect, Telegram channel setup, and the supported continuous run command. It also records the supported install profile in local config so the productization phase can see whether a home has actually been bootstrapped or only assembled manually.
 
+For first-time operator setup, the same bootstrap command now also supports:
+
+- `--guide` to print provider choices, BotFather onboarding steps, and discovered chip/path inventory
+- `--interactive` to walk through primary/fallback providers, Telegram onboarding, and chip/path selection
+- `--fallback-provider <provider>` plus matching fallback API/model flags for an explicit backup model path
+- `--activate-chip <chip_key>` and `--pin-chip <chip_key>` during bootstrap
+- `--set-path <path_key>` during bootstrap
+- `--chip-root <path>` and `--path-root <path>` when the Spark ecosystem repos are not already in the default autodiscovery locations
+
+Example:
+
+```bash
+spark-intelligence bootstrap telegram-agent --home .tmp-home-live-telegram-real --guide
+spark-intelligence bootstrap telegram-agent --home .tmp-home-live-telegram-real --interactive
+spark-intelligence bootstrap telegram-agent \
+  --provider minimax \
+  --api-key-env MINIMAX_API_KEY \
+  --model MiniMax-M2.7 \
+  --base-url https://api.minimax.io/v1 \
+  --fallback-provider anthropic \
+  --fallback-api-key-env ANTHROPIC_API_KEY \
+  --fallback-model claude-opus-4-6 \
+  --bot-token-env TELEGRAM_BOT_TOKEN \
+  --pin-chip startup-yc \
+  --set-path startup-operator
+```
+
 The matching supported always-on run wrapper on Windows is now:
 
 ```bash
@@ -332,15 +359,15 @@ For local recovery on Windows, use [`start-telegram.ps1`](C:/Users/USER/Desktop/
 .\start-telegram.ps1
 ```
 
-Production ingress ownership rule:
+Historical Builder polling rule:
 
 - only one runtime may long-poll one Telegram bot token at a time
-- today, the implemented production Telegram ingress is still `spark-intelligence` Builder, not `spark-swarm`
+- the older live path used `spark-intelligence` Builder as the Telegram poller
 - do not run a second Telegram poller against the same bot token from another runtime, browser automation surface, or test harness
-- if `spark-swarm` later gains real Telegram ingress ownership, Builder must stop polling that same bot token and remain downstream for reasoning, chips, and governed browser execution
-- if direct Builder Telegram testing is needed alongside another ingress owner later, use a separate staging bot token instead of dual-polling the production bot
+- the current stable production path should use the dedicated `spark-telegram-bot` webhook gateway instead of Builder-owned polling
+- if direct Builder Telegram testing is needed alongside another ingress owner, use a separate staging bot token instead of dual-polling the production bot
 
-Live Telegram system shape:
+Historical Builder-owned Telegram system shape:
 
 - Telegram DMs land in Builder's Telegram runtime first
 - Builder owns pairing, identity, operator controls, channel delivery, and bot-token polling
@@ -545,6 +572,8 @@ spark-intelligence attachments snapshot --json
 spark-intelligence attachments run-hook evaluate --chip-key startup-yc --payload-json "{\"situation\":\"How should we improve retention?\"}" --json
 spark-intelligence agent inspect
 ```
+
+Those same chip and path choices can now be pulled into the initial Telegram installer path through `bootstrap telegram-agent`, so a new user can land on a ready provider + bot + attachment setup instead of stopping after only token and API configuration.
 
 The attachment snapshot is written to `SPARK_INTELLIGENCE_HOME/attachments.snapshot.json` and mirrored into SQLite runtime state so external Spark repos can consume the current attachment set without importing this repo's internals.
 

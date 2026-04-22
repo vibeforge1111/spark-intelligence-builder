@@ -19,6 +19,8 @@ from spark_intelligence.memory.orchestrator import (
     retrieve_memory_events_in_memory,
     run_memory_sdk_smoke_test,
     write_profile_fact_to_memory,
+    write_raw_episode_to_memory,
+    write_structured_evidence_to_memory,
     write_personality_preferences_to_memory,
     write_telegram_event_to_memory,
 )
@@ -99,6 +101,8 @@ __all__ = [
     "run_telegram_memory_architecture_soak",
     "run_telegram_memory_regression",
     "write_profile_fact_to_memory",
+    "write_raw_episode_to_memory",
+    "write_structured_evidence_to_memory",
     "write_telegram_event_to_memory",
     "run_sdk_maintenance_report",
     "run_shadow_report",

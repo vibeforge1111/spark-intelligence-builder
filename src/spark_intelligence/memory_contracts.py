@@ -3,16 +3,28 @@ from __future__ import annotations
 from typing import Any
 
 
-ALLOWED_MEMORY_ROLES = frozenset({"current_state", "event"})
+ALLOWED_MEMORY_ROLES = frozenset(
+    {
+        "current_state",
+        "state_deletion",
+        "structured_evidence",
+        "episodic",
+        "belief",
+        "event",
+        "aggregate",
+        "ambiguity",
+    }
+)
 READ_METHOD_EXPECTED_MEMORY_ROLE = {
-    "get_current_state": "current_state",
-    "get_historical_state": "current_state",
-    "retrieve_events": "event",
+    "get_current_state": frozenset({"current_state", "state_deletion"}),
+    "get_historical_state": frozenset({"structured_evidence", "state_deletion"}),
+    "retrieve_events": frozenset({"event"}),
 }
 WRITE_OPERATION_EXPECTED_MEMORY_ROLE = {
-    "update": "current_state",
-    "delete": "current_state",
-    "event": "event",
+    "update": frozenset({"current_state"}),
+    "delete": frozenset({"current_state", "state_deletion"}),
+    "event": frozenset({"event"}),
+    "create": frozenset({"structured_evidence", "episodic"}),
 }
 MEMORY_CONTRACT_REASONS = frozenset(
     {
@@ -50,7 +62,7 @@ def effective_memory_role(
     return role
 
 
-def expected_memory_role(*, operation: str | None = None, method: str | None = None) -> str | None:
+def expected_memory_role(*, operation: str | None = None, method: str | None = None) -> frozenset[str] | None:
     if operation:
         return WRITE_OPERATION_EXPECTED_MEMORY_ROLE.get(str(operation).strip().lower())
     if method:
@@ -72,7 +84,7 @@ def memory_contract_reason(
     if observed == "unknown":
         return None if allow_unknown else "invalid_memory_role"
     expected = expected_memory_role(operation=operation, method=method)
-    if expected and observed != expected:
+    if expected and observed not in expected:
         return "memory_role_operation_mismatch" if operation else "memory_role_method_mismatch"
     return None
 
@@ -92,7 +104,7 @@ def annotate_contract_trace(
     payload["observed_memory_role"] = observed_role
     expected = expected_memory_role(operation=operation, method=method)
     if expected:
-        payload["expected_memory_role"] = expected
+        payload["expected_memory_roles"] = sorted(expected)
     if operation:
         payload["operation"] = operation
     if method:
