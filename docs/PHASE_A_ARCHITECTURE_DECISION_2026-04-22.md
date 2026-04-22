@@ -33,8 +33,9 @@
 | Surface | `summary_synthesis_memory` | `dual_store_event_calendar_hybrid` | Takeaway |
 |---|---:|---:|---|
 | BEAM public `128K` | `400/400` (`100.00%`) | `66/400` (`16.50%`) | Summary-synthesis is decisively stronger on the first completed external lane |
-| LoCoMo | in progress | in progress | waiting on fresh reruns |
-| LongMemEval_s | in progress | in progress | rerunning after a substrate sort-key fix |
+| LoCoMo | in progress | `163/1986` (`8.21%`) | Dual-store fresh rerun is complete; summary-synthesis still running |
+| LongMemEval_s | `468/500` (`93.60%`) | in progress | Summary-synthesis fresh rerun is complete; dual-store still running |
+| BEAM public `500K` | in progress | in progress | launched after the first LongMemEval slot freed up |
 
 ### Internal regression details
 
@@ -77,9 +78,12 @@ Observed on this machine during this turn:
   `C:\Users\USER\Desktop\domain-chip-memory\.gitignore`
 - fresh Phase A external artifacts now exist for:
   - `BEAM` public `128K`
+  - `LoCoMo` for `dual_store_event_calendar_hybrid`
+  - `LongMemEval_s` for `summary_synthesis_memory`
 - fresh reruns are still active for:
-  - `LoCoMo`
-  - `LongMemEval_s`
+  - `LoCoMo` for `summary_synthesis_memory`
+  - `LongMemEval_s` for `dual_store_event_calendar_hybrid`
+  - `BEAM` public `500K` for both contenders
 
 Two substrate fixes were required to get the external suite moving on current HEAD:
 
@@ -98,6 +102,8 @@ Current evidence says:
 - live internal regression still prefers `summary_synthesis_memory`
 - current runtime remains pinned to `dual_store_event_calendar_hybrid`
 - the first completed external lane (`BEAM` public `128K`) strongly favors `summary_synthesis_memory`
+- the next completed external lane (`LongMemEval_s`) currently favors `summary_synthesis_memory`
+- the only finished LoCoMo lane so far shows `dual_store_event_calendar_hybrid` is very weak on that surface
 - `architecture_promotion_gap` still reproduces on fresh artifacts
 
 That is enough to confirm the gap is real and to increase confidence in `summary_synthesis_memory`, but not enough to close Phase A mechanically because the remaining external lanes are still running.
@@ -126,3 +132,7 @@ That is enough to confirm the gap is real and to increase confidence in `summary
   `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\summary_synthesis_memory\beam_128k.json`
 - External BEAM `128K` dual-store:
   `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\dual_store_event_calendar_hybrid\beam_128k.json`
+- External LoCoMo dual-store:
+  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\dual_store_event_calendar_hybrid\locomo10.json`
+- External LongMemEval_s summary-synthesis:
+  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\summary_synthesis_memory\longmemeval_s.json`
