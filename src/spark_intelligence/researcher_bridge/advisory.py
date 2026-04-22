@@ -37,6 +37,7 @@ from spark_intelligence.capability_router import build_capability_router_prompt_
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.harness_registry import build_harness_prompt_context
 from spark_intelligence.memory import (
+    delete_profile_fact_from_memory,
     explain_memory_answer_in_memory,
     inspect_human_memory_in_memory,
     lookup_current_state_in_memory,
@@ -44,6 +45,21 @@ from spark_intelligence.memory import (
     retrieve_memory_evidence_in_memory,
     retrieve_memory_events_in_memory,
     write_profile_fact_to_memory,
+    write_telegram_event_to_memory,
+)
+from spark_intelligence.memory.episodic_events import (
+    build_telegram_memory_event_observation_answer,
+    build_telegram_memory_event_query_answer,
+    detect_telegram_memory_event_observation,
+    detect_telegram_memory_event_query,
+    filter_telegram_memory_event_records,
+    telegram_event_summary_predicate,
+)
+from spark_intelligence.memory.generic_observations import (
+    build_telegram_generic_deletion_answer,
+    build_telegram_generic_observation_answer,
+    detect_telegram_generic_deletion,
+    detect_telegram_generic_observation,
 )
 from spark_intelligence.memory.profile_facts import (
     build_profile_fact_explanation_answer,
@@ -3428,6 +3444,10 @@ def build_researcher_reply(
     observation_record = None
     detected_profile_fact = None
     detected_profile_fact_query = None
+    detected_memory_event = None
+    detected_memory_event_query = None
+    detected_generic_memory_deletion = None
+    detected_generic_memory_observation = None
     try:
         personality_profile = load_personality_profile(
             human_id=human_id,
@@ -3504,6 +3524,8 @@ def build_researcher_reply(
                     query=detected_profile_fact_query,
                     value=fact_value,
                 )
+            elif detected_memory_event_query is None:
+                detected_memory_event_query = detect_telegram_memory_event_query(user_message)
         except Exception:
             pass
 
@@ -3550,6 +3572,56 @@ def build_researcher_reply(
                     turn_id=request_id,
                     channel_kind=channel_kind,
                 )
+            elif config_manager.get_path("spark.memory.enabled", default=False):
+                detected_memory_event = detect_telegram_memory_event_observation(user_message)
+                if detected_memory_event is not None:
+                    write_telegram_event_to_memory(
+                        config_manager=config_manager,
+                        state_db=state_db,
+                        human_id=human_id,
+                        predicate=detected_memory_event.predicate,
+                        value=detected_memory_event.value,
+                        evidence_text=detected_memory_event.evidence_text,
+                        event_name=detected_memory_event.event_name,
+                        session_id=session_id,
+                        turn_id=request_id,
+                        channel_kind=channel_kind,
+                    )
+                else:
+                    detected_generic_memory_deletion = detect_telegram_generic_deletion(user_message)
+                    if detected_generic_memory_deletion is not None:
+                        generic_delete_result = delete_profile_fact_from_memory(
+                            config_manager=config_manager,
+                            state_db=state_db,
+                            human_id=human_id,
+                            predicate=detected_generic_memory_deletion.predicate,
+                            evidence_text=detected_generic_memory_deletion.evidence_text,
+                            fact_name=detected_generic_memory_deletion.fact_name,
+                            session_id=session_id,
+                            turn_id=request_id,
+                            channel_kind=channel_kind,
+                            actor_id="telegram_generic_observation_loader",
+                        )
+                        if generic_delete_result.accepted_count <= 0:
+                            detected_generic_memory_deletion = None
+                    else:
+                        detected_generic_memory_observation = detect_telegram_generic_observation(user_message)
+                    if detected_generic_memory_observation is not None:
+                        generic_write_result = write_profile_fact_to_memory(
+                            config_manager=config_manager,
+                            state_db=state_db,
+                            human_id=human_id,
+                            predicate=detected_generic_memory_observation.predicate,
+                            value=detected_generic_memory_observation.value,
+                            evidence_text=detected_generic_memory_observation.evidence_text,
+                            fact_name=detected_generic_memory_observation.fact_name,
+                            session_id=session_id,
+                            turn_id=request_id,
+                            channel_kind=channel_kind,
+                            actor_id="telegram_generic_observation_loader",
+                        )
+                        if generic_write_result.accepted_count <= 0:
+                            detected_generic_memory_observation = None
         except Exception:
             pass
 
@@ -3580,6 +3652,10 @@ def build_researcher_reply(
         or observation_record
         or detected_profile_fact
         or detected_profile_fact_query
+        or detected_memory_event
+        or detected_memory_event_query
+        or detected_generic_memory_deletion
+        or detected_generic_memory_observation
     ):
         source_kind = "personality_profile"
         if detected_deltas:
@@ -3590,6 +3666,14 @@ def build_researcher_reply(
             source_kind = "profile_fact_update"
         elif detected_profile_fact_query is not None:
             source_kind = "profile_fact_query"
+        elif detected_memory_event is not None:
+            source_kind = "telegram_event_update"
+        elif detected_memory_event_query is not None:
+            source_kind = "telegram_event_query"
+        elif detected_generic_memory_deletion is not None:
+            source_kind = "generic_memory_deletion"
+        elif detected_generic_memory_observation is not None:
+            source_kind = "generic_memory_observation"
         elif personality_query_kind != "none":
             source_kind = f"personality_query_{personality_query_kind}"
         elif evolved_deltas:
@@ -3647,6 +3731,47 @@ def build_researcher_reply(
                         "message_text": str(user_message or "").strip(),
                     }
                     if detected_profile_fact_query is not None
+                    else None
+                ),
+                "detected_memory_event": (
+                    {
+                        "predicate": detected_memory_event.predicate,
+                        "value": detected_memory_event.value,
+                        "event_name": detected_memory_event.event_name,
+                        "label": detected_memory_event.label,
+                    }
+                    if detected_memory_event is not None
+                    else None
+                ),
+                "detected_memory_event_query": (
+                    {
+                        "predicate": detected_memory_event_query.predicate,
+                        "label": detected_memory_event_query.label,
+                        "query_kind": detected_memory_event_query.query_kind,
+                        "message_text": str(user_message or "").strip(),
+                    }
+                    if detected_memory_event_query is not None
+                    else None
+                ),
+                "detected_generic_memory_observation": (
+                    {
+                        "predicate": detected_generic_memory_observation.predicate,
+                        "value": detected_generic_memory_observation.value,
+                        "fact_name": detected_generic_memory_observation.fact_name,
+                        "label": detected_generic_memory_observation.label,
+                        "message_text": str(user_message or "").strip(),
+                    }
+                    if detected_generic_memory_observation is not None
+                    else None
+                ),
+                "detected_generic_memory_deletion": (
+                    {
+                        "predicate": detected_generic_memory_deletion.predicate,
+                        "fact_name": detected_generic_memory_deletion.fact_name,
+                        "label": detected_generic_memory_deletion.label,
+                        "message_text": str(user_message or "").strip(),
+                    }
+                    if detected_generic_memory_deletion is not None
                     else None
                 ),
                 "evolved_deltas": evolved_deltas or {},
@@ -3721,6 +3846,190 @@ def build_researcher_reply(
             config_path=None,
             attachment_context=attachment_context,
             routing_decision="memory_profile_fact_observation",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+
+    if detected_memory_event is not None:
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_telegram_event_update",
+            routing_decision="memory_telegram_event_observation",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = build_telegram_memory_event_observation_answer(observation=detected_memory_event)
+        evidence_summary = (
+            "status=memory_telegram_event_update "
+            f"predicate={detected_memory_event.predicate or 'unknown'}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge acknowledged a Telegram event update directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_telegram_event_observation",
+            facts=_bridge_event_facts(
+                routing_decision="memory_telegram_event_observation",
+                bridge_mode="memory_telegram_event_update",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "event_name": detected_memory_event.event_name,
+                    "predicate": detected_memory_event.predicate,
+                    "value": detected_memory_event.value,
+                    "label": detected_memory_event.label,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_telegram_event_update",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_telegram_event_observation",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+
+    if detected_generic_memory_observation is not None:
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_generic_observation_update",
+            routing_decision="memory_generic_observation",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = build_telegram_generic_observation_answer(
+            observation=detected_generic_memory_observation
+        )
+        evidence_summary = (
+            "status=memory_generic_observation_update "
+            f"predicate={detected_generic_memory_observation.predicate or 'unknown'}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge acknowledged a generic Telegram memory observation directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_generic_observation",
+            facts=_bridge_event_facts(
+                routing_decision="memory_generic_observation",
+                bridge_mode="memory_generic_observation_update",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "fact_name": detected_generic_memory_observation.fact_name,
+                    "predicate": detected_generic_memory_observation.predicate,
+                    "value": detected_generic_memory_observation.value,
+                    "label": detected_generic_memory_observation.label,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_generic_observation_update",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_generic_observation",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+
+    if detected_generic_memory_deletion is not None:
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_generic_observation_delete",
+            routing_decision="memory_generic_observation_delete",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = build_telegram_generic_deletion_answer(
+            deletion=detected_generic_memory_deletion
+        )
+        evidence_summary = (
+            "status=memory_generic_observation_delete "
+            f"predicate={detected_generic_memory_deletion.predicate or 'unknown'}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge acknowledged a generic Telegram memory deletion directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_generic_observation_delete",
+            facts=_bridge_event_facts(
+                routing_decision="memory_generic_observation_delete",
+                bridge_mode="memory_generic_observation_delete",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "fact_name": detected_generic_memory_deletion.fact_name,
+                    "predicate": detected_generic_memory_deletion.predicate,
+                    "label": detected_generic_memory_deletion.label,
+                    "operation": "delete",
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_generic_observation_delete",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_generic_observation_delete",
             active_chip_key=None,
             active_chip_task_type=None,
             active_chip_evaluate_used=False,
@@ -4367,6 +4676,182 @@ def build_researcher_reply(
             config_path=None,
             attachment_context=attachment_context,
             routing_decision="memory_profile_identity_summary",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+    if detected_memory_event_query is not None and detected_memory_event_query.query_kind == "latest_event":
+        memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
+        summary_predicate = detected_memory_event_query.summary_predicate or telegram_event_summary_predicate(
+            detected_memory_event_query.predicate
+        )
+        latest_records: list[dict[str, Any]] = []
+        latest_read_method = "retrieve_events"
+        if summary_predicate:
+            latest_lookup = lookup_current_state_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                subject=memory_subject,
+                predicate=summary_predicate,
+                actor_id="researcher_bridge",
+            )
+            if not latest_lookup.read_result.abstained and latest_lookup.read_result.records:
+                latest_records = list(latest_lookup.read_result.records)
+                latest_read_method = "get_current_state"
+        if not latest_records:
+            event_lookup = retrieve_memory_events_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                query=str(user_message or "").strip() or f"What {detected_memory_event_query.label} do I have?",
+                subject=memory_subject,
+                predicate=detected_memory_event_query.predicate,
+                limit=8,
+                actor_id="researcher_bridge",
+            )
+            if not event_lookup.read_result.abstained and event_lookup.read_result.records:
+                latest_records = filter_telegram_memory_event_records(
+                    query=detected_memory_event_query,
+                    records=list(event_lookup.read_result.records),
+                )
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_telegram_event_latest",
+            routing_decision="memory_telegram_event_latest_query",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = build_telegram_memory_event_query_answer(
+            query=detected_memory_event_query,
+            records=latest_records,
+        )
+        evidence_summary = (
+            "status=memory_telegram_event_latest "
+            f"predicate={detected_memory_event_query.predicate or 'telegram.event.*'} "
+            f"record_count={len(latest_records)} "
+            f"read_method={latest_read_method}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered a latest Telegram event query directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_telegram_event_latest_query",
+            facts=_bridge_event_facts(
+                routing_decision="memory_telegram_event_latest_query",
+                bridge_mode="memory_telegram_event_latest",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "predicate": detected_memory_event_query.predicate,
+                    "summary_predicate": summary_predicate,
+                    "label": detected_memory_event_query.label,
+                    "record_count": len(latest_records),
+                    "read_method": latest_read_method,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_telegram_event_latest",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_telegram_event_latest_query",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+    if detected_memory_event_query is not None:
+        memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
+        event_lookup = retrieve_memory_events_in_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            query=str(user_message or "").strip() or "What events did I mention?",
+            subject=memory_subject,
+            predicate=detected_memory_event_query.predicate,
+            limit=8,
+            actor_id="researcher_bridge",
+        )
+        event_records: list[dict[str, Any]] = []
+        if not event_lookup.read_result.abstained and event_lookup.read_result.records:
+            event_records = filter_telegram_memory_event_records(
+                query=detected_memory_event_query,
+                records=list(event_lookup.read_result.records),
+            )
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_telegram_event_history",
+            routing_decision="memory_telegram_event_query",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = build_telegram_memory_event_query_answer(
+            query=detected_memory_event_query,
+            records=event_records,
+        )
+        evidence_summary = (
+            "status=memory_telegram_event_history "
+            f"predicate={detected_memory_event_query.predicate or 'telegram.event.*'} "
+            f"event_count={len(event_records)}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered a Telegram event query directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_telegram_event_query",
+            facts=_bridge_event_facts(
+                routing_decision="memory_telegram_event_query",
+                bridge_mode="memory_telegram_event_history",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "predicate": detected_memory_event_query.predicate,
+                    "label": detected_memory_event_query.label,
+                    "event_record_count": len(event_records),
+                    "read_method": "retrieve_events",
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_telegram_event_history",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_telegram_event_query",
             active_chip_key=None,
             active_chip_task_type=None,
             active_chip_evaluate_used=False,

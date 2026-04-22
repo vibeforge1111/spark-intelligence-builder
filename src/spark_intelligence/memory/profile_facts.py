@@ -293,6 +293,19 @@ class ProfileFactQuery:
     predicate_prefix: str | None = None
 
 
+_GENERIC_PROFILE_QUERY_SPECS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
+    ("profile.cofounder_name", "profile_cofounder_name", "cofounder", ("cofounder",)),
+    ("profile.mentor_name", "profile_mentor_name", "mentor", ("mentor",)),
+    ("profile.manager_name", "profile_manager_name", "manager", ("manager",)),
+    ("profile.assistant_name", "profile_assistant_name", "assistant", ("assistant",)),
+    ("profile.partner_name", "profile_partner_name", "partner", ("partner", "wife", "husband")),
+    ("profile.mother_name", "profile_mother_name", "mother", ("mother",)),
+    ("profile.father_name", "profile_father_name", "father", ("father",)),
+    ("profile.sister_name", "profile_sister_name", "sister", ("sister",)),
+    ("profile.brother_name", "profile_brother_name", "brother", ("brother",)),
+)
+
+
 def _history_fact_query(
     *,
     predicate: str,
@@ -306,6 +319,81 @@ def _history_fact_query(
         label=label,
         query_kind=query_kind,
     )
+
+
+def _generic_profile_fact_query(
+    *,
+    predicate: str,
+    fact_name: str,
+    label: str,
+    query_kind: str = "single_fact",
+) -> ProfileFactQuery:
+    return ProfileFactQuery(
+        predicate=predicate,
+        fact_name=fact_name,
+        label=label,
+        query_kind=query_kind,
+    )
+
+
+def _match_generic_profile_history_query(text: str) -> ProfileFactQuery | None:
+    for predicate, fact_name, label, aliases in _GENERIC_PROFILE_QUERY_SPECS:
+        if any(
+            phrase in text
+            for alias in aliases
+            for phrase in (
+                f"who was my {alias} before",
+                f"what was my previous {alias}",
+                f"what {alias} did you have for me before",
+            )
+        ):
+            return _generic_profile_fact_query(
+                predicate=predicate,
+                fact_name=fact_name,
+                label=label,
+                query_kind="fact_history",
+            )
+    return None
+
+
+def _match_generic_profile_event_history_query(text: str) -> ProfileFactQuery | None:
+    for predicate, fact_name, label, aliases in _GENERIC_PROFILE_QUERY_SPECS:
+        if any(
+            phrase in text
+            for alias in aliases
+            for phrase in (
+                f"what memory events do you have about my {alias}",
+                f"show my {alias} history",
+                f"what {alias} history do you have for me",
+            )
+        ):
+            return _generic_profile_fact_query(
+                predicate=predicate,
+                fact_name=fact_name,
+                label=label,
+                query_kind="event_history",
+            )
+    return None
+
+
+def _match_generic_profile_current_query(text: str) -> ProfileFactQuery | None:
+    for predicate, fact_name, label, aliases in _GENERIC_PROFILE_QUERY_SPECS:
+        if any(
+            phrase in text
+            for alias in aliases
+            for phrase in (
+                f"who is my {alias}",
+                f"what is my {alias} name",
+                f"what's my {alias} name",
+                f"what {alias} do you have for me",
+            )
+        ):
+            return _generic_profile_fact_query(
+                predicate=predicate,
+                fact_name=fact_name,
+                label=label,
+            )
+    return None
 
 
 def _detect_profile_fact_history_query(text: str) -> ProfileFactQuery | None:
@@ -382,6 +470,187 @@ def _detect_profile_fact_history_query(text: str) -> ProfileFactQuery | None:
             label="company you founded",
             query_kind="fact_history",
         )
+    generic_history_query = _match_generic_profile_history_query(text)
+    if generic_history_query is not None:
+        return generic_history_query
+    if any(
+        phrase in text
+        for phrase in (
+            "what was my previous plan",
+            "what plan did i have before",
+            "what was our previous plan",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_plan",
+            fact_name="profile_current_plan",
+            label="current plan",
+            query_kind="fact_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what was my previous focus",
+            "what was our previous priority",
+            "what priority did we have before",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_focus",
+            fact_name="profile_current_focus",
+            label="current focus",
+            query_kind="fact_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what was my previous decision",
+            "what was our previous decision",
+            "what did we decide before",
+            "what decision did we make before",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_decision",
+            fact_name="profile_current_decision",
+            label="current decision",
+            query_kind="fact_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what was my previous blocker",
+            "what was our previous blocker",
+            "what was our previous bottleneck",
+            "what were we blocked on before",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_blocker",
+            fact_name="profile_current_blocker",
+            label="current blocker",
+            query_kind="fact_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what was my previous status",
+            "what was our previous status",
+            "what was the project status before",
+            "what status did we have before",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_status",
+            fact_name="profile_current_status",
+            label="current status",
+            query_kind="fact_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what was my previous commitment",
+            "what was our previous commitment",
+            "what did we commit to before",
+            "what was the commitment before",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_commitment",
+            fact_name="profile_current_commitment",
+            label="current commitment",
+            query_kind="fact_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what was my previous milestone",
+            "what was our previous milestone",
+            "what was the milestone before",
+            "what milestone did we have before",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_milestone",
+            fact_name="profile_current_milestone",
+            label="current milestone",
+            query_kind="fact_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what was my previous risk",
+            "what was our previous risk",
+            "what was the risk before",
+            "what risk did we have before",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_risk",
+            fact_name="profile_current_risk",
+            label="current risk",
+            query_kind="fact_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what was my previous dependency",
+            "what was our previous dependency",
+            "what was the dependency before",
+            "what dependency did we have before",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_dependency",
+            fact_name="profile_current_dependency",
+            label="current dependency",
+            query_kind="fact_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what was my previous constraint",
+            "what was our previous constraint",
+            "what was the constraint before",
+            "what constraint did we have before",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_constraint",
+            fact_name="profile_current_constraint",
+            label="current constraint",
+            query_kind="fact_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what was my previous assumption",
+            "what was our previous assumption",
+            "what was the assumption before",
+            "what assumption did we have before",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_assumption",
+            fact_name="profile_current_assumption",
+            label="current assumption",
+            query_kind="fact_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what was my previous owner",
+            "what was our previous owner",
+            "what was the owner before",
+            "who owned this before",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_owner",
+            fact_name="profile_current_owner",
+            label="current owner",
+            query_kind="fact_history",
+        )
     return None
 
 
@@ -427,6 +696,200 @@ def _detect_profile_fact_event_history_query(text: str) -> ProfileFactQuery | No
             predicate="profile.timezone",
             fact_name="profile_timezone",
             label="timezone",
+            query_kind="event_history",
+        )
+    generic_event_history_query = _match_generic_profile_event_history_query(text)
+    if generic_event_history_query is not None:
+        return generic_event_history_query
+    if any(
+        phrase in text
+        for phrase in (
+            "what memory events do you have about my current plan",
+            "show my plan history",
+            "what plan history do you have for me",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_plan",
+            fact_name="profile_current_plan",
+            label="current plan",
+            query_kind="event_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what memory events do you have about my current focus",
+            "what memory events do you have about our priority",
+            "show my focus history",
+            "show our priority history",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_focus",
+            fact_name="profile_current_focus",
+            label="current focus",
+            query_kind="event_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what memory events do you have about my current decision",
+            "what memory events do you have about our decision",
+            "show my decision history",
+            "show our decision history",
+            "what decision history do you have for me",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_decision",
+            fact_name="profile_current_decision",
+            label="current decision",
+            query_kind="event_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what memory events do you have about my current blocker",
+            "what memory events do you have about our blocker",
+            "what memory events do you have about our bottleneck",
+            "show my blocker history",
+            "show our blocker history",
+            "show our bottleneck history",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_blocker",
+            fact_name="profile_current_blocker",
+            label="current blocker",
+            query_kind="event_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what memory events do you have about my current status",
+            "what memory events do you have about our status",
+            "what memory events do you have about the project status",
+            "show my status history",
+            "show our status history",
+            "show the project status history",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_status",
+            fact_name="profile_current_status",
+            label="current status",
+            query_kind="event_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what memory events do you have about my current commitment",
+            "what memory events do you have about our commitment",
+            "show my commitment history",
+            "show our commitment history",
+            "show the commitment history",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_commitment",
+            fact_name="profile_current_commitment",
+            label="current commitment",
+            query_kind="event_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what memory events do you have about my current milestone",
+            "what memory events do you have about our milestone",
+            "show my milestone history",
+            "show our milestone history",
+            "show the milestone history",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_milestone",
+            fact_name="profile_current_milestone",
+            label="current milestone",
+            query_kind="event_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what memory events do you have about my current risk",
+            "what memory events do you have about our risk",
+            "show my risk history",
+            "show our risk history",
+            "show the risk history",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_risk",
+            fact_name="profile_current_risk",
+            label="current risk",
+            query_kind="event_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what memory events do you have about my current dependency",
+            "what memory events do you have about our dependency",
+            "show my dependency history",
+            "show our dependency history",
+            "show the dependency history",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_dependency",
+            fact_name="profile_current_dependency",
+            label="current dependency",
+            query_kind="event_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what memory events do you have about my current constraint",
+            "what memory events do you have about our constraint",
+            "show my constraint history",
+            "show our constraint history",
+            "show the constraint history",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_constraint",
+            fact_name="profile_current_constraint",
+            label="current constraint",
+            query_kind="event_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what memory events do you have about my current assumption",
+            "what memory events do you have about our assumption",
+            "show my assumption history",
+            "show our assumption history",
+            "show the assumption history",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_assumption",
+            fact_name="profile_current_assumption",
+            label="current assumption",
+            query_kind="event_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what memory events do you have about my current owner",
+            "what memory events do you have about our owner",
+            "show my owner history",
+            "show our owner history",
+            "show the owner history",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_owner",
+            fact_name="profile_current_owner",
+            label="current owner",
             query_kind="event_history",
         )
     return None
@@ -699,6 +1162,219 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
             fact_name="profile_current_mission",
             label="current mission",
         )
+    generic_current_query = _match_generic_profile_current_query(text)
+    if generic_current_query is not None:
+        return generic_current_query
+    if any(
+        phrase in text
+        for phrase in (
+            "what is my current plan",
+            "what's my current plan",
+            "what do you have as my current plan",
+            "what plan do you have for me",
+            "what are we planning",
+            "what do we plan to do",
+        )
+    ):
+        return ProfileFactQuery(
+            predicate="profile.current_plan",
+            fact_name="profile_current_plan",
+            label="current plan",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what is my current focus",
+            "what's my current focus",
+            "what is our priority",
+            "what's our priority",
+            "what are we focusing on",
+            "what do you have as my current focus",
+        )
+    ):
+        return ProfileFactQuery(
+            predicate="profile.current_focus",
+            fact_name="profile_current_focus",
+            label="current focus",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what is my current decision",
+            "what's my current decision",
+            "what is our current decision",
+            "what's our current decision",
+            "what did we decide",
+            "what have we decided",
+            "what decision did we make",
+            "what are we going with",
+        )
+    ):
+        return ProfileFactQuery(
+            predicate="profile.current_decision",
+            fact_name="profile_current_decision",
+            label="current decision",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what is my current blocker",
+            "what's my current blocker",
+            "what is our current blocker",
+            "what's our current blocker",
+            "what is our bottleneck",
+            "what's our bottleneck",
+            "what are we blocked on",
+        )
+    ):
+        return ProfileFactQuery(
+            predicate="profile.current_blocker",
+            fact_name="profile_current_blocker",
+            label="current blocker",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what is my current status",
+            "what's my current status",
+            "what is our current status",
+            "what's our current status",
+            "what is the project status",
+            "what's the project status",
+            "where do things stand",
+        )
+    ):
+        return ProfileFactQuery(
+            predicate="profile.current_status",
+            fact_name="profile_current_status",
+            label="current status",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what is my current commitment",
+            "what's my current commitment",
+            "what is our current commitment",
+            "what's our current commitment",
+            "what is our commitment",
+            "what's our commitment",
+            "what did we commit to",
+            "what commitment do we have",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_commitment",
+            fact_name="profile_current_commitment",
+            label="current commitment",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what is my current milestone",
+            "what's my current milestone",
+            "what is our current milestone",
+            "what's our current milestone",
+            "what is our milestone",
+            "what's our milestone",
+            "what is the milestone",
+            "what's the milestone",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_milestone",
+            fact_name="profile_current_milestone",
+            label="current milestone",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what is my current risk",
+            "what's my current risk",
+            "what is our current risk",
+            "what's our current risk",
+            "what is our risk",
+            "what's our risk",
+            "what is the risk",
+            "what's the risk",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_risk",
+            fact_name="profile_current_risk",
+            label="current risk",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what is my current dependency",
+            "what's my current dependency",
+            "what is our current dependency",
+            "what's our current dependency",
+            "what is our dependency",
+            "what's our dependency",
+            "what is the dependency",
+            "what's the dependency",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_dependency",
+            fact_name="profile_current_dependency",
+            label="current dependency",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what is my current constraint",
+            "what's my current constraint",
+            "what is our current constraint",
+            "what's our current constraint",
+            "what is our constraint",
+            "what's our constraint",
+            "what is the constraint",
+            "what's the constraint",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_constraint",
+            fact_name="profile_current_constraint",
+            label="current constraint",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what is my current assumption",
+            "what's my current assumption",
+            "what is our current assumption",
+            "what's our current assumption",
+            "what is our assumption",
+            "what's our assumption",
+            "what is the assumption",
+            "what's the assumption",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_assumption",
+            fact_name="profile_current_assumption",
+            label="current assumption",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what is my current owner",
+            "what's my current owner",
+            "what is our current owner",
+            "what's our current owner",
+            "what is our owner",
+            "what's our owner",
+            "who is the owner",
+            "who owns this",
+        )
+    ):
+        return _generic_profile_fact_query(
+            predicate="profile.current_owner",
+            fact_name="profile_current_owner",
+            label="current owner",
+        )
     if normalized_question in {
         "what startup did i create",
         "what company did i found",
@@ -883,6 +1559,106 @@ def build_profile_fact_history_answer(
         if normalized_current and normalized_current != normalized_previous:
             return _ensure_sentence(f"Before {normalized_current}, your timezone was {normalized_previous}")
         return _ensure_sentence(f"An earlier saved timezone was {normalized_previous}")
+    if predicate == "profile.current_plan":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before your current plan was to {normalized_current}, it was to {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved current plan was to {normalized_previous}")
+    if predicate == "profile.current_focus":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before your current focus was {normalized_current}, it was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved current focus was {normalized_previous}")
+    if predicate == "profile.current_decision":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(
+                f"Before your current decision was {normalized_current}, it was {normalized_previous}"
+            )
+        return _ensure_sentence(f"An earlier saved current decision was {normalized_previous}")
+    if predicate == "profile.current_blocker":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(
+                f"Before your current blocker was {normalized_current}, it was {normalized_previous}"
+            )
+        return _ensure_sentence(f"An earlier saved current blocker was {normalized_previous}")
+    if predicate == "profile.current_status":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(
+                f"Before your current status was {normalized_current}, it was {normalized_previous}"
+            )
+        return _ensure_sentence(f"An earlier saved current status was {normalized_previous}")
+    if predicate == "profile.current_commitment":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(
+                f"Before your current commitment was to {normalized_current}, it was to {normalized_previous}"
+            )
+        return _ensure_sentence(f"An earlier saved current commitment was to {normalized_previous}")
+    if predicate == "profile.current_milestone":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(
+                f"Before your current milestone was {normalized_current}, it was {normalized_previous}"
+            )
+        return _ensure_sentence(f"An earlier saved current milestone was {normalized_previous}")
+    if predicate == "profile.current_risk":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before your current risk was {normalized_current}, it was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved current risk was {normalized_previous}")
+    if predicate == "profile.current_dependency":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(
+                f"Before your current dependency was {normalized_current}, it was {normalized_previous}"
+            )
+        return _ensure_sentence(f"An earlier saved current dependency was {normalized_previous}")
+    if predicate == "profile.current_constraint":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(
+                f"Before your current constraint was {normalized_current}, it was {normalized_previous}"
+            )
+        return _ensure_sentence(f"An earlier saved current constraint was {normalized_previous}")
+    if predicate == "profile.current_assumption":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(
+                f"Before your current assumption was {normalized_current}, it was {normalized_previous}"
+            )
+        return _ensure_sentence(f"An earlier saved current assumption was {normalized_previous}")
+    if predicate == "profile.current_owner":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before your current owner was {normalized_current}, it was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved current owner was {normalized_previous}")
+    if predicate == "profile.cofounder_name":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before {normalized_current}, your cofounder was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved cofounder was {normalized_previous}")
+    if predicate == "profile.mentor_name":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before {normalized_current}, your mentor was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved mentor was {normalized_previous}")
+    if predicate == "profile.manager_name":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before {normalized_current}, your manager was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved manager was {normalized_previous}")
+    if predicate == "profile.assistant_name":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before {normalized_current}, your assistant was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved assistant was {normalized_previous}")
+    if predicate == "profile.partner_name":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before {normalized_current}, your partner was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved partner was {normalized_previous}")
+    if predicate == "profile.mother_name":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before {normalized_current}, your mother was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved mother was {normalized_previous}")
+    if predicate == "profile.father_name":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before {normalized_current}, your father was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved father was {normalized_previous}")
+    if predicate == "profile.sister_name":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before {normalized_current}, your sister was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved sister was {normalized_previous}")
+    if predicate == "profile.brother_name":
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(f"Before {normalized_current}, your brother was {normalized_previous}")
+        return _ensure_sentence(f"An earlier saved brother was {normalized_previous}")
     return _ensure_sentence(f"An earlier saved {query.label} was {normalized_previous}")
 
 
@@ -948,6 +1724,48 @@ def _build_profile_fact_concise_answer(*, query: ProfileFactQuery, value: str) -
         return _ensure_sentence(f"The hack actor was {normalized_value}")
     if predicate == "profile.current_mission":
         return _ensure_sentence(f"Right now you're trying to {normalized_value}")
+    if predicate == "profile.current_plan":
+        return _ensure_sentence(f"Your current plan is to {normalized_value}")
+    if predicate == "profile.current_focus":
+        return _ensure_sentence(f"Your current focus is {normalized_value}")
+    if predicate == "profile.current_decision":
+        return _ensure_sentence(f"Your current decision is {normalized_value}")
+    if predicate == "profile.current_blocker":
+        return _ensure_sentence(f"Your current blocker is {normalized_value}")
+    if predicate == "profile.current_status":
+        return _ensure_sentence(f"Your current status is {normalized_value}")
+    if predicate == "profile.current_commitment":
+        return _ensure_sentence(f"Your current commitment is to {normalized_value}")
+    if predicate == "profile.current_milestone":
+        return _ensure_sentence(f"Your current milestone is {normalized_value}")
+    if predicate == "profile.current_risk":
+        return _ensure_sentence(f"Your current risk is {normalized_value}")
+    if predicate == "profile.current_dependency":
+        return _ensure_sentence(f"Your current dependency is {normalized_value}")
+    if predicate == "profile.current_constraint":
+        return _ensure_sentence(f"Your current constraint is {normalized_value}")
+    if predicate == "profile.current_assumption":
+        return _ensure_sentence(f"Your current assumption is {normalized_value}")
+    if predicate == "profile.current_owner":
+        return _ensure_sentence(f"Your current owner is {normalized_value}")
+    if predicate == "profile.cofounder_name":
+        return _ensure_sentence(f"Your cofounder is {normalized_value}")
+    if predicate == "profile.mentor_name":
+        return _ensure_sentence(f"Your mentor is {normalized_value}")
+    if predicate == "profile.manager_name":
+        return _ensure_sentence(f"Your manager is {normalized_value}")
+    if predicate == "profile.assistant_name":
+        return _ensure_sentence(f"Your assistant is {normalized_value}")
+    if predicate == "profile.partner_name":
+        return _ensure_sentence(f"Your partner is {normalized_value}")
+    if predicate == "profile.mother_name":
+        return _ensure_sentence(f"Your mother is {normalized_value}")
+    if predicate == "profile.father_name":
+        return _ensure_sentence(f"Your father is {normalized_value}")
+    if predicate == "profile.sister_name":
+        return _ensure_sentence(f"Your sister is {normalized_value}")
+    if predicate == "profile.brother_name":
+        return _ensure_sentence(f"Your brother is {normalized_value}")
     if predicate == "profile.spark_role":
         return _ensure_sentence(_spark_role_sentence(normalized_value))
     if predicate == "profile.home_country":
@@ -994,6 +1812,27 @@ def build_profile_identity_summary_context(*, records: list[dict[str, str]]) -> 
         "profile.founder_of",
         "profile.hack_actor",
         "profile.current_mission",
+        "profile.current_plan",
+        "profile.current_focus",
+        "profile.current_decision",
+        "profile.current_blocker",
+        "profile.current_status",
+        "profile.current_commitment",
+        "profile.current_milestone",
+        "profile.current_risk",
+        "profile.current_dependency",
+        "profile.current_constraint",
+        "profile.current_assumption",
+        "profile.current_owner",
+        "profile.cofounder_name",
+        "profile.mentor_name",
+        "profile.manager_name",
+        "profile.assistant_name",
+        "profile.partner_name",
+        "profile.mother_name",
+        "profile.father_name",
+        "profile.sister_name",
+        "profile.brother_name",
         "profile.spark_role",
         "profile.city",
         "profile.home_country",
@@ -1006,6 +1845,27 @@ def build_profile_identity_summary_context(*, records: list[dict[str, str]]) -> 
         "profile.founder_of": "founder of",
         "profile.hack_actor": "hacked by",
         "profile.current_mission": "current mission",
+        "profile.current_plan": "current plan",
+        "profile.current_focus": "current focus",
+        "profile.current_decision": "current decision",
+        "profile.current_blocker": "current blocker",
+        "profile.current_status": "current status",
+        "profile.current_commitment": "current commitment",
+        "profile.current_milestone": "current milestone",
+        "profile.current_risk": "current risk",
+        "profile.current_dependency": "current dependency",
+        "profile.current_constraint": "current constraint",
+        "profile.current_assumption": "current assumption",
+        "profile.current_owner": "current owner",
+        "profile.cofounder_name": "cofounder",
+        "profile.mentor_name": "mentor",
+        "profile.manager_name": "manager",
+        "profile.assistant_name": "assistant",
+        "profile.partner_name": "partner",
+        "profile.mother_name": "mother",
+        "profile.father_name": "father",
+        "profile.sister_name": "sister",
+        "profile.brother_name": "brother",
         "profile.spark_role": "Spark role",
         "profile.city": "city",
         "profile.home_country": "country",

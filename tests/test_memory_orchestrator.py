@@ -14,8 +14,18 @@ from spark_intelligence.memory import (
     inspect_human_memory_in_memory,
     lookup_current_state_in_memory,
     lookup_historical_state_in_memory,
+    retrieve_memory_events_in_memory,
     run_memory_sdk_smoke_test,
     write_profile_fact_to_memory,
+    write_telegram_event_to_memory,
+)
+from spark_intelligence.memory.episodic_events import (
+    build_telegram_memory_event_observation_answer,
+    build_telegram_memory_event_query_answer,
+    detect_telegram_memory_event_observation,
+    detect_telegram_memory_event_query,
+    filter_telegram_memory_event_records,
+    telegram_event_summary_predicate,
 )
 from spark_intelligence.memory.profile_facts import (
     build_profile_fact_event_history_answer,
@@ -45,6 +55,7 @@ from tests.test_support import SparkTestCase
 class _FakeMemoryClient:
     def __init__(self) -> None:
         self.observation_calls: list[dict[str, object]] = []
+        self.event_calls: list[dict[str, object]] = []
         self.current_state_calls: list[dict[str, object]] = []
 
     def write_observation(self, **payload):
@@ -54,6 +65,15 @@ class _FakeMemoryClient:
             "memory_role": "current_state",
             "provenance": [{"memory_role": "current_state", "source": "fake_sdk"}],
             "retrieval_trace": {"trace_id": "mem-trace-write"},
+        }
+
+    def write_event(self, **payload):
+        self.event_calls.append(payload)
+        return {
+            "status": "accepted",
+            "memory_role": "event",
+            "provenance": [{"memory_role": "event", "source": "fake_sdk"}],
+            "retrieval_trace": {"trace_id": "mem-trace-event-write"},
         }
 
     def get_current_state(self, **payload):
@@ -150,6 +170,130 @@ class MemoryOrchestratorTests(SparkTestCase):
         observations = (events[0]["facts_json"] or {}).get("observations") or []
         self.assertEqual(observations[0]["predicate"], "profile.city")
         self.assertEqual(observations[0]["value"], "Dubai")
+
+    def test_telegram_event_detection_write_and_answer_use_event_memory_lane(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        detected = detect_telegram_memory_event_observation("My meeting with Omar is on May 3.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "telegram.event.meeting")
+        self.assertEqual(detected.value, "meeting with Omar on May 3")
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            result = write_telegram_event_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                predicate=detected.predicate,
+                value=detected.value,
+                evidence_text=detected.evidence_text,
+                event_name=detected.event_name,
+                session_id="session:event",
+                turn_id="turn:event",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        self.assertEqual(len(fake_client.event_calls), 1)
+        self.assertEqual(len(fake_client.observation_calls), 1)
+        call = fake_client.event_calls[0]
+        self.assertEqual(call["subject"], "human:test")
+        self.assertEqual(call["predicate"], "telegram.event.meeting")
+        self.assertEqual(call["value"], "meeting with Omar on May 3")
+        self.assertEqual(call["text"], "My meeting with Omar is on May 3.")
+        summary_call = fake_client.observation_calls[0]
+        self.assertEqual(summary_call["predicate"], "telegram.summary.latest_meeting")
+        self.assertEqual(summary_call["value"], "meeting with Omar on May 3")
+        self.assertEqual(summary_call["metadata"]["entity_key"], "telegram.summary.latest_meeting")
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(write_events)
+        recorded_events = (write_events[0]["facts_json"] or {}).get("events") or []
+        self.assertEqual(recorded_events[0]["predicate"], "telegram.event.meeting")
+        self.assertEqual(recorded_events[0]["value"], "meeting with Omar on May 3")
+        self.assertEqual(
+            build_telegram_memory_event_observation_answer(observation=detected),
+            "I'll remember your meeting with Omar on May 3.",
+        )
+
+    def test_telegram_event_summary_current_state_overwrites_while_event_history_is_preserved(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        write_telegram_event_to_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human:test",
+            predicate="telegram.event.flight",
+            value="flight to London on May 6",
+            evidence_text="My flight to London is on May 6.",
+            event_name="telegram_event_flight",
+            session_id="session:flight:1",
+            turn_id="turn:flight:1",
+            channel_kind="telegram",
+        )
+        write_telegram_event_to_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human:test",
+            predicate="telegram.event.flight",
+            value="flight to Paris on May 9",
+            evidence_text="My flight to Paris is on May 9.",
+            event_name="telegram_event_flight",
+            session_id="session:flight:2",
+            turn_id="turn:flight:2",
+            channel_kind="telegram",
+        )
+
+        latest_lookup = lookup_current_state_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject="human:test",
+            predicate="telegram.summary.latest_flight",
+            sdk_module="domain_chip_memory",
+        )
+        history_lookup = retrieve_memory_events_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            query="What flight did I mention?",
+            subject="human:test",
+            predicate="telegram.event.flight",
+            sdk_module="domain_chip_memory",
+        )
+        inspection = inspect_human_memory_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="test",
+            sdk_module="domain_chip_memory",
+        )
+
+        self.assertFalse(latest_lookup.read_result.abstained)
+        self.assertEqual(len(latest_lookup.read_result.records), 1)
+        self.assertEqual(latest_lookup.read_result.records[0]["value"], "flight to Paris on May 9")
+        self.assertEqual(len(history_lookup.read_result.records), 2)
+        self.assertEqual(
+            [record["value"] for record in history_lookup.read_result.records],
+            ["flight to Paris on May 9", "flight to London on May 6"],
+        )
+        summary_records = [
+            record
+            for record in inspection.read_result.records
+            if record.get("predicate") == "telegram.summary.latest_flight"
+        ]
+        self.assertEqual(len(summary_records), 1)
+        self.assertEqual(summary_records[0]["value"], "flight to Paris on May 9")
+
+    def test_telegram_event_detection_rejects_hypothetical_and_non_temporal_phrasing(self) -> None:
+        self.assertIsNone(
+            detect_telegram_memory_event_observation("Maybe my meeting with Omar is on May 3.")
+        )
+        self.assertIsNone(
+            detect_telegram_memory_event_observation("What if my meeting with Omar is on May 3?")
+        )
+        self.assertIsNone(
+            detect_telegram_memory_event_observation("My meeting with Omar is on track.")
+        )
 
     def test_profile_city_detection_strips_temporal_tail_words(self) -> None:
         detected = detect_profile_fact_observation("I live in Abu Dhabi now.")
@@ -666,6 +810,18 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(event_history_query.predicate, "profile.city")
         self.assertEqual(event_history_query.query_kind, "event_history")
 
+        cofounder_history_query = detect_profile_fact_query("Who was my cofounder before?")
+        self.assertIsNotNone(cofounder_history_query)
+        assert cofounder_history_query is not None
+        self.assertEqual(cofounder_history_query.predicate, "profile.cofounder_name")
+        self.assertEqual(cofounder_history_query.query_kind, "fact_history")
+
+        cofounder_event_history_query = detect_profile_fact_query("Show my cofounder history.")
+        self.assertIsNotNone(cofounder_event_history_query)
+        assert cofounder_event_history_query is not None
+        self.assertEqual(cofounder_event_history_query.predicate, "profile.cofounder_name")
+        self.assertEqual(cofounder_event_history_query.query_kind, "event_history")
+
     def test_profile_fact_history_and_event_answers_are_grounded_and_compact(self) -> None:
         history_query = detect_profile_fact_query("Where did I live before?")
         self.assertIsNotNone(history_query)
@@ -703,6 +859,99 @@ class MemoryOrchestratorTests(SparkTestCase):
             ),
             "I have 2 saved city events: Dubai then Abu Dhabi.",
         )
+
+        cofounder_history_query = detect_profile_fact_query("Who was my cofounder before?")
+        self.assertIsNotNone(cofounder_history_query)
+        assert cofounder_history_query is not None
+        self.assertEqual(
+            build_profile_fact_history_answer(
+                query=cofounder_history_query,
+                previous_value="Omar",
+                current_value="Sara",
+            ),
+            "Before Sara, your cofounder was Omar.",
+        )
+
+    def test_telegram_event_query_detection_filtering_and_answers_are_compact(self) -> None:
+        query = detect_telegram_memory_event_query("What event did I mention?")
+        self.assertIsNotNone(query)
+        assert query is not None
+        self.assertIsNone(query.predicate)
+
+        meeting_query = detect_telegram_memory_event_query("What meetings did I mention?")
+        self.assertIsNotNone(meeting_query)
+        assert meeting_query is not None
+        self.assertEqual(meeting_query.predicate, "telegram.event.meeting")
+
+        latest_query = detect_telegram_memory_event_query("What flight do I have?")
+        self.assertIsNotNone(latest_query)
+        assert latest_query is not None
+        self.assertEqual(latest_query.query_kind, "latest_event")
+        self.assertEqual(latest_query.predicate, "telegram.event.flight")
+        self.assertEqual(latest_query.summary_predicate, "telegram.summary.latest_flight")
+        self.assertEqual(
+            telegram_event_summary_predicate("telegram.event.deadline"),
+            "telegram.summary.latest_deadline",
+        )
+
+        filtered = filter_telegram_memory_event_records(
+            query=query,
+            records=[
+                {
+                    "predicate": "telegram.event.meeting",
+                    "value": "meeting with Omar on May 3",
+                    "timestamp": "2026-04-10T10:00:00+00:00",
+                    "turn_ids": ["turn-1"],
+                },
+                {
+                    "predicate": "profile.city",
+                    "value": "Dubai",
+                    "timestamp": "2026-04-10T11:00:00+00:00",
+                    "turn_ids": ["turn-2"],
+                },
+                {
+                    "predicate": "telegram.event.call",
+                    "value": "call with Sarah on May 4",
+                    "timestamp": "2026-04-10T12:00:00+00:00",
+                    "turn_ids": ["turn-3"],
+                },
+            ],
+        )
+        self.assertEqual([record["predicate"] for record in filtered], ["telegram.event.meeting", "telegram.event.call"])
+        self.assertEqual(
+            build_telegram_memory_event_query_answer(
+                query=query,
+                records=filtered,
+            ),
+            "I have 2 saved events: meeting with Omar on May 3 then call with Sarah on May 4.",
+        )
+        self.assertEqual(
+            build_telegram_memory_event_query_answer(
+                query=latest_query,
+                records=[
+                    {
+                        "predicate": "telegram.summary.latest_flight",
+                        "value": "flight to London on May 6",
+                        "timestamp": "2026-04-10T12:00:00+00:00",
+                        "turn_ids": ["turn-4"],
+                    }
+                ],
+            ),
+            "Your latest saved flight is flight to London on May 6.",
+        )
+
+    def test_telegram_event_detection_supports_flight_and_deadline_types(self) -> None:
+        flight = detect_telegram_memory_event_observation("My flight to London is on May 6.")
+        self.assertIsNotNone(flight)
+        assert flight is not None
+        self.assertEqual(flight.predicate, "telegram.event.flight")
+        self.assertEqual(flight.value, "flight to London on May 6")
+
+        deadline = detect_telegram_memory_event_observation("My deadline for the proposal is by Friday.")
+        self.assertIsNotNone(deadline)
+        assert deadline is not None
+        self.assertEqual(deadline.predicate, "telegram.event.deadline")
+        self.assertEqual(deadline.value, "deadline for the proposal by Friday")
 
     def test_build_profile_identity_summary_context_lists_saved_facts(self) -> None:
         context = build_profile_identity_summary_context(
@@ -867,6 +1116,341 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertTrue(result.read_result.records)
         self.assertEqual(result.read_result.records[0]["predicate"], "system.memory.persisted")
         self.assertEqual(result.read_result.records[0]["value"], "ok")
+
+    def test_domain_chip_persistence_merges_concurrent_client_writes(self) -> None:
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+        client_a = memory_orchestrator._load_sdk_client_for_module(
+            module_name="domain_chip_memory",
+            home_path=self.config_manager.paths.home,
+        )
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+        client_b = memory_orchestrator._load_sdk_client_for_module(
+            module_name="domain_chip_memory",
+            home_path=self.config_manager.paths.home,
+        )
+        self.assertIsNotNone(client_a)
+        self.assertIsNotNone(client_b)
+
+        client_a.write_observation(
+            operation="update",
+            subject="human:merge:test:a",
+            predicate="profile.current_owner",
+            value="Omar",
+            text="Our owner is Omar.",
+            session_id="session:merge:test:a",
+            turn_id="turn:merge:test:a",
+            timestamp="2026-04-21T10:00:00+00:00",
+            metadata={
+                "entity_type": "human",
+                "field_name": "current_owner",
+                "memory_role": "current_state",
+                "source_surface": "test",
+                "fact_name": "current_owner",
+                "normalized_value": "Omar",
+            },
+        )
+        client_b.write_observation(
+            operation="update",
+            subject="human:merge:test:b",
+            predicate="profile.current_constraint",
+            value="budget for one engineer",
+            text="Our constraint is budget for only one engineer.",
+            session_id="session:merge:test:b",
+            turn_id="turn:merge:test:b",
+            timestamp="2026-04-21T10:00:01+00:00",
+            metadata={
+                "entity_type": "human",
+                "field_name": "current_constraint",
+                "memory_role": "current_state",
+                "source_surface": "test",
+                "fact_name": "current_constraint",
+                "normalized_value": "budget for one engineer",
+            },
+        )
+
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+
+        owner_result = lookup_current_state_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject="human:merge:test:a",
+            predicate="profile.current_owner",
+            sdk_module="domain_chip_memory",
+        )
+        constraint_result = lookup_current_state_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject="human:merge:test:b",
+            predicate="profile.current_constraint",
+            sdk_module="domain_chip_memory",
+        )
+
+        self.assertFalse(owner_result.read_result.abstained)
+        self.assertEqual(owner_result.read_result.records[0]["value"], "Omar")
+        self.assertFalse(constraint_result.read_result.abstained)
+        self.assertEqual(constraint_result.read_result.records[0]["value"], "budget for one engineer")
+
+    def test_domain_chip_persistence_merges_concurrent_current_state_and_event_writes(self) -> None:
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+        client_a = memory_orchestrator._load_sdk_client_for_module(
+            module_name="domain_chip_memory",
+            home_path=self.config_manager.paths.home,
+        )
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+        client_b = memory_orchestrator._load_sdk_client_for_module(
+            module_name="domain_chip_memory",
+            home_path=self.config_manager.paths.home,
+        )
+        self.assertIsNotNone(client_a)
+        self.assertIsNotNone(client_b)
+
+        client_a.write_observation(
+            operation="update",
+            subject="human:merge:test:mixed",
+            predicate="profile.current_owner",
+            value="Nadia",
+            text="The current owner is Nadia.",
+            session_id="session:merge:test:mixed:owner",
+            turn_id="turn:merge:test:mixed:owner",
+            timestamp="2026-04-21T10:01:00+00:00",
+            metadata={
+                "entity_type": "human",
+                "field_name": "current_owner",
+                "memory_role": "current_state",
+                "source_surface": "test",
+                "fact_name": "current_owner",
+                "normalized_value": "Nadia",
+            },
+        )
+        client_b.write_event(
+            operation="event",
+            subject="human:merge:test:mixed",
+            predicate="telegram.event.meeting",
+            value="meeting with Omar on May 3",
+            text="My meeting with Omar is on May 3.",
+            session_id="session:merge:test:mixed:event",
+            turn_id="turn:merge:test:mixed:event",
+            timestamp="2026-04-21T10:01:01+00:00",
+            metadata={
+                "entity_type": "human",
+                "memory_role": "event",
+                "source_surface": "test",
+                "event_name": "telegram_event_meeting",
+                "normalized_value": "meeting with Omar on May 3",
+                "value": "meeting with Omar on May 3",
+            },
+        )
+
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+
+        owner_result = lookup_current_state_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject="human:merge:test:mixed",
+            predicate="profile.current_owner",
+            sdk_module="domain_chip_memory",
+        )
+        event_result = retrieve_memory_events_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            query="What event did I mention?",
+            subject="human:merge:test:mixed",
+            predicate="telegram.event.meeting",
+            sdk_module="domain_chip_memory",
+        )
+
+        self.assertFalse(owner_result.read_result.abstained)
+        self.assertEqual(owner_result.read_result.records[0]["value"], "Nadia")
+        self.assertFalse(event_result.read_result.abstained)
+        self.assertEqual(len(event_result.read_result.records), 1)
+        self.assertEqual(event_result.read_result.records[0]["value"], "meeting with Omar on May 3")
+
+    def test_domain_chip_persistence_preserves_stale_client_delete(self) -> None:
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+        client_a = memory_orchestrator._load_sdk_client_for_module(
+            module_name="domain_chip_memory",
+            home_path=self.config_manager.paths.home,
+        )
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+        client_b = memory_orchestrator._load_sdk_client_for_module(
+            module_name="domain_chip_memory",
+            home_path=self.config_manager.paths.home,
+        )
+        self.assertIsNotNone(client_a)
+        self.assertIsNotNone(client_b)
+
+        client_a.write_observation(
+            operation="update",
+            subject="human:merge:test:delete",
+            predicate="profile.current_owner",
+            value="Omar",
+            text="Our owner is Omar.",
+            session_id="session:merge:test:delete:write",
+            turn_id="turn:merge:test:delete:write",
+            timestamp="2026-04-21T10:02:00+00:00",
+            metadata={
+                "entity_type": "human",
+                "field_name": "current_owner",
+                "memory_role": "current_state",
+                "source_surface": "test",
+                "fact_name": "current_owner",
+                "normalized_value": "Omar",
+            },
+        )
+        client_b.write_observation(
+            operation="delete",
+            subject="human:merge:test:delete",
+            predicate="profile.current_owner",
+            value=None,
+            text="Forget our owner.",
+            session_id="session:merge:test:delete:delete",
+            turn_id="turn:merge:test:delete:delete",
+            timestamp="2026-04-21T10:02:01+00:00",
+            metadata={
+                "entity_type": "human",
+                "field_name": "current_owner",
+                "memory_role": "current_state",
+                "source_surface": "test",
+                "fact_name": "current_owner",
+            },
+        )
+
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+
+        current_result = lookup_current_state_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject="human:merge:test:delete",
+            predicate="profile.current_owner",
+            sdk_module="domain_chip_memory",
+        )
+
+        self.assertTrue(current_result.read_result.abstained)
+        self.assertEqual(current_result.read_result.records, [])
+
+    def test_domain_chip_persistence_preserves_repeated_stale_client_overwrites_across_predicates(self) -> None:
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+        client_a = memory_orchestrator._load_sdk_client_for_module(
+            module_name="domain_chip_memory",
+            home_path=self.config_manager.paths.home,
+        )
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+        client_b = memory_orchestrator._load_sdk_client_for_module(
+            module_name="domain_chip_memory",
+            home_path=self.config_manager.paths.home,
+        )
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+        client_c = memory_orchestrator._load_sdk_client_for_module(
+            module_name="domain_chip_memory",
+            home_path=self.config_manager.paths.home,
+        )
+        self.assertIsNotNone(client_a)
+        self.assertIsNotNone(client_b)
+        self.assertIsNotNone(client_c)
+
+        client_a.write_observation(
+            operation="update",
+            subject="human:merge:test:multi",
+            predicate="profile.current_owner",
+            value="Omar",
+            text="Our owner is Omar.",
+            session_id="session:merge:test:multi:owner:1",
+            turn_id="turn:merge:test:multi:owner:1",
+            timestamp="2026-04-21T10:03:00+00:00",
+            metadata={
+                "entity_type": "human",
+                "field_name": "current_owner",
+                "memory_role": "current_state",
+                "source_surface": "test",
+                "fact_name": "current_owner",
+                "normalized_value": "Omar",
+            },
+        )
+        client_b.write_observation(
+            operation="update",
+            subject="human:merge:test:multi",
+            predicate="profile.current_risk",
+            value="delayed instrumentation",
+            text="Our main risk is delayed instrumentation.",
+            session_id="session:merge:test:multi:risk",
+            turn_id="turn:merge:test:multi:risk",
+            timestamp="2026-04-21T10:03:01+00:00",
+            metadata={
+                "entity_type": "human",
+                "field_name": "current_risk",
+                "memory_role": "current_state",
+                "source_surface": "test",
+                "fact_name": "current_risk",
+                "normalized_value": "delayed instrumentation",
+            },
+        )
+        client_c.write_observation(
+            operation="update",
+            subject="human:merge:test:multi",
+            predicate="profile.current_dependency",
+            value="partner API access",
+            text="Our dependency is partner API access.",
+            session_id="session:merge:test:multi:dependency",
+            turn_id="turn:merge:test:multi:dependency",
+            timestamp="2026-04-21T10:03:02+00:00",
+            metadata={
+                "entity_type": "human",
+                "field_name": "current_dependency",
+                "memory_role": "current_state",
+                "source_surface": "test",
+                "fact_name": "current_dependency",
+                "normalized_value": "partner API access",
+            },
+        )
+        client_a.write_observation(
+            operation="update",
+            subject="human:merge:test:multi",
+            predicate="profile.current_owner",
+            value="Sara",
+            text="The current owner is Sara.",
+            session_id="session:merge:test:multi:owner:2",
+            turn_id="turn:merge:test:multi:owner:2",
+            timestamp="2026-04-21T10:03:03+00:00",
+            metadata={
+                "entity_type": "human",
+                "field_name": "current_owner",
+                "memory_role": "current_state",
+                "source_surface": "test",
+                "fact_name": "current_owner",
+                "normalized_value": "Sara",
+            },
+        )
+
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+
+        owner_result = lookup_current_state_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject="human:merge:test:multi",
+            predicate="profile.current_owner",
+            sdk_module="domain_chip_memory",
+        )
+        risk_result = lookup_current_state_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject="human:merge:test:multi",
+            predicate="profile.current_risk",
+            sdk_module="domain_chip_memory",
+        )
+        dependency_result = lookup_current_state_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject="human:merge:test:multi",
+            predicate="profile.current_dependency",
+            sdk_module="domain_chip_memory",
+        )
+
+        self.assertFalse(owner_result.read_result.abstained)
+        self.assertEqual(owner_result.read_result.records[0]["value"], "Sara")
+        self.assertFalse(risk_result.read_result.abstained)
+        self.assertEqual(risk_result.read_result.records[0]["value"], "delayed instrumentation")
+        self.assertFalse(dependency_result.read_result.abstained)
+        self.assertEqual(dependency_result.read_result.records[0]["value"], "partner API access")
 
     def test_lookup_historical_state_in_memory_reads_prior_value_after_overwrite(self) -> None:
         expected_read_result = memory_orchestrator.MemoryReadResult(

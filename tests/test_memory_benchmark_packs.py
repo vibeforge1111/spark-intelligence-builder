@@ -13,6 +13,9 @@ def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
     assert "loaded_context_abstention" in packs
     assert "temporal_conflict_gauntlet" in packs
     assert "event_calendar_lineage_proxy" in packs
+    assert "telegram_event_overwrite_lineage" in packs
+    assert "telegram_generic_profile_lifecycle" in packs
+    assert "telegram_mixed_memory_session_churn" in packs
     assert "explanation_pressure_suite" in packs
     assert "identity_under_recency_pressure" in packs
 
@@ -22,6 +25,12 @@ def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
     assert "native_history" in packs["contradiction_and_recency"].focus_areas
     assert "event_ordering_proxy" in packs["event_calendar_lineage_proxy"].focus_areas
     assert "native_history" in packs["event_calendar_lineage_proxy"].focus_areas
+    assert "telegram_events" in packs["telegram_event_overwrite_lineage"].focus_areas
+    assert "current_state" in packs["telegram_event_overwrite_lineage"].focus_areas
+    assert "delete" in packs["telegram_generic_profile_lifecycle"].focus_areas
+    assert "native_history" in packs["telegram_generic_profile_lifecycle"].focus_areas
+    assert "mixed_session" in packs["telegram_mixed_memory_session_churn"].focus_areas
+    assert "telegram_events" in packs["telegram_mixed_memory_session_churn"].focus_areas
     assert "provenance" in packs["explanation_pressure_suite"].focus_areas
     assert packs["long_horizon_recall"].selection_role == "health_gate"
     assert packs["boundary_abstention"].selection_role == "health_gate"
@@ -57,6 +66,67 @@ def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
     assert "country_history_query_after_overwrite" in event_proxy_case_ids
     assert "city_event_history_query_after_overwrite" in event_proxy_case_ids
 
+    telegram_event_case_ids = {case.case_id for case in packs["telegram_event_overwrite_lineage"].cases}
+    assert "meeting_write" in telegram_event_case_ids
+    assert "event_query_after_meeting_write" in telegram_event_case_ids
+    assert "flight_write" in telegram_event_case_ids
+    assert "flight_overwrite" in telegram_event_case_ids
+    assert "latest_flight_query_after_overwrite" in telegram_event_case_ids
+    assert "flight_history_query_after_overwrite" in telegram_event_case_ids
+
+    generic_profile_case_ids = {case.case_id for case in packs["telegram_generic_profile_lifecycle"].cases}
+    assert "generic_cofounder_write" in generic_profile_case_ids
+    assert "generic_cofounder_history_query_after_overwrite" in generic_profile_case_ids
+    assert "generic_cofounder_delete" in generic_profile_case_ids
+    assert "generic_cofounder_event_history_query_after_delete" in generic_profile_case_ids
+    assert "generic_decision_write" in generic_profile_case_ids
+    assert "generic_decision_history_query_after_overwrite" in generic_profile_case_ids
+    assert "generic_decision_delete" in generic_profile_case_ids
+    assert "generic_decision_event_history_query_after_delete" in generic_profile_case_ids
+    assert "generic_blocker_write" in generic_profile_case_ids
+    assert "generic_blocker_history_query_after_overwrite" in generic_profile_case_ids
+    assert "generic_blocker_delete" in generic_profile_case_ids
+    assert "generic_blocker_event_history_query_after_delete" in generic_profile_case_ids
+    assert "generic_status_write" in generic_profile_case_ids
+    assert "generic_status_history_query_after_overwrite" in generic_profile_case_ids
+    assert "generic_status_delete" in generic_profile_case_ids
+    assert "generic_status_event_history_query_after_delete" in generic_profile_case_ids
+    assert "generic_risk_write" in generic_profile_case_ids
+    assert "generic_risk_history_query_after_overwrite" in generic_profile_case_ids
+    assert "generic_risk_delete" in generic_profile_case_ids
+    assert "generic_risk_event_history_query_after_delete" in generic_profile_case_ids
+    assert "generic_dependency_write" in generic_profile_case_ids
+    assert "generic_dependency_history_query_after_overwrite" in generic_profile_case_ids
+    assert "generic_dependency_delete" in generic_profile_case_ids
+    assert "generic_dependency_event_history_query_after_delete" in generic_profile_case_ids
+    assert "generic_constraint_write" in generic_profile_case_ids
+    assert "generic_constraint_history_query_after_overwrite" in generic_profile_case_ids
+    assert "generic_constraint_delete" in generic_profile_case_ids
+    assert "generic_constraint_event_history_query_after_delete" in generic_profile_case_ids
+    assert "generic_assumption_write" in generic_profile_case_ids
+    assert "generic_assumption_history_query_after_overwrite" in generic_profile_case_ids
+    assert "generic_assumption_delete" in generic_profile_case_ids
+    assert "generic_assumption_event_history_query_after_delete" in generic_profile_case_ids
+    assert "generic_owner_write" in generic_profile_case_ids
+    assert "generic_owner_history_query_after_overwrite" in generic_profile_case_ids
+    assert "generic_owner_delete" in generic_profile_case_ids
+    assert "generic_owner_event_history_query_after_delete" in generic_profile_case_ids
+
+    churn_case_ids = {case.case_id for case in packs["telegram_generic_profile_churn"].cases}
+    assert "generic_long_run_owner_write_initial" in churn_case_ids
+    assert "generic_long_run_owner_rewrite" in churn_case_ids
+    assert "generic_long_run_risk_rewrite" in churn_case_ids
+    assert "generic_long_run_owner_event_history_query" in churn_case_ids
+    assert "generic_long_run_dependency_current_query" in churn_case_ids
+
+    mixed_session_case_ids = {case.case_id for case in packs["telegram_mixed_memory_session_churn"].cases}
+    assert "mixed_session_owner_write_initial" in mixed_session_case_ids
+    assert "mixed_session_flight_overwrite" in mixed_session_case_ids
+    assert "mixed_session_owner_delete" in mixed_session_case_ids
+    assert "mixed_session_owner_event_history_query" in mixed_session_case_ids
+    assert "mixed_session_latest_flight_query" in mixed_session_case_ids
+    assert "mixed_session_flight_history_query" in mixed_session_case_ids
+
     identity_case_ids = {case.case_id for case in packs["identity_under_recency_pressure"].cases}
     assert "name_query_after_recency_pressure" in identity_case_ids
     assert "occupation_query_after_recency_pressure" in identity_case_ids
@@ -88,6 +158,99 @@ def test_select_event_calendar_proxy_pack_exposes_lineage_cases() -> None:
     assert "identity_summary_after_event_lineage_proxy" in case_ids
     assert "city_history_query_after_overwrite" in case_ids
     assert "city_event_history_query_after_overwrite" in case_ids
+
+
+def test_select_telegram_event_overwrite_pack_exposes_latest_and_history_cases() -> None:
+    packs = select_telegram_memory_benchmark_packs(["telegram_event_overwrite_lineage"])
+
+    assert [pack.pack_id for pack in packs] == ["telegram_event_overwrite_lineage"]
+
+    case_ids = {case.case_id for case in flatten_benchmark_pack_cases(packs)}
+    assert "meeting_write" in case_ids
+    assert "event_query_after_meeting_write" in case_ids
+    assert "latest_flight_query_after_overwrite" in case_ids
+    assert "flight_history_query_after_overwrite" in case_ids
+
+
+def test_select_generic_profile_lifecycle_pack_exposes_overwrite_and_delete_cases() -> None:
+    packs = select_telegram_memory_benchmark_packs(["telegram_generic_profile_lifecycle"])
+
+    assert [pack.pack_id for pack in packs] == ["telegram_generic_profile_lifecycle"]
+
+    case_ids = {case.case_id for case in flatten_benchmark_pack_cases(packs)}
+    assert "generic_cofounder_overwrite" in case_ids
+    assert "generic_cofounder_history_query_after_overwrite" in case_ids
+    assert "generic_cofounder_delete" in case_ids
+    assert "generic_cofounder_current_query_after_delete" in case_ids
+    assert "generic_decision_overwrite" in case_ids
+    assert "generic_decision_history_query_after_overwrite" in case_ids
+    assert "generic_decision_delete" in case_ids
+    assert "generic_decision_current_query_after_delete" in case_ids
+    assert "generic_blocker_overwrite" in case_ids
+    assert "generic_blocker_history_query_after_overwrite" in case_ids
+    assert "generic_blocker_delete" in case_ids
+    assert "generic_blocker_current_query_after_delete" in case_ids
+    assert "generic_status_overwrite" in case_ids
+    assert "generic_status_history_query_after_overwrite" in case_ids
+    assert "generic_status_delete" in case_ids
+    assert "generic_status_current_query_after_delete" in case_ids
+    assert "generic_commitment_overwrite" in case_ids
+    assert "generic_commitment_history_query_after_overwrite" in case_ids
+    assert "generic_commitment_delete" in case_ids
+    assert "generic_commitment_current_query_after_delete" in case_ids
+    assert "generic_milestone_overwrite" in case_ids
+    assert "generic_milestone_history_query_after_overwrite" in case_ids
+    assert "generic_milestone_delete" in case_ids
+    assert "generic_milestone_current_query_after_delete" in case_ids
+    assert "generic_risk_overwrite" in case_ids
+    assert "generic_risk_history_query_after_overwrite" in case_ids
+    assert "generic_risk_delete" in case_ids
+    assert "generic_risk_current_query_after_delete" in case_ids
+    assert "generic_dependency_overwrite" in case_ids
+    assert "generic_dependency_history_query_after_overwrite" in case_ids
+    assert "generic_dependency_delete" in case_ids
+    assert "generic_dependency_current_query_after_delete" in case_ids
+    assert "generic_constraint_overwrite" in case_ids
+    assert "generic_constraint_history_query_after_overwrite" in case_ids
+    assert "generic_constraint_delete" in case_ids
+    assert "generic_constraint_current_query_after_delete" in case_ids
+    assert "generic_assumption_overwrite" in case_ids
+    assert "generic_assumption_history_query_after_overwrite" in case_ids
+    assert "generic_assumption_delete" in case_ids
+    assert "generic_assumption_current_query_after_delete" in case_ids
+    assert "generic_owner_overwrite" in case_ids
+    assert "generic_owner_history_query_after_overwrite" in case_ids
+    assert "generic_owner_delete" in case_ids
+    assert "generic_owner_current_query_after_delete" in case_ids
+
+
+def test_select_generic_profile_churn_pack_exposes_long_run_cases() -> None:
+    packs = select_telegram_memory_benchmark_packs(["telegram_generic_profile_churn"])
+
+    assert [pack.pack_id for pack in packs] == ["telegram_generic_profile_churn"]
+
+    case_ids = {case.case_id for case in flatten_benchmark_pack_cases(packs)}
+    assert "generic_long_run_owner_write_initial" in case_ids
+    assert "generic_long_run_owner_delete" in case_ids
+    assert "generic_long_run_owner_rewrite" in case_ids
+    assert "generic_long_run_owner_history_query" in case_ids
+    assert "generic_long_run_risk_rewrite" in case_ids
+    assert "generic_long_run_risk_event_history_query" in case_ids
+    assert "generic_long_run_dependency_current_query" in case_ids
+
+
+def test_select_mixed_memory_session_churn_pack_exposes_interleaved_cases() -> None:
+    packs = select_telegram_memory_benchmark_packs(["telegram_mixed_memory_session_churn"])
+
+    assert [pack.pack_id for pack in packs] == ["telegram_mixed_memory_session_churn"]
+
+    case_ids = {case.case_id for case in flatten_benchmark_pack_cases(packs)}
+    assert "mixed_session_meeting_write" in case_ids
+    assert "mixed_session_flight_overwrite" in case_ids
+    assert "mixed_session_owner_rewrite" in case_ids
+    assert "mixed_session_owner_event_history_query" in case_ids
+    assert "mixed_session_risk_current_query" in case_ids
+    assert "mixed_session_latest_flight_query" in case_ids
 
 
 def test_select_benchmark_packs_rejects_unknown_pack_ids() -> None:

@@ -7,6 +7,7 @@ from spark_intelligence.memory.orchestrator import (
     MemoryRetrievalQueryResult,
     MemorySdkSmokeResult,
     MemoryWriteResult,
+    delete_profile_fact_from_memory,
     delete_personality_preferences_from_memory,
     explain_memory_answer_in_memory,
     inspect_human_memory_in_memory,
@@ -19,6 +20,7 @@ from spark_intelligence.memory.orchestrator import (
     run_memory_sdk_smoke_test,
     write_profile_fact_to_memory,
     write_personality_preferences_to_memory,
+    write_telegram_event_to_memory,
 )
 from spark_intelligence.memory.sdk_maintenance import (
     SdkMaintenanceExportResult,
@@ -80,6 +82,7 @@ __all__ = [
     "build_shadow_replay_payload",
     "build_telegram_state_knowledge_base",
     "compare_telegram_memory_architectures",
+    "delete_profile_fact_from_memory",
     "delete_personality_preferences_from_memory",
     "explain_memory_answer_in_memory",
     "export_sdk_maintenance_replay",
@@ -96,6 +99,7 @@ __all__ = [
     "run_telegram_memory_architecture_soak",
     "run_telegram_memory_regression",
     "write_profile_fact_to_memory",
+    "write_telegram_event_to_memory",
     "run_sdk_maintenance_report",
     "run_shadow_report",
     "run_shadow_report_batch",

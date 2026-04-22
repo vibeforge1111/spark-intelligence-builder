@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import sys
+import time
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -521,15 +523,45 @@ class _DomainChipMemoryClientAdapter:
     def _persist_manual_state(self) -> None:
         if self._persistence_path is None:
             return
-        payload = {
-            "manual_observations": [asdict(entry) for entry in list(getattr(self._sdk, "_manual_observations", []) or [])],
-            "manual_events": [asdict(entry) for entry in list(getattr(self._sdk, "_manual_events", []) or [])],
-            "manual_current_state_snapshot": [
-                asdict(entry) for entry in list(getattr(self._sdk, "_manual_current_state_snapshot", []) or [])
-            ],
-        }
         self._persistence_path.parent.mkdir(parents=True, exist_ok=True)
-        self._persistence_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        lock_path = self._persistence_path.with_name(f"{self._persistence_path.name}.lock")
+        with _exclusive_path_lock(lock_path):
+            existing_payload = _load_domain_chip_memory_payload(self._persistence_path)
+            merged_observation_payloads = _merge_domain_entry_payloads(
+                existing_payload.get("manual_observations"),
+                [asdict(entry) for entry in list(getattr(self._sdk, "_manual_observations", []) or [])],
+            )
+            merged_event_payloads = _merge_domain_entry_payloads(
+                existing_payload.get("manual_events"),
+                [asdict(entry) for entry in list(getattr(self._sdk, "_manual_events", []) or [])],
+            )
+            observation_cls = getattr(self._sdk_module, "ObservationEntry", None)
+            event_cls = getattr(self._sdk_module, "EventCalendarEntry", None)
+            merged_observations = _hydrate_domain_entries(merged_observation_payloads, observation_cls) if observation_cls else []
+            merged_events = _hydrate_domain_entries(merged_event_payloads, event_cls) if event_cls else []
+            current_snapshot = []
+            build_snapshot = getattr(self._sdk, "_build_manual_current_state_snapshot", None)
+            if callable(build_snapshot):
+                try:
+                    current_snapshot = list(build_snapshot(merged_observations) or [])
+                except Exception:
+                    current_snapshot = []
+            elif observation_cls:
+                current_snapshot = _hydrate_domain_entries(
+                    existing_payload.get("manual_current_state_snapshot"),
+                    observation_cls,
+                )
+            self._sdk._manual_observations = merged_observations
+            self._sdk._manual_events = merged_events
+            self._sdk._manual_current_state_snapshot = current_snapshot
+            payload = {
+                "manual_observations": [asdict(entry) for entry in merged_observations],
+                "manual_events": [asdict(entry) for entry in merged_events],
+                "manual_current_state_snapshot": [asdict(entry) for entry in current_snapshot],
+            }
+            temp_path = self._persistence_path.with_name(f"{self._persistence_path.name}.{os.getpid()}.tmp")
+            temp_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            temp_path.replace(self._persistence_path)
 
 
 def run_memory_sdk_smoke_test(
@@ -1170,15 +1202,89 @@ def write_profile_fact_to_memory(
             provenance=[],
             reason="no_durable_profile_fact",
         )
+    return _write_profile_fact_memory_operation(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=human_id,
+        predicate=predicate,
+        value=value,
+        evidence_text=evidence_text,
+        fact_name=fact_name,
+        session_id=session_id,
+        turn_id=turn_id,
+        channel_kind=channel_kind,
+        actor_id=actor_id,
+        operation="update",
+    )
+
+
+def delete_profile_fact_from_memory(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str,
+    predicate: str,
+    evidence_text: str,
+    fact_name: str,
+    session_id: str | None,
+    turn_id: str | None,
+    channel_kind: str | None,
+    actor_id: str = "profile_fact_deleter",
+) -> MemoryWriteResult:
+    if not predicate:
+        return MemoryWriteResult(
+            status="skipped",
+            operation="delete",
+            method="write_observation",
+            memory_role="current_state",
+            accepted_count=0,
+            rejected_count=0,
+            skipped_count=1,
+            abstained=False,
+            retrieval_trace=None,
+            provenance=[],
+            reason="no_profile_fact_predicate",
+        )
+    return _write_profile_fact_memory_operation(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=human_id,
+        predicate=predicate,
+        value=None,
+        evidence_text=evidence_text,
+        fact_name=fact_name,
+        session_id=session_id,
+        turn_id=turn_id,
+        channel_kind=channel_kind,
+        actor_id=actor_id,
+        operation="delete",
+    )
+
+
+def _write_profile_fact_memory_operation(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str,
+    predicate: str,
+    value: str | None,
+    evidence_text: str,
+    fact_name: str,
+    session_id: str | None,
+    turn_id: str | None,
+    channel_kind: str | None,
+    actor_id: str,
+    operation: str,
+) -> MemoryWriteResult:
     if not _memory_enabled(config_manager):
-        return _disabled_write_result(operation="update")
+        return _disabled_write_result(operation=operation)
     if not bool(config_manager.get_path("spark.memory.write_profile_facts", default=True)):
-        return _disabled_write_result(operation="update", reason="profile_fact_memory_writes_disabled")
+        return _disabled_write_result(operation=operation, reason="profile_fact_memory_writes_disabled")
     client = _load_sdk_client(config_manager)
     if client is None:
         result = MemoryWriteResult(
             status="abstained",
-            operation="update",
+            operation=operation,
             method="write_observation",
             memory_role="current_state",
             accepted_count=0,
@@ -1203,13 +1309,13 @@ def write_profile_fact_to_memory(
         "subject": subject,
         "predicate": predicate,
         "value": value,
-        "operation": "update",
+        "operation": operation,
         "memory_role": "current_state",
         "text": evidence_text,
     }
     _record_memory_write_requested_observations(
         state_db=state_db,
-        operation="update",
+        operation=operation,
         human_id=human_id,
         observations=[observation],
         session_id=session_id,
@@ -1220,7 +1326,7 @@ def write_profile_fact_to_memory(
         client,
         "write_observation",
         {
-            "operation": "update",
+            "operation": operation,
             "subject": subject,
             "predicate": predicate,
             "value": value,
@@ -1240,7 +1346,19 @@ def write_profile_fact_to_memory(
             },
         },
     )
-    result = _normalize_write_result(raw=raw, operation="update")
+    result = _normalize_write_result(raw=raw, operation=operation)
+    if result.accepted_count > 0 and operation == "update":
+        _write_profile_fact_history_event(
+            client=client,
+            human_id=human_id,
+            predicate=predicate,
+            value=value,
+            evidence_text=evidence_text,
+            fact_name=fact_name,
+            session_id=session_id,
+            turn_id=turn_id,
+            channel_kind=channel_kind,
+        )
     _record_memory_write_event(
         state_db=state_db,
         result=result,
@@ -1250,6 +1368,223 @@ def write_profile_fact_to_memory(
         actor_id=actor_id,
     )
     return result
+
+
+def write_telegram_event_to_memory(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str,
+    predicate: str,
+    value: str,
+    evidence_text: str,
+    event_name: str,
+    session_id: str | None,
+    turn_id: str | None,
+    channel_kind: str | None,
+    actor_id: str = "telegram_event_loader",
+) -> MemoryWriteResult:
+    if not predicate or not str(value or "").strip():
+        return MemoryWriteResult(
+            status="skipped",
+            operation="event",
+            method="write_event",
+            memory_role="event",
+            accepted_count=0,
+            rejected_count=0,
+            skipped_count=1,
+            abstained=False,
+            retrieval_trace=None,
+            provenance=[],
+            reason="no_durable_telegram_event",
+        )
+    if not _memory_enabled(config_manager):
+        return _disabled_write_result(operation="event", method="write_event", default_role="event")
+    if not bool(config_manager.get_path("spark.memory.write_telegram_events", default=True)):
+        return _disabled_write_result(
+            operation="event",
+            method="write_event",
+            default_role="event",
+            reason="telegram_event_memory_writes_disabled",
+        )
+    client = _load_sdk_client(config_manager)
+    if client is None:
+        result = MemoryWriteResult(
+            status="abstained",
+            operation="event",
+            method="write_event",
+            memory_role="event",
+            accepted_count=0,
+            rejected_count=0,
+            skipped_count=1,
+            abstained=True,
+            retrieval_trace=None,
+            provenance=[],
+            reason="sdk_unavailable",
+        )
+        _record_memory_write_event(
+            state_db=state_db,
+            result=result,
+            human_id=human_id,
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=actor_id,
+        )
+        return result
+    subject = _subject_for_human_id(human_id)
+    event_payload = {
+        "subject": subject,
+        "predicate": predicate,
+        "value": value,
+        "operation": "event",
+        "memory_role": "event",
+        "text": evidence_text,
+    }
+    _record_memory_write_requested_events(
+        state_db=state_db,
+        human_id=human_id,
+        events=[event_payload],
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+    )
+    raw = _call_sdk_method(
+        client,
+        "write_event",
+        {
+            "operation": "event",
+            "subject": subject,
+            "predicate": predicate,
+            "value": value,
+            "text": evidence_text,
+            "memory_role": "event",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "timestamp": _now_iso(),
+            "metadata": {
+                "entity_type": "human",
+                "channel_kind": channel_kind,
+                "memory_role": "event",
+                "source_surface": "researcher_bridge",
+                "event_name": event_name,
+                "normalized_value": value,
+                "value": value,
+            },
+        },
+    )
+    result = _normalize_write_result(
+        raw=raw,
+        operation="event",
+        method="write_event",
+        default_role="event",
+    )
+    if result.accepted_count > 0 and bool(
+        config_manager.get_path("spark.memory.consolidate_telegram_events", default=True)
+    ):
+        _consolidate_telegram_event_summary_observation(
+            client=client,
+            predicate=predicate,
+            value=value,
+            evidence_text=evidence_text,
+            session_id=session_id,
+            turn_id=turn_id,
+            channel_kind=channel_kind,
+            event_name=event_name,
+            subject=subject,
+        )
+    _record_memory_write_event(
+        state_db=state_db,
+        result=result,
+        human_id=human_id,
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+    )
+    return result
+
+
+def _write_profile_fact_history_event(
+    *,
+    client: Any,
+    human_id: str,
+    predicate: str,
+    value: str,
+    evidence_text: str,
+    fact_name: str,
+    session_id: str | None,
+    turn_id: str | None,
+    channel_kind: str | None,
+) -> None:
+    _call_sdk_method(
+        client,
+        "write_event",
+        {
+            "operation": "event",
+            "subject": _subject_for_human_id(human_id),
+            "predicate": predicate,
+            "value": value,
+            "text": evidence_text,
+            "memory_role": "event",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "timestamp": _now_iso(),
+            "metadata": {
+                "entity_type": "human",
+                "channel_kind": channel_kind,
+                "memory_role": "event",
+                "source_surface": "profile_fact_history_capture",
+                "fact_name": fact_name,
+                "normalized_value": value,
+                "value": value,
+                "source_predicate": predicate,
+            },
+        },
+    )
+
+
+def _consolidate_telegram_event_summary_observation(
+    *,
+    client: Any,
+    predicate: str,
+    value: str,
+    evidence_text: str,
+    session_id: str | None,
+    turn_id: str | None,
+    channel_kind: str | None,
+    event_name: str,
+    subject: str,
+) -> None:
+    suffix = str(predicate or "").strip().removeprefix("telegram.event.")
+    if not suffix:
+        return
+    summary_predicate = f"telegram.summary.latest_{suffix}"
+    _call_sdk_method(
+        client,
+        "write_observation",
+        {
+            "operation": "update",
+            "subject": subject,
+            "predicate": summary_predicate,
+            "value": value,
+            "text": evidence_text,
+            "memory_role": "current_state",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "timestamp": _now_iso(),
+            "metadata": {
+                "entity_type": "human",
+                "channel_kind": channel_kind,
+                "memory_role": "current_state",
+                "source_surface": "telegram_event_consolidation",
+                "event_name": event_name,
+                "source_event_predicate": predicate,
+                "entity_key": summary_predicate,
+                "normalized_value": value,
+                "value": value,
+                "consolidated_from_event": True,
+            },
+        },
+    )
 
 
 def read_personality_preferences_from_memory(
@@ -1490,6 +1825,67 @@ def _supports_domain_chip_memory_adapter(module: ModuleType) -> bool:
 
 def _domain_chip_memory_persistence_path(home_path: Any) -> Path:
     return Path(str(home_path)) / "artifacts" / "domain_chip_memory_sdk_state.json"
+
+
+@contextmanager
+def _exclusive_path_lock(lock_path: Path, *, timeout_seconds: float = 15.0, poll_seconds: float = 0.05):
+    fd: int | None = None
+    deadline = time.monotonic() + timeout_seconds
+    while fd is None:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
+        except FileExistsError:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"timed out waiting for persistence lock: {lock_path}")
+            time.sleep(poll_seconds)
+    try:
+        yield
+    finally:
+        try:
+            if fd is not None:
+                os.close(fd)
+        finally:
+            try:
+                lock_path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def _load_domain_chip_memory_payload(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return payload
+
+
+def _merge_domain_entry_payloads(existing_entries: Any, new_entries: Any) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for raw_entry in list(existing_entries or []) + list(new_entries or []):
+        if not isinstance(raw_entry, dict):
+            continue
+        merged[_domain_entry_payload_key(raw_entry)] = raw_entry
+    return sorted(
+        merged.values(),
+        key=lambda entry: (
+            str(entry.get("timestamp") or ""),
+            str(entry.get("observation_id") or entry.get("event_id") or ""),
+        ),
+    )
+
+
+def _domain_entry_payload_key(entry: dict[str, Any]) -> str:
+    observation_id = _optional_string(entry.get("observation_id"))
+    if observation_id:
+        return f"observation:{observation_id}"
+    event_id = _optional_string(entry.get("event_id"))
+    if event_id:
+        return f"event:{event_id}"
+    return json.dumps(entry, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
 def _hydrate_domain_chip_memory_sdk(*, client: Any, module: ModuleType, persistence_path: Path) -> None:
@@ -2164,6 +2560,38 @@ def _record_memory_write_requested_observations(
     )
 
 
+def _record_memory_write_requested_events(
+    *,
+    state_db: StateDB,
+    human_id: str,
+    events: list[dict[str, Any]],
+    session_id: str | None,
+    turn_id: str | None,
+    actor_id: str,
+) -> None:
+    subject = _subject_for_human_id(human_id)
+    record_event(
+        state_db,
+        event_type="memory_write_requested",
+        component="memory_orchestrator",
+        summary="Spark memory event write requested for durable Telegram events.",
+        request_id=turn_id,
+        session_id=session_id,
+        human_id=human_id,
+        actor_id=actor_id,
+        facts={
+            "operation": "event",
+            "method": "write_event",
+            "memory_role": "event",
+            "subject": subject,
+            "predicate_count": len(events),
+            "predicates": [str(item.get("predicate") or "") for item in events if item.get("predicate")],
+            "events": events,
+        },
+        provenance={"memory_role": "event"},
+    )
+
+
 def _record_memory_write_event(
     *,
     state_db: StateDB,
@@ -2328,4 +2756,4 @@ def _record_memory_smoke_event(
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")

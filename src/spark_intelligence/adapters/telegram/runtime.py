@@ -246,7 +246,7 @@ def _build_verbatim_chip_block(raw_chip_metrics: list[dict]) -> str:
     return "\n".join(lines) if len(lines) > 3 else ""
 
 
-def _maybe_save_long_reply_as_draft(
+def _maybe_save_reply_as_draft(
     *,
     state_db,
     external_user_id: str,
@@ -259,54 +259,86 @@ def _maybe_save_long_reply_as_draft(
         return reply_text
     try:
         from spark_intelligence.bot_drafts import (
+            detect_generative_intent,
+            detect_iteration_intent,
             find_draft_for_iteration,
             save_draft,
             update_draft_content,
-            DRAFT_MIN_LENGTH,
         )
     except Exception:
         return reply_text
-    if len(reply_text) < DRAFT_MIN_LENGTH:
+
+    user = str(external_user_id or "").strip()
+    reply = str(reply_text or "")
+    if not user or not reply.strip():
         return reply_text
-    source_draft = None
-    if user_message:
+
+    is_iteration = bool(user_message) and detect_iteration_intent(user_message) is not None
+    is_generative = bool(user_message) and detect_generative_intent(user_message)
+
+    try:
+        from pathlib import Path as _P
+        from datetime import datetime as _dt
+        _dbg = _P(r"C:/Users/USER/Desktop/spark-intelligence-builder/.tmp-home-live-telegram-real/logs/draft_capture_probe.log")
+        _dbg.parent.mkdir(parents=True, exist_ok=True)
+        with _dbg.open("a", encoding="utf-8") as _fh:
+            _fh.write(
+                f"{_dt.utcnow().isoformat()}Z user={user} iter={is_iteration} "
+                f"gen={is_generative} msg={user_message[:120]!r} reply_len={len(reply)}\n"
+            )
+    except Exception:
+        pass
+
+    if is_iteration:
+        source_draft = None
         try:
             source_draft = find_draft_for_iteration(
                 state_db,
-                external_user_id=str(external_user_id),
+                external_user_id=user,
                 channel_kind="telegram",
                 user_message=user_message,
             )
         except Exception:
             source_draft = None
-    if source_draft is not None:
+        if source_draft is not None:
+            try:
+                update_draft_content(
+                    state_db,
+                    draft_id=source_draft.draft_id,
+                    content=reply,
+                    chip_used=chip_used,
+                )
+            except Exception:
+                pass
+            return reply_text
         try:
-            ok = update_draft_content(
+            save_draft(
                 state_db,
-                draft_id=source_draft.draft_id,
-                content=reply_text,
+                external_user_id=user,
+                channel_kind="telegram",
+                content=reply,
+                session_id=session_id,
                 chip_used=chip_used,
             )
         except Exception:
-            ok = False
-        if ok:
-            base = reply_text.rstrip()
-            return f"{base}\n\n_(draft updated: {source_draft.handle} — same handle, content replaced; say \"optimize this\" again to keep iterating)_"
-    try:
-        draft = save_draft(
-            state_db,
-            external_user_id=str(external_user_id),
-            channel_kind="telegram",
-            content=reply_text,
-            session_id=session_id,
-            chip_used=chip_used,
-        )
-    except Exception:
+            pass
         return reply_text
-    if draft is None:
+
+    if is_generative:
+        try:
+            save_draft(
+                state_db,
+                external_user_id=user,
+                channel_kind="telegram",
+                content=reply,
+                session_id=session_id,
+                chip_used=chip_used,
+            )
+        except Exception:
+            pass
         return reply_text
-    base = reply_text.rstrip()
-    return f"{base}\n\n_(draft: {draft.handle} — say \"iterate {draft.handle}\" or \"optimize this\" to revise this exact text)_"
+
+    return reply_text
 
 
 def _maybe_capture_user_instruction(
@@ -315,6 +347,8 @@ def _maybe_capture_user_instruction(
     user_message: str,
     external_user_id: str,
     reply_text: str,
+    bridge_mode: str | None = None,
+    routing_decision: str | None = None,
 ) -> str:
     try:
         from spark_intelligence.user_instructions import (
@@ -326,6 +360,8 @@ def _maybe_capture_user_instruction(
     except Exception:
         return reply_text
     if not user_message or not external_user_id:
+        return reply_text
+    if bridge_mode == "memory_generic_observation_delete" or routing_decision == "memory_generic_observation_delete":
         return reply_text
     intent = detect_instruction_intent(user_message)
     if not intent:
@@ -960,8 +996,10 @@ def simulate_telegram_update(
                     user_message=effective_text,
                     external_user_id=normalized.telegram_user_id,
                     reply_text=outbound_text,
+                    bridge_mode=bridge_result.mode,
+                    routing_decision=bridge_result.routing_decision,
                 )
-                outbound_text = _maybe_save_long_reply_as_draft(
+                outbound_text = _maybe_save_reply_as_draft(
                     state_db=state_db,
                     external_user_id=normalized.telegram_user_id,
                     session_id=resolution.session_id,
@@ -1646,6 +1684,27 @@ def poll_telegram_updates_once(
             human_id=resolution.human_id,
             agent_id=resolution.agent_id,
             reply_text=shaped_bridge_reply,
+        )
+        outbound_text = _maybe_append_verbatim_chip_block(
+            user_message=effective_text,
+            reply_text=outbound_text,
+            raw_chip_metrics=getattr(bridge_result, "raw_chip_metrics", []) or [],
+        )
+        outbound_text = _maybe_capture_user_instruction(
+            state_db=state_db,
+            user_message=effective_text,
+            external_user_id=normalized.telegram_user_id,
+            reply_text=outbound_text,
+            bridge_mode=bridge_result.mode,
+            routing_decision=bridge_result.routing_decision,
+        )
+        outbound_text = _maybe_save_reply_as_draft(
+            state_db=state_db,
+            external_user_id=normalized.telegram_user_id,
+            session_id=resolution.session_id,
+            chip_used=bridge_result.active_chip_key,
+            reply_text=outbound_text,
+            user_message=effective_text,
         )
         send_result = _send_telegram_reply(
             config_manager=config_manager,
