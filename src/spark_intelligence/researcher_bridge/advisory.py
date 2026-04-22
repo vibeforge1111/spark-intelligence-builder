@@ -4825,23 +4825,7 @@ def build_researcher_reply(
                 },
             ),
         )
-        return ResearcherBridgeResult(
-            request_id=request_id,
-            reply_text=reply_text,
-            evidence_summary=evidence_summary,
-            escalation_hint=None,
-            trace_ref=trace_ref,
-            mode="memory_structured_evidence_update",
-            runtime_root=None,
-            config_path=None,
-            attachment_context=attachment_context,
-            routing_decision="memory_structured_evidence_observation",
-            active_chip_key=None,
-            active_chip_task_type=None,
-            active_chip_evaluate_used=False,
-            output_keepability=output_keepability,
-            promotion_disposition=promotion_disposition,
-        )
+        # Memory captured above; fall through to conversational reply (was early return mode=memory_structured_evidence_update)
 
     if (
         assessed_generic_memory_candidate is not None
@@ -4891,23 +4875,7 @@ def build_researcher_reply(
                 },
             ),
         )
-        return ResearcherBridgeResult(
-            request_id=request_id,
-            reply_text=reply_text,
-            evidence_summary=evidence_summary,
-            escalation_hint=None,
-            trace_ref=trace_ref,
-            mode="memory_raw_episode_update",
-            runtime_root=None,
-            config_path=None,
-            attachment_context=attachment_context,
-            routing_decision="memory_raw_episode_observation",
-            active_chip_key=None,
-            active_chip_task_type=None,
-            active_chip_evaluate_used=False,
-            output_keepability=output_keepability,
-            promotion_disposition=promotion_disposition,
-        )
+        # Memory captured above; fall through to conversational reply (was early return mode=memory_raw_episode_update)
 
     if (
         assessed_generic_memory_candidate is not None
@@ -4959,23 +4927,7 @@ def build_researcher_reply(
                 },
             ),
         )
-        return ResearcherBridgeResult(
-            request_id=request_id,
-            reply_text=reply_text,
-            evidence_summary=evidence_summary,
-            escalation_hint=None,
-            trace_ref=trace_ref,
-            mode="memory_belief_update",
-            runtime_root=None,
-            config_path=None,
-            attachment_context=attachment_context,
-            routing_decision="memory_belief_observation",
-            active_chip_key=None,
-            active_chip_task_type=None,
-            active_chip_evaluate_used=False,
-            output_keepability=output_keepability,
-            promotion_disposition=promotion_disposition,
-        )
+        # Memory captured above; fall through to conversational reply (was early return mode=memory_belief_update)
 
     if (
         detected_profile_fact_query is not None
