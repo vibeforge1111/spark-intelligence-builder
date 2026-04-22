@@ -27,6 +27,7 @@ Artifact:
 
 - `C:\Users\USER\.spark-intelligence\artifacts\locomo-unseen-slice\2026-04-22-conversational-shadow-eval.json`
 - `C:\Users\USER\.spark-intelligence\artifacts\locomo-unseen-slice\2026-04-22-gated-conversational-shadow-eval.json`
+- `C:\Users\USER\.spark-intelligence\artifacts\locomo-unseen-slice\2026-04-22-exact-turn-shadow-selector.json`
 
 ## What Was Measured
 
@@ -40,6 +41,8 @@ For each question, we compared three retrieval-coverage views:
   - coverage from `summary OR conversational`
 - `gated_hybrid`
   - coverage from `summary OR conversational`, but only when a question-family gate allows the conversational lane
+- `exact_turn_hybrid`
+  - coverage from `summary OR conversational`, but only when a broader exact-turn selector allows the conversational lane
 
 This is retrieval coverage only, not final answer accuracy.
 
@@ -55,8 +58,10 @@ Overall on the unseen `580`-question slice:
 - `conversational`: `60/580` (`10.34%`)
 - `hybrid`: `130/580` (`22.41%`)
 - `gated_hybrid`: `111/580` (`19.14%`)
+- `exact_turn_hybrid`: `130/580` (`22.41%`)
 - `hybrid_delta_vs_summary`: `+21`
 - `gated_hybrid_delta_vs_summary`: `+2`
+- `exact_turn_hybrid_delta_vs_summary`: `+21`
 
 Interpretation:
 
@@ -65,14 +70,14 @@ Interpretation:
 
 Per conversation:
 
-- `conv-41`: summary `7/66`, conversational `9/66`, hybrid `14/66`, gated `8/66`
-- `conv-42`: summary `13/88`, conversational `4/88`, hybrid `13/88`, gated `13/88`
-- `conv-43`: summary `14/71`, conversational `3/71`, hybrid `15/71`, gated `14/71`
-- `conv-44`: summary `16/61`, conversational `12/61`, hybrid `19/61`, gated `16/61`
-- `conv-47`: summary `10/67`, conversational `3/67`, hybrid `11/67`, gated `10/67`
-- `conv-48`: summary `24/73`, conversational `12/73`, hybrid `26/73`, gated `25/73`
-- `conv-49`: summary `12/83`, conversational `8/83`, hybrid `15/83`, gated `12/83`
-- `conv-50`: summary `13/71`, conversational `9/71`, hybrid `17/71`, gated `13/71`
+- `conv-41`: summary `7/66`, conversational `9/66`, hybrid `14/66`, gated `8/66`, exact-turn `14/66`
+- `conv-42`: summary `13/88`, conversational `4/88`, hybrid `13/88`, gated `13/88`, exact-turn `13/88`
+- `conv-43`: summary `14/71`, conversational `3/71`, hybrid `15/71`, gated `14/71`, exact-turn `15/71`
+- `conv-44`: summary `16/61`, conversational `12/61`, hybrid `19/61`, gated `16/61`, exact-turn `19/61`
+- `conv-47`: summary `10/67`, conversational `3/67`, hybrid `11/67`, gated `10/67`, exact-turn `11/67`
+- `conv-48`: summary `24/73`, conversational `12/73`, hybrid `26/73`, gated `25/73`, exact-turn `26/73`
+- `conv-49`: summary `12/83`, conversational `8/83`, hybrid `15/83`, gated `12/83`, exact-turn `15/83`
+- `conv-50`: summary `13/71`, conversational `9/71`, hybrid `17/71`, gated `13/71`, exact-turn `17/71`
 
 ## Main Read
 
@@ -104,6 +109,14 @@ The gated experiment matters because it failed in an informative way:
   - where someone was located
   - pet / dream / activity facts
 
+The exact-turn selector matters because it recovered those same gains without opening the lane fully. On this slice it matched the unrestricted `hybrid` result exactly:
+
+- it preserved the full `+21` over summary
+- it still stayed narrower than “use conversational everywhere”
+- it points to the right architectural distinction:
+  - summary retrieval is strong for abstracted memory
+  - conversational retrieval is strong for exact slot-filling from raw turns
+
 ## Architectural Conclusion
 
 The next correct architecture is not:
@@ -133,7 +146,7 @@ Do not promote the conversational lane broadly yet for:
 
 ## Recommended Next Step
 
-Implement a stronger shadow selector before touching runtime:
+Implement an exact-evidence selector before touching runtime:
 
 1. Keep current summary retrieval unchanged.
 2. Score whether a question is better served by:
@@ -148,5 +161,7 @@ Implement a stronger shadow selector before touching runtime:
    - unseen `580`-question slice
    - focused `conv-48` / `conv-49` / `conv-50` packs
    - regression and soak guardrails
+
+On the current unseen slice, the exact-turn selector is the best shadow candidate so far.
 
 That is the highest-probability path to improve real chat memory without repeating the last overfit mistake.
