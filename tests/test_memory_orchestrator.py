@@ -3876,3 +3876,51 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(write["value"], "Dubai")
         self.assertEqual(payload["checks"]["current_state"][0]["predicate"], "profile.city")
         self.assertNotIn("historical_state", payload["checks"])
+
+
+class RuntimeArchitecturePinTests(SparkTestCase):
+    def test_pin_constants_exported(self) -> None:
+        self.assertEqual(
+            memory_orchestrator.PINNED_RUNTIME_MEMORY_ARCHITECTURE,
+            "dual_store_event_calendar_hybrid",
+        )
+        self.assertEqual(
+            memory_orchestrator.PINNED_RUNTIME_MEMORY_PROVIDER,
+            "heuristic_v1",
+        )
+
+    def test_apply_pin_sets_env_when_absent(self) -> None:
+        import os
+        saved_arch = os.environ.pop("SPARK_MEMORY_RUNTIME_ARCHITECTURE", None)
+        saved_prov = os.environ.pop("SPARK_MEMORY_RUNTIME_PROVIDER", None)
+        try:
+            memory_orchestrator._apply_runtime_architecture_pin()
+            self.assertEqual(
+                os.environ["SPARK_MEMORY_RUNTIME_ARCHITECTURE"],
+                memory_orchestrator.PINNED_RUNTIME_MEMORY_ARCHITECTURE,
+            )
+            self.assertEqual(
+                os.environ["SPARK_MEMORY_RUNTIME_PROVIDER"],
+                memory_orchestrator.PINNED_RUNTIME_MEMORY_PROVIDER,
+            )
+        finally:
+            if saved_arch is not None:
+                os.environ["SPARK_MEMORY_RUNTIME_ARCHITECTURE"] = saved_arch
+            if saved_prov is not None:
+                os.environ["SPARK_MEMORY_RUNTIME_PROVIDER"] = saved_prov
+
+    def test_apply_pin_respects_existing_env(self) -> None:
+        import os
+        saved = os.environ.get("SPARK_MEMORY_RUNTIME_ARCHITECTURE")
+        os.environ["SPARK_MEMORY_RUNTIME_ARCHITECTURE"] = "summary_synthesis_memory"
+        try:
+            memory_orchestrator._apply_runtime_architecture_pin()
+            self.assertEqual(
+                os.environ["SPARK_MEMORY_RUNTIME_ARCHITECTURE"],
+                "summary_synthesis_memory",
+            )
+        finally:
+            if saved is None:
+                os.environ.pop("SPARK_MEMORY_RUNTIME_ARCHITECTURE", None)
+            else:
+                os.environ["SPARK_MEMORY_RUNTIME_ARCHITECTURE"] = saved

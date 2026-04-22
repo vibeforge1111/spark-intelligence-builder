@@ -29,13 +29,41 @@ from spark_intelligence.observability.store import record_event
 from spark_intelligence.state.db import StateDB
 
 
+from spark_intelligence.memory.retention_policy import (
+    BELIEF_REVALIDATION_DAYS,
+    RAW_EPISODE_ARCHIVE_DAYS,
+    STRUCTURED_EVIDENCE_ARCHIVE_DAYS,
+)
+
 DEFAULT_SDK_MODULE = "domain_chip_memory"
 DEFAULT_DOMAIN_CHIP_MEMORY_ROOT = Path.home() / "Desktop" / "domain-chip-memory"
 PREFERENCE_PREDICATE_PREFIX = "personality.preference."
-BELIEF_REVALIDATION_DAYS = 30
-STRUCTURED_EVIDENCE_ARCHIVE_DAYS = 30
-RAW_EPISODE_ARCHIVE_DAYS = 14
 _SDK_CLIENT_CACHE: dict[tuple[str, str], Any] = {}
+
+# Builder-side source of truth for the runtime memory architecture. Substrate
+# (`domain_chip_memory.sdk`) also defines a default, but relying on it meant
+# the live runtime would silently flip on env-var loss or a substrate-side
+# refactor. Applying the pin from Builder makes the choice explicit and
+# auditable here. Pre-existing env vars are respected so tests can override.
+#
+# 2026-04-22: live Telegram regression flags `architecture_promotion_gap` —
+# the live leader recommendation is `summary_synthesis_memory`. The pin below
+# keeps the April 21 handoff's chosen value so behavior is unchanged by the
+# introduction of this pin; the flip decision is deferred.
+PINNED_RUNTIME_MEMORY_ARCHITECTURE = "dual_store_event_calendar_hybrid"
+PINNED_RUNTIME_MEMORY_PROVIDER = "heuristic_v1"
+_ARCHITECTURE_PIN_ENV_VAR = "SPARK_MEMORY_RUNTIME_ARCHITECTURE"
+_PROVIDER_PIN_ENV_VAR = "SPARK_MEMORY_RUNTIME_PROVIDER"
+
+
+def _apply_runtime_architecture_pin() -> None:
+    if not os.environ.get(_ARCHITECTURE_PIN_ENV_VAR):
+        os.environ[_ARCHITECTURE_PIN_ENV_VAR] = PINNED_RUNTIME_MEMORY_ARCHITECTURE
+    if not os.environ.get(_PROVIDER_PIN_ENV_VAR):
+        os.environ[_PROVIDER_PIN_ENV_VAR] = PINNED_RUNTIME_MEMORY_PROVIDER
+
+
+_apply_runtime_architecture_pin()
 
 
 @dataclass(frozen=True)

@@ -6,29 +6,15 @@ from dataclasses import dataclass
 from typing import Any
 
 
+from spark_intelligence.memory.retention_policy import (
+    ACTIVE_STATE_REVALIDATION_DAYS_BY_PREDICATE as _ACTIVE_STATE_REVALIDATION_DAYS_BY_PREDICATE,
+)
+
 _CITY_PATTERNS = [
     re.compile(r"\bi\s+moved\s+to\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
     re.compile(r"\bi\s+live\s+in\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
     re.compile(r"\bi(?:'m| am)\s+in\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
 ]
-
-_ACTIVE_STATE_REVALIDATION_DAYS_BY_PREDICATE = {
-    "profile.current_plan": 30,
-    "profile.current_focus": 21,
-    "profile.current_decision": 30,
-    "profile.current_blocker": 14,
-    "profile.current_status": 14,
-    "profile.current_commitment": 21,
-    "profile.current_milestone": 21,
-    "profile.current_risk": 14,
-    "profile.current_dependency": 14,
-    "profile.current_constraint": 14,
-    "profile.current_assumption": 30,
-    "profile.current_owner": 21,
-    "telegram.summary.latest_meeting": 14,
-    "telegram.summary.latest_deadline": 14,
-    "telegram.summary.latest_shipped": 14,
-}
 _STARTUP_PATTERNS = [
     re.compile(r"\bmy\s+startup\s+is\s+([A-Za-z][A-Za-z0-9\s\-'`.&_]{1,60})", re.I),
     re.compile(r"\b([A-Za-z][A-Za-z0-9\s\-'`.&_]{1,60})\s+is\s+my\s+startup", re.I),
