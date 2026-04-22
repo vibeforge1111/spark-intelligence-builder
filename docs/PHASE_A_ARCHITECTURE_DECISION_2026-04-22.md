@@ -1,8 +1,8 @@
 # Phase A Architecture Decision 2026-04-22
 
-**Status:** partial Phase A complete, external suite in progress.
-**Decision state:** no pin change recommended yet.
-**Reason:** internal head-to-head is captured on current HEAD and external data restore is done, but only the first external BEAM lane is complete so the full Phase A decision is still incomplete.
+**Status:** Phase A measurement complete.
+**Decision state:** recommend flipping the runtime pin to `summary_synthesis_memory`.
+**Reason:** internal live recommendation already favored `summary_synthesis_memory`, and the completed external head-to-head now shows a decisive multi-benchmark win for `summary_synthesis_memory` over `dual_store_event_calendar_hybrid`.
 
 ## Snapshot
 
@@ -28,7 +28,7 @@
 | Live Telegram regression score | n/a | `200/202` runtime result | Same 2 known mismatches, no new ones |
 | 14-pack soak aggregate | n/a | `238/244` runtime result | Same 6 known mismatches, no new ones |
 
-### External progress so far
+### External head-to-head
 
 | Surface | `summary_synthesis_memory` | `dual_store_event_calendar_hybrid` | Takeaway |
 |---|---:|---:|---|
@@ -36,7 +36,7 @@
 | LoCoMo | `173/1986` (`8.71%`) | `163/1986` (`8.21%`) | Both contenders are weak here, but summary-synthesis still edges dual-store |
 | LongMemEval_s | `468/500` (`93.60%`) | `232/500` (`46.40%`) | Summary-synthesis wins LongMemEval_s by a wide margin |
 | BEAM public `500K` | `700/700` (`100.00%`) | `49/700` (`7.00%`) | Summary-synthesis repeated the same perfect pattern while dual-store collapsed again |
-| BEAM public `1M` | `700/700` (`100.00%`) | in progress | Summary-synthesis completed another perfect lane; dual-store is still running |
+| BEAM public `1M` | `700/700` (`100.00%`) | `49/700` (`7.00%`) | Summary-synthesis completed another perfect lane while dual-store collapsed again |
 | BEAM public `10M` | `200/200` (`100.00%`) | `2/200` (`1.00%`) | Summary-synthesis stays perfect at the largest completed BEAM scale while dual-store nearly zeros out |
 
 ### Internal regression details
@@ -79,52 +79,50 @@ Observed on this machine during this turn:
 - `benchmark_data/` is gitignored in
   `C:\Users\USER\Desktop\domain-chip-memory\.gitignore`
 - fresh Phase A external artifacts now exist for:
-  - `BEAM` public `128K`
+  - `BEAM` public `128K` for both contenders
+  - `BEAM` public `500K` for both contenders
+  - `BEAM` public `1M` for both contenders
+  - `BEAM` public `10M` for both contenders
   - `LoCoMo` for both contenders
   - `LongMemEval_s` for both contenders
-  - `BEAM` public `500K` for both contenders
-  - `BEAM` public `1M` for `summary_synthesis_memory`
-  - `BEAM` public `10M` for both contenders
-- fresh reruns are still active for:
-  - `BEAM` public `1M` for `dual_store_event_calendar_hybrid`
 
 Two substrate fixes were required to get the external suite moving on current HEAD:
 
 - `cce6e83` `Handle event calendar ids in yes-no ranking`
 - `b1cc017` `Normalize observation id sorting for external benchmarks`
 
-That means the external half of Phase A is now runnable from this checkout, but still incomplete.
+That means the external half of Phase A is now complete from this checkout.
 
 ## Recommendation
 
-Do **not** flip `PINNED_RUNTIME_MEMORY_ARCHITECTURE` yet.
+Recommend flipping `PINNED_RUNTIME_MEMORY_ARCHITECTURE` from
+`dual_store_event_calendar_hybrid` to `summary_synthesis_memory`.
 
 Current evidence says:
 
 - offline internal data is a tie
 - live internal regression still prefers `summary_synthesis_memory`
 - current runtime remains pinned to `dual_store_event_calendar_hybrid`
-- the first completed external lane (`BEAM` public `128K`) strongly favors `summary_synthesis_memory`
+- the completed `BEAM` `128K` head-to-head strongly favors `summary_synthesis_memory`
 - the fully completed `LongMemEval_s` head-to-head strongly favors `summary_synthesis_memory`
 - the completed `LoCoMo` head-to-head is weak for both contenders, with only a slight summary-synthesis edge
 - the completed `BEAM` `500K` head-to-head continues the same summary-synthesis pattern with another perfect lane and another dual-store collapse
-- the completed summary side of `BEAM` `1M` continues the same pattern, pending the dual-store side
+- the completed `BEAM` `1M` head-to-head continues the same pattern with another perfect-vs-collapse split
 - the completed `BEAM` `10M` head-to-head extends that same pattern to the largest finished scale
 - `architecture_promotion_gap` still reproduces on fresh artifacts
 
-That is enough to confirm the gap is real and to increase confidence in `summary_synthesis_memory`, but not enough to close Phase A mechanically because the remaining external lanes are still running.
+That is enough to close Phase A mechanically. The internal live recommendation and the external benchmark matrix now point in the same direction: `summary_synthesis_memory` is the stronger runtime architecture.
+
+I did **not** change the pin in code in this pass. This doc now provides the completed evidence and recommendation needed for that final approval step.
 
 ## Next Actions
 
-1. Finish the fresh external head-to-head for both contenders:
-   - `LongMemEval`
-   - `LoCoMo`
-   - remaining `BEAM` public scales if Phase A requires the full public reproduction rather than the completed `128K` lane
-2. Append those scores to this doc.
-3. Re-evaluate whether the founder should keep or flip the runtime pin.
-4. Only after explicit approval, update
+1. If approved, update
    `src/spark_intelligence/memory/orchestrator.py`
-   and rerun the full internal gate.
+   to pin `summary_synthesis_memory`.
+2. Rerun the full internal gate after the pin flip.
+3. Confirm the `architecture_promotion_gap` label disappears on fresh regression artifacts.
+4. Then move into Phase B mismatch work.
 
 ## Artifact Paths
 
@@ -156,3 +154,5 @@ That is enough to confirm the gap is real and to increase confidence in `summary
   `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\dual_store_event_calendar_hybrid\beam_10m.json`
 - External BEAM `1M` summary-synthesis:
   `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\summary_synthesis_memory\beam_1m.json`
+- External BEAM `1M` dual-store:
+  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\dual_store_event_calendar_hybrid\beam_1m.json`
