@@ -3924,3 +3924,48 @@ class RuntimeArchitecturePinTests(SparkTestCase):
                 os.environ.pop("SPARK_MEMORY_RUNTIME_ARCHITECTURE", None)
             else:
                 os.environ["SPARK_MEMORY_RUNTIME_ARCHITECTURE"] = saved
+
+
+class PredicateRegistryConsolidationTests(SparkTestCase):
+    _EXPECTED_PREDICATE_DAYS = {
+        "profile.current_plan": 30,
+        "profile.current_focus": 21,
+        "profile.current_decision": 30,
+        "profile.current_blocker": 14,
+        "profile.current_status": 14,
+        "profile.current_commitment": 21,
+        "profile.current_milestone": 21,
+        "profile.current_risk": 14,
+        "profile.current_dependency": 14,
+        "profile.current_constraint": 14,
+        "profile.current_assumption": 30,
+        "profile.current_owner": 21,
+    }
+
+    def test_pack_carries_revalidation_days_for_all_current_state_predicates(self) -> None:
+        from spark_intelligence.memory.generic_observations import pack_revalidation_days
+        for predicate, expected in self._EXPECTED_PREDICATE_DAYS.items():
+            self.assertEqual(
+                pack_revalidation_days(predicate),
+                expected,
+                msg=f"pack_revalidation_days({predicate!r}) should resolve via TelegramGenericPack registry",
+            )
+
+    def test_retention_policy_prefers_pack_then_falls_back_to_orphan_dict(self) -> None:
+        from spark_intelligence.memory.retention_policy import active_state_revalidation_days_for
+        for predicate, expected in self._EXPECTED_PREDICATE_DAYS.items():
+            self.assertEqual(active_state_revalidation_days_for(predicate), expected)
+        for orphan in (
+            "telegram.summary.latest_meeting",
+            "telegram.summary.latest_deadline",
+            "telegram.summary.latest_shipped",
+        ):
+            self.assertEqual(active_state_revalidation_days_for(orphan), 14)
+        self.assertIsNone(active_state_revalidation_days_for("bogus.predicate"))
+        self.assertIsNone(active_state_revalidation_days_for(None))
+
+    def test_profile_facts_helper_uses_unified_lookup(self) -> None:
+        from spark_intelligence.memory.profile_facts import active_state_revalidation_days
+        self.assertEqual(active_state_revalidation_days("profile.current_plan"), 30)
+        self.assertEqual(active_state_revalidation_days("telegram.summary.latest_meeting"), 14)
+        self.assertIsNone(active_state_revalidation_days("bogus.predicate"))

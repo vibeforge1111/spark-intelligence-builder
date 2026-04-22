@@ -171,6 +171,7 @@ class TelegramGenericPack:
     delete_phrases: tuple[str, ...]
     observation_answer_template: str | None = None
     deletion_answer_template: str | None = None
+    revalidation_days: int | None = None
 
 
 def _simple_delete_phrases(*targets: str) -> tuple[str, ...]:
@@ -289,6 +290,7 @@ _GENERIC_PACKS: tuple[TelegramGenericPack, ...] = (
         delete_phrases=_simple_delete_phrases("my current plan", "the plan"),
         observation_answer_template="I'll remember that your current plan is to {value}.",
         deletion_answer_template="I'll forget your current plan.",
+        revalidation_days=30,
     ),
     TelegramGenericPack(
         domain_pack="goals_and_priorities",
@@ -299,6 +301,7 @@ _GENERIC_PACKS: tuple[TelegramGenericPack, ...] = (
         update_patterns=_FOCUS_PATTERNS,
         delete_phrases=_simple_delete_phrases("my current focus", "our priority"),
         deletion_answer_template="I'll forget your current focus.",
+        revalidation_days=21,
     ),
     TelegramGenericPack(
         domain_pack="plans_and_commitments",
@@ -310,6 +313,7 @@ _GENERIC_PACKS: tuple[TelegramGenericPack, ...] = (
         delete_phrases=_simple_delete_phrases("my current commitment", "our commitment", "the commitment"),
         observation_answer_template="I'll remember that your current commitment is to {value}.",
         deletion_answer_template="I'll forget your current commitment.",
+        revalidation_days=21,
     ),
     TelegramGenericPack(
         domain_pack="plans_and_commitments",
@@ -320,6 +324,7 @@ _GENERIC_PACKS: tuple[TelegramGenericPack, ...] = (
         update_patterns=_MILESTONE_PATTERNS,
         delete_phrases=_simple_delete_phrases("my current milestone", "our milestone", "the milestone"),
         deletion_answer_template="I'll forget your current milestone.",
+        revalidation_days=21,
     ),
     TelegramGenericPack(
         domain_pack="project_state",
@@ -330,6 +335,7 @@ _GENERIC_PACKS: tuple[TelegramGenericPack, ...] = (
         update_patterns=_DECISION_PATTERNS,
         delete_phrases=_simple_delete_phrases("my current decision", "our decision"),
         deletion_answer_template="I'll forget your current decision.",
+        revalidation_days=30,
     ),
     TelegramGenericPack(
         domain_pack="project_state",
@@ -340,6 +346,7 @@ _GENERIC_PACKS: tuple[TelegramGenericPack, ...] = (
         update_patterns=_BLOCKER_PATTERNS,
         delete_phrases=_simple_delete_phrases("my current blocker", "our blocker", "our bottleneck"),
         deletion_answer_template="I'll forget your current blocker.",
+        revalidation_days=14,
     ),
     TelegramGenericPack(
         domain_pack="project_state",
@@ -350,6 +357,7 @@ _GENERIC_PACKS: tuple[TelegramGenericPack, ...] = (
         update_patterns=_STATUS_PATTERNS,
         delete_phrases=_simple_delete_phrases("my current status", "our status", "the project status"),
         deletion_answer_template="I'll forget your current status.",
+        revalidation_days=14,
     ),
     TelegramGenericPack(
         domain_pack="project_state",
@@ -360,6 +368,7 @@ _GENERIC_PACKS: tuple[TelegramGenericPack, ...] = (
         update_patterns=_RISK_PATTERNS,
         delete_phrases=_simple_delete_phrases("my current risk", "our risk", "the risk"),
         deletion_answer_template="I'll forget your current risk.",
+        revalidation_days=14,
     ),
     TelegramGenericPack(
         domain_pack="project_state",
@@ -370,6 +379,7 @@ _GENERIC_PACKS: tuple[TelegramGenericPack, ...] = (
         update_patterns=_DEPENDENCY_PATTERNS,
         delete_phrases=_simple_delete_phrases("my current dependency", "our dependency", "the dependency"),
         deletion_answer_template="I'll forget your current dependency.",
+        revalidation_days=14,
     ),
     TelegramGenericPack(
         domain_pack="project_state",
@@ -380,6 +390,7 @@ _GENERIC_PACKS: tuple[TelegramGenericPack, ...] = (
         update_patterns=_CONSTRAINT_PATTERNS,
         delete_phrases=_simple_delete_phrases("my current constraint", "our constraint", "the constraint"),
         deletion_answer_template="I'll forget your current constraint.",
+        revalidation_days=14,
     ),
     TelegramGenericPack(
         domain_pack="project_state",
@@ -390,6 +401,7 @@ _GENERIC_PACKS: tuple[TelegramGenericPack, ...] = (
         update_patterns=_ASSUMPTION_PATTERNS,
         delete_phrases=_simple_delete_phrases("my current assumption", "our assumption", "the assumption"),
         deletion_answer_template="I'll forget your current assumption.",
+        revalidation_days=30,
     ),
     TelegramGenericPack(
         domain_pack="project_state",
@@ -400,10 +412,20 @@ _GENERIC_PACKS: tuple[TelegramGenericPack, ...] = (
         update_patterns=_OWNER_PATTERNS,
         delete_phrases=_simple_delete_phrases("my current owner", "our owner", "the owner"),
         deletion_answer_template="I'll forget your current owner.",
+        revalidation_days=21,
     ),
 )
 
 _GENERIC_PACKS_BY_PREDICATE = {pack.predicate: pack for pack in _GENERIC_PACKS}
+
+
+def pack_revalidation_days(predicate: str | None) -> int | None:
+    if predicate is None:
+        return None
+    pack = _GENERIC_PACKS_BY_PREDICATE.get(predicate)
+    if pack is None:
+        return None
+    return pack.revalidation_days
 
 _BELIEF_PREFIX_PATTERN = re.compile(
     r"^(?:i think|we think|i believe|we believe|it seems|it looks like|probably|likely)\b",

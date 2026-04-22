@@ -4,7 +4,7 @@ Single source of truth for Builder-side lifecycle timing. Moving these
 values here makes policy changes reviewable in one place instead of
 scattered through executable code.
 
-Per-predicate tuning rationale:
+Per-predicate revalidation tuning:
 
 - 14 days: rapidly-changing state (blocker, status, risk, dependency,
   constraint, operational summary fields). Short window reflects that
@@ -13,6 +13,10 @@ Per-predicate tuning rationale:
   owner).
 - 30 days: long-horizon choices (plan, decision, assumption) plus the
   belief-level and structured-evidence cache.
+
+For predicates that have a TelegramGenericPack entry, `revalidation_days`
+lives on the pack itself. The dict below only covers orphan predicates
+that are not (yet) pack-backed.
 """
 
 from __future__ import annotations
@@ -22,19 +26,7 @@ BELIEF_REVALIDATION_DAYS = 30
 STRUCTURED_EVIDENCE_ARCHIVE_DAYS = 30
 RAW_EPISODE_ARCHIVE_DAYS = 14
 
-ACTIVE_STATE_REVALIDATION_DAYS_BY_PREDICATE: dict[str, int] = {
-    "profile.current_plan": 30,
-    "profile.current_focus": 21,
-    "profile.current_decision": 30,
-    "profile.current_blocker": 14,
-    "profile.current_status": 14,
-    "profile.current_commitment": 21,
-    "profile.current_milestone": 21,
-    "profile.current_risk": 14,
-    "profile.current_dependency": 14,
-    "profile.current_constraint": 14,
-    "profile.current_assumption": 30,
-    "profile.current_owner": 21,
+_ORPHAN_REVALIDATION_DAYS: dict[str, int] = {
     "telegram.summary.latest_meeting": 14,
     "telegram.summary.latest_deadline": 14,
     "telegram.summary.latest_shipped": 14,
@@ -44,4 +36,9 @@ ACTIVE_STATE_REVALIDATION_DAYS_BY_PREDICATE: dict[str, int] = {
 def active_state_revalidation_days_for(predicate: str | None) -> int | None:
     if predicate is None:
         return None
-    return ACTIVE_STATE_REVALIDATION_DAYS_BY_PREDICATE.get(predicate)
+    from spark_intelligence.memory.generic_observations import pack_revalidation_days
+
+    pack_days = pack_revalidation_days(predicate)
+    if pack_days is not None:
+        return pack_days
+    return _ORPHAN_REVALIDATION_DAYS.get(predicate)

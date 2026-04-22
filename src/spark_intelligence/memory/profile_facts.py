@@ -7,7 +7,7 @@ from typing import Any
 
 
 from spark_intelligence.memory.retention_policy import (
-    ACTIVE_STATE_REVALIDATION_DAYS_BY_PREDICATE as _ACTIVE_STATE_REVALIDATION_DAYS_BY_PREDICATE,
+    active_state_revalidation_days_for as _active_state_revalidation_days_for,
 )
 
 _CITY_PATTERNS = [
@@ -1528,7 +1528,9 @@ def build_profile_fact_query_context(*, query: ProfileFactQuery, value: str | No
 
 def active_state_revalidation_days(predicate: str | None) -> int | None:
     normalized = str(predicate or "").strip().lower()
-    return _ACTIVE_STATE_REVALIDATION_DAYS_BY_PREDICATE.get(normalized)
+    if not normalized:
+        return None
+    return _active_state_revalidation_days_for(normalized)
 
 
 def active_state_revalidate_at(*, predicate: str | None, timestamp: str | None) -> str | None:
