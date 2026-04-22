@@ -1,8 +1,8 @@
 # Phase A Architecture Decision 2026-04-22
 
-**Status:** Phase A measurement complete.
-**Decision state:** recommend flipping the runtime pin to `summary_synthesis_memory`.
-**Reason:** internal live recommendation already favored `summary_synthesis_memory`, and the completed external head-to-head now shows a decisive multi-benchmark win for `summary_synthesis_memory` over `dual_store_event_calendar_hybrid`.
+**Status:** Phase A complete and post-flip validation passed.
+**Decision state:** the runtime pin was flipped to `summary_synthesis_memory` and the full internal gate was rerun successfully.
+**Reason:** internal live recommendation already favored `summary_synthesis_memory`, the completed external head-to-head showed a decisive multi-benchmark win, and the post-flip regression rerun removed `architecture_promotion_gap` without introducing new mismatches.
 
 ## Snapshot
 
@@ -14,6 +14,10 @@
   `C:\Users\USER\.spark-intelligence\artifacts\phase-a-internal\2026-04-22-head-to-head\run-summary.json`
 - External artifact root:
   `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks`
+- Pin-flip builder commit:
+  `54a01eb`
+- Post-flip validation artifact root:
+  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-post-flip\2026-04-22-summary-synthesis-pin`
 
 ## What Was Measured This Turn
 
@@ -38,6 +42,23 @@
 | BEAM public `500K` | `700/700` (`100.00%`) | `49/700` (`7.00%`) | Summary-synthesis repeated the same perfect pattern while dual-store collapsed again |
 | BEAM public `1M` | `700/700` (`100.00%`) | `49/700` (`7.00%`) | Summary-synthesis completed another perfect lane while dual-store collapsed again |
 | BEAM public `10M` | `200/200` (`100.00%`) | `2/200` (`1.00%`) | Summary-synthesis stays perfect at the largest completed BEAM scale while dual-store nearly zeros out |
+
+### Post-flip validation
+
+After approval, Builder pin `54a01eb` flipped the runtime to
+`summary_synthesis_memory` and reran the full internal gate into:
+
+`C:\Users\USER\.spark-intelligence\artifacts\phase-a-post-flip\2026-04-22-summary-synthesis-pin`
+
+Results on the flipped pin:
+
+| Surface | Result | Takeaway |
+|---|---:|---|
+| Offline ProductMemory | unchanged leader set | runtime now matches one of the offline leaders |
+| Live Telegram regression | `200/202` | same 2 known mismatches, no new ones |
+| Live Telegram regression issue labels | `probe_quality_gap` only | `architecture_promotion_gap` disappeared |
+| Live Telegram runtime recommendation | `summary_synthesis_memory` | runtime now matches the recommended live leader |
+| 14-pack soak | `238/244` | same 6 known mismatches, no new ones |
 
 ### Internal regression details
 
@@ -91,38 +112,41 @@ Two substrate fixes were required to get the external suite moving on current HE
 - `cce6e83` `Handle event calendar ids in yes-no ranking`
 - `b1cc017` `Normalize observation id sorting for external benchmarks`
 
-That means the external half of Phase A is now complete from this checkout.
+That means the external half of Phase A is complete from this checkout.
 
 ## Recommendation
 
-Recommend flipping `PINNED_RUNTIME_MEMORY_ARCHITECTURE` from
+The Phase A recommendation was approved and executed:
+
+`PINNED_RUNTIME_MEMORY_ARCHITECTURE` was flipped from
 `dual_store_event_calendar_hybrid` to `summary_synthesis_memory`.
 
 Current evidence says:
 
 - offline internal data is a tie
 - live internal regression still prefers `summary_synthesis_memory`
-- current runtime remains pinned to `dual_store_event_calendar_hybrid`
+- current runtime is now pinned to `summary_synthesis_memory`
 - the completed `BEAM` `128K` head-to-head strongly favors `summary_synthesis_memory`
 - the fully completed `LongMemEval_s` head-to-head strongly favors `summary_synthesis_memory`
 - the completed `LoCoMo` head-to-head is weak for both contenders, with only a slight summary-synthesis edge
 - the completed `BEAM` `500K` head-to-head continues the same summary-synthesis pattern with another perfect lane and another dual-store collapse
 - the completed `BEAM` `1M` head-to-head continues the same pattern with another perfect-vs-collapse split
 - the completed `BEAM` `10M` head-to-head extends that same pattern to the largest finished scale
-- `architecture_promotion_gap` still reproduces on fresh artifacts
+- post-flip regression shows `live_architecture_runtime_matches_leader: true`
+- post-flip regression issue labels no longer include `architecture_promotion_gap`
 
-That is enough to close Phase A mechanically. The internal live recommendation and the external benchmark matrix now point in the same direction: `summary_synthesis_memory` is the stronger runtime architecture.
-
-I did **not** change the pin in code in this pass. This doc now provides the completed evidence and recommendation needed for that final approval step.
+That closes Phase A mechanically. The internal live recommendation, the external benchmark matrix, and the post-flip rerun all point in the same direction: `summary_synthesis_memory` is the stronger runtime architecture and the promotion gap is closed.
 
 ## Next Actions
 
-1. If approved, update
-   `src/spark_intelligence/memory/orchestrator.py`
-   to pin `summary_synthesis_memory`.
-2. Rerun the full internal gate after the pin flip.
-3. Confirm the `architecture_promotion_gap` label disappears on fresh regression artifacts.
-4. Then move into Phase B mismatch work.
+1. Move into Phase B mismatch work.
+2. Target the 2 regression mismatches:
+   - `belief_recall_after_evidence_override_onboarding`
+   - `evidence_consolidation_belief_recall_onboarding`
+3. Target the 6 soak mismatches in:
+   - `anti_personalization_guardrails`
+   - `loaded_context_abstention`
+4. Preserve the current pin and use the post-flip artifact set as the new architecture baseline.
 
 ## Artifact Paths
 
@@ -156,3 +180,9 @@ I did **not** change the pin in code in this pass. This doc now provides the com
   `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\summary_synthesis_memory\beam_1m.json`
 - External BEAM `1M` dual-store:
   `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\dual_store_event_calendar_hybrid\beam_1m.json`
+- Post-flip validation run summary:
+  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-post-flip\2026-04-22-summary-synthesis-pin\run-summary.json`
+- Post-flip regression:
+  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-post-flip\2026-04-22-summary-synthesis-pin\telegram-memory-regression\telegram-memory-regression.json`
+- Post-flip soak:
+  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-post-flip\2026-04-22-summary-synthesis-pin\telegram-memory-architecture-soak\telegram-memory-architecture-soak.json`
