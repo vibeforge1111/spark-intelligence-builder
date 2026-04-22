@@ -117,6 +117,13 @@ The exact-turn selector matters because it recovered those same gains without op
   - summary retrieval is strong for abstracted memory
   - conversational retrieval is strong for exact slot-filling from raw turns
 
+Follow-up implementation status:
+
+- an eval-only exact-turn hybrid packet builder now exists in the substrate
+- it merges current summary packet context with conversational turns only when the exact-turn selector fires
+- runtime is still unchanged
+- this means the next pass can measure answer behavior on fused evidence instead of stopping at coverage-only analysis
+
 ## Architectural Conclusion
 
 The next correct architecture is not:
@@ -146,22 +153,28 @@ Do not promote the conversational lane broadly yet for:
 
 ## Recommended Next Step
 
-Implement an exact-evidence selector before touching runtime:
+Implement answer-side shadow evaluation on top of the exact-turn hybrid packets before touching runtime:
 
 1. Keep current summary retrieval unchanged.
-2. Score whether a question is better served by:
+2. Build fused shadow packets with:
+   - summary packet context
+   - exact-turn conversational additions when the selector fires
+3. Run answer evaluation over those shadow packets.
+4. Compare against current summary-only packets on:
+   - unseen `580`-question slice
+   - focused `conv-48` / `conv-49` / `conv-50` packs
+   - regression and soak guardrails
+5. Only then consider runtime promotion.
+
+The selector itself should keep scoring whether a question is better served by:
    - abstract summary evidence
    - exact conversational-turn evidence
-3. Let the selector consider:
+6. Let the selector consider:
    - question shape
    - presence of person-specific slot filling
    - summary evidence quality
    - conversational evidence quality
-4. Re-measure:
-   - unseen `580`-question slice
-   - focused `conv-48` / `conv-49` / `conv-50` packs
-   - regression and soak guardrails
-
+ 
 On the current unseen slice, the exact-turn selector is the best shadow candidate so far.
 
 That is the highest-probability path to improve real chat memory without repeating the last overfit mistake.
