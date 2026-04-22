@@ -37,7 +37,7 @@
 | LongMemEval_s | `468/500` (`93.60%`) | `232/500` (`46.40%`) | Summary-synthesis wins LongMemEval_s by a wide margin |
 | BEAM public `500K` | `700/700` (`100.00%`) | `49/700` (`7.00%`) | Summary-synthesis repeated the same perfect pattern while dual-store collapsed again |
 | BEAM public `1M` | in progress | in progress | launched after the summary `500K` lane finished |
-| BEAM public `10M` | in progress | in progress | launched after the `500K` head-to-head closed |
+| BEAM public `10M` | `200/200` (`100.00%`) | `2/200` (`1.00%`) | Summary-synthesis stays perfect at the largest completed BEAM scale while dual-store nearly zeros out |
 
 ### Internal regression details
 
@@ -83,9 +83,9 @@ Observed on this machine during this turn:
   - `LoCoMo` for both contenders
   - `LongMemEval_s` for both contenders
   - `BEAM` public `500K` for both contenders
+  - `BEAM` public `10M` for both contenders
 - fresh reruns are still active for:
   - `BEAM` public `1M` for both contenders
-  - `BEAM` public `10M` for both contenders
 
 Two substrate fixes were required to get the external suite moving on current HEAD:
 
@@ -107,6 +107,7 @@ Current evidence says:
 - the fully completed `LongMemEval_s` head-to-head strongly favors `summary_synthesis_memory`
 - the completed `LoCoMo` head-to-head is weak for both contenders, with only a slight summary-synthesis edge
 - the completed `BEAM` `500K` head-to-head continues the same summary-synthesis pattern with another perfect lane and another dual-store collapse
+- the completed `BEAM` `10M` head-to-head extends that same pattern to the largest finished scale
 - `architecture_promotion_gap` still reproduces on fresh artifacts
 
 That is enough to confirm the gap is real and to increase confidence in `summary_synthesis_memory`, but not enough to close Phase A mechanically because the remaining external lanes are still running.
@@ -147,3 +148,7 @@ That is enough to confirm the gap is real and to increase confidence in `summary
   `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\summary_synthesis_memory\beam_500k.json`
 - External BEAM `500K` dual-store:
   `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\dual_store_event_calendar_hybrid\beam_500k.json`
+- External BEAM `10M` summary-synthesis:
+  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\summary_synthesis_memory\beam_10m.json`
+- External BEAM `10M` dual-store:
+  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\dual_store_event_calendar_hybrid\beam_10m.json`
