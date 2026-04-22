@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
+from typing import Any
 
+
+from spark_intelligence.memory.retention_policy import (
+    active_state_revalidation_days_for as _active_state_revalidation_days_for,
+)
 
 _CITY_PATTERNS = [
     re.compile(r"\bi\s+moved\s+to\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
@@ -1131,6 +1137,49 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
     if any(
         phrase in text
         for phrase in (
+            "what is my favorite color",
+            "what's my favorite color",
+            "what is my favourite color",
+            "what's my favourite color",
+        )
+    ):
+        return ProfileFactQuery(
+            predicate="profile.favorite_color",
+            fact_name="profile_favorite_color",
+            label="favorite color",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what is my dog's name",
+            "what's my dog's name",
+            "what is my dogs name",
+            "what's my dogs name",
+        )
+    ):
+        return ProfileFactQuery(
+            predicate="profile.dog_name",
+            fact_name="profile_dog_name",
+            label="dog's name",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what food do i love the most",
+            "what is my favorite food",
+            "what's my favorite food",
+            "what is my favourite food",
+            "what's my favourite food",
+        )
+    ):
+        return ProfileFactQuery(
+            predicate="profile.favorite_food",
+            fact_name="profile_favorite_food",
+            label="favorite food",
+        )
+    if any(
+        phrase in text
+        for phrase in (
             "what startup do you have for me",
             "what startup do you have saved for me",
             "what is my startup",
@@ -1170,6 +1219,10 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
         for phrase in (
             "what is my current plan",
             "what's my current plan",
+            "what is our plan",
+            "what's our plan",
+            "what is the plan",
+            "what's the plan",
             "what do you have as my current plan",
             "what plan do you have for me",
             "what are we planning",
@@ -1239,6 +1292,10 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
             "what's my current status",
             "what is our current status",
             "what's our current status",
+            "what is my status",
+            "what's my status",
+            "what is our status",
+            "what's our status",
             "what is the project status",
             "what's the project status",
             "where do things stand",
@@ -1512,10 +1569,69 @@ def build_profile_fact_query_context(*, query: ProfileFactQuery, value: str | No
     )
 
 
-def build_profile_fact_query_answer(*, query: ProfileFactQuery, value: str | None) -> str:
+def active_state_revalidation_days(predicate: str | None) -> int | None:
+    normalized = str(predicate or "").strip().lower()
+    if not normalized:
+        return None
+    return _active_state_revalidation_days_for(normalized)
+
+
+def active_state_revalidate_at(*, predicate: str | None, timestamp: str | None) -> str | None:
+    revalidation_days = active_state_revalidation_days(predicate)
+    if revalidation_days is None:
+        return None
+    normalized_timestamp = str(timestamp or "").strip()
+    if not normalized_timestamp:
+        return None
+    try:
+        parsed = datetime.fromisoformat(normalized_timestamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    else:
+        parsed = parsed.astimezone(timezone.utc)
+    return (parsed + timedelta(days=revalidation_days)).isoformat()
+
+
+def active_state_records_past_revalidation(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    now = datetime.now(timezone.utc)
+    stale_records: list[dict[str, Any]] = []
+    for record in records:
+        predicate = str(record.get("predicate") or "").strip()
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        revalidate_at = str(metadata.get("revalidate_at") or "").strip()
+        if not revalidate_at:
+            timestamp = str(record.get("timestamp") or record.get("document_time") or "").strip()
+            revalidate_at = active_state_revalidate_at(predicate=predicate, timestamp=timestamp) or ""
+        if not revalidate_at:
+            continue
+        try:
+            parsed = datetime.fromisoformat(revalidate_at.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        else:
+            parsed = parsed.astimezone(timezone.utc)
+        if parsed <= now:
+            stale_records.append(record)
+    return stale_records
+
+
+def _build_profile_fact_stale_answer(*, query: ProfileFactQuery, value: str) -> str:
+    return (
+        f'I have an older saved {query.label}: "{value}" '
+        "but it has not been revalidated recently, so I would not treat it as current."
+    )
+
+
+def build_profile_fact_query_answer(*, query: ProfileFactQuery, value: str | None, stale: bool = False) -> str:
     normalized_value = str(value or "").strip()
     if not normalized_value:
         return "I don't currently have that saved."
+    if stale:
+        return _build_profile_fact_stale_answer(query=query, value=normalized_value)
     return _build_profile_fact_concise_answer(query=query, value=normalized_value)
 
 

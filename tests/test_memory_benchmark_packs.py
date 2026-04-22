@@ -119,6 +119,61 @@ def test_default_benchmark_packs_include_live_pressure_expansions() -> None:
     assert "generic_long_run_owner_event_history_query" in churn_case_ids
     assert "generic_long_run_dependency_current_query" in churn_case_ids
 
+    open_recall_case_ids = {case.case_id for case in packs["telegram_open_memory_recall"].cases}
+    assert "open_evidence_write_onboarding" in open_recall_case_ids
+    assert "open_evidence_recall_onboarding" in open_recall_case_ids
+    assert "open_episode_write_demo" in open_recall_case_ids
+    assert "open_episode_recall_demo" in open_recall_case_ids
+
+    belief_recall_case_ids = {case.case_id for case in packs["telegram_belief_memory_recall"].cases}
+    assert "belief_write_onboarding" in belief_recall_case_ids
+    assert "belief_refresh_onboarding" in belief_recall_case_ids
+    assert "belief_evidence_override_onboarding" in belief_recall_case_ids
+    assert "belief_recall_onboarding" in belief_recall_case_ids
+    assert "belief_recall_after_evidence_override_onboarding" in belief_recall_case_ids
+
+    evidence_consolidation_case_ids = {case.case_id for case in packs["telegram_evidence_consolidation"].cases}
+    assert "evidence_consolidation_write_onboarding_initial" in evidence_consolidation_case_ids
+    assert "evidence_consolidation_write_onboarding_repeat" in evidence_consolidation_case_ids
+    assert "evidence_consolidation_belief_recall_onboarding" in evidence_consolidation_case_ids
+
+    evidence_current_state_case_ids = {
+        case.case_id for case in packs["telegram_evidence_current_state_consolidation"].cases
+    }
+    assert "evidence_current_state_write_onboarding_initial" in evidence_current_state_case_ids
+    assert "evidence_current_state_write_onboarding_repeat" in evidence_current_state_case_ids
+    assert "evidence_current_state_query_onboarding_blocker" in evidence_current_state_case_ids
+
+    evidence_active_state_case_ids = {
+        case.case_id for case in packs["telegram_evidence_active_state_consolidation"].cases
+    }
+    assert "evidence_current_state_write_dependency_initial" in evidence_active_state_case_ids
+    assert "evidence_current_state_query_dependency" in evidence_active_state_case_ids
+    assert "evidence_current_state_write_constraint_initial" in evidence_active_state_case_ids
+    assert "evidence_current_state_query_constraint" in evidence_active_state_case_ids
+    assert "evidence_current_state_write_risk_initial" in evidence_active_state_case_ids
+    assert "evidence_current_state_query_risk" in evidence_active_state_case_ids
+    assert "evidence_current_state_write_status_initial" in evidence_active_state_case_ids
+    assert "evidence_current_state_query_status" in evidence_active_state_case_ids
+    assert "evidence_current_state_write_owner_initial" in evidence_active_state_case_ids
+    assert "evidence_current_state_query_owner" in evidence_active_state_case_ids
+
+    evidence_project_state_case_ids = {
+        case.case_id for case in packs["telegram_evidence_project_state_consolidation"].cases
+    }
+    assert "evidence_project_state_write_plan" in evidence_project_state_case_ids
+    assert "evidence_project_state_query_plan" in evidence_project_state_case_ids
+    assert "evidence_project_state_write_focus" in evidence_project_state_case_ids
+    assert "evidence_project_state_query_focus" in evidence_project_state_case_ids
+    assert "evidence_project_state_write_decision" in evidence_project_state_case_ids
+    assert "evidence_project_state_query_decision" in evidence_project_state_case_ids
+    assert "evidence_project_state_write_commitment" in evidence_project_state_case_ids
+    assert "evidence_project_state_query_commitment" in evidence_project_state_case_ids
+    assert "evidence_project_state_write_milestone" in evidence_project_state_case_ids
+    assert "evidence_project_state_query_milestone" in evidence_project_state_case_ids
+    assert "evidence_project_state_write_assumption" in evidence_project_state_case_ids
+    assert "evidence_project_state_query_assumption" in evidence_project_state_case_ids
+
     mixed_session_case_ids = {case.case_id for case in packs["telegram_mixed_memory_session_churn"].cases}
     assert "mixed_session_owner_write_initial" in mixed_session_case_ids
     assert "mixed_session_flight_overwrite" in mixed_session_case_ids
@@ -251,6 +306,19 @@ def test_select_mixed_memory_session_churn_pack_exposes_interleaved_cases() -> N
     assert "mixed_session_owner_event_history_query" in case_ids
     assert "mixed_session_risk_current_query" in case_ids
     assert "mixed_session_latest_flight_query" in case_ids
+
+
+def test_select_belief_memory_recall_pack_exposes_belief_cases() -> None:
+    packs = select_telegram_memory_benchmark_packs(["telegram_belief_memory_recall"])
+
+    assert [pack.pack_id for pack in packs] == ["telegram_belief_memory_recall"]
+
+    case_ids = {case.case_id for case in flatten_benchmark_pack_cases(packs)}
+    assert "belief_write_onboarding" in case_ids
+    assert "belief_refresh_onboarding" in case_ids
+    assert "belief_evidence_override_onboarding" in case_ids
+    assert "belief_recall_onboarding" in case_ids
+    assert "belief_recall_after_evidence_override_onboarding" in case_ids
 
 
 def test_select_benchmark_packs_rejects_unknown_pack_ids() -> None:

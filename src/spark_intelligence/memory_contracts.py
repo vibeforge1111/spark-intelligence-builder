@@ -24,7 +24,7 @@ WRITE_OPERATION_EXPECTED_MEMORY_ROLE = {
     "update": frozenset({"current_state"}),
     "delete": frozenset({"current_state", "state_deletion"}),
     "event": frozenset({"event"}),
-    "create": frozenset({"structured_evidence", "episodic"}),
+    "create": frozenset({"structured_evidence", "episodic", "belief"}),
 }
 MEMORY_CONTRACT_REASONS = frozenset(
     {

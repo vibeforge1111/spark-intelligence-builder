@@ -813,6 +813,126 @@ def default_telegram_memory_benchmark_packs() -> tuple[TelegramMemoryBenchmarkPa
             ),
         ),
         TelegramMemoryBenchmarkPack(
+            pack_id="telegram_open_memory_recall",
+            title="Telegram Open Memory Recall",
+            description=(
+                "Seeds structured evidence and raw episodic turns, then verifies that open-ended recall questions "
+                "are answered directly from memory rather than falling back to provider-only chat."
+            ),
+            focus_areas=("structured_evidence", "raw_episode", "open_recall", "direct_memory_query"),
+            cases=(
+                *_existing(
+                    "open_evidence_write_onboarding",
+                    "open_evidence_recall_onboarding",
+                    "open_episode_write_demo",
+                    "open_episode_recall_demo",
+                ),
+            ),
+        ),
+        TelegramMemoryBenchmarkPack(
+            pack_id="telegram_belief_memory_recall",
+            title="Telegram Belief Memory Recall",
+            description=(
+                "Seeds derived belief memory and verifies that belief-specific recall questions are answered "
+                "directly from memory while staying clearly marked as inferred rather than fact."
+            ),
+            focus_areas=("belief", "derived_memory", "direct_memory_query"),
+            cases=(
+                *_existing(
+                    "belief_write_onboarding",
+                    "belief_refresh_onboarding",
+                    "belief_recall_onboarding",
+                    "belief_evidence_override_onboarding",
+                    "belief_recall_after_evidence_override_onboarding",
+                ),
+            ),
+        ),
+        TelegramMemoryBenchmarkPack(
+            pack_id="telegram_evidence_consolidation",
+            title="Telegram Evidence Consolidation",
+            description=(
+                "Seeds repeated structured evidence on the same topic and verifies that Builder promotes "
+                "the corroborated signal into a derived belief that can be recalled explicitly."
+            ),
+            focus_areas=("structured_evidence", "belief_consolidation", "derived_memory"),
+            cases=(
+                *_existing(
+                    "evidence_consolidation_write_onboarding_initial",
+                    "evidence_consolidation_write_onboarding_repeat",
+                    "evidence_consolidation_belief_recall_onboarding",
+                ),
+            ),
+        ),
+        TelegramMemoryBenchmarkPack(
+            pack_id="telegram_evidence_current_state_consolidation",
+            title="Telegram Evidence To Current-State Consolidation",
+            description=(
+                "Seeds repeated structured evidence about an ongoing issue and verifies that Builder promotes "
+                "the corroborated signal into explicit current-state memory that can be queried directly."
+            ),
+            focus_areas=("structured_evidence", "current_state", "evidence_consolidation"),
+            cases=(
+                *_existing(
+                    "evidence_current_state_write_onboarding_initial",
+                    "evidence_current_state_write_onboarding_repeat",
+                    "evidence_current_state_query_onboarding_blocker",
+                ),
+            ),
+        ),
+        TelegramMemoryBenchmarkPack(
+            pack_id="telegram_evidence_active_state_consolidation",
+            title="Telegram Evidence To Active-State Consolidation",
+            description=(
+                "Seeds repeated structured evidence that clearly describes an ongoing dependency, constraint, or risk "
+                "and verifies that Builder promotes those signals into explicit current-state memory."
+            ),
+            focus_areas=("structured_evidence", "current_state", "dependency", "constraint", "risk"),
+            cases=(
+                *_existing(
+                    "evidence_current_state_write_dependency_initial",
+                    "evidence_current_state_write_dependency_repeat",
+                    "evidence_current_state_query_dependency",
+                    "evidence_current_state_write_constraint_initial",
+                    "evidence_current_state_write_constraint_repeat",
+                    "evidence_current_state_query_constraint",
+                    "evidence_current_state_write_risk_initial",
+                    "evidence_current_state_write_risk_repeat",
+                    "evidence_current_state_query_risk",
+                    "evidence_current_state_write_status_initial",
+                    "evidence_current_state_write_status_repeat",
+                    "evidence_current_state_query_status",
+                    "evidence_current_state_write_owner_initial",
+                    "evidence_current_state_write_owner_repeat",
+                    "evidence_current_state_query_owner",
+                ),
+            ),
+        ),
+        TelegramMemoryBenchmarkPack(
+            pack_id="telegram_evidence_project_state_consolidation",
+            title="Telegram Evidence To Project-State Consolidation",
+            description=(
+                "Seeds source-backed structured evidence about plan, focus, decision, commitment, milestone, "
+                "and assumption, then verifies those project-state facts are promoted into explicit current-state memory."
+            ),
+            focus_areas=("structured_evidence", "current_state", "project_state", "planning"),
+            cases=(
+                *_existing(
+                    "evidence_project_state_write_plan",
+                    "evidence_project_state_query_plan",
+                    "evidence_project_state_write_focus",
+                    "evidence_project_state_query_focus",
+                    "evidence_project_state_write_decision",
+                    "evidence_project_state_query_decision",
+                    "evidence_project_state_write_commitment",
+                    "evidence_project_state_query_commitment",
+                    "evidence_project_state_write_milestone",
+                    "evidence_project_state_query_milestone",
+                    "evidence_project_state_write_assumption",
+                    "evidence_project_state_query_assumption",
+                ),
+            ),
+        ),
+        TelegramMemoryBenchmarkPack(
             pack_id="telegram_mixed_memory_session_churn",
             title="Telegram Mixed Memory Session Churn",
             description=(

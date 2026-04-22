@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -1206,6 +1207,370 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         expected_response_contains=("Stripe approval",),
     ),
     TelegramMemoryRegressionCase(
+        case_id="open_evidence_write_onboarding",
+        category="open_memory_recall",
+        message="Users keep dropping during onboarding because Stripe verification fails.",
+        benchmark_tags=("structured_evidence", "open_recall_seed"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="open_evidence_recall_onboarding",
+        category="open_memory_recall",
+        message="What evidence do you have about onboarding?",
+        expected_bridge_mode="memory_open_recall",
+        expected_routing_decision="memory_open_recall_query",
+        expected_response_contains=("onboarding", "Stripe verification fails"),
+        benchmark_tags=("structured_evidence", "open_recall"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="open_episode_write_demo",
+        category="open_memory_recall",
+        message="The pricing page felt confusing during the demo.",
+        benchmark_tags=("raw_episode", "open_recall_seed"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="open_episode_recall_demo",
+        category="open_memory_recall",
+        message="What happened during the demo?",
+        expected_bridge_mode="memory_open_recall",
+        expected_routing_decision="memory_open_recall_query",
+        expected_response_contains=("demo", "pricing page felt confusing"),
+        benchmark_tags=("raw_episode", "open_recall"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="belief_write_onboarding",
+        category="belief_memory_recall",
+        message="I think self-serve onboarding will work.",
+        expected_bridge_mode="memory_belief_update",
+        expected_routing_decision="memory_belief_observation",
+        expected_response_contains=("save that as a belief", "self-serve onboarding will work"),
+        benchmark_tags=("belief", "belief_seed"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="belief_refresh_onboarding",
+        category="belief_memory_recall",
+        message="I think enterprise teams need hands-on onboarding.",
+        expected_bridge_mode="memory_belief_update",
+        expected_routing_decision="memory_belief_observation",
+        expected_response_contains=("save that as a belief", "hands-on onboarding"),
+        benchmark_tags=("belief", "belief_refresh"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="belief_recall_onboarding",
+        category="belief_memory_recall",
+        message="What is your current belief about onboarding?",
+        expected_bridge_mode="memory_belief_recall",
+        expected_routing_decision="memory_belief_recall_query",
+        expected_response_contains=("onboarding", "hands-on onboarding", "inferred belief"),
+        benchmark_tags=("belief", "belief_recall"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="belief_evidence_override_onboarding",
+        category="belief_memory_recall",
+        message="Users keep needing hands-on onboarding support because enterprise teams ask for setup help.",
+        benchmark_tags=("belief", "belief_evidence_override"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="belief_recall_after_evidence_override_onboarding",
+        category="belief_memory_recall",
+        message="What is your current belief about onboarding?",
+        expected_bridge_mode="memory_belief_recall",
+        expected_routing_decision="memory_belief_recall_query",
+        expected_response_contains=("newer direct evidence", "hands-on onboarding support"),
+        expected_response_excludes=("self-serve onboarding will work",),
+        benchmark_tags=("belief", "belief_recall", "belief_evidence_override"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_consolidation_write_onboarding_initial",
+        category="evidence_consolidation",
+        message="Users keep dropping during onboarding because Stripe verification fails.",
+        benchmark_tags=("structured_evidence", "belief_consolidation_seed"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_consolidation_write_onboarding_repeat",
+        category="evidence_consolidation",
+        message="Users still drop during onboarding because Stripe verification fails and the retry flow is confusing.",
+        benchmark_tags=("structured_evidence", "belief_consolidation_repeat"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_consolidation_belief_recall_onboarding",
+        category="evidence_consolidation",
+        message="What is your current belief about onboarding?",
+        expected_bridge_mode="memory_belief_recall",
+        expected_routing_decision="memory_belief_recall_query",
+        expected_response_contains=("newer direct evidence", "Stripe verification fails"),
+        benchmark_tags=("belief", "belief_consolidation_recall"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_current_state_write_onboarding_initial",
+        category="evidence_current_state_consolidation",
+        message="Users keep dropping during onboarding because Stripe verification fails.",
+        expected_bridge_mode="memory_structured_evidence_update",
+        expected_routing_decision="memory_structured_evidence_observation",
+        expected_response_contains=("structured evidence", "Stripe verification fails"),
+        benchmark_tags=("structured_evidence", "current_state_consolidation_seed"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_current_state_write_onboarding_repeat",
+        category="evidence_current_state_consolidation",
+        message="Users still drop during onboarding because Stripe verification fails and the retry flow is confusing.",
+        expected_bridge_mode="memory_structured_evidence_update",
+        expected_routing_decision="memory_structured_evidence_observation",
+        expected_response_contains=("structured evidence", "retry flow is confusing"),
+        benchmark_tags=("structured_evidence", "current_state_consolidation_repeat"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_current_state_query_onboarding_blocker",
+        category="evidence_current_state_consolidation",
+        message="What are we blocked on?",
+        expected_bridge_mode="memory_profile_fact",
+        expected_routing_decision="memory_profile_fact_query",
+        expected_response_contains=("current blocker", "Stripe verification fails"),
+        benchmark_tags=("current_state", "current_state_consolidation_recall"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_current_state_write_dependency_initial",
+        category="evidence_active_state_consolidation",
+        message="Users keep getting stuck during onboarding because we're waiting on Stripe approval.",
+        expected_bridge_mode="memory_structured_evidence_update",
+        expected_routing_decision="memory_structured_evidence_observation",
+        expected_response_contains=("structured evidence", "waiting on Stripe approval"),
+        benchmark_tags=("structured_evidence", "current_dependency_consolidation_seed"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_current_state_write_dependency_repeat",
+        category="evidence_active_state_consolidation",
+        message="Users still get stuck during onboarding because we're waiting on Stripe approval and review is slow.",
+        expected_bridge_mode="memory_structured_evidence_update",
+        expected_routing_decision="memory_structured_evidence_observation",
+        expected_response_contains=("structured evidence", "review is slow"),
+        benchmark_tags=("structured_evidence", "current_dependency_consolidation_repeat"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_current_state_query_dependency",
+        category="evidence_active_state_consolidation",
+        message="What is our dependency?",
+        expected_bridge_mode="memory_profile_fact",
+        expected_routing_decision="memory_profile_fact_query",
+        expected_response_contains=("current dependency", "Stripe approval"),
+        benchmark_tags=("current_state", "current_dependency_consolidation_recall"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_current_state_write_constraint_initial",
+        category="evidence_active_state_consolidation",
+        message="Users keep waiting during onboarding because we're limited by founder bandwidth.",
+        expected_bridge_mode="memory_structured_evidence_update",
+        expected_routing_decision="memory_structured_evidence_observation",
+        expected_response_contains=("structured evidence", "founder bandwidth"),
+        benchmark_tags=("structured_evidence", "current_constraint_consolidation_seed"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_current_state_write_constraint_repeat",
+        category="evidence_active_state_consolidation",
+        message="Users still wait during onboarding because we're limited by founder bandwidth.",
+        expected_bridge_mode="memory_structured_evidence_update",
+        expected_routing_decision="memory_structured_evidence_observation",
+        expected_response_contains=("structured evidence", "founder bandwidth"),
+        benchmark_tags=("structured_evidence", "current_constraint_consolidation_repeat"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_current_state_query_constraint",
+        category="evidence_active_state_consolidation",
+        message="What is our constraint?",
+        expected_bridge_mode="memory_profile_fact",
+        expected_routing_decision="memory_profile_fact_query",
+        expected_response_contains=("current constraint", "founder bandwidth"),
+        benchmark_tags=("current_state", "current_constraint_consolidation_recall"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_current_state_write_risk_initial",
+        category="evidence_active_state_consolidation",
+        message="There is still a risk of enterprise churn during onboarding because activation is weak.",
+        expected_bridge_mode="memory_structured_evidence_update",
+        expected_routing_decision="memory_structured_evidence_observation",
+        expected_response_contains=("structured evidence", "activation is weak"),
+        benchmark_tags=("structured_evidence", "current_risk_consolidation_seed"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_current_state_write_risk_repeat",
+        category="evidence_active_state_consolidation",
+        message="There is still a risk of enterprise churn during onboarding because activation is weak and teams are delaying rollout.",
+        expected_bridge_mode="memory_structured_evidence_update",
+        expected_routing_decision="memory_structured_evidence_observation",
+        expected_response_contains=("structured evidence", "teams are delaying rollout"),
+        benchmark_tags=("structured_evidence", "current_risk_consolidation_repeat"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_current_state_query_risk",
+        category="evidence_active_state_consolidation",
+        message="What is our risk?",
+        expected_bridge_mode="memory_profile_fact",
+        expected_routing_decision="memory_profile_fact_query",
+        expected_response_contains=("current risk", "enterprise churn during onboarding"),
+        benchmark_tags=("current_state", "current_risk_consolidation_recall"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_current_state_write_status_initial",
+        category="evidence_active_state_consolidation",
+        message="Status update: pending security review for the onboarding rollout.",
+        expected_bridge_mode="memory_generic_observation_update",
+        expected_routing_decision="memory_generic_observation",
+        expected_response_contains=("current status", "pending security review"),
+        benchmark_tags=("structured_evidence", "current_status_consolidation_seed"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_current_state_write_status_repeat",
+        category="evidence_active_state_consolidation",
+        message="Status update: still pending security review for the onboarding rollout.",
+        expected_bridge_mode="memory_generic_observation_update",
+        expected_routing_decision="memory_generic_observation",
+        expected_response_contains=("current status", "still pending security review"),
+        benchmark_tags=("structured_evidence", "current_status_consolidation_repeat"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_current_state_query_status",
+        category="evidence_active_state_consolidation",
+        message="What is our status?",
+        expected_bridge_mode="memory_profile_fact",
+        expected_routing_decision="memory_profile_fact_query",
+        expected_response_contains=("current status", "pending security review"),
+        benchmark_tags=("current_state", "current_status_consolidation_recall"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_current_state_write_owner_initial",
+        category="evidence_active_state_consolidation",
+        message="The onboarding rollout is currently owned by Nadia.",
+        expected_bridge_mode="memory_generic_observation_update",
+        expected_routing_decision="memory_generic_observation",
+        expected_response_contains=("current owner", "Nadia"),
+        benchmark_tags=("structured_evidence", "current_owner_consolidation_seed"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_current_state_write_owner_repeat",
+        category="evidence_active_state_consolidation",
+        message="The onboarding rollout is still owned by Nadia during security review.",
+        expected_bridge_mode="memory_generic_observation_update",
+        expected_routing_decision="memory_generic_observation",
+        expected_response_contains=("current owner", "Nadia"),
+        benchmark_tags=("structured_evidence", "current_owner_consolidation_repeat"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_current_state_query_owner",
+        category="evidence_active_state_consolidation",
+        message="Who is the owner?",
+        expected_bridge_mode="memory_profile_fact",
+        expected_routing_decision="memory_profile_fact_query",
+        expected_response_contains=("current owner", "Nadia"),
+        benchmark_tags=("current_state", "current_owner_consolidation_recall"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_project_state_write_plan",
+        category="evidence_project_state_consolidation",
+        message="Customer interviews confirm our plan is to simplify onboarding approvals.",
+        expected_bridge_mode="memory_structured_evidence_update",
+        expected_routing_decision="memory_structured_evidence_observation",
+        expected_response_contains=("structured evidence", "simplify onboarding approvals"),
+        benchmark_tags=("structured_evidence", "current_plan_consolidation_seed"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_project_state_query_plan",
+        category="evidence_project_state_consolidation",
+        message="What is our plan?",
+        expected_bridge_mode="memory_profile_fact",
+        expected_routing_decision="memory_profile_fact_query",
+        expected_response_contains=("current plan", "simplify onboarding approvals"),
+        benchmark_tags=("current_state", "current_plan_consolidation_recall"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_project_state_write_focus",
+        category="evidence_project_state_consolidation",
+        message="Interview notes show our priority is onboarding reliability.",
+        expected_bridge_mode="memory_structured_evidence_update",
+        expected_routing_decision="memory_structured_evidence_observation",
+        expected_response_contains=("structured evidence", "onboarding reliability"),
+        benchmark_tags=("structured_evidence", "current_focus_consolidation_seed"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_project_state_query_focus",
+        category="evidence_project_state_consolidation",
+        message="What is our priority?",
+        expected_bridge_mode="memory_profile_fact",
+        expected_routing_decision="memory_profile_fact_query",
+        expected_response_contains=("current focus", "onboarding reliability"),
+        benchmark_tags=("current_state", "current_focus_consolidation_recall"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_project_state_write_decision",
+        category="evidence_project_state_consolidation",
+        message="After testing both flows, our decision is to keep human onboarding support.",
+        expected_bridge_mode="memory_structured_evidence_update",
+        expected_routing_decision="memory_structured_evidence_observation",
+        expected_response_contains=("structured evidence", "keep human onboarding support"),
+        benchmark_tags=("structured_evidence", "current_decision_consolidation_seed"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_project_state_query_decision",
+        category="evidence_project_state_consolidation",
+        message="What decision did we make?",
+        expected_bridge_mode="memory_profile_fact",
+        expected_routing_decision="memory_profile_fact_query",
+        expected_response_contains=("current decision", "keep human onboarding support"),
+        benchmark_tags=("current_state", "current_decision_consolidation_recall"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_project_state_write_commitment",
+        category="evidence_project_state_consolidation",
+        message="The weekly review says our commitment is to ship onboarding fixes this week.",
+        expected_bridge_mode="memory_structured_evidence_update",
+        expected_routing_decision="memory_structured_evidence_observation",
+        expected_response_contains=("structured evidence", "ship onboarding fixes this week"),
+        benchmark_tags=("structured_evidence", "current_commitment_consolidation_seed"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_project_state_query_commitment",
+        category="evidence_project_state_consolidation",
+        message="What is our commitment?",
+        expected_bridge_mode="memory_profile_fact",
+        expected_routing_decision="memory_profile_fact_query",
+        expected_response_contains=("current commitment", "ship onboarding fixes this week"),
+        benchmark_tags=("current_state", "current_commitment_consolidation_recall"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_project_state_write_milestone",
+        category="evidence_project_state_consolidation",
+        message="Roadmap notes confirm our next milestone is launch the self-serve onboarding beta.",
+        expected_bridge_mode="memory_structured_evidence_update",
+        expected_routing_decision="memory_structured_evidence_observation",
+        expected_response_contains=("structured evidence", "launch the self-serve onboarding beta"),
+        benchmark_tags=("structured_evidence", "current_milestone_consolidation_seed"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_project_state_query_milestone",
+        category="evidence_project_state_consolidation",
+        message="What is our milestone?",
+        expected_bridge_mode="memory_profile_fact",
+        expected_routing_decision="memory_profile_fact_query",
+        expected_response_contains=("current milestone", "launch the self-serve onboarding beta"),
+        benchmark_tags=("current_state", "current_milestone_consolidation_recall"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_project_state_write_assumption",
+        category="evidence_project_state_consolidation",
+        message="Interview notes suggest our assumption is enterprise teams want hands-on onboarding.",
+        expected_bridge_mode="memory_structured_evidence_update",
+        expected_routing_decision="memory_structured_evidence_observation",
+        expected_response_contains=("structured evidence", "enterprise teams want hands-on onboarding"),
+        benchmark_tags=("structured_evidence", "current_assumption_consolidation_seed"),
+    ),
+    TelegramMemoryRegressionCase(
+        case_id="evidence_project_state_query_assumption",
+        category="evidence_project_state_consolidation",
+        message="What is our assumption?",
+        expected_bridge_mode="memory_profile_fact",
+        expected_routing_decision="memory_profile_fact_query",
+        expected_response_contains=("current assumption", "enterprise teams want hands-on onboarding"),
+        benchmark_tags=("current_state", "current_assumption_consolidation_recall"),
+    ),
+    TelegramMemoryRegressionCase(
         case_id="mixed_session_owner_write_initial",
         category="mixed_memory_churn",
         message="Our owner is Omar.",
@@ -1394,6 +1759,12 @@ def run_telegram_memory_regression(
 ) -> TelegramMemoryRegressionResult:
     from spark_intelligence.gateway.runtime import gateway_ask_telegram
 
+    def _emit_progress(stage: str) -> None:
+        print(f"[memory-regression] {stage}", file=sys.stderr, flush=True)
+
+    def _is_focused_slice() -> bool:
+        return bool(requested_case_ids or requested_categories or requested_benchmark_pack_ids)
+
     resolved_output_dir = Path(output_dir) if output_dir else _default_output_dir(config_manager)
     resolved_output_dir.mkdir(parents=True, exist_ok=True)
     resolved_kb_output_dir = resolved_output_dir / "kb"
@@ -1485,7 +1856,9 @@ def run_telegram_memory_regression(
         resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return TelegramMemoryRegressionResult(output_dir=resolved_output_dir, payload=payload)
 
+    _emit_progress(f"running {len(selected_cases)} selected Telegram regression cases")
     for case in selected_cases:
+        _emit_progress(f"case:{case.case_id}")
         case_user_id = selected_user_id
         case_chat_id = selected_chat_id
         if case.isolate_memory and selected_user_id:
@@ -1560,6 +1933,7 @@ def run_telegram_memory_regression(
     resolved_human_id = f"human:telegram:{selected_user_id}" if selected_user_id else None
     inspection_payload: dict[str, Any] | None = None
     if resolved_human_id:
+        _emit_progress("inspecting current memory state")
         inspection_result = inspect_human_memory_in_memory(
             config_manager=config_manager,
             state_db=state_db,
@@ -1568,32 +1942,47 @@ def run_telegram_memory_regression(
         )
         inspection_payload = _parse_json_object(inspection_result.to_json())
 
-    architecture_benchmark_result = benchmark_memory_architectures(
-        config_manager=config_manager,
-        output_dir=architecture_benchmark_output_dir,
-        validator_root=validator_root,
-        baseline_names=requested_baseline_names or None,
-    )
-    architecture_benchmark_payload = architecture_benchmark_result.payload
-    architecture_summary_path = (
-        (architecture_benchmark_payload.get("artifact_paths") or {}).get("summary_markdown")
-        if isinstance(architecture_benchmark_payload, dict)
-        else None
-    )
-    architecture_live_comparison_result = compare_telegram_memory_architectures(
-        config_manager=config_manager,
-        case_payloads=case_payloads,
-        selected_cases=selected_cases,
-        output_dir=architecture_live_comparison_output_dir,
-        validator_root=validator_root,
-        baseline_names=requested_baseline_names or None,
-    )
-    architecture_live_comparison_payload = architecture_live_comparison_result.payload
-    architecture_live_comparison_summary_path = (
-        (architecture_live_comparison_payload.get("artifact_paths") or {}).get("summary_markdown")
-        if isinstance(architecture_live_comparison_payload, dict)
-        else None
-    )
+    architecture_benchmark_payload: dict[str, Any] | None = None
+    architecture_live_comparison_payload: dict[str, Any] | None = None
+    architecture_summary_path: str | None = None
+    architecture_live_comparison_summary_path: str | None = None
+    skipped_post_analysis_labels: list[str] = []
+    if _is_focused_slice():
+        skipped_post_analysis_labels.extend(
+            [
+                "architecture_benchmark_skipped_for_focused_slice",
+                "architecture_live_comparison_skipped_for_focused_slice",
+            ]
+        )
+    else:
+        _emit_progress("running architecture benchmark")
+        architecture_benchmark_result = benchmark_memory_architectures(
+            config_manager=config_manager,
+            output_dir=architecture_benchmark_output_dir,
+            validator_root=validator_root,
+            baseline_names=requested_baseline_names or None,
+        )
+        architecture_benchmark_payload = architecture_benchmark_result.payload
+        architecture_summary_path = (
+            (architecture_benchmark_payload.get("artifact_paths") or {}).get("summary_markdown")
+            if isinstance(architecture_benchmark_payload, dict)
+            else None
+        )
+        _emit_progress("running live architecture comparison")
+        architecture_live_comparison_result = compare_telegram_memory_architectures(
+            config_manager=config_manager,
+            case_payloads=case_payloads,
+            selected_cases=selected_cases,
+            output_dir=architecture_live_comparison_output_dir,
+            validator_root=validator_root,
+            baseline_names=requested_baseline_names or None,
+        )
+        architecture_live_comparison_payload = architecture_live_comparison_result.payload
+        architecture_live_comparison_summary_path = (
+            (architecture_live_comparison_payload.get("artifact_paths") or {}).get("summary_markdown")
+            if isinstance(architecture_live_comparison_payload, dict)
+            else None
+        )
     regression_summary_markdown_path.write_text(
         _build_regression_summary_markdown(
             selected_user_id=selected_user_id,
@@ -1628,6 +2017,7 @@ def run_telegram_memory_regression(
         repo_sources.append(str(architecture_summary_path))
     if architecture_live_comparison_summary_path:
         repo_sources.append(str(architecture_live_comparison_summary_path))
+    _emit_progress("compiling Telegram KB snapshot")
     kb_result = build_telegram_state_knowledge_base(
         config_manager=config_manager,
         output_dir=resolved_kb_output_dir,
@@ -1636,6 +2026,7 @@ def run_telegram_memory_regression(
         repo_sources=repo_sources,
         write_path=kb_write_path,
         validator_root=validator_root,
+        timeout_seconds=120.0,
     )
     kb_payload = kb_result.payload
     current_probe = _probe_row(kb_payload, "current_state")
@@ -1644,6 +2035,9 @@ def run_telegram_memory_regression(
         kb_payload=kb_payload,
         architecture_live_comparison_payload=architecture_live_comparison_payload,
     )
+    for skipped_label in skipped_post_analysis_labels:
+        if skipped_label not in issue_labels:
+            issue_labels.append(skipped_label)
     summary = {
         "status": "ok",
         "case_count": len(case_payloads),
@@ -1653,6 +2047,7 @@ def run_telegram_memory_regression(
         "selected_chat_id": selected_chat_id,
         "human_id": resolved_human_id,
         "issue_labels": issue_labels,
+        "skipped_post_analysis_labels": skipped_post_analysis_labels,
         "architecture_runtime_sdk_class": _nested_get(
             architecture_benchmark_payload,
             "summary",

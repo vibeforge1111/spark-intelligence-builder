@@ -8,6 +8,9 @@ from unittest.mock import patch
 from spark_intelligence.doctor.checks import run_doctor
 from spark_intelligence.memory import orchestrator as memory_orchestrator
 from spark_intelligence.memory import (
+    archive_belief_from_memory,
+    archive_raw_episode_from_memory,
+    archive_structured_evidence_from_memory,
     build_sdk_maintenance_payload,
     build_shadow_replay_payload,
     export_shadow_replay_batch,
@@ -16,6 +19,7 @@ from spark_intelligence.memory import (
     lookup_historical_state_in_memory,
     retrieve_memory_events_in_memory,
     run_memory_sdk_smoke_test,
+    write_belief_to_memory,
     write_profile_fact_to_memory,
     write_raw_episode_to_memory,
     write_structured_evidence_to_memory,
@@ -62,7 +66,11 @@ class _FakeMemoryClient:
 
     def write_observation(self, **payload):
         self.observation_calls.append(payload)
-        memory_role = str(payload.get("memory_role") or "current_state")
+        memory_role = (
+            "state_deletion"
+            if str(payload.get("operation") or "").strip().lower() == "delete"
+            else str(payload.get("memory_role") or "current_state")
+        )
         return {
             "status": "accepted",
             "memory_role": memory_role,
@@ -200,6 +208,33 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(result.status, "succeeded")
         self.assertEqual(fake_client.observation_calls[0]["retention_class"], "active_state")
 
+    def test_profile_current_state_predicates_store_revalidation_metadata(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator._now_iso",
+            return_value="2025-03-01T09:00:00Z",
+        ):
+            result = write_profile_fact_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                predicate="profile.current_plan",
+                value="launch Atlas in enterprise first",
+                evidence_text="Our current plan is to launch Atlas in enterprise first.",
+                fact_name="current_plan",
+                session_id="session:plan:stale",
+                turn_id="turn:plan:stale",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        metadata = fake_client.observation_calls[0]["metadata"]
+        self.assertEqual(metadata["revalidate_after_days"], 30)
+        self.assertEqual(metadata["revalidate_at"], "2025-03-31T09:00:00+00:00")
+
     def test_structured_evidence_writes_use_evidence_role_and_archive_retention(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
@@ -226,12 +261,656 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(call["retention_class"], "episodic_archive")
         self.assertEqual(call["metadata"]["evidence_kind"], "evidence_marker")
         self.assertEqual(call["metadata"]["domain_pack"], "evidence")
+        self.assertEqual(call["metadata"]["archive_after_days"], 30)
+        self.assertTrue(call["metadata"]["archive_at"])
         events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(events)
         observations = (events[0]["facts_json"] or {}).get("observations") or []
         self.assertEqual(events[0]["facts_json"].get("memory_role"), "structured_evidence")
         self.assertEqual(observations[0]["predicate"], "evidence.telegram.evidence")
         self.assertEqual(observations[0]["retention_class"], "episodic_archive")
+
+    def test_structured_evidence_write_marks_related_beliefs_invalidated(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        prior_records = [
+            {
+                "memory_role": "belief",
+                "predicate": "belief.telegram.beliefs_and_inferences",
+                "text": "I think enterprise teams need hands-on onboarding.",
+                "timestamp": "2025-03-01T09:00:00Z",
+                "observation_id": "obs-belief-1",
+                "metadata": {"value": "I think enterprise teams need hands-on onboarding."},
+                "lifecycle": {},
+            }
+        ]
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.retrieve_memory_evidence_in_memory",
+            return_value=SimpleNamespace(
+                read_result=SimpleNamespace(
+                    abstained=False,
+                    records=prior_records,
+                )
+            ),
+        ):
+            result = write_structured_evidence_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                evidence_text="Users keep needing hands-on onboarding support because enterprise teams ask for setup help.",
+                domain_pack="evidence",
+                evidence_kind="evidence_marker",
+                session_id="session:evidence:2",
+                turn_id="turn:evidence:2",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        call = fake_client.observation_calls[0]
+        self.assertEqual(call["conflicts_with"], ["obs-belief-1"])
+        self.assertEqual(call["metadata"]["belief_lifecycle_action"], "invalidated")
+        self.assertEqual(call["metadata"]["invalidated_belief_ids"], ["obs-belief-1"])
+        events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(events)
+        observations = (events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(observations[0]["conflicts_with"], ["obs-belief-1"])
+        self.assertEqual(observations[0]["belief_lifecycle_action"], "invalidated")
+
+    def test_structured_evidence_write_promotes_corroborated_belief(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        prior_evidence_records = [
+            {
+                "memory_role": "structured_evidence",
+                "predicate": "evidence.telegram.evidence",
+                "text": "Users keep dropping during onboarding because Stripe verification fails.",
+                "timestamp": "2025-03-01T09:00:00Z",
+                "observation_id": "obs-evidence-1",
+                "metadata": {"value": "Users keep dropping during onboarding because Stripe verification fails."},
+                "lifecycle": {},
+            }
+        ]
+        retrieve_results = [
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[])),
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=prior_evidence_records)),
+        ]
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.retrieve_memory_evidence_in_memory",
+            side_effect=retrieve_results,
+        ), patch(
+            "spark_intelligence.memory.orchestrator.write_belief_to_memory",
+            return_value=memory_orchestrator.MemoryWriteResult(
+                status="succeeded",
+                operation="create",
+                method="write_observation",
+                memory_role="belief",
+                accepted_count=1,
+                rejected_count=0,
+                skipped_count=0,
+                abstained=False,
+                retrieval_trace=None,
+                provenance=[],
+                reason=None,
+            ),
+        ) as mocked_belief_write:
+            result = write_structured_evidence_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                evidence_text="Users still drop during onboarding because Stripe verification fails and the retry flow is confusing.",
+                domain_pack="evidence",
+                evidence_kind="evidence_marker",
+                session_id="session:evidence:consolidation",
+                turn_id="turn:evidence:consolidation",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        mocked_belief_write.assert_called_once()
+        belief_kwargs = mocked_belief_write.call_args.kwargs
+        self.assertEqual(belief_kwargs["belief_kind"], "evidence_consolidation")
+        self.assertEqual(belief_kwargs["domain_pack"], "evidence_onboarding_stripe_verification")
+        self.assertIn("I think users still drop during onboarding", belief_kwargs["belief_text"])
+
+    def test_structured_evidence_write_promotes_corroborated_current_blocker(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        prior_evidence_records = [
+            {
+                "memory_role": "structured_evidence",
+                "predicate": "evidence.telegram.evidence",
+                "text": "Users keep dropping during onboarding because Stripe verification fails.",
+                "timestamp": "2025-03-01T09:00:00Z",
+                "observation_id": "obs-evidence-1",
+                "metadata": {"value": "Users keep dropping during onboarding because Stripe verification fails."},
+                "lifecycle": {},
+            }
+        ]
+        retrieve_results = [
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[])),
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=prior_evidence_records)),
+        ]
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.retrieve_memory_evidence_in_memory",
+            side_effect=retrieve_results,
+        ), patch(
+            "spark_intelligence.memory.orchestrator.write_belief_to_memory",
+            return_value=memory_orchestrator.MemoryWriteResult(
+                status="succeeded",
+                operation="create",
+                method="write_observation",
+                memory_role="belief",
+                accepted_count=1,
+                rejected_count=0,
+                skipped_count=0,
+                abstained=False,
+                retrieval_trace=None,
+                provenance=[],
+                reason=None,
+            ),
+        ):
+            result = write_structured_evidence_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                evidence_text="Users still drop during onboarding because Stripe verification fails and the retry flow is confusing.",
+                domain_pack="evidence",
+                evidence_kind="evidence_marker",
+                session_id="session:evidence:current-state",
+                turn_id="turn:evidence:current-state",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        current_state_calls = [
+            call for call in fake_client.observation_calls if call.get("predicate") == "profile.current_blocker"
+        ]
+        self.assertEqual(len(current_state_calls), 1)
+        promoted_call = current_state_calls[0]
+        self.assertEqual(promoted_call["memory_role"], "current_state")
+        self.assertEqual(promoted_call["retention_class"], "active_state")
+        self.assertEqual(promoted_call["value"], "Stripe verification fails and the retry flow is confusing")
+        self.assertEqual(promoted_call["metadata"]["fact_name"], "current_blocker")
+
+    def test_structured_evidence_write_promotes_corroborated_current_dependency(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        prior_evidence_records = [
+            {
+                "memory_role": "structured_evidence",
+                "predicate": "evidence.telegram.evidence",
+                "text": "Users keep getting stuck during onboarding because we're waiting on Stripe approval.",
+                "timestamp": "2025-03-01T09:00:00Z",
+                "observation_id": "obs-evidence-dependency-1",
+                "metadata": {"value": "Users keep getting stuck during onboarding because we're waiting on Stripe approval."},
+                "lifecycle": {},
+            }
+        ]
+        retrieve_results = [
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[])),
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=prior_evidence_records)),
+        ]
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.retrieve_memory_evidence_in_memory",
+            side_effect=retrieve_results,
+        ), patch(
+            "spark_intelligence.memory.orchestrator.write_belief_to_memory",
+            return_value=memory_orchestrator.MemoryWriteResult(
+                status="succeeded",
+                operation="create",
+                method="write_observation",
+                memory_role="belief",
+                accepted_count=1,
+                rejected_count=0,
+                skipped_count=0,
+                abstained=False,
+                retrieval_trace=None,
+                provenance=[],
+                reason=None,
+            ),
+        ):
+            result = write_structured_evidence_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                evidence_text="Users still get stuck during onboarding because we're waiting on Stripe approval and review is slow.",
+                domain_pack="evidence",
+                evidence_kind="evidence_marker",
+                session_id="session:evidence:dependency",
+                turn_id="turn:evidence:dependency",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        current_state_calls = [
+            call for call in fake_client.observation_calls if call.get("predicate") == "profile.current_dependency"
+        ]
+        self.assertEqual(len(current_state_calls), 1)
+        promoted_call = current_state_calls[0]
+        self.assertEqual(promoted_call["memory_role"], "current_state")
+        self.assertEqual(promoted_call["retention_class"], "active_state")
+        self.assertEqual(promoted_call["value"], "Stripe approval and review is slow")
+        self.assertEqual(promoted_call["metadata"]["fact_name"], "current_dependency")
+
+    def test_structured_evidence_write_promotes_corroborated_current_constraint(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        prior_evidence_records = [
+            {
+                "memory_role": "structured_evidence",
+                "predicate": "evidence.telegram.evidence",
+                "text": "Users keep waiting during onboarding because we're limited by founder bandwidth.",
+                "timestamp": "2025-03-01T09:00:00Z",
+                "observation_id": "obs-evidence-constraint-1",
+                "metadata": {"value": "Users keep waiting during onboarding because we're limited by founder bandwidth."},
+                "lifecycle": {},
+            }
+        ]
+        retrieve_results = [
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[])),
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=prior_evidence_records)),
+        ]
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.retrieve_memory_evidence_in_memory",
+            side_effect=retrieve_results,
+        ), patch(
+            "spark_intelligence.memory.orchestrator.write_belief_to_memory",
+            return_value=memory_orchestrator.MemoryWriteResult(
+                status="succeeded",
+                operation="create",
+                method="write_observation",
+                memory_role="belief",
+                accepted_count=1,
+                rejected_count=0,
+                skipped_count=0,
+                abstained=False,
+                retrieval_trace=None,
+                provenance=[],
+                reason=None,
+            ),
+        ):
+            result = write_structured_evidence_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                evidence_text="Users still wait during onboarding because we're limited by founder bandwidth.",
+                domain_pack="evidence",
+                evidence_kind="evidence_marker",
+                session_id="session:evidence:constraint",
+                turn_id="turn:evidence:constraint",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        current_state_calls = [
+            call for call in fake_client.observation_calls if call.get("predicate") == "profile.current_constraint"
+        ]
+        self.assertEqual(len(current_state_calls), 1)
+        promoted_call = current_state_calls[0]
+        self.assertEqual(promoted_call["memory_role"], "current_state")
+        self.assertEqual(promoted_call["retention_class"], "active_state")
+        self.assertEqual(promoted_call["value"], "founder bandwidth")
+        self.assertEqual(promoted_call["metadata"]["fact_name"], "current_constraint")
+
+    def test_structured_evidence_write_promotes_corroborated_current_risk(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        prior_evidence_records = [
+            {
+                "memory_role": "structured_evidence",
+                "predicate": "evidence.telegram.evidence",
+                "text": "There is still a risk of enterprise churn during onboarding because activation is weak.",
+                "timestamp": "2025-03-01T09:00:00Z",
+                "observation_id": "obs-evidence-risk-1",
+                "metadata": {"value": "There is still a risk of enterprise churn during onboarding because activation is weak."},
+                "lifecycle": {},
+            }
+        ]
+        retrieve_results = [
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[])),
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=prior_evidence_records)),
+        ]
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.retrieve_memory_evidence_in_memory",
+            side_effect=retrieve_results,
+        ), patch(
+            "spark_intelligence.memory.orchestrator.write_belief_to_memory",
+            return_value=memory_orchestrator.MemoryWriteResult(
+                status="succeeded",
+                operation="create",
+                method="write_observation",
+                memory_role="belief",
+                accepted_count=1,
+                rejected_count=0,
+                skipped_count=0,
+                abstained=False,
+                retrieval_trace=None,
+                provenance=[],
+                reason=None,
+            ),
+        ):
+            result = write_structured_evidence_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                evidence_text="There is still a risk of enterprise churn during onboarding because activation is weak and teams are delaying rollout.",
+                domain_pack="evidence",
+                evidence_kind="evidence_marker",
+                session_id="session:evidence:risk",
+                turn_id="turn:evidence:risk",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        current_state_calls = [
+            call for call in fake_client.observation_calls if call.get("predicate") == "profile.current_risk"
+        ]
+        self.assertEqual(len(current_state_calls), 1)
+        promoted_call = current_state_calls[0]
+        self.assertEqual(promoted_call["memory_role"], "current_state")
+        self.assertEqual(promoted_call["retention_class"], "active_state")
+        self.assertEqual(promoted_call["value"], "enterprise churn during onboarding")
+        self.assertEqual(promoted_call["metadata"]["fact_name"], "current_risk")
+
+    def test_structured_evidence_write_promotes_corroborated_current_owner(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        prior_evidence_records = [
+            {
+                "memory_role": "structured_evidence",
+                "predicate": "evidence.telegram.evidence",
+                "text": "The onboarding rollout is currently owned by Nadia.",
+                "timestamp": "2025-03-01T09:00:00Z",
+                "observation_id": "obs-evidence-owner-1",
+                "metadata": {"value": "The onboarding rollout is currently owned by Nadia."},
+                "lifecycle": {},
+            }
+        ]
+        retrieve_results = [
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[])),
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=prior_evidence_records)),
+        ]
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.retrieve_memory_evidence_in_memory",
+            side_effect=retrieve_results,
+        ), patch(
+            "spark_intelligence.memory.orchestrator.write_belief_to_memory",
+            return_value=memory_orchestrator.MemoryWriteResult(
+                status="succeeded",
+                operation="create",
+                method="write_observation",
+                memory_role="belief",
+                accepted_count=1,
+                rejected_count=0,
+                skipped_count=0,
+                abstained=False,
+                retrieval_trace=None,
+                provenance=[],
+                reason=None,
+            ),
+        ):
+            result = write_structured_evidence_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                evidence_text="The onboarding rollout is still owned by Nadia during security review.",
+                domain_pack="evidence",
+                evidence_kind="evidence_marker",
+                session_id="session:evidence:owner",
+                turn_id="turn:evidence:owner",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        current_state_calls = [
+            call for call in fake_client.observation_calls if call.get("predicate") == "profile.current_owner"
+        ]
+        self.assertEqual(len(current_state_calls), 1)
+        promoted_call = current_state_calls[0]
+        self.assertEqual(promoted_call["memory_role"], "current_state")
+        self.assertEqual(promoted_call["retention_class"], "active_state")
+        self.assertEqual(promoted_call["value"], "Nadia")
+        self.assertEqual(promoted_call["metadata"]["fact_name"], "current_owner")
+
+    def test_structured_evidence_write_does_not_promote_uncorroborated_current_dependency(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        retrieve_results = [
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[])),
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[])),
+        ]
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.retrieve_memory_evidence_in_memory",
+            side_effect=retrieve_results,
+        ), patch(
+            "spark_intelligence.memory.orchestrator.write_belief_to_memory",
+            return_value=memory_orchestrator.MemoryWriteResult(
+                status="succeeded",
+                operation="create",
+                method="write_observation",
+                memory_role="belief",
+                accepted_count=1,
+                rejected_count=0,
+                skipped_count=0,
+                abstained=False,
+                retrieval_trace=None,
+                provenance=[],
+                reason=None,
+            ),
+        ) as mocked_belief_write, patch(
+            "spark_intelligence.memory.orchestrator.write_profile_fact_to_memory",
+            return_value=memory_orchestrator.MemoryWriteResult(
+                status="succeeded",
+                operation="update",
+                method="write_observation",
+                memory_role="current_state",
+                accepted_count=1,
+                rejected_count=0,
+                skipped_count=0,
+                abstained=False,
+                retrieval_trace=None,
+                provenance=[],
+                reason=None,
+            ),
+        ) as mocked_profile_write:
+            result = write_structured_evidence_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                evidence_text="Users keep getting stuck during onboarding because we're waiting on Stripe approval.",
+                domain_pack="evidence",
+                evidence_kind="evidence_marker",
+                session_id="session:evidence:dependency:single",
+                turn_id="turn:evidence:dependency:single",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        mocked_belief_write.assert_not_called()
+        mocked_profile_write.assert_not_called()
+
+    def test_structured_evidence_write_promotes_high_confidence_current_status_without_corroboration(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        retrieve_results = [
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[])),
+            SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[])),
+        ]
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.retrieve_memory_evidence_in_memory",
+            side_effect=retrieve_results,
+        ), patch(
+            "spark_intelligence.memory.orchestrator.write_belief_to_memory",
+            return_value=memory_orchestrator.MemoryWriteResult(
+                status="succeeded",
+                operation="create",
+                method="write_observation",
+                memory_role="belief",
+                accepted_count=1,
+                rejected_count=0,
+                skipped_count=0,
+                abstained=False,
+                retrieval_trace=None,
+                provenance=[],
+                reason=None,
+            ),
+        ) as mocked_belief_write, patch(
+            "spark_intelligence.memory.orchestrator.write_profile_fact_to_memory",
+            return_value=memory_orchestrator.MemoryWriteResult(
+                status="succeeded",
+                operation="update",
+                method="write_observation",
+                memory_role="current_state",
+                accepted_count=1,
+                rejected_count=0,
+                skipped_count=0,
+                abstained=False,
+                retrieval_trace=None,
+                provenance=[],
+                reason=None,
+            ),
+        ) as mocked_profile_write:
+            result = write_structured_evidence_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                evidence_text="Status update: pending security review for the onboarding rollout.",
+                domain_pack="evidence",
+                evidence_kind="evidence_marker",
+                session_id="session:evidence:status:single",
+                turn_id="turn:evidence:status:single",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        mocked_belief_write.assert_not_called()
+        mocked_profile_write.assert_called_once()
+        promoted_kwargs = mocked_profile_write.call_args.kwargs
+        self.assertEqual(promoted_kwargs["predicate"], "profile.current_status")
+        self.assertEqual(promoted_kwargs["value"], "pending security review for the onboarding rollout")
+        self.assertEqual(promoted_kwargs["fact_name"], "current_status")
+
+    def test_structured_evidence_write_promotes_high_confidence_project_state_fields_without_corroboration(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        cases = (
+            (
+                "Customer interviews confirm our plan is to simplify onboarding approvals.",
+                "profile.current_plan",
+                "simplify onboarding approvals",
+                "current_plan",
+            ),
+            (
+                "Interview notes show our priority is onboarding reliability.",
+                "profile.current_focus",
+                "onboarding reliability",
+                "current_focus",
+            ),
+            (
+                "After testing both flows, our decision is to keep human onboarding support.",
+                "profile.current_decision",
+                "keep human onboarding support",
+                "current_decision",
+            ),
+            (
+                "The weekly review says our commitment is to ship onboarding fixes this week.",
+                "profile.current_commitment",
+                "ship onboarding fixes this week",
+                "current_commitment",
+            ),
+            (
+                "Roadmap notes confirm our next milestone is launch the self-serve onboarding beta.",
+                "profile.current_milestone",
+                "launch the self-serve onboarding beta",
+                "current_milestone",
+            ),
+            (
+                "Interview notes suggest our assumption is enterprise teams want hands-on onboarding.",
+                "profile.current_assumption",
+                "enterprise teams want hands-on onboarding",
+                "current_assumption",
+            ),
+        )
+
+        for index, (evidence_text, expected_predicate, expected_value, expected_fact_name) in enumerate(cases, start=1):
+            with self.subTest(predicate=expected_predicate):
+                fake_client = _FakeMemoryClient()
+                retrieve_results = [
+                    SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[])),
+                    SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[])),
+                ]
+                with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client), patch(
+                    "spark_intelligence.memory.orchestrator.retrieve_memory_evidence_in_memory",
+                    side_effect=retrieve_results,
+                ), patch(
+                    "spark_intelligence.memory.orchestrator.write_belief_to_memory",
+                    return_value=memory_orchestrator.MemoryWriteResult(
+                        status="succeeded",
+                        operation="create",
+                        method="write_observation",
+                        memory_role="belief",
+                        accepted_count=1,
+                        rejected_count=0,
+                        skipped_count=0,
+                        abstained=False,
+                        retrieval_trace=None,
+                        provenance=[],
+                        reason=None,
+                    ),
+                ) as mocked_belief_write, patch(
+                    "spark_intelligence.memory.orchestrator.write_profile_fact_to_memory",
+                    return_value=memory_orchestrator.MemoryWriteResult(
+                        status="succeeded",
+                        operation="update",
+                        method="write_observation",
+                        memory_role="current_state",
+                        accepted_count=1,
+                        rejected_count=0,
+                        skipped_count=0,
+                        abstained=False,
+                        retrieval_trace=None,
+                        provenance=[],
+                        reason=None,
+                    ),
+                ) as mocked_profile_write:
+                    result = write_structured_evidence_to_memory(
+                        config_manager=self.config_manager,
+                        state_db=self.state_db,
+                        human_id=f"human:test:{index}",
+                        evidence_text=evidence_text,
+                        domain_pack="evidence",
+                        evidence_kind="evidence_marker",
+                        session_id=f"session:evidence:project-state:{index}",
+                        turn_id=f"turn:evidence:project-state:{index}",
+                        channel_kind="telegram",
+                    )
+
+                self.assertEqual(result.status, "succeeded")
+                mocked_belief_write.assert_not_called()
+                mocked_profile_write.assert_called_once()
+                promoted_kwargs = mocked_profile_write.call_args.kwargs
+                self.assertEqual(promoted_kwargs["predicate"], expected_predicate)
+                self.assertEqual(promoted_kwargs["value"], expected_value)
+                self.assertEqual(promoted_kwargs["fact_name"], expected_fact_name)
 
     def test_raw_episode_writes_use_raw_turn_predicate_and_archive_retention(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -257,12 +936,193 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(call["memory_role"], "episodic")
         self.assertEqual(call["retention_class"], "episodic_archive")
         self.assertTrue(call["metadata"]["raw_episode"])
+        self.assertEqual(call["metadata"]["archive_after_days"], 14)
+        self.assertTrue(call["metadata"]["archive_at"])
         events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(events)
         observations = (events[0]["facts_json"] or {}).get("observations") or []
         self.assertEqual(events[0]["facts_json"].get("memory_role"), "episodic")
         self.assertEqual(observations[0]["predicate"], "raw_turn")
         self.assertEqual(observations[0]["retention_class"], "episodic_archive")
+
+    def test_archive_raw_episode_from_memory_writes_delete_tombstone(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            result = archive_raw_episode_from_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                episode_text="The pricing page felt confusing during the demo.",
+                raw_episode_observation_id="obs-episode-1",
+                archive_reason="covered_by_newer_structured_evidence",
+                session_id="session:raw:archive",
+                turn_id="turn:raw:archive",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        call = fake_client.observation_calls[0]
+        self.assertEqual(call["operation"], "delete")
+        self.assertEqual(call["predicate"], "raw_turn")
+        self.assertEqual(call["supersedes"], "obs-episode-1")
+        self.assertTrue(call["metadata"]["raw_episode"])
+        self.assertEqual(call["metadata"]["raw_episode_lifecycle_action"], "archived")
+        self.assertEqual(call["metadata"]["archive_reason"], "covered_by_newer_structured_evidence")
+        events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(events)
+        observations = (events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(observations[0]["operation"], "delete")
+        self.assertEqual(observations[0]["raw_episode_lifecycle_action"], "archived")
+
+    def test_archive_structured_evidence_from_memory_writes_delete_tombstone(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            result = archive_structured_evidence_from_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                predicate="evidence.telegram.evidence",
+                evidence_text="Users keep dropping during onboarding because Stripe verification fails.",
+                evidence_observation_id="obs-evidence-1",
+                archive_reason="eclipsed_by_newer_structured_evidence",
+                session_id="session:evidence:archive",
+                turn_id="turn:evidence:archive",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        call = fake_client.observation_calls[0]
+        self.assertEqual(call["operation"], "delete")
+        self.assertEqual(call["predicate"], "evidence.telegram.evidence")
+        self.assertEqual(call["supersedes"], "obs-evidence-1")
+        self.assertEqual(call["metadata"]["structured_evidence_lifecycle_action"], "archived")
+        self.assertEqual(call["metadata"]["archive_reason"], "eclipsed_by_newer_structured_evidence")
+        events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(events)
+        observations = (events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(observations[0]["operation"], "delete")
+        self.assertEqual(observations[0]["structured_evidence_lifecycle_action"], "archived")
+
+    def test_belief_writes_use_belief_role_and_derived_retention(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            result = write_belief_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                belief_text="I think enterprise teams need hands-on onboarding.",
+                domain_pack="beliefs_and_inferences",
+                belief_kind="belief_marker",
+                session_id="session:belief",
+                turn_id="turn:belief",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        self.assertEqual(len(fake_client.observation_calls), 1)
+        call = fake_client.observation_calls[0]
+        self.assertEqual(call["predicate"], "belief.telegram.beliefs_and_inferences")
+        self.assertEqual(call["memory_role"], "belief")
+        self.assertEqual(call["retention_class"], "derived_belief")
+        self.assertEqual(call["metadata"]["belief_kind"], "belief_marker")
+        self.assertEqual(call["metadata"]["revalidate_after_days"], 30)
+        self.assertTrue(call["metadata"]["revalidate_at"])
+        events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(events)
+        observations = (events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(events[0]["facts_json"].get("memory_role"), "belief")
+        self.assertEqual(observations[0]["predicate"], "belief.telegram.beliefs_and_inferences")
+        self.assertEqual(observations[0]["retention_class"], "derived_belief")
+
+    def test_belief_writes_supersede_latest_active_belief_for_same_pack(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        prior_records = [
+            {
+                "memory_role": "belief",
+                "predicate": "belief.telegram.beliefs_and_inferences",
+                "text": "I think self-serve onboarding will work.",
+                "timestamp": "2025-03-01T09:00:00Z",
+                "observation_id": "obs-belief-1",
+                "metadata": {"value": "I think self-serve onboarding will work."},
+                "lifecycle": {},
+            }
+        ]
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.retrieve_memory_evidence_in_memory",
+            return_value=SimpleNamespace(
+                read_result=SimpleNamespace(
+                    abstained=False,
+                    records=prior_records,
+                )
+            ),
+        ) as retrieve_mock:
+            result = write_belief_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                belief_text="I think enterprise teams need hands-on onboarding.",
+                domain_pack="beliefs_and_inferences",
+                belief_kind="belief_marker",
+                session_id="session:belief:2",
+                turn_id="turn:belief:2",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        self.assertFalse(retrieve_mock.call_args.kwargs["record_activity"])
+        call = fake_client.observation_calls[0]
+        self.assertEqual(call["supersedes"], "obs-belief-1")
+        self.assertEqual(call["conflicts_with"], ["obs-belief-1"])
+        self.assertEqual(call["metadata"]["previous_belief_text"], "I think self-serve onboarding will work.")
+        events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(events)
+        observations = (events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(observations[0]["supersedes"], "obs-belief-1")
+        self.assertEqual(observations[0]["conflicts_with"], ["obs-belief-1"])
+
+    def test_archive_belief_from_memory_writes_delete_tombstone(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            result = archive_belief_from_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                predicate="belief.telegram.beliefs_and_inferences",
+                belief_text="I think enterprise teams need hands-on onboarding.",
+                belief_observation_id="obs-belief-1",
+                archive_reason="invalidated_and_past_revalidation",
+                session_id="session:belief:archive",
+                turn_id="turn:belief:archive",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        call = fake_client.observation_calls[0]
+        self.assertEqual(call["operation"], "delete")
+        self.assertEqual(call["predicate"], "belief.telegram.beliefs_and_inferences")
+        self.assertEqual(call["supersedes"], "obs-belief-1")
+        self.assertEqual(call["metadata"]["belief_lifecycle_action"], "archived")
+        self.assertEqual(call["metadata"]["archive_reason"], "invalidated_and_past_revalidation")
+        events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(events)
+        observations = (events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(observations[0]["operation"], "delete")
+        self.assertEqual(observations[0]["belief_lifecycle_action"], "archived")
 
     def test_telegram_event_detection_write_and_answer_use_event_memory_lane(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -826,6 +1686,24 @@ class MemoryOrchestratorTests(SparkTestCase):
         assert remember_query is not None
         self.assertEqual(remember_query.query_kind, "identity_summary")
         self.assertEqual(remember_query.predicate_prefix, "profile.")
+
+        favorite_color_query = detect_profile_fact_query("What is my favorite color?")
+        self.assertIsNotNone(favorite_color_query)
+        assert favorite_color_query is not None
+        self.assertEqual(favorite_color_query.predicate, "profile.favorite_color")
+        self.assertEqual(favorite_color_query.query_kind, "single_fact")
+
+        dog_name_query = detect_profile_fact_query("What is my dog's name?")
+        self.assertIsNotNone(dog_name_query)
+        assert dog_name_query is not None
+        self.assertEqual(dog_name_query.predicate, "profile.dog_name")
+        self.assertEqual(dog_name_query.query_kind, "single_fact")
+
+        favorite_food_query = detect_profile_fact_query("What food do I love the most?")
+        self.assertIsNotNone(favorite_food_query)
+        assert favorite_food_query is not None
+        self.assertEqual(favorite_food_query.predicate, "profile.favorite_food")
+        self.assertEqual(favorite_food_query.query_kind, "single_fact")
 
         summarize_profile_query = detect_profile_fact_query("Summarize my profile in one sentence.")
         self.assertIsNotNone(summarize_profile_query)
@@ -3016,3 +3894,96 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(write["value"], "Dubai")
         self.assertEqual(payload["checks"]["current_state"][0]["predicate"], "profile.city")
         self.assertNotIn("historical_state", payload["checks"])
+
+
+class RuntimeArchitecturePinTests(SparkTestCase):
+    def test_pin_constants_exported(self) -> None:
+        self.assertEqual(
+            memory_orchestrator.PINNED_RUNTIME_MEMORY_ARCHITECTURE,
+            "dual_store_event_calendar_hybrid",
+        )
+        self.assertEqual(
+            memory_orchestrator.PINNED_RUNTIME_MEMORY_PROVIDER,
+            "heuristic_v1",
+        )
+
+    def test_apply_pin_sets_env_when_absent(self) -> None:
+        import os
+        saved_arch = os.environ.pop("SPARK_MEMORY_RUNTIME_ARCHITECTURE", None)
+        saved_prov = os.environ.pop("SPARK_MEMORY_RUNTIME_PROVIDER", None)
+        try:
+            memory_orchestrator._apply_runtime_architecture_pin()
+            self.assertEqual(
+                os.environ["SPARK_MEMORY_RUNTIME_ARCHITECTURE"],
+                memory_orchestrator.PINNED_RUNTIME_MEMORY_ARCHITECTURE,
+            )
+            self.assertEqual(
+                os.environ["SPARK_MEMORY_RUNTIME_PROVIDER"],
+                memory_orchestrator.PINNED_RUNTIME_MEMORY_PROVIDER,
+            )
+        finally:
+            if saved_arch is not None:
+                os.environ["SPARK_MEMORY_RUNTIME_ARCHITECTURE"] = saved_arch
+            if saved_prov is not None:
+                os.environ["SPARK_MEMORY_RUNTIME_PROVIDER"] = saved_prov
+
+    def test_apply_pin_respects_existing_env(self) -> None:
+        import os
+        saved = os.environ.get("SPARK_MEMORY_RUNTIME_ARCHITECTURE")
+        os.environ["SPARK_MEMORY_RUNTIME_ARCHITECTURE"] = "summary_synthesis_memory"
+        try:
+            memory_orchestrator._apply_runtime_architecture_pin()
+            self.assertEqual(
+                os.environ["SPARK_MEMORY_RUNTIME_ARCHITECTURE"],
+                "summary_synthesis_memory",
+            )
+        finally:
+            if saved is None:
+                os.environ.pop("SPARK_MEMORY_RUNTIME_ARCHITECTURE", None)
+            else:
+                os.environ["SPARK_MEMORY_RUNTIME_ARCHITECTURE"] = saved
+
+
+class PredicateRegistryConsolidationTests(SparkTestCase):
+    _EXPECTED_PREDICATE_DAYS = {
+        "profile.current_plan": 30,
+        "profile.current_focus": 21,
+        "profile.current_decision": 30,
+        "profile.current_blocker": 14,
+        "profile.current_status": 14,
+        "profile.current_commitment": 21,
+        "profile.current_milestone": 21,
+        "profile.current_risk": 14,
+        "profile.current_dependency": 14,
+        "profile.current_constraint": 14,
+        "profile.current_assumption": 30,
+        "profile.current_owner": 21,
+    }
+
+    def test_pack_carries_revalidation_days_for_all_current_state_predicates(self) -> None:
+        from spark_intelligence.memory.generic_observations import pack_revalidation_days
+        for predicate, expected in self._EXPECTED_PREDICATE_DAYS.items():
+            self.assertEqual(
+                pack_revalidation_days(predicate),
+                expected,
+                msg=f"pack_revalidation_days({predicate!r}) should resolve via TelegramGenericPack registry",
+            )
+
+    def test_retention_policy_prefers_pack_then_falls_back_to_orphan_dict(self) -> None:
+        from spark_intelligence.memory.retention_policy import active_state_revalidation_days_for
+        for predicate, expected in self._EXPECTED_PREDICATE_DAYS.items():
+            self.assertEqual(active_state_revalidation_days_for(predicate), expected)
+        for orphan in (
+            "telegram.summary.latest_meeting",
+            "telegram.summary.latest_deadline",
+            "telegram.summary.latest_shipped",
+        ):
+            self.assertEqual(active_state_revalidation_days_for(orphan), 14)
+        self.assertIsNone(active_state_revalidation_days_for("bogus.predicate"))
+        self.assertIsNone(active_state_revalidation_days_for(None))
+
+    def test_profile_facts_helper_uses_unified_lookup(self) -> None:
+        from spark_intelligence.memory.profile_facts import active_state_revalidation_days
+        self.assertEqual(active_state_revalidation_days("profile.current_plan"), 30)
+        self.assertEqual(active_state_revalidation_days("telegram.summary.latest_meeting"), 14)
+        self.assertIsNone(active_state_revalidation_days("bogus.predicate"))

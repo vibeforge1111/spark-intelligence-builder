@@ -7,7 +7,7 @@ import re
 import sys
 import time
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -37,6 +37,9 @@ from spark_intelligence.capability_router import build_capability_router_prompt_
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.harness_registry import build_harness_prompt_context
 from spark_intelligence.memory import (
+    archive_belief_from_memory,
+    archive_raw_episode_from_memory,
+    archive_structured_evidence_from_memory,
     delete_profile_fact_from_memory,
     explain_memory_answer_in_memory,
     inspect_human_memory_in_memory,
@@ -44,6 +47,7 @@ from spark_intelligence.memory import (
     lookup_historical_state_in_memory,
     retrieve_memory_evidence_in_memory,
     retrieve_memory_events_in_memory,
+    write_belief_to_memory,
     write_profile_fact_to_memory,
     write_raw_episode_to_memory,
     write_structured_evidence_to_memory,
@@ -66,6 +70,7 @@ from spark_intelligence.memory.generic_observations import (
     detect_telegram_generic_observation,
 )
 from spark_intelligence.memory.profile_facts import (
+    active_state_records_past_revalidation,
     build_profile_fact_explanation_answer,
     build_profile_fact_event_history_answer,
     build_profile_fact_history_answer,
@@ -331,6 +336,563 @@ def _profile_fact_explanation_has_content(payload: dict[str, Any] | None) -> boo
     if isinstance(events, list) and any(item for item in events):
         return True
     return False
+
+
+@dataclass(frozen=True)
+class OpenMemoryRecallQuery:
+    topic: str
+    query_kind: str = "evidence_recall"
+
+
+@dataclass(frozen=True)
+class BeliefRecallQuery:
+    topic: str
+
+
+_OPEN_MEMORY_RECALL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "evidence_recall",
+        re.compile(
+            r"^(?:what|which)\s+(?:evidence|saved memory|memory)\s+do you have about\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "evidence_recall",
+        re.compile(
+            r"^(?:what|which)\s+do you\s+(?:remember|know|have saved)\s+about\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "episodic_recall",
+        re.compile(
+            r"^(?:what|tell me what)\s+happened\s+(?:during|in|around|at)\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
+
+_BELIEF_RECALL_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"^(?:what(?:'s| is)|tell me)\s+your\s+(?:current\s+)?belief\s+about\s+(.+?)[\?\.\!]*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?:what|which)\s+belief\s+do you have about\s+(.+?)[\?\.\!]*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?:what|which)\s+do you\s+currently\s+believe\s+about\s+(.+?)[\?\.\!]*$",
+        re.IGNORECASE,
+    ),
+)
+
+
+def _detect_open_memory_recall_query(user_message: str) -> OpenMemoryRecallQuery | None:
+    normalized = " ".join(str(user_message or "").strip().split())
+    if not normalized:
+        return None
+    for query_kind, pattern in _OPEN_MEMORY_RECALL_PATTERNS:
+        match = pattern.match(normalized)
+        if not match:
+            continue
+        topic = str(match.group(1) or "").strip(" \t\r\n?!.\"'")
+        if not topic or topic in {"me", "my profile"}:
+            return None
+        return OpenMemoryRecallQuery(topic=topic, query_kind=query_kind)
+    return None
+
+
+def _detect_belief_recall_query(user_message: str) -> BeliefRecallQuery | None:
+    normalized = " ".join(str(user_message or "").strip().split())
+    if not normalized:
+        return None
+    for pattern in _BELIEF_RECALL_PATTERNS:
+        match = pattern.match(normalized)
+        if not match:
+            continue
+        topic = str(match.group(1) or "").strip(" \t\r\n?!.\"'")
+        if not topic or topic in {"me", "my profile"}:
+            return None
+        return BeliefRecallQuery(topic=topic)
+    return None
+
+
+def _memory_record_text(record: dict[str, Any]) -> str:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    for key in ("evidence_text", "source_text", "value"):
+        candidate = str(metadata.get(key) or "").strip()
+        if candidate:
+            return candidate
+    text = str(record.get("text") or "").strip()
+    if text:
+        subject = str(record.get("subject") or "").strip()
+        predicate = str(record.get("predicate") or "").strip()
+        value = str(record.get("value") or metadata.get("normalized_value") or "").strip()
+        if subject and predicate and text.startswith(f"{subject} {predicate} ") and value:
+            return value
+        return text
+    return str(record.get("value") or metadata.get("normalized_value") or "").strip()
+
+
+def _filter_open_memory_recall_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    superseded_ids: set[str] = set()
+    for record in records:
+        lifecycle = record.get("lifecycle") if isinstance(record.get("lifecycle"), dict) else {}
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        supersedes = str(lifecycle.get("supersedes") or metadata.get("supersedes") or "").strip()
+        if supersedes:
+            superseded_ids.add(supersedes)
+    filtered: list[dict[str, Any]] = []
+    for record in records:
+        predicate = str(record.get("predicate") or "").strip()
+        role = str(record.get("memory_role") or "").strip()
+        record_id = str(record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or "").strip()
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        if role == "state_deletion" or str(record.get("operation") or "").strip().lower() == "delete":
+            continue
+        if record_id and record_id in superseded_ids:
+            continue
+        if metadata.get("raw_episode_lifecycle_action") == "archived":
+            continue
+        if role in {"structured_evidence", "episodic"}:
+            filtered.append(record)
+            continue
+        if predicate == "raw_turn" or predicate.startswith("evidence.telegram."):
+            filtered.append(record)
+    return filtered
+
+
+def _record_matches_open_memory_topic(*, record: dict[str, Any], topic: str) -> bool:
+    normalized_topic = str(topic or "").strip().casefold()
+    if not normalized_topic:
+        return False
+    haystack = _memory_record_text(record).casefold()
+    return bool(haystack) and normalized_topic in haystack
+
+
+def _build_open_memory_recall_answer(*, query: OpenMemoryRecallQuery, records: list[dict[str, Any]]) -> str:
+    snippets: list[str] = []
+    seen: set[str] = set()
+    for record in records:
+        snippet = _memory_record_text(record)
+        if not snippet:
+            continue
+        normalized = snippet.casefold()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        snippets.append(snippet)
+        if len(snippets) >= 2:
+            break
+    if not snippets:
+        return "I don't currently have saved memory about that."
+    if len(snippets) == 1:
+        return f'I have saved memory about {query.topic}: "{snippets[0]}"'
+    return f'I have saved memory about {query.topic}: "{snippets[0]}" Also: "{snippets[1]}"'
+
+
+def _filter_belief_recall_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+    for record in records:
+        predicate = str(record.get("predicate") or "").strip()
+        role = str(record.get("memory_role") or "").strip()
+        if role == "belief" or predicate.startswith("belief.telegram."):
+            filtered.append(record)
+    if not filtered:
+        return filtered
+    superseded_ids: set[str] = set()
+    for record in filtered:
+        lifecycle = record.get("lifecycle") if isinstance(record.get("lifecycle"), dict) else {}
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        supersedes = str(lifecycle.get("supersedes") or metadata.get("supersedes") or "").strip()
+        if supersedes:
+            superseded_ids.add(supersedes)
+    active = [
+        record
+        for record in filtered
+        if str(record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or "").strip()
+        not in superseded_ids
+    ]
+    if not active:
+        return filtered
+    return active
+
+
+def _filter_structured_evidence_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+    for record in records:
+        predicate = str(record.get("predicate") or "").strip()
+        role = str(record.get("memory_role") or "").strip()
+        if role == "structured_evidence" or predicate.startswith("evidence.telegram."):
+            filtered.append(record)
+    return filtered
+
+
+def _filter_current_state_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+    for record in records:
+        predicate = str(record.get("predicate") or "").strip()
+        role = str(record.get("memory_role") or "").strip()
+        if role == "current_state" or predicate.startswith("profile.current_"):
+            filtered.append(record)
+    return filtered
+
+
+def _newer_current_state_records_than_beliefs(
+    *,
+    belief_records: list[dict[str, Any]],
+    current_state_records: list[dict[str, Any]],
+    topic: str,
+) -> list[dict[str, Any]]:
+    if not belief_records or not current_state_records:
+        return []
+    latest_belief_timestamp = max((_memory_record_timestamp(record) for record in belief_records), default="")
+    if not latest_belief_timestamp:
+        return []
+    return [
+        record
+        for record in current_state_records
+        if _record_matches_open_memory_topic(record=record, topic=topic)
+        and _memory_record_timestamp(record) > latest_belief_timestamp
+    ]
+
+
+def _select_belief_recall_newer_evidence_records(
+    *,
+    belief_records: list[dict[str, Any]],
+    candidate_records: list[dict[str, Any]],
+    topic: str,
+) -> list[dict[str, Any]]:
+    if not belief_records or not candidate_records:
+        return []
+    topical_current_state_records = _newer_current_state_records_than_beliefs(
+        belief_records=belief_records,
+        current_state_records=_filter_current_state_records(candidate_records),
+        topic=topic,
+    )
+    topical_structured_evidence_records = [
+        record
+        for record in _newer_evidence_than_beliefs(
+            belief_records=belief_records,
+            evidence_records=_filter_structured_evidence_records(candidate_records),
+        )
+        if _record_matches_open_memory_topic(record=record, topic=topic)
+    ]
+    if not topical_current_state_records and not topical_structured_evidence_records:
+        return []
+    return sorted(
+        _merge_memory_records(topical_current_state_records, topical_structured_evidence_records),
+        key=_memory_record_timestamp,
+        reverse=True,
+    )
+
+
+def _synthesize_belief_records_from_consolidated_memory(
+    *,
+    records: list[dict[str, Any]],
+    topic: str,
+) -> list[dict[str, Any]]:
+    matching_evidence = [
+        record
+        for record in _filter_structured_evidence_records(records)
+        if _record_matches_open_memory_topic(record=record, topic=topic)
+    ]
+    if not matching_evidence:
+        return []
+    current_state_records = _filter_current_state_records(records)
+    if not current_state_records:
+        return []
+    latest_current_state = sorted(current_state_records, key=_memory_record_timestamp)[-1]
+    source_value = str(latest_current_state.get("value") or "").strip()
+    if not source_value:
+        source_value = _memory_record_text(latest_current_state).strip()
+    if not source_value:
+        return []
+    belief_text = source_value if source_value.casefold().startswith("i think ") else f"I think {source_value[0].lower() + source_value[1:] if len(source_value) > 1 else source_value.lower()}"
+    topic_slug = re.sub(r"[^a-z0-9]+", "_", str(topic or "synthetic").strip().lower()).strip("_") or "synthetic"
+    return [
+        {
+            "memory_role": "belief",
+            "predicate": f"belief.synthetic.{topic_slug}",
+            "text": belief_text,
+            "value": belief_text,
+            "timestamp": _memory_record_timestamp(latest_current_state),
+            "metadata": {
+                "synthetic_from_current_state": True,
+                "source_predicate": str(latest_current_state.get("predicate") or "").strip(),
+                "source_topic": topic,
+            },
+        }
+    ]
+
+
+def _structured_evidence_invalidated_belief_ids(records: list[dict[str, Any]]) -> set[str]:
+    invalidated_ids: set[str] = set()
+    for record in _filter_structured_evidence_records(records):
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        for belief_id in list(metadata.get("invalidated_belief_ids") or []):
+            normalized = str(belief_id or "").strip()
+            if normalized:
+                invalidated_ids.add(normalized)
+    return invalidated_ids
+
+
+def _filter_records_by_observation_ids(records: list[dict[str, Any]], observation_ids: set[str]) -> list[dict[str, Any]]:
+    if not observation_ids:
+        return []
+    filtered: list[dict[str, Any]] = []
+    for record in records:
+        record_id = str(record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or "").strip()
+        if record_id and record_id in observation_ids:
+            filtered.append(record)
+    return filtered
+
+
+def _merge_memory_records(primary: list[dict[str, Any]], supplemental: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for record in [*primary, *supplemental]:
+        key = (
+            str(record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or "").strip(),
+            str(record.get("predicate") or "").strip(),
+            _memory_record_text(record).strip().casefold(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(record)
+    return merged
+
+
+def _memory_record_timestamp(record: dict[str, Any]) -> str:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    return str(record.get("timestamp") or metadata.get("document_time") or "").strip()
+
+
+def _parse_memory_timestamp(value: str | None) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _belief_records_past_revalidation(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    now = datetime.now(timezone.utc)
+    stale_records: list[dict[str, Any]] = []
+    for record in records:
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        revalidate_at = _parse_memory_timestamp(metadata.get("revalidate_at"))
+        if revalidate_at is None:
+            timestamp = _parse_memory_timestamp(_memory_record_timestamp(record))
+            if timestamp is not None:
+                revalidate_at = timestamp + timedelta(days=30)
+        if revalidate_at is not None and revalidate_at <= now:
+            stale_records.append(record)
+    return stale_records
+
+
+def _raw_episode_records_past_archive(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    now = datetime.now(timezone.utc)
+    stale_records: list[dict[str, Any]] = []
+    for record in records:
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        archive_at = _parse_memory_timestamp(metadata.get("archive_at"))
+        if archive_at is None:
+            timestamp = _parse_memory_timestamp(_memory_record_timestamp(record))
+            if timestamp is not None:
+                archive_at = timestamp + timedelta(days=14)
+        if archive_at is not None and archive_at <= now:
+            stale_records.append(record)
+    return stale_records
+
+
+def _structured_evidence_records_past_archive(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    now = datetime.now(timezone.utc)
+    stale_records: list[dict[str, Any]] = []
+    for record in records:
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        archive_at = _parse_memory_timestamp(metadata.get("archive_at"))
+        if archive_at is None:
+            timestamp = _parse_memory_timestamp(_memory_record_timestamp(record))
+            if timestamp is not None:
+                archive_at = timestamp + timedelta(days=30)
+        if archive_at is not None and archive_at <= now:
+            stale_records.append(record)
+    return stale_records
+
+
+def _filter_raw_episode_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+    for record in records:
+        predicate = str(record.get("predicate") or "").strip()
+        role = str(record.get("memory_role") or "").strip()
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        if role == "episodic" or predicate == "raw_turn" or bool(metadata.get("raw_episode")):
+            filtered.append(record)
+    return filtered
+
+
+def _newer_evidence_than_beliefs(
+    *,
+    belief_records: list[dict[str, Any]],
+    evidence_records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not belief_records or not evidence_records:
+        return []
+    latest_belief_timestamp = max((_memory_record_timestamp(record) for record in belief_records), default="")
+    if not latest_belief_timestamp:
+        return []
+    return [
+        record
+        for record in evidence_records
+        if _memory_record_timestamp(record) > latest_belief_timestamp
+    ]
+
+
+def _newer_structured_evidence_than_raw_episodes(
+    *,
+    raw_episode_records: list[dict[str, Any]],
+    evidence_records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not raw_episode_records or not evidence_records:
+        return []
+    latest_raw_episode_timestamp = max((_memory_record_timestamp(record) for record in raw_episode_records), default="")
+    if not latest_raw_episode_timestamp:
+        return []
+    return [
+        record
+        for record in evidence_records
+        if _memory_record_timestamp(record) > latest_raw_episode_timestamp
+    ]
+
+
+def _newer_structured_evidence_records(
+    *,
+    evidence_records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if len(evidence_records) < 2:
+        return []
+    latest_evidence_timestamp = max((_memory_record_timestamp(record) for record in evidence_records), default="")
+    if not latest_evidence_timestamp:
+        return []
+    return [
+        record
+        for record in evidence_records
+        if _memory_record_timestamp(record) < latest_evidence_timestamp
+    ]
+
+
+def _build_belief_recall_answer(
+    *,
+    query: BeliefRecallQuery,
+    records: list[dict[str, Any]],
+    newer_evidence_records: list[dict[str, Any]] | None = None,
+    stale_belief_records: list[dict[str, Any]] | None = None,
+) -> str:
+    if newer_evidence_records:
+        snippets: list[str] = []
+        seen: set[str] = set()
+        for record in sorted(newer_evidence_records, key=_memory_record_timestamp, reverse=True):
+            snippet = _memory_record_text(record)
+            if not snippet:
+                continue
+            normalized = snippet.casefold()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            snippets.append(snippet)
+            if len(snippets) >= 2:
+                break
+        if snippets:
+            if len(snippets) == 1:
+                return (
+                    f'I have an older inferred belief about {query.topic}, but newer direct evidence says: "{snippets[0]}" '
+                    "I would not treat the older belief as current."
+                )
+            return (
+                f'I have older inferred beliefs about {query.topic}, but newer direct evidence says: "{snippets[0]}" '
+                f'Also: "{snippets[1]}" I would not treat the older belief as current.'
+            )
+        return (
+            f"I have older inferred beliefs about {query.topic}, but newer direct evidence exists, "
+            "so I would not treat the older belief as current."
+        )
+    if stale_belief_records:
+        snippets: list[str] = []
+        seen: set[str] = set()
+        for record in stale_belief_records:
+            snippet = _memory_record_text(record)
+            if not snippet:
+                continue
+            normalized = snippet.casefold()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            snippets.append(snippet)
+            if len(snippets) >= 2:
+                break
+        if snippets:
+            if len(snippets) == 1:
+                return (
+                    f'I have an older inferred belief about {query.topic}: "{snippets[0]}" '
+                    "but it has not been revalidated recently, so I would not treat it as current."
+                )
+            return (
+                f'I have older inferred beliefs about {query.topic}: "{snippets[0]}" Also: "{snippets[1]}" '
+                "but they have not been revalidated recently, so I would not treat them as current."
+            )
+        return f"I have an older inferred belief about {query.topic}, but it has not been revalidated recently."
+    snippets: list[str] = []
+    seen: set[str] = set()
+    for record in records:
+        snippet = _memory_record_text(record)
+        if not snippet:
+            continue
+        normalized = snippet.casefold()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        snippets.append(snippet)
+        if len(snippets) >= 2:
+            break
+    if not snippets:
+        return "I don't currently have a saved belief about that."
+    if len(snippets) == 1:
+        return f'My saved belief about {query.topic} is: "{snippets[0]}" This is an inferred belief, not a direct fact.'
+    return (
+        f'My saved beliefs about {query.topic} are: "{snippets[0]}" Also: "{snippets[1]}" '
+        "These are inferred beliefs, not direct facts."
+    )
+
+
+def _build_belief_observation_answer(*, belief_text: str) -> str:
+    snippet = str(belief_text or "").strip()
+    if not snippet:
+        return "I'll save that as a belief."
+    return f"I'll save that as a belief: \"{snippet}\""
+
+
+def _build_structured_evidence_observation_answer(*, evidence_text: str) -> str:
+    snippet = str(evidence_text or "").strip()
+    if not snippet:
+        return "I'll save that as structured evidence."
+    return f"I'll save that as structured evidence: \"{snippet}\""
+
+
+def _build_raw_episode_observation_answer(*, episode_text: str) -> str:
+    snippet = str(episode_text or "").strip()
+    if not snippet:
+        return "I'll save that as a raw episode."
+    return f"I'll save that as a raw episode: \"{snippet}\""
 
 
 @dataclass
@@ -3450,6 +4012,8 @@ def build_researcher_reply(
     detected_profile_fact_query = None
     detected_memory_event = None
     detected_memory_event_query = None
+    detected_open_memory_recall_query = None
+    detected_belief_recall_query = None
     detected_generic_memory_candidate = None
     assessed_generic_memory_candidate = None
     detected_generic_memory_deletion = None
@@ -3532,6 +4096,19 @@ def build_researcher_reply(
                 )
             elif detected_memory_event_query is None:
                 detected_memory_event_query = detect_telegram_memory_event_query(user_message)
+            if (
+                detected_profile_fact_query is None
+                and detected_memory_event_query is None
+                and detected_open_memory_recall_query is None
+            ):
+                detected_open_memory_recall_query = _detect_open_memory_recall_query(user_message)
+            if (
+                detected_profile_fact_query is None
+                and detected_memory_event_query is None
+                and detected_open_memory_recall_query is None
+                and detected_belief_recall_query is None
+            ):
+                detected_belief_recall_query = _detect_belief_recall_query(user_message)
         except Exception:
             pass
 
@@ -3673,6 +4250,22 @@ def build_researcher_reply(
                     turn_id=request_id,
                     channel_kind=channel_kind,
                     actor_id="telegram_raw_episode_loader",
+                )
+            except Exception:
+                pass
+        elif assessed_generic_memory_candidate.outcome == "belief_candidate":
+            try:
+                write_belief_to_memory(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    human_id=human_id,
+                    belief_text=assessed_generic_memory_candidate.evidence_text,
+                    domain_pack=str(assessed_generic_memory_candidate.domain_pack or "belief"),
+                    belief_kind=str(assessed_generic_memory_candidate.reason or "belief_candidate"),
+                    session_id=session_id,
+                    turn_id=request_id,
+                    channel_kind=channel_kind,
+                    actor_id="telegram_belief_loader",
                 )
             except Exception:
                 pass
@@ -4183,6 +4776,208 @@ def build_researcher_reply(
         )
 
     if (
+        assessed_generic_memory_candidate is not None
+        and assessed_generic_memory_candidate.outcome == "structured_evidence"
+    ):
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_structured_evidence_update",
+            routing_decision="memory_structured_evidence_observation",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = _build_structured_evidence_observation_answer(
+            evidence_text=assessed_generic_memory_candidate.evidence_text,
+        )
+        evidence_summary = (
+            "status=memory_structured_evidence_update "
+            f"domain_pack={assessed_generic_memory_candidate.domain_pack or 'evidence'} "
+            f"evidence_kind={assessed_generic_memory_candidate.reason or 'structured_evidence'}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge acknowledged structured evidence directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_structured_evidence_observation",
+            facts=_bridge_event_facts(
+                routing_decision="memory_structured_evidence_observation",
+                bridge_mode="memory_structured_evidence_update",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "memory_role": assessed_generic_memory_candidate.memory_role,
+                    "retention_class": assessed_generic_memory_candidate.retention_class,
+                    "domain_pack": assessed_generic_memory_candidate.domain_pack,
+                    "evidence_kind": assessed_generic_memory_candidate.reason,
+                    "evidence_text": assessed_generic_memory_candidate.evidence_text,
+                    "operation": assessed_generic_memory_candidate.operation,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_structured_evidence_update",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_structured_evidence_observation",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+
+    if (
+        assessed_generic_memory_candidate is not None
+        and assessed_generic_memory_candidate.outcome == "raw_episode"
+    ):
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_raw_episode_update",
+            routing_decision="memory_raw_episode_observation",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = _build_raw_episode_observation_answer(
+            episode_text=assessed_generic_memory_candidate.evidence_text,
+        )
+        evidence_summary = (
+            "status=memory_raw_episode_update "
+            f"domain_pack={assessed_generic_memory_candidate.domain_pack or 'raw_episode'}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge acknowledged a raw episode directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_raw_episode_observation",
+            facts=_bridge_event_facts(
+                routing_decision="memory_raw_episode_observation",
+                bridge_mode="memory_raw_episode_update",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "memory_role": assessed_generic_memory_candidate.memory_role,
+                    "retention_class": assessed_generic_memory_candidate.retention_class,
+                    "domain_pack": assessed_generic_memory_candidate.domain_pack,
+                    "episode_text": assessed_generic_memory_candidate.evidence_text,
+                    "operation": assessed_generic_memory_candidate.operation,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_raw_episode_update",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_raw_episode_observation",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+
+    if (
+        assessed_generic_memory_candidate is not None
+        and assessed_generic_memory_candidate.outcome == "belief_candidate"
+    ):
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_belief_update",
+            routing_decision="memory_belief_observation",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = _build_belief_observation_answer(
+            belief_text=assessed_generic_memory_candidate.evidence_text,
+        )
+        evidence_summary = (
+            "status=memory_belief_update "
+            f"domain_pack={assessed_generic_memory_candidate.domain_pack or 'belief'} "
+            f"belief_kind={assessed_generic_memory_candidate.reason or 'belief_candidate'}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge acknowledged a Telegram belief observation directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_belief_observation",
+            facts=_bridge_event_facts(
+                routing_decision="memory_belief_observation",
+                bridge_mode="memory_belief_update",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "memory_role": assessed_generic_memory_candidate.memory_role,
+                    "retention_class": assessed_generic_memory_candidate.retention_class,
+                    "domain_pack": assessed_generic_memory_candidate.domain_pack,
+                    "belief_kind": assessed_generic_memory_candidate.reason,
+                    "belief_text": assessed_generic_memory_candidate.evidence_text,
+                    "operation": assessed_generic_memory_candidate.operation,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_belief_update",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_belief_observation",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+
+    if (
         detected_profile_fact_query is not None
         and detected_profile_fact_query.query_kind == "fact_explanation"
     ):
@@ -4414,11 +5209,30 @@ def build_researcher_reply(
                     predicate=detected_profile_fact_query.predicate,
                     related_predicates=related_predicates,
                 )
+        if (
+            str(detected_profile_fact_query.predicate or "").startswith("profile.current_")
+            and primary_records
+            and not current_fact_deleted
+        ):
+            inspected_primary_records, inspected_related_records = _inspect_profile_fact_records(
+                config_manager=config_manager,
+                state_db=state_db,
+                human_id=human_id,
+                predicate=detected_profile_fact_query.predicate,
+                related_predicates=related_predicates,
+                actor_id="researcher_bridge",
+            )
+            if inspected_primary_records:
+                primary_records = inspected_primary_records
+            if inspected_related_records:
+                related_records = inspected_related_records
         direct_fact_value = _select_profile_fact_query_value(
             predicate=detected_profile_fact_query.predicate,
             primary_records=primary_records,
             related_records=related_records,
         )
+        stale_primary_records = active_state_records_past_revalidation(primary_records)
+        stale_current_fact = bool(primary_records) and len(stale_primary_records) == len(primary_records)
         output_keepability, promotion_disposition = _bridge_output_classification(
             mode="memory_profile_fact",
             routing_decision="memory_profile_fact_query",
@@ -4427,11 +5241,13 @@ def build_researcher_reply(
         reply_text = build_profile_fact_query_answer(
             query=detected_profile_fact_query,
             value=direct_fact_value,
+            stale=stale_current_fact,
         )
         evidence_summary = (
             "status=memory_profile_fact "
             f"predicate={detected_profile_fact_query.predicate or 'unknown'} "
-            f"value_found={'yes' if direct_fact_value else 'no'}"
+            f"value_found={'yes' if direct_fact_value else 'no'} "
+            f"stale_current_fact={'yes' if stale_current_fact else 'no'}"
         )
         record_event(
             state_db,
@@ -4461,6 +5277,7 @@ def build_researcher_reply(
                     "predicate": detected_profile_fact_query.predicate,
                     "label": detected_profile_fact_query.label,
                     "value_found": bool(direct_fact_value),
+                    "stale_current_fact": stale_current_fact,
                 },
             ),
         )
@@ -4824,6 +5641,676 @@ def build_researcher_reply(
             config_path=None,
             attachment_context=attachment_context,
             routing_decision="memory_profile_identity_summary",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+    if detected_open_memory_recall_query is not None:
+        memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
+        archived_raw_episode_count = 0
+        archived_structured_evidence_count = 0
+        direct_inspection = None
+        evidence_lookup = retrieve_memory_evidence_in_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            query=str(user_message or "").strip() or detected_open_memory_recall_query.topic,
+            subject=memory_subject,
+            limit=6,
+            actor_id="researcher_bridge",
+        )
+        recall_records: list[dict[str, Any]] = []
+        read_method = "retrieve_evidence"
+        if not evidence_lookup.read_result.abstained and evidence_lookup.read_result.records:
+            recall_records = [
+                record
+                for record in _filter_open_memory_recall_records(evidence_lookup.read_result.records)
+                if _record_matches_open_memory_topic(
+                    record=record,
+                    topic=detected_open_memory_recall_query.topic,
+                )
+            ]
+            direct_inspection = inspect_human_memory_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                human_id=human_id,
+                actor_id="researcher_bridge",
+            )
+            if not direct_inspection.read_result.abstained and direct_inspection.read_result.records:
+                supplemental_records = [
+                    record
+                    for record in _filter_open_memory_recall_records(direct_inspection.read_result.records)
+                    if _record_matches_open_memory_topic(
+                        record=record,
+                        topic=detected_open_memory_recall_query.topic,
+                    )
+                ]
+                merged_records = _merge_memory_records(recall_records, supplemental_records)
+                if merged_records != recall_records:
+                    recall_records = merged_records
+                    read_method = "retrieve_evidence+inspect_memory_records"
+            structured_evidence_records = _filter_structured_evidence_records(recall_records)
+            archivable_structured_evidence_records = _structured_evidence_records_past_archive(structured_evidence_records)
+            if len(structured_evidence_records) >= 2 and archivable_structured_evidence_records:
+                older_evidence_records = _newer_structured_evidence_records(evidence_records=structured_evidence_records)
+                archived_structured_evidence_ids: set[str] = set()
+                archived_structured_evidence_texts: set[str] = set()
+                for record in archivable_structured_evidence_records:
+                    record_id = str(
+                        record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                    ).strip()
+                    record_text = _memory_record_text(record).strip().casefold()
+                    if not record_id:
+                        if not record_text:
+                            continue
+                    if not any(
+                        (
+                            str(
+                                candidate.get("observation_id") or (candidate.get("metadata") or {}).get("observation_id") or ""
+                            ).strip()
+                            == record_id
+                            if record_id
+                            else _memory_record_text(candidate).strip().casefold() == record_text
+                        )
+                        for candidate in older_evidence_records
+                    ):
+                        continue
+                    try:
+                        archive_structured_evidence_from_memory(
+                            config_manager=config_manager,
+                            state_db=state_db,
+                            human_id=human_id,
+                            predicate=str(record.get("predicate") or ""),
+                            evidence_text=_memory_record_text(record),
+                            evidence_observation_id=record_id,
+                            archive_reason="eclipsed_by_newer_structured_evidence",
+                            session_id=session_id,
+                            turn_id=request_id,
+                            channel_kind=channel_kind,
+                            actor_id="telegram_structured_evidence_archiver",
+                        )
+                        archived_structured_evidence_count += 1
+                        if record_id:
+                            archived_structured_evidence_ids.add(record_id)
+                        if record_text:
+                            archived_structured_evidence_texts.add(record_text)
+                    except Exception:
+                        pass
+                if archived_structured_evidence_ids or archived_structured_evidence_texts:
+                    recall_records = [
+                        record
+                        for record in recall_records
+                        if (
+                            str(
+                                record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                            ).strip()
+                            not in archived_structured_evidence_ids
+                            and _memory_record_text(record).strip().casefold() not in archived_structured_evidence_texts
+                        )
+                    ]
+                    structured_evidence_records = [
+                        record
+                        for record in structured_evidence_records
+                        if (
+                            str(
+                                record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                            ).strip()
+                            not in archived_structured_evidence_ids
+                            and _memory_record_text(record).strip().casefold() not in archived_structured_evidence_texts
+                        )
+                    ]
+            raw_episode_records = _filter_raw_episode_records(recall_records)
+            archivable_raw_episode_records = _raw_episode_records_past_archive(raw_episode_records)
+            if structured_evidence_records and archivable_raw_episode_records:
+                newer_evidence_records = _newer_structured_evidence_than_raw_episodes(
+                    raw_episode_records=archivable_raw_episode_records,
+                    evidence_records=structured_evidence_records,
+                )
+                archived_raw_episode_ids: set[str] = set()
+                for record in archivable_raw_episode_records:
+                    record_timestamp = _memory_record_timestamp(record)
+                    if not any(_memory_record_timestamp(evidence_record) > record_timestamp for evidence_record in newer_evidence_records):
+                        continue
+                    try:
+                        archive_raw_episode_from_memory(
+                            config_manager=config_manager,
+                            state_db=state_db,
+                            human_id=human_id,
+                            episode_text=_memory_record_text(record),
+                            raw_episode_observation_id=str(
+                                record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                            ).strip()
+                            or None,
+                            archive_reason="covered_by_newer_structured_evidence",
+                            session_id=session_id,
+                            turn_id=request_id,
+                            channel_kind=channel_kind,
+                            actor_id="telegram_raw_episode_archiver",
+                        )
+                        archived_raw_episode_count += 1
+                        record_id = str(
+                            record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                        ).strip()
+                        if record_id:
+                            archived_raw_episode_ids.add(record_id)
+                    except Exception:
+                        pass
+                if archived_raw_episode_ids:
+                    recall_records = [
+                        record
+                        for record in recall_records
+                        if str(
+                            record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                        ).strip()
+                        not in archived_raw_episode_ids
+                    ]
+        if not recall_records:
+            if direct_inspection is None:
+                direct_inspection = inspect_human_memory_in_memory(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    human_id=human_id,
+                    actor_id="researcher_bridge",
+                )
+            if not direct_inspection.read_result.abstained and direct_inspection.read_result.records:
+                recall_records = [
+                    record
+                    for record in _filter_open_memory_recall_records(direct_inspection.read_result.records)
+                    if _record_matches_open_memory_topic(
+                        record=record,
+                        topic=detected_open_memory_recall_query.topic,
+                    )
+                ]
+                structured_evidence_records = _filter_structured_evidence_records(recall_records)
+                archivable_structured_evidence_records = _structured_evidence_records_past_archive(structured_evidence_records)
+                if len(structured_evidence_records) >= 2 and archivable_structured_evidence_records:
+                    older_evidence_records = _newer_structured_evidence_records(evidence_records=structured_evidence_records)
+                    archived_structured_evidence_ids: set[str] = set()
+                    archived_structured_evidence_texts: set[str] = set()
+                    for record in archivable_structured_evidence_records:
+                        record_id = str(
+                            record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                        ).strip()
+                        record_text = _memory_record_text(record).strip().casefold()
+                        if not record_id:
+                            if not record_text:
+                                continue
+                        if not any(
+                            (
+                                str(
+                                    candidate.get("observation_id") or (candidate.get("metadata") or {}).get("observation_id") or ""
+                                ).strip()
+                                == record_id
+                                if record_id
+                                else _memory_record_text(candidate).strip().casefold() == record_text
+                            )
+                            for candidate in older_evidence_records
+                        ):
+                            continue
+                        try:
+                            archive_structured_evidence_from_memory(
+                                config_manager=config_manager,
+                                state_db=state_db,
+                                human_id=human_id,
+                                predicate=str(record.get("predicate") or ""),
+                                evidence_text=_memory_record_text(record),
+                                evidence_observation_id=record_id,
+                                archive_reason="eclipsed_by_newer_structured_evidence",
+                                session_id=session_id,
+                                turn_id=request_id,
+                                channel_kind=channel_kind,
+                                actor_id="telegram_structured_evidence_archiver",
+                            )
+                            archived_structured_evidence_count += 1
+                            if record_id:
+                                archived_structured_evidence_ids.add(record_id)
+                            if record_text:
+                                archived_structured_evidence_texts.add(record_text)
+                        except Exception:
+                            pass
+                    if archived_structured_evidence_ids or archived_structured_evidence_texts:
+                        recall_records = [
+                            record
+                            for record in recall_records
+                            if (
+                                str(
+                                    record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                                ).strip()
+                                not in archived_structured_evidence_ids
+                                and _memory_record_text(record).strip().casefold() not in archived_structured_evidence_texts
+                            )
+                        ]
+                        structured_evidence_records = [
+                            record
+                            for record in structured_evidence_records
+                            if (
+                                str(
+                                    record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                                ).strip()
+                                not in archived_structured_evidence_ids
+                                and _memory_record_text(record).strip().casefold() not in archived_structured_evidence_texts
+                            )
+                        ]
+                raw_episode_records = _filter_raw_episode_records(recall_records)
+                archivable_raw_episode_records = _raw_episode_records_past_archive(raw_episode_records)
+                if structured_evidence_records and archivable_raw_episode_records:
+                    newer_evidence_records = _newer_structured_evidence_than_raw_episodes(
+                        raw_episode_records=archivable_raw_episode_records,
+                        evidence_records=structured_evidence_records,
+                    )
+                    archived_raw_episode_ids: set[str] = set()
+                    for record in archivable_raw_episode_records:
+                        record_timestamp = _memory_record_timestamp(record)
+                        if not any(_memory_record_timestamp(evidence_record) > record_timestamp for evidence_record in newer_evidence_records):
+                            continue
+                        try:
+                            archive_raw_episode_from_memory(
+                                config_manager=config_manager,
+                                state_db=state_db,
+                                human_id=human_id,
+                                episode_text=_memory_record_text(record),
+                                raw_episode_observation_id=str(
+                                    record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                                ).strip()
+                                or None,
+                                archive_reason="covered_by_newer_structured_evidence",
+                                session_id=session_id,
+                                turn_id=request_id,
+                                channel_kind=channel_kind,
+                                actor_id="telegram_raw_episode_archiver",
+                            )
+                            archived_raw_episode_count += 1
+                            record_id = str(
+                                record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                            ).strip()
+                            if record_id:
+                                archived_raw_episode_ids.add(record_id)
+                        except Exception:
+                            pass
+                    if archived_raw_episode_ids:
+                        recall_records = [
+                            record
+                            for record in recall_records
+                            if str(
+                                record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                            ).strip()
+                            not in archived_raw_episode_ids
+                        ]
+                if recall_records:
+                    read_method = "inspect_memory_records"
+        retrieved_memory_roles = sorted(
+            {
+                str(record.get("memory_role") or "").strip()
+                for record in recall_records
+                if str(record.get("memory_role") or "").strip()
+            }
+        )
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_open_recall",
+            routing_decision="memory_open_recall_query",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = _build_open_memory_recall_answer(
+            query=detected_open_memory_recall_query,
+            records=recall_records,
+        )
+        evidence_summary = (
+            "status=memory_open_recall "
+            f"topic={detected_open_memory_recall_query.topic or 'unknown'} "
+            f"record_count={len(recall_records)} "
+            f"archived_structured_evidence_count={archived_structured_evidence_count} "
+            f"archived_raw_episode_count={archived_raw_episode_count} "
+            f"read_method={read_method} "
+            f"retrieved_roles={','.join(retrieved_memory_roles) if retrieved_memory_roles else 'none'}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered an open memory recall query directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_open_recall_query",
+            facts=_bridge_event_facts(
+                routing_decision="memory_open_recall_query",
+                bridge_mode="memory_open_recall",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "topic": detected_open_memory_recall_query.topic,
+                    "query_kind": detected_open_memory_recall_query.query_kind,
+                    "record_count": len(recall_records),
+                    "archived_structured_evidence_count": archived_structured_evidence_count,
+                    "archived_raw_episode_count": archived_raw_episode_count,
+                    "read_method": read_method,
+                    "retrieved_memory_roles": retrieved_memory_roles,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_open_recall",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_open_recall_query",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+    if detected_belief_recall_query is not None:
+        memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
+        evidence_lookup = retrieve_memory_evidence_in_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            query=str(user_message or "").strip() or detected_belief_recall_query.topic,
+            subject=memory_subject,
+            limit=6,
+            actor_id="researcher_bridge",
+        )
+        belief_records: list[dict[str, Any]] = []
+        newer_evidence_records: list[dict[str, Any]] = []
+        stale_belief_records: list[dict[str, Any]] = []
+        archived_belief_count = 0
+        read_method = "retrieve_evidence"
+        focused_belief_lookup_records: list[dict[str, Any]] = []
+        if not evidence_lookup.read_result.abstained and evidence_lookup.read_result.records:
+            belief_records = _filter_belief_recall_records(evidence_lookup.read_result.records)
+            invalidated_belief_ids = _structured_evidence_invalidated_belief_ids(evidence_lookup.read_result.records)
+            if invalidated_belief_ids:
+                archivable_belief_records = _filter_records_by_observation_ids(
+                    _belief_records_past_revalidation(belief_records),
+                    invalidated_belief_ids,
+                )
+                for record in archivable_belief_records:
+                    try:
+                        archive_belief_from_memory(
+                            config_manager=config_manager,
+                            state_db=state_db,
+                            human_id=human_id,
+                            predicate=str(record.get("predicate") or ""),
+                            belief_text=_memory_record_text(record),
+                            belief_observation_id=str(
+                                record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                            ).strip()
+                            or None,
+                            archive_reason="invalidated_and_past_revalidation",
+                            session_id=session_id,
+                            turn_id=request_id,
+                            channel_kind=channel_kind,
+                            actor_id="telegram_belief_archiver",
+                        )
+                        archived_belief_count += 1
+                    except Exception:
+                        pass
+                evidence_records = _filter_structured_evidence_records(evidence_lookup.read_result.records)
+                newer_evidence_records = [
+                    record
+                    for record in evidence_records
+                    if set((record.get("metadata") or {}).get("invalidated_belief_ids") or []) & invalidated_belief_ids
+                ]
+                belief_records = [
+                    record
+                    for record in belief_records
+                    if str(record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or "").strip()
+                    not in invalidated_belief_ids
+                ]
+            if belief_records:
+                newer_evidence_records = _select_belief_recall_newer_evidence_records(
+                    belief_records=belief_records,
+                    candidate_records=evidence_lookup.read_result.records,
+                    topic=detected_belief_recall_query.topic,
+                )
+                if not newer_evidence_records:
+                    stale_belief_records = _belief_records_past_revalidation(belief_records)
+        direct_inspection = None
+        if belief_records and not stale_belief_records:
+            direct_inspection = inspect_human_memory_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                human_id=human_id,
+                actor_id="researcher_bridge",
+            )
+            if not direct_inspection.read_result.abstained and direct_inspection.read_result.records:
+                invalidated_belief_ids = _structured_evidence_invalidated_belief_ids(direct_inspection.read_result.records)
+                if invalidated_belief_ids:
+                    archivable_belief_records = _filter_records_by_observation_ids(
+                        _belief_records_past_revalidation(belief_records),
+                        invalidated_belief_ids,
+                    )
+                    for record in archivable_belief_records:
+                        try:
+                            archive_belief_from_memory(
+                                config_manager=config_manager,
+                                state_db=state_db,
+                                human_id=human_id,
+                                predicate=str(record.get("predicate") or ""),
+                                belief_text=_memory_record_text(record),
+                                belief_observation_id=str(
+                                    record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                                ).strip()
+                                or None,
+                                archive_reason="invalidated_and_past_revalidation",
+                                session_id=session_id,
+                                turn_id=request_id,
+                                channel_kind=channel_kind,
+                                actor_id="telegram_belief_archiver",
+                            )
+                            archived_belief_count += 1
+                        except Exception:
+                            pass
+                    evidence_records = _filter_structured_evidence_records(direct_inspection.read_result.records)
+                    newer_evidence_records = [
+                        record
+                        for record in evidence_records
+                        if set((record.get("metadata") or {}).get("invalidated_belief_ids") or []) & invalidated_belief_ids
+                    ]
+                    belief_records = [
+                        record
+                        for record in belief_records
+                        if str(record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or "").strip()
+                        not in invalidated_belief_ids
+                    ]
+                if belief_records:
+                    inspection_evidence_records = _select_belief_recall_newer_evidence_records(
+                        belief_records=belief_records,
+                        candidate_records=direct_inspection.read_result.records,
+                        topic=detected_belief_recall_query.topic,
+                    )
+                    if inspection_evidence_records:
+                        newer_evidence_records = sorted(
+                            _merge_memory_records(newer_evidence_records, inspection_evidence_records),
+                            key=_memory_record_timestamp,
+                            reverse=True,
+                        )
+                    if not newer_evidence_records:
+                        stale_belief_records = _belief_records_past_revalidation(belief_records)
+                if newer_evidence_records:
+                    read_method = "inspect_memory_records"
+        if not belief_records and detected_belief_recall_query.topic:
+            focused_belief_lookup = retrieve_memory_evidence_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                query=detected_belief_recall_query.topic,
+                subject=memory_subject,
+                limit=12,
+                actor_id="researcher_bridge_belief_focus",
+                record_activity=False,
+            )
+            if not focused_belief_lookup.read_result.abstained and focused_belief_lookup.read_result.records:
+                focused_belief_lookup_records = focused_belief_lookup.read_result.records
+                belief_records = _filter_belief_recall_records(focused_belief_lookup.read_result.records)
+                if belief_records:
+                    invalidated_belief_ids = _structured_evidence_invalidated_belief_ids(
+                        focused_belief_lookup.read_result.records
+                    )
+                    if invalidated_belief_ids:
+                        evidence_records = _filter_structured_evidence_records(focused_belief_lookup.read_result.records)
+                        newer_evidence_records = [
+                            record
+                            for record in evidence_records
+                            if set((record.get("metadata") or {}).get("invalidated_belief_ids") or [])
+                            & invalidated_belief_ids
+                        ]
+                        belief_records = [
+                            record
+                            for record in belief_records
+                            if str(
+                                record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or ""
+                            ).strip()
+                            not in invalidated_belief_ids
+                        ]
+                    if belief_records:
+                        focused_newer_evidence_records = _select_belief_recall_newer_evidence_records(
+                            belief_records=belief_records,
+                            candidate_records=focused_belief_lookup.read_result.records,
+                            topic=detected_belief_recall_query.topic,
+                        )
+                        if focused_newer_evidence_records:
+                            newer_evidence_records = focused_newer_evidence_records
+                        if not newer_evidence_records:
+                            stale_belief_records = _belief_records_past_revalidation(belief_records)
+                    read_method = "retrieve_evidence(topic_focus)"
+        if not belief_records:
+            if direct_inspection is None:
+                direct_inspection = inspect_human_memory_in_memory(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    human_id=human_id,
+                    actor_id="researcher_bridge",
+                )
+            if not direct_inspection.read_result.abstained and direct_inspection.read_result.records:
+                belief_records = [
+                    record
+                    for record in _filter_belief_recall_records(direct_inspection.read_result.records)
+                    if _record_matches_open_memory_topic(
+                        record=record,
+                        topic=detected_belief_recall_query.topic,
+                    )
+                ]
+                if belief_records:
+                    read_method = "inspect_memory_records"
+        if belief_records and not stale_belief_records:
+            belief_recall_candidate_records: list[dict[str, Any]] = []
+            if not evidence_lookup.read_result.abstained and evidence_lookup.read_result.records:
+                belief_recall_candidate_records.extend(evidence_lookup.read_result.records)
+            if focused_belief_lookup_records:
+                belief_recall_candidate_records.extend(focused_belief_lookup_records)
+            if direct_inspection is not None and not direct_inspection.read_result.abstained and direct_inspection.read_result.records:
+                belief_recall_candidate_records.extend(direct_inspection.read_result.records)
+            reconciled_newer_evidence_records = _select_belief_recall_newer_evidence_records(
+                belief_records=belief_records,
+                candidate_records=belief_recall_candidate_records,
+                topic=detected_belief_recall_query.topic,
+            )
+            if reconciled_newer_evidence_records:
+                newer_evidence_records = reconciled_newer_evidence_records
+            elif not newer_evidence_records:
+                stale_belief_records = _belief_records_past_revalidation(belief_records)
+        if not belief_records:
+            synthetic_source_records: list[dict[str, Any]] = []
+            if not evidence_lookup.read_result.abstained and evidence_lookup.read_result.records:
+                synthetic_source_records.extend(evidence_lookup.read_result.records)
+            if direct_inspection is not None and not direct_inspection.read_result.abstained and direct_inspection.read_result.records:
+                synthetic_source_records.extend(direct_inspection.read_result.records)
+            belief_records = _synthesize_belief_records_from_consolidated_memory(
+                records=synthetic_source_records,
+                topic=detected_belief_recall_query.topic,
+            )
+            if belief_records:
+                read_method = "synthesized_from_current_state"
+        retrieved_memory_roles = sorted(
+            {
+                str(record.get("memory_role") or "").strip()
+                for record in belief_records
+                if str(record.get("memory_role") or "").strip()
+            }
+        )
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_belief_recall",
+            routing_decision="memory_belief_recall_query",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = _build_belief_recall_answer(
+            query=detected_belief_recall_query,
+            records=belief_records,
+            newer_evidence_records=newer_evidence_records,
+            stale_belief_records=stale_belief_records,
+        )
+        evidence_summary = (
+            "status=memory_belief_recall "
+            f"topic={detected_belief_recall_query.topic or 'unknown'} "
+            f"record_count={len(belief_records)} "
+            f"newer_evidence_count={len(newer_evidence_records)} "
+            f"stale_belief_count={len(stale_belief_records)} "
+            f"archived_belief_count={archived_belief_count} "
+            f"read_method={read_method} "
+            f"retrieved_roles={','.join(retrieved_memory_roles) if retrieved_memory_roles else 'none'}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered a belief recall query directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_belief_recall_query",
+            facts=_bridge_event_facts(
+                routing_decision="memory_belief_recall_query",
+                bridge_mode="memory_belief_recall",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "topic": detected_belief_recall_query.topic,
+                    "record_count": len(belief_records),
+                    "newer_evidence_count": len(newer_evidence_records),
+                    "belief_stale_due_to_evidence": bool(newer_evidence_records),
+                    "belief_stale_due_to_age": bool(stale_belief_records),
+                    "stale_belief_count": len(stale_belief_records),
+                    "archived_belief_count": archived_belief_count,
+                    "read_method": read_method,
+                    "retrieved_memory_roles": retrieved_memory_roles,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_belief_recall",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_belief_recall_query",
             active_chip_key=None,
             active_chip_task_type=None,
             active_chip_evaluate_used=False,

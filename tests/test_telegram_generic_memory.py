@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from spark_intelligence.memory.generic_observations import (
@@ -88,6 +89,20 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(assessment.memory_role, "structured_evidence")
         self.assertEqual(assessment.retention_class, "episodic_archive")
 
+    def test_assess_telegram_generic_memory_candidate_assigns_source_backed_structured_evidence(self) -> None:
+        for text in (
+            "Interview notes show our priority is onboarding reliability.",
+            "The weekly review says our commitment is to ship onboarding fixes this week.",
+            "After testing both flows, our decision is to keep human onboarding support.",
+        ):
+            with self.subTest(text=text):
+                assessment = assess_telegram_generic_memory_candidate(text)
+
+                self.assertEqual(assessment.outcome, "structured_evidence")
+                self.assertEqual(assessment.reason, "evidence_marker")
+                self.assertEqual(assessment.memory_role, "structured_evidence")
+                self.assertEqual(assessment.retention_class, "episodic_archive")
+
     def test_assess_telegram_generic_memory_candidate_assigns_belief_candidate(self) -> None:
         assessment = assess_telegram_generic_memory_candidate(
             "I think enterprise teams need hands-on onboarding."
@@ -110,18 +125,29 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        result = build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
-            request_id="req-generic-candidate-assessment",
-            agent_id="agent-1",
-            human_id="human-1",
-            session_id="session-generic-candidate-assessment",
-            channel_kind="telegram",
-            user_message="Users keep dropping during onboarding because Stripe verification fails.",
-        )
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for structured evidence observations"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for structured evidence observations"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-generic-candidate-assessment",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-generic-candidate-assessment",
+                channel_kind="telegram",
+                user_message="Users keep dropping during onboarding because Stripe verification fails.",
+            )
 
         self.assertTrue(result.reply_text)
+        self.assertEqual(result.mode, "memory_structured_evidence_update")
+        self.assertEqual(result.routing_decision, "memory_structured_evidence_observation")
+        self.assertIn("save that as structured evidence", result.reply_text.lower())
+        self.assertIn("Stripe verification fails", result.reply_text)
         assessment_events = latest_events_by_type(self.state_db, event_type="memory_candidate_assessed", limit=10)
         self.assertTrue(assessment_events)
         facts = assessment_events[0]["facts_json"] or {}
@@ -135,23 +161,456 @@ class TelegramGenericMemoryTests(SparkTestCase):
         recorded_observations = write_facts.get("observations") or []
         self.assertEqual(recorded_observations[0]["predicate"], "evidence.telegram.evidence")
         self.assertEqual(recorded_observations[0]["retention_class"], "episodic_archive")
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(tool_events)
+        tool_facts = tool_events[0]["facts_json"] or {}
+        self.assertEqual(tool_facts.get("bridge_mode"), "memory_structured_evidence_update")
+        self.assertEqual(tool_facts.get("routing_decision"), "memory_structured_evidence_observation")
+        self.assertEqual(tool_facts.get("memory_role"), "structured_evidence")
+
+    def test_build_researcher_reply_persists_belief_candidate_as_derived_belief(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for belief observations"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for belief observations"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-generic-belief",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-generic-belief",
+                channel_kind="telegram",
+                user_message="I think enterprise teams need hands-on onboarding.",
+            )
+
+        self.assertTrue(result.reply_text)
+        self.assertEqual(result.mode, "memory_belief_update")
+        self.assertEqual(result.routing_decision, "memory_belief_observation")
+        self.assertIn("save that as a belief", result.reply_text.lower())
+        self.assertIn("hands-on onboarding", result.reply_text)
+        assessment_events = latest_events_by_type(self.state_db, event_type="memory_candidate_assessed", limit=10)
+        self.assertTrue(assessment_events)
+        facts = assessment_events[0]["facts_json"] or {}
+        self.assertEqual(facts.get("outcome"), "belief_candidate")
+        self.assertEqual(facts.get("retention_class"), "derived_belief")
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(write_events)
+        write_facts = write_events[0]["facts_json"] or {}
+        self.assertEqual(write_facts.get("memory_role"), "belief")
+        recorded_observations = write_facts.get("observations") or []
+        self.assertEqual(recorded_observations[0]["predicate"], "belief.telegram.beliefs_and_inferences")
+        self.assertEqual(recorded_observations[0]["retention_class"], "derived_belief")
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(tool_events)
+        tool_facts = tool_events[0]["facts_json"] or {}
+        self.assertEqual(tool_facts.get("bridge_mode"), "memory_belief_update")
+        self.assertEqual(tool_facts.get("routing_decision"), "memory_belief_observation")
+        self.assertEqual(tool_facts.get("memory_role"), "belief_candidate")
+
+    def test_build_researcher_reply_answers_belief_recall_from_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-belief-write",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-belief-write",
+            channel_kind="telegram",
+            user_message="I think enterprise teams need hands-on onboarding.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for belief recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for belief recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-belief-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-belief-read",
+                channel_kind="telegram",
+                user_message="What is your current belief about onboarding?",
+            )
+
+        self.assertEqual(result.mode, "memory_belief_recall")
+        self.assertEqual(result.routing_decision, "memory_belief_recall_query")
+        self.assertIn("onboarding", result.reply_text.lower())
+        self.assertIn("hands-on onboarding", result.reply_text)
+        self.assertIn("inferred belief", result.reply_text.lower())
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(tool_events)
+        facts = next(
+            (
+                (event["facts_json"] or {})
+                for event in tool_events
+                if (event["facts_json"] or {}).get("bridge_mode") == "memory_belief_recall"
+            ),
+            {},
+        )
+        self.assertEqual(facts.get("bridge_mode"), "memory_belief_recall")
+        self.assertIn("belief", facts.get("retrieved_memory_roles") or [])
+
+    def test_build_researcher_reply_belief_recall_prefers_latest_unsuperseded_belief(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-belief-write-1",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-belief-write-1",
+            channel_kind="telegram",
+            user_message="I think self-serve onboarding will work.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-belief-write-2",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-belief-write-2",
+            channel_kind="telegram",
+            user_message="I think enterprise teams need hands-on onboarding.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for belief recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for belief recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-belief-refresh-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-belief-refresh-read",
+                channel_kind="telegram",
+                user_message="What is your current belief about onboarding?",
+            )
+
+        self.assertEqual(result.mode, "memory_belief_recall")
+        self.assertIn("hands-on onboarding", result.reply_text)
+        self.assertNotIn("self-serve onboarding will work", result.reply_text)
+
+    def test_build_researcher_reply_belief_recall_downgrades_when_newer_evidence_exists(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-belief-stale-write",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-belief-stale-write",
+            channel_kind="telegram",
+            user_message="I think self-serve onboarding will work.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-belief-stale-evidence",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-belief-stale-evidence",
+            channel_kind="telegram",
+            user_message="Users keep needing hands-on onboarding support because enterprise teams ask for setup help.",
+        )
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(write_events)
+        evidence_write = next(
+            (
+                (event["facts_json"] or {})
+                for event in write_events
+                if (event["facts_json"] or {}).get("memory_role") == "structured_evidence"
+            ),
+            {},
+        )
+        evidence_observations = evidence_write.get("observations") or []
+        self.assertEqual(evidence_observations[0].get("belief_lifecycle_action"), "invalidated")
+        self.assertTrue(evidence_observations[0].get("conflicts_with"))
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for belief recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for belief recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-belief-stale-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-belief-stale-read",
+                channel_kind="telegram",
+                user_message="What is your current belief about onboarding?",
+            )
+
+        self.assertEqual(result.mode, "memory_belief_recall")
+        self.assertIn("newer direct evidence", result.reply_text.lower())
+        self.assertIn("hands-on onboarding support", result.reply_text)
+        self.assertNotIn("self-serve onboarding will work", result.reply_text)
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(tool_events)
+        facts = next(
+            (
+                (event["facts_json"] or {})
+                for event in tool_events
+                if (event["facts_json"] or {}).get("bridge_mode") == "memory_belief_recall"
+            ),
+            {},
+        )
+        self.assertTrue(facts.get("belief_stale_due_to_evidence"))
+        self.assertGreaterEqual(int(facts.get("newer_evidence_count") or 0), 1)
+        post_recall_write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=20)
+        archive_write = next(
+            (
+                (event["facts_json"] or {})
+                for event in post_recall_write_events
+                if (event["facts_json"] or {}).get("memory_role") == "belief"
+                and ((event["facts_json"] or {}).get("observations") or [{}])[0].get("operation") == "delete"
+            ),
+            {},
+        )
+        archive_observations = archive_write.get("observations") or []
+        if archive_observations:
+            self.assertEqual(archive_observations[0].get("belief_lifecycle_action"), "archived")
+
+    def test_build_researcher_reply_belief_recall_uses_newer_current_state_evidence_in_mixed_sequence(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        for request_id, message in (
+            ("req-seed-evidence", "Users keep dropping during onboarding because Stripe verification fails."),
+            ("req-seed-belief-1", "I think self-serve onboarding will work."),
+            ("req-seed-belief-2", "I think enterprise teams need hands-on onboarding."),
+            (
+                "req-seed-evidence-2",
+                "Users keep needing hands-on onboarding support because enterprise teams ask for setup help.",
+            ),
+        ):
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id=request_id,
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-mixed-belief-recall",
+                channel_kind="telegram",
+                user_message=message,
+            )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for belief recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for belief recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-mixed-belief-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-mixed-belief-recall",
+                channel_kind="telegram",
+                user_message="What is your current belief about onboarding?",
+            )
+
+        self.assertEqual(result.mode, "memory_belief_recall")
+        self.assertIn("newer direct evidence", result.reply_text.lower())
+        self.assertIn("hands-on onboarding support", result.reply_text)
+        self.assertNotIn("self-serve onboarding will work", result.reply_text)
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        facts = next(
+            (
+                (event["facts_json"] or {})
+                for event in tool_events
+                if (event["facts_json"] or {}).get("bridge_mode") == "memory_belief_recall"
+            ),
+            {},
+        )
+        self.assertTrue(facts.get("belief_stale_due_to_evidence"))
+        self.assertGreaterEqual(int(facts.get("newer_evidence_count") or 0), 1)
+
+    def test_build_researcher_reply_belief_recall_prefers_newer_consolidated_blocker_evidence_over_saved_belief(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        for request_id, message in (
+            ("req-seed-evidence", "Users keep dropping during onboarding because Stripe verification fails."),
+            ("req-seed-belief-1", "I think self-serve onboarding will work."),
+            ("req-seed-belief-2", "I think enterprise teams need hands-on onboarding."),
+            (
+                "req-seed-evidence-hands-on",
+                "Users keep needing hands-on onboarding support because enterprise teams ask for setup help.",
+            ),
+            ("req-seed-evidence-2", "Users keep dropping during onboarding because Stripe verification fails."),
+            (
+                "req-seed-evidence-3",
+                "Users still drop during onboarding because Stripe verification fails and the retry flow is confusing.",
+            ),
+        ):
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id=request_id,
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-mixed-evidence-consolidation",
+                channel_kind="telegram",
+                user_message=message,
+            )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for belief recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for belief recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-mixed-evidence-belief-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-mixed-evidence-consolidation",
+                channel_kind="telegram",
+                user_message="What is your current belief about onboarding?",
+            )
+
+        self.assertEqual(result.mode, "memory_belief_recall")
+        self.assertIn("newer direct evidence", result.reply_text.lower())
+        self.assertIn("Stripe verification fails", result.reply_text)
+        self.assertNotIn("self-serve onboarding will work", result.reply_text)
+
+    def test_build_researcher_reply_returns_empty_belief_recall_when_nothing_saved(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for empty belief recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for empty belief recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-belief-empty-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-belief-empty-read",
+                channel_kind="telegram",
+                user_message="What belief do you have about pricing?",
+            )
+
+        self.assertEqual(result.mode, "memory_belief_recall")
+        self.assertEqual(result.routing_decision, "memory_belief_recall_query")
+        self.assertEqual(result.reply_text, "I don't currently have a saved belief about that.")
+
+    def test_build_researcher_reply_belief_recall_downgrades_stale_unrevalidated_belief(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch("spark_intelligence.memory.orchestrator._now_iso", return_value="2025-02-01T00:00:00+00:00"):
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-belief-old-write",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-belief-old-write",
+                channel_kind="telegram",
+                user_message="I think enterprise teams need hands-on onboarding.",
+            )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for stale belief recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for stale belief recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-belief-old-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-belief-old-read",
+                channel_kind="telegram",
+                user_message="What is your current belief about onboarding?",
+            )
+
+        self.assertEqual(result.mode, "memory_belief_recall")
+        self.assertIn("not been revalidated recently", result.reply_text.lower())
+        self.assertIn("hands-on onboarding", result.reply_text)
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(tool_events)
+        facts = next(
+            (
+                (event["facts_json"] or {})
+                for event in tool_events
+                if (event["facts_json"] or {}).get("bridge_mode") == "memory_belief_recall"
+            ),
+            {},
+        )
+        self.assertTrue(facts.get("belief_stale_due_to_age"))
+        self.assertEqual(facts.get("stale_belief_count"), 1)
 
     def test_build_researcher_reply_persists_raw_episode_for_meaningful_unpromoted_turn(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
-        result = build_researcher_reply(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
-            request_id="req-generic-raw-episode",
-            agent_id="agent-1",
-            human_id="human-1",
-            session_id="session-generic-raw-episode",
-            channel_kind="telegram",
-            user_message="The pricing page felt confusing during the demo.",
-        )
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for raw episode observations"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for raw episode observations"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-generic-raw-episode",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-generic-raw-episode",
+                channel_kind="telegram",
+                user_message="The pricing page felt confusing during the demo.",
+            )
 
         self.assertTrue(result.reply_text)
+        self.assertEqual(result.mode, "memory_raw_episode_update")
+        self.assertEqual(result.routing_decision, "memory_raw_episode_observation")
+        self.assertIn("save that as a raw episode", result.reply_text.lower())
+        self.assertIn("pricing page felt confusing", result.reply_text)
         assessment_events = latest_events_by_type(self.state_db, event_type="memory_candidate_assessed", limit=10)
         self.assertTrue(assessment_events)
         facts = assessment_events[0]["facts_json"] or {}
@@ -164,6 +623,735 @@ class TelegramGenericMemoryTests(SparkTestCase):
         recorded_observations = write_facts.get("observations") or []
         self.assertEqual(recorded_observations[0]["predicate"], "raw_turn")
         self.assertEqual(recorded_observations[0]["retention_class"], "episodic_archive")
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(tool_events)
+        tool_facts = tool_events[0]["facts_json"] or {}
+        self.assertEqual(tool_facts.get("bridge_mode"), "memory_raw_episode_update")
+        self.assertEqual(tool_facts.get("routing_decision"), "memory_raw_episode_observation")
+        self.assertEqual(tool_facts.get("memory_role"), "raw_episode")
+
+    def test_build_researcher_reply_answers_open_structured_evidence_recall_from_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-open-evidence-write",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-open-evidence-write",
+            channel_kind="telegram",
+            user_message="Users keep dropping during onboarding because Stripe verification fails.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for open memory recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for open memory recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-open-evidence-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-open-evidence-read",
+                channel_kind="telegram",
+                user_message="What evidence do you have about onboarding?",
+            )
+
+        self.assertEqual(result.mode, "memory_open_recall")
+        self.assertEqual(result.routing_decision, "memory_open_recall_query")
+        self.assertIn("onboarding", result.reply_text.lower())
+        self.assertIn("Stripe verification fails", result.reply_text)
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(tool_events)
+        facts = next(
+            (
+                (event["facts_json"] or {})
+                for event in tool_events
+                if (event["facts_json"] or {}).get("bridge_mode") == "memory_open_recall"
+            ),
+            {},
+        )
+        self.assertEqual(facts.get("bridge_mode"), "memory_open_recall")
+        self.assertIn("structured_evidence", facts.get("retrieved_memory_roles") or [])
+
+    def test_build_researcher_reply_promotes_repeated_evidence_into_belief_recall(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-belief-seed-1",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-belief-seed-1",
+            channel_kind="telegram",
+            user_message="Users keep dropping during onboarding because Stripe verification fails.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-belief-seed-2",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-belief-seed-2",
+            channel_kind="telegram",
+            user_message="Users still drop during onboarding because Stripe verification fails and the retry flow is confusing.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for belief recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for belief recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-evidence-belief-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-evidence-belief-read",
+                channel_kind="telegram",
+                user_message="What is your current belief about onboarding?",
+            )
+
+        self.assertEqual(result.mode, "memory_belief_recall")
+        self.assertIn("inferred belief", result.reply_text.lower())
+        self.assertIn("stripe verification fails", result.reply_text.lower())
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(tool_events)
+        facts = next(
+            (
+                (event["facts_json"] or {})
+                for event in tool_events
+                if (event["facts_json"] or {}).get("bridge_mode") == "memory_belief_recall"
+            ),
+            {},
+        )
+        self.assertIn("belief", facts.get("retrieved_memory_roles") or [])
+
+    def test_build_researcher_reply_promotes_repeated_evidence_into_current_blocker(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-blocker-seed-1",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-blocker-seed-1",
+            channel_kind="telegram",
+            user_message="Users keep dropping during onboarding because Stripe verification fails.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-blocker-seed-2",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-blocker-seed-2",
+            channel_kind="telegram",
+            user_message="Users still drop during onboarding because Stripe verification fails and the retry flow is confusing.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for current blocker recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for current blocker recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-evidence-blocker-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-evidence-blocker-read",
+                channel_kind="telegram",
+                user_message="What are we blocked on?",
+            )
+
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+        self.assertIn("current blocker", result.reply_text.lower())
+        self.assertIn("stripe verification fails", result.reply_text.lower())
+
+    def test_build_researcher_reply_promotes_repeated_evidence_into_current_dependency(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-dependency-seed-1",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-dependency-seed-1",
+            channel_kind="telegram",
+            user_message="Users keep getting stuck during onboarding because we're waiting on Stripe approval.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-dependency-seed-2",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-dependency-seed-2",
+            channel_kind="telegram",
+            user_message="Users still get stuck during onboarding because we're waiting on Stripe approval and review is slow.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for current dependency recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for current dependency recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-evidence-dependency-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-evidence-dependency-read",
+                channel_kind="telegram",
+                user_message="What is our dependency?",
+            )
+
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+        self.assertIn("current dependency", result.reply_text.lower())
+        self.assertIn("stripe approval", result.reply_text.lower())
+
+    def test_build_researcher_reply_promotes_repeated_evidence_into_current_constraint(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-constraint-seed-1",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-constraint-seed-1",
+            channel_kind="telegram",
+            user_message="Users keep waiting during onboarding because we're limited by founder bandwidth.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-constraint-seed-2",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-constraint-seed-2",
+            channel_kind="telegram",
+            user_message="Users still wait during onboarding because we're limited by founder bandwidth.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for current constraint recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for current constraint recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-evidence-constraint-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-evidence-constraint-read",
+                channel_kind="telegram",
+                user_message="What is our constraint?",
+            )
+
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+        self.assertIn("current constraint", result.reply_text.lower())
+        self.assertIn("founder bandwidth", result.reply_text.lower())
+
+    def test_build_researcher_reply_promotes_repeated_evidence_into_current_risk(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-risk-seed-1",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-risk-seed-1",
+            channel_kind="telegram",
+            user_message="There is still a risk of enterprise churn during onboarding because activation is weak.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-risk-seed-2",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-risk-seed-2",
+            channel_kind="telegram",
+            user_message="There is still a risk of enterprise churn during onboarding because activation is weak and teams are delaying rollout.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for current risk recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for current risk recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-evidence-risk-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-evidence-risk-read",
+                channel_kind="telegram",
+                user_message="What is our risk?",
+            )
+
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+        self.assertIn("current risk", result.reply_text.lower())
+        self.assertIn("enterprise churn during onboarding", result.reply_text.lower())
+
+    def test_build_researcher_reply_promotes_repeated_evidence_into_current_status(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-status-seed-1",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-status-seed-1",
+            channel_kind="telegram",
+            user_message="Status update: pending security review for the onboarding rollout.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-status-seed-2",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-status-seed-2",
+            channel_kind="telegram",
+            user_message="Status update: still pending security review for the onboarding rollout.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for current status recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for current status recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-evidence-status-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-evidence-status-read",
+                channel_kind="telegram",
+                user_message="What is our status?",
+            )
+
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+        self.assertIn("current status", result.reply_text.lower())
+        self.assertIn("pending security review", result.reply_text.lower())
+
+    def test_build_researcher_reply_promotes_repeated_evidence_into_current_owner(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-owner-seed-1",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-owner-seed-1",
+            channel_kind="telegram",
+            user_message="The onboarding rollout is currently owned by Nadia.",
+        )
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-owner-seed-2",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-owner-seed-2",
+            channel_kind="telegram",
+            user_message="The onboarding rollout is still owned by Nadia during security review.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for current owner recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for current owner recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-evidence-owner-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-evidence-owner-read",
+                channel_kind="telegram",
+                user_message="Who is the owner?",
+            )
+
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+        self.assertEqual(result.reply_text, "Your current owner is Nadia.")
+
+    def test_build_researcher_reply_promotes_high_confidence_project_state_fields_from_single_evidence_turn(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        cases = (
+            (
+                "Customer interviews confirm our plan is to simplify onboarding approvals.",
+                "What is our plan?",
+                "current plan",
+                "simplify onboarding approvals",
+            ),
+            (
+                "Interview notes show our priority is onboarding reliability.",
+                "What is our priority?",
+                "current focus",
+                "onboarding reliability",
+            ),
+            (
+                "After testing both flows, our decision is to keep human onboarding support.",
+                "What decision did we make?",
+                "current decision",
+                "keep human onboarding support",
+            ),
+            (
+                "The weekly review says our commitment is to ship onboarding fixes this week.",
+                "What is our commitment?",
+                "current commitment",
+                "ship onboarding fixes this week",
+            ),
+            (
+                "Roadmap notes confirm our next milestone is launch the self-serve onboarding beta.",
+                "What is our milestone?",
+                "current milestone",
+                "launch the self-serve onboarding beta",
+            ),
+            (
+                "Interview notes suggest our assumption is enterprise teams want hands-on onboarding.",
+                "What is our assumption?",
+                "current assumption",
+                "enterprise teams want hands-on onboarding",
+            ),
+        )
+
+        for index, (seed_message, query_message, expected_label, expected_value) in enumerate(cases, start=1):
+            with self.subTest(query=query_message):
+                build_researcher_reply(
+                    config_manager=self.config_manager,
+                    state_db=self.state_db,
+                    request_id=f"req-evidence-project-state-seed-{index}",
+                    agent_id="agent-1",
+                    human_id=f"human-project-state-{index}",
+                    session_id=f"session-evidence-project-state-seed-{index}",
+                    channel_kind="telegram",
+                    user_message=seed_message,
+                )
+
+                with patch(
+                    "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+                    side_effect=AssertionError("provider resolution should not run for project-state recall"),
+                ), patch(
+                    "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+                    side_effect=AssertionError("provider execution should not run for project-state recall"),
+                ):
+                    result = build_researcher_reply(
+                        config_manager=self.config_manager,
+                        state_db=self.state_db,
+                        request_id=f"req-evidence-project-state-read-{index}",
+                        agent_id="agent-1",
+                        human_id=f"human-project-state-{index}",
+                        session_id=f"session-evidence-project-state-read-{index}",
+                        channel_kind="telegram",
+                        user_message=query_message,
+                    )
+
+                self.assertEqual(result.mode, "memory_profile_fact")
+                self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+                self.assertIn(expected_label, result.reply_text.lower())
+                self.assertIn(expected_value.lower(), result.reply_text.lower())
+
+    def test_build_researcher_reply_downgrades_stale_current_plan_recall(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.memory.orchestrator._now_iso",
+            return_value="2025-03-01T09:00:00Z",
+        ):
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-stale-plan-seed",
+                agent_id="agent-1",
+                human_id="human-stale-plan",
+                session_id="session-stale-plan",
+                channel_kind="telegram",
+                user_message="Our current plan is to simplify onboarding approvals.",
+            )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for stale current-state recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for stale current-state recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-stale-plan-read",
+                agent_id="agent-1",
+                human_id="human-stale-plan",
+                session_id="session-stale-plan",
+                channel_kind="telegram",
+                user_message="What is our plan?",
+            )
+
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+        self.assertEqual(
+            result.reply_text,
+            'I have an older saved current plan: "simplify onboarding approvals" but it has not been revalidated recently, so I would not treat it as current.',
+        )
+
+    def test_build_researcher_reply_archives_stale_structured_evidence_when_newer_evidence_exists(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        evidence_records = [
+            {
+                "memory_role": "structured_evidence",
+                "predicate": "evidence.telegram.evidence",
+                "text": "Users keep dropping during onboarding because Stripe verification fails.",
+                "timestamp": "2025-02-01T00:00:00+00:00",
+                "observation_id": "obs-evidence-1",
+                "metadata": {
+                    "value": "Users keep dropping during onboarding because Stripe verification fails.",
+                    "archive_at": "2025-03-03T00:00:00+00:00",
+                },
+            },
+            {
+                "memory_role": "structured_evidence",
+                "predicate": "evidence.telegram.evidence",
+                "text": "Users still drop during onboarding because Stripe verification fails and the identity retry flow is confusing.",
+                "timestamp": "2025-03-20T00:00:00+00:00",
+                "observation_id": "obs-evidence-2",
+                "metadata": {
+                    "value": "Users still drop during onboarding because Stripe verification fails and the identity retry flow is confusing.",
+                    "archive_at": "2025-04-19T00:00:00+00:00",
+                },
+            },
+        ]
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for open memory recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for open memory recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.retrieve_memory_evidence_in_memory",
+            return_value=SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=evidence_records)),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.inspect_human_memory_in_memory",
+            return_value=SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=evidence_records)),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.archive_structured_evidence_from_memory",
+            return_value=SimpleNamespace(status="succeeded", accepted_count=1),
+        ) as mocked_archive:
+            with patch(
+                "spark_intelligence.researcher_bridge.advisory.datetime",
+            ) as mocked_datetime:
+                from datetime import datetime, timezone
+
+                mocked_datetime.now.return_value = datetime(2026, 4, 21, tzinfo=timezone.utc)
+                mocked_datetime.fromisoformat.side_effect = datetime.fromisoformat
+                mocked_datetime.side_effect = datetime
+                result = build_researcher_reply(
+                    config_manager=self.config_manager,
+                    state_db=self.state_db,
+                    request_id="req-open-evidence-archive-read",
+                    agent_id="agent-1",
+                    human_id="human-1",
+                    session_id="session-open-evidence-archive-read",
+                    channel_kind="telegram",
+                    user_message="What evidence do you have about onboarding?",
+                )
+
+        self.assertEqual(result.mode, "memory_open_recall")
+        self.assertIn("identity retry flow is confusing", result.reply_text.lower())
+        self.assertNotIn("users keep dropping during onboarding because stripe verification fails.", result.reply_text.lower())
+        mocked_archive.assert_called_once()
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(tool_events)
+        facts = next(
+            (
+                (event["facts_json"] or {})
+                for event in tool_events
+                if (event["facts_json"] or {}).get("bridge_mode") == "memory_open_recall"
+            ),
+            {},
+        )
+        self.assertEqual(facts.get("archived_structured_evidence_count"), 1)
+
+    def test_build_researcher_reply_answers_open_raw_episode_recall_from_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-open-episode-write",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-open-episode-write",
+            channel_kind="telegram",
+            user_message="The pricing page felt confusing during the demo.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for open memory recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for open memory recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-open-episode-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-open-episode-read",
+                channel_kind="telegram",
+                user_message="What happened during the demo?",
+            )
+
+        self.assertEqual(result.mode, "memory_open_recall")
+        self.assertEqual(result.routing_decision, "memory_open_recall_query")
+        self.assertIn("demo", result.reply_text.lower())
+        self.assertIn("pricing page felt confusing during the demo", result.reply_text.lower())
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(tool_events)
+        facts = next(
+            (
+                (event["facts_json"] or {})
+                for event in tool_events
+                if (event["facts_json"] or {}).get("bridge_mode") == "memory_open_recall"
+            ),
+            {},
+        )
+        self.assertEqual(facts.get("bridge_mode"), "memory_open_recall")
+        self.assertIn("episodic", facts.get("retrieved_memory_roles") or [])
+
+    def test_build_researcher_reply_archives_stale_raw_episode_when_newer_evidence_exists(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch("spark_intelligence.memory.orchestrator._now_iso", return_value="2025-02-01T00:00:00+00:00"):
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-open-episode-old-write",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-open-episode-old-write",
+                channel_kind="telegram",
+                user_message="The pricing page felt confusing during the demo.",
+            )
+
+        with patch("spark_intelligence.memory.orchestrator._now_iso", return_value="2025-03-20T00:00:00+00:00"):
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-open-episode-evidence-write",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-open-episode-evidence-write",
+                channel_kind="telegram",
+                user_message="During the demo, users got confused because the pricing page explanation was unclear.",
+            )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for open memory recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for open memory recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-open-episode-archive-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-open-episode-archive-read",
+                channel_kind="telegram",
+                user_message="What happened during the demo?",
+            )
+
+        self.assertEqual(result.mode, "memory_open_recall")
+        self.assertIn("during the demo", result.reply_text.lower())
+        self.assertIn("pricing page explanation was unclear", result.reply_text.lower())
+        self.assertNotIn("pricing page felt confusing during the demo", result.reply_text.lower())
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(tool_events)
+        facts = next(
+            (
+                (event["facts_json"] or {})
+                for event in tool_events
+                if (event["facts_json"] or {}).get("bridge_mode") == "memory_open_recall"
+            ),
+            {},
+        )
+        self.assertEqual(facts.get("archived_raw_episode_count"), 1)
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=20)
+        archive_write = next(
+            (
+                (event["facts_json"] or {})
+                for event in write_events
+                if (event["facts_json"] or {}).get("memory_role") == "episodic"
+                and ((event["facts_json"] or {}).get("observations") or [{}])[0].get("operation") == "delete"
+            ),
+            {},
+        )
+        archive_observations = archive_write.get("observations") or []
+        self.assertTrue(archive_observations)
+        self.assertEqual(archive_observations[0].get("raw_episode_lifecycle_action"), "archived")
 
     def test_build_researcher_reply_persists_generic_plan_memory_before_provider_resolution(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -560,6 +1748,40 @@ class TelegramGenericMemoryTests(SparkTestCase):
         recorded_observations = (write_events[0]["facts_json"] or {}).get("observations") or []
         self.assertEqual(recorded_observations[0]["predicate"], "profile.current_owner")
         self.assertEqual(recorded_observations[0]["value"], "Omar")
+
+    def test_build_researcher_reply_persists_still_owned_by_as_generic_owner_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for generic owner observations"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for generic owner observations"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-generic-owner-still-update",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-generic-owner-still-update",
+                channel_kind="telegram",
+                user_message="The onboarding rollout is still owned by Nadia during security review.",
+            )
+
+        self.assertEqual(
+            result.reply_text,
+            "I'll remember that your current owner is Nadia.",
+        )
+        self.assertEqual(result.mode, "memory_generic_observation_update")
+        self.assertEqual(result.routing_decision, "memory_generic_observation")
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(write_events)
+        recorded_observations = (write_events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(recorded_observations[0]["predicate"], "profile.current_owner")
+        self.assertEqual(recorded_observations[0]["value"], "Nadia")
 
     def test_build_researcher_reply_persists_generic_manager_relationship_memory(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

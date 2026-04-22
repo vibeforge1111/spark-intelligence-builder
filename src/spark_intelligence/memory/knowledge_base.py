@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -60,6 +61,7 @@ def build_telegram_state_knowledge_base(
     repo_source_manifest_files: list[str] | None = None,
     write_path: str | Path | None = None,
     validator_root: str | Path | None = None,
+    timeout_seconds: float | None = None,
 ) -> TelegramStateKnowledgeBaseResult:
     resolved_builder_home = config_manager.paths.home.resolve(strict=False)
     resolved_output_dir = (Path(output_dir) if output_dir else _default_output_dir(config_manager)).resolve(strict=False)
@@ -86,6 +88,7 @@ def build_telegram_state_knowledge_base(
         "run-spark-builder-state-telegram-intake",
         *command_args,
         validator_root=validator_root,
+        timeout_seconds=timeout_seconds,
     )
     return TelegramStateKnowledgeBaseResult(output_dir=resolved_output_dir, payload=payload)
 
@@ -94,6 +97,7 @@ def _run_domain_chip_memory_cli(
     command_name: str,
     *command_args: str,
     validator_root: str | Path | None = None,
+    timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
     root = Path(validator_root) if validator_root else DEFAULT_VALIDATOR_ROOT
     if not root.exists():
@@ -103,17 +107,26 @@ def _run_domain_chip_memory_cli(
             "warnings": [],
         }
     command_env = _domain_chip_memory_cli_env(root)
-    execution = run_governed_command(
-        command=[
-            sys.executable,
-            "-m",
-            "domain_chip_memory.cli",
-            command_name,
-            *command_args,
-        ],
-        cwd=str(root),
-        env=command_env,
-    )
+    try:
+        execution = run_governed_command(
+            command=[
+                sys.executable,
+                "-m",
+                "domain_chip_memory.cli",
+                command_name,
+                *command_args,
+            ],
+            cwd=str(root),
+            env=command_env,
+            timeout_seconds=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        rendered_timeout = float(timeout_seconds) if timeout_seconds is not None else 0.0
+        return {
+            "valid": False,
+            "errors": [f"validator_timeout:{command_name}:{rendered_timeout:g}s"],
+            "warnings": [],
+        }
     stdout = execution.stdout.strip()
     parsed: dict[str, Any] | None = None
     if stdout:

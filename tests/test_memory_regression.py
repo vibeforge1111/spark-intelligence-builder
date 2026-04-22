@@ -224,13 +224,13 @@ class MemoryRegressionTests(SparkTestCase):
         ), patch(
             "spark_intelligence.memory.regression.build_telegram_state_knowledge_base",
             return_value=SimpleNamespace(payload=kb_payload),
-        ), patch(
+        ) as compile_kb, patch(
             "spark_intelligence.memory.regression.benchmark_memory_architectures",
             return_value=SimpleNamespace(payload=self._benchmark_payload(output_dir)),
-        ), patch(
+        ) as run_benchmark, patch(
             "spark_intelligence.memory.regression.compare_telegram_memory_architectures",
             return_value=SimpleNamespace(payload=self._live_comparison_payload(output_dir)),
-        ):
+        ) as live_compare:
             result = run_telegram_memory_regression(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
@@ -249,6 +249,16 @@ class MemoryRegressionTests(SparkTestCase):
             result.payload["summary"]["selected_case_ids"],
             ["identity_summary_after_recency_pressure_rich"],
         )
+        self.assertEqual(
+            result.payload["summary"]["skipped_post_analysis_labels"],
+            [
+                "architecture_benchmark_skipped_for_focused_slice",
+                "architecture_live_comparison_skipped_for_focused_slice",
+            ],
+        )
+        self.assertFalse(run_benchmark.called)
+        self.assertFalse(live_compare.called)
+        self.assertTrue(compile_kb.called)
 
     def test_run_telegram_memory_regression_writes_operator_summary_and_passes_it_to_kb_compile(self) -> None:
         output_dir = self.home / "artifacts" / "telegram-memory-regression-with-summary"
@@ -314,6 +324,7 @@ class MemoryRegressionTests(SparkTestCase):
 
         kwargs = compile_kb.call_args.kwargs
         self.assertTrue(run_benchmark.called)
+        self.assertEqual(kwargs["timeout_seconds"], 120.0)
         repo_sources = kwargs["repo_sources"]
         self.assertEqual(len(repo_sources), 4)
         summary_path = Path(repo_sources[0])
@@ -450,8 +461,6 @@ class MemoryRegressionTests(SparkTestCase):
                 output_dir=output_dir,
                 user_id="12345",
                 chat_id="12345",
-                benchmark_pack_ids=["identity_under_recency_pressure"],
-                case_ids=["identity_summary_after_recency_pressure_rich"],
             )
 
         self.assertEqual(result.payload["summary"]["issue_labels"], ["architecture_promotion_gap"])
