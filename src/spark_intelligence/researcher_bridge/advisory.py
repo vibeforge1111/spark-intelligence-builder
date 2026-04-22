@@ -560,6 +560,36 @@ def _newer_current_state_records_than_beliefs(
     ]
 
 
+def _select_belief_recall_newer_evidence_records(
+    *,
+    belief_records: list[dict[str, Any]],
+    candidate_records: list[dict[str, Any]],
+    topic: str,
+) -> list[dict[str, Any]]:
+    if not belief_records or not candidate_records:
+        return []
+    topical_current_state_records = _newer_current_state_records_than_beliefs(
+        belief_records=belief_records,
+        current_state_records=_filter_current_state_records(candidate_records),
+        topic=topic,
+    )
+    topical_structured_evidence_records = [
+        record
+        for record in _newer_evidence_than_beliefs(
+            belief_records=belief_records,
+            evidence_records=_filter_structured_evidence_records(candidate_records),
+        )
+        if _record_matches_open_memory_topic(record=record, topic=topic)
+    ]
+    if not topical_current_state_records and not topical_structured_evidence_records:
+        return []
+    return sorted(
+        _merge_memory_records(topical_current_state_records, topical_structured_evidence_records),
+        key=_memory_record_timestamp,
+        reverse=True,
+    )
+
+
 def _synthesize_belief_records_from_consolidated_memory(
     *,
     records: list[dict[str, Any]],
@@ -771,7 +801,7 @@ def _build_belief_recall_answer(
     if newer_evidence_records:
         snippets: list[str] = []
         seen: set[str] = set()
-        for record in newer_evidence_records:
+        for record in sorted(newer_evidence_records, key=_memory_record_timestamp, reverse=True):
             snippet = _memory_record_text(record)
             if not snippet:
                 continue
@@ -6000,6 +6030,7 @@ def build_researcher_reply(
         stale_belief_records: list[dict[str, Any]] = []
         archived_belief_count = 0
         read_method = "retrieve_evidence"
+        focused_belief_lookup_records: list[dict[str, Any]] = []
         if not evidence_lookup.read_result.abstained and evidence_lookup.read_result.records:
             belief_records = _filter_belief_recall_records(evidence_lookup.read_result.records)
             invalidated_belief_ids = _structured_evidence_invalidated_belief_ids(evidence_lookup.read_result.records)
@@ -6042,19 +6073,15 @@ def build_researcher_reply(
                     not in invalidated_belief_ids
                 ]
             if belief_records:
-                topical_current_state_records = _newer_current_state_records_than_beliefs(
+                newer_evidence_records = _select_belief_recall_newer_evidence_records(
                     belief_records=belief_records,
-                    current_state_records=_filter_current_state_records(evidence_lookup.read_result.records),
+                    candidate_records=evidence_lookup.read_result.records,
                     topic=detected_belief_recall_query.topic,
-                )
-                newer_evidence_records = topical_current_state_records or _newer_evidence_than_beliefs(
-                    belief_records=belief_records,
-                    evidence_records=newer_evidence_records or _filter_structured_evidence_records(evidence_lookup.read_result.records),
                 )
                 if not newer_evidence_records:
                     stale_belief_records = _belief_records_past_revalidation(belief_records)
         direct_inspection = None
-        if belief_records and not newer_evidence_records and not stale_belief_records:
+        if belief_records and not stale_belief_records:
             direct_inspection = inspect_human_memory_in_memory(
                 config_manager=config_manager,
                 state_db=state_db,
@@ -6102,23 +6129,17 @@ def build_researcher_reply(
                         not in invalidated_belief_ids
                     ]
                 if belief_records:
-                    topical_current_state_records = _newer_current_state_records_than_beliefs(
+                    inspection_evidence_records = _select_belief_recall_newer_evidence_records(
                         belief_records=belief_records,
-                        current_state_records=_filter_current_state_records(direct_inspection.read_result.records),
+                        candidate_records=direct_inspection.read_result.records,
                         topic=detected_belief_recall_query.topic,
                     )
-                    newer_evidence_records = topical_current_state_records or [
-                        record
-                        for record in _newer_evidence_than_beliefs(
-                            belief_records=belief_records,
-                            evidence_records=newer_evidence_records
-                            or _filter_structured_evidence_records(direct_inspection.read_result.records),
+                    if inspection_evidence_records:
+                        newer_evidence_records = sorted(
+                            _merge_memory_records(newer_evidence_records, inspection_evidence_records),
+                            key=_memory_record_timestamp,
+                            reverse=True,
                         )
-                        if _record_matches_open_memory_topic(
-                            record=record,
-                            topic=detected_belief_recall_query.topic,
-                        )
-                    ]
                     if not newer_evidence_records:
                         stale_belief_records = _belief_records_past_revalidation(belief_records)
                 if newer_evidence_records:
@@ -6134,6 +6155,7 @@ def build_researcher_reply(
                 record_activity=False,
             )
             if not focused_belief_lookup.read_result.abstained and focused_belief_lookup.read_result.records:
+                focused_belief_lookup_records = focused_belief_lookup.read_result.records
                 belief_records = _filter_belief_recall_records(focused_belief_lookup.read_result.records)
                 if belief_records:
                     invalidated_belief_ids = _structured_evidence_invalidated_belief_ids(
@@ -6155,27 +6177,14 @@ def build_researcher_reply(
                             ).strip()
                             not in invalidated_belief_ids
                         ]
-                    if belief_records and not newer_evidence_records:
-                        topical_current_state_records = _newer_current_state_records_than_beliefs(
+                    if belief_records:
+                        focused_newer_evidence_records = _select_belief_recall_newer_evidence_records(
                             belief_records=belief_records,
-                            current_state_records=_filter_current_state_records(
-                                focused_belief_lookup.read_result.records
-                            ),
+                            candidate_records=focused_belief_lookup.read_result.records,
                             topic=detected_belief_recall_query.topic,
                         )
-                        newer_evidence_records = topical_current_state_records or [
-                            record
-                            for record in _newer_evidence_than_beliefs(
-                                belief_records=belief_records,
-                                evidence_records=_filter_structured_evidence_records(
-                                    focused_belief_lookup.read_result.records
-                                ),
-                            )
-                            if _record_matches_open_memory_topic(
-                                record=record,
-                                topic=detected_belief_recall_query.topic,
-                            )
-                        ]
+                        if focused_newer_evidence_records:
+                            newer_evidence_records = focused_newer_evidence_records
                         if not newer_evidence_records:
                             stale_belief_records = _belief_records_past_revalidation(belief_records)
                     read_method = "retrieve_evidence(topic_focus)"
@@ -6198,6 +6207,23 @@ def build_researcher_reply(
                 ]
                 if belief_records:
                     read_method = "inspect_memory_records"
+        if belief_records and not stale_belief_records:
+            belief_recall_candidate_records: list[dict[str, Any]] = []
+            if not evidence_lookup.read_result.abstained and evidence_lookup.read_result.records:
+                belief_recall_candidate_records.extend(evidence_lookup.read_result.records)
+            if focused_belief_lookup_records:
+                belief_recall_candidate_records.extend(focused_belief_lookup_records)
+            if direct_inspection is not None and not direct_inspection.read_result.abstained and direct_inspection.read_result.records:
+                belief_recall_candidate_records.extend(direct_inspection.read_result.records)
+            reconciled_newer_evidence_records = _select_belief_recall_newer_evidence_records(
+                belief_records=belief_records,
+                candidate_records=belief_recall_candidate_records,
+                topic=detected_belief_recall_query.topic,
+            )
+            if reconciled_newer_evidence_records:
+                newer_evidence_records = reconciled_newer_evidence_records
+            elif not newer_evidence_records:
+                stale_belief_records = _belief_records_past_revalidation(belief_records)
         if not belief_records:
             synthetic_source_records: list[dict[str, Any]] = []
             if not evidence_lookup.read_result.abstained and evidence_lookup.read_result.records:

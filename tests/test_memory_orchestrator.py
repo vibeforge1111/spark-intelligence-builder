@@ -1687,6 +1687,24 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(remember_query.query_kind, "identity_summary")
         self.assertEqual(remember_query.predicate_prefix, "profile.")
 
+        favorite_color_query = detect_profile_fact_query("What is my favorite color?")
+        self.assertIsNotNone(favorite_color_query)
+        assert favorite_color_query is not None
+        self.assertEqual(favorite_color_query.predicate, "profile.favorite_color")
+        self.assertEqual(favorite_color_query.query_kind, "single_fact")
+
+        dog_name_query = detect_profile_fact_query("What is my dog's name?")
+        self.assertIsNotNone(dog_name_query)
+        assert dog_name_query is not None
+        self.assertEqual(dog_name_query.predicate, "profile.dog_name")
+        self.assertEqual(dog_name_query.query_kind, "single_fact")
+
+        favorite_food_query = detect_profile_fact_query("What food do I love the most?")
+        self.assertIsNotNone(favorite_food_query)
+        assert favorite_food_query is not None
+        self.assertEqual(favorite_food_query.predicate, "profile.favorite_food")
+        self.assertEqual(favorite_food_query.query_kind, "single_fact")
+
         summarize_profile_query = detect_profile_fact_query("Summarize my profile in one sentence.")
         self.assertIsNotNone(summarize_profile_query)
         assert summarize_profile_query is not None

@@ -1137,6 +1137,49 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
     if any(
         phrase in text
         for phrase in (
+            "what is my favorite color",
+            "what's my favorite color",
+            "what is my favourite color",
+            "what's my favourite color",
+        )
+    ):
+        return ProfileFactQuery(
+            predicate="profile.favorite_color",
+            fact_name="profile_favorite_color",
+            label="favorite color",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what is my dog's name",
+            "what's my dog's name",
+            "what is my dogs name",
+            "what's my dogs name",
+        )
+    ):
+        return ProfileFactQuery(
+            predicate="profile.dog_name",
+            fact_name="profile_dog_name",
+            label="dog's name",
+        )
+    if any(
+        phrase in text
+        for phrase in (
+            "what food do i love the most",
+            "what is my favorite food",
+            "what's my favorite food",
+            "what is my favourite food",
+            "what's my favourite food",
+        )
+    ):
+        return ProfileFactQuery(
+            predicate="profile.favorite_food",
+            fact_name="profile_favorite_food",
+            label="favorite food",
+        )
+    if any(
+        phrase in text
+        for phrase in (
             "what startup do you have for me",
             "what startup do you have saved for me",
             "what is my startup",
