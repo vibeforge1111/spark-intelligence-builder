@@ -1297,7 +1297,7 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         message="What is your current belief about onboarding?",
         expected_bridge_mode="memory_belief_recall",
         expected_routing_decision="memory_belief_recall_query",
-        expected_response_contains=("inferred belief", "Stripe verification fails"),
+        expected_response_contains=("newer direct evidence", "Stripe verification fails"),
         benchmark_tags=("belief", "belief_consolidation_recall"),
     ),
     TelegramMemoryRegressionCase(

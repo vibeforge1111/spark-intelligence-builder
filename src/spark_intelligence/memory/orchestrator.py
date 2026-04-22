@@ -2646,6 +2646,7 @@ def _write_profile_fact_memory_operation(
         "source_surface": "researcher_bridge",
         "fact_name": fact_name,
         "normalized_value": value,
+        "evidence_text": evidence_text,
     }
     if operation != "delete" and revalidate_after_days is not None and revalidate_at:
         metadata["revalidate_after_days"] = revalidate_after_days

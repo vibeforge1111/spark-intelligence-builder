@@ -421,10 +421,20 @@ def _detect_belief_recall_query(user_message: str) -> BeliefRecallQuery | None:
 
 
 def _memory_record_text(record: dict[str, Any]) -> str:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    for key in ("evidence_text", "source_text", "value"):
+        candidate = str(metadata.get(key) or "").strip()
+        if candidate:
+            return candidate
     text = str(record.get("text") or "").strip()
     if text:
+        subject = str(record.get("subject") or "").strip()
+        predicate = str(record.get("predicate") or "").strip()
+        value = str(record.get("value") or metadata.get("normalized_value") or "").strip()
+        if subject and predicate and text.startswith(f"{subject} {predicate} ") and value:
+            return value
         return text
-    return str(record.get("value") or "").strip()
+    return str(record.get("value") or metadata.get("normalized_value") or "").strip()
 
 
 def _filter_open_memory_recall_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -529,6 +539,25 @@ def _filter_current_state_records(records: list[dict[str, Any]]) -> list[dict[st
         if role == "current_state" or predicate.startswith("profile.current_"):
             filtered.append(record)
     return filtered
+
+
+def _newer_current_state_records_than_beliefs(
+    *,
+    belief_records: list[dict[str, Any]],
+    current_state_records: list[dict[str, Any]],
+    topic: str,
+) -> list[dict[str, Any]]:
+    if not belief_records or not current_state_records:
+        return []
+    latest_belief_timestamp = max((_memory_record_timestamp(record) for record in belief_records), default="")
+    if not latest_belief_timestamp:
+        return []
+    return [
+        record
+        for record in current_state_records
+        if _record_matches_open_memory_topic(record=record, topic=topic)
+        and _memory_record_timestamp(record) > latest_belief_timestamp
+    ]
 
 
 def _synthesize_belief_records_from_consolidated_memory(
@@ -6013,7 +6042,12 @@ def build_researcher_reply(
                     not in invalidated_belief_ids
                 ]
             if belief_records:
-                newer_evidence_records = _newer_evidence_than_beliefs(
+                topical_current_state_records = _newer_current_state_records_than_beliefs(
+                    belief_records=belief_records,
+                    current_state_records=_filter_current_state_records(evidence_lookup.read_result.records),
+                    topic=detected_belief_recall_query.topic,
+                )
+                newer_evidence_records = topical_current_state_records or _newer_evidence_than_beliefs(
                     belief_records=belief_records,
                     evidence_records=newer_evidence_records or _filter_structured_evidence_records(evidence_lookup.read_result.records),
                 )
@@ -6068,7 +6102,12 @@ def build_researcher_reply(
                         not in invalidated_belief_ids
                     ]
                 if belief_records:
-                    newer_evidence_records = [
+                    topical_current_state_records = _newer_current_state_records_than_beliefs(
+                        belief_records=belief_records,
+                        current_state_records=_filter_current_state_records(direct_inspection.read_result.records),
+                        topic=detected_belief_recall_query.topic,
+                    )
+                    newer_evidence_records = topical_current_state_records or [
                         record
                         for record in _newer_evidence_than_beliefs(
                             belief_records=belief_records,
@@ -6117,7 +6156,14 @@ def build_researcher_reply(
                             not in invalidated_belief_ids
                         ]
                     if belief_records and not newer_evidence_records:
-                        newer_evidence_records = [
+                        topical_current_state_records = _newer_current_state_records_than_beliefs(
+                            belief_records=belief_records,
+                            current_state_records=_filter_current_state_records(
+                                focused_belief_lookup.read_result.records
+                            ),
+                            topic=detected_belief_recall_query.topic,
+                        )
+                        newer_evidence_records = topical_current_state_records or [
                             record
                             for record in _newer_evidence_than_beliefs(
                                 belief_records=belief_records,
