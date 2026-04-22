@@ -16,6 +16,24 @@ Domain checkpoints used:
   - `Add conversational shadow coverage eval`
 - `f3f9127`
   - `Add gated conversational shadow metrics`
+- `4bea39a`
+  - `Add typed temporal graph memory sidecar`
+- `46be043`
+  - `Add eval-only graph retrieval`
+- `d684f4d`
+  - `Add alias and commitment graph memory`
+- `9f7f07e`
+  - `Add typed graph hybrid shadow packets`
+- `2ff415c`
+  - `Add typed graph shadow answer eval`
+- `6d4d76f`
+  - `Add multi-family shadow answer eval`
+- `9f4ba1e`
+  - `Add CLI for multi-family shadow eval`
+- `0c49964`
+  - `Add negation and reported-speech graph memory`
+- `6e1dd96`
+  - `Add unknown conversational graph memory`
 
 Measured lane:
 
@@ -29,6 +47,7 @@ Artifact:
 - `C:\Users\USER\.spark-intelligence\artifacts\locomo-unseen-slice\2026-04-22-gated-conversational-shadow-eval.json`
 - `C:\Users\USER\.spark-intelligence\artifacts\locomo-unseen-slice\2026-04-22-exact-turn-shadow-selector.json`
 - `C:\Users\USER\.spark-intelligence\artifacts\locomo-unseen-slice\2026-04-22-exact-turn-shadow-answer-eval.json`
+- `C:\Users\USER\.spark-intelligence\artifacts\locomo-unseen-slice\cli-multi-shadow-smoke.json`
 
 ## What Was Measured
 
@@ -158,6 +177,56 @@ External architecture and evaluation review was consistent with the local measur
 - the best next substrate shape is a typed temporal / relationship graph with preserved provenance spans
 - broad-synthesis regression must remain the primary overfit detector
 - promotion should require real-LLM answer evaluation, not heuristic-only shadow passes
+
+## Later Additive Progress
+
+After the first exact-turn shadow pass, the substrate was extended with a typed graph sidecar instead of pushing runtime changes:
+
+- alias bindings such as `Jo -> Joanna`
+- commitment records such as `I'm going to a transgender conference this month`
+- negation records such as `I've never been to Boston before`
+- reported-speech records such as `The doctor said it's not too serious`
+- unknown records such as `I can't remember such a game`
+
+These are all provenance-preserving sidecar records. Runtime is still unchanged.
+
+What this means architecturally:
+
+- the system now has a better typed conversational substrate for social, temporal, and uncertainty-heavy chat memory
+- we are no longer blocked on extraction/plumbing for the next eval step
+- the remaining blocker is evaluation quality, not storage shape
+
+Focused validation on the newest graph-memory layers is green in the domain repo:
+
+- negation / reported-speech lane: `19 passed, 14 deselected`
+- unknown-record lane: `10 passed, 27 deselected`
+
+Those runs validate extraction, promotion, retrieval, and shadow-packet assembly, but they do not count as promotion evidence for runtime.
+
+## Current Blocker
+
+The real-provider comparison path is implemented, but the local machine does not currently expose a configured provider env for it.
+
+Checked locally on `2026-04-22`:
+
+- `OPENAI_API_KEY`: not set
+- `DOMAIN_CHIP_MEMORY_OPENAI_MODEL`: not set
+- `OPENAI_MODEL`: not set
+- `MINIMAX_API_KEY`: not set
+- `DOMAIN_CHIP_MEMORY_MINIMAX_MODEL`: not set
+- `MINIMAX_MODEL`: not set
+
+So the honest current state is:
+
+- multi-family real-provider eval plumbing exists
+- the local deterministic heuristic remains flat on answer quality
+- promotion-grade answer comparison is blocked until a real provider is configured
+
+When a provider is available, the intended command is:
+
+```powershell
+python -m domain_chip_memory.cli run-locomo-multi-shadow-eval C:\Users\USER\Desktop\domain-chip-memory\benchmark_data\official\LoCoMo\data\locomo10.json --provider openai:<model> --sample-id conv-41 --sample-id conv-42 --sample-id conv-43 --sample-id conv-44 --sample-id conv-47 --sample-id conv-48 --sample-id conv-49 --sample-id conv-50 --category 1 --category 2 --category 3 --exclude-missing-gold --write C:\Users\USER\.spark-intelligence\artifacts\locomo-unseen-slice\real-provider-multi-shadow.json
+```
 
 ## Architectural Conclusion
 
