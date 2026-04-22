@@ -46,11 +46,10 @@ _SDK_CLIENT_CACHE: dict[tuple[str, str], Any] = {}
 # refactor. Applying the pin from Builder makes the choice explicit and
 # auditable here. Pre-existing env vars are respected so tests can override.
 #
-# 2026-04-22: live Telegram regression flags `architecture_promotion_gap` —
-# the live leader recommendation is `summary_synthesis_memory`. The pin below
-# keeps the April 21 handoff's chosen value so behavior is unchanged by the
-# introduction of this pin; the flip decision is deferred.
-PINNED_RUNTIME_MEMORY_ARCHITECTURE = "dual_store_event_calendar_hybrid"
+# 2026-04-22: Phase A head-to-head validation is complete. Internal live
+# regression and the completed external benchmark matrix both favor
+# `summary_synthesis_memory`, so Builder now pins that architecture directly.
+PINNED_RUNTIME_MEMORY_ARCHITECTURE = "summary_synthesis_memory"
 PINNED_RUNTIME_MEMORY_PROVIDER = "heuristic_v1"
 _ARCHITECTURE_PIN_ENV_VAR = "SPARK_MEMORY_RUNTIME_ARCHITECTURE"
 _PROVIDER_PIN_ENV_VAR = "SPARK_MEMORY_RUNTIME_PROVIDER"
