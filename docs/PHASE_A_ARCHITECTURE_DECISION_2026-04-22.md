@@ -1,17 +1,19 @@
 # Phase A Architecture Decision 2026-04-22
 
-**Status:** partial Phase A complete.
+**Status:** partial Phase A complete, external suite in progress.
 **Decision state:** no pin change recommended yet.
-**Reason:** internal head-to-head is now captured on current HEAD, but the required external benchmark suite is blocked locally because the substrate checkout does not contain `benchmark_data/`.
+**Reason:** internal head-to-head is captured on current HEAD and external data restore is done, but only the first external BEAM lane is complete so the full Phase A decision is still incomplete.
 
 ## Snapshot
 
 - Builder commit: `472f3c6aacdc13f18c164fde0eb5cbae0546d09a`
-- Substrate commit: `b3e8fdacba3f6597d4ed565b949b0e401cc992ab`
+- Substrate commit when this checkpoint was written: `b1cc017`
 - Internal artifact root:
   `C:\Users\USER\.spark-intelligence\artifacts\phase-a-internal\2026-04-22-head-to-head`
 - Run manifest:
   `C:\Users\USER\.spark-intelligence\artifacts\phase-a-internal\2026-04-22-head-to-head\run-summary.json`
+- External artifact root:
+  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks`
 
 ## What Was Measured This Turn
 
@@ -25,6 +27,14 @@
 | Live Telegram regression runtime pin | no | yes | Current runtime still pinned to dual-store |
 | Live Telegram regression score | n/a | `200/202` runtime result | Same 2 known mismatches, no new ones |
 | 14-pack soak aggregate | n/a | `238/244` runtime result | Same 6 known mismatches, no new ones |
+
+### External progress so far
+
+| Surface | `summary_synthesis_memory` | `dual_store_event_calendar_hybrid` | Takeaway |
+|---|---:|---:|---|
+| BEAM public `128K` | `400/400` (`100.00%`) | `66/400` (`16.50%`) | Summary-synthesis is decisively stronger on the first completed external lane |
+| LoCoMo | in progress | in progress | waiting on fresh reruns |
+| LongMemEval_s | in progress | in progress | rerunning after a substrate sort-key fix |
 
 ### Internal regression details
 
@@ -46,7 +56,7 @@
   - `loaded_context_abstention`
 - No new soak packs regressed.
 
-## What Is Still Blocked
+## External Benchmark State
 
 Phase A requires external benchmark data for both contenders across:
 
@@ -54,7 +64,7 @@ Phase A requires external benchmark data for both contenders across:
 - `LoCoMo`
 - `LongMemEval`
 
-The substrate checkout currently references these local inputs:
+The substrate checkout references these local inputs:
 
 - `benchmark_data/official/LongMemEval/data/longmemeval_s_cleaned.json`
 - `benchmark_data/official/LoCoMo/data/locomo10.json`
@@ -62,12 +72,21 @@ The substrate checkout currently references these local inputs:
 
 Observed on this machine during this turn:
 
-- `C:\Users\USER\Desktop\domain-chip-memory\benchmark_data` is absent
+- `C:\Users\USER\Desktop\domain-chip-memory\benchmark_data` is restored locally
 - `benchmark_data/` is gitignored in
   `C:\Users\USER\Desktop\domain-chip-memory\.gitignore`
-- historical artifact files exist, but they are not sufficient to claim a fresh two-contender external rerun on current HEAD
+- fresh Phase A external artifacts now exist for:
+  - `BEAM` public `128K`
+- fresh reruns are still active for:
+  - `LoCoMo`
+  - `LongMemEval_s`
 
-That means the external half of Phase A is not runnable from this checkout alone.
+Two substrate fixes were required to get the external suite moving on current HEAD:
+
+- `cce6e83` `Handle event calendar ids in yes-no ranking`
+- `b1cc017` `Normalize observation id sorting for external benchmarks`
+
+That means the external half of Phase A is now runnable from this checkout, but still incomplete.
 
 ## Recommendation
 
@@ -78,20 +97,20 @@ Current evidence says:
 - offline internal data is a tie
 - live internal regression still prefers `summary_synthesis_memory`
 - current runtime remains pinned to `dual_store_event_calendar_hybrid`
+- the first completed external lane (`BEAM` public `128K`) strongly favors `summary_synthesis_memory`
 - `architecture_promotion_gap` still reproduces on fresh artifacts
 
-That is enough to confirm the gap is real, but not enough to close Phase A mechanically because the required external suite is still missing.
+That is enough to confirm the gap is real and to increase confidence in `summary_synthesis_memory`, but not enough to close Phase A mechanically because the remaining external lanes are still running.
 
 ## Next Actions
 
-1. Restore or mount substrate `benchmark_data/` locally.
-2. Run external head-to-head for both contenders:
+1. Finish the fresh external head-to-head for both contenders:
    - `LongMemEval`
    - `LoCoMo`
-   - `BEAM`
-3. Append those scores to this doc.
-4. Re-evaluate whether the founder should keep or flip the runtime pin.
-5. Only after explicit approval, update
+   - remaining `BEAM` public scales if Phase A requires the full public reproduction rather than the completed `128K` lane
+2. Append those scores to this doc.
+3. Re-evaluate whether the founder should keep or flip the runtime pin.
+4. Only after explicit approval, update
    `src/spark_intelligence/memory/orchestrator.py`
    and rerun the full internal gate.
 
@@ -103,3 +122,7 @@ That is enough to confirm the gap is real, but not enough to close Phase A mecha
   `C:\Users\USER\.spark-intelligence\artifacts\phase-a-internal\2026-04-22-head-to-head\telegram-memory-regression\telegram-memory-regression.json`
 - Live soak:
   `C:\Users\USER\.spark-intelligence\artifacts\phase-a-internal\2026-04-22-head-to-head\telegram-memory-architecture-soak\telegram-memory-architecture-soak.json`
+- External BEAM `128K` summary-synthesis:
+  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\summary_synthesis_memory\beam_128k.json`
+- External BEAM `128K` dual-store:
+  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\dual_store_event_calendar_hybrid\beam_128k.json`
