@@ -1,0 +1,68 @@
+[module]
+name = "spark-intelligence-builder"
+version = "0.1.0"
+kind = "runtime"
+plane = "runtime"
+description = "Spark runtime core for identity, routing, memory, and provider orchestration"
+homepage = "https://github.com/spark/spark-intelligence-builder"
+license = "UNLICENSED"
+
+[runtime]
+kind = "python"
+version = ">=3.11"
+package_manager = "uv"
+lockfile = "uv.lock"
+
+[install.dev]
+commands = ["uv pip install -e ."]
+
+[provides]
+capabilities = [
+  "spark.runtime",
+  "spark.memory",
+  "spark.identity",
+  "spark.routing",
+]
+binary = "spark-intelligence"
+
+[needs]
+modules = []
+capabilities = []
+secrets = []
+
+[claims]
+secrets = []
+ports = []
+routes = []
+
+[healthcheck]
+command = "python -m spark_intelligence.cli doctor"
+timeout_seconds = 20
+success_hint = "Spark runtime core is healthy."
+failure_hint = "Run `spark-intelligence doctor` in the module home for the repair detail."
+
+[entrypoints]
+cli = "spark-intelligence"
+
+[config]
+format = "env+yaml"
+installer_owned = true
+primary = "$SPARK_HOME/config.yaml"
+
+[paths]
+home = "~/.spark/modules/spark-intelligence-builder"
+state = "~/.spark/state/spark-intelligence"
+logs = "~/.spark/logs/spark-intelligence"
+
+[profiles.telegram_starter]
+role = "runtime-behind-gateway"
+owns = [
+  "spark.runtime",
+  "spark.memory",
+  "spark.identity",
+  "spark.routing",
+]
+does_not_own = [
+  "telegram.ingress",
+  "telegram.bot_token",
+]

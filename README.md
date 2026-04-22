@@ -27,6 +27,33 @@ It should avoid becoming a giant everything-repo by copying the internals of:
 - `domain chip` repos
 - `specialization path` repos
 
+## Current Live Telegram Architecture
+
+The stable live Telegram path is now split across repos:
+
+- `spark-telegram-bot` is the Telegram ingress owner
+- `spark-intelligence-builder` remains the Builder/runtime and adapter-logic repo
+- `spawner-ui` is the execution plane for mission-style work
+
+Current live shape:
+
+`Telegram -> spark-telegram-bot webhook gateway -> Builder/Spark logic -> Spawner UI when execution is needed`
+
+That also means multiple terminals or workers must stay behind one Telegram ingress owner. The system can fan out internally, but it must not run multiple concurrent Telegram receivers for the same bot token.
+
+Current installer rule for this split architecture:
+
+- `spark-telegram-bot` gets the Telegram bot token
+- `spark-intelligence-builder` is the runtime core behind that gateway
+- `spawner-ui` is the execution plane behind that gateway
+- do not give the same Telegram bot token to both Builder and the gateway
+
+Installer source of truth:
+
+- [docs/SPARK_INSTALLER_STANDARD_V1_2026-04-22.md](./docs/SPARK_INSTALLER_STANDARD_V1_2026-04-22.md)
+
+Older Telegram sections in this README may still describe the historical Builder-owned polling path. Treat those sections as historical unless they explicitly mention the newer webhook gateway split.
+
 This repo currently includes:
 
 - [docs/PRD_SPARK_INTELLIGENCE_V1.md](./docs/PRD_SPARK_INTELLIGENCE_V1.md)
