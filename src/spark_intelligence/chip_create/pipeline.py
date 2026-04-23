@@ -110,10 +110,34 @@ def _validate_brief(brief: dict) -> list[str]:
     return errors
 
 
+def _normalize_commands(commands: Any) -> dict:
+    if not isinstance(commands, dict):
+        return {}
+    result: dict[str, list[str]] = {}
+    for name, value in commands.items():
+        if isinstance(value, list):
+            parts = [str(x) for x in value if str(x).strip()]
+        elif isinstance(value, str):
+            stripped = value.replace("--input {input}", "").replace("--output {output}", "")
+            parts = [p for p in stripped.split() if p.strip()]
+        else:
+            continue
+        while parts and parts[-1] in ("--input", "--output", "{input}", "{output}"):
+            parts.pop()
+        if parts:
+            result[str(name)] = parts
+    return result
+
+
 def _patch_manifest_router_fields(manifest_path: Path, brief: dict, *, chip_key: str) -> None:
     doc = json.loads(manifest_path.read_text(encoding="utf-8"))
     if not doc.get("chip_name"):
         doc["chip_name"] = chip_key
+    normalized = _normalize_commands(doc.get("commands"))
+    if normalized:
+        doc["commands"] = normalized
+    if not doc.get("io_protocol"):
+        doc["io_protocol"] = "spark-hook-io.v1"
     for key in ("task_topics", "task_keywords", "combine_with"):
         val = brief.get(key)
         if isinstance(val, list):

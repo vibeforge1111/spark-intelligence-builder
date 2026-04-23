@@ -1627,6 +1627,16 @@ def build_parser() -> argparse.ArgumentParser:
     chips_why_parser.add_argument("--history", default="", help="Recent conversation history text to score against (lower weight)")
     chips_why_parser.add_argument("--recent-chip", action="append", default=[], help="Chip key recently selected (sticky boost). Repeat for multiple.")
 
+    loops_parser = subparsers.add_parser("loops", help="Run recursive self-improving loops against a chip")
+    loops_subparsers = loops_parser.add_subparsers(dest="loops_command", required=True)
+    loops_run_parser = loops_subparsers.add_parser("run", help="Run N rounds of suggest/evaluate against a chip")
+    loops_run_parser.add_argument("--chip", required=True, help="Chip key (e.g. domain-chip-brand-sentiment-tracking)")
+    loops_run_parser.add_argument("--rounds", type=int, default=3, help="Number of rounds (default 3)")
+    loops_run_parser.add_argument("--suggest-limit", type=int, default=3, help="Max candidates per round (default 3)")
+    loops_run_parser.add_argument("--pause-seconds", type=float, default=0.0, help="Sleep between rounds")
+    loops_run_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    loops_run_parser.add_argument("--json", action="store_true", help="Emit JSON result")
+
     chips_create_parser = chips_subparsers.add_parser("create", help="Create a new domain chip from a natural-language prompt")
     chips_create_parser.add_argument("--prompt", required=True, help="Natural-language description of the chip to create")
     chips_create_parser.add_argument("--output-dir", default=None, help="Directory to scaffold into (default: C:/Users/USER/Desktop)")
@@ -4323,6 +4333,35 @@ def handle_chips_why(args: argparse.Namespace) -> int:
     else:
         print(explain_routing(decision))
     return 0
+
+
+def handle_loops_run(args: argparse.Namespace) -> int:
+    import json as _json
+    from spark_intelligence.loops import run_chip_autoloop
+
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    result = run_chip_autoloop(
+        config_manager=config_manager,
+        chip_key=args.chip,
+        rounds=args.rounds,
+        suggest_limit=args.suggest_limit,
+        pause_seconds=args.pause_seconds,
+    )
+    if args.json:
+        print(_json.dumps(result.to_dict(), indent=2, default=str))
+    else:
+        if result.ok:
+            print(f"ok: chip={result.chip_key} rounds={result.rounds_completed}/{result.total_rounds}")
+            for r in result.history:
+                print(f"  round {r['round_index']}: suggestions={r['suggestions_count']} best_verdict={r.get('best_verdict')} best_metric={r.get('best_metric')}")
+            if result.status_path:
+                print(f"status: {result.status_path}")
+        else:
+            print(f"error: {result.error}")
+            if result.history:
+                print(f"completed {result.rounds_completed}/{result.total_rounds} rounds before failure")
+    return 0 if result.ok else 1
 
 
 def handle_chips_create(args: argparse.Namespace) -> int:
@@ -7070,6 +7109,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_chips_why(args)
     if args.command == "chips" and args.chips_command == "create":
         return handle_chips_create(args)
+    if args.command == "loops" and args.loops_command == "run":
+        return handle_loops_run(args)
     if args.command == "drafts" and args.drafts_command == "list":
         return handle_drafts_list(args)
     if args.command == "drafts" and args.drafts_command == "show":
