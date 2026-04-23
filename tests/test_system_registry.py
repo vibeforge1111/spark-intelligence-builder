@@ -24,20 +24,29 @@ class SystemRegistryTests(SparkTestCase):
 
         snapshot = build_system_registry(self.config_manager, self.state_db)
         payload = snapshot.to_payload()
-        records = {str(record["key"]): record for record in payload["records"]}
+        records = {(str(record["kind"]), str(record["key"])): record for record in payload["records"]}
 
-        self.assertEqual(records["spark_intelligence_builder"]["kind"], "system")
-        self.assertEqual(records["spark_researcher"]["kind"], "system")
-        self.assertEqual(records["spark_swarm"]["kind"], "system")
-        self.assertEqual(records["spark_browser"]["status"], "ready")
-        self.assertEqual(records["spark_voice"]["status"], "available")
-        self.assertEqual(records["startup-yc"]["kind"], "chip")
-        self.assertTrue(records["startup-yc"]["pinned"])
-        self.assertEqual(records["spark-browser"]["status"], "active")
+        self.assertEqual(records[("system", "spark_intelligence_builder")]["kind"], "system")
+        self.assertEqual(records[("system", "spark_researcher")]["kind"], "system")
+        self.assertEqual(records[("system", "spark_swarm")]["kind"], "system")
+        self.assertEqual(records[("system", "spark_browser")]["status"], "ready")
+        self.assertEqual(records[("system", "spark_voice")]["status"], "available")
+        self.assertEqual(records[("chip", "startup-yc")]["kind"], "chip")
+        self.assertTrue(records[("chip", "startup-yc")]["pinned"])
+        self.assertEqual(records[("chip", "spark-browser")]["status"], "active")
+        self.assertEqual(
+            records[("chip", "spark-browser")]["metadata"]["onboarding"]["harnesses"],
+            ["browser.grounded"],
+        )
+        self.assertIn(
+            "origin_access",
+            records[("chip", "spark-browser")]["metadata"]["onboarding"]["permissions"],
+        )
         self.assertIn(
             "governed browser search and page inspection",
             payload["summary"]["current_capabilities"],
         )
+        self.assertGreaterEqual(int(payload["summary"]["onboarding_contract_count"]), 1)
 
     def test_build_system_registry_prompt_context_uses_registry_for_self_knowledge(self) -> None:
         create_fake_hook_chip(self.home, chip_key="startup-yc")
@@ -54,6 +63,9 @@ class SystemRegistryTests(SparkTestCase):
 
         self.assertIn("[Spark system registry]", prompt_context)
         self.assertIn("Spark Intelligence Builder: status=", prompt_context)
+        self.assertIn("[Onboarded contracts]", prompt_context)
+        self.assertIn("spark-browser:", prompt_context)
+        self.assertIn("harnesses=browser.grounded", prompt_context)
         self.assertIn("[Current capabilities]", prompt_context)
         self.assertIn("1:1 conversational work through Builder", prompt_context)
 

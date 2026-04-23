@@ -553,12 +553,75 @@ if __name__ == "__main__":
                     if chip_key == "spark-browser"
                     else None
                 ),
+                "onboarding": _default_fake_chip_onboarding(chip_key),
             },
             indent=2,
         ),
         encoding="utf-8",
     )
     return repo_root
+
+
+def _default_fake_chip_onboarding(chip_key: str) -> dict[str, object]:
+    if chip_key == "spark-browser":
+        return {
+            "role": "Governed browser and search chip for web inspection and source capture.",
+            "surfaces": ["researcher_bridge", "cli", "telegram"],
+            "permissions": ["browser_session", "origin_access"],
+            "harnesses": ["browser.grounded"],
+            "health_checks": ["browser.status"],
+            "example_intents": [
+                "Open a page and inspect it.",
+                "Search the web and summarize findings.",
+            ],
+            "limitations": ["Requires a live browser session and host access for the target origin."],
+        }
+    if chip_key == "domain-chip-voice-comms":
+        return {
+            "role": "Speech I/O chip for transcription and spoken replies.",
+            "surfaces": ["telegram", "cli", "researcher_bridge"],
+            "permissions": ["audio_io", "tts_provider"],
+            "harnesses": ["voice.io"],
+            "health_checks": ["voice.status"],
+            "example_intents": [
+                "Reply in voice.",
+                "Transcribe this voice note.",
+            ],
+            "limitations": ["Quality depends on STT/TTS provider health and channel delivery behavior."],
+        }
+    if chip_key == "spark-swarm":
+        return {
+            "role": "Collective-execution chip for Swarm escalation and multi-agent coordination.",
+            "surfaces": ["researcher_bridge", "cli"],
+            "permissions": ["swarm_api"],
+            "harnesses": ["swarm.escalation"],
+            "health_checks": ["identity", "watchtower"],
+            "example_intents": [
+                "Escalate this to Swarm.",
+                "Coordinate parallel work across agents.",
+            ],
+            "limitations": ["Requires Swarm payload readiness and valid auth."],
+        }
+    if chip_key == "startup-yc":
+        return {
+            "role": "Doctrine chip for founder/operator guidance and startup diagnosis.",
+            "surfaces": ["researcher_bridge"],
+            "permissions": ["advisory_only"],
+            "harnesses": ["builder.direct", "researcher.advisory"],
+            "health_checks": ["evaluate"],
+            "example_intents": [
+                "Diagnose the startup bottleneck.",
+                "Pressure-test the go-to-market wedge.",
+            ],
+            "limitations": ["Guidance-oriented only; it does not execute external actions itself."],
+        }
+    return {
+        "role": f"{chip_key} attached capability contract.",
+        "surfaces": ["cli"],
+        "permissions": ["hook_execution"],
+        "health_checks": ["evaluate"],
+        "example_intents": [f"Use {chip_key} for its attached capability."],
+    }
 
 
 def create_fake_researcher_runtime(root: Path) -> Path:
