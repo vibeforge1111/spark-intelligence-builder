@@ -129,6 +129,38 @@ def _normalize_commands(commands: Any) -> dict:
     return result
 
 
+def _patch_manifest_command_modules(manifest_path: Path, chip_dir: Path) -> None:
+    """Rewrite command entries like ['python','-m','<pkg>',...] to
+    ['python','-m','<pkg>.cli',...] when <pkg>/cli.py exists and there
+    is no __main__.py. The scaffolder emits the bare module path but
+    the generated package has no __main__, so `python -m <pkg>` fails.
+    """
+    doc = json.loads(manifest_path.read_text(encoding="utf-8"))
+    commands = doc.get("commands")
+    if not isinstance(commands, dict):
+        return
+    src_dir = chip_dir / "src"
+    if not src_dir.exists():
+        return
+    changed = False
+    for hook, parts in list(commands.items()):
+        if not isinstance(parts, list) or len(parts) < 3:
+            continue
+        if parts[0] != "python" or parts[1] != "-m":
+            continue
+        mod = parts[2]
+        if not mod or "." in mod:
+            continue
+        pkg_dir = src_dir / mod
+        has_main = (pkg_dir / "__main__.py").exists()
+        has_cli = (pkg_dir / "cli.py").exists()
+        if has_cli and not has_main:
+            parts[2] = f"{mod}.cli"
+            changed = True
+    if changed:
+        manifest_path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+
+
 def _patch_generated_cli(chip_dir: Path, chip_labs_root: Path) -> None:
     """Rewrite the scaffolded cli.py so it can run as a standalone module.
 
@@ -259,6 +291,13 @@ def create_chip_from_prompt(
         _patch_generated_cli(chip_dir, chip_labs_root)
     except Exception as exc:
         warnings.append(f"cli.py import patch failed: {exc}")
+
+    # 4c) Rewrite manifest commands to use <pkg>.cli when the scaffolded
+    #     package has no __main__.py (the default).
+    try:
+        _patch_manifest_command_modules(manifest, chip_dir)
+    except Exception as exc:
+        warnings.append(f"manifest command module patch failed: {exc}")
 
     # 5) Register + snapshot + pin + snapshot
     try:
