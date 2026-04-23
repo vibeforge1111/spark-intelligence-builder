@@ -219,7 +219,7 @@ def _format_chip_metric_value(value: object) -> str:
 
 
 def _build_verbatim_chip_block(raw_chip_metrics: list[dict]) -> str:
-    lines = ["", "—", "Chip output (verbatim, not paraphrased):"]
+    lines = ["", "---", "Chip output (verbatim, not paraphrased):"]
     for entry in raw_chip_metrics:
         if not isinstance(entry, dict):
             continue
@@ -426,7 +426,7 @@ def _maybe_capture_user_instruction(
         )
     except Exception:
         return reply_text
-    return f"{base}\n\n_(saved instruction: \"{saved.instruction_text[:160]}\" — will apply to future replies)_\n"
+    return f"{base}\n\n_(saved instruction: \"{saved.instruction_text[:160]}\" - will apply to future replies)_\n"
 
 
 def _maybe_append_verbatim_chip_block(
