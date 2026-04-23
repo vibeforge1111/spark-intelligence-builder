@@ -976,59 +976,87 @@ def simulate_telegram_update(
                 active_chip_evaluate_used = False
                 evidence_summary = None
             else:
-                bridge_result = build_researcher_reply(
-                    config_manager=config_manager,
-                    state_db=state_db,
-                    request_id=f"sim:{normalized.update_id}",
-                    agent_id=resolution.agent_id,
-                    human_id=resolution.human_id,
-                    session_id=resolution.session_id,
-                    channel_kind="telegram",
-                    user_message=effective_text,
-                )
-                record_researcher_bridge_result(state_db=state_db, result=bridge_result)
-                shaped_bridge_reply = _shape_telegram_bridge_reply(
-                    bridge_result.reply_text,
-                    bridge_mode=bridge_result.mode,
-                    routing_decision=bridge_result.routing_decision,
-                )
-                outbound_text = _apply_post_approval_welcome(
-                    config_manager=config_manager,
-                    state_db=state_db,
-                    external_user_id=normalized.telegram_user_id,
-                    human_id=resolution.human_id,
-                    agent_id=resolution.agent_id,
-                    reply_text=shaped_bridge_reply,
-                )
-                trace_ref = bridge_result.trace_ref
-                bridge_mode = bridge_result.mode
-                attachment_context = bridge_result.attachment_context
-                routing_decision = bridge_result.routing_decision
-                active_chip_key = bridge_result.active_chip_key
-                active_chip_task_type = bridge_result.active_chip_task_type
-                active_chip_evaluate_used = bridge_result.active_chip_evaluate_used
-                evidence_summary = bridge_result.evidence_summary
-                outbound_text = _maybe_append_verbatim_chip_block(
-                    user_message=effective_text,
-                    reply_text=outbound_text,
-                    raw_chip_metrics=getattr(bridge_result, "raw_chip_metrics", []) or [],
-                )
-                outbound_text = _maybe_capture_user_instruction(
-                    state_db=state_db,
-                    user_message=effective_text,
-                    external_user_id=normalized.telegram_user_id,
-                    reply_text=outbound_text,
-                    bridge_mode=bridge_result.mode,
-                    routing_decision=bridge_result.routing_decision,
-                )
-                outbound_text = _maybe_save_reply_as_draft(
-                    state_db=state_db,
-                    external_user_id=normalized.telegram_user_id,
-                    session_id=resolution.session_id,
-                    chip_used=bridge_result.active_chip_key,
-                    reply_text=outbound_text,
-                    user_message=effective_text,
-                )
+                _instruction_intent = None
+                if effective_text:
+                    try:
+                        from spark_intelligence.user_instructions import (
+                            detect_instruction_intent as _detect_instruction_intent,
+                        )
+                        _instruction_intent = _detect_instruction_intent(effective_text)
+                    except Exception:
+                        _instruction_intent = None
+                if _instruction_intent is not None:
+                    outbound_text = _maybe_capture_user_instruction(
+                        state_db=state_db,
+                        user_message=effective_text,
+                        external_user_id=normalized.telegram_user_id,
+                        reply_text="",
+                        bridge_mode="user_instruction_shortcircuit",
+                        routing_decision="user_instruction_shortcircuit",
+                    )
+                    trace_ref = None
+                    bridge_mode = "user_instruction_shortcircuit"
+                    attachment_context = None
+                    routing_decision = "user_instruction_shortcircuit"
+                    active_chip_key = None
+                    active_chip_task_type = None
+                    active_chip_evaluate_used = False
+                    evidence_summary = None
+                    bridge_result = None
+                else:
+                    bridge_result = build_researcher_reply(
+                        config_manager=config_manager,
+                        state_db=state_db,
+                        request_id=f"sim:{normalized.update_id}",
+                        agent_id=resolution.agent_id,
+                        human_id=resolution.human_id,
+                        session_id=resolution.session_id,
+                        channel_kind="telegram",
+                        user_message=effective_text,
+                    )
+                    record_researcher_bridge_result(state_db=state_db, result=bridge_result)
+                    shaped_bridge_reply = _shape_telegram_bridge_reply(
+                        bridge_result.reply_text,
+                        bridge_mode=bridge_result.mode,
+                        routing_decision=bridge_result.routing_decision,
+                    )
+                    outbound_text = _apply_post_approval_welcome(
+                        config_manager=config_manager,
+                        state_db=state_db,
+                        external_user_id=normalized.telegram_user_id,
+                        human_id=resolution.human_id,
+                        agent_id=resolution.agent_id,
+                        reply_text=shaped_bridge_reply,
+                    )
+                    trace_ref = bridge_result.trace_ref
+                    bridge_mode = bridge_result.mode
+                    attachment_context = bridge_result.attachment_context
+                    routing_decision = bridge_result.routing_decision
+                    active_chip_key = bridge_result.active_chip_key
+                    active_chip_task_type = bridge_result.active_chip_task_type
+                    active_chip_evaluate_used = bridge_result.active_chip_evaluate_used
+                    evidence_summary = bridge_result.evidence_summary
+                    outbound_text = _maybe_append_verbatim_chip_block(
+                        user_message=effective_text,
+                        reply_text=outbound_text,
+                        raw_chip_metrics=getattr(bridge_result, "raw_chip_metrics", []) or [],
+                    )
+                    outbound_text = _maybe_capture_user_instruction(
+                        state_db=state_db,
+                        user_message=effective_text,
+                        external_user_id=normalized.telegram_user_id,
+                        reply_text=outbound_text,
+                        bridge_mode=bridge_result.mode,
+                        routing_decision=bridge_result.routing_decision,
+                    )
+                    outbound_text = _maybe_save_reply_as_draft(
+                        state_db=state_db,
+                        external_user_id=normalized.telegram_user_id,
+                        session_id=resolution.session_id,
+                        chip_used=bridge_result.active_chip_key,
+                        reply_text=outbound_text,
+                        user_message=effective_text,
+                    )
         outbound_text = _apply_think_visibility(
             state_db=state_db,
             external_user_id=normalized.telegram_user_id,

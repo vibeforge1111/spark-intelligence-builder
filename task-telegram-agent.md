@@ -16,11 +16,11 @@ Started: 2026-04-23
 - [x] Green signal: spawner-ui REST verified, mission ran end-to-end Z.AI+MiniMax in <25s, Telegram round-trip confirmed (msg 680 sent, user reply received on bot side)
 - KNOWN GAP: Spark Builder gateway not in boot script yet - will add before Phase 1 text tests
 
-## Phase 1 - Urgent defects
+## Phase 1 - Urgent defects  [GREEN 2026-04-23]
 
-- [ ] P9 fix: `remember this:` / `from now on:` must route to `user_instructions`, not web_search. Root cause: chip_router keyword priority after my web-search additions landed (spark-browser has `"find"` and `"lookup"` which collide with instruction capture).
-- [ ] P7 fix: researcher_bridge swarm path read-timeout. Diagnose (likely sync HTTP call with no timeout); fix or make async-nonblocking.
-- [ ] Green signal: live Telegram test - "remember this: I prefer terse answers" returns instruction-captured ack (not a web search). Swarm escalation returns without timeout.
+- [x] P9 fix: short-circuit in `adapters/telegram/runtime.py` - detect_instruction_intent runs BEFORE bridge; matched messages skip chip routing, produce instruction ack directly
+- [x] P7 fix: wrap `evaluate_swarm_escalation` in `capability_router/service.py` try/except - any failure (timeout, URLError, None api_url) degrades to `swarm_decision(mode="unavailable", escalate=False)` instead of killing the turn
+- [x] Green signal: Live Telegram tests pass. P9 routes to `user_instruction_shortcircuit` with ack. P7 routes to `provider_fallback_chat+manual_recommended` without `bridge_error`.
 
 ## Phase 2 - /chip create from Telegram
 

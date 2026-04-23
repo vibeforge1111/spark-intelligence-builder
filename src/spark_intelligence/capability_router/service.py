@@ -113,11 +113,25 @@ def build_capability_route_decision(
         supporting_systems = ["Spark Researcher"]
         required_capabilities = ["routing", "attachments", "operator_controls"]
     else:
-        swarm_decision = evaluate_swarm_escalation(
-            config_manager=config_manager,
-            state_db=state_db,
-            task=normalized_task,
-        )
+        from spark_intelligence.swarm_bridge import SwarmDecisionResult
+        try:
+            swarm_decision = evaluate_swarm_escalation(
+                config_manager=config_manager,
+                state_db=state_db,
+                task=normalized_task,
+            )
+        except Exception as exc:
+            swarm_decision = SwarmDecisionResult(
+                ok=False,
+                escalate=False,
+                mode="unavailable",
+                reason=f"Swarm probe failed: {type(exc).__name__}",
+                triggers=[],
+                task=normalized_task,
+                attachment_context={},
+                swarm_available=False,
+                api_ready=False,
+            )
         if swarm_decision.escalate:
             target_system = "Spark Swarm"
             route_mode = "swarm_escalation"
