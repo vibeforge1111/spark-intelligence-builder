@@ -9,7 +9,30 @@ from spark_intelligence.state.db import StateDB
 
 
 DRAFT_HANDLE_PATTERN = re.compile(r"\bD-([0-9a-f]{6,12})\b", re.IGNORECASE)
-DRAFT_MIN_LENGTH = 800
+DRAFT_MIN_LENGTH = 0
+
+_GENERATIVE_REQUEST_PATTERN = re.compile(
+    r"\b("
+    r"write|draft|compose|create|generate|craft|build|outline|sketch|propose|"
+    r"give\s+me|show\s+me|make\s+me|put\s+together"
+    r")"
+    r"(?:\s+(?:me|us))?"
+    r"(?:\s+(?:a|an|the|some|another|one|\d+))?"
+    r"\s*"
+    r"(tweet|thread|post|reply|dm|message|email|caption|bio|headline|"
+    r"tagline|one[- ]?liner|pitch|plan|outline|spec|brief|proposal|"
+    r"summary|intro|hook|cta|response|comment|paragraph|section|"
+    r"article|list|announcement|update|blurb|slogan|name|title|"
+    r"description|readme|prd|doc|draft|version)s?"
+    r"\b",
+    re.IGNORECASE,
+)
+
+_ITERATION_ADJECTIVES = (
+    r"shorter|longer|punchier|tighter|looser|simpler|bolder|sharper|"
+    r"cleaner|crisper|softer|harder|meaner|nicer|snappier|smoother|"
+    r"edgier|funnier|drier|calmer|warmer|colder|spicier"
+)
 
 _ITERATION_INTENT_PATTERN = re.compile(
     r"\b("
@@ -22,10 +45,26 @@ _ITERATION_INTENT_PATTERN = re.compile(
     r"rewrite(?:\s+this|\s+that|\s+the)?|"
     r"sharpen(?:\s+this|\s+that|\s+the)?|"
     r"tighten(?:\s+this|\s+that|\s+the)?|"
+    r"tweak(?:\s+(?:this|that|the|it))?|"
+    r"adjust(?:\s+(?:this|that|the|it))?|"
+    r"rework(?:\s+(?:this|that|the|it))?|"
+    r"redo(?:\s+(?:this|that|the|it))?|"
+    r"another\s+(?:pass|take|version|shot)|"
+    r"one\s+more\s+(?:pass|take|version|try)|"
+    r"try\s+again|take\s+two|v\s*2|v\s*3|version\s+\d+|"
+    r"make\s+it\s+(?:" + _ITERATION_ADJECTIVES + r"|more\s+\w+|less\s+\w+)|"
+    r"(?:change|fix|cut|swap|replace|remove|drop|kill)\s+the\s+\w+|"
+    r"tone\s+it\s+(?:down|up)|"
+    r"more\s+edge|less\s+corporate|cut\s+the\s+fluff|"
     r"the\s+(?:last|previous|earlier)\s+(?:draft|article|thread|tweet|post|version)|"
     r"that\s+(?:draft|article|thread|tweet|post|version)|"
     r"my\s+(?:last|previous|earlier)\s+(?:draft|article|thread|tweet|post)"
     r")\b",
+    re.IGNORECASE,
+)
+
+_ITERATION_STANDALONE_PATTERN = re.compile(
+    r"^\s*(?:" + _ITERATION_ADJECTIVES + r")\s*(?:please|plz|pls)?\s*[.!?]?\s*$",
     re.IGNORECASE,
 )
 
@@ -87,7 +126,9 @@ def save_draft(
     min_length: int = DRAFT_MIN_LENGTH,
 ) -> BotDraft | None:
     text = str(content or "")
-    if len(text) < min_length:
+    if not text.strip():
+        return None
+    if min_length and len(text) < min_length:
         return None
     user = str(external_user_id or "").strip()
     channel = str(channel_kind or "").strip()
@@ -209,6 +250,47 @@ def find_draft_by_handle(
     return _row_to_draft(rows[0])
 
 
+_DRAFT_DRIFT_STOPWORDS = frozenset({
+    "the", "and", "for", "with", "this", "that", "your", "you", "have", "here",
+    "have", "just", "what", "when", "where", "would", "could", "should", "from",
+    "about", "some", "into", "than", "then", "there", "their", "they", "them",
+    "will", "been", "want", "make", "more", "less", "very", "only", "like",
+})
+
+
+def _extract_tokens(text: str) -> set[str]:
+    words = re.findall(r"[a-z0-9]{4,}", (text or "").lower())
+    return {w for w in words if w not in _DRAFT_DRIFT_STOPWORDS}
+
+
+def reply_resembles_draft(draft_content: str, reply_text: str, *, threshold: float = 0.15) -> bool:
+    """Lightweight topical-drift guard.
+
+    Returns True if the reply shares enough vocabulary with the draft to be
+    considered a genuine iteration (same subject), False if the topic drifted.
+    Used to prevent overwriting a draft when iteration intent fired but the
+    bot produced an unrelated reply (e.g. ambiguous "this" resolving to a
+    different conversational referent).
+    """
+    draft_tokens = _extract_tokens(draft_content)
+    reply_tokens = _extract_tokens(reply_text)
+    if not draft_tokens or not reply_tokens:
+        return True  # too little signal — fall back to trusting the iteration intent
+    overlap = len(draft_tokens & reply_tokens)
+    union = len(draft_tokens | reply_tokens)
+    if union == 0:
+        return True
+    jaccard = overlap / union
+    return jaccard >= threshold
+
+
+def detect_generative_intent(message: str) -> bool:
+    text = str(message or "").strip()
+    if not text:
+        return False
+    return bool(_GENERATIVE_REQUEST_PATTERN.search(text))
+
+
 def detect_iteration_intent(message: str) -> dict | None:
     text = str(message or "").strip()
     if not text:
@@ -219,6 +301,9 @@ def detect_iteration_intent(message: str) -> dict | None:
     intent_match = _ITERATION_INTENT_PATTERN.search(text)
     if intent_match:
         return {"matched_handle": None, "trigger": intent_match.group(0).lower()}
+    standalone_match = _ITERATION_STANDALONE_PATTERN.match(text)
+    if standalone_match:
+        return {"matched_handle": None, "trigger": standalone_match.group(0).strip().lower()}
     return None
 
 

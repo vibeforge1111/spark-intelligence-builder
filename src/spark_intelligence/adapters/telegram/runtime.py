@@ -262,6 +262,7 @@ def _maybe_save_reply_as_draft(
             detect_generative_intent,
             detect_iteration_intent,
             find_draft_for_iteration,
+            reply_resembles_draft,
             save_draft,
             update_draft_content,
         )
@@ -301,11 +302,32 @@ def _maybe_save_reply_as_draft(
         except Exception:
             source_draft = None
         if source_draft is not None:
+            on_topic = True
             try:
-                update_draft_content(
+                on_topic = reply_resembles_draft(source_draft.content, reply)
+            except Exception:
+                on_topic = True
+            if on_topic:
+                try:
+                    update_draft_content(
+                        state_db,
+                        draft_id=source_draft.draft_id,
+                        content=reply,
+                        chip_used=chip_used,
+                    )
+                except Exception:
+                    pass
+                return reply_text
+            # iteration intent fired but reply drifted off-topic —
+            # preserve the original draft and capture the divergent
+            # reply as a fresh draft instead of silently clobbering.
+            try:
+                save_draft(
                     state_db,
-                    draft_id=source_draft.draft_id,
+                    external_user_id=user,
+                    channel_kind="telegram",
                     content=reply,
+                    session_id=session_id,
                     chip_used=chip_used,
                 )
             except Exception:

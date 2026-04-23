@@ -45,6 +45,13 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
 
         self.assertEqual(query, "Example Domain")
 
+    def test_normalize_browser_search_query_strips_source_request_suffix(self) -> None:
+        query = _normalize_browser_search_query(
+            "Search the web for the official IANA page about reserved example domains and tell me the source you used."
+        )
+
+        self.assertEqual(query, "official IANA page about reserved example domains")
+
     def test_normalize_browser_search_query_extracts_domain_from_browse_request(self) -> None:
         query = _normalize_browser_search_query(
             "Go to vibeship.co and tell me what you think."
@@ -926,6 +933,22 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
 
         self.assertNotIn("[TOOL_CALL]", cleaned)
         self.assertIn("Source: https://www.iana.org/domains/reserved", cleaned)
+
+    def test_sanitize_browser_search_reply_promotes_specific_same_host_source_url(self) -> None:
+        cleaned, actions = _sanitize_browser_search_reply(
+            (
+                "The official source is IANA itself at https://www.iana.org.\n\n"
+                "The specific page is https://www.iana.org/domains/reserved.\n\n"
+                "The user asked me to give sources using the `source_url` field - so there it is: https://www.iana.org/domains/reserved."
+            ),
+            source_url="https://www.iana.org",
+        )
+
+        self.assertIn("https://www.iana.org/domains/reserved", cleaned)
+        self.assertNotIn("The user asked me to give sources using the `source_url` field", cleaned)
+        self.assertIn("Source: https://www.iana.org/domains/reserved", cleaned)
+        self.assertIn("promote_specific_same_host_source_url", actions)
+        self.assertIn("strip_browser_process_residue", actions)
 
     def test_clean_messaging_reply_rewrites_structured_chip_memo_for_telegram(self) -> None:
         cleaned = _clean_messaging_reply(
@@ -3156,6 +3179,41 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         read_events = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=10)
         self.assertTrue(read_events)
         self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate"), "profile.home_country")
+
+    def test_build_researcher_reply_answers_missing_personal_preference_queries_directly_from_memory(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        for request_id, message, predicate in (
+            ("req-favorite-color-missing", "What is my favorite color?", "profile.favorite_color"),
+            ("req-dog-name-missing", "What is my dog's name?", "profile.dog_name"),
+            ("req-favorite-food-missing", "What food do I love the most?", "profile.favorite_food"),
+        ):
+            with self.subTest(message=message):
+                with patch(
+                    "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+                    side_effect=AssertionError("provider resolution should not run for direct memory fact replies"),
+                ), patch(
+                    "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+                    side_effect=AssertionError("provider execution should not run for direct memory fact replies"),
+                ):
+                    result = build_researcher_reply(
+                        config_manager=self.config_manager,
+                        state_db=self.state_db,
+                        request_id=request_id,
+                        agent_id="agent-1",
+                        human_id="human-1",
+                        session_id="session-personal-preference-query-missing",
+                        channel_kind="telegram",
+                        user_message=message,
+                    )
+
+                self.assertEqual(result.reply_text, "I don't currently have that saved.")
+                self.assertEqual(result.mode, "memory_profile_fact")
+                self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+                read_events = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=20)
+                self.assertTrue(read_events)
 
     def test_build_researcher_reply_answers_profile_fact_history_query_directly_from_memory(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)

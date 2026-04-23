@@ -960,7 +960,7 @@ class CliSmokeTests(SparkTestCase):
 
         self.assertEqual(status_stderr, "")
         self.assertIn(status_exit, (0, 1))
-        self.assertIn("- browser: failed via spark-browser BROWSER_SESSION_STALE", status_stdout)
+        self.assertIn("- browser: standby via spark-browser BROWSER_SESSION_STALE", status_stdout)
         self.assertIn("- browser detail: Live browser session is not currently connected.", status_stdout)
         self.assertIn(
             "- browser repair: Reconnect the Spark Browser extension session, then rerun `spark-intelligence browser status --json`.",

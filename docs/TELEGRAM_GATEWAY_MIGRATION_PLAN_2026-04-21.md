@@ -58,6 +58,18 @@ Even after migration, these boundaries should remain:
 5. Migration must be reversible.
 6. `spark-telegram-bot` remains the production ingress until Builder proves parity.
 
+## Multi-Terminal Clarification
+
+Multiple terminals and workers can safely participate in the Spark system only if they remain behind the Telegram ingress owner.
+
+That means:
+
+- one public Telegram gateway receives updates
+- internal workers fan out behind it
+- internal workers do not own the Telegram bot token directly
+
+This migration is therefore about possibly moving the single ingress owner from `spark-telegram-bot` into Builder later, not about allowing multiple concurrent Telegram receivers.
+
 ## Required Parity Before Cutover
 
 Builder must support all of these before it becomes the Telegram ingress owner:

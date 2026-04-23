@@ -149,6 +149,39 @@ class DraftRuntimeIntegrationTests(SparkTestCase):
         self.assertEqual(returned, "some reply")
         self.assertEqual(len(self._drafts()), 0)
 
+    # ---------- drift guard ----------
+
+    def test_iteration_topic_drift_saves_new_draft_instead_of_overwriting(self) -> None:
+        tweet = "Got hacked. Three years of account history gone in four hours. Rebuilding."
+        self._send(user_message="draft a tweet about the hack", reply_text=tweet)
+        tweet_id = self._drafts()[0].draft_id
+
+        # Iteration intent fires (matches "less corporate") but the bot
+        # replies about a totally different subject (meta conversation).
+        drifted_reply = "Two chips are currently active: xcontent and startup-yc. Everything else is dormant."
+        self._send(user_message="can you make this less corporate", reply_text=drifted_reply)
+
+        drafts = self._drafts()
+        self.assertEqual(len(drafts), 2, "drift should create a new draft, not overwrite")
+        # Original tweet draft is still intact under its original id.
+        original = next((d for d in drafts if d.draft_id == tweet_id), None)
+        self.assertIsNotNone(original)
+        assert original is not None
+        self.assertEqual(original.content, tweet)
+
+    def test_iteration_on_topic_still_updates_in_place(self) -> None:
+        tweet = "Got hacked. Three years of account history vanished in four hours. Rebuilding."
+        self._send(user_message="draft a tweet about the hack", reply_text=tweet)
+        tweet_id = self._drafts()[0].draft_id
+
+        tighter = "Got hacked. Three years gone in four hours."
+        self._send(user_message="tighten this", reply_text=tighter)
+
+        drafts = self._drafts()
+        self.assertEqual(len(drafts), 1, "on-topic iteration must update in place")
+        self.assertEqual(drafts[0].draft_id, tweet_id)
+        self.assertEqual(drafts[0].content, tighter)
+
     def test_memory_delete_reply_does_not_append_instruction_forget_footer(self) -> None:
         returned = _maybe_capture_user_instruction(
             state_db=self.state_db,
