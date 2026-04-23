@@ -22,6 +22,7 @@ from spark_intelligence.schedule_bridge import (
 )
 from spark_intelligence.mission_bridge import detect_board_intent
 from spark_intelligence.loop_bridge import detect_loop_invoke_intent
+from spark_intelligence.chip_create_bridge import detect_chip_create_intent
 from spark_intelligence.user_instructions import detect_instruction_intent
 
 
@@ -134,6 +135,20 @@ LOOP_INVOKE_PHRASES = [
     "run domain-chip-xcontent a few times",
 ]
 
+CHIP_CREATE_PHRASES = [
+    "build me a chip for supply-chain-risk",
+    "make a chip that tracks brand sentiment",
+    "create a new chip for investor research",
+    "scaffold a chip for competitive intel",
+    "generate a domain chip for gtm experiments",
+    "I need a chip that audits security posture",
+    "I want a chip for content repurposing",
+    "spin up a chip for financial modeling",
+    "new chip for product launch readiness",
+    "chip for customer feedback analysis",
+    "could you make me a chip that tracks market trends",
+]
+
 
 # -------- Anti-fixtures (plain chat, must not match anything) ---------------
 
@@ -182,8 +197,12 @@ def _board_hit(phrase: str) -> bool:
 def _loop_invoke_hit(phrase: str) -> bool:
     return detect_loop_invoke_intent(phrase) is not None
 
+def _chip_create_hit(phrase: str) -> bool:
+    return detect_chip_create_intent(phrase) is not None
+
 
 INTENT_DETECTORS = {
+    "chip_create": _chip_create_hit,
     "loop_invoke": _loop_invoke_hit,
     "board": _board_hit,
     "schedule_list": _schedule_list_hit,
@@ -209,6 +228,7 @@ STATEFUL_DETECTORS = {"confirm_yes", "confirm_no"}
 INTENT_PRIORITY = [
     "schedule_delete",    # destructive, explicit verbs, confirmation-gated
     "instruction_forget", # explicit /forget or "stop remembering X"
+    "chip_create",        # explicit creation verb + chip vocabulary
     "loop_invoke",        # explicit chip-key reference + loop verb
     "board",              # mission board - "what's running" with live missions
     "schedule_list",      # read-only schedule listing
@@ -217,6 +237,7 @@ INTENT_PRIORITY = [
 
 
 FIXTURE_BY_INTENT = {
+    "chip_create": CHIP_CREATE_PHRASES,
     "loop_invoke": LOOP_INVOKE_PHRASES,
     "board": BOARD_PHRASES,
     "schedule_list": SCHEDULE_LIST_PHRASES,

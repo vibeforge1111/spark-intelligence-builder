@@ -1086,7 +1086,28 @@ def simulate_telegram_update(
                         _loop_intent = _detect_loop_intent(effective_text)
                     except Exception:
                         _loop_intent = None
-                    if _loop_intent is not None:
+                    _chip_create_intent = None
+                    try:
+                        from spark_intelligence.chip_create_bridge import (
+                            detect_chip_create_intent as _detect_chip_create_intent,
+                            format_chip_create_suggestion as _fmt_chip_create,
+                        )
+                        _chip_create_intent = _detect_chip_create_intent(effective_text)
+                    except Exception:
+                        _chip_create_intent = None
+                    if _chip_create_intent is not None:
+                        _shortcircuited = True
+                        outbound_text = _fmt_chip_create(_chip_create_intent.get("brief", ""))
+                        trace_ref = None
+                        bridge_mode = "chip_create_suggest_shortcircuit"
+                        attachment_context = None
+                        routing_decision = "chip_create_suggest_shortcircuit"
+                        active_chip_key = None
+                        active_chip_task_type = None
+                        active_chip_evaluate_used = False
+                        evidence_summary = None
+                        bridge_result = None
+                    elif _loop_intent is not None:
                         _shortcircuited = True
                         chip = _loop_intent.get("chip_key")
                         rounds = _loop_intent.get("rounds", 1)
