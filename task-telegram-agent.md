@@ -79,6 +79,17 @@ evaluate per round) -> status JSON -> Telegram reply.
 - [ ] Telegram `/loop <goal> --iterations N` sugar on top of `/run`
 - [ ] Plain-text mission-intent auto-route (builder suggests `/run` when user describes a recursive task conversationally)
 
+## Track C - Self-observability chip (real-world run)  [GREEN 2026-04-23]
+
+- [x] `/chip create` scaffolded `domain-chip-spark-ops-critic` (commit 33006e2 fixed scaffolder .cli suffix bug surfaced by this track)
+- [x] First /loop run: generic scaffolded hooks returned portfolio-audit metric, not real self-critic signal
+- [x] Replaced cli.py with hand-written evaluate/suggest that read schedules.json, loop status files, mission-control.json, bot log (commit 0892c0e)
+- [x] /loop domain-chip-spark-ops-critic: verdict=critical, defect_rate=0.687, surfaced real findings including the already-tracked startup-yc cold-start bug
+- [x] B remediation: loop runner now bootstraps a probe candidate when suggest returns empty on cold state (commit ffcfefa)
+- [x] /loop startup-yc post-fix: candidates 0 -> 1, null_metric -> 1.000
+- [x] Compound loop closed: /loop domain-chip-spark-ops-critic post-fix returned verdict=healthy, defect_rate=0.020 (was 0.687)
+- [x] A scheduling: nightly 03:00 local cron (sched-d3460982) DMs the defect brief to chat 8319079055
+
 ---
 
 ## Test discipline (every green signal)
