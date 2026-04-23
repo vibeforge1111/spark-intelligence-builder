@@ -546,7 +546,9 @@ def resolve_canonical_agent_identity(
     display_name: str | None = None,
 ) -> CanonicalAgentState:
     local_agent_id = _canonical_agent_id(human_id)
-    resolved_name = (display_name or "").strip() or "Spark Agent"
+    # Do not invent an agent name from the human display name or a default.
+    # An empty agent_name means the agent still needs a user-defined name.
+    resolved_name = (display_name or "").strip()
 
     with state_db.connect() as conn:
         link_row = conn.execute(

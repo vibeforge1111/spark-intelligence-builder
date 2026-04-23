@@ -2132,7 +2132,7 @@ class CliSmokeTests(SparkTestCase):
         payload = json.loads(import_stdout)
         self.assertEqual(payload["status"], "completed")
         self.assertEqual(payload["chip_key"], "spark-personality")
-        self.assertEqual(payload["persona_profile"]["persona_name"], "Alice")
+        self.assertEqual(payload["persona_profile"]["persona_name"], "Founder Operator")
         self.assertEqual(payload["persona_profile"]["base_traits"]["directness"], 0.82)
         self.assertTrue(Path(payload["payload_path"]).exists())
         self.assertTrue(Path(payload["result_path"]).exists())

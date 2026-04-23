@@ -5084,7 +5084,7 @@ def build_researcher_reply(
                 predicate="profile.startup_name",
                 actor_id="researcher_bridge",
             )
-            current_fact_deleted = direct_fact_lookup.read_result.memory_role == "state_deletion"
+            current_fact_deleted = getattr(direct_fact_lookup.read_result, "memory_role", None) == "state_deletion"
             if not direct_fact_lookup.read_result.abstained and direct_fact_lookup.read_result.records:
                 primary_records = [
                     record
@@ -5131,7 +5131,7 @@ def build_researcher_reply(
                 predicate=str(detected_profile_fact_query.predicate or ""),
                 actor_id="researcher_bridge",
             )
-            current_fact_deleted = direct_fact_lookup.read_result.memory_role == "state_deletion"
+            current_fact_deleted = getattr(direct_fact_lookup.read_result, "memory_role", None) == "state_deletion"
             if not direct_fact_lookup.read_result.abstained and direct_fact_lookup.read_result.records:
                 primary_records = [
                     record
