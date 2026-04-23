@@ -1919,6 +1919,55 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertTrue(bridge_events)
         self.assertEqual((bridge_events[0]["facts_json"] or {}).get("read_method"), "explain_answer")
 
+    def test_build_researcher_reply_falls_back_to_founder_fact_for_startup_explanation(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        write_profile_fact_to_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human-1",
+            predicate="profile.founder_of",
+            value="Spark Swarm",
+            evidence_text="I am the founder of Spark Swarm.",
+            fact_name="profile_founder_of",
+            session_id="session-startup-explanation-founder-fallback",
+            turn_id="turn-startup-explanation-founder-fallback-write",
+            channel_kind="telegram",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for direct memory explanation replies"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for direct memory explanation replies"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-startup-explanation-founder-fallback",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-startup-explanation-founder-fallback",
+                channel_kind="telegram",
+                user_message="How do you know my startup?",
+            )
+
+        self.assertEqual(
+            result.reply_text,
+            "Because I have a saved memory record for that. You created Spark Swarm.",
+        )
+        self.assertEqual(result.mode, "memory_profile_fact_explanation")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_explanation")
+        bridge_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(bridge_events)
+        self.assertEqual(
+            (bridge_events[0]["facts_json"] or {}).get("read_method"),
+            "inspect_current_state(+related)",
+        )
+
     def test_build_researcher_reply_preserves_uncertainty_for_missing_city_query_fact(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)
