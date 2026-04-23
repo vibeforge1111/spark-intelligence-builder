@@ -22,17 +22,18 @@ Started: 2026-04-23
 - [x] P7 fix: wrap `evaluate_swarm_escalation` in `capability_router/service.py` try/except - any failure (timeout, URLError, None api_url) degrades to `swarm_decision(mode="unavailable", escalate=False)` instead of killing the turn
 - [x] Green signal: Live Telegram tests pass. P9 routes to `user_instruction_shortcircuit` with ack. P7 routes to `provider_fallback_chat+manual_recommended` without `bridge_error`.
 
-## Phase 2 - /chip create from Telegram
+## Phase 2 - /chip create from Telegram  [GREEN 2026-04-23]
 
-- [ ] spawner-ui: new `POST /api/chip/create` endpoint wrapping `chip_labs.chip_factory.scaffold_chip`
-- [ ] Brief parser: LLM converts free-text prompt -> structured brief JSON
-- [ ] Scaffolder enhancements:
-  - [ ] auto-populate `task_topics` / `task_keywords` / `combine_with` from brief
-  - [ ] call `vibeship-skills-lab/tools/validate-h70-cplus.js` after scaffold
-  - [ ] run `attachments pin-chip` + `snapshot` so chip becomes router-invokable immediately
-- [ ] spark-telegram-bot: `/chip create <prompt>` handler -> POSTs to spawner-ui
-- [ ] Mission relay posts chip-creation progress into Telegram chat
-- [ ] Green signal: Telegram `/chip create a chip for supply-chain-risk` produces a valid, router-invokable chip end-to-end
+- [x] Builder CLI: `spark-intelligence chips create --prompt ...` (commit 19008ec)
+- [x] Brief parser: LLM (Z.AI GLM 5.1) turns prompt -> strict JSON brief with router fields
+- [x] Scaffolder delegation: chip_labs.chip_factory.scaffold_chip
+- [x] Manifest patched with chip_name + task_topics + task_keywords + combine_with
+- [x] add_attachment_root -> snapshot -> pin_chip -> snapshot -> router_invokable verified
+- [x] spark-telegram-bot /chip create handler (commit 4030ee2) shells out to builder CLI
+- [x] Green signal: live Telegram `/chip create a chip for brand-sentiment-tracking ...` produced `domain-chip-brand-sentiment-tracking` at Desktop, router_invokable=yes, in ~45s
+- DEFERRED: spawner-ui REST endpoint (bot shells Python directly; simpler and works)
+- DEFERRED: H70-C+ validator integration (chip contract is different from skills contract; not blocking)
+- DEFERRED: mission-relay progress events for chip-creation (single-shot is fine for now)
 
 ## Phase 3 - Autoloops (Scheduled tab)
 
