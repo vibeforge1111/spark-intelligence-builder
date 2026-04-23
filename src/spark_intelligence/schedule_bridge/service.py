@@ -11,19 +11,51 @@ from typing import Any
 
 _SPAWNER_URL = os.environ.get("SPAWNER_UI_URL") or "http://127.0.0.1:4174"
 
-# Natural-language intent for scheduler list queries. Deliberately narrow to
-# avoid false positives — we only short-circuit if the user is clearly asking
-# about their scheduled tasks.
+# Scope note: scheduler-related vocabulary the bot should route here.
+# We match on any message that (a) asks about the scheduler surface or
+# (b) asks a "what's running / what's set up / what's automated" type
+# question. Kept permissive because this short-circuits before the LLM
+# and is easy to override by just not asking about schedules.
+_SCHEDULER_NOUNS = (
+    r"schedules?|scheduled|cron\s*jobs?|cron|recurring|recurring\s+tasks?|"
+    r"automations?|autoruns?|autoloops?|routines?|nightly|daily|weekly|"
+    r"background\s+tasks?|repeating\s+tasks?|set\s*up\s+(?:tasks?|jobs?)"
+)
+_LIST_VERBS = (
+    r"show|list|display|see|view|get|tell\s+me|what(?:\s+are|\s+is)?|whats?|"
+    r"do\s+i\s+have|have\s+i\s+got|are\s+there|any|check|find|browse|"
+    r"look\s+at|review|overview|status\s+of|summary\s+of"
+)
+_RUNTIME_QUALIFIERS = (
+    r"right\s*now|currently|tonight|tomorrow|today|next|upcoming|planned|"
+    r"running|enabled|active|live|pending|queued|set|configured"
+)
+
 _LIST_PATTERNS = (
-    re.compile(r"\b(?:show|list|display|see|view|get)\b.{0,40}\b(?:schedule|schedules|scheduled|cron|recurring)\b", re.IGNORECASE),
-    re.compile(r"\b(?:whats?|what\s+is|what\s+are|what\s+have)\b.{0,30}\b(?:schedule|schedules|scheduled)\b", re.IGNORECASE),
-    re.compile(r"\b(?:schedules?|cron\s*jobs?)\b.{0,20}\b(?:list|status|active|enabled|right\s*now|do\s+i\s+have)\b", re.IGNORECASE),
-    re.compile(r"\b(?:do\s+i\s+have|are\s+there|any)\b.{0,20}\b(?:schedules?|scheduled|cron)\b", re.IGNORECASE),
-    re.compile(r"^\s*(?:my\s+)?schedules?\s*\??\s*$", re.IGNORECASE),
+    # "show my schedules", "list the scheduled jobs", "display cron jobs", etc.
+    re.compile(rf"\b(?:{_LIST_VERBS})\b[^.\n]{{0,40}}\b(?:{_SCHEDULER_NOUNS})\b", re.IGNORECASE),
+    # "what's scheduled", "whats on my schedule", "what are the schedules"
+    re.compile(rf"\b(?:whats?|what\s+is|what\s+are)\b[^.\n]{{0,40}}\b(?:{_SCHEDULER_NOUNS}|running\s+automatically|running\s+in\s+background|automated)\b", re.IGNORECASE),
+    # "schedules list", "cron status", "cron active"
+    re.compile(rf"\b(?:{_SCHEDULER_NOUNS})\b[^.\n]{{0,25}}\b(?:{_RUNTIME_QUALIFIERS}|list|status)\b", re.IGNORECASE),
+    # "do I have any schedules", "are there any cron jobs"
+    re.compile(rf"\b(?:do\s+i\s+have|have\s+i|are\s+there|is\s+there|any)\b[^.\n]{{0,25}}\b(?:{_SCHEDULER_NOUNS})\b", re.IGNORECASE),
+    # Bare "my schedules?", "schedules?" as a one-word query
+    re.compile(r"^\s*(?:my\s+)?(?:schedules?|automations?|cron\s*jobs?|autoloops?)\s*\??\s*$", re.IGNORECASE),
+    # "what's running tonight", "anything fire tonight", "what's firing soon"
+    re.compile(r"\b(?:what|anything)\b[^.\n]{0,20}\b(?:running|firing|fire|scheduled|queued)\b[^.\n]{0,20}\b(?:tonight|tomorrow|today|soon|next|later)\b", re.IGNORECASE),
+    # "schedule board", "scheduler status", "show the scheduler"
+    re.compile(r"\b(?:scheduler|schedule\s+board|schedule\s+page|schedule\s+panel)\b", re.IGNORECASE),
 )
 
 
 def detect_schedule_intent(message: str) -> dict | None:
+    """Detect plain-language intent to list the scheduler surface.
+
+    Returns {"action": "list"} on match, None otherwise. Errs on the side
+    of matching since the short-circuit is cheap and easy to avoid
+    (users who don't want schedules simply don't ask about them).
+    """
     text = str(message or "").strip()
     if not text:
         return None
@@ -110,18 +142,41 @@ def _human_summary(rec: dict[str, Any]) -> str:
 
 
 def format_schedule_list(schedules: list[dict[str, Any]]) -> str:
+    """Conversational rendering of the scheduler surface.
+
+    Reads like Spark answering a friend, not a terminal dumping fields.
+    """
     if not schedules:
-        return "No schedules."
-    lines = [f"Schedules ({len(schedules)}):", ""]
+        return (
+            "Nothing on the schedule right now. If you want me to run "
+            "something on a cadence, say the word, or use /schedule to set it up."
+        )
+    n = len(schedules)
+    opener = (
+        f"Here's what I've got queued up ({n} active):"
+        if n > 1
+        else "Just one thing on the schedule:"
+    )
+    lines = [opener, ""]
     for rec in schedules:
-        lines.append(_human_summary(rec))
-        lines.append(f"  Schedule: {humanize_cron(str(rec.get('cron') or ''))}")
-        lines.append(f"  Next: {_format_next_fire(rec.get('nextFireAt'))}")
+        summary = _human_summary(rec)
+        when = humanize_cron(str(rec.get("cron") or ""))
+        next_fire = _format_next_fire(rec.get("nextFireAt"))
+        fires = int(rec.get("fireCount", 0) or 0)
         last = rec.get("lastStatus")
-        last_str = f" | last: {str(last)[:80]}" if last else ""
-        lines.append(f"  Fires so far: {rec.get('fireCount', 0)}{last_str}")
-        lines.append(f"  Id: {rec.get('id')}")
+        ran_bit = (
+            " Hasn't fired yet." if fires == 0
+            else f" Fired {fires} time{'' if fires == 1 else 's'} so far"
+            + (f" (last result: {str(last)[:60]})." if last else ".")
+        )
+        lines.append(f"• {summary}")
+        lines.append(f"  {when}, next run {next_fire}.{ran_bit}")
+        lines.append(f"  (id {rec.get('id')} - delete with /schedules delete {rec.get('id')})")
         lines.append("")
+    lines.append(
+        "Want to add or kill one? Use /schedule to create, /schedules delete <id> to remove, "
+        "or just ask me in plain English."
+    )
     return "\n".join(lines).rstrip()
 
 
