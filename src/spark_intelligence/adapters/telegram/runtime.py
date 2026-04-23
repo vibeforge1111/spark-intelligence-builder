@@ -1189,6 +1189,31 @@ def simulate_telegram_update(
                         active_chip_evaluate_used = False
                         evidence_summary = None
                         bridge_result = None
+                # Disambiguation: if no specific intent matched but the
+                # message clearly references agent surfaces, ask a single
+                # clarifying question rather than falling through to web
+                # search / chip routing / bridge.
+                if not _shortcircuited and _instruction_intent is None and effective_text:
+                    try:
+                        from spark_intelligence.disambiguation_bridge import (
+                            detect_ambiguous_intent as _detect_ambiguous,
+                            format_clarifying_question as _fmt_clarify,
+                        )
+                        _ambiguous = _detect_ambiguous(effective_text)
+                    except Exception:
+                        _ambiguous = None
+                    if _ambiguous is not None:
+                        _shortcircuited = True
+                        outbound_text = _fmt_clarify(_ambiguous)
+                        trace_ref = None
+                        bridge_mode = "disambiguation_shortcircuit"
+                        attachment_context = None
+                        routing_decision = "disambiguation_shortcircuit"
+                        active_chip_key = None
+                        active_chip_task_type = None
+                        active_chip_evaluate_used = False
+                        evidence_summary = None
+                        bridge_result = None
                 if not _shortcircuited and _instruction_intent is not None:
                     _shortcircuited = True
                     outbound_text = _maybe_capture_user_instruction(
