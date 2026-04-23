@@ -35,13 +35,33 @@ Started: 2026-04-23
 - DEFERRED: H70-C+ validator integration (chip contract is different from skills contract; not blocking)
 - DEFERRED: mission-relay progress events for chip-creation (single-shot is fine for now)
 
-## Phase 3 - Autoloops (Scheduled tab)
+## Phase 3A - Autoloops (recursive self-improving loops)  [GREEN 2026-04-23]
 
-- [ ] spawner-ui: cron backend. Persistent schedule store in `.spawner/schedules.json`
+Plumbing: Telegram /loop -> builder CLI -> run_chip_hook (suggest then
+evaluate per round) -> status JSON -> Telegram reply.
+
+- [x] spark-researcher `autoloop` CLI investigated - broken against its
+      own committed chips (schema drift); pivoted to lightweight
+      in-builder runner.
+- [x] Builder loops/ module with run_chip_autoloop()
+- [x] `spark-intelligence loops run --chip <key> --rounds N`
+- [x] spark-telegram-bot `/loop <chip_key> [rounds]` command
+- [x] Green signal: live Telegram `/loop startup-yc 2` returned "Rounds
+      2/2" with per-round summary; status file written.
+- FOLLOW-UP: scaffolded chips (from /chip create) have a lab_hooks
+  relative-import bug; fix so new chips can loop immediately.
+- FOLLOW-UP: seed history / priming for suggest hooks that return 0
+  candidates on cold state.
+
+## Phase 3B - Scheduler (cron-style recurring triggers)
+
+Distinct from autoloops. Cron-driven recurring missions or autoloops.
+
+- [ ] spawner-ui: persistent schedule store in `.spawner/schedules.json`
 - [ ] spawner-ui: `POST /api/scheduled/{create,list,delete}` endpoints
-- [ ] spawner-ui: kanban Scheduled tab UI - replace "Coming in next pass" placeholder with real list + create form
-- [ ] Scheduler worker: wakes on cron match, POSTs `/api/spark/run`, relays mission outcome to telegram
-- [ ] spark-telegram-bot: `/schedule "<cron>" <goal>` and `/schedules list|delete <id>` handlers
+- [ ] spawner-ui: Kanban Scheduled tab - replace "Coming in next pass" placeholder
+- [ ] Scheduler worker: wakes on cron match, calls `/api/spark/run` OR spawns autoloop
+- [ ] spark-telegram-bot: `/schedule "<cron>" <action>` and `/schedules list|delete <id>`
 - [ ] Green signal: Telegram `/schedule "*/2 * * * *" echo hello` fires twice, reports both in chat
 
 ## Phase 4 - Stretch (only if time remains)
