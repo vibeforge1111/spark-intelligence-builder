@@ -137,7 +137,13 @@ def run_chip_autoloop(
                 config_manager,
                 chip_key=chip_key,
                 hook="suggest",
-                payload={"history": history, "round": round_idx, "limit": suggest_limit},
+                payload={
+                    "history": history,
+                    "round": round_idx,
+                    "limit": suggest_limit,
+                    "chip_key": chip_key,
+                    "cold_start": round_idx == 1 and not history,
+                },
             )
         except Exception as exc:
             return LoopResult(
@@ -164,6 +170,21 @@ def run_chip_autoloop(
         if not isinstance(suggestions_raw, list):
             suggestions_raw = []
         suggestions = suggestions_raw[:suggest_limit]
+
+        # Cold-start bootstrap: if a chip returns no suggestions on the first
+        # round with empty history, inject a probe candidate so evaluate still
+        # fires. Chips with sophisticated suggest logic typically need state
+        # (research frontier, prior trials) that doesn't exist on first run.
+        if not suggestions and round_idx == 1 and not history:
+            suggestions = [
+                {
+                    "candidate_id": f"bootstrap-{chip_key}",
+                    "candidate_summary": f"Cold-start bootstrap probe for {chip_key}",
+                    "hypothesis": "No prior state; triggering evaluate to capture baseline metrics.",
+                    "mutations": {"bootstrap": True},
+                    "priority": "low",
+                }
+            ]
 
         evaluations: list[dict[str, Any]] = []
         for s in suggestions:
