@@ -1069,6 +1069,7 @@ def simulate_telegram_update(
                     bridge_result = None
                 elif _instruction_intent is None:
                     _board_intent = None
+                    _loop_intent = None
                     try:
                         from spark_intelligence.mission_bridge import (
                             detect_board_intent as _detect_board_intent,
@@ -1078,7 +1079,34 @@ def simulate_telegram_update(
                         _board_intent = _detect_board_intent(effective_text)
                     except Exception:
                         _board_intent = None
-                    if _board_intent is not None:
+                    try:
+                        from spark_intelligence.loop_bridge import (
+                            detect_loop_invoke_intent as _detect_loop_intent,
+                        )
+                        _loop_intent = _detect_loop_intent(effective_text)
+                    except Exception:
+                        _loop_intent = None
+                    if _loop_intent is not None:
+                        _shortcircuited = True
+                        chip = _loop_intent.get("chip_key")
+                        rounds = _loop_intent.get("rounds", 1)
+                        outbound_text = (
+                            f"Got it - you want to loop {chip} for {rounds} round"
+                            f"{'' if rounds == 1 else 's'}. "
+                            f"Tap /loop {chip} {rounds} to fire it (takes a few minutes).\n"
+                            f"I don't run loops from plain chat because they're long-running "
+                            f"and I'd rather hand back control to you than block."
+                        )
+                        trace_ref = None
+                        bridge_mode = "loop_suggest_shortcircuit"
+                        attachment_context = None
+                        routing_decision = "loop_suggest_shortcircuit"
+                        active_chip_key = None
+                        active_chip_task_type = None
+                        active_chip_evaluate_used = False
+                        evidence_summary = None
+                        bridge_result = None
+                    elif _board_intent is not None:
                         _shortcircuited = True
                         outbound_text = _fmt_board()
                         trace_ref = None

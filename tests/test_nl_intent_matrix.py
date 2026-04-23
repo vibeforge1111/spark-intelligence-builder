@@ -21,6 +21,7 @@ from spark_intelligence.schedule_bridge import (
     is_confirmation_yes,
 )
 from spark_intelligence.mission_bridge import detect_board_intent
+from spark_intelligence.loop_bridge import detect_loop_invoke_intent
 from spark_intelligence.user_instructions import detect_instruction_intent
 
 
@@ -120,6 +121,19 @@ BOARD_PHRASES = [
     "view the board right now",
 ]
 
+LOOP_INVOKE_PHRASES = [
+    "loop startup-yc",
+    "loop startup-yc 3 times",
+    "loop domain-chip-spark-ops-critic",
+    "run domain-chip-xcontent",
+    "run the startup-yc chip",
+    "improve the spark-browser chip",
+    "iterate on domain-chip-spark-ops-critic",
+    "tune startup-yc",
+    "run startup-yc twice",
+    "run domain-chip-xcontent a few times",
+]
+
 
 # -------- Anti-fixtures (plain chat, must not match anything) ---------------
 
@@ -165,8 +179,12 @@ def _confirm_no_hit(phrase: str) -> bool:
 def _board_hit(phrase: str) -> bool:
     return detect_board_intent(phrase) is not None
 
+def _loop_invoke_hit(phrase: str) -> bool:
+    return detect_loop_invoke_intent(phrase) is not None
+
 
 INTENT_DETECTORS = {
+    "loop_invoke": _loop_invoke_hit,
     "board": _board_hit,
     "schedule_list": _schedule_list_hit,
     "schedule_delete": _schedule_delete_hit,
@@ -191,6 +209,7 @@ STATEFUL_DETECTORS = {"confirm_yes", "confirm_no"}
 INTENT_PRIORITY = [
     "schedule_delete",    # destructive, explicit verbs, confirmation-gated
     "instruction_forget", # explicit /forget or "stop remembering X"
+    "loop_invoke",        # explicit chip-key reference + loop verb
     "board",              # mission board - "what's running" with live missions
     "schedule_list",      # read-only schedule listing
     "instruction_remember",  # most permissive; catches inline directives
@@ -198,6 +217,7 @@ INTENT_PRIORITY = [
 
 
 FIXTURE_BY_INTENT = {
+    "loop_invoke": LOOP_INVOKE_PHRASES,
     "board": BOARD_PHRASES,
     "schedule_list": SCHEDULE_LIST_PHRASES,
     "schedule_delete": SCHEDULE_DELETE_PHRASES,
