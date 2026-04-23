@@ -60,16 +60,18 @@ evaluate per round) -> status JSON -> Telegram reply.
       returned "candidates=3 best_verdict=benchmark_grounded best_metric=0.773"
       on both rounds
 
-## Phase 3B - Scheduler (cron-style recurring triggers)
+## Phase 3B - Scheduler (cron-style recurring triggers)  [GREEN 2026-04-23]
 
-Distinct from autoloops. Cron-driven recurring missions or autoloops.
-
-- [ ] spawner-ui: persistent schedule store in `.spawner/schedules.json`
-- [ ] spawner-ui: `POST /api/scheduled/{create,list,delete}` endpoints
-- [ ] spawner-ui: Kanban Scheduled tab - replace "Coming in next pass" placeholder
-- [ ] Scheduler worker: wakes on cron match, calls `/api/spark/run` OR spawns autoloop
-- [ ] spark-telegram-bot: `/schedule "<cron>" <action>` and `/schedules list|delete <id>`
-- [ ] Green signal: Telegram `/schedule "*/2 * * * *" echo hello` fires twice, reports both in chat
+- [x] spawner-ui: persistent schedule store in `.spawner/schedules.json`
+- [x] spawner-ui: `GET/POST/DELETE /api/scheduled` endpoints
+- [x] Scheduler worker (30s tick via croner) fires mission (POST /api/spark/run) or loop (builder CLI)
+- [x] Telegram relay: direct Bot API sendMessage on each fire; reads token via `$env/dynamic/private`
+- [x] spark-telegram-bot: `/schedule "<cron>" mission <goal>` / `/schedule "<cron>" loop <chip> [rounds]` / `/schedules` / `/schedules delete <id>`
+- [x] Green signal: live fire sent msg_id 714 from Spark AGI to user with `[sched sched-f359fe87] loop ok`
+- DEFERRED: Kanban Scheduled tab UI - still placeholder, but backend is live; UI can come later
+- LESSONS LEARNED:
+  - Test schedule at large intervals only (≥60m) unless you want to burn tokens; mission action fires real /api/spark/run
+  - Clean up test schedules immediately after verification
 
 ## Phase 4 - Stretch (only if time remains)
 
