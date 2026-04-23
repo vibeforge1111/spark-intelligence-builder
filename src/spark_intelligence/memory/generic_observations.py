@@ -117,6 +117,28 @@ _OWNER_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*)\s+owns\s+.+?[.!]?$", re.IGNORECASE),
 )
 
+_KINSHIP_ALIAS_TO_CANONICAL = {
+    "mom": "mother",
+    "mum": "mother",
+    "mother": "mother",
+    "dad": "father",
+    "father": "father",
+    "sister": "sister",
+    "brother": "brother",
+}
+_KINSHIP_ALIAS_PATTERN = r"mom|mum|mother|dad|father|sister|brother"
+_FAMILY_SHARED_TIME_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        rf"\bmy\s+({_KINSHIP_ALIAS_PATTERN})\s+(?:came over|dropped by|visited(?:\s+(?:me|us))?)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"\b(?:i\s+)?(?:spent|spend|spending)\s+time\s+with\s+my\s+({_KINSHIP_ALIAS_PATTERN})\b",
+        re.IGNORECASE,
+    ),
+    re.compile(rf"\bhung out with\s+my\s+({_KINSHIP_ALIAS_PATTERN})\b", re.IGNORECASE),
+)
+
 TelegramGenericMemoryRole = Literal["current_state", "structured_evidence", "event", "belief_candidate"]
 TelegramGenericOperation = Literal["update", "delete"]
 TelegramGenericAssessmentOutcome = Literal[
@@ -279,6 +301,18 @@ _GENERIC_PACKS: tuple[TelegramGenericPack, ...] = (
         retention_class="durable_profile",
         update_patterns=(re.compile(r"^my\s+brother\s+is\s+(.+?)[.!]?$", re.IGNORECASE),),
         delete_phrases=_relationship_delete_phrases("brother"),
+    ),
+    TelegramGenericPack(
+        domain_pack="relationships",
+        predicate="profile.recent_family_members",
+        fact_name="recent_family_members",
+        label="family members you spent time with recently",
+        retention_class="active_state",
+        update_patterns=(),
+        delete_phrases=_simple_delete_phrases("my recent family time", "recent family members"),
+        observation_answer_template="I'll remember you recently spent time with: {value}.",
+        deletion_answer_template="I'll forget your recent family time.",
+        revalidation_days=14,
     ),
     TelegramGenericPack(
         domain_pack="goals_and_priorities",
@@ -536,6 +570,20 @@ def classify_telegram_generic_memory_candidate(user_message: str) -> TelegramGen
                 domain_pack=pack.domain_pack,
             )
 
+    family_shared_time_value = _family_shared_time_members_value(normalized)
+    if family_shared_time_value:
+        return TelegramGenericCandidate(
+            predicate="profile.recent_family_members",
+            value=family_shared_time_value,
+            evidence_text=text,
+            fact_name="recent_family_members",
+            label="family members you spent time with recently",
+            operation="update",
+            memory_role="current_state",
+            retention_class="active_state",
+            domain_pack="relationships",
+        )
+
     for pack in _GENERIC_PACKS:
         for pattern in pack.update_patterns:
             match = pattern.fullmatch(normalized)
@@ -556,6 +604,21 @@ def classify_telegram_generic_memory_candidate(user_message: str) -> TelegramGen
                 domain_pack=pack.domain_pack,
             )
     return None
+
+
+def _family_shared_time_members_value(text: str) -> str | None:
+    found: list[str] = []
+    seen: set[str] = set()
+    for pattern in _FAMILY_SHARED_TIME_PATTERNS:
+        for match in pattern.finditer(text):
+            canonical = _KINSHIP_ALIAS_TO_CANONICAL.get(match.group(1).lower())
+            if not canonical or canonical in seen:
+                continue
+            seen.add(canonical)
+            found.append(canonical)
+    if not found:
+        return None
+    return ", ".join(found)
 
 
 def detect_telegram_generic_observation(user_message: str) -> TelegramGenericObservation | None:

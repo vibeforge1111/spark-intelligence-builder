@@ -311,6 +311,16 @@ _GENERIC_PROFILE_QUERY_SPECS: tuple[tuple[str, str, str, tuple[str, ...]], ...] 
     ("profile.brother_name", "profile_brother_name", "brother", ("brother",)),
 )
 
+_FAMILY_SHARED_TIME_QUERY_TERMS = (
+    "spend time",
+    "spent time",
+    "spending time",
+    "hung out",
+    "visited",
+    "came over",
+    "dropped by",
+)
+
 
 def _history_fact_query(
     *,
@@ -1011,6 +1021,16 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
     event_history_query = _detect_profile_fact_event_history_query(text)
     if event_history_query is not None:
         return event_history_query
+    if (
+        normalized_question.startswith(("which ", "who ", "what "))
+        and "family" in normalized_question
+        and any(term in normalized_question for term in _FAMILY_SHARED_TIME_QUERY_TERMS)
+    ):
+        return ProfileFactQuery(
+            predicate="profile.recent_family_members",
+            fact_name="profile_recent_family_members",
+            label="family members you spent time with recently",
+        )
     if any(
         phrase in text
         for phrase in (
@@ -1888,6 +1908,8 @@ def _build_profile_fact_concise_answer(*, query: ProfileFactQuery, value: str) -
         return _ensure_sentence(f"Your sister is {normalized_value}")
     if predicate == "profile.brother_name":
         return _ensure_sentence(f"Your brother is {normalized_value}")
+    if predicate == "profile.recent_family_members":
+        return _ensure_sentence(f"You recently spent time with {normalized_value}")
     if predicate == "profile.spark_role":
         return _ensure_sentence(_spark_role_sentence(normalized_value))
     if predicate == "profile.home_country":
