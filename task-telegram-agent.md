@@ -48,10 +48,17 @@ evaluate per round) -> status JSON -> Telegram reply.
 - [x] spark-telegram-bot `/loop <chip_key> [rounds]` command
 - [x] Green signal: live Telegram `/loop startup-yc 2` returned "Rounds
       2/2" with per-round summary; status file written.
-- FOLLOW-UP: scaffolded chips (from /chip create) have a lab_hooks
-  relative-import bug; fix so new chips can loop immediately.
-- FOLLOW-UP: seed history / priming for suggest hooks that return 0
-  candidates on cold state.
+- [x] POLISH: scaffolded-chip lab_hooks import fixed via
+      `_patch_generated_cli` (rewrites relative -> absolute import and
+      prepends sys.path shim for chip_labs/src)
+- [x] POLISH: extractor generalized to mine real metrics from any
+      chip's evaluate output (lab_research_quality_score, portfolio_health,
+      or first scalar); pulls status from verdict/comparison_class/etc
+- [x] POLISH: Telegraf 90s handler timeout bypassed - /loop detaches,
+      bot acks immediately, posts summary when done
+- [x] Final polish verification: /loop domain-chip-brand-sentiment-tracking 2
+      returned "candidates=3 best_verdict=benchmark_grounded best_metric=0.773"
+      on both rounds
 
 ## Phase 3B - Scheduler (cron-style recurring triggers)
 
