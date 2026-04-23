@@ -977,6 +977,7 @@ def simulate_telegram_update(
                 evidence_summary = None
             else:
                 _instruction_intent = None
+                _schedule_intent = None
                 if effective_text:
                     try:
                         from spark_intelligence.user_instructions import (
@@ -985,7 +986,29 @@ def simulate_telegram_update(
                         _instruction_intent = _detect_instruction_intent(effective_text)
                     except Exception:
                         _instruction_intent = None
-                if _instruction_intent is not None:
+                    try:
+                        from spark_intelligence.schedule_bridge import (
+                            detect_schedule_intent as _detect_schedule_intent,
+                            format_schedule_list_from_spawner as _fmt_schedules,
+                        )
+                        _schedule_intent = _detect_schedule_intent(effective_text)
+                    except Exception:
+                        _schedule_intent = None
+                if _schedule_intent is not None and _instruction_intent is None:
+                    try:
+                        outbound_text = _fmt_schedules()
+                    except Exception as exc:
+                        outbound_text = f"Could not reach scheduler: {exc}"
+                    trace_ref = None
+                    bridge_mode = "schedule_list_shortcircuit"
+                    attachment_context = None
+                    routing_decision = "schedule_list_shortcircuit"
+                    active_chip_key = None
+                    active_chip_task_type = None
+                    active_chip_evaluate_used = False
+                    evidence_summary = None
+                    bridge_result = None
+                elif _instruction_intent is not None:
                     outbound_text = _maybe_capture_user_instruction(
                         state_db=state_db,
                         user_message=effective_text,
