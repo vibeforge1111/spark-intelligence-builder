@@ -4963,7 +4963,7 @@ def build_researcher_reply(
         direct_fact_read_method = "explain_answer"
         explanation_payload: dict[str, Any] = {}
         related_predicates = _profile_fact_query_related_predicates(detected_profile_fact_query.predicate)
-        explanation_related_predicates: tuple[str, ...] = ()
+        explanation_related_predicates: tuple[str, ...] = related_predicates
         direct_fact_explanation = explain_memory_answer_in_memory(
             config_manager=config_manager,
             state_db=state_db,
