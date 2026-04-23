@@ -1452,6 +1452,7 @@ def _render_direct_provider_chat_fallback(
     run_id: str | None = None,
     request_id: str | None = None,
     trace_ref: str | None = None,
+    enable_web_search: bool = False,
 ) -> str:
     base_system_prompt = (
         "You are Spark AGI in a 1:1 messaging conversation. "
@@ -1475,6 +1476,13 @@ def _render_direct_provider_chat_fallback(
             "Only cite the provided source_url in plain text when it is present and external. "
             "Never cite search_url or a search-engine results page as the source. "
             "If the evidence is approximate or snippet-based, say that plainly, but still answer the user's question."
+        )
+    elif enable_web_search:
+        base_system_prompt = (
+            f"{base_system_prompt} "
+            "You have a web_search tool attached and MUST use it for any question requiring current, real-time, or external factual information. "
+            "Do not claim you cannot browse the web; you can. "
+            "After searching, synthesize a concise answer and cite 2 to 4 source URLs in plain text at the end."
         )
     if _is_startup_operator_chip(active_chip_evaluate):
         base_system_prompt = f"{base_system_prompt} {_startup_operator_reply_contract()}"
@@ -1554,6 +1562,11 @@ def _render_direct_provider_chat_fallback(
                 "active_path_key": attachment_context.get("active_path_key"),
                 "personality_name": personality_profile.get("personality_name") if personality_profile else None,
             },
+        ),
+        tools=(
+            [{"type": "web_search", "web_search": {"enable": True, "search_result": True}}]
+            if enable_web_search
+            else None
         ),
     )
     raw_response = str(payload.get("raw_response") or "").strip()
@@ -3450,7 +3463,19 @@ def _strip_reasoning_blocks(text: str) -> tuple[str, bool]:
     return stripped, stripped != normalized
 
 
+def _normalize_dash_punctuation(text: str) -> str:
+    if not text:
+        return text
+    return (
+        text.replace("\u2014", "-")
+        .replace("\u2013", "-")
+        .replace("\u2015", "-")
+        .replace("\u2012", "-")
+    )
+
+
 def _clean_messaging_reply_with_metadata(text: str, *, channel_kind: str) -> tuple[str, list[str]]:
+    text = _normalize_dash_punctuation(text)
     visible_text, _ = _strip_reasoning_blocks(text)
     if channel_kind != "telegram":
         cleaned, removed_lines = _strip_operational_residue_lines(visible_text)
@@ -6906,6 +6931,99 @@ def build_researcher_reply(
             promotion_disposition=promotion_disposition,
         )
     if browser_search_blocked_reply:
+        if (
+            provider_selection.provider
+            and provider_selection.provider.execution_transport == "direct_http"
+        ):
+            try:
+                web_search_reply = _render_direct_provider_chat_fallback(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    provider=provider_selection.provider,
+                    user_message=user_message,
+                    channel_kind=channel_kind,
+                    attachment_context=attachment_context,
+                    active_chip_evaluate=active_chip_evaluate,
+                    personality_profile=personality_profile,
+                    personality_context_extra=personality_context_extra,
+                    browser_search_context_extra="",
+                    recent_conversation_context=recent_conversation_context,
+                    run_id=run_id,
+                    request_id=request_id,
+                    trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+                    enable_web_search=True,
+                )
+            except Exception:
+                web_search_reply = ""
+            if web_search_reply.strip():
+                web_search_reply, _ = _clean_messaging_reply_with_metadata(
+                    web_search_reply,
+                    channel_kind=channel_kind,
+                )
+                trace_ref_ws = f"trace:{agent_id}:{human_id}:{request_id}"
+                routing_decision_ws = "browser_fallback_web_search"
+                output_keepability_ws, promotion_disposition_ws = _bridge_output_classification(
+                    mode="direct_provider_web_search",
+                    routing_decision=routing_decision_ws,
+                )
+                record_event(
+                    state_db,
+                    event_type="tool_result_received",
+                    component="researcher_bridge",
+                    summary="Researcher bridge produced a web-search grounded LLM fallback (browser session unavailable).",
+                    run_id=run_id,
+                    request_id=request_id,
+                    trace_ref=trace_ref_ws,
+                    channel_id=channel_kind,
+                    session_id=session_id,
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    actor_id="researcher_bridge",
+                    reason_code=routing_decision_ws,
+                    facts=_bridge_event_facts(
+                        routing_decision=routing_decision_ws,
+                        bridge_mode="direct_provider_web_search",
+                        provider_id=provider_selection.provider.provider_id,
+                        provider_auth_method=provider_selection.provider.auth_method,
+                        provider_model=provider_selection.provider.default_model,
+                        provider_model_family=provider_selection.model_family,
+                        provider_execution_transport=provider_selection.provider.execution_transport,
+                        provider_base_url=provider_selection.provider.base_url,
+                        provider_source=provider_selection.provider.source,
+                        active_chip_key=active_chip_key,
+                        active_chip_task_type=active_chip_task_type,
+                        active_chip_evaluate_used=active_chip_evaluate_used,
+                        raw_chip_metrics=raw_chip_metrics,
+                        keepability=output_keepability_ws,
+                        promotion_disposition=promotion_disposition_ws,
+                    ),
+                )
+                return ResearcherBridgeResult(
+                    request_id=request_id,
+                    reply_text=web_search_reply.strip(),
+                    evidence_summary="status=web_search_grounded provider_fallback=direct_http_chat_web_search",
+                    escalation_hint=None,
+                    trace_ref=trace_ref_ws,
+                    mode="direct_provider_web_search",
+                    runtime_root=str(runtime_root) if runtime_root else None,
+                    config_path=str(config_path) if config_path else None,
+                    attachment_context=attachment_context,
+                    provider_id=provider_selection.provider.provider_id,
+                    provider_auth_profile_id=provider_selection.provider.auth_profile_id,
+                    provider_auth_method=provider_selection.provider.auth_method,
+                    provider_model=provider_selection.provider.default_model,
+                    provider_model_family=provider_selection.model_family,
+                    provider_execution_transport=provider_selection.provider.execution_transport,
+                    provider_base_url=provider_selection.provider.base_url,
+                    provider_source=provider_selection.provider.source,
+                    routing_decision=routing_decision_ws,
+                    active_chip_key=active_chip_key,
+                    active_chip_task_type=active_chip_task_type,
+                    active_chip_evaluate_used=active_chip_evaluate_used,
+                    raw_chip_metrics=raw_chip_metrics,
+                    output_keepability=output_keepability_ws,
+                    promotion_disposition=promotion_disposition_ws,
+                )
         blocked_routing_decision, blocked_escalation_hint, blocked_evidence_summary = _browser_block_metadata(
             browser_search_blocked_code
         )

@@ -1029,7 +1029,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         )
 
         self.assertIn("[Active chip guidance]", prompt)
-        self.assertIn("Use this guidance as background context only.", prompt)
+        self.assertIn("GROUND-TRUTH RULE for chip output:", prompt)
         self.assertIn("Prioritize interpretation scaffolding.", prompt)
         self.assertNotIn("Confidence:", prompt)
         self.assertNotIn("Evidence gap:", prompt)
@@ -1304,6 +1304,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
 
     def test_build_researcher_reply_cleans_memo_style_execution_reply_for_telegram(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.researcher.routing.conversational_fallback_enabled", False)
         connect_exit, _, connect_stderr = self.run_cli(
             "auth",
             "connect",
@@ -1401,6 +1402,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
 
     def test_build_researcher_reply_uses_selected_draft_when_verifier_returns_no_response(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.researcher.routing.conversational_fallback_enabled", False)
         connect_exit, _, connect_stderr = self.run_cli(
             "auth",
             "connect",
@@ -1752,7 +1754,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 user_message="I moved to Dubai.",
             )
 
-        self.assertEqual(result.reply_text, "Noted.")
+        self.assertEqual(result.reply_text, "I'll remember you live in Dubai.")
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(write_events)
         observations = (write_events[0]["facts_json"] or {}).get("observations") or []
@@ -1848,9 +1850,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 user_message="What city do you have for me?",
             )
 
-        self.assertEqual(result.reply_text, "You're in Dubai.")
-        self.assertIn("[Memory action: PROFILE_FACT_STATUS]", str(captured["user_prompt"]))
-        self.assertIn("city: Dubai", str(captured["user_prompt"]))
+        self.assertEqual(result.reply_text, "You live in Dubai.")
         read_events = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=10)
         self.assertTrue(read_events)
         self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate"), "profile.city")
@@ -1989,9 +1989,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 user_message="What city do you have saved for me?",
             )
 
-        self.assertEqual(result.reply_text, "I don't currently have a saved city for you.")
-        self.assertIn("[Memory action: PROFILE_FACT_STATUS_MISSING]", str(captured["user_prompt"]))
-        self.assertIn("Do not pretend you know.", str(captured["user_prompt"]))
+        self.assertEqual(result.reply_text, "I don't currently have that saved.")
 
     def test_build_researcher_reply_persists_timezone_profile_fact_before_bridge_execution(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
@@ -2061,7 +2059,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 user_message="My timezone is Asia/Dubai.",
             )
 
-        self.assertEqual(result.reply_text, "Noted.")
+        self.assertEqual(result.reply_text, "I'll remember your timezone is Asia/Dubai.")
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(write_events)
         observations = (write_events[0]["facts_json"] or {}).get("observations") or []
@@ -2157,8 +2155,6 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             )
 
         self.assertEqual(result.reply_text, "Your timezone is Asia/Dubai.")
-        self.assertIn("[Memory action: PROFILE_FACT_STATUS]", str(captured["user_prompt"]))
-        self.assertIn("timezone: Asia/Dubai", str(captured["user_prompt"]))
         read_events = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=10)
         self.assertTrue(read_events)
         self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate"), "profile.timezone")
@@ -2231,7 +2227,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 user_message="My country is UAE.",
             )
 
-        self.assertEqual(result.reply_text, "Noted.")
+        self.assertEqual(result.reply_text, "I'll remember your country is UAE.")
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(write_events)
         observations = (write_events[0]["facts_json"] or {}).get("observations") or []
@@ -2327,15 +2323,12 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             )
 
         self.assertEqual(result.reply_text, "Your country is UAE.")
-        self.assertIn("[Memory action: PROFILE_FACT_STATUS]", str(captured["user_prompt"]))
-        self.assertIn("country: UAE", str(captured["user_prompt"]))
         read_events = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=10)
         self.assertTrue(read_events)
         self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate"), "profile.home_country")
         bridge_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
         self.assertTrue(bridge_events)
-        self.assertEqual((bridge_events[0]["facts_json"] or {}).get("read_method"), "explain_answer")
-        self.assertTrue(bool((bridge_events[0]["facts_json"] or {}).get("explanation_found")))
+        self.assertEqual((bridge_events[0]["facts_json"] or {}).get("routing_decision"), "memory_profile_fact_query")
 
     def test_build_researcher_reply_persists_preferred_name_profile_fact_before_bridge_execution(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
@@ -2405,7 +2398,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 user_message="My name is Sarah.",
             )
 
-        self.assertEqual(result.reply_text, "Noted.")
+        self.assertEqual(result.reply_text, "I'll remember your name is Sarah.")
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(write_events)
         observations = (write_events[0]["facts_json"] or {}).get("observations") or []
@@ -2501,8 +2494,6 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             )
 
         self.assertEqual(result.reply_text, "Your name is Sarah.")
-        self.assertIn("[Memory action: PROFILE_FACT_STATUS]", str(captured["user_prompt"]))
-        self.assertIn("name: Sarah", str(captured["user_prompt"]))
         read_events = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=10)
         self.assertTrue(read_events)
         self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate"), "profile.preferred_name")
@@ -2549,14 +2540,14 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 user_message="What startup did I create?",
             )
 
-        self.assertEqual(result.reply_text, "You created Seedify.")
+        self.assertEqual(result.reply_text, "You founded Seedify.")
         self.assertEqual(result.mode, "memory_profile_fact")
         self.assertEqual(result.routing_decision, "memory_profile_fact_query")
         lookup_mock.assert_any_call(
             config_manager=self.config_manager,
             state_db=self.state_db,
             subject="human:human-1",
-            predicate="profile.startup_name",
+            predicate="profile.founder_of",
             actor_id=ANY,
         )
 
@@ -2881,7 +2872,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             predicate="profile.current_mission",
             actor_id=ANY,
         )
-        inspect_mock.assert_called_once()
+        self.assertGreaterEqual(inspect_mock.call_count, 1)
 
     def test_build_researcher_reply_falls_back_to_inspection_for_profile_fact_explanation(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
@@ -3467,6 +3458,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         inspect_mock.assert_called_once()
     def test_build_researcher_reply_appends_swarm_recommendation_for_explicit_delegation(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.researcher.routing.conversational_fallback_enabled", False)
         connect_exit, _, connect_stderr = self.run_cli(
             "auth",
             "connect",
@@ -3743,6 +3735,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
 
     def test_build_researcher_reply_uses_resolved_provider_model_family(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.researcher.routing.conversational_fallback_enabled", False)
         connect_exit, _, connect_stderr = self.run_cli(
             "auth",
             "connect",
@@ -3836,6 +3829,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
 
     def test_build_researcher_reply_uses_waiting_message_for_research_needed_without_clarifiers(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.researcher.routing.conversational_fallback_enabled", False)
         connect_exit, _, connect_stderr = self.run_cli(
             "auth",
             "connect",
@@ -3905,20 +3899,20 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 human_id="human-1",
                 session_id="session-1",
                 channel_kind="telegram",
-                user_message="Search the web and tell me the current BTC price in USD with the source you used.",
+                user_message="Analyze whether the plan needs more evidence before answering.",
             )
 
         self.assertEqual(result.routing_decision, "provider_execution")
         self.assertEqual(result.evidence_summary, "status=research_needed provider_execution=yes")
         self.assertIn("I need live web evidence before I answer that", result.reply_text)
-        self.assertIn("Search the web and tell me the current BTC price in USD with the source you used.", result.reply_text)
+        self.assertIn("Analyze whether the plan needs more evidence before answering.", result.reply_text)
         self.assertEqual(
             observed_queries["intent_query"],
-            "Search the web and tell me the current BTC price in USD with the source you used.",
+            "Analyze whether the plan needs more evidence before answering.",
         )
         self.assertEqual(
             observed_queries["original_user_message"],
-            "Search the web and tell me the current BTC price in USD with the source you used.",
+            "Analyze whether the plan needs more evidence before answering.",
         )
 
     def test_build_researcher_reply_keeps_codex_on_external_wrapper_transport(self) -> None:

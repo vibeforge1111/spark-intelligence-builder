@@ -44,6 +44,7 @@ def execute_direct_provider_prompt(
     system_prompt: str,
     user_prompt: str,
     governance: DirectProviderGovernance | None = None,
+    tools: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     if governance and governance.state_db_path:
         state_db = StateDB(Path(governance.state_db_path))
@@ -69,9 +70,9 @@ def execute_direct_provider_prompt(
         raise RuntimeError(f"Provider '{provider.provider_id}' has no base URL configured.")
 
     if provider.api_mode == "chat_completions":
-        return _execute_chat_completions(provider=provider, system_prompt=system_prompt, user_prompt=user_prompt)
+        return _execute_chat_completions(provider=provider, system_prompt=system_prompt, user_prompt=user_prompt, tools=tools)
     if provider.api_mode == "anthropic_messages":
-        return _execute_anthropic_messages(provider=provider, system_prompt=system_prompt, user_prompt=user_prompt)
+        return _execute_anthropic_messages(provider=provider, system_prompt=system_prompt, user_prompt=user_prompt, tools=tools)
     raise RuntimeError(
         f"Provider '{provider.provider_id}' uses unsupported direct execution mode '{provider.api_mode}'."
     )
@@ -81,13 +82,16 @@ def _execute_chat_completions(
     provider: DirectProviderRequest,
     system_prompt: str,
     user_prompt: str,
+    tools: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     model_name = _normalize_chat_completions_model(provider)
-    payload = {
+    payload: dict[str, object] = {
         "model": model_name,
         "messages": _chat_messages(system_prompt=system_prompt, user_prompt=user_prompt),
         "temperature": 0.2,
     }
+    if tools:
+        payload["tools"] = tools
     response = _post_json(
         _join_url(provider.base_url, "chat/completions"),
         headers={
@@ -111,8 +115,9 @@ def _execute_anthropic_messages(
     provider: DirectProviderRequest,
     system_prompt: str,
     user_prompt: str,
+    tools: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
-    payload = {
+    payload: dict[str, object] = {
         "model": provider.model,
         "max_tokens": 1024,
         "messages": [
@@ -122,6 +127,8 @@ def _execute_anthropic_messages(
             }
         ],
     }
+    if tools:
+        payload["tools"] = tools
     response = _post_json(
         _join_url(_normalize_anthropic_base_url(provider.base_url), "messages"),
         headers={

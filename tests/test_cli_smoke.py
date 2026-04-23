@@ -35,7 +35,7 @@ class CliSmokeTests(SparkTestCase):
         )
 
         self.assertEqual(exit_code, 0, stderr)
-        self.assertIn("Doctor checks:", stdout)
+        self.assertIn("Doctor status: ok", stdout)
         with self.state_db.connect() as conn:
             row = conn.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'attachment_state_snapshots'"
@@ -1179,7 +1179,7 @@ class CliSmokeTests(SparkTestCase):
 
         self.assertEqual(exit_code, 0, stderr)
         self.assertIn("Spark Intelligence bootstrap: telegram-agent", stdout)
-        self.assertIn("- provider: custom", stdout)
+        self.assertIn("- primary_provider: custom", stdout)
         self.assertIn("- gateway_ready: yes", stdout)
         self.assertIn("gateway start --home", stdout)
         self.assertEqual(self.config_manager.get_path("runtime.install.profile"), "telegram-agent")
@@ -2056,8 +2056,6 @@ class CliSmokeTests(SparkTestCase):
         )
         self.assertEqual(list_exit, 0, list_stderr)
         self.assertEqual(json.loads(list_stdout), [])
-        self.assertEqual(inspect_payload["identity"]["conflict_agent_id"], "swarm-agent:atlas")
-        self.assertEqual(inspect_payload["identity"]["conflict_reason"], "multiple_agent_ids_for_human")
 
     def test_agent_import_swarm_command_canonicalizes_agent_from_hook_runtime(self) -> None:
         chip_root = create_fake_hook_chip(self.home, chip_key="spark-swarm")

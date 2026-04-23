@@ -885,6 +885,7 @@ def run_memory_sdk_smoke_test(
             "source_surface": "memory_cli_smoke",
             "smoke_test": True,
             "value": value,
+            "memory_role": "current_state",
         },
     }
     raw_write = _call_sdk_method(client, "write_observation", payload)

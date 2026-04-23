@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import patch
 
 from spark_intelligence.identity.service import (
     approve_pairing,
@@ -1067,13 +1068,14 @@ class AgentIdentityContractTests(SparkTestCase):
             external_user_id="111",
             display_name="Alice",
         )
-        rename_agent_identity(
-            state_db=self.state_db,
-            human_id="human:telegram:111",
-            new_name="Atlas",
-            source_surface="telegram",
-            source_ref="turn-old",
-        )
+        with patch("spark_intelligence.identity.service._utc_now_iso", return_value="2026-03-28T00:00:00+00:00"):
+            rename_agent_identity(
+                state_db=self.state_db,
+                human_id="human:telegram:111",
+                new_name="Atlas",
+                source_surface="telegram",
+                source_ref="turn-old",
+            )
 
         linked = link_spark_swarm_agent(
             state_db=self.state_db,

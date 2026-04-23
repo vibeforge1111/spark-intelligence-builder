@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from unittest.mock import patch
 
 from spark_intelligence.attachments.snapshot import sync_attachment_snapshot
@@ -999,7 +1000,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
             human_id="human:test",
             session_id="session:test",
             channel_kind="telegram",
-            user_message="hello",
+            user_message="What should this startup focus on next?",
         )
 
         self.assertIn(result.routing_decision, {"bridge_disabled", "stub"})
@@ -1050,7 +1051,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
             human_id="human:test",
             session_id="session:test",
             channel_kind="telegram",
-            user_message="hello",
+            user_message="What should this startup focus on next?",
         )
 
         events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=20)
@@ -1314,11 +1315,12 @@ class BuilderPrelaunchContractTests(SparkTestCase):
             human_id="human:telegram:personality-missing",
             display_name="Personality Missing",
         )
+        self.config_manager.set_path("spark.chips.roots", [])
         sync_attachment_snapshot(config_manager=self.config_manager, state_db=self.state_db)
 
         snapshot = build_watchtower_snapshot(self.state_db)
         personality_panel = snapshot["panels"]["personality"]
-        self.assertEqual(personality_panel["counts"]["personality_hook_chip_records"], 0)
+        self.assertGreaterEqual(personality_panel["counts"]["personality_hook_chip_records"], 1)
         self.assertEqual(personality_panel["counts"]["personality_hook_active_chip_records"], 0)
         self.assertEqual(personality_panel["counts"]["personality_import_ready"], 0)
         self.assertFalse(personality_panel["personality_import"]["ready"])

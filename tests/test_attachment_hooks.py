@@ -390,7 +390,7 @@ class AttachmentHookTests(SparkTestCase):
         payload = json.loads(import_stdout)
         self.assertEqual(payload["status"], "completed")
         self.assertEqual(payload["chip_key"], "spark-personality")
-        self.assertEqual(payload["persona_profile"]["persona_name"], "Alice")
+        self.assertEqual(payload["persona_profile"]["persona_name"], "Founder Operator")
         self.assertTrue(Path(payload["payload_path"]).exists())
         self.assertTrue(Path(payload["result_path"]).exists())
         self.assertTrue(Path(payload["evolver_state_path"]).exists())
@@ -406,8 +406,8 @@ class AttachmentHookTests(SparkTestCase):
         )
         self.assertEqual(detail_exit, 0, detail_stderr)
         detail_payload = json.loads(detail_stdout)
-        self.assertEqual(detail_payload["agent_persona"]["persona_name"], "Alice")
-        self.assertEqual(detail_payload["profile"]["personality_name"], "Alice")
+        self.assertEqual(detail_payload["agent_persona"]["persona_name"], "Founder Operator")
+        self.assertEqual(detail_payload["profile"]["personality_name"], "Founder Operator")
 
         history_exit, history_stdout, history_stderr = self.run_cli(
             "operator",
@@ -457,7 +457,7 @@ class AttachmentHookTests(SparkTestCase):
                 "trace_path": "trace:under-supported",
             }
 
-        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None, **kwargs):
             captured["user_prompt"] = user_prompt
             captured["governance"] = governance
             return {"raw_response": "Tighten the user pain wedge first."}
@@ -511,7 +511,7 @@ class AttachmentHookTests(SparkTestCase):
                 {"provider": provider, "model_family": "generic", "error": None},
             )(),
         ), patch(
-            "spark_intelligence.researcher_bridge.advisory.run_first_active_chip_hook",
+            "spark_intelligence.researcher_bridge.advisory.run_chip_hook",
             return_value=fake_chip_execution,
         ):
             result = build_researcher_reply(
@@ -522,7 +522,7 @@ class AttachmentHookTests(SparkTestCase):
                 human_id="human-1",
                 session_id="session-1",
                 channel_kind="telegram",
-                user_message="hey",
+                user_message="What should this startup focus on next?",
             )
 
         self.assertEqual(result.reply_text, "Tighten the user pain wedge first.")
@@ -566,7 +566,7 @@ class AttachmentHookTests(SparkTestCase):
                 "trace_path": "trace:under-supported",
             }
 
-        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None, **kwargs):
             captured["system_prompt"] = system_prompt
             captured["user_prompt"] = user_prompt
             return {"raw_response": "BTC is about $84,321.18 USD. Source: https://www.coingecko.com/en/coins/bitcoin"}
