@@ -359,7 +359,7 @@ For local recovery on Windows, use [`start-telegram.ps1`](C:/Users/USER/Desktop/
 .\start-telegram.ps1
 ```
 
-Historical Builder polling rule:
+Production ingress ownership rule:
 
 - only one runtime may long-poll one Telegram bot token at a time
 - the older live path used `spark-intelligence` Builder as the Telegram poller
