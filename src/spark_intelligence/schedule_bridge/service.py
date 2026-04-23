@@ -41,8 +41,8 @@ _LIST_PATTERNS = (
     re.compile(rf"\b(?:{_SCHEDULER_NOUNS})\b[^.\n]{{0,25}}\b(?:{_RUNTIME_QUALIFIERS}|list|status)\b", re.IGNORECASE),
     # "do I have any schedules", "are there any cron jobs"
     re.compile(rf"\b(?:do\s+i\s+have|have\s+i|are\s+there|is\s+there|any)\b[^.\n]{{0,25}}\b(?:{_SCHEDULER_NOUNS})\b", re.IGNORECASE),
-    # Bare "my schedules?", "schedules?" as a one-word query
-    re.compile(r"^\s*(?:my\s+)?(?:schedules?|automations?|cron\s*jobs?|autoloops?)\s*\??\s*$", re.IGNORECASE),
+    # Bare "my schedules?", "schedules?", "my routines?" as a one-word query
+    re.compile(r"^\s*(?:my\s+)?(?:schedules?|automations?|cron\s*jobs?|autoloops?|routines?|recurring\s+tasks?)\s*\??\s*$", re.IGNORECASE),
     # "what's running tonight", "anything fire tonight", "what's firing soon"
     re.compile(r"\b(?:what|anything)\b[^.\n]{0,20}\b(?:running|firing|fire|scheduled|queued)\b[^.\n]{0,20}\b(?:tonight|tomorrow|today|soon|next|later)\b", re.IGNORECASE),
     # "schedule board", "scheduler status", "show the scheduler"
@@ -203,7 +203,7 @@ def format_schedule_list_from_spawner(spawner_url: str | None = None) -> str:
 # --- Delete intent + confirmation gate ----------------------------------
 
 _DELETE_PATTERNS = (
-    re.compile(r"\b(?:cancel|delete|kill|remove|stop|drop|disable|turn\s+off)\b.{0,40}\b(?:schedule|schedules?|cron|nightly|daily|weekly|autoloop|automation|routine)\b", re.IGNORECASE),
+    re.compile(r"\b(?:cancel|delete|kill|remove|stop|drop|disable|turn\s+off)\b.{0,40}\b(?:schedule|schedules?|cron|nightly|daily|weekly|autoloop|automation|routine|recurring(?:\s+task)?|scheduled\s+task|scheduled\s+job)\b", re.IGNORECASE),
     re.compile(r"\b(?:cancel|delete|kill|remove|stop|drop|disable|turn\s+off)\b.{0,40}\b(?:sched-[a-z0-9]+)\b", re.IGNORECASE),
     re.compile(r"\b(?:cancel|delete|kill|remove|stop)\b.{0,30}\b(?:my|the)\b.{0,30}\b(?:nightly|daily|weekly|morning|evening|3\s*am|3\s*pm|9\s*am|9\s*pm)\b", re.IGNORECASE),
 )
