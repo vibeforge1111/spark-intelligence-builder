@@ -35,6 +35,7 @@ from spark_intelligence.memory.episodic_events import (
 )
 from spark_intelligence.memory.profile_facts import (
     build_profile_fact_event_history_answer,
+    build_profile_fact_explanation_answer,
     build_profile_fact_history_answer,
     build_profile_fact_observation_answer,
     build_profile_fact_query_answer,
@@ -1763,6 +1764,29 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(mission_explanation_query.query_kind, "fact_explanation")
         self.assertIsNone(
             detect_profile_fact_observation("How do you know what I'm trying to do now?")
+        )
+
+    def test_build_profile_fact_explanation_answer_prefers_original_evidence_text_metadata(self) -> None:
+        query = detect_profile_fact_query("How do you know where I live?")
+        self.assertIsNotNone(query)
+        assert query is not None
+
+        answer = build_profile_fact_explanation_answer(
+            query=query,
+            explanation={
+                "answer": "Dubai",
+                "evidence": [
+                    {
+                        "text": "human:telegram:12345 profile.city Dubai",
+                        "metadata": {"evidence_text": "I moved to Dubai."},
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(
+            answer,
+            'Because I have a saved memory record from when you said: "I moved to Dubai." You live in Dubai.',
         )
 
     def test_profile_fact_query_detects_history_and_event_history_queries(self) -> None:
