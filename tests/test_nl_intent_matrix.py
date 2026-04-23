@@ -23,6 +23,7 @@ from spark_intelligence.schedule_bridge import (
 from spark_intelligence.mission_bridge import detect_board_intent
 from spark_intelligence.loop_bridge import detect_loop_invoke_intent
 from spark_intelligence.chip_create_bridge import detect_chip_create_intent
+from spark_intelligence.schedule_create_bridge import detect_schedule_create_intent
 from spark_intelligence.user_instructions import detect_instruction_intent
 
 
@@ -149,6 +150,20 @@ CHIP_CREATE_PHRASES = [
     "could you make me a chip that tracks market trends",
 ]
 
+SCHEDULE_CREATE_PHRASES = [
+    "schedule a research task every day at 9am",
+    "run this research every morning",
+    "every weekday at 8am fire off the critic loop",
+    "every Monday at 3pm run the startup-yc chip",
+    "automate the brand-sentiment check hourly",
+    "schedule daily seedify news research at 9am",
+    "fire this every 30 minutes",
+    "every evening run startup-yc",
+    "set up a weekly run every Sunday night",
+    "every 6 hours run domain-chip-spark-ops-critic",
+    "schedule research seedify launchpad every morning",
+]
+
 
 # -------- Anti-fixtures (plain chat, must not match anything) ---------------
 
@@ -200,8 +215,12 @@ def _loop_invoke_hit(phrase: str) -> bool:
 def _chip_create_hit(phrase: str) -> bool:
     return detect_chip_create_intent(phrase) is not None
 
+def _schedule_create_hit(phrase: str) -> bool:
+    return detect_schedule_create_intent(phrase) is not None
+
 
 INTENT_DETECTORS = {
+    "schedule_create": _schedule_create_hit,
     "chip_create": _chip_create_hit,
     "loop_invoke": _loop_invoke_hit,
     "board": _board_hit,
@@ -228,6 +247,7 @@ STATEFUL_DETECTORS = {"confirm_yes", "confirm_no"}
 INTENT_PRIORITY = [
     "schedule_delete",    # destructive, explicit verbs, confirmation-gated
     "instruction_forget", # explicit /forget or "stop remembering X"
+    "schedule_create",    # explicit schedule verb + time expression
     "chip_create",        # explicit creation verb + chip vocabulary
     "loop_invoke",        # explicit chip-key reference + loop verb
     "board",              # mission board - "what's running" with live missions
@@ -237,6 +257,7 @@ INTENT_PRIORITY = [
 
 
 FIXTURE_BY_INTENT = {
+    "schedule_create": SCHEDULE_CREATE_PHRASES,
     "chip_create": CHIP_CREATE_PHRASES,
     "loop_invoke": LOOP_INVOKE_PHRASES,
     "board": BOARD_PHRASES,

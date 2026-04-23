@@ -1087,6 +1087,7 @@ def simulate_telegram_update(
                     except Exception:
                         _loop_intent = None
                     _chip_create_intent = None
+                    _schedule_create_intent = None
                     try:
                         from spark_intelligence.chip_create_bridge import (
                             detect_chip_create_intent as _detect_chip_create_intent,
@@ -1095,7 +1096,27 @@ def simulate_telegram_update(
                         _chip_create_intent = _detect_chip_create_intent(effective_text)
                     except Exception:
                         _chip_create_intent = None
-                    if _chip_create_intent is not None:
+                    try:
+                        from spark_intelligence.schedule_create_bridge import (
+                            detect_schedule_create_intent as _detect_sch_create_intent,
+                            format_schedule_create_suggestion as _fmt_sch_create,
+                        )
+                        _schedule_create_intent = _detect_sch_create_intent(effective_text)
+                    except Exception:
+                        _schedule_create_intent = None
+                    if _schedule_create_intent is not None:
+                        _shortcircuited = True
+                        outbound_text = _fmt_sch_create(_schedule_create_intent)
+                        trace_ref = None
+                        bridge_mode = "schedule_create_suggest_shortcircuit"
+                        attachment_context = None
+                        routing_decision = "schedule_create_suggest_shortcircuit"
+                        active_chip_key = None
+                        active_chip_task_type = None
+                        active_chip_evaluate_used = False
+                        evidence_summary = None
+                        bridge_result = None
+                    elif _chip_create_intent is not None:
                         _shortcircuited = True
                         outbound_text = _fmt_chip_create(_chip_create_intent.get("brief", ""))
                         trace_ref = None
