@@ -978,6 +978,10 @@ def simulate_telegram_update(
             else:
                 _instruction_intent = None
                 _schedule_intent = None
+                _delete_intent = None
+                _pending_delete = None
+                _confirmation_yes = False
+                _confirmation_no = False
                 if effective_text:
                     try:
                         from spark_intelligence.user_instructions import (
@@ -989,12 +993,78 @@ def simulate_telegram_update(
                     try:
                         from spark_intelligence.schedule_bridge import (
                             detect_schedule_intent as _detect_schedule_intent,
+                            detect_delete_intent as _detect_delete_intent,
+                            peek_pending_delete as _peek_pending_delete,
+                            is_confirmation_yes as _is_confirm_yes,
+                            is_confirmation_no as _is_confirm_no,
                             format_schedule_list_from_spawner as _fmt_schedules,
+                            fetch_schedules as _fetch_schedules,
+                            match_schedules as _match_schedules,
+                            arm_pending_delete as _arm_pending_delete,
+                            clear_pending_delete as _clear_pending_delete,
+                            delete_schedule_via_spawner as _delete_schedule,
+                            format_delete_prompt as _fmt_delete_prompt,
+                            format_delete_ambiguous as _fmt_delete_ambiguous,
+                            format_delete_not_found as _fmt_delete_notfound,
+                            format_delete_success as _fmt_delete_success,
+                            format_delete_cancelled as _fmt_delete_cancelled,
                         )
                         _schedule_intent = _detect_schedule_intent(effective_text)
+                        _delete_intent = _detect_delete_intent(effective_text)
+                        _pending_delete = _peek_pending_delete(str(normalized.telegram_user_id))
+                        _confirmation_yes = _is_confirm_yes(effective_text)
+                        _confirmation_no = _is_confirm_no(effective_text)
                     except Exception:
                         _schedule_intent = None
-                if _schedule_intent is not None and _instruction_intent is None:
+                        _delete_intent = None
+                        _pending_delete = None
+                # Confirmation of a pending delete takes priority over anything
+                if _pending_delete is not None and (_confirmation_yes or _confirmation_no):
+                    if _confirmation_yes:
+                        sid = str(_pending_delete.get("schedule_id") or "")
+                        try:
+                            ok = _delete_schedule(sid) if sid else False
+                        except Exception:
+                            ok = False
+                        if ok:
+                            outbound_text = _fmt_delete_success(_pending_delete)
+                        else:
+                            outbound_text = f"Tried to kill {sid}, but the scheduler rejected it. Run 'show my schedules' to check."
+                    else:
+                        outbound_text = _fmt_delete_cancelled()
+                    _clear_pending_delete(str(normalized.telegram_user_id))
+                    trace_ref = None
+                    bridge_mode = "schedule_confirm_shortcircuit"
+                    attachment_context = None
+                    routing_decision = "schedule_confirm_shortcircuit"
+                    active_chip_key = None
+                    active_chip_task_type = None
+                    active_chip_evaluate_used = False
+                    evidence_summary = None
+                    bridge_result = None
+                elif _delete_intent is not None and _instruction_intent is None:
+                    try:
+                        existing = _fetch_schedules()
+                    except Exception:
+                        existing = []
+                    matches = _match_schedules(existing, _delete_intent.get("hints", {}))
+                    if len(matches) == 0:
+                        outbound_text = _fmt_delete_notfound(_delete_intent.get("hints", {}))
+                    elif len(matches) == 1:
+                        _arm_pending_delete(str(normalized.telegram_user_id), matches[0])
+                        outbound_text = _fmt_delete_prompt(matches[0])
+                    else:
+                        outbound_text = _fmt_delete_ambiguous(matches)
+                    trace_ref = None
+                    bridge_mode = "schedule_delete_shortcircuit"
+                    attachment_context = None
+                    routing_decision = "schedule_delete_shortcircuit"
+                    active_chip_key = None
+                    active_chip_task_type = None
+                    active_chip_evaluate_used = False
+                    evidence_summary = None
+                    bridge_result = None
+                elif _schedule_intent is not None and _instruction_intent is None:
                     try:
                         outbound_text = _fmt_schedules()
                     except Exception as exc:

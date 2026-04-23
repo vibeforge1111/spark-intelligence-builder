@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import urllib.parse
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
@@ -197,3 +198,221 @@ def fetch_schedules(spawner_url: str | None = None, *, timeout: float = 5.0) -> 
 def format_schedule_list_from_spawner(spawner_url: str | None = None) -> str:
     schedules = fetch_schedules(spawner_url)
     return format_schedule_list(schedules)
+
+
+# --- Delete intent + confirmation gate ----------------------------------
+
+_DELETE_PATTERNS = (
+    re.compile(r"\b(?:cancel|delete|kill|remove|stop|drop|disable|turn\s+off)\b.{0,40}\b(?:schedule|schedules?|cron|nightly|daily|weekly|autoloop|automation|routine)\b", re.IGNORECASE),
+    re.compile(r"\b(?:cancel|delete|kill|remove|stop|drop|disable|turn\s+off)\b.{0,40}\b(?:sched-[a-z0-9]+)\b", re.IGNORECASE),
+    re.compile(r"\b(?:cancel|delete|kill|remove|stop)\b.{0,30}\b(?:my|the)\b.{0,30}\b(?:nightly|daily|weekly|morning|evening|3\s*am|3\s*pm|9\s*am|9\s*pm)\b", re.IGNORECASE),
+)
+
+_CONFIRM_YES_PATTERNS = (
+    re.compile(r"^\s*yes\s*(?:cancel|delete|kill|remove|stop|do\s*it|confirm|go\s*ahead|please)\s*$", re.IGNORECASE),
+    re.compile(r"^\s*(?:confirm|confirmed|go\s*ahead|do\s*it|proceed)\s*$", re.IGNORECASE),
+    re.compile(r"^\s*yes\s*$", re.IGNORECASE),
+)
+
+_CONFIRM_NO_PATTERNS = (
+    re.compile(r"\b(?:never\s*mind|nevermind|cancel|abort|stop|wait|no|nope|skip|keep\s*it|leave\s*it)\b", re.IGNORECASE),
+)
+
+
+def detect_delete_intent(message: str) -> dict | None:
+    """Detect intent to cancel/delete a schedule. Returns hints for matching."""
+    text = str(message or "").strip()
+    if not text:
+        return None
+    matched = False
+    for pat in _DELETE_PATTERNS:
+        if pat.search(text):
+            matched = True
+            break
+    if not matched:
+        return None
+    hints: dict[str, Any] = {"raw": text}
+    id_match = re.search(r"\b(sched-[a-z0-9]+)\b", text, re.IGNORECASE)
+    if id_match:
+        hints["schedule_id"] = id_match.group(1)
+    for tod in ("nightly", "daily", "weekly", "morning", "evening"):
+        if re.search(rf"\b{tod}\b", text, re.IGNORECASE):
+            hints["time_of_day"] = tod
+            break
+    time_match = re.search(r"\b(\d{1,2})\s*(am|pm)\b", text, re.IGNORECASE)
+    if time_match:
+        h = int(time_match.group(1))
+        ampm = time_match.group(2).lower()
+        if ampm == "pm" and h < 12:
+            h += 12
+        if ampm == "am" and h == 12:
+            h = 0
+        hints["hour_24"] = h
+    return {"action": "delete", "hints": hints}
+
+
+def match_schedules(schedules: list[dict[str, Any]], hints: dict) -> list[dict[str, Any]]:
+    """Filter schedules by delete-intent hints. Returns best matches."""
+    if not schedules:
+        return []
+    sid = hints.get("schedule_id")
+    if sid:
+        return [s for s in schedules if s.get("id") == sid]
+    candidates = list(schedules)
+    hour = hints.get("hour_24")
+    if hour is not None:
+        filtered = []
+        for s in candidates:
+            parts = str(s.get("cron") or "").split()
+            if len(parts) == 5 and parts[1].isdigit() and int(parts[1]) == hour:
+                filtered.append(s)
+        if filtered:
+            candidates = filtered
+    tod = hints.get("time_of_day")
+    if tod in ("nightly", "morning", "evening", "daily"):
+        # No precise filter; if only one schedule exists, treat it as the match.
+        pass
+    return candidates
+
+
+# File-backed pending confirmations per external_user_id. TTL 5 minutes.
+# Must persist across Python invocations because the telegram bot shells
+# out to a fresh `python -m spark_intelligence.cli` per message.
+from pathlib import Path as _Path
+
+_PENDING_TTL_SECONDS = 300
+
+
+def _pending_store_path() -> _Path:
+    home_env = os.environ.get("SPARK_INTELLIGENCE_HOME")
+    base = _Path(home_env) if home_env else _Path.home() / ".spark-intelligence"
+    base.mkdir(parents=True, exist_ok=True)
+    return base / "pending_confirmations.json"
+
+
+def _load_pending() -> dict[str, Any]:
+    p = _pending_store_path()
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_pending(store: dict[str, Any]) -> None:
+    import time as _time
+    p = _pending_store_path()
+    tmp = p.with_suffix(".json.tmp")
+    now = _time.time()
+    pruned = {k: v for k, v in store.items() if v.get("expires_at", 0) > now}
+    tmp.write_text(json.dumps(pruned, indent=2), encoding="utf-8")
+    tmp.replace(p)
+
+
+def arm_pending_delete(user_id: str, schedule: dict[str, Any]) -> None:
+    import time as _time
+    store = _load_pending()
+    store[str(user_id)] = {
+        "schedule_id": schedule.get("id"),
+        "cron": schedule.get("cron"),
+        "payload": schedule.get("payload"),
+        "action": schedule.get("action"),
+        "expires_at": _time.time() + _PENDING_TTL_SECONDS,
+    }
+    _save_pending(store)
+
+
+def peek_pending_delete(user_id: str) -> dict[str, Any] | None:
+    import time as _time
+    store = _load_pending()
+    rec = store.get(str(user_id))
+    if not rec:
+        return None
+    if rec.get("expires_at", 0) < _time.time():
+        store.pop(str(user_id), None)
+        _save_pending(store)
+        return None
+    return rec
+
+
+def clear_pending_delete(user_id: str) -> None:
+    store = _load_pending()
+    if str(user_id) in store:
+        store.pop(str(user_id), None)
+        _save_pending(store)
+
+
+def is_confirmation_yes(message: str) -> bool:
+    text = str(message or "").strip()
+    if not text:
+        return False
+    return any(p.search(text) for p in _CONFIRM_YES_PATTERNS)
+
+
+def is_confirmation_no(message: str) -> bool:
+    text = str(message or "").strip()
+    if not text:
+        return False
+    return any(p.search(text) for p in _CONFIRM_NO_PATTERNS)
+
+
+def format_delete_prompt(schedule: dict[str, Any]) -> str:
+    payload = schedule.get("payload") or {}
+    if schedule.get("action") == "mission":
+        what = f'the mission "{payload.get("goal", "(no goal)")}"'
+    else:
+        what = f'the {payload.get("chipKey", "chip")} loop'
+    when = humanize_cron(str(schedule.get("cron") or ""))
+    sid = schedule.get("id")
+    return (
+        f'Kill {what} scheduled {when.lower()} ({sid})?\n'
+        f'Say "yes cancel" to confirm, or "never mind" to keep it.'
+    )
+
+
+def format_delete_ambiguous(matches: list[dict[str, Any]]) -> str:
+    lines = ["I found a few that could match. Which one do you mean?", ""]
+    for s in matches[:5]:
+        payload = s.get("payload") or {}
+        tag = payload.get("goal") if s.get("action") == "mission" else payload.get("chipKey")
+        when = humanize_cron(str(s.get("cron") or ""))
+        lines.append(f'  {s.get("id")}: {tag} ({when})')
+    lines.append("")
+    lines.append("Reply with the id (e.g. cancel sched-abc123) or 'never mind' to back out.")
+    return "\n".join(lines)
+
+
+def format_delete_not_found(hints: dict) -> str:
+    detail = ""
+    if hints.get("schedule_id"):
+        detail = f' (id {hints["schedule_id"]})'
+    elif hints.get("time_of_day"):
+        detail = f' ({hints["time_of_day"]})'
+    elif hints.get("hour_24") is not None:
+        detail = f' (at {hints["hour_24"]}:00)'
+    return f"I don't see a matching schedule{detail}. Run 'show my schedules' to see what's active."
+
+
+def delete_schedule_via_spawner(schedule_id: str, spawner_url: str | None = None, *, timeout: float = 5.0) -> bool:
+    base = (spawner_url or _SPAWNER_URL).rstrip("/")
+    req = urllib.request.Request(
+        f"{base}/api/scheduled?id={urllib.parse.quote(schedule_id)}",
+        method="DELETE",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return bool(data.get("ok"))
+    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
+        return False
+
+
+def format_delete_success(schedule: dict[str, Any]) -> str:
+    payload = schedule.get("payload") or {}
+    tag = payload.get("goal") if schedule.get("action") == "mission" else payload.get("chipKey")
+    return f"Done. {tag} is off the schedule. If you want to bring it back, just tell me."
+
+
+def format_delete_cancelled() -> str:
+    return "Alright, keeping it as-is."
