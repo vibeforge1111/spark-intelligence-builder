@@ -1627,6 +1627,13 @@ def build_parser() -> argparse.ArgumentParser:
     chips_why_parser.add_argument("--history", default="", help="Recent conversation history text to score against (lower weight)")
     chips_why_parser.add_argument("--recent-chip", action="append", default=[], help="Chip key recently selected (sticky boost). Repeat for multiple.")
 
+    chips_create_parser = chips_subparsers.add_parser("create", help="Create a new domain chip from a natural-language prompt")
+    chips_create_parser.add_argument("--prompt", required=True, help="Natural-language description of the chip to create")
+    chips_create_parser.add_argument("--output-dir", default=None, help="Directory to scaffold into (default: C:/Users/USER/Desktop)")
+    chips_create_parser.add_argument("--chip-labs-root", default=None, help="Path to spark-domain-chip-labs (default: C:/Users/USER/Desktop/spark-domain-chip-labs)")
+    chips_create_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    chips_create_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+
     attachments_parser = subparsers.add_parser("attachments", help="Inspect and manage chip/path attachment roots")
     attachments_subparsers = attachments_parser.add_subparsers(dest="attachments_command", required=True)
     attachments_status_parser = attachments_subparsers.add_parser("status", help="Scan chip and path attachments")
@@ -4316,6 +4323,38 @@ def handle_chips_why(args: argparse.Namespace) -> int:
     else:
         print(explain_routing(decision))
     return 0
+
+
+def handle_chips_create(args: argparse.Namespace) -> int:
+    from pathlib import Path as _Path
+    import json as _json
+    from spark_intelligence.chip_create import create_chip_from_prompt
+
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    output_dir = _Path(args.output_dir) if args.output_dir else None
+    chip_labs_root = _Path(args.chip_labs_root) if args.chip_labs_root else None
+    result = create_chip_from_prompt(
+        prompt=args.prompt,
+        config_manager=config_manager,
+        state_db=state_db,
+        output_dir=output_dir,
+        chip_labs_root=chip_labs_root,
+    )
+    if args.json:
+        print(_json.dumps(result.to_dict(), indent=2, default=str))
+    else:
+        if result.ok:
+            print(f"ok: chip_key={result.chip_key} path={result.chip_path} router_invokable={result.router_invokable}")
+            if result.warnings:
+                print("warnings:")
+                for w in result.warnings:
+                    print(f"  - {w}")
+        else:
+            print(f"error: {result.error}")
+    return 0 if result.ok else 1
 
 
 def handle_attachments_list(args: argparse.Namespace) -> int:
@@ -7029,6 +7068,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_channel_test(args)
     if args.command == "chips" and args.chips_command == "why":
         return handle_chips_why(args)
+    if args.command == "chips" and args.chips_command == "create":
+        return handle_chips_create(args)
     if args.command == "drafts" and args.drafts_command == "list":
         return handle_drafts_list(args)
     if args.command == "drafts" and args.drafts_command == "show":
