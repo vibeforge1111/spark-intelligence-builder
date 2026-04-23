@@ -129,6 +129,42 @@ def _normalize_commands(commands: Any) -> dict:
     return result
 
 
+def _patch_generated_cli(chip_dir: Path, chip_labs_root: Path) -> None:
+    """Rewrite the scaffolded cli.py so it can run as a standalone module.
+
+    The scaffolder emits `from ..lab_hooks import (...)`, which breaks
+    when the chip is scaffolded outside the chip_labs package. We
+    rewrite it to an absolute import and prepend a sys.path shim that
+    locates chip_labs via env (CHIP_LABS_SRC) or the known default.
+    """
+    chip_labs_src = (chip_labs_root / "src").resolve()
+    src_dir = chip_dir / "src"
+    if not src_dir.exists():
+        return
+    for cli_path in src_dir.glob("*/cli.py"):
+        text = cli_path.read_text(encoding="utf-8")
+        if "from ..lab_hooks" not in text:
+            continue
+        shim = (
+            "import os as _os\n"
+            "import sys as _sys\n"
+            f"_CHIP_LABS_SRC = _os.environ.get('CHIP_LABS_SRC') or r'{chip_labs_src}'\n"
+            "if _CHIP_LABS_SRC and _CHIP_LABS_SRC not in _sys.path:\n"
+            "    _sys.path.insert(0, _CHIP_LABS_SRC)\n"
+        )
+        patched = text.replace(
+            "from ..lab_hooks import",
+            "from chip_labs.lab_hooks import",
+        )
+        # Insert shim after the module docstring (if any) and `from __future__` line.
+        marker = "from __future__ import annotations\n"
+        if marker in patched:
+            patched = patched.replace(marker, marker + "\n" + shim + "\n", 1)
+        else:
+            patched = shim + "\n" + patched
+        cli_path.write_text(patched, encoding="utf-8")
+
+
 def _patch_manifest_router_fields(manifest_path: Path, brief: dict, *, chip_key: str) -> None:
     doc = json.loads(manifest_path.read_text(encoding="utf-8"))
     if not doc.get("chip_name"):
@@ -216,6 +252,13 @@ def create_chip_from_prompt(
         _patch_manifest_router_fields(manifest, brief, chip_key=chip_key)
     except Exception as exc:
         warnings.append(f"router field patch failed: {exc}")
+
+    # 4b) Patch generated cli.py so it can import chip_labs.lab_hooks without
+    #     requiring editable install or living inside chip_labs's tree.
+    try:
+        _patch_generated_cli(chip_dir, chip_labs_root)
+    except Exception as exc:
+        warnings.append(f"cli.py import patch failed: {exc}")
 
     # 5) Register + snapshot + pin + snapshot
     try:

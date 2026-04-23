@@ -36,6 +36,8 @@ class LoopResult:
 
 
 def _coerce_float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
     if isinstance(value, (int, float)):
         return float(value)
     if isinstance(value, str):
@@ -46,20 +48,59 @@ def _coerce_float(value: Any) -> float | None:
     return None
 
 
+_PRIMARY_METRIC_KEYS = (
+    "primary", "score", "fitness", "value", "metric",
+    "lab_research_quality_score", "portfolio_health", "quality_score",
+)
+
+_STATUS_KEYS = ("verdict", "status", "comparison_class", "outcome", "decision")
+
+
+def _extract_primary(output: dict[str, Any]) -> tuple[str | None, float | None]:
+    """Find the most interesting status string + primary metric in a hook output.
+
+    Tries common key names first, then falls back to the first top-level scalar.
+    """
+    if not isinstance(output, dict):
+        return None, None
+    status: str | None = None
+    for key in _STATUS_KEYS:
+        raw = output.get(key)
+        if isinstance(raw, str) and raw.strip():
+            status = raw.strip()
+            break
+    metrics_sub = output.get("metrics") if isinstance(output.get("metrics"), dict) else {}
+    metric: float | None = None
+    for key in _PRIMARY_METRIC_KEYS:
+        metric = _coerce_float(metrics_sub.get(key)) if metrics_sub else None
+        if metric is not None:
+            break
+        metric = _coerce_float(output.get(key))
+        if metric is not None:
+            break
+    if metric is None:
+        for v in output.values():
+            metric = _coerce_float(v)
+            if metric is not None:
+                break
+    return status, metric
+
+
 def _extract_best(evaluations: list[dict[str, Any]]) -> tuple[str | None, float | None]:
     best_verdict: str | None = None
     best_metric: float | None = None
     for ev in evaluations:
-        verdict = ev.get("verdict")
-        metrics = ev.get("metrics") or {}
-        score = None
-        for key in ("primary", "score", "fitness", "value"):
-            score = _coerce_float(metrics.get(key) if isinstance(metrics, dict) else None)
-            if score is not None:
-                break
-        if score is not None and (best_metric is None or score > best_metric):
-            best_metric = score
-            best_verdict = str(verdict) if verdict is not None else None
+        output = ev.get("output") if isinstance(ev.get("output"), dict) else None
+        if output is None:
+            output = {
+                "metrics": ev.get("metrics"),
+                "verdict": ev.get("verdict"),
+                "confidence": ev.get("confidence"),
+            }
+        status, metric = _extract_primary(output)
+        if metric is not None and (best_metric is None or metric > best_metric):
+            best_metric = metric
+            best_verdict = status
     return best_verdict, best_metric
 
 
@@ -144,9 +185,7 @@ def run_chip_autoloop(
                 continue
             evaluations.append({
                 "candidate": s,
-                "verdict": eval_exec.output.get("verdict"),
-                "metrics": eval_exec.output.get("metrics"),
-                "confidence": eval_exec.output.get("confidence"),
+                "output": eval_exec.output,
             })
 
         best_verdict, best_metric = _extract_best(evaluations)
