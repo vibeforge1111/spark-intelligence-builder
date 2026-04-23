@@ -1,6 +1,6 @@
 # Spark NL Intent Matrix - Test Results
 
-**Generated:** 2026-04-23 18:37 UTC
+**Generated:** 2026-04-23 19:00 UTC
 **Intents tracked:** 10
 **Positive fixtures:** 105
 **Plain-chat anti-fixtures:** 13

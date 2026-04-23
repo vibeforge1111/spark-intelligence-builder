@@ -35,31 +35,66 @@ _NEGATIVE_ANCHORS = (
 
 def _extract_brief(message: str) -> str:
     """Strip the command-verb + 'chip' tokens from the front so we pass the
-    remaining description through as the brief."""
+    remaining description through as the brief. Collapses all whitespace
+    (including newlines) so the brief stays clean on a single line."""
     text = str(message or "").strip()
     if not text:
         return ""
-    # Remove leading patterns like "build me a chip for X" -> "X"
-    stripped = re.sub(
-        r"^\s*(?:please\s+)?(?:can\s+you\s+)?(?:could\s+you\s+)?"
-        r"(?:make|build|create|scaffold|generate|spin\s+up|cook\s+up|craft|author|whip\s+up)\s+"
-        r"(?:me\s+)?(?:a\s+|another\s+|new\s+)?"
-        r"(?:domain[\s\-])?chip\s+(?:for\s+|that\s+|which\s+|to\s+)?",
+    # Normalize whitespace first - convert any newlines/tabs/double-spaces to
+    # single spaces so later processing and the Telegram echo stay clean.
+    text = re.sub(r"\s+", " ", text)
+    # Strip polite/lead-in tokens
+    text = re.sub(
+        r"^\s*(?:let[']?s\s+|please\s+|hey\s+|ok\s+|okay\s+|can\s+you\s+|could\s+you\s+|would\s+you\s+)+",
         "",
         text,
-        count=1,
         flags=re.IGNORECASE,
     )
-    if stripped == text:
+    # Iteratively strip lead tokens: creation verb, "a/another/new", domain-chip
+    # prefix, the explicit chip-name token, optional connector words. Repeat
+    # until no further trimming happens so compound phrasings collapse cleanly.
+    stripped = text
+    for _ in range(6):
+        before = stripped
         stripped = re.sub(
-            r"^\s*i\s+(?:need|want|could\s+use|would\s+like)\s+"
-            r"(?:a\s+|another\s+|new\s+)?(?:domain[\s\-])?chip\s+(?:for\s+|that\s+|which\s+|to\s+)?",
+            r"^\s*(?:make|build|create|scaffold|generate|spin\s+up|cook\s+up|craft|author|whip\s+up)\s+(?:me\s+)?",
             "",
-            text,
+            stripped,
             count=1,
             flags=re.IGNORECASE,
         )
-    return stripped.strip().rstrip(".!?")
+        stripped = re.sub(
+            r"^\s*i\s+(?:need|want|could\s+use|would\s+like)\s+",
+            "",
+            stripped,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        stripped = re.sub(r"^\s*(?:a|an|another|new)\s+", "", stripped, count=1, flags=re.IGNORECASE)
+        stripped = re.sub(
+            r"^\s*(?:domain[\s\-])?chip\s+(?:called\s+|named\s+)?",
+            "",
+            stripped,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        stripped = re.sub(
+            r"^\s*domain-chip-[\w\-]+\s*[:\-,]?\s*",
+            "",
+            stripped,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        stripped = re.sub(
+            r"^\s*(?:for|that|which|to|about)\s+",
+            "",
+            stripped,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        if stripped == before:
+            break
+    return stripped.strip().rstrip(".!?,")
 
 
 def detect_chip_create_intent(message: str) -> dict | None:
@@ -78,15 +113,18 @@ def detect_chip_create_intent(message: str) -> dict | None:
 
 
 def format_chip_create_suggestion(brief: str) -> str:
-    trimmed = (brief or "").strip()
+    trimmed = re.sub(r"\s+", " ", (brief or "").strip())
     if not trimmed:
         return (
-            "Sounds like you want me to scaffold a new chip. Give me a one-line "
-            "description and tap /chip create <description>."
+            "Sounds like you want me to scaffold a new chip.\n\n"
+            "Give me a one-line description and tap:\n"
+            "/chip create <description>"
         )
+    # Three short paragraphs, blank line between each.
     return (
-        f"Got it - scaffolding a chip for {trimmed!r}. "
-        f"Tap /chip create {trimmed} to fire it (takes 30-60s). "
-        f"I hand this off to the slash command so you can see the scaffolder's "
-        f"output directly and cancel if the brief needs tweaking."
+        f"Got it - a chip for:\n{trimmed}\n\n"
+        f"Tap this to scaffold it (takes 30-60s):\n"
+        f"/chip create {trimmed}\n\n"
+        f"I hand off to the slash command so you see the scaffolder's output "
+        f"live and can cancel if the brief needs tweaking."
     )
