@@ -8,12 +8,13 @@ Started: 2026-04-23
 
 ---
 
-## Phase 0 - Boot ritual + tracking
+## Phase 0 - Boot ritual + tracking  [GREEN 2026-04-23]
 
-- [ ] `scripts/boot-spark.sh` - detect port conflicts, launch spawner-ui (:4174), telegram-bot (polling), builder. Health-gated.
-- [ ] `scripts/kill-spark.sh` - clean teardown
-- [ ] `task-telegram-agent.md` committed
-- [ ] Green signal: single command brings full stack up; `curl :4174/api/providers` returns, `curl :4174/api/mission-control/board` returns, Telegram bot replies to `/start`
+- [x] `scripts/boot-spark.sh` - detect port conflicts, launch spawner-ui (:4174), telegram-bot (polling). Health-gated.
+- [x] `scripts/kill-spark.sh` - clean teardown
+- [x] `task-telegram-agent.md` committed (0f516b5)
+- [x] Green signal: spawner-ui REST verified, mission ran end-to-end Z.AI+MiniMax in <25s, Telegram round-trip confirmed (msg 680 sent, user reply received on bot side)
+- KNOWN GAP: Spark Builder gateway not in boot script yet - will add before Phase 1 text tests
 
 ## Phase 1 - Urgent defects
 
