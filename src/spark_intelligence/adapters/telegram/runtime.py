@@ -1018,8 +1018,10 @@ def simulate_telegram_update(
                         _schedule_intent = None
                         _delete_intent = None
                         _pending_delete = None
+                _shortcircuited = False
                 # Confirmation of a pending delete takes priority over anything
                 if _pending_delete is not None and (_confirmation_yes or _confirmation_no):
+                    _shortcircuited = True
                     if _confirmation_yes:
                         sid = str(_pending_delete.get("schedule_id") or "")
                         try:
@@ -1043,6 +1045,7 @@ def simulate_telegram_update(
                     evidence_summary = None
                     bridge_result = None
                 elif _delete_intent is not None and _instruction_intent is None:
+                    _shortcircuited = True
                     try:
                         existing = _fetch_schedules()
                     except Exception:
@@ -1064,21 +1067,60 @@ def simulate_telegram_update(
                     active_chip_evaluate_used = False
                     evidence_summary = None
                     bridge_result = None
-                elif _schedule_intent is not None and _instruction_intent is None:
+                elif _instruction_intent is None:
+                    _board_intent = None
                     try:
-                        outbound_text = _fmt_schedules()
-                    except Exception as exc:
-                        outbound_text = f"Could not reach scheduler: {exc}"
-                    trace_ref = None
-                    bridge_mode = "schedule_list_shortcircuit"
-                    attachment_context = None
-                    routing_decision = "schedule_list_shortcircuit"
-                    active_chip_key = None
-                    active_chip_task_type = None
-                    active_chip_evaluate_used = False
-                    evidence_summary = None
-                    bridge_result = None
-                elif _instruction_intent is not None:
+                        from spark_intelligence.mission_bridge import (
+                            detect_board_intent as _detect_board_intent,
+                            has_live_missions as _has_live_missions,
+                            format_board_from_spawner as _fmt_board,
+                        )
+                        _board_intent = _detect_board_intent(effective_text)
+                    except Exception:
+                        _board_intent = None
+                    if _board_intent is not None:
+                        _shortcircuited = True
+                        outbound_text = _fmt_board()
+                        trace_ref = None
+                        bridge_mode = "board_shortcircuit"
+                        attachment_context = None
+                        routing_decision = "board_shortcircuit"
+                        active_chip_key = None
+                        active_chip_task_type = None
+                        active_chip_evaluate_used = False
+                        evidence_summary = None
+                        bridge_result = None
+                    elif _schedule_intent is not None:
+                        _shortcircuited = True
+                        # "what's running" is ambiguous: if there are live
+                        # missions, show the board; else fall through to the
+                        # schedule list. Per the conversational-intent-design
+                        # skill, prioritize missions > schedules for ambiguous
+                        # "what's running" queries.
+                        try:
+                            show_board = re.search(r"\brunning\b", effective_text, re.IGNORECASE) and _has_live_missions()
+                        except Exception:
+                            show_board = False
+                        if show_board:
+                            outbound_text = _fmt_board()
+                            bridge_mode = "board_shortcircuit"
+                            routing_decision = "board_shortcircuit"
+                        else:
+                            try:
+                                outbound_text = _fmt_schedules()
+                            except Exception as exc:
+                                outbound_text = f"Could not reach scheduler: {exc}"
+                            bridge_mode = "schedule_list_shortcircuit"
+                            routing_decision = "schedule_list_shortcircuit"
+                        trace_ref = None
+                        attachment_context = None
+                        active_chip_key = None
+                        active_chip_task_type = None
+                        active_chip_evaluate_used = False
+                        evidence_summary = None
+                        bridge_result = None
+                if not _shortcircuited and _instruction_intent is not None:
+                    _shortcircuited = True
                     outbound_text = _maybe_capture_user_instruction(
                         state_db=state_db,
                         user_message=effective_text,
@@ -1096,7 +1138,7 @@ def simulate_telegram_update(
                     active_chip_evaluate_used = False
                     evidence_summary = None
                     bridge_result = None
-                else:
+                if not _shortcircuited:
                     bridge_result = build_researcher_reply(
                         config_manager=config_manager,
                         state_db=state_db,

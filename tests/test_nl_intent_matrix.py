@@ -20,6 +20,7 @@ from spark_intelligence.schedule_bridge import (
     is_confirmation_no,
     is_confirmation_yes,
 )
+from spark_intelligence.mission_bridge import detect_board_intent
 from spark_intelligence.user_instructions import detect_instruction_intent
 
 
@@ -100,6 +101,25 @@ CONFIRM_NO_PHRASES = [
     "leave it",
 ]
 
+BOARD_PHRASES = [
+    "show me the missions",
+    "list missions",
+    "show the board",
+    "kanban",
+    "what's running",
+    "whats running",
+    "what am I running",
+    "is anything running",
+    "show live missions",
+    "any running missions",
+    "any live missions",
+    "mission status",
+    "board status",
+    "my missions?",
+    "missions",
+    "view the board right now",
+]
+
 
 # -------- Anti-fixtures (plain chat, must not match anything) ---------------
 
@@ -142,8 +162,12 @@ def _confirm_yes_hit(phrase: str) -> bool:
 def _confirm_no_hit(phrase: str) -> bool:
     return is_confirmation_no(phrase)
 
+def _board_hit(phrase: str) -> bool:
+    return detect_board_intent(phrase) is not None
+
 
 INTENT_DETECTORS = {
+    "board": _board_hit,
     "schedule_list": _schedule_list_hit,
     "schedule_delete": _schedule_delete_hit,
     "instruction_remember": _instruction_remember_hit,
@@ -167,12 +191,14 @@ STATEFUL_DETECTORS = {"confirm_yes", "confirm_no"}
 INTENT_PRIORITY = [
     "schedule_delete",    # destructive, explicit verbs, confirmation-gated
     "instruction_forget", # explicit /forget or "stop remembering X"
-    "schedule_list",      # read-only
+    "board",              # mission board - "what's running" with live missions
+    "schedule_list",      # read-only schedule listing
     "instruction_remember",  # most permissive; catches inline directives
 ]
 
 
 FIXTURE_BY_INTENT = {
+    "board": BOARD_PHRASES,
     "schedule_list": SCHEDULE_LIST_PHRASES,
     "schedule_delete": SCHEDULE_DELETE_PHRASES,
     "instruction_remember": INSTRUCTION_REMEMBER_PHRASES,
