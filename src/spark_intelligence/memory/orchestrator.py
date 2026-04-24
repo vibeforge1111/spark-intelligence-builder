@@ -1041,6 +1041,15 @@ def lookup_current_state_in_memory(
             reason="sdk_unavailable",
             shadow_only=False,
         )
+        _record_memory_read_requested_subject(
+            state_db=state_db,
+            method="get_current_state",
+            subject=subject,
+            predicate=predicate,
+            session_id=f"memory-lookup:{actor_id}",
+            turn_id=f"{actor_id}:lookup",
+            actor_id=actor_id,
+        )
         _record_memory_read_event(
             state_db=state_db,
             result=read_result,

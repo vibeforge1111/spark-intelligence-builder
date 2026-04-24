@@ -5177,6 +5177,7 @@ def build_researcher_reply(
                 state_db=state_db,
                 query=str(user_message or "").strip() or f"What is my {detected_profile_fact_query.label}?",
                 subject=memory_subject,
+                predicate=detected_profile_fact_query.predicate,
                 limit=6,
                 actor_id="researcher_bridge",
             )

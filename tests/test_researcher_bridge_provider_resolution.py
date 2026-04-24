@@ -1521,12 +1521,13 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 "trace_path": "trace:under-supported",
             }
 
-        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None, tools=None):
             captured["provider_id"] = provider.provider_id
             captured["provider_model"] = provider.model
             captured["system_prompt"] = system_prompt
             captured["user_prompt"] = user_prompt
             captured["governance"] = governance
+            captured["tools"] = tools
             return {"raw_response": "Hey there. How can I help?"}
 
         def fail_execute_with_research(*args, **kwargs):
@@ -1589,9 +1590,10 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         )
         captured: dict[str, object] = {}
 
-        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None, tools=None):
             captured["system_prompt"] = system_prompt
             captured["user_prompt"] = user_prompt
+            captured["tools"] = tools
             return {"raw_response": "Focus on in-house teams for now."}
 
         with patch(
@@ -1640,9 +1642,10 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         )
         captured: dict[str, object] = {}
 
-        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None, tools=None):
             captured["system_prompt"] = system_prompt
             captured["user_prompt"] = user_prompt
+            captured["tools"] = tools
             return {"raw_response": "Start with the wedge."}
 
         with patch(
@@ -2374,7 +2377,9 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual(result.reply_text, "Your country is UAE.")
         read_events = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=10)
         self.assertTrue(read_events)
-        self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate"), "profile.home_country")
+        self.assertTrue(
+            any((event["facts_json"] or {}).get("predicate") == "profile.home_country" for event in read_events)
+        )
         bridge_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
         self.assertTrue(bridge_events)
         self.assertEqual((bridge_events[0]["facts_json"] or {}).get("routing_decision"), "memory_profile_fact_query")
