@@ -10,6 +10,55 @@ from tests.test_support import SparkTestCase
 
 
 class GatewayAskTelegramTests(SparkTestCase):
+    def test_gateway_ask_telegram_routes_generic_memory_deletes_before_instruction_shortcircuit(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        self.config_manager.set_path("spark.researcher.enabled", True)
+
+        update = json.loads(
+            gateway_ask_telegram(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                message="My favorite color is cobalt blue.",
+                user_id="111",
+                as_json=True,
+            )
+        )
+        deletion = json.loads(
+            gateway_ask_telegram(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                message="Forget my favorite color.",
+                user_id="111",
+                as_json=True,
+            )
+        )
+        post_delete_query = json.loads(
+            gateway_ask_telegram(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                message="What is my favorite color?",
+                user_id="111",
+                as_json=True,
+            )
+        )
+
+        self.assertEqual(
+            update["result"]["detail"]["bridge_mode"],
+            "memory_generic_observation_update",
+        )
+        self.assertEqual(
+            deletion["result"]["detail"]["bridge_mode"],
+            "memory_generic_observation_delete",
+        )
+        self.assertIn("I'll forget your favorite color.", deletion["result"]["detail"]["response_text"])
+        self.assertEqual(
+            post_delete_query["result"]["detail"]["response_text"],
+            "I don't currently have that saved.",
+        )
+
     def test_gateway_ask_telegram_uses_single_allowed_user_and_formats_reply(self) -> None:
         self.add_telegram_channel(allowed_users=["111"])
         self.config_manager.set_path("operator.experimental.telegram_terminal_bridge_enabled", True)

@@ -994,6 +994,19 @@ def simulate_telegram_update(
                         _instruction_intent = _detect_instruction_intent(effective_text)
                     except Exception:
                         _instruction_intent = None
+                    if _instruction_intent is not None:
+                        try:
+                            memory_enabled = bool(config_manager.get_path("spark.memory.enabled"))
+                            shadow_mode = bool(config_manager.get_path("spark.memory.shadow_mode"))
+                            if memory_enabled and not shadow_mode:
+                                from spark_intelligence.memory.generic_observations import (
+                                    detect_telegram_generic_deletion as _detect_generic_memory_deletion,
+                                )
+
+                                if _detect_generic_memory_deletion(effective_text) is not None:
+                                    _instruction_intent = None
+                        except Exception:
+                            pass
                     try:
                         from spark_intelligence.schedule_bridge import (
                             detect_schedule_intent as _detect_schedule_intent,
