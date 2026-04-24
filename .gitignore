@@ -16,6 +16,7 @@ __pycache__/
 .tmp-home/
 .tmp-home-*/
 .tmp/
+.tmp-shadow-*
 .vendor/
 .spark-swarm/
 .tmp-telegram-*.json
@@ -30,6 +31,8 @@ PROJECT.md
 .boot-logs/
 .claude/
 .codex
+logs/
+prompts/
 PERSONALITY_HANDOFF_*.md
 docs/MEMORY_METHODOLOGY_UPGRADE_*.md
 docs/MEMORY_NEXT_PHASES_HANDOFF_*.md
