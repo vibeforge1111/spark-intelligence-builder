@@ -135,15 +135,17 @@ Phase 2 prep has now started with `DISCORD_OPERATOR_RUNBOOK_2026-03-26.md`, whic
 
 Execution is now explicitly refocused through `EXECUTION_REFOCUS_TELEGRAM_LLM_2026-03-26.md`: before live Discord or broader WhatsApp work, Spark should first prove and stabilize the real Telegram plus LLM path end to end on the live home.
 
-That proof is now in place on the canonical home `.tmp-home-live-telegram-real`:
+That proof is now in place on the canonical home `.tmp-home-live-telegram-real`.
 
-- Telegram auth is healthy against the live BotFather bot `@SparkAGI_bot`
-- the live home is narrowed to one working provider path, `custom`, backed by MiniMax
+Historical note: this section records a specific March 2026 provider validation pass. It is not a product requirement to use one LLM provider; the intended launch shape is provider-pluggable.
+
+- Telegram auth is healthy against the live BotFather bot
+- the live home is narrowed to one working provider path for validation
 - `auth status`, `gateway status`, and top-level `status` are now all consistent on that same home
 - `gateway start --once` now exits cleanly on that same home with provider runtime and execution both healthy
 - one real inbound Telegram DM has been processed and one real outbound provider-backed reply has been sent successfully on that same home
 
-Codex OAuth is still not proven on the live home and is no longer the gating item for the Telegram vertical slice. The current remaining work is operational hardening around the already-proven Telegram plus MiniMax path, followed by a deliberate decision on whether to retry Codex auth or defer it behind the stable API-key-backed path.
+Codex OAuth is still not proven on the live home and is no longer the gating item for the Telegram vertical slice. The current remaining work is operational hardening around the already-proven Telegram plus provider path, followed by a deliberate decision on whether to retry Codex auth or defer it behind the stable API-key-backed path.
 
 The next broader connection and productization map is now recorded in `SYSTEM_CONNECTION_AND_PRODUCTIZATION_PLAN_2026-03-26.md`. That plan separates what is truly connected today from what is only wired, and defines the next step-by-step order for activating chips/path specialization, connecting real Swarm API access, and productizing the install/setup/run story for another operator.
 
@@ -153,7 +155,7 @@ The next specialization/runtime bridge layer is now also real instead of docs-on
 
 The current canonical live home has also moved further through that connection plan:
 
-- phase A is ready on the real Telegram plus MiniMax home
+- phase A is ready on the real Telegram plus provider-backed home
 - phase B is ready with `startup-yc` and `startup-operator` active in live runtime state
 - phase C is locally wired with live Swarm auth/config present locally, although the hosted Swarm side is still rejecting the current session with `authentication_required` on real sync
 
@@ -167,7 +169,7 @@ Phase E now has its first real supported bootstrap profile instead of only a bag
 
 Phase E now also has the first supported native always-on wrapper on Windows: `install-autostart` and `uninstall-autostart` manage a Task Scheduler entry that runs the foreground gateway continuously for one home. That keeps the implementation aligned with the architecture rule to prefer native autostart registration over inventing a custom daemon layer, and it makes always-on operation visible in config and top-level status instead of remaining a manual terminal habit.
 
-The supported MiniMax path is now also aligned on `MiniMax-M2.7` instead of `MiniMax-M2.5`, and the clean-home bootstrap/autostart path is now covered by smoke tests instead of still being tracked as an unvalidated fresh-operator install gap.
+The clean-home bootstrap/autostart path is now covered by smoke tests instead of still being tracked as an unvalidated fresh-operator install gap.
 
 The end-of-day local finish pass tightened two more pieces without widening scope again. First, the Telegram runtime no longer feeds raw active-chip memo scaffolding straight through to live DM replies: active-chip doctrine is now summarized as hidden background guidance for provider chat, and Telegram reply cleanup strips common internal memo labels such as `Primary Focus`, `Confidence`, and `Evidence gap` before delivery. Second, the Swarm operator surfaces now distinguish "token exists" from "hosted auth/session is actually accepted": `connect status`, `connect route-policy`, and `swarm status` now surface hosted auth rejection directly, so phase C no longer looks deceptively green when the hosted Swarm side is returning `authentication_required`.
 
@@ -207,5 +209,5 @@ The next slice is successful if all of this is true:
 - the canonical Telegram live home stays on one working provider path and remains green after token, provider, or pairing changes
 - one controlled provider-failure drill is run on that same home and all recovery surfaces point at the correct repair flow
 - one real Telegram reply is re-proven after the recovery drill
-- Codex auth is either deliberately retried from a stable baseline or explicitly deferred behind the proven MiniMax path
+- Codex auth is either deliberately retried from a stable baseline or explicitly deferred behind the proven API-key-backed provider path
 - expansion to another adapter happens only after those contracts are stable

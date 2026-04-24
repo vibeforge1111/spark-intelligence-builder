@@ -13,12 +13,12 @@ The first supporting runtime surface for this plan is `spark-intelligence connec
 
 ## 2. Current Reality
 
-These things are real today on the canonical live home `.tmp-home-live-telegram-real`:
+These things were real on the canonical live home `.tmp-home-live-telegram-real` during the March validation pass. This is historical status, not a requirement to use one specific LLM provider:
 
-- Telegram DM ingress is live against `@SparkAGI_bot`
+- Telegram DM ingress is live against the configured BotFather bot
 - the gateway can run continuously in foreground mode
 - the Spark Researcher bridge is connected to the local `spark-researcher` runtime
-- MiniMax is connected through the `custom` direct provider path
+- one OpenAI-compatible provider is connected through the `custom` direct provider path
 - provider runtime and provider execution readiness are both green
 - pairing, operator controls, traces, outbound audit, and recovery surfaces are real
 - Telegram conversational fallback is live for under-supported small-talk
@@ -56,7 +56,7 @@ Do this in order.
 
 Goal:
 
-- keep the current Telegram plus Researcher plus MiniMax path stable while everything else is connected around it
+- keep the current Telegram plus Researcher plus provider path stable while everything else is connected around it
 
 Required outcomes:
 
