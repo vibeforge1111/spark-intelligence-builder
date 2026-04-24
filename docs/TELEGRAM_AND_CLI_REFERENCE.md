@@ -42,7 +42,7 @@ If the bot refuses to start:
 
 Env files that matter:
 
-- `spark-telegram-bot/.env` - `BOT_TOKEN`, `SPARK_API_URL`, `TELEGRAM_GATEWAY_MODE`, relay ports.
+- `spark-telegram-bot/.env` - `BOT_TOKEN`, `TELEGRAM_GATEWAY_MODE`, relay ports, and LLM provider metadata.
 - `spawner-ui/.env` - `MISSION_CONTROL_WEBHOOK_URLS`, `SPAWNER_H70_SKILLS_DIR`, `TELEGRAM_BOT_TOKEN` (mirrored from bot so scheduler can DM).
 - `spark-intelligence-builder/.tmp-home-live-telegram-real/.env` - `ZAI_API_KEY`, `MINIMAX_API_KEY`.
 
