@@ -383,12 +383,14 @@ def gateway_simulate_telegram_update(
     update_path: Path,
     *,
     as_json: bool = False,
+    simulation: bool = True,
 ) -> str:
     payload: dict[str, Any] = json.loads(update_path.read_text(encoding="utf-8-sig"))
     result = simulate_telegram_update(
         config_manager=config_manager,
         state_db=state_db,
         update_payload=payload,
+        simulation=simulation,
     )
     return result.to_json() if as_json else result.to_text()
 

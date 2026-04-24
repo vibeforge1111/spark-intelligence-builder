@@ -4,6 +4,7 @@ from spark_intelligence.adapters.telegram.runtime import simulate_telegram_updat
 from spark_intelligence.gateway.runtime import gateway_outbound_view, gateway_trace_view
 from spark_intelligence.gateway.tracing import append_gateway_trace, append_outbound_audit
 from spark_intelligence.identity.service import hold_pairing, review_pairings
+from spark_intelligence.observability.store import latest_events_by_type
 from spark_intelligence.ops.service import list_operator_events, log_operator_event
 
 from tests.test_support import SparkTestCase, make_telegram_update
@@ -131,6 +132,64 @@ class ObservabilityFilterTests(SparkTestCase):
         self.assertEqual(pending.rows[0]["status"], "pending")
         self.assertEqual(held.rows[0]["external_user_id"], "333")
         self.assertEqual(held.rows[0]["status"], "held")
+
+    def test_telegram_runtime_origin_uses_real_request_ids_and_trace_labels(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        runtime_result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=501,
+                user_id="111",
+                username="user111",
+                text="My mom came over yesterday and I spent time with my sister at the park.",
+            ),
+            simulation=False,
+        )
+
+        self.assertTrue(runtime_result.ok)
+        self.assertEqual(runtime_result.detail["request_id"], "telegram:501")
+        self.assertFalse(runtime_result.detail["simulation"])
+        self.assertEqual(runtime_result.detail["origin_surface"], "telegram_runtime")
+        self.assertEqual(runtime_result.detail["routing_decision"], "memory_generic_observation")
+
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=5)
+        self.assertTrue(write_events)
+        self.assertEqual(write_events[0]["request_id"], "telegram:501")
+
+        runtime_trace = json.loads(
+            gateway_trace_view(
+                self.config_manager,
+                limit=10,
+                channel_id="telegram",
+                event="telegram_update_processed",
+                user="111",
+                as_json=True,
+            )
+        )[0]
+        self.assertEqual(runtime_trace["request_id"], "telegram:501")
+        self.assertFalse(runtime_trace["simulation"])
+        self.assertEqual(runtime_trace["origin_surface"], "telegram_runtime")
+
+        simulation_result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=502,
+                user_id="111",
+                username="user111",
+                text="Which family members did I spend time with recently?",
+            ),
+        )
+
+        self.assertTrue(simulation_result.ok)
+        self.assertEqual(simulation_result.detail["request_id"], "sim:502")
+        self.assertTrue(simulation_result.detail["simulation"])
+        self.assertEqual(simulation_result.detail["origin_surface"], "simulation_cli")
 
     def test_operator_history_filters_by_action_target_kind_and_contains(self) -> None:
         log_operator_event(

@@ -1441,6 +1441,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     gateway_simulate_parser.add_argument("update_file", help="Path to a Telegram update JSON file")
     gateway_simulate_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    gateway_simulate_parser.add_argument(
+        "--origin",
+        choices=("simulation", "telegram-runtime"),
+        default="simulation",
+        help="Label generated Builder traces as synthetic simulation or real Telegram runtime bridge traffic",
+    )
     gateway_simulate_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     gateway_ask_telegram_parser = gateway_subparsers.add_parser(
         "ask-telegram",
@@ -3742,6 +3748,7 @@ def handle_gateway_simulate_telegram_update(args: argparse.Namespace) -> int:
             state_db,
             Path(args.update_file),
             as_json=args.json,
+            simulation=args.origin != "telegram-runtime",
         )
     )
     return 0

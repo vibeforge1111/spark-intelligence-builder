@@ -835,8 +835,12 @@ def simulate_telegram_update(
     state_db: StateDB,
     update_payload: dict[str, Any],
     client: TelegramBotApiClient | None = None,
+    simulation: bool = True,
 ) -> TelegramSimulationResult:
     normalized = normalize_telegram_update(update_payload, channel_id="telegram")
+    request_prefix = "sim" if simulation else "telegram"
+    request_id = f"{request_prefix}:{normalized.update_id}"
+    origin_surface = "simulation_cli" if simulation else "telegram_runtime"
     if not normalized.is_dm:
         return TelegramSimulationResult(
             ok=False,
@@ -908,7 +912,7 @@ def simulate_telegram_update(
             external_user_id=normalized.telegram_user_id,
             inbound_text=effective_text,
             run_id=None,
-            request_id=f"sim:{normalized.update_id}",
+            request_id=request_id,
             session_id=resolution.session_id,
             human_id=resolution.human_id,
             agent_id=resolution.agent_id,
@@ -955,7 +959,7 @@ def simulate_telegram_update(
                 user_message=effective_text,
                 state_db=state_db,
                 source_surface="telegram",
-                source_ref=f"sim:{normalized.update_id}",
+                source_ref=request_id,
                 start_if_eligible=onboarding_eligible,
             )
             if onboarding_result is not None:
@@ -1237,7 +1241,7 @@ def simulate_telegram_update(
                     bridge_result = build_researcher_reply(
                         config_manager=config_manager,
                         state_db=state_db,
-                        request_id=f"sim:{normalized.update_id}",
+                        request_id=request_id,
                         agent_id=resolution.agent_id,
                         human_id=resolution.human_id,
                         session_id=resolution.session_id,
@@ -1311,6 +1315,9 @@ def simulate_telegram_update(
         active_chip_evaluate_used = False
         evidence_summary = None
     detail = {
+        "request_id": request_id,
+        "simulation": simulation,
+        "origin_surface": origin_surface,
         "telegram_user_id": normalized.telegram_user_id,
         "chat_id": normalized.chat_id,
         "session_id": resolution.session_id,
@@ -1351,7 +1358,9 @@ def simulate_telegram_update(
                 "delivery_ok": True,
                 "delivery_error": None,
                 "guardrail_actions": [],
-                "simulation": True,
+                "simulation": simulation,
+                "origin_surface": origin_surface,
+                "request_id": request_id,
             },
         )
     return TelegramSimulationResult(ok=resolution.allowed, decision=resolution.decision, detail=detail)
