@@ -342,9 +342,13 @@ def _handle_discord_interaction_payload(
         max_reply_chars=DISCORD_MAX_INTERACTION_RESPONSE_CHARS,
         redact_secret_like_replies=True,
     )
+    delivered_text = _discord_single_response_text(prepared)
+    mutation_actions = list(prepared["actions"])
+    if len(delivered_text) < len(str(prepared.get("text") or "")):
+        mutation_actions.append("truncate_reply")
     response = GatewayWebhookResponse(
         status_code=200,
-        body=json.dumps({"type": 4, "data": {"content": prepared["text"], "flags": 64}}),
+        body=json.dumps({"type": 4, "data": {"content": delivered_text, "flags": 64}}),
         content_type="application/json",
     )
     append_gateway_trace(
@@ -374,8 +378,8 @@ def _handle_discord_interaction_payload(
         keepability=str(bridge.detail.get("output_keepability") or "") or None,
         promotion_disposition=str(bridge.detail.get("promotion_disposition") or "") or None,
         raw_text=str(bridge.detail.get("response_text") or ""),
-        delivered_text=str(prepared["text"] or ""),
-        mutation_actions=list(prepared["actions"]),
+        delivered_text=delivered_text,
+        mutation_actions=mutation_actions,
     )
     close_run(
         state_db,
@@ -459,13 +463,25 @@ def _discord_interaction_message(
         max_reply_chars=DISCORD_MAX_INTERACTION_RESPONSE_CHARS,
         redact_secret_like_replies=True,
     )
-    data: dict[str, Any] = {"content": prepared["text"]}
+    data: dict[str, Any] = {"content": _discord_single_response_text(prepared)}
     if ephemeral:
         data["flags"] = 64
     return GatewayWebhookResponse(
         status_code=200,
         body=json.dumps({"type": 4, "data": data}, indent=2),
     )
+
+
+def _discord_single_response_text(prepared: dict[str, Any]) -> str:
+    chunks = prepared.get("chunks")
+    text = str(chunks[0] if isinstance(chunks, list) and chunks else prepared.get("text") or "")
+    if len(text) <= DISCORD_MAX_INTERACTION_RESPONSE_CHARS:
+        return text
+    suffix = "\n\n[truncated for delivery]"
+    keep = DISCORD_MAX_INTERACTION_RESPONSE_CHARS - len(suffix)
+    if keep < 1:
+        return text[:DISCORD_MAX_INTERACTION_RESPONSE_CHARS]
+    return text[:keep].rstrip() + suffix
 
 
 def _record_discord_delivery(

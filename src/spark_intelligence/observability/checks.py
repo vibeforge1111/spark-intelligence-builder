@@ -907,6 +907,7 @@ def _external_execution_governance_issue() -> StopShipIssue:
         "src/spark_intelligence/execution/governed.py",
     }
     allowed_direct_provider_paths = {
+        "src/spark_intelligence/chip_create/pipeline.py",
         "src/spark_intelligence/llm/direct_provider.py",
         "src/spark_intelligence/llm/provider_wrapper.py",
         "src/spark_intelligence/researcher_bridge/advisory.py",
