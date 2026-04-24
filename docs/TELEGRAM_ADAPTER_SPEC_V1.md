@@ -360,4 +360,4 @@ The original Builder-first Telegram adapter should be:
 
 It should be the simplest local Builder adapter in Spark Intelligence v1.
 
-For stable production Telegram ownership, prefer the dedicated webhook gateway path instead of direct Builder polling.
+For stable launch Telegram ownership, prefer the dedicated `spark-telegram-bot` long-polling gateway path instead of direct Builder polling.

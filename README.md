@@ -27,17 +27,22 @@ It should avoid becoming a giant everything-repo by copying the internals of:
 - `domain chip` repos
 - `specialization path` repos
 
-## Current Live Telegram Architecture
+## Launch Telegram Architecture
 
-The stable live Telegram path is now split across repos:
+The launch Telegram path is split across repos:
 
 - `spark-telegram-bot` is the Telegram ingress owner
 - `spark-intelligence-builder` remains the Builder/runtime and adapter-logic repo
 - `spawner-ui` is the execution plane for mission-style work
 
-Current live shape:
+Launch shape:
 
-`Telegram -> spark-telegram-bot webhook gateway -> Builder/Spark logic -> Spawner UI when execution is needed`
+```text
+Telegram long polling
+  -> spark-telegram-bot
+  -> Builder/Spark logic
+  -> Spawner UI when execution is needed
+```
 
 That also means multiple terminals or workers must stay behind one Telegram ingress owner. The system can fan out internally, but it must not run multiple concurrent Telegram receivers for the same bot token.
 
@@ -47,12 +52,13 @@ Current installer rule for this split architecture:
 - `spark-intelligence-builder` is the runtime core behind that gateway
 - `spawner-ui` is the execution plane behind that gateway
 - do not give the same Telegram bot token to both Builder and the gateway
+- Telegram webhooks are not part of launch v1; `spark-telegram-bot` uses long polling
 
 Installer source of truth:
 
 - [docs/SPARK_INSTALLER_STANDARD_V1_2026-04-22.md](./docs/SPARK_INSTALLER_STANDARD_V1_2026-04-22.md)
 
-Older Telegram sections in this README may still describe the historical Builder-owned polling path. Treat those sections as historical unless they explicitly mention the newer webhook gateway split.
+Older Telegram docs may describe historical Builder-owned polling or webhook plans. Treat those sections as historical unless they explicitly match the launch split above.
 
 This repo currently includes:
 
@@ -380,7 +386,7 @@ Production ingress ownership rule:
 - only one runtime may long-poll one Telegram bot token at a time
 - the older live path used `spark-intelligence` Builder as the Telegram poller
 - do not run a second Telegram poller against the same bot token from another runtime, browser automation surface, or test harness
-- the current stable production path should use the dedicated `spark-telegram-bot` webhook gateway instead of Builder-owned polling
+- the current stable launch path should use the dedicated `spark-telegram-bot` long-polling gateway instead of Builder-owned polling
 - if direct Builder Telegram testing is needed alongside another ingress owner, use a separate staging bot token instead of dual-polling the production bot
 
 Historical Builder-owned Telegram system shape:

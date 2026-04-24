@@ -91,10 +91,12 @@ npm install -g spark-intelligence
 spark-intelligence setup
 ```
 
-Later optional convenience:
+Later optional convenience, if we ship a signed installer script:
 
 ```bash
-curl -fsSL <install-script> | bash
+curl -fsSLO <install-script>
+less ./install.sh
+bash ./install.sh
 spark-intelligence setup
 ```
 

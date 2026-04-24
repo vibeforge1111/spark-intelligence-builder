@@ -13,7 +13,7 @@ This is a migration plan, not a current-state doc.
 
 Today the stable live path is:
 
-`Telegram -> spark-telegram-bot webhook gateway -> Builder/Spark logic -> Spawner UI when execution is needed`
+`Telegram -> spark-telegram-bot long-polling gateway -> Builder/Spark logic -> Spawner UI when execution is needed`
 
 That split exists for a good reason:
 

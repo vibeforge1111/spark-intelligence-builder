@@ -18,7 +18,7 @@ This document also captures which patterns we should borrow from `OpenClaw` and 
 Current live-note:
 
 - this architecture document describes the Spark Intelligence system shape at a product level
-- the current stable Telegram ingress owner is the dedicated `spark-telegram-bot` webhook gateway
+- the current stable launch Telegram ingress owner is the dedicated `spark-telegram-bot` long-polling gateway
 - `spark-intelligence-builder` remains the Builder/runtime logic repo behind that gateway rather than the only live Telegram token owner
 
 ## 2. Design Goals
@@ -132,7 +132,7 @@ So the architecture should be:
 
 For the current live Telegram path, that means:
 
-`Telegram -> spark-telegram-bot webhook gateway -> Builder/Spark logic -> downstream Spark systems`
+`Telegram -> spark-telegram-bot long-polling gateway -> Builder/Spark logic -> downstream Spark systems`
 
 not:
 
@@ -865,7 +865,7 @@ The install path should be aggressively simple.
 
 Recommended shape:
 
-- `curl ... | bash` or equivalent one-step installer later
+- download/inspect/run installer script later, without pipe-to-shell execution
 - `spark-intelligence setup`
 - `spark-intelligence doctor`
 - `spark-intelligence gateway start`
