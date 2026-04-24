@@ -1155,6 +1155,11 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap_telegram_parser.add_argument("--path-root", action="append", default=[], help="Additional specialization-path root to attach during bootstrap")
     bootstrap_telegram_parser.add_argument("--activate-chip", action="append", default=[], help="Chip key to activate during bootstrap")
     bootstrap_telegram_parser.add_argument("--pin-chip", action="append", default=[], help="Chip key to pin during bootstrap")
+    bootstrap_telegram_parser.add_argument(
+        "--no-default-memory-chip",
+        action="store_true",
+        help="Do not auto-activate the default domain-chip-memory attachment during telegram-agent bootstrap",
+    )
     bootstrap_telegram_parser.add_argument("--set-path", help="Specialization path key to activate during bootstrap")
     bootstrap_telegram_parser.add_argument("--allowed-user", action="append", default=[], help="Allowed Telegram user id")
     bootstrap_telegram_parser.add_argument(
@@ -2191,6 +2196,7 @@ def _apply_bootstrap_attachment_preferences(
     activate_chip_keys: list[str],
     pin_chip_keys: list[str],
     active_path_key: str | None,
+    default_memory_chip: bool,
 ) -> tuple[list[str], object]:
     notes: list[str] = []
     changed = False
@@ -2203,6 +2209,20 @@ def _apply_bootstrap_attachment_preferences(
         add_attachment_root(config_manager, target="paths", root=root)
         notes.append(f"added specialization path root {root}")
         changed = True
+
+    if default_memory_chip:
+        available_chip_keys = {
+            record.key
+            for record in attachment_status(config_manager).records
+            if record.kind == "chip"
+        }
+        if "domain-chip-memory" in available_chip_keys:
+            activate_chip(config_manager, chip_key="domain-chip-memory")
+            notes.append("activated default memory chip domain-chip-memory")
+            changed = True
+        else:
+            notes.append("default memory chip domain-chip-memory not found; continuing without it")
+
     for chip_key in activate_chip_keys:
         activate_chip(config_manager, chip_key=chip_key)
         notes.append(f"activated chip {chip_key}")
@@ -2504,6 +2524,7 @@ def handle_bootstrap_telegram_agent(args: argparse.Namespace) -> int:
         activate_chip_keys=[] if args.interactive else args.activate_chip,
         pin_chip_keys=[] if args.interactive else args.pin_chip,
         active_path_key=None if args.interactive else args.set_path,
+        default_memory_chip=not args.no_default_memory_chip,
     )
     setup_notes.extend(attachment_notes)
     if created:
@@ -2557,6 +2578,7 @@ def handle_bootstrap_telegram_agent(args: argparse.Namespace) -> int:
             activate_chip_keys=args.activate_chip,
             pin_chip_keys=args.pin_chip,
             active_path_key=args.set_path,
+            default_memory_chip=False,
         )
         setup_notes.extend(attachment_notes)
 

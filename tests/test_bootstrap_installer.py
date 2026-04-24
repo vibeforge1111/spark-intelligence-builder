@@ -40,6 +40,7 @@ class BootstrapInstallerTests(SparkTestCase):
         researcher_root.mkdir()
         researcher_config = researcher_root / "spark-researcher.project.json"
         researcher_config.write_text("{}", encoding="utf-8")
+        memory_chip_root = create_fake_hook_chip(self.home, chip_key="domain-chip-memory")
         chip_root = create_fake_hook_chip(self.home, chip_key="startup-yc")
         path_root = self.home / "specialization-path-startup-operator"
         path_root.mkdir(parents=True, exist_ok=True)
@@ -68,6 +69,8 @@ class BootstrapInstallerTests(SparkTestCase):
             "--bot-token",
             "telegram-test-token",
             "--chip-root",
+            str(memory_chip_root),
+            "--chip-root",
             str(chip_root),
             "--path-root",
             str(path_root),
@@ -82,12 +85,69 @@ class BootstrapInstallerTests(SparkTestCase):
 
         self.assertIn(exit_code, (0, 1), stderr)
         self.assertIn("Spark Intelligence bootstrap: telegram-agent", stdout)
-        self.assertIn("- active_chip_keys: startup-yc", stdout)
+        self.assertIn("- active_chip_keys: domain-chip-memory, startup-yc", stdout)
         self.assertIn("- pinned_chip_keys: startup-yc", stdout)
         self.assertIn("- active_path_key: startup-operator", stdout)
-        self.assertEqual(self.config_manager.get_path("spark.chips.active_keys"), ["startup-yc"])
+        self.assertEqual(self.config_manager.get_path("spark.chips.active_keys"), ["domain-chip-memory", "startup-yc"])
         self.assertEqual(self.config_manager.get_path("spark.chips.pinned_keys"), ["startup-yc"])
         self.assertEqual(self.config_manager.get_path("spark.specialization_paths.active_path_key"), "startup-operator")
+
+    def test_bootstrap_telegram_agent_activates_memory_chip_by_default_when_discoverable(self) -> None:
+        memory_chip_root = create_fake_hook_chip(self.home, chip_key="domain-chip-memory")
+
+        exit_code, stdout, stderr = self.run_cli(
+            "bootstrap",
+            "telegram-agent",
+            "--home",
+            str(self.home),
+            "--provider",
+            "custom",
+            "--api-key",
+            "provider-secret",
+            "--model",
+            "sandbox-model",
+            "--base-url",
+            "http://127.0.0.1:9/v1",
+            "--bot-token",
+            "telegram-test-token",
+            "--chip-root",
+            str(memory_chip_root),
+            "--skip-validate",
+        )
+
+        self.assertIn(exit_code, (0, 1), stderr)
+        self.assertIn("activated default memory chip domain-chip-memory", stdout)
+        self.assertIn("- active_chip_keys: domain-chip-memory", stdout)
+        self.assertEqual(self.config_manager.get_path("spark.chips.active_keys"), ["domain-chip-memory"])
+
+    def test_bootstrap_telegram_agent_can_opt_out_of_default_memory_chip(self) -> None:
+        memory_chip_root = create_fake_hook_chip(self.home, chip_key="domain-chip-memory")
+
+        exit_code, stdout, stderr = self.run_cli(
+            "bootstrap",
+            "telegram-agent",
+            "--home",
+            str(self.home),
+            "--provider",
+            "custom",
+            "--api-key",
+            "provider-secret",
+            "--model",
+            "sandbox-model",
+            "--base-url",
+            "http://127.0.0.1:9/v1",
+            "--bot-token",
+            "telegram-test-token",
+            "--chip-root",
+            str(memory_chip_root),
+            "--no-default-memory-chip",
+            "--skip-validate",
+        )
+
+        self.assertIn(exit_code, (0, 1), stderr)
+        self.assertNotIn("activated default memory chip domain-chip-memory", stdout)
+        self.assertIn("- active_chip_keys: none", stdout)
+        self.assertEqual(self.config_manager.get_path("spark.chips.active_keys"), [])
 
     def test_bootstrap_telegram_agent_can_configure_fallback_provider(self) -> None:
         researcher_root = self.home / "spark-researcher"
@@ -167,6 +227,7 @@ class BootstrapInstallerTests(SparkTestCase):
         researcher_root.mkdir()
         researcher_config = researcher_root / "spark-researcher.project.json"
         researcher_config.write_text("{}", encoding="utf-8")
+        memory_chip_root = create_fake_hook_chip(self.home, chip_key="domain-chip-memory")
         chip_root = create_fake_hook_chip(self.home, chip_key="startup-yc")
         path_root = self.home / "specialization-path-startup-operator"
         path_root.mkdir(parents=True, exist_ok=True)
@@ -215,6 +276,8 @@ class BootstrapInstallerTests(SparkTestCase):
                     "--researcher-config",
                     str(researcher_config),
                     "--chip-root",
+                    str(memory_chip_root),
+                    "--chip-root",
                     str(chip_root),
                     "--path-root",
                     str(path_root),
@@ -226,12 +289,12 @@ class BootstrapInstallerTests(SparkTestCase):
         self.assertIn("Spark Intelligence bootstrap: telegram-agent", stdout)
         self.assertIn("- primary_provider: minimax", stdout)
         self.assertIn("- fallback_provider: anthropic", stdout)
-        self.assertIn("- active_chip_keys: startup-yc", stdout)
+        self.assertIn("- active_chip_keys: domain-chip-memory, startup-yc", stdout)
         self.assertIn("- pinned_chip_keys: startup-yc", stdout)
         self.assertIn("- active_path_key: startup-operator", stdout)
         self.assertEqual(self.config_manager.get_path("providers.default_provider"), "minimax")
         self.assertEqual(self.config_manager.get_path("providers.fallback_provider"), "anthropic")
-        self.assertEqual(self.config_manager.get_path("spark.chips.active_keys"), ["startup-yc"])
+        self.assertEqual(self.config_manager.get_path("spark.chips.active_keys"), ["domain-chip-memory", "startup-yc"])
         self.assertEqual(self.config_manager.get_path("spark.chips.pinned_keys"), ["startup-yc"])
         self.assertEqual(self.config_manager.get_path("spark.specialization_paths.active_path_key"), "startup-operator")
 

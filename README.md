@@ -254,12 +254,15 @@ spark-intelligence bootstrap telegram-agent \
 
 That command reuses the proven pieces already in this repo: config/state bootstrap, local Spark repo autodetection, API-key provider connect, Telegram channel setup, and the supported continuous run command. It also records the supported install profile in local config so the productization phase can see whether a home has actually been bootstrapped or only assembled manually.
 
+For the `telegram-agent` profile, `domain-chip-memory` is treated as a default attached chip when it is discoverable from the configured chip roots or Desktop auto-discovery. Use `--no-default-memory-chip` only when intentionally bootstrapping without the memory benchmark/substrate chip.
+
 For first-time operator setup, the same bootstrap command now also supports:
 
 - `--guide` to print provider choices, BotFather onboarding steps, and discovered chip/path inventory
 - `--interactive` to walk through primary/fallback providers, Telegram onboarding, and chip/path selection
 - `--fallback-provider <provider>` plus matching fallback API/model flags for an explicit backup model path
 - `--activate-chip <chip_key>` and `--pin-chip <chip_key>` during bootstrap
+- `--no-default-memory-chip` to opt out of the default `domain-chip-memory` attachment
 - `--set-path <path_key>` during bootstrap
 - `--chip-root <path>` and `--path-root <path>` when the Spark ecosystem repos are not already in the default autodiscovery locations
 
@@ -586,7 +589,7 @@ spark-intelligence attachments run-hook evaluate --chip-key startup-yc --payload
 spark-intelligence agent inspect
 ```
 
-Those same chip and path choices can now be pulled into the initial Telegram installer path through `bootstrap telegram-agent`, so a new user can land on a ready provider + bot + attachment setup instead of stopping after only token and API configuration.
+Those same chip and path choices can now be pulled into the initial Telegram installer path through `bootstrap telegram-agent`, so a new user can land on a ready provider + bot + attachment setup instead of stopping after only token and API configuration. The memory chip is the default chip for that starter profile when `domain-chip-memory` is present; additional chips and paths remain explicit choices.
 
 The attachment snapshot is written to `SPARK_INTELLIGENCE_HOME/attachments.snapshot.json` and mirrored into SQLite runtime state so external Spark repos can consume the current attachment set without importing this repo's internals.
 
