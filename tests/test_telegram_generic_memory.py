@@ -387,6 +387,42 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(deletion.reply_text, "I'll forget your favorite food.")
         self.assertEqual(deletion.mode, "memory_generic_observation_delete")
 
+    def test_build_researcher_reply_handles_explicit_remember_style_preference_directly(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for explicit preference memory"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for explicit preference memory"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-explicit-reply-style-preference",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-explicit-reply-style-preference",
+                channel_kind="telegram",
+                user_message="Please remember this: my preferred Spark reply style is concise but warm",
+            )
+
+        self.assertEqual(result.reply_text, "Saved that reply style preference.")
+        self.assertEqual(result.mode, "personality_preference_update")
+        self.assertEqual(result.routing_decision, "personality_preference_update")
+        self.assertNotIn("Working Memory", result.reply_text)
+        self.assertNotIn("Please remember this", result.reply_text)
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(tool_events)
+        facts = tool_events[0]["facts_json"] or {}
+        self.assertTrue(facts.get("explicit_memory_message"))
+        self.assertEqual(
+            facts.get("normalized_memory_message"),
+            "my preferred Spark reply style is concise but warm",
+        )
+
     def test_classify_telegram_generic_memory_candidate_assigns_project_state_metadata(self) -> None:
         candidate = classify_telegram_generic_memory_candidate(
             "Actually, the biggest risk is delayed product instrumentation."

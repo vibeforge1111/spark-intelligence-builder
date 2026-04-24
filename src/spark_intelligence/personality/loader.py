@@ -127,6 +127,8 @@ _GUIDED_TRAIT_ANCHORS: dict[str, dict[int, str]] = {
 _NL_TRAIT_PATTERNS: list[tuple[re.Pattern[str], dict[str, float]]] = [
     (re.compile(r"\b(?:be\s+|more\s+|too\s+)direct\b", re.I), {"directness": 0.4}),
     (re.compile(r"\b(?:be\s+|more\s+|too\s+)concise\b", re.I), {"directness": 0.3, "pacing": 0.2}),
+    (re.compile(r"\b(?:preferred\s+(?:spark\s+)?)?(?:reply|response|answer)\s+style\s+(?:is|should\s+be|to\s+be)\s+[^.?!]*\bconcise\b", re.I), {"directness": 0.3, "pacing": 0.2}),
+    (re.compile(r"\b(?:preferred\s+(?:spark\s+)?)?(?:reply|response|answer)\s+style\s+(?:is|should\s+be|to\s+be)\s+[^.?!]*\bwarm\b", re.I), {"warmth": 0.4}),
     (re.compile(r"\bkeep\s+(?:replies|responses?)\s+short(?:er)?\b", re.I), {"directness": 0.2, "pacing": 0.3}),
     (re.compile(r"\bavoid\s+long\s+(?:monologues|responses?|answers?)\b", re.I), {"directness": 0.2, "pacing": 0.3}),
     (re.compile(r"\bskip\b.*(?:explain|preamble|intro)", re.I), {"directness": 0.4, "pacing": 0.3}),

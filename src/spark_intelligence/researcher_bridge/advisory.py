@@ -3910,6 +3910,47 @@ def _runtime_safe_bridge_failure_message(result: ResearcherBridgeResult) -> str:
     return str(result.reply_text or "").strip()
 
 
+_EXPLICIT_MEMORY_PREFIX_PATTERN = re.compile(
+    r"^\s*(?:"
+    r"/(?:remember|save)\b"
+    r"|(?:please\s+)?(?:remember|save)\s+(?:this|that|the following)(?:\s+for me)?\s*:?"
+    r")\s*",
+    re.IGNORECASE,
+)
+
+
+def _normalize_explicit_memory_message(user_message: str) -> tuple[bool, str]:
+    text = " ".join(str(user_message or "").strip().split())
+    if not text:
+        return False, ""
+    normalized = _EXPLICIT_MEMORY_PREFIX_PATTERN.sub("", text, count=1).strip()
+    if not normalized or normalized == text:
+        return False, text
+    return True, normalized
+
+
+def _build_direct_preference_update_answer(*, user_message: str) -> str:
+    if re.search(r"\b(?:reply|response|style|tone|voice|concise|warm|direct)\b", user_message, flags=re.I):
+        return "Saved that reply style preference."
+    return "Saved that preference. I'll use it going forward."
+
+
+def _explicit_style_preference_canonical_message(user_message: str) -> str | None:
+    lowered = str(user_message or "").casefold()
+    if not re.search(r"\b(?:reply|response|answer|communication)\s+style\b", lowered):
+        return None
+    directives: list[str] = []
+    if any(word in lowered for word in ("concise", "brief", "short", "low-fluff", "low fluff", "no-fluff")):
+        directives.append("be concise")
+    if "warm" in lowered or "friendly" in lowered:
+        directives.append("be warm")
+    if "direct" in lowered:
+        directives.append("be direct")
+    if not directives:
+        return None
+    return " and ".join(directives)
+
+
 def researcher_bridge_status(*, config_manager: ConfigManager, state_db: StateDB) -> ResearcherBridgeStatus:
     attachment_context = build_attachment_context(config_manager)
     runtime_root, runtime_source = discover_researcher_runtime_root(config_manager)
@@ -4026,6 +4067,12 @@ def build_researcher_reply(
     run_id: str | None = None,
 ) -> ResearcherBridgeResult:
     attachment_context = build_attachment_context(config_manager)
+    explicit_memory_message, memory_user_message = _normalize_explicit_memory_message(user_message)
+    preference_detection_message = (
+        _explicit_style_preference_canonical_message(memory_user_message)
+        if explicit_memory_message
+        else None
+    ) or memory_user_message
 
     # ── Personality integration ──
     personality_profile = None
@@ -4144,7 +4191,7 @@ def build_researcher_reply(
         try:
             detected_deltas = detect_and_persist_nl_preferences(
                 human_id=human_id,
-                user_message=user_message,
+                user_message=preference_detection_message,
                 state_db=state_db,
                 config_manager=config_manager,
                 session_id=session_id,
@@ -4166,7 +4213,7 @@ def build_researcher_reply(
 
     if not personality_context_extra:
         try:
-            detected_profile_fact = detect_profile_fact_observation(user_message)
+            detected_profile_fact = detect_profile_fact_observation(memory_user_message)
             if detected_profile_fact is not None:
                 write_profile_fact_to_memory(
                     config_manager=config_manager,
@@ -4181,7 +4228,7 @@ def build_researcher_reply(
                     channel_kind=channel_kind,
                 )
             elif config_manager.get_path("spark.memory.enabled", default=False):
-                detected_memory_event = detect_telegram_memory_event_observation(user_message)
+                detected_memory_event = detect_telegram_memory_event_observation(memory_user_message)
                 if detected_memory_event is not None:
                     write_telegram_event_to_memory(
                         config_manager=config_manager,
@@ -4196,10 +4243,10 @@ def build_researcher_reply(
                         channel_kind=channel_kind,
                     )
                 else:
-                    detected_generic_memory_candidate = classify_telegram_generic_memory_candidate(user_message)
+                    detected_generic_memory_candidate = classify_telegram_generic_memory_candidate(memory_user_message)
                     if detected_generic_memory_candidate is not None:
                         if detected_generic_memory_candidate.operation == "delete":
-                            detected_generic_memory_deletion = detect_telegram_generic_deletion(user_message)
+                            detected_generic_memory_deletion = detect_telegram_generic_deletion(memory_user_message)
                             if detected_generic_memory_deletion is not None:
                                 generic_delete_result = delete_profile_fact_from_memory(
                                     config_manager=config_manager,
@@ -4217,7 +4264,7 @@ def build_researcher_reply(
                                     detected_generic_memory_candidate = None
                                     detected_generic_memory_deletion = None
                         else:
-                            detected_generic_memory_observation = detect_telegram_generic_observation(user_message)
+                            detected_generic_memory_observation = detect_telegram_generic_observation(memory_user_message)
                             if detected_generic_memory_observation is not None:
                                 generic_write_result = write_profile_fact_to_memory(
                                     config_manager=config_manager,
@@ -4240,7 +4287,7 @@ def build_researcher_reply(
                         and detected_memory_event is None
                         and detected_profile_fact is None
                     ):
-                        assessed_generic_memory_candidate = assess_telegram_generic_memory_candidate(user_message)
+                        assessed_generic_memory_candidate = assess_telegram_generic_memory_candidate(memory_user_message)
                         if assessed_generic_memory_candidate.outcome == "drop":
                             assessed_generic_memory_candidate = None
         except Exception:
@@ -4523,6 +4570,64 @@ def build_researcher_reply(
                 "source_kind": source_kind,
                 "source_ref": personality_profile.get("personality_id") if personality_profile else human_id,
             },
+        )
+
+    if detected_deltas and explicit_memory_message:
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="personality_preference_update",
+            routing_decision="personality_preference_update",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = _build_direct_preference_update_answer(user_message=memory_user_message)
+        evidence_summary = "status=personality_preference_update traits=" + ",".join(
+            sorted(str(trait) for trait in detected_deltas)
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge acknowledged an explicit Telegram preference memory update directly.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="personality_preference_update",
+            facts=_bridge_event_facts(
+                routing_decision="personality_preference_update",
+                bridge_mode="personality_preference_update",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "detected_deltas": detected_deltas,
+                    "explicit_memory_message": explicit_memory_message,
+                    "normalized_memory_message": memory_user_message,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="personality_preference_update",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="personality_preference_update",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
         )
 
     if detected_profile_fact is not None:
