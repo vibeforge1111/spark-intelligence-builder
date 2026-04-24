@@ -21,9 +21,21 @@ __pycache__/
 .tmp-telegram-*.json
 .operator-local/
 attachments.snapshot.json
+state.db
+config.yaml
+AUTORESEARCH.md
+PROJECT.md
+=
+'@ + $tmp + @'/
+.boot-logs/
+.claude/
+.codex
 PERSONALITY_HANDOFF_*.md
+docs/MEMORY_METHODOLOGY_UPGRADE_*.md
+docs/MEMORY_NEXT_PHASES_HANDOFF_*.md
 docs/PERSONALITY_TESTING_*.md
 docs/*RESUME_PROMPT*.md
 docs/DRAFT_SYSTEM_TELEGRAM_CHECKLIST.md
+docs/SPARK_CLI_TUI_DESIGN_GUIDE.md
 *.egg-info/
 .gstack/
