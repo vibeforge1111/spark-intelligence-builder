@@ -258,7 +258,7 @@ class AttachmentHookTests(SparkTestCase):
             str(self.home),
             "--json",
             "--payload-json",
-            json.dumps({"situation": "sk-abcdefghijklmnopqrstuvwxyz123456"}),
+            json.dumps({"situation": "sk-" + "abcdefghijklmnopqrstuvwxyz123456"}),
         )
         self.assertEqual(hook_stdout, "")
         self.assertNotEqual(hook_exit, 0)

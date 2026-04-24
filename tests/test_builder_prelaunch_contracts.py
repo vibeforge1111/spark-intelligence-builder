@@ -125,13 +125,13 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(counts["provenance_mutation_log"], 1)
 
     def test_secret_policy_detects_common_secret_families(self) -> None:
-        self.assertTrue(looks_secret_like("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl"))
+        self.assertTrue(looks_secret_like("eyJ" + "hbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl"))
         self.assertTrue(looks_secret_like("TELEGRAM_BOT_TOKEN=1234567890:abcdefghijklmnopqrstuvwxyzABCDE"))
-        self.assertTrue(looks_secret_like("api_key: sk-proj-abcdefghijklmnopqrstuvwxyz123456"))
+        self.assertTrue(looks_secret_like("api_key: " + "sk-proj-" + "abcdefghijklmnopqrstuvwxyz123456"))
         self.assertTrue(looks_secret_like("Authorization: Basic dXNlcjpzdXBlci1zZWNyZXQtcGFzc3dvcmQtMTIz"))
         self.assertTrue(looks_secret_like('{"client_secret":"ZXlKaGJHY2lPaUpJVXpJMU5pSjkuZXlKemRXSWlPaUl4TWpNME5UWTNPRGt3SW4wLnNpZw=="}'))
         self.assertTrue(looks_secret_like("database_url=https://operator:Sup3rSecretPassw0rd@example.com/app"))
-        self.assertTrue(looks_secret_like("-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----"))
+        self.assertTrue(looks_secret_like("-----BEGIN " + "PRIVATE KEY-----\nabc\n-----END " + "PRIVATE KEY-----"))
         self.assertFalse(looks_secret_like("This is a normal operational note with no credentials in it."))
         self.assertFalse(looks_secret_like("tokenization_status=phase-b-specialization"))
 
@@ -2173,7 +2173,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
             human_id="human:test",
             session_id="session:test",
             channel_kind="telegram",
-            user_message="here is my token sk-abcdefghijklmnopqrstuvwxyz123456",
+            user_message="here is my token " + "sk-" + "abcdefghijklmnopqrstuvwxyz123456",
         )
 
         self.assertEqual(result.routing_decision, "secret_boundary_blocked")

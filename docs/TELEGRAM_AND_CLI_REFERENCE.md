@@ -40,11 +40,11 @@ If the bot refuses to start:
    ```
 4. Re-run the boot script.
 
-Env files that matter:
+Launch config boundaries that matter:
 
-- `spark-telegram-bot/.env` - `BOT_TOKEN`, `TELEGRAM_GATEWAY_MODE`, relay ports, and LLM provider metadata.
-- `spawner-ui/.env` - `MISSION_CONTROL_WEBHOOK_URLS`, `SPAWNER_H70_SKILLS_DIR`, `TELEGRAM_BOT_TOKEN` (mirrored from bot so scheduler can DM).
-- `spark-intelligence-builder/.tmp-home-live-telegram-real/.env` - `ZAI_API_KEY`, `MINIMAX_API_KEY`.
+- `spark-telegram-bot` owns the Telegram bot token and polling mode.
+- `spawner-ui` owns mission execution config and receives only the relay URL plus `TELEGRAM_RELAY_SECRET`; it should not receive the Telegram bot token.
+- Builder owns runtime/provider config and should read provider secrets from the supported local secret/config layer, not from public docs or command arguments.
 
 ---
 
@@ -276,12 +276,12 @@ curl -X DELETE "http://127.0.0.1:4174/api/scheduled?id=sched-abc123"
 | Bot replies "Something went wrong" instantly | Telegraf 90s handler timeout on a long command | The detach pattern is shipped for `/loop`; if it reappears, detach the handler body with `void (async () => { ... })()` and post results via `ctx.telegram.sendMessage` |
 | Bot fails to start, "Gateway ownership already held" | Stale lock file or orphan process | See boot-stack steps 1-3 above |
 | Bot fails to start, `EADDRINUSE :8788` | Previous bot process didn't release the relay port | `powershell Get-NetTCPConnection -LocalPort 8788 -State Listen \| % { Stop-Process -Id $_.OwningProcess -Force }` |
-| Scheduled fires but no Telegram message | `TELEGRAM_BOT_TOKEN` not reaching spawner-ui process env | Confirm `.env` has the var, restart spawner-ui fully; scheduler uses `$env/dynamic/private` which only reloads on restart |
+| Scheduled fires but no Telegram message | Mission relay config is missing or rejected | Confirm the generated relay URL and `TELEGRAM_RELAY_SECRET` are present in the Spawner runtime config, then restart Spawner fully |
 | `/chip create` result says `router_invokable: false` | `attachment_mode` not `active`/`pinned` OR no `task_topics`/`task_keywords` in manifest | Inspect with `attachments snapshot --json`; re-pin with `attachments pin-chip <key>` |
 | `/loop` says "Supported hooks: none" | `commands` in spark-chip.json is in string form or missing | Manifest commands must be an array per hook (e.g. `["python","-m","<module>.cli","evaluate"]`); the chip_create pipeline normalizes this automatically |
 | `/loop` returns candidates=0 | Chip's `suggest` hook returns empty on cold history (not a bug, chip-specific) | Either (a) seed history via chip-specific bootstrap, or (b) pick a chip with non-empty cold-start behavior |
 | `/loop` on a scaffolded chip fails with `ImportError: attempted relative import beyond top-level package` | Scaffolder emits `from ..lab_hooks import`; needs absolute import | The chip_create pipeline patches this automatically; for older chips, run the patch manually via `python -c "from spark_intelligence.chip_create.pipeline import _patch_generated_cli; _patch_generated_cli(Path('<chip_dir>'), Path('C:/Users/USER/Desktop/spark-domain-chip-labs'))"` |
-| "Researcher is unavailable" on swarm-escalation messages | Spark Swarm API unreachable (no URL set) | Already graceful-degrades to local; if you want real swarm, set `SPARK_SWARM_API_URL` in .env and start the swarm service |
+| "Researcher is unavailable" on swarm-escalation messages | Spark Swarm API unreachable (no URL set) | Already graceful-degrades to local; if you want real swarm, configure `SPARK_SWARM_API_URL` through the supported local config layer and start the swarm service |
 
 ---
 

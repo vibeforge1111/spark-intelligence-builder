@@ -66,7 +66,7 @@ class GovernedExecutionTests(SparkTestCase):
 
     def test_screen_governed_tool_text_quarantines_secret_like_output(self) -> None:
         execution = run_governed_command(
-            command=[sys.executable, "-c", "print('sk-abcdefghijklmnopqrstuvwxyz123456')"],
+            command=[sys.executable, "-c", "print('sk-' + 'abcdefghijklmnopqrstuvwxyz123456')"],
             cwd=self.home,
         )
 

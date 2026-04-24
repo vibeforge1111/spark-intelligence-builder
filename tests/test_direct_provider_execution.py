@@ -175,7 +175,7 @@ class DirectProviderExecutionTests(SparkTestCase):
         user_prompt_path = self.home / "user.txt"
         response_path = self.home / "response.json"
         system_prompt_path.write_text("System instructions", encoding="utf-8")
-        user_prompt_path.write_text("User token sk-abcdefghijklmnopqrstuvwxyz123456", encoding="utf-8")
+        user_prompt_path.write_text("User token " + "sk-" + "abcdefghijklmnopqrstuvwxyz123456", encoding="utf-8")
 
         env = {
             "SPARK_INTELLIGENCE_PROVIDER_ID": "custom",

@@ -127,15 +127,15 @@ Current operational rule:
 
 Canonical owner:
 
-- repo: `C:\Users\USER\Desktop\spark-telegram-bot`
-- mode is whatever `spark-telegram-bot/.env` currently declares
-- do not assume webhook mode or polling mode from older docs; inspect the live `.env` first
+- repo: `spark-telegram-bot`
+- mode is whatever the current gateway config declares
+- do not assume webhook mode or polling mode from older docs; verify the active launch config first
 
 Hard requirements before touching Telegram runtime behavior:
 
-1. inspect `C:\Users\USER\Desktop\spark-telegram-bot\.env`
+1. inspect the active gateway config through the supported CLI/status commands
 2. confirm whether `spark-telegram-bot` is already running
-3. confirm Telegram webhook ownership with `getWebhookInfo`
+3. confirm Telegram ownership without exposing or copying the bot token
 4. if a webhook is active, do not start polling
 5. if polling is the active posture, do not start any second Telegram receiver
 
@@ -150,7 +150,7 @@ Never:
 If Telegram looks broken:
 
 - stop and inspect first
-- diagnose the canonical `spark-telegram-bot` process, local env, and current ingress ownership
+- diagnose the canonical `spark-telegram-bot` process, launch config, and current ingress ownership
 - keep all memory tests and Builder improvements behind the existing receiver instead of competing with it
 
 ## 5. State Rules
