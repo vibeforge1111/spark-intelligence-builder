@@ -118,6 +118,161 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(result.mode, "memory_profile_fact")
         self.assertEqual(result.routing_decision, "memory_profile_fact_query")
 
+    def test_build_researcher_reply_answers_plan_and_commitment_queries_from_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for plan or commitment memory"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for plan or commitment memory"),
+        ):
+            plan_update = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-plan-update",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-plan-commitment",
+                channel_kind="telegram",
+                user_message="The plan is to run weekly Telegram memory probes.",
+            )
+            plan_query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-plan-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-plan-commitment",
+                channel_kind="telegram",
+                user_message="What is my current plan?",
+            )
+            commitment_update = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-commitment-update",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-plan-commitment",
+                channel_kind="telegram",
+                user_message="We committed to ship deletion memory checks today.",
+            )
+            commitment_query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-commitment-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-plan-commitment",
+                channel_kind="telegram",
+                user_message="What did we commit to?",
+            )
+
+        self.assertEqual(
+            plan_update.reply_text,
+            "I'll remember that your current plan is to run weekly Telegram memory probes.",
+        )
+        self.assertEqual(plan_update.mode, "memory_generic_observation_update")
+        self.assertEqual(plan_query.reply_text, "Your current plan is to run weekly Telegram memory probes.")
+        self.assertEqual(plan_query.mode, "memory_profile_fact")
+        self.assertEqual(
+            commitment_update.reply_text,
+            "I'll remember that your current commitment is to ship deletion memory checks today.",
+        )
+        self.assertEqual(commitment_update.mode, "memory_generic_observation_update")
+        self.assertEqual(
+            commitment_query.reply_text,
+            "Your current commitment is to ship deletion memory checks today.",
+        )
+        self.assertEqual(commitment_query.mode, "memory_profile_fact")
+
+    def test_build_researcher_reply_handles_plan_correction_history_and_deletion(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for plan correction/deletion memory"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for plan correction/deletion memory"),
+        ):
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-plan-original",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-plan-correction",
+                channel_kind="telegram",
+                user_message="The plan is to run weekly Telegram memory probes.",
+            )
+            correction = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-plan-correction",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-plan-correction",
+                channel_kind="telegram",
+                user_message="Actually, the plan is to run live Telegram deletion checks.",
+            )
+            current_query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-plan-current-after-correction",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-plan-correction",
+                channel_kind="telegram",
+                user_message="What is my current plan?",
+            )
+            history_query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-plan-history-after-correction",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-plan-correction",
+                channel_kind="telegram",
+                user_message="What was my previous plan?",
+            )
+            deletion = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-plan-delete",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-plan-correction",
+                channel_kind="telegram",
+                user_message="Forget my current plan.",
+            )
+            post_delete_query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-plan-after-delete",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-plan-correction",
+                channel_kind="telegram",
+                user_message="What is my current plan?",
+            )
+
+        self.assertEqual(
+            correction.reply_text,
+            "I'll remember that your current plan is to run live Telegram deletion checks.",
+        )
+        self.assertEqual(current_query.reply_text, "Your current plan is to run live Telegram deletion checks.")
+        self.assertEqual(
+            history_query.reply_text,
+            "Before your current plan was to run live Telegram deletion checks, it was to run weekly Telegram memory probes.",
+        )
+        self.assertEqual(deletion.reply_text, "I'll forget your current plan.")
+        self.assertEqual(deletion.mode, "memory_generic_observation_delete")
+        self.assertEqual(post_delete_query.reply_text, "I don't currently have that saved.")
+
     def test_classify_telegram_generic_memory_candidate_assigns_project_state_metadata(self) -> None:
         candidate = classify_telegram_generic_memory_candidate(
             "Actually, the biggest risk is delayed product instrumentation."
