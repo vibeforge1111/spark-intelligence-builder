@@ -1866,6 +1866,10 @@ def _build_profile_fact_concise_answer(*, query: ProfileFactQuery, value: str) -
         return _ensure_sentence(f"The hack actor was {normalized_value}")
     if predicate == "profile.current_mission":
         return _ensure_sentence(f"Right now you're trying to {normalized_value}")
+    if predicate == "profile.favorite_color":
+        return _ensure_sentence(f"Your favorite color is {normalized_value}")
+    if predicate == "profile.favorite_food":
+        return _ensure_sentence(f"Your favorite food is {normalized_value}")
     if predicate == "profile.current_plan":
         return _ensure_sentence(f"Your current plan is to {normalized_value}")
     if predicate == "profile.current_focus":

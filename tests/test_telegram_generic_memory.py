@@ -273,6 +273,71 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(deletion.mode, "memory_generic_observation_delete")
         self.assertEqual(post_delete_query.reply_text, "I don't currently have that saved.")
 
+    def test_build_researcher_reply_handles_preference_update_query_and_deletion(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for favorite preference memory"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for favorite preference memory"),
+        ):
+            update = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-favorite-color-update",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-favorite-color",
+                channel_kind="telegram",
+                user_message="My favorite color is cobalt blue.",
+            )
+            query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-favorite-color-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-favorite-color",
+                channel_kind="telegram",
+                user_message="What is my favorite color?",
+            )
+            deletion = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-favorite-color-delete",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-favorite-color",
+                channel_kind="telegram",
+                user_message="Forget my favorite color.",
+            )
+            post_delete_query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-favorite-color-after-delete",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-favorite-color",
+                channel_kind="telegram",
+                user_message="What is my favorite color?",
+            )
+
+        self.assertEqual(update.reply_text, "I'll remember that your favorite color is cobalt blue.")
+        self.assertEqual(update.mode, "memory_generic_observation_update")
+        self.assertEqual(update.routing_decision, "memory_generic_observation")
+        self.assertEqual(query.reply_text, "Your favorite color is cobalt blue.")
+        self.assertEqual(query.mode, "memory_profile_fact")
+        self.assertEqual(deletion.reply_text, "I'll forget your favorite color.")
+        self.assertEqual(deletion.mode, "memory_generic_observation_delete")
+        self.assertEqual(post_delete_query.reply_text, "I don't currently have that saved.")
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=20)
+        facts = next(event["facts_json"] for event in tool_events if event.get("reason_code") == "memory_generic_observation")
+        self.assertEqual(facts.get("domain_pack"), "preferences")
+        self.assertEqual(facts.get("retention_class"), "durable_profile")
+
     def test_classify_telegram_generic_memory_candidate_assigns_project_state_metadata(self) -> None:
         candidate = classify_telegram_generic_memory_candidate(
             "Actually, the biggest risk is delayed product instrumentation."

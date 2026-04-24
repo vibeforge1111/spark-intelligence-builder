@@ -315,6 +315,33 @@ _GENERIC_PACKS: tuple[TelegramGenericPack, ...] = (
         revalidation_days=14,
     ),
     TelegramGenericPack(
+        domain_pack="preferences",
+        predicate="profile.favorite_color",
+        fact_name="favorite_color",
+        label="favorite color",
+        retention_class="durable_profile",
+        update_patterns=(
+            re.compile(r"^my\s+favou?rite\s+color\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+        ),
+        delete_phrases=_simple_delete_phrases("my favorite color", "my favourite color"),
+        observation_answer_template="I'll remember that your favorite color is {value}.",
+        deletion_answer_template="I'll forget your favorite color.",
+    ),
+    TelegramGenericPack(
+        domain_pack="preferences",
+        predicate="profile.favorite_food",
+        fact_name="favorite_food",
+        label="favorite food",
+        retention_class="durable_profile",
+        update_patterns=(
+            re.compile(r"^my\s+favou?rite\s+food\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+            re.compile(r"^the\s+food\s+i\s+love\s+the\s+most\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+        ),
+        delete_phrases=_simple_delete_phrases("my favorite food", "my favourite food"),
+        observation_answer_template="I'll remember that your favorite food is {value}.",
+        deletion_answer_template="I'll forget your favorite food.",
+    ),
+    TelegramGenericPack(
         domain_pack="goals_and_priorities",
         predicate="profile.current_plan",
         fact_name="current_plan",
