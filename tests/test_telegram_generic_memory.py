@@ -338,6 +338,55 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(facts.get("domain_pack"), "preferences")
         self.assertEqual(facts.get("retention_class"), "durable_profile")
 
+    def test_build_researcher_reply_handles_favorite_food_preference_phrase(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for favorite food memory"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for favorite food memory"),
+        ):
+            update = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-favorite-food-update",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-favorite-food",
+                channel_kind="telegram",
+                user_message="The food I love the most is shakshuka.",
+            )
+            query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-favorite-food-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-favorite-food",
+                channel_kind="telegram",
+                user_message="What is my favorite food?",
+            )
+            deletion = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-favorite-food-delete",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-favorite-food",
+                channel_kind="telegram",
+                user_message="Forget my favorite food.",
+            )
+
+        self.assertEqual(update.reply_text, "I'll remember that your favorite food is shakshuka.")
+        self.assertEqual(update.mode, "memory_generic_observation_update")
+        self.assertEqual(query.reply_text, "Your favorite food is shakshuka.")
+        self.assertEqual(query.mode, "memory_profile_fact")
+        self.assertEqual(deletion.reply_text, "I'll forget your favorite food.")
+        self.assertEqual(deletion.mode, "memory_generic_observation_delete")
+
     def test_classify_telegram_generic_memory_candidate_assigns_project_state_metadata(self) -> None:
         candidate = classify_telegram_generic_memory_candidate(
             "Actually, the biggest risk is delayed product instrumentation."
