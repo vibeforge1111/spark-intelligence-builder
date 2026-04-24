@@ -1,0 +1,23 @@
+# Live Telegram memory lifecycle probe
+# Send these to the real Spark Telegram bot, in order, then verify with:
+# powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_live_telegram_memory_probe.ps1 -SparkHome .tmp-home-live-telegram-real
+#
+# This pack is intentionally for manual live long-polling checks, not shadow-telegram-pack.
+
+my favorite color is bright green
+The food I love the most is shakshuka.
+What is my favorite food?
+Forget my favorite food.
+What is my favorite food?
+We plan to complete live memory checks.
+Actually, the current plan is to complete live memory preference checks.
+What is my current plan?
+What was my previous plan?
+Forget my current plan.
+What is my current plan?
+We committed to closing the pilot by June 1.
+Actually, our current commitment is to finish the memory Telegram checks tonight.
+What is our commitment?
+What was our previous commitment?
+Forget our commitment.
+What is our commitment?
