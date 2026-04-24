@@ -169,7 +169,7 @@ python -m spark_intelligence.cli chips why "research seedify news" \
 python -m spark_intelligence.cli chips create \
   --home .tmp-home-live-telegram-real \
   --prompt "a chip for competitive-intel tracking 5 rivals across pricing and launches" \
-  --output-dir "C:/Users/USER/Desktop" \
+  --output-dir "<user-home>/Desktop" \
   --json
 ```
 
@@ -236,7 +236,7 @@ curl http://127.0.0.1:4174/api/providers
 # Create
 curl -X POST http://127.0.0.1:4174/api/spark/run \
   -H "Content-Type: application/json" \
-  -d '{"goal":"summarize top gamefi launchpads","chatId":"smoke","userId":"smoke","requestId":"smoke-1","projectPath":"C:/Users/USER/Desktop"}'
+  -d '{"goal":"summarize top gamefi launchpads","chatId":"smoke","userId":"smoke","requestId":"smoke-1","projectPath":"<user-home>/Desktop"}'
 
 # Status
 curl -X POST http://127.0.0.1:4174/api/mission-control/command \
@@ -280,7 +280,7 @@ curl -X DELETE "http://127.0.0.1:4174/api/scheduled?id=sched-abc123"
 | `/chip create` result says `router_invokable: false` | `attachment_mode` not `active`/`pinned` OR no `task_topics`/`task_keywords` in manifest | Inspect with `attachments snapshot --json`; re-pin with `attachments pin-chip <key>` |
 | `/loop` says "Supported hooks: none" | `commands` in spark-chip.json is in string form or missing | Manifest commands must be an array per hook (e.g. `["python","-m","<module>.cli","evaluate"]`); the chip_create pipeline normalizes this automatically |
 | `/loop` returns candidates=0 | Chip's `suggest` hook returns empty on cold history (not a bug, chip-specific) | Either (a) seed history via chip-specific bootstrap, or (b) pick a chip with non-empty cold-start behavior |
-| `/loop` on a scaffolded chip fails with `ImportError: attempted relative import beyond top-level package` | Scaffolder emits `from ..lab_hooks import`; needs absolute import | The chip_create pipeline patches this automatically; for older chips, run the patch manually via `python -c "from spark_intelligence.chip_create.pipeline import _patch_generated_cli; _patch_generated_cli(Path('<chip_dir>'), Path('C:/Users/USER/Desktop/spark-domain-chip-labs'))"` |
+| `/loop` on a scaffolded chip fails with `ImportError: attempted relative import beyond top-level package` | Scaffolder emits `from ..lab_hooks import`; needs absolute import | The chip_create pipeline patches this automatically; for older chips, run the patch manually via `python -c "from spark_intelligence.chip_create.pipeline import _patch_generated_cli; _patch_generated_cli(Path('<chip_dir>'), Path('<workspace>/spark-domain-chip-labs'))"` |
 | "Researcher is unavailable" on swarm-escalation messages | Spark Swarm API unreachable (no URL set) | Already graceful-degrades to local; if you want real swarm, configure `SPARK_SWARM_API_URL` through the supported local config layer and start the swarm service |
 
 ---

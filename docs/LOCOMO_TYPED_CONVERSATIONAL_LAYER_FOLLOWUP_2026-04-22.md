@@ -4,7 +4,7 @@
 
 This follow-up measures the same answer-present unseen LoCoMo slice used in:
 
-- [LOCOMO_UNSEEN_SLICE_FOLLOWUP_2026-04-22.md](/C:/Users/USER/Desktop/spark-intelligence-builder/docs/LOCOMO_UNSEEN_SLICE_FOLLOWUP_2026-04-22.md)
+- [LOCOMO_UNSEEN_SLICE_FOLLOWUP_2026-04-22.md](/<workspace>/spark-intelligence-builder/docs/LOCOMO_UNSEEN_SLICE_FOLLOWUP_2026-04-22.md)
 
 Current substrate checkpoints:
 
@@ -21,7 +21,7 @@ Measured lane:
 
 Artifact:
 
-- `C:\Users\USER\.spark-intelligence\artifacts\locomo-unseen-slice\2026-04-22-typed-conversational-layer-direct.json`
+- `$SPARK_HOME\artifacts\locomo-unseen-slice\2026-04-22-typed-conversational-layer-direct.json`
 
 ## Measurement Method
 

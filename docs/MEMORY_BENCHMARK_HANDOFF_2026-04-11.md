@@ -2,7 +2,7 @@
 
 Date: 2026-04-11
 Repo: `spark-intelligence-builder`
-Related memory substrate repo: `C:\Users\USER\Desktop\domain-chip-memory`
+Related memory substrate repo: `<workspace>\\domain-chip-memory`
 
 > Historical snapshot note, updated April 21, 2026: this handoff captures the April 11 runtime decision context. The current live Builder runtime is now pinned to `dual_store_event_calendar_hybrid`, and the latest clean mixed-session live regression is `16/16` matched with the runtime contract aligned to that leader.
 
@@ -16,19 +16,19 @@ Related memory substrate repo: `C:\Users\USER\Desktop\domain-chip-memory`
 - The current default serious comparison loop is now governed by `docs/MEMORY_REALTIME_BENCHMARK_PROGRAM_2026-04-11.md`.
 - The latest clean live `14`-pack soak now favors `summary_synthesis_memory`, while the latest offline ProductMemory benchmark is tied with both contenders at `1156/1266`.
 - Because the result is an offline tie plus a live `summary_synthesis_memory` lead, the runtime is now pinned to `summary_synthesis_memory`.
-- The current canonical full validation pointer is `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\latest-full-run.json`.
+- The current canonical full validation pointer is `$SPARK_HOME\artifacts\memory-validation-runs\latest-full-run.json`.
 
 ## Current clean timed baseline
 
 <!-- AUTO_MEMORY_BASELINE_HANDOFF_START -->
 - latest clean full validation root:
-  `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\20260412-023241`
+  `$SPARK_HOME\artifacts\memory-validation-runs\20260412-023241`
 - latest full-run pointer:
-  `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\latest-full-run.json`
+  `$SPARK_HOME\artifacts\memory-validation-runs\latest-full-run.json`
 - previous full-run pointer:
-  `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\previous-full-run.json`
+  `$SPARK_HOME\artifacts\memory-validation-runs\previous-full-run.json`
 - validation delta for the latest run:
-  `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\20260412-023241\validation-delta.md`
+  `$SPARK_HOME\artifacts\memory-validation-runs\20260412-023241\validation-delta.md`
 - offline ProductMemory leaders:
   `summary_synthesis_memory`, `dual_store_event_calendar_hybrid`
 - live regression:
@@ -47,10 +47,10 @@ Related memory substrate repo: `C:\Users\USER\Desktop\domain-chip-memory`
 ## Historical soak snapshot
 
 Artifact root:
-- `C:\Users\USER\.spark-intelligence\artifacts\telegram-memory-architecture-trust-soak-27-fixed`
+- `$SPARK_HOME\artifacts\telegram-memory-architecture-trust-soak-27-fixed`
 
 Final summary:
-- `C:\Users\USER\.spark-intelligence\artifacts\telegram-memory-architecture-trust-soak-27-fixed\telegram-memory-architecture-soak.json`
+- `$SPARK_HOME\artifacts\telegram-memory-architecture-trust-soak-27-fixed\telegram-memory-architecture-soak.json`
 
 Run status:
 - completed `27/27`
@@ -175,10 +175,10 @@ Promotion rule:
 ## Good continuation point
 
 Tomorrow, resume from:
-- the latest clean `14/14` soak artifact at `C:\Users\USER\.spark-intelligence\artifacts\telegram-memory-architecture-soak-post-timeout-v1\telegram-memory-architecture-soak.json`
-- the refreshed explanation-pack rerun at `C:\Users\USER\.spark-intelligence\artifacts\telegram-memory-regression-explanation-pack-v2`
+- the latest clean `14/14` soak artifact at `$SPARK_HOME\artifacts\telegram-memory-architecture-soak-post-timeout-v1\telegram-memory-architecture-soak.json`
+- the refreshed explanation-pack rerun at `$SPARK_HOME\artifacts\telegram-memory-regression-explanation-pack-v2`
 - the current default two-contender program in `docs/MEMORY_REALTIME_BENCHMARK_PROGRAM_2026-04-11.md`
-- the offline benchmark artifact at `C:\Users\USER\.spark-intelligence\artifacts\memory-architecture-benchmark\memory-architecture-benchmark.json`
+- the offline benchmark artifact at `$SPARK_HOME\artifacts\memory-architecture-benchmark\memory-architecture-benchmark.json`
 - new benchmark design focused on the unsolved selector lanes and on separating offline-vs-live disagreement more directly
 
 ## Relevant commits from this session

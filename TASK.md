@@ -3,8 +3,8 @@
 Date: 2026-04-21
 Status: active
 Repos:
-- `C:\Users\USER\Desktop\spark-intelligence-builder`
-- `C:\Users\USER\Desktop\domain-chip-memory`
+- `<workspace>\\spark-intelligence-builder`
+- `<workspace>\\domain-chip-memory`
 
 ## Mission
 

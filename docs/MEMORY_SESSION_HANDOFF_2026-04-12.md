@@ -1,8 +1,8 @@
 # Memory Session Handoff
 
 Date: 2026-04-12
-Primary repo: `C:\Users\USER\Desktop\spark-intelligence-builder`
-Related substrate repo: `C:\Users\USER\Desktop\domain-chip-memory`
+Primary repo: `<workspace>\\spark-intelligence-builder`
+Related substrate repo: `<workspace>\\domain-chip-memory`
 
 > Historical snapshot note, updated April 21, 2026: this handoff reflects the April 12 operating state. The current pinned runtime has since moved to `dual_store_event_calendar_hybrid`, with the live mixed-session regression green at `16/16`.
 
@@ -38,13 +38,13 @@ As of the latest serious full run, the state is:
 Current canonical full baseline:
 
 - full validation root:
-  `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\20260412-023241`
+  `$SPARK_HOME\artifacts\memory-validation-runs\20260412-023241`
 - latest full-run pointer:
-  `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\latest-full-run.json`
+  `$SPARK_HOME\artifacts\memory-validation-runs\latest-full-run.json`
 - previous full-run pointer:
-  `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\previous-full-run.json`
+  `$SPARK_HOME\artifacts\memory-validation-runs\previous-full-run.json`
 - validation delta for the latest run:
-  `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\20260412-023241\validation-delta.md`
+  `$SPARK_HOME\artifacts\memory-validation-runs\20260412-023241\validation-delta.md`
 
 Latest timings from that canonical baseline:
 
@@ -158,7 +158,7 @@ So the cross-repo state is synchronized again to the same canonical baseline.
 
 ### Chip renderer
 
-- `C:\Users\USER\Desktop\domain-chip-memory\scripts\render_builder_baseline_docs.py`
+- `<workspace>\\domain-chip-memory\scripts\render_builder_baseline_docs.py`
 
 ### Builder tests
 
@@ -168,16 +168,16 @@ So the cross-repo state is synchronized again to the same canonical baseline.
 
 ### Chip tests
 
-- `C:\Users\USER\Desktop\domain-chip-memory\tests\test_builder_baseline_doc_rendering.py`
+- `<workspace>\\domain-chip-memory\tests\test_builder_baseline_doc_rendering.py`
 
 ### Canonical artifact pointers
 
 - latest run of any kind:
-  `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\latest-run.json`
+  `$SPARK_HOME\artifacts\memory-validation-runs\latest-run.json`
 - latest serious full run:
-  `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\latest-full-run.json`
+  `$SPARK_HOME\artifacts\memory-validation-runs\latest-full-run.json`
 - previous serious full run:
-  `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\previous-full-run.json`
+  `$SPARK_HOME\artifacts\memory-validation-runs\previous-full-run.json`
 
 ## Current Workflow Rules
 
@@ -278,8 +278,8 @@ Use this exact order:
    - `docs/MEMORY_LIVE_VALIDATION_RESULTS_2026-04-11.md`
    - `docs/MEMORY_BENCHMARK_HANDOFF_2026-04-11.md`
 3. Inspect:
-   - `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\latest-full-run.json`
-   - `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\previous-full-run.json`
+   - `$SPARK_HOME\artifacts\memory-validation-runs\latest-full-run.json`
+   - `$SPARK_HOME\artifacts\memory-validation-runs\previous-full-run.json`
 4. Run the fast automation preflight if the morning changes are only wrapper/doc/test related:
 
 ```powershell

@@ -26,7 +26,7 @@ Primary commit:
 
 Source anchor:
 
-- [BUILDER_PACKET_AND_EVENT_SCHEMA_SPEC.md](C:/Users/USER/Desktop/spark-domain-chip-labs/docs/BUILDER_PACKET_AND_EVENT_SCHEMA_SPEC.md)
+- [BUILDER_PACKET_AND_EVENT_SCHEMA_SPEC.md](<workspace>/spark-domain-chip-labs/docs/BUILDER_PACKET_AND_EVENT_SCHEMA_SPEC.md)
 
 Explicit `Second tranche` items:
 
@@ -60,7 +60,7 @@ What is still tranche 2 and intentionally left for later:
 
 Source anchor:
 
-- [SPARK_PROVENANCE_AND_MUTATION_LEDGER_DOCTRINE.md](C:/Users/USER/Desktop/spark-domain-chip-labs/docs/SPARK_PROVENANCE_AND_MUTATION_LEDGER_DOCTRINE.md)
+- [SPARK_PROVENANCE_AND_MUTATION_LEDGER_DOCTRINE.md](<workspace>/spark-domain-chip-labs/docs/SPARK_PROVENANCE_AND_MUTATION_LEDGER_DOCTRINE.md)
 
 Carry forward:
 
@@ -86,7 +86,7 @@ Still open:
 
 Source anchor:
 
-- [MEMORY_LANE_SEPARATION_AND_PROMOTION_POLICY.md](C:/Users/USER/Desktop/spark-domain-chip-labs/docs/MEMORY_LANE_SEPARATION_AND_PROMOTION_POLICY.md)
+- [MEMORY_LANE_SEPARATION_AND_PROMOTION_POLICY.md](<workspace>/spark-domain-chip-labs/docs/MEMORY_LANE_SEPARATION_AND_PROMOTION_POLICY.md)
 
 Carry forward:
 
@@ -122,8 +122,8 @@ Core rule to preserve:
 
 Source anchor:
 
-- [SILENT_FAILURE_HEALTH_MODEL_FOR_BUILDER_AND_WATCHTOWER.md](C:/Users/USER/Desktop/spark-domain-chip-labs/docs/SILENT_FAILURE_HEALTH_MODEL_FOR_BUILDER_AND_WATCHTOWER.md)
-- [BUILDER_WATCHTOWER_PANEL_SPEC.md](C:/Users/USER/Desktop/spark-domain-chip-labs/docs/BUILDER_WATCHTOWER_PANEL_SPEC.md)
+- [SILENT_FAILURE_HEALTH_MODEL_FOR_BUILDER_AND_WATCHTOWER.md](<workspace>/spark-domain-chip-labs/docs/SILENT_FAILURE_HEALTH_MODEL_FOR_BUILDER_AND_WATCHTOWER.md)
+- [BUILDER_WATCHTOWER_PANEL_SPEC.md](<workspace>/spark-domain-chip-labs/docs/BUILDER_WATCHTOWER_PANEL_SPEC.md)
 
 Carry forward:
 
@@ -156,8 +156,8 @@ Still open:
 
 Source anchor:
 
-- [SELF_OBSERVER_PACKET_CONTRACT.md](C:/Users/USER/Desktop/spark-domain-chip-labs/docs/SELF_OBSERVER_PACKET_CONTRACT.md)
-- [SELF_OBSERVER_HYBRID_BOUNDARY.md](C:/Users/USER/Desktop/spark-domain-chip-labs/docs/SELF_OBSERVER_HYBRID_BOUNDARY.md)
+- [SELF_OBSERVER_PACKET_CONTRACT.md](<workspace>/spark-domain-chip-labs/docs/SELF_OBSERVER_PACKET_CONTRACT.md)
+- [SELF_OBSERVER_HYBRID_BOUNDARY.md](<workspace>/spark-domain-chip-labs/docs/SELF_OBSERVER_HYBRID_BOUNDARY.md)
 
 Carry forward:
 
@@ -182,7 +182,7 @@ Status:
 
 Source anchor:
 
-- [STOP_SHIP_REGISTRY_SPARK_PRELAUNCH.md](C:/Users/USER/Desktop/spark-domain-chip-labs/docs/STOP_SHIP_REGISTRY_SPARK_PRELAUNCH.md)
+- [STOP_SHIP_REGISTRY_SPARK_PRELAUNCH.md](<workspace>/spark-domain-chip-labs/docs/STOP_SHIP_REGISTRY_SPARK_PRELAUNCH.md)
 
 Still important for later tranches:
 

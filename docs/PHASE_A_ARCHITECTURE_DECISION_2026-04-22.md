@@ -9,15 +9,15 @@
 - Builder commit: `472f3c6aacdc13f18c164fde0eb5cbae0546d09a`
 - Substrate commit when this checkpoint was written: `b1cc017`
 - Internal artifact root:
-  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-internal\2026-04-22-head-to-head`
+  `$SPARK_HOME\artifacts\phase-a-internal\2026-04-22-head-to-head`
 - Run manifest:
-  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-internal\2026-04-22-head-to-head\run-summary.json`
+  `$SPARK_HOME\artifacts\phase-a-internal\2026-04-22-head-to-head\run-summary.json`
 - External artifact root:
-  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks`
+  `$SPARK_HOME\artifacts\phase-a-external-benchmarks`
 - Pin-flip builder commit:
   `54a01eb`
 - Post-flip validation artifact root:
-  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-post-flip\2026-04-22-summary-synthesis-pin`
+  `$SPARK_HOME\artifacts\phase-a-post-flip\2026-04-22-summary-synthesis-pin`
 
 ## What Was Measured This Turn
 
@@ -48,7 +48,7 @@
 After approval, Builder pin `54a01eb` flipped the runtime to
 `summary_synthesis_memory` and reran the full internal gate into:
 
-`C:\Users\USER\.spark-intelligence\artifacts\phase-a-post-flip\2026-04-22-summary-synthesis-pin`
+`$SPARK_HOME\artifacts\phase-a-post-flip\2026-04-22-summary-synthesis-pin`
 
 Results on the flipped pin:
 
@@ -96,9 +96,9 @@ The substrate checkout references these local inputs:
 
 Observed on this machine during this turn:
 
-- `C:\Users\USER\Desktop\domain-chip-memory\benchmark_data` is restored locally
+- `<workspace>\\domain-chip-memory\benchmark_data` is restored locally
 - `benchmark_data/` is gitignored in
-  `C:\Users\USER\Desktop\domain-chip-memory\.gitignore`
+  `<workspace>\\domain-chip-memory\.gitignore`
 - fresh Phase A external artifacts now exist for:
   - `BEAM` public `128K` for both contenders
   - `BEAM` public `500K` for both contenders
@@ -151,38 +151,38 @@ That closes Phase A mechanically. The internal live recommendation, the external
 ## Artifact Paths
 
 - Offline benchmark:
-  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-internal\2026-04-22-head-to-head\memory-architecture-benchmark\memory-architecture-benchmark.json`
+  `$SPARK_HOME\artifacts\phase-a-internal\2026-04-22-head-to-head\memory-architecture-benchmark\memory-architecture-benchmark.json`
 - Live regression:
-  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-internal\2026-04-22-head-to-head\telegram-memory-regression\telegram-memory-regression.json`
+  `$SPARK_HOME\artifacts\phase-a-internal\2026-04-22-head-to-head\telegram-memory-regression\telegram-memory-regression.json`
 - Live soak:
-  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-internal\2026-04-22-head-to-head\telegram-memory-architecture-soak\telegram-memory-architecture-soak.json`
+  `$SPARK_HOME\artifacts\phase-a-internal\2026-04-22-head-to-head\telegram-memory-architecture-soak\telegram-memory-architecture-soak.json`
 - External BEAM `128K` summary-synthesis:
-  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\summary_synthesis_memory\beam_128k.json`
+  `$SPARK_HOME\artifacts\phase-a-external-benchmarks\summary_synthesis_memory\beam_128k.json`
 - External BEAM `128K` dual-store:
-  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\dual_store_event_calendar_hybrid\beam_128k.json`
+  `$SPARK_HOME\artifacts\phase-a-external-benchmarks\dual_store_event_calendar_hybrid\beam_128k.json`
 - External LoCoMo dual-store:
-  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\dual_store_event_calendar_hybrid\locomo10.json`
+  `$SPARK_HOME\artifacts\phase-a-external-benchmarks\dual_store_event_calendar_hybrid\locomo10.json`
 - External LoCoMo summary-synthesis:
-  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\summary_synthesis_memory\locomo10.json`
+  `$SPARK_HOME\artifacts\phase-a-external-benchmarks\summary_synthesis_memory\locomo10.json`
 - External LongMemEval_s summary-synthesis:
-  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\summary_synthesis_memory\longmemeval_s.json`
+  `$SPARK_HOME\artifacts\phase-a-external-benchmarks\summary_synthesis_memory\longmemeval_s.json`
 - External LongMemEval_s dual-store:
-  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\dual_store_event_calendar_hybrid\longmemeval_s.json`
+  `$SPARK_HOME\artifacts\phase-a-external-benchmarks\dual_store_event_calendar_hybrid\longmemeval_s.json`
 - External BEAM `500K` summary-synthesis:
-  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\summary_synthesis_memory\beam_500k.json`
+  `$SPARK_HOME\artifacts\phase-a-external-benchmarks\summary_synthesis_memory\beam_500k.json`
 - External BEAM `500K` dual-store:
-  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\dual_store_event_calendar_hybrid\beam_500k.json`
+  `$SPARK_HOME\artifacts\phase-a-external-benchmarks\dual_store_event_calendar_hybrid\beam_500k.json`
 - External BEAM `10M` summary-synthesis:
-  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\summary_synthesis_memory\beam_10m.json`
+  `$SPARK_HOME\artifacts\phase-a-external-benchmarks\summary_synthesis_memory\beam_10m.json`
 - External BEAM `10M` dual-store:
-  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\dual_store_event_calendar_hybrid\beam_10m.json`
+  `$SPARK_HOME\artifacts\phase-a-external-benchmarks\dual_store_event_calendar_hybrid\beam_10m.json`
 - External BEAM `1M` summary-synthesis:
-  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\summary_synthesis_memory\beam_1m.json`
+  `$SPARK_HOME\artifacts\phase-a-external-benchmarks\summary_synthesis_memory\beam_1m.json`
 - External BEAM `1M` dual-store:
-  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-external-benchmarks\dual_store_event_calendar_hybrid\beam_1m.json`
+  `$SPARK_HOME\artifacts\phase-a-external-benchmarks\dual_store_event_calendar_hybrid\beam_1m.json`
 - Post-flip validation run summary:
-  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-post-flip\2026-04-22-summary-synthesis-pin\run-summary.json`
+  `$SPARK_HOME\artifacts\phase-a-post-flip\2026-04-22-summary-synthesis-pin\run-summary.json`
 - Post-flip regression:
-  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-post-flip\2026-04-22-summary-synthesis-pin\telegram-memory-regression\telegram-memory-regression.json`
+  `$SPARK_HOME\artifacts\phase-a-post-flip\2026-04-22-summary-synthesis-pin\telegram-memory-regression\telegram-memory-regression.json`
 - Post-flip soak:
-  `C:\Users\USER\.spark-intelligence\artifacts\phase-a-post-flip\2026-04-22-summary-synthesis-pin\telegram-memory-architecture-soak\telegram-memory-architecture-soak.json`
+  `$SPARK_HOME\artifacts\phase-a-post-flip\2026-04-22-summary-synthesis-pin\telegram-memory-architecture-soak\telegram-memory-architecture-soak.json`

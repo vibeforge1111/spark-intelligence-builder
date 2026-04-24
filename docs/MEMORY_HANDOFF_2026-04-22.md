@@ -1,8 +1,8 @@
 # Memory Handoff 2026-04-22
 
 Status: active  
-Primary repo: `C:\Users\USER\Desktop\spark-intelligence-builder`  
-Companion repo: `C:\Users\USER\Desktop\domain-chip-memory`
+Primary repo: `<workspace>\\spark-intelligence-builder`  
+Companion repo: `<workspace>\\domain-chip-memory`
 
 ## Purpose
 
@@ -211,7 +211,7 @@ Results:
 Command:
 
 ```powershell
-python -m spark_intelligence.cli memory run-telegram-regression --home C:/Users/USER/Desktop/spark-intelligence-builder/.tmp-home-live-telegram-real --benchmark-pack telegram_evidence_active_state_consolidation --json
+python -m spark_intelligence.cli memory run-telegram-regression --home <workspace>/spark-intelligence-builder/.tmp-home-live-telegram-real --benchmark-pack telegram_evidence_active_state_consolidation --json
 ```
 
 Result:
@@ -309,7 +309,7 @@ Goal:
 If resuming cold, do this first:
 
 ```powershell
-cd C:\Users\USER\Desktop\spark-intelligence-builder
+cd <workspace>\\spark-intelligence-builder
 git log --oneline -n 12
 Get-Content TASK.md | Select-Object -First 220
 Get-Content TEST.md | Select-Object -First 220
@@ -353,9 +353,9 @@ The likely next code entry point is:
 
 ### Companion repo files
 
-- `C:\Users\USER\Desktop\domain-chip-memory\src\domain_chip_memory\builder_read_adapter.py`
-- `C:\Users\USER\Desktop\domain-chip-memory\tests\test_builder_read_adapter.py`
-- `C:\Users\USER\Desktop\domain-chip-memory\tests\test_builder_read_adapter_memory_roles.py`
+- `<workspace>\\domain-chip-memory\src\domain_chip_memory\builder_read_adapter.py`
+- `<workspace>\\domain-chip-memory\tests\test_builder_read_adapter.py`
+- `<workspace>\\domain-chip-memory\tests\test_builder_read_adapter_memory_roles.py`
 
 ## Dirty Worktree Boundaries
 

@@ -93,7 +93,7 @@ Why it mattered:
 
 Repo:
 
-- `C:\Users\USER\Desktop\spark-browser-extension`
+- `<workspace>\\spark-browser-extension`
 - GitHub: `https://github.com/vibeforge1111/spark-browser-extension`
 
 What happened there today:
@@ -164,11 +164,11 @@ What is not done yet:
 Builder verification completed:
 
 - `python -m pytest tests/test_cli_smoke.py -k browser -q`
-- `spark-intelligence attachments add-root chips C:\Users\USER\Desktop\spark-browser-extension --home C:\Users\USER\Desktop\spark-intelligence-builder\.tmp-home-browser-extension`
-- `spark-intelligence attachments activate-chip spark-browser --home C:\Users\USER\Desktop\spark-intelligence-builder\.tmp-home-browser-extension`
-- fixture-mode `spark-intelligence browser status --chip-key spark-browser --home C:\Users\USER\Desktop\spark-intelligence-builder\.tmp-home-browser-extension`
-- fixture-mode `spark-intelligence browser page-snapshot --origin https://example.com --chip-key spark-browser --home C:\Users\USER\Desktop\spark-intelligence-builder\.tmp-home-browser-extension`
-- live-session `spark-intelligence browser status --chip-key spark-browser --home C:\Users\USER\Desktop\spark-intelligence-builder\.tmp-home-browser-extension`
+- `spark-intelligence attachments add-root chips <workspace>\\spark-browser-extension --home <workspace>\\spark-intelligence-builder\.tmp-home-browser-extension`
+- `spark-intelligence attachments activate-chip spark-browser --home <workspace>\\spark-intelligence-builder\.tmp-home-browser-extension`
+- fixture-mode `spark-intelligence browser status --chip-key spark-browser --home <workspace>\\spark-intelligence-builder\.tmp-home-browser-extension`
+- fixture-mode `spark-intelligence browser page-snapshot --origin https://example.com --chip-key spark-browser --home <workspace>\\spark-intelligence-builder\.tmp-home-browser-extension`
+- live-session `spark-intelligence browser status --chip-key spark-browser --home <workspace>\\spark-intelligence-builder\.tmp-home-browser-extension`
 
 Result:
 
@@ -254,8 +254,8 @@ For Builder:
 
 ```text
 python -m pytest tests/test_cli_smoke.py -k browser -q
-spark-intelligence attachments status --home C:\Users\USER\Desktop\spark-intelligence-builder\.tmp-home-browser-extension --json
-spark-intelligence browser status --chip-key spark-browser --home C:\Users\USER\Desktop\spark-intelligence-builder\.tmp-home-browser-extension
+spark-intelligence attachments status --home <workspace>\\spark-intelligence-builder\.tmp-home-browser-extension --json
+spark-intelligence browser status --chip-key spark-browser --home <workspace>\\spark-intelligence-builder\.tmp-home-browser-extension
 ```
 
 For the browser repo:

@@ -5,10 +5,10 @@
 Phase B is closed on the live Spark side.
 
 - Belief-recall regression slice:
-  - artifact: `C:\Users\USER\.spark-intelligence\artifacts\phase-b-targeted\regression-belief-sequence-v4`
+  - artifact: `$SPARK_HOME\artifacts\phase-b-targeted\regression-belief-sequence-v4`
   - result: `7/7`
 - Abstention guardrail packs:
-  - artifact: `C:\Users\USER\.spark-intelligence\artifacts\phase-b-targeted\regression-abstention-packs-v1`
+  - artifact: `$SPARK_HOME\artifacts\phase-b-targeted\regression-abstention-packs-v1`
   - result: `14/14`
 - Builder checkpoint:
   - commit: `195eb28`
@@ -35,7 +35,7 @@ The real picture is:
 
 The raw dataset at:
 
-- `C:\Users\USER\Desktop\domain-chip-memory\benchmark_data\official\LoCoMo\data\locomo10.json`
+- `<workspace>\\domain-chip-memory\benchmark_data\official\LoCoMo\data\locomo10.json`
 
 contains `444` QA rows with no `answer` field at all.
 
@@ -108,9 +108,9 @@ The substrate has many LoCoMo-specific phrase rules and answer rescues concentra
 
 The strongest evidence is in:
 
-- `C:\Users\USER\Desktop\domain-chip-memory\src\domain_chip_memory\memory_observation_scoring_rules.py`
-- `C:\Users\USER\Desktop\domain-chip-memory\tests\test_providers.py`
-- `C:\Users\USER\Desktop\domain-chip-memory\tests\test_memory_systems.py`
+- `<workspace>\\domain-chip-memory\src\domain_chip_memory\memory_observation_scoring_rules.py`
+- `<workspace>\\domain-chip-memory\tests\test_providers.py`
+- `<workspace>\\domain-chip-memory\tests\test_memory_systems.py`
 
 These files contain many question- or phrase-shaped boosts around themes like:
 

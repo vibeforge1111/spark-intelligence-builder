@@ -108,7 +108,7 @@ Validated live:
 
 ### Builder
 
-In [tests/test_memory_orchestrator.py](C:/Users/USER/Desktop/spark-intelligence-builder/tests/test_memory_orchestrator.py):
+In [tests/test_memory_orchestrator.py](<workspace>/spark-intelligence-builder/tests/test_memory_orchestrator.py):
 
 - `I'm in Canada now.` country regression
 - `I'm in Abu Dhabi now.` city regression
@@ -125,7 +125,7 @@ In [tests/test_memory_orchestrator.py](C:/Users/USER/Desktop/spark-intelligence-
 
 ### Domain replay
 
-In [tests/test_cli.py](C:/Users/USER/Desktop/domain-chip-memory/tests/test_cli.py):
+In [tests/test_cli.py](<workspace>/domain-chip-memory/tests/test_cli.py):
 
 - mixed current-state replay covering:
   - country write
@@ -143,8 +143,8 @@ Builder probe homes created during this pass:
 
 Domain replay outputs created during this pass:
 
-- `C:\Users\USER\Desktop\domain-chip-memory\tmp\in_country_supported_intake.json`
-- `C:\Users\USER\Desktop\domain-chip-memory\tmp\moved_country_supported_intake.json`
+- `<workspace>\\domain-chip-memory\tmp\in_country_supported_intake.json`
+- `<workspace>\\domain-chip-memory\tmp\moved_country_supported_intake.json`
 
 ## Best Next Continuation
 

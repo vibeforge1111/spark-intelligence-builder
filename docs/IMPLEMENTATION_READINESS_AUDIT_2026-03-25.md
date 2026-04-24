@@ -29,22 +29,22 @@ The repo now has strong coverage for:
 
 ## 3. What Exists And Is Good Enough To Build Against
 
-- [PRD_SPARK_INTELLIGENCE_V1.md](C:/Users/USER/Desktop/spark-intelligence-builder/docs/PRD_SPARK_INTELLIGENCE_V1.md#L1)
-- [ARCHITECTURE_SPARK_INTELLIGENCE_V1.md](C:/Users/USER/Desktop/spark-intelligence-builder/docs/ARCHITECTURE_SPARK_INTELLIGENCE_V1.md#L1)
-- [CODING_RULESET_V1.md](C:/Users/USER/Desktop/spark-intelligence-builder/docs/CODING_RULESET_V1.md#L1)
-- [CRON_JOB_HARNESS_SPEC_V1.md](C:/Users/USER/Desktop/spark-intelligence-builder/docs/CRON_JOB_HARNESS_SPEC_V1.md#L1)
-- [ONBOARDING_CLI_SPEC_V1.md](C:/Users/USER/Desktop/spark-intelligence-builder/docs/ONBOARDING_CLI_SPEC_V1.md#L1)
-- [IDENTITY_AND_SESSION_MODEL_SPEC_V1.md](C:/Users/USER/Desktop/spark-intelligence-builder/docs/IDENTITY_AND_SESSION_MODEL_SPEC_V1.md#L1)
-- [PROVIDER_AND_AUTH_CONFIG_SPEC_V1.md](C:/Users/USER/Desktop/spark-intelligence-builder/docs/PROVIDER_AND_AUTH_CONFIG_SPEC_V1.md#L1)
-- [TELEGRAM_ADAPTER_SPEC_V1.md](C:/Users/USER/Desktop/spark-intelligence-builder/docs/TELEGRAM_ADAPTER_SPEC_V1.md#L1)
-- [SPARK_RESEARCHER_INTEGRATION_CONTRACT_V1.md](C:/Users/USER/Desktop/spark-intelligence-builder/docs/SPARK_RESEARCHER_INTEGRATION_CONTRACT_V1.md#L1)
-- [SPARK_SWARM_ESCALATION_CONTRACT_V1.md](C:/Users/USER/Desktop/spark-intelligence-builder/docs/SPARK_SWARM_ESCALATION_CONTRACT_V1.md#L1)
-- [DOMAIN_CHIP_ATTACHMENT_CONTRACT_V1.md](C:/Users/USER/Desktop/spark-intelligence-builder/docs/DOMAIN_CHIP_ATTACHMENT_CONTRACT_V1.md#L1)
-- [CONFIG_AND_STATE_SCHEMA_SPEC_V1.md](C:/Users/USER/Desktop/spark-intelligence-builder/docs/CONFIG_AND_STATE_SCHEMA_SPEC_V1.md#L1)
-- [OPERATOR_CONTROL_SURFACE_SPEC_V1.md](C:/Users/USER/Desktop/spark-intelligence-builder/docs/OPERATOR_CONTROL_SURFACE_SPEC_V1.md#L1)
-- [SECURITY_DOCTRINE_V1.md](C:/Users/USER/Desktop/spark-intelligence-builder/docs/SECURITY_DOCTRINE_V1.md#L1)
-- [OPENCLAW_HERMES_SECURITY_HISTORY_ANALYSIS_2026-03-25.md](C:/Users/USER/Desktop/spark-intelligence-builder/docs/OPENCLAW_HERMES_SECURITY_HISTORY_ANALYSIS_2026-03-25.md#L1)
-- [OPENCLAW_HERMES_DEEP_COMPARATIVE_ANALYSIS_2026-03-25.md](C:/Users/USER/Desktop/spark-intelligence-builder/docs/OPENCLAW_HERMES_DEEP_COMPARATIVE_ANALYSIS_2026-03-25.md#L1)
+- [PRD_SPARK_INTELLIGENCE_V1.md](<workspace>/spark-intelligence-builder/docs/PRD_SPARK_INTELLIGENCE_V1.md#L1)
+- [ARCHITECTURE_SPARK_INTELLIGENCE_V1.md](<workspace>/spark-intelligence-builder/docs/ARCHITECTURE_SPARK_INTELLIGENCE_V1.md#L1)
+- [CODING_RULESET_V1.md](<workspace>/spark-intelligence-builder/docs/CODING_RULESET_V1.md#L1)
+- [CRON_JOB_HARNESS_SPEC_V1.md](<workspace>/spark-intelligence-builder/docs/CRON_JOB_HARNESS_SPEC_V1.md#L1)
+- [ONBOARDING_CLI_SPEC_V1.md](<workspace>/spark-intelligence-builder/docs/ONBOARDING_CLI_SPEC_V1.md#L1)
+- [IDENTITY_AND_SESSION_MODEL_SPEC_V1.md](<workspace>/spark-intelligence-builder/docs/IDENTITY_AND_SESSION_MODEL_SPEC_V1.md#L1)
+- [PROVIDER_AND_AUTH_CONFIG_SPEC_V1.md](<workspace>/spark-intelligence-builder/docs/PROVIDER_AND_AUTH_CONFIG_SPEC_V1.md#L1)
+- [TELEGRAM_ADAPTER_SPEC_V1.md](<workspace>/spark-intelligence-builder/docs/TELEGRAM_ADAPTER_SPEC_V1.md#L1)
+- [SPARK_RESEARCHER_INTEGRATION_CONTRACT_V1.md](<workspace>/spark-intelligence-builder/docs/SPARK_RESEARCHER_INTEGRATION_CONTRACT_V1.md#L1)
+- [SPARK_SWARM_ESCALATION_CONTRACT_V1.md](<workspace>/spark-intelligence-builder/docs/SPARK_SWARM_ESCALATION_CONTRACT_V1.md#L1)
+- [DOMAIN_CHIP_ATTACHMENT_CONTRACT_V1.md](<workspace>/spark-intelligence-builder/docs/DOMAIN_CHIP_ATTACHMENT_CONTRACT_V1.md#L1)
+- [CONFIG_AND_STATE_SCHEMA_SPEC_V1.md](<workspace>/spark-intelligence-builder/docs/CONFIG_AND_STATE_SCHEMA_SPEC_V1.md#L1)
+- [OPERATOR_CONTROL_SURFACE_SPEC_V1.md](<workspace>/spark-intelligence-builder/docs/OPERATOR_CONTROL_SURFACE_SPEC_V1.md#L1)
+- [SECURITY_DOCTRINE_V1.md](<workspace>/spark-intelligence-builder/docs/SECURITY_DOCTRINE_V1.md#L1)
+- [OPENCLAW_HERMES_SECURITY_HISTORY_ANALYSIS_2026-03-25.md](<workspace>/spark-intelligence-builder/docs/OPENCLAW_HERMES_SECURITY_HISTORY_ANALYSIS_2026-03-25.md#L1)
+- [OPENCLAW_HERMES_DEEP_COMPARATIVE_ANALYSIS_2026-03-25.md](<workspace>/spark-intelligence-builder/docs/OPENCLAW_HERMES_DEEP_COMPARATIVE_ANALYSIS_2026-03-25.md#L1)
 
 ## 4. Remaining Missing Or Lightweight Docs
 

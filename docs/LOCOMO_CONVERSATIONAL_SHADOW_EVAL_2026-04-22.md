@@ -43,11 +43,11 @@ Measured lane:
 
 Artifact:
 
-- `C:\Users\USER\.spark-intelligence\artifacts\locomo-unseen-slice\2026-04-22-conversational-shadow-eval.json`
-- `C:\Users\USER\.spark-intelligence\artifacts\locomo-unseen-slice\2026-04-22-gated-conversational-shadow-eval.json`
-- `C:\Users\USER\.spark-intelligence\artifacts\locomo-unseen-slice\2026-04-22-exact-turn-shadow-selector.json`
-- `C:\Users\USER\.spark-intelligence\artifacts\locomo-unseen-slice\2026-04-22-exact-turn-shadow-answer-eval.json`
-- `C:\Users\USER\.spark-intelligence\artifacts\locomo-unseen-slice\cli-multi-shadow-smoke.json`
+- `$SPARK_HOME\artifacts\locomo-unseen-slice\2026-04-22-conversational-shadow-eval.json`
+- `$SPARK_HOME\artifacts\locomo-unseen-slice\2026-04-22-gated-conversational-shadow-eval.json`
+- `$SPARK_HOME\artifacts\locomo-unseen-slice\2026-04-22-exact-turn-shadow-selector.json`
+- `$SPARK_HOME\artifacts\locomo-unseen-slice\2026-04-22-exact-turn-shadow-answer-eval.json`
+- `$SPARK_HOME\artifacts\locomo-unseen-slice\cli-multi-shadow-smoke.json`
 
 ## What Was Measured
 
@@ -225,7 +225,7 @@ So the honest current state is:
 When a provider is available, the intended command is:
 
 ```powershell
-python -m domain_chip_memory.cli run-locomo-multi-shadow-eval C:\Users\USER\Desktop\domain-chip-memory\benchmark_data\official\LoCoMo\data\locomo10.json --provider openai:<model> --sample-id conv-41 --sample-id conv-42 --sample-id conv-43 --sample-id conv-44 --sample-id conv-47 --sample-id conv-48 --sample-id conv-49 --sample-id conv-50 --category 1 --category 2 --category 3 --exclude-missing-gold --write C:\Users\USER\.spark-intelligence\artifacts\locomo-unseen-slice\real-provider-multi-shadow.json
+python -m domain_chip_memory.cli run-locomo-multi-shadow-eval <workspace>\\domain-chip-memory\benchmark_data\official\LoCoMo\data\locomo10.json --provider openai:<model> --sample-id conv-41 --sample-id conv-42 --sample-id conv-43 --sample-id conv-44 --sample-id conv-47 --sample-id conv-48 --sample-id conv-49 --sample-id conv-50 --category 1 --category 2 --category 3 --exclude-missing-gold --write $SPARK_HOME\artifacts\locomo-unseen-slice\real-provider-multi-shadow.json
 ```
 
 ## Architectural Conclusion

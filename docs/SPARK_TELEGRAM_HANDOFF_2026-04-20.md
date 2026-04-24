@@ -25,7 +25,7 @@ Repos affected:
 ## System state at end of day
 
 **Gateway**
-- Home: `C:\Users\USER\Desktop\spark-intelligence-builder\.tmp-home-live-telegram-real`
+- Home: `<workspace>\\spark-intelligence-builder\.tmp-home-live-telegram-real`
 - Autostart shim: `%AppData%\...\Startup\Spark Intelligence Gateway __tmp-home-live-telegram-real_.cmd` (calls Telegram `close` API before launch to pre-empt poll races)
 - Bot: `@SparkAGI_bot` (id `8667732512`), allowlist mode, 1 allowed user (`8319079055`)
 - Doctor: `ok` (cleared this session by running `jobs tick` — background-freshness watchtower needs a recent `jobs_tick` row to stay green)

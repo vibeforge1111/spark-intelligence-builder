@@ -106,7 +106,7 @@ The following is no longer theoretical:
 
 Current live autostart wrapper:
 
-- [Spark Intelligence Gateway __tmp-home-live-telegram-real_.cmd](C:/Users/USER/AppData/Roaming/Microsoft/Windows/Start%20Menu/Programs/Startup/Spark%20Intelligence%20Gateway%20__tmp-home-live-telegram-real_.cmd)
+- [Spark Intelligence Gateway __tmp-home-live-telegram-real_.cmd](<user-home>/AppData/Roaming/Microsoft/Windows/Start%20Menu/Programs/Startup/Spark%20Intelligence%20Gateway%20__tmp-home-live-telegram-real_.cmd)
 
 ## 5. Current Phase Map
 

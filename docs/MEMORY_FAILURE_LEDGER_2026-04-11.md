@@ -5,9 +5,9 @@ Status: generated from the latest validation run
 
 ## Baseline run
 
-- wrapper output root: `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\20260412-023241`
-- manifest: `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\20260412-023241\run-summary.json`
-- stable pointer: `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\latest-full-run.json`
+- wrapper output root: `$SPARK_HOME\artifacts\memory-validation-runs\20260412-023241`
+- manifest: `$SPARK_HOME\artifacts\memory-validation-runs\20260412-023241\run-summary.json`
+- stable pointer: `$SPARK_HOME\artifacts\memory-validation-runs\latest-full-run.json`
 
 Pinned code state behind this run:
 

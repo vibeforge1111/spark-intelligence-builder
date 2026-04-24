@@ -23,8 +23,8 @@ Verification completed locally:
 - `spark-swarm`: focused bridge tests passed for autoloop, startup-bench adapter, and runtime-context updates
 - `specialization-path-startup-operator`: local hook tests passed
 - real smoke check: `python -m thestartupbench run-script ... benchmarks/startup-operator.tool_calls.json ...` executed successfully against `minimal_0to1_scenario`
-- real Spark Swarm autoloop check: `spark-swarm specialization-path autoloop startup-operator C:\Users\USER\Desktop\specialization-path-startup-operator --plan-only`
-- real Spark Swarm forced round: `spark-swarm specialization-path autoloop startup-operator C:\Users\USER\Desktop\specialization-path-startup-operator --rounds 1 --force`
+- real Spark Swarm autoloop check: `spark-swarm specialization-path autoloop startup-operator <workspace>\\specialization-path-startup-operator --plan-only`
+- real Spark Swarm forced round: `spark-swarm specialization-path autoloop startup-operator <workspace>\\specialization-path-startup-operator --rounds 1 --force`
 - Builder Telegram autoloop/session reply tests now surface script-backed runner details and plain-language stop reasons
 
 ## 3. Current Honest Status
@@ -52,8 +52,8 @@ This is no longer speculative. The seam has already been proven once on April 9,
 
 When re-running on the real path repo, use:
 
-- `spark-swarm specialization-path autoloop startup-operator C:\Users\USER\Desktop\specialization-path-startup-operator --plan-only`
-- `spark-swarm specialization-path autoloop startup-operator C:\Users\USER\Desktop\specialization-path-startup-operator --rounds 1 --force`
+- `spark-swarm specialization-path autoloop startup-operator <workspace>\\specialization-path-startup-operator --plan-only`
+- `spark-swarm specialization-path autoloop startup-operator <workspace>\\specialization-path-startup-operator --rounds 1 --force`
 - if needed later, one manual round with `--candidate-file` against the tool-script target
 
 Confirm:

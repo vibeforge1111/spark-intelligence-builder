@@ -14,9 +14,9 @@ The goal was to keep offline ProductMemory comparison and live Telegram validati
 ## Confirmed Results
 
 <!-- AUTO_MEMORY_BASELINE_LIVE_RESULTS_START -->
-- Latest clean full validation root: `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\20260412-023241`
-- Stable latest full-run pointer: `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\latest-full-run.json`
-- Stable previous full-run pointer: `C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\previous-full-run.json`
+- Latest clean full validation root: `$SPARK_HOME\artifacts\memory-validation-runs\20260412-023241`
+- Stable latest full-run pointer: `$SPARK_HOME\artifacts\memory-validation-runs\latest-full-run.json`
+- Stable previous full-run pointer: `$SPARK_HOME\artifacts\memory-validation-runs\previous-full-run.json`
 - Live Telegram regression: `34/34` matched
 - KB compile: valid
 - KB probe coverage: `38/38` current-state and `38/38` evidence hits

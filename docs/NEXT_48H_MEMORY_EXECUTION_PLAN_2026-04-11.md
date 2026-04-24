@@ -2,7 +2,7 @@
 
 Date: 2026-04-11
 Repo: `spark-intelligence-builder`
-Related substrate repo: `C:\Users\USER\Desktop\domain-chip-memory`
+Related substrate repo: `<workspace>\\domain-chip-memory`
 Status: active execution plan
 
 > Historical execution-plan note, updated April 21, 2026: this plan captured the April 11 starting point. The current runtime is no longer `summary_synthesis_memory`; it is now pinned to `dual_store_event_calendar_hybrid` after the later live comparison and runtime-contract promotion work.
@@ -116,7 +116,7 @@ What the chained entrypoint gives us:
 Stable pointer for the latest run:
 
 ```text
-C:\Users\USER\.spark-intelligence\artifacts\memory-validation-runs\latest-run.json
+$SPARK_HOME\artifacts\memory-validation-runs\latest-run.json
 ```
 
 ## Core loop
@@ -375,8 +375,8 @@ Targeted pack rerun:
 
 ```powershell
 spark-intelligence memory run-telegram-regression `
-  --home C:\Users\USER\.spark-intelligence `
-  --output-dir C:\Users\USER\.spark-intelligence\artifacts\targeted-pack-rerun `
+  --home $SPARK_HOME `
+  --output-dir $SPARK_HOME\artifacts\targeted-pack-rerun `
   --benchmark-pack temporal_conflict_gauntlet `
   --baseline summary_synthesis_memory `
   --baseline dual_store_event_calendar_hybrid
@@ -386,8 +386,8 @@ Timeout-hardened soak:
 
 ```powershell
 spark-intelligence memory soak-architectures `
-  --home C:\Users\USER\.spark-intelligence `
-  --output-dir C:\Users\USER\.spark-intelligence\artifacts\manual-soak-rerun `
+  --home $SPARK_HOME `
+  --output-dir $SPARK_HOME\artifacts\manual-soak-rerun `
   --runs 14 `
   --baseline summary_synthesis_memory `
   --baseline dual_store_event_calendar_hybrid `

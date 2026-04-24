@@ -2,7 +2,7 @@
 
 Date: 2026-04-22
 Status: active
-Repo: `C:\Users\USER\Desktop\spark-intelligence-builder`
+Repo: `<workspace>\\spark-intelligence-builder`
 
 ## Purpose
 

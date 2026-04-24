@@ -37,7 +37,7 @@ The following flow is now working for the `trading-crypto` specialization path:
 
 This was validated against the real repo-backed path:
 
-- repo: `/mnt/c/Users/USER/Desktop/domain-chip-trading-crypto`
+- repo: `<workspace>/domain-chip-trading-crypto`
 - path key: `trading-crypto`
 - benchmark target: `benchmarks/trading-crypto-candidate.json`
 

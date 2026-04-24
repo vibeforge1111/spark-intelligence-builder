@@ -192,7 +192,7 @@ spark-intelligence jobs tick
 spark-intelligence channel telegram-onboard
 spark-intelligence channel add discord --bot-token <token> --allowed-user <id>
 spark-intelligence channel add whatsapp --bot-token <token> --allowed-user <id>
-spark-intelligence config set spark.researcher.runtime_root "C:/Users/USER/Desktop/spark-researcher"
+spark-intelligence config set spark.researcher.runtime_root "<workspace>/spark-researcher"
 spark-intelligence swarm configure --api-url https://your-swarm-host --workspace-id <workspace_id> --access-token <token> --refresh-token <refresh_token> --auth-client-key-env SPARK_SWARM_AUTH_CLIENT_KEY
 spark-intelligence doctor
 spark-intelligence agent inspect
@@ -375,7 +375,7 @@ There is also an internal operator-only terminal-to-Telegram bridge for probing 
 `gateway shadow-telegram` and `gateway shadow-telegram-pack` are the explicit migration-parity variants of that same internal bridge. They keep the current ingress truth visible in output: `spark-telegram-bot` remains the live ingress owner while Builder is only in shadow-validation mode. Use `--output <file>` on pack runs when you want a persistent JSON artifact for parity review.
 `scripts/run_live_telegram_memory_probe.ps1` is the repeatable live long-polling memory check. Use `-PrintPromptsOnly` to copy the probe sequence from [scenario-packs/telegram-live-memory-lifecycle.txt](./scenario-packs/telegram-live-memory-lifecycle.txt), send it to the real Spark Telegram bot, then rerun without that switch to verify the real `telegram_runtime` traces for profile preference, active-state history, and delete behavior.
 
-For local recovery on Windows, use [`start-telegram.ps1`](C:/Users/USER/Desktop/spark-intelligence-builder/start-telegram.ps1). It uses the same native Windows Python path as the supported autostart wrapper, tests Telegram auth against `.tmp-home-live-telegram-real`, and then starts the continuous gateway:
+For local recovery on Windows, use [`start-telegram.ps1`](<workspace>/spark-intelligence-builder/start-telegram.ps1). It uses the same native Windows Python path as the supported autostart wrapper, tests Telegram auth against `.tmp-home-live-telegram-real`, and then starts the continuous gateway:
 
 ```powershell
 .\start-telegram.ps1
@@ -565,7 +565,7 @@ Config can be inspected and updated without editing `config.yaml` manually:
 ```bash
 spark-intelligence config show
 spark-intelligence config show --path spark.researcher --json
-spark-intelligence config set spark.researcher.config_path "C:/Users/USER/Desktop/spark-researcher/spark-researcher.project.json"
+spark-intelligence config set spark.researcher.config_path "<workspace>/spark-researcher/spark-researcher.project.json"
 spark-intelligence config unset spark.researcher.config_path
 ```
 
@@ -585,8 +585,8 @@ Chip and specialization-path attachments stay external as well. Spark Intelligen
 spark-intelligence attachments status
 spark-intelligence attachments list --kind chip
 spark-intelligence attachments list --kind path --json
-spark-intelligence attachments add-root chips "C:/Users/USER/Desktop/domain-chip-content"
-spark-intelligence attachments add-root paths "C:/Users/USER/Desktop/specialization-path-startup-operator"
+spark-intelligence attachments add-root chips "<workspace>/domain-chip-content"
+spark-intelligence attachments add-root paths "<workspace>/specialization-path-startup-operator"
 spark-intelligence attachments activate-chip content
 spark-intelligence attachments pin-chip startup-yc
 spark-intelligence attachments set-path startup-operator

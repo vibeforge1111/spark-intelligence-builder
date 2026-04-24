@@ -37,10 +37,10 @@ Builder verification completed:
 
 - `python -m pytest tests/test_cli_smoke.py tests/test_attachment_hooks.py -k browser -q`
 - `python -m pytest tests/test_cli_smoke.py tests/test_attachment_hooks.py -q`
-- `spark-intelligence attachments add-root chips C:\Users\USER\Desktop\spark-browser-extension --home C:\Users\USER\Desktop\spark-intelligence-builder\.tmp-home-browser-extension`
-- `spark-intelligence attachments activate-chip spark-browser --home C:\Users\USER\Desktop\spark-intelligence-builder\.tmp-home-browser-extension`
-- `spark-intelligence browser status --chip-key spark-browser --home C:\Users\USER\Desktop\spark-intelligence-builder\.tmp-home-browser-extension --json`
-- `spark-intelligence browser page-snapshot --origin https://example.com/ --chip-key spark-browser --home C:\Users\USER\Desktop\spark-intelligence-builder\.tmp-home-browser-extension --json`
+- `spark-intelligence attachments add-root chips <workspace>\\spark-browser-extension --home <workspace>\\spark-intelligence-builder\.tmp-home-browser-extension`
+- `spark-intelligence attachments activate-chip spark-browser --home <workspace>\\spark-intelligence-builder\.tmp-home-browser-extension`
+- `spark-intelligence browser status --chip-key spark-browser --home <workspace>\\spark-intelligence-builder\.tmp-home-browser-extension --json`
+- `spark-intelligence browser page-snapshot --origin https://example.com/ --chip-key spark-browser --home <workspace>\\spark-intelligence-builder\.tmp-home-browser-extension --json`
 
 Results:
 

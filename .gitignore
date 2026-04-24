@@ -15,7 +15,15 @@ __pycache__/
 # Use this for features such as the terminal-to-Telegram bridge that must stay removable from public/runtime services.
 .tmp-home/
 .tmp-home-*/
+.tmp/
+.vendor/
+.spark-swarm/
 .tmp-telegram-*.json
 .operator-local/
+attachments.snapshot.json
+PERSONALITY_HANDOFF_*.md
+docs/PERSONALITY_TESTING_*.md
+docs/*RESUME_PROMPT*.md
+docs/DRAFT_SYSTEM_TELEGRAM_CHECKLIST.md
 *.egg-info/
 .gstack/

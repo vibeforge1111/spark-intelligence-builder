@@ -474,7 +474,7 @@ Tracked docs and config examples must use:
 
 Never:
 
-- `C:/Users/USER/Desktop/...`
+- `<workspace>/...`
 
 ### 13.2 Secret Rule
 
