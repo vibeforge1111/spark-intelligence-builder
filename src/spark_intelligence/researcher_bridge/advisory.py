@@ -1480,6 +1480,72 @@ def _is_conversational_fallback_candidate(
 _SPARK_CHARACTER_PERSONA_CACHE: str | None = None
 
 
+def try_spark_character_fallback(
+    *,
+    user_message: str,
+    config_manager: ConfigManager,
+    use_critic: bool = False,
+) -> str | None:
+    """Generate a reply via spark-character when the Researcher bridge
+    cannot serve the request. Provider-agnostic, picks up ZAI_API_KEY /
+    OPENAI_API_KEY / etc from the workspace .env file. Returns None on
+    any failure so the caller can fall through to the error copy.
+    """
+    text = str(user_message or "").strip()
+    if not text:
+        return None
+    try:
+        from spark_character import (  # type: ignore
+            ProviderSpec,
+            generate,
+            generate_with_critique,
+            load_persona,
+        )
+    except Exception:
+        return None
+    env_map: dict[str, str] = {}
+    try:
+        env_map = dict(config_manager.read_env_map() or {})
+    except Exception:
+        env_map = {}
+    provider = _resolve_spark_character_provider(env_map)
+    if provider is None:
+        return None
+    try:
+        persona = load_persona()
+        if use_critic:
+            result = generate_with_critique(text, provider=provider, persona=persona)
+        else:
+            result = generate(text, provider=provider, persona=persona)
+        reply = str(result.final or "").strip()
+        return reply or None
+    except Exception:
+        return None
+
+
+def _resolve_spark_character_provider(env_map: dict[str, str]):
+    try:
+        from spark_character import ProviderSpec  # type: ignore
+    except Exception:
+        return None
+    candidates = (
+        ("ZAI_API_KEY", "ZAI_BASE_URL", "ZAI_MODEL",
+         "https://api.z.ai/api/coding/paas/v4/", "glm-5.1"),
+        ("MINIMAX_API_KEY", "MINIMAX_BASE_URL", "MINIMAX_MODEL",
+         "https://api.minimax.io/v1/", "MiniMax-M2.7"),
+        ("OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL",
+         "https://api.openai.com/v1/", "gpt-4o-mini"),
+    )
+    for key_env, base_env, model_env, default_base, default_model in candidates:
+        api_key = (env_map.get(key_env) or os.environ.get(key_env) or "").strip()
+        if not api_key:
+            continue
+        base_url = (env_map.get(base_env) or os.environ.get(base_env) or default_base).strip()
+        model = (env_map.get(model_env) or os.environ.get(model_env) or default_model).strip()
+        return ProviderSpec(base_url=base_url, model=model, api_key=api_key)
+    return None
+
+
 def _load_spark_character_persona() -> str:
     """Load Spark's canonical persona from the spark-character package.
 

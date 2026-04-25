@@ -52,7 +52,11 @@ from spark_intelligence.personality import (
     resolve_builder_persona_agent_id,
     restore_agent_persona_savepoint,
 )
-from spark_intelligence.researcher_bridge.advisory import build_researcher_reply, record_researcher_bridge_result
+from spark_intelligence.researcher_bridge.advisory import (
+    build_researcher_reply,
+    record_researcher_bridge_result,
+    try_spark_character_fallback,
+)
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD
 from spark_intelligence.swarm_bridge import (
@@ -444,6 +448,33 @@ def _maybe_append_verbatim_chip_block(
         return reply_text
     base = (reply_text or "").rstrip()
     return f"{base}\n{block}\n"
+
+
+_SPARK_CHARACTER_FALLBACK_ROUTES = frozenset(
+    {"bridge_error", "bridge_disabled", "stub", "provider_resolution_failed"}
+)
+_SPARK_CHARACTER_FALLBACK_MODES = frozenset({"bridge_error", "disabled", "stub"})
+
+
+def _maybe_spark_character_reply(
+    *,
+    config_manager: ConfigManager,
+    user_message: str,
+    bridge_mode: str | None,
+    routing_decision: str | None,
+) -> str | None:
+    """Try to serve a real LLM reply via spark-character when the
+    Researcher bridge cannot. Returns None on any failure so the caller
+    falls through to the canned error copy.
+    """
+    mode = str(bridge_mode or "").strip()
+    route = str(routing_decision or "").strip()
+    if route not in _SPARK_CHARACTER_FALLBACK_ROUTES and mode not in _SPARK_CHARACTER_FALLBACK_MODES:
+        return None
+    return try_spark_character_fallback(
+        user_message=user_message,
+        config_manager=config_manager,
+    )
 
 
 def _shape_telegram_bridge_reply(reply_text: str, *, bridge_mode: str | None, routing_decision: str | None) -> str:
@@ -1262,7 +1293,13 @@ def simulate_telegram_update(
                         user_message=effective_text,
                     )
                     record_researcher_bridge_result(state_db=state_db, result=bridge_result)
-                    shaped_bridge_reply = _shape_telegram_bridge_reply(
+                    spark_character_reply = _maybe_spark_character_reply(
+                        config_manager=config_manager,
+                        user_message=effective_text,
+                        bridge_mode=bridge_result.mode,
+                        routing_decision=bridge_result.routing_decision,
+                    )
+                    shaped_bridge_reply = spark_character_reply or _shape_telegram_bridge_reply(
                         bridge_result.reply_text,
                         bridge_mode=bridge_result.mode,
                         routing_decision=bridge_result.routing_decision,
@@ -1974,7 +2011,13 @@ def poll_telegram_updates_once(
             run_id=run.run_id,
         )
         record_researcher_bridge_result(state_db=state_db, result=bridge_result)
-        shaped_bridge_reply = _shape_telegram_bridge_reply(
+        spark_character_reply = _maybe_spark_character_reply(
+            config_manager=config_manager,
+            user_message=effective_text,
+            bridge_mode=bridge_result.mode,
+            routing_decision=bridge_result.routing_decision,
+        )
+        shaped_bridge_reply = spark_character_reply or _shape_telegram_bridge_reply(
             bridge_result.reply_text,
             bridge_mode=bridge_result.mode,
             routing_decision=bridge_result.routing_decision,
