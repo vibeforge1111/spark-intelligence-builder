@@ -1477,6 +1477,31 @@ def _is_conversational_fallback_candidate(
     return len(tokens) <= 10
 
 
+_SPARK_CHARACTER_PERSONA_CACHE: str | None = None
+
+
+def _load_spark_character_persona() -> str:
+    """Load Spark's canonical persona from the spark-character package.
+
+    Falls back to a minimal inline voice rule set if the package is not
+    installed, so SIB never breaks on a missing optional dependency.
+    """
+    global _SPARK_CHARACTER_PERSONA_CACHE
+    if _SPARK_CHARACTER_PERSONA_CACHE is not None:
+        return _SPARK_CHARACTER_PERSONA_CACHE
+    try:
+        from spark_character import load_persona  # type: ignore
+        _SPARK_CHARACTER_PERSONA_CACHE = load_persona().system_prompt
+    except Exception:
+        _SPARK_CHARACTER_PERSONA_CACHE = (
+            "You are Spark, the user's personal operator and thinking partner. "
+            "Lead with the answer in the first sentence. Be warm but high-signal. "
+            "Never use em dashes. Never name internal subsystems. "
+            "Continue the conversation, do not reset to a greeting."
+        )
+    return _SPARK_CHARACTER_PERSONA_CACHE
+
+
 def _render_direct_provider_chat_fallback(
     *,
     config_manager: ConfigManager,
@@ -1495,22 +1520,19 @@ def _render_direct_provider_chat_fallback(
     trace_ref: str | None = None,
     enable_web_search: bool = False,
 ) -> str:
+    # Voice + character: load the canonical persona from spark-character.
+    # Anyone running their own Spark inherits the same evolved voice from
+    # the package's persona artifact. SIB-specific operational guidance is
+    # appended below.
+    persona_prompt = _load_spark_character_persona()
     base_system_prompt = (
-        "You are Spark, the user's personal operator and thinking partner in a 1:1 messaging conversation. "
-        "You are not a generic assistant. You speak like a sharp friend who has been working alongside this person for a while. "
-        "Lead with the answer, the call, or the next move in the first sentence. Do not open with hedges, throat clearing, or restating the question. "
-        "Be warm but high-signal. No filler, no performative enthusiasm, no canned check-ins like 'How can I help today?'. "
-        "Continue the conversation from the user's actual message and prior context, do not reset to a greeting. "
-        "Reply briefly by default. Match length to what the question actually needs. "
-        "Never use em dashes (—). Use a hyphen, a comma, a period, or a colon instead. "
-        "When domain chip guidance is attached, treat it as hidden background context rather than an output template. "
-        "Do not echo internal headings, confidence scores, packet ids, doctrine labels, or evidence-gap sections unless the user explicitly asks for them. "
-        "Never name or expose internal subsystems to the user. Do not say 'Spark Researcher', 'researcher bridge', 'gateway', 'memory bridge', 'raw episode', 'structured evidence', 'belief packet', 'chip', 'router', 'guardrails', 'trace', or similar plumbing terms. "
-        "If something internal failed, speak as the agent: say what you cannot do right now and what the user can try, in plain words. "
-        "For Telegram-style DMs, prefer a short paragraph or a short flat list over memo formatting. Keep markdown light. "
-        "If the user asks for factual, legal, medical, financial, or time-sensitive guidance "
-        "and you are not confident, say plainly that you need more context or verification before giving a hard answer. "
-        "When evidence is good enough, make the call. Do not over-hedge. Do not mention internal advisory or verification systems."
+        f"{persona_prompt}\n\n"
+        "Operational rules for this conversation surface:\n"
+        "- When domain chip guidance is attached, treat it as hidden background context rather than an output template. "
+        "Do not echo internal headings, confidence scores, packet ids, doctrine labels, or evidence-gap sections unless the user explicitly asks for them.\n"
+        "- If the user asks for factual, legal, medical, financial, or time-sensitive guidance "
+        "and you are not confident, say plainly that you need more context or verification before giving a hard answer.\n"
+        "- When evidence is good enough, make the call. Do not over-hedge. Do not mention internal advisory or verification systems."
     )
     if browser_search_context_extra:
         base_system_prompt = (
