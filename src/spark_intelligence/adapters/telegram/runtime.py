@@ -1598,6 +1598,7 @@ def poll_telegram_updates_once(
                 run_id=run.run_id,
                 request_id=run.request_id,
                 trace_ref=None,
+                user_message=normalized.text,
             )
             if send_result["ok"]:
                 sent_count += 1
@@ -1655,6 +1656,7 @@ def poll_telegram_updates_once(
                 run_id=run.run_id,
                 request_id=run.request_id,
                 trace_ref=None,
+                user_message=normalized.text,
             )
             if resolution.decision == "held":
                 held_count += 1
@@ -1729,6 +1731,7 @@ def poll_telegram_updates_once(
                 human_id=resolution.human_id,
                 agent_id=resolution.agent_id,
                 respect_voice_reply_state=False,
+                user_message=effective_text,
             )
             processed_count += 1
             if send_result["ok"]:
@@ -1836,6 +1839,7 @@ def poll_telegram_updates_once(
                     else (outbound_text if voice_origin_reply else None)
                 ),
                 respect_voice_reply_state=bool(command_result.get("respect_voice_reply_state", True)),
+                user_message=effective_text,
             )
             processed_count += 1
             if send_result["ok"]:
@@ -1953,6 +1957,7 @@ def poll_telegram_updates_once(
                 agent_id=resolution.agent_id,
                 force_voice=voice_origin_reply,
                 voice_text=outbound_text if voice_origin_reply else None,
+                user_message=effective_text,
             )
             processed_count += 1
             if send_result["ok"]:
@@ -2097,6 +2102,7 @@ def poll_telegram_updates_once(
             agent_id=resolution.agent_id,
             force_voice=voice_origin_reply,
             voice_text=outbound_text if voice_origin_reply else None,
+            user_message=effective_text,
         )
         processed_count += 1
         if send_result["ok"]:
@@ -2316,6 +2322,7 @@ def _send_telegram_reply(
     force_voice: bool = False,
     voice_text: str | None = None,
     respect_voice_reply_state: bool = True,
+    user_message: str | None = None,
 ) -> dict[str, Any]:
     if output_keepability is None and event != "telegram_bridge_outbound":
         output_keepability = "operator_debug_only"
@@ -2531,6 +2538,8 @@ def _send_telegram_reply(
             "voice_error": voice_error,
             "response_preview": _preview_text(guarded["text"]),
             "response_length": len(guarded["text"]),
+            "user_message_preview": _preview_text(user_message) if user_message else None,
+            "user_message_length": len(user_message) if user_message else None,
         },
     )
     return {
