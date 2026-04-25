@@ -462,10 +462,15 @@ def _maybe_spark_character_reply(
     user_message: str,
     bridge_mode: str | None,
     routing_decision: str | None,
+    surface: str | None = None,
 ) -> str | None:
     """Try to serve a real LLM reply via spark-character when the
     Researcher bridge cannot. Returns None on any failure so the caller
     falls through to the canned error copy.
+
+    surface lets the caller hint what surface the reply is for so the
+    correct surface overlay (voice, browser_extension, telegram, ...)
+    gets appended to the persona during generation.
     """
     mode = str(bridge_mode or "").strip()
     route = str(routing_decision or "").strip()
@@ -474,6 +479,7 @@ def _maybe_spark_character_reply(
     return try_spark_character_fallback(
         user_message=user_message,
         config_manager=config_manager,
+        surface=surface,
     )
 
 
@@ -1298,6 +1304,14 @@ def simulate_telegram_update(
                         user_message=effective_text,
                         bridge_mode=bridge_result.mode,
                         routing_decision=bridge_result.routing_decision,
+                        surface=(
+                            "voice"
+                            if _voice_reply_enabled_for_user(
+                                state_db=state_db,
+                                external_user_id=normalized.telegram_user_id,
+                            )
+                            else "telegram"
+                        ),
                     )
                     shaped_bridge_reply = spark_character_reply or _shape_telegram_bridge_reply(
                         bridge_result.reply_text,
@@ -2016,6 +2030,14 @@ def poll_telegram_updates_once(
             user_message=effective_text,
             bridge_mode=bridge_result.mode,
             routing_decision=bridge_result.routing_decision,
+            surface=(
+                "voice"
+                if _voice_reply_enabled_for_user(
+                    state_db=state_db,
+                    external_user_id=normalized.telegram_user_id,
+                )
+                else "telegram"
+            ),
         )
         shaped_bridge_reply = spark_character_reply or _shape_telegram_bridge_reply(
             bridge_result.reply_text,

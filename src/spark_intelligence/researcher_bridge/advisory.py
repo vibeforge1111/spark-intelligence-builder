@@ -1485,6 +1485,7 @@ def try_spark_character_fallback(
     user_message: str,
     config_manager: ConfigManager,
     use_critic: bool = False,
+    surface: str | None = None,
 ) -> str | None:
     """Generate a reply via spark-character when the Researcher bridge
     cannot serve the request. Provider-agnostic, picks up ZAI_API_KEY /
@@ -1518,7 +1519,7 @@ def try_spark_character_fallback(
             kind = detect_provider_kind(provider)
         except Exception:
             kind = None
-        persona = _resolve_chip_or_persona(kind=kind)
+        persona = _resolve_chip_or_persona(kind=kind, surface=surface)
         if use_critic:
             result = generate_with_critique(text, provider=provider, persona=persona)
         else:
@@ -1533,6 +1534,7 @@ def try_spark_character_fallback(
                 persona=persona,
                 tools=tools,
                 enable_search=True,
+                surface=surface,
             )
         reply = str(result.final or "").strip()
         return reply or None
@@ -1540,33 +1542,53 @@ def try_spark_character_fallback(
         return None
 
 
-def _resolve_chip_or_persona(*, kind: str | None):
-    """Try chip-rendered persona first (with provider overlay appended),
-    fall back to flat-MD persona if the chip lab is not present.
+def _resolve_chip_or_persona(*, kind: str | None, surface: str | None = None):
+    """Try chip-rendered persona first (with provider + surface overlays
+    appended), fall back to flat-MD persona if the chip lab is not present.
 
     Returns a spark_character.PersonaSpec or None on any failure so the
-    caller can decide what to do."""
+    caller can decide what to do.
+
+    surface: 'voice' / 'browser_extension' / 'telegram' / etc. Appends the
+    matching surface overlay so output is shaped for that delivery channel
+    (short declarative sentences for voice, popup-friendly for browser, etc).
+    """
     try:
         from spark_character import (  # type: ignore
             PersonaSpec,
             load_chip_by_id,
             render_chip_to_system_prompt,
         )
-        from spark_character.persona import load_overlay  # type: ignore
+        from spark_character.persona import load_overlay, load_surface_overlay  # type: ignore
         chip_id = _resolve_active_personality_chip_id()
         chip = load_chip_by_id(chip_id)
         rendered = render_chip_to_system_prompt(chip)
+        parts = [rendered]
         if kind:
             overlay = load_overlay(kind)
             if overlay:
-                rendered = f"{rendered}\n\n---\n\n{overlay}"
-        return PersonaSpec(
-            version=f"chip:{chip_id}{':' + kind if kind else ''}",
-            text=rendered,
-        )
+                parts.append(overlay)
+        if surface:
+            try:
+                surface_overlay = load_surface_overlay(surface)
+                if surface_overlay:
+                    parts.append(surface_overlay)
+            except Exception:
+                pass
+        combined = "\n\n---\n\n".join(parts)
+        version_tag = f"chip:{chip_id}"
+        if kind:
+            version_tag += f":{kind}"
+        if surface:
+            version_tag += f":{surface}"
+        return PersonaSpec(version=version_tag, text=combined)
     except Exception:
         try:
-            return load_persona(provider_kind=kind) if kind else load_persona()
+            return (
+                load_persona(provider_kind=kind, surface=surface)
+                if (kind or surface)
+                else load_persona()
+            )
         except Exception:
             return None
 
