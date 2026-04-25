@@ -1596,18 +1596,76 @@ def _resolve_spark_character_provider(env_map: dict[str, str]):
     return None
 
 
+_ACTIVE_PERSONALITY_CACHE: str | None = None
+
+
 def _resolve_active_personality_chip_id() -> str:
-    """Resolve the active personality chip id from spark-personality-chip-labs
-    if available, falling back to founder-operator. Cached for the process
-    lifetime - restart the gateway to pick up a switch."""
+    """Resolve the active personality chip id.
+
+    Priority order:
+      1. SPARK_INTELLIGENCE_PERSONALITY env override (operator escape hatch).
+      2. SIB's own agent_persona_profiles table when populated (workspace-
+         level active persona, set via SIB's persona ops commands).
+      3. spark-personality-chip-labs ~/.spark/active_personality.json
+         (system-wide active personality set via the chip lab UI / CLI).
+      4. Fallback to founder-operator.
+
+    Cached per process. Restart the gateway to pick up a switch.
+    """
+    global _ACTIVE_PERSONALITY_CACHE
+    if _ACTIVE_PERSONALITY_CACHE is not None:
+        return _ACTIVE_PERSONALITY_CACHE
+    # 1. Operator override
+    env_override = (os.environ.get("SPARK_INTELLIGENCE_PERSONALITY") or "").strip()
+    if env_override:
+        _ACTIVE_PERSONALITY_CACHE = env_override
+        return _ACTIVE_PERSONALITY_CACHE
+    # 2. SIB workspace-level (agent_persona_profiles)
+    sib_active = _read_sib_active_personality_id()
+    if sib_active:
+        _ACTIVE_PERSONALITY_CACHE = sib_active
+        return _ACTIVE_PERSONALITY_CACHE
+    # 3. Chip lab system-wide
     try:
         from personality_engine.active import get_active_personality_id  # type: ignore
         active = get_active_personality_id()
         if active:
-            return str(active)
+            _ACTIVE_PERSONALITY_CACHE = str(active)
+            return _ACTIVE_PERSONALITY_CACHE
     except Exception:
         pass
-    return "founder-operator"
+    # 4. Fallback
+    _ACTIVE_PERSONALITY_CACHE = "founder-operator"
+    return _ACTIVE_PERSONALITY_CACHE
+
+
+def _read_sib_active_personality_id() -> str | None:
+    """Read the most recently updated agent_persona_profiles row for the
+    current workspace's state.db. Returns the persona_name when one exists,
+    None otherwise. Soft-fails on any error so the resolver can continue."""
+    home = os.environ.get("SPARK_INTELLIGENCE_HOME")
+    if not home:
+        return None
+    try:
+        import sqlite3
+        from pathlib import Path
+        db = Path(home) / "state.db"
+        if not db.exists():
+            return None
+        con = sqlite3.connect(str(db))
+        try:
+            cur = con.cursor()
+            cur.execute(
+                "SELECT persona_name FROM agent_persona_profiles "
+                "WHERE persona_name IS NOT NULL AND persona_name != '' "
+                "ORDER BY updated_at DESC LIMIT 1"
+            )
+            row = cur.fetchone()
+            return str(row[0]) if row else None
+        finally:
+            con.close()
+    except Exception:
+        return None
 
 
 def _load_spark_character_persona() -> str:
