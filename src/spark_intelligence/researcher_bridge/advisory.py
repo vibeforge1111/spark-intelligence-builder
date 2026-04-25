@@ -1511,16 +1511,30 @@ def try_spark_character_fallback(
     provider = _resolve_spark_character_provider(env_map)
     if provider is None:
         return None
+    tools = _spark_character_provider_tools(provider)
     try:
         persona = load_persona()
         if use_critic:
             result = generate_with_critique(text, provider=provider, persona=persona)
         else:
-            result = generate(text, provider=provider, persona=persona)
+            result = generate(text, provider=provider, persona=persona, tools=tools)
         reply = str(result.final or "").strip()
         return reply or None
     except Exception:
         return None
+
+
+def _spark_character_provider_tools(provider) -> list[dict] | None:
+    """Return the native tool list to attach for this provider so Spark
+    can ask for live data when the user needs it. Z.AI exposes
+    web_search as a built-in tool; the model decides when to call it.
+    For providers that do not support native tools we attach nothing
+    and the persona spec falls back to the "say so plainly" rule.
+    """
+    base = (getattr(provider, "base_url", "") or "").lower()
+    if "z.ai" in base or "zhipuai" in base or "bigmodel" in base:
+        return [{"type": "web_search", "web_search": {"enable": True, "search_result": True}}]
+    return None
 
 
 def _resolve_spark_character_provider(env_map: dict[str, str]):
