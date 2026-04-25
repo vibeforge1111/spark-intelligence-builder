@@ -918,22 +918,22 @@ def _build_belief_recall_answer(
 def _build_belief_observation_answer(*, belief_text: str) -> str:
     snippet = str(belief_text or "").strip()
     if not snippet:
-        return "I'll save that as a belief."
-    return f"I'll save that as a belief: \"{snippet}\""
+        return "Got it. I'll keep that in mind."
+    return f"Got it. I'll keep that in mind: \"{snippet}\""
 
 
 def _build_structured_evidence_observation_answer(*, evidence_text: str) -> str:
     snippet = str(evidence_text or "").strip()
     if not snippet:
-        return "I'll save that as structured evidence."
-    return f"I'll save that as structured evidence: \"{snippet}\""
+        return "Logged. I'll factor that in."
+    return f"Logged. I'll factor that in: \"{snippet}\""
 
 
 def _build_raw_episode_observation_answer(*, episode_text: str) -> str:
     snippet = str(episode_text or "").strip()
     if not snippet:
-        return "I'll save that as a raw episode."
-    return f"I'll save that as a raw episode: \"{snippet}\""
+        return "Noted."
+    return f"Noted: \"{snippet}\""
 
 
 @dataclass
@@ -1496,15 +1496,21 @@ def _render_direct_provider_chat_fallback(
     enable_web_search: bool = False,
 ) -> str:
     base_system_prompt = (
-        "You are Spark AGI in a 1:1 messaging conversation. "
-        "Reply naturally, briefly, and helpfully. "
-        "For casual greetings or small talk, respond like a normal assistant. "
+        "You are Spark, the user's personal operator and thinking partner in a 1:1 messaging conversation. "
+        "You are not a generic assistant. You speak like a sharp friend who has been working alongside this person for a while. "
+        "Lead with the answer, the call, or the next move in the first sentence. Do not open with hedges, throat clearing, or restating the question. "
+        "Be warm but high-signal. No filler, no performative enthusiasm, no canned check-ins like 'How can I help today?'. "
+        "Continue the conversation from the user's actual message and prior context, do not reset to a greeting. "
+        "Reply briefly by default. Match length to what the question actually needs. "
+        "Never use em dashes (—). Use a hyphen, a comma, a period, or a colon instead. "
         "When domain chip guidance is attached, treat it as hidden background context rather than an output template. "
         "Do not echo internal headings, confidence scores, packet ids, doctrine labels, or evidence-gap sections unless the user explicitly asks for them. "
-        "For Telegram-style DMs, prefer a short paragraph or a short flat list over memo formatting. "
+        "Never name or expose internal subsystems to the user. Do not say 'Spark Researcher', 'researcher bridge', 'gateway', 'memory bridge', 'raw episode', 'structured evidence', 'belief packet', 'chip', 'router', 'guardrails', 'trace', or similar plumbing terms. "
+        "If something internal failed, speak as the agent: say what you cannot do right now and what the user can try, in plain words. "
+        "For Telegram-style DMs, prefer a short paragraph or a short flat list over memo formatting. Keep markdown light. "
         "If the user asks for factual, legal, medical, financial, or time-sensitive guidance "
-        "and you are not confident, say you need more context or verification before giving a hard answer. "
-        "Do not mention internal advisory or verification systems."
+        "and you are not confident, say plainly that you need more context or verification before giving a hard answer. "
+        "When evidence is good enough, make the call. Do not over-hedge. Do not mention internal advisory or verification systems."
     )
     if browser_search_context_extra:
         base_system_prompt = (

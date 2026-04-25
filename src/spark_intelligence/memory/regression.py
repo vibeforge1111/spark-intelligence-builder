@@ -1360,7 +1360,7 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         message="I think self-serve onboarding will work.",
         expected_bridge_mode="memory_belief_update",
         expected_routing_decision="memory_belief_observation",
-        expected_response_contains=("save that as a belief", "self-serve onboarding will work"),
+        expected_response_contains=("keep that in mind", "self-serve onboarding will work"),
         benchmark_tags=("belief", "belief_seed"),
     ),
     TelegramMemoryRegressionCase(
@@ -1369,7 +1369,7 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         message="I think enterprise teams need hands-on onboarding.",
         expected_bridge_mode="memory_belief_update",
         expected_routing_decision="memory_belief_observation",
-        expected_response_contains=("save that as a belief", "hands-on onboarding"),
+        expected_response_contains=("keep that in mind", "hands-on onboarding"),
         benchmark_tags=("belief", "belief_refresh"),
     ),
     TelegramMemoryRegressionCase(
@@ -1424,7 +1424,7 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         message="Users keep dropping during onboarding because Stripe verification fails.",
         expected_bridge_mode="memory_structured_evidence_update",
         expected_routing_decision="memory_structured_evidence_observation",
-        expected_response_contains=("structured evidence", "Stripe verification fails"),
+        expected_response_contains=("logged", "Stripe verification fails"),
         benchmark_tags=("structured_evidence", "current_state_consolidation_seed"),
     ),
     TelegramMemoryRegressionCase(
@@ -1433,7 +1433,7 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         message="Users still drop during onboarding because Stripe verification fails and the retry flow is confusing.",
         expected_bridge_mode="memory_structured_evidence_update",
         expected_routing_decision="memory_structured_evidence_observation",
-        expected_response_contains=("structured evidence", "retry flow is confusing"),
+        expected_response_contains=("logged", "retry flow is confusing"),
         benchmark_tags=("structured_evidence", "current_state_consolidation_repeat"),
     ),
     TelegramMemoryRegressionCase(
@@ -1451,7 +1451,7 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         message="Users keep getting stuck during onboarding because we're waiting on Stripe approval.",
         expected_bridge_mode="memory_structured_evidence_update",
         expected_routing_decision="memory_structured_evidence_observation",
-        expected_response_contains=("structured evidence", "waiting on Stripe approval"),
+        expected_response_contains=("logged", "waiting on Stripe approval"),
         benchmark_tags=("structured_evidence", "current_dependency_consolidation_seed"),
     ),
     TelegramMemoryRegressionCase(
@@ -1460,7 +1460,7 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         message="Users still get stuck during onboarding because we're waiting on Stripe approval and review is slow.",
         expected_bridge_mode="memory_structured_evidence_update",
         expected_routing_decision="memory_structured_evidence_observation",
-        expected_response_contains=("structured evidence", "review is slow"),
+        expected_response_contains=("logged", "review is slow"),
         benchmark_tags=("structured_evidence", "current_dependency_consolidation_repeat"),
     ),
     TelegramMemoryRegressionCase(
@@ -1478,7 +1478,7 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         message="Users keep waiting during onboarding because we're limited by founder bandwidth.",
         expected_bridge_mode="memory_structured_evidence_update",
         expected_routing_decision="memory_structured_evidence_observation",
-        expected_response_contains=("structured evidence", "founder bandwidth"),
+        expected_response_contains=("logged", "founder bandwidth"),
         benchmark_tags=("structured_evidence", "current_constraint_consolidation_seed"),
     ),
     TelegramMemoryRegressionCase(
@@ -1487,7 +1487,7 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         message="Users still wait during onboarding because we're limited by founder bandwidth.",
         expected_bridge_mode="memory_structured_evidence_update",
         expected_routing_decision="memory_structured_evidence_observation",
-        expected_response_contains=("structured evidence", "founder bandwidth"),
+        expected_response_contains=("logged", "founder bandwidth"),
         benchmark_tags=("structured_evidence", "current_constraint_consolidation_repeat"),
     ),
     TelegramMemoryRegressionCase(
@@ -1505,7 +1505,7 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         message="There is still a risk of enterprise churn during onboarding because activation is weak.",
         expected_bridge_mode="memory_structured_evidence_update",
         expected_routing_decision="memory_structured_evidence_observation",
-        expected_response_contains=("structured evidence", "activation is weak"),
+        expected_response_contains=("logged", "activation is weak"),
         benchmark_tags=("structured_evidence", "current_risk_consolidation_seed"),
     ),
     TelegramMemoryRegressionCase(
@@ -1514,7 +1514,7 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         message="There is still a risk of enterprise churn during onboarding because activation is weak and teams are delaying rollout.",
         expected_bridge_mode="memory_structured_evidence_update",
         expected_routing_decision="memory_structured_evidence_observation",
-        expected_response_contains=("structured evidence", "teams are delaying rollout"),
+        expected_response_contains=("logged", "teams are delaying rollout"),
         benchmark_tags=("structured_evidence", "current_risk_consolidation_repeat"),
     ),
     TelegramMemoryRegressionCase(
@@ -1586,7 +1586,7 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         message="Customer interviews confirm our plan is to simplify onboarding approvals.",
         expected_bridge_mode="memory_structured_evidence_update",
         expected_routing_decision="memory_structured_evidence_observation",
-        expected_response_contains=("structured evidence", "simplify onboarding approvals"),
+        expected_response_contains=("logged", "simplify onboarding approvals"),
         benchmark_tags=("structured_evidence", "current_plan_consolidation_seed"),
     ),
     TelegramMemoryRegressionCase(
@@ -1604,7 +1604,7 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         message="Interview notes show our priority is onboarding reliability.",
         expected_bridge_mode="memory_structured_evidence_update",
         expected_routing_decision="memory_structured_evidence_observation",
-        expected_response_contains=("structured evidence", "onboarding reliability"),
+        expected_response_contains=("logged", "onboarding reliability"),
         benchmark_tags=("structured_evidence", "current_focus_consolidation_seed"),
     ),
     TelegramMemoryRegressionCase(
@@ -1622,7 +1622,7 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         message="After testing both flows, our decision is to keep human onboarding support.",
         expected_bridge_mode="memory_structured_evidence_update",
         expected_routing_decision="memory_structured_evidence_observation",
-        expected_response_contains=("structured evidence", "keep human onboarding support"),
+        expected_response_contains=("logged", "keep human onboarding support"),
         benchmark_tags=("structured_evidence", "current_decision_consolidation_seed"),
     ),
     TelegramMemoryRegressionCase(
@@ -1640,7 +1640,7 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         message="The weekly review says our commitment is to ship onboarding fixes this week.",
         expected_bridge_mode="memory_structured_evidence_update",
         expected_routing_decision="memory_structured_evidence_observation",
-        expected_response_contains=("structured evidence", "ship onboarding fixes this week"),
+        expected_response_contains=("logged", "ship onboarding fixes this week"),
         benchmark_tags=("structured_evidence", "current_commitment_consolidation_seed"),
     ),
     TelegramMemoryRegressionCase(
@@ -1658,7 +1658,7 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         message="Roadmap notes confirm our next milestone is launch the self-serve onboarding beta.",
         expected_bridge_mode="memory_structured_evidence_update",
         expected_routing_decision="memory_structured_evidence_observation",
-        expected_response_contains=("structured evidence", "launch the self-serve onboarding beta"),
+        expected_response_contains=("logged", "launch the self-serve onboarding beta"),
         benchmark_tags=("structured_evidence", "current_milestone_consolidation_seed"),
     ),
     TelegramMemoryRegressionCase(
@@ -1676,7 +1676,7 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         message="Interview notes suggest our assumption is enterprise teams want hands-on onboarding.",
         expected_bridge_mode="memory_structured_evidence_update",
         expected_routing_decision="memory_structured_evidence_observation",
-        expected_response_contains=("structured evidence", "enterprise teams want hands-on onboarding"),
+        expected_response_contains=("logged", "enterprise teams want hands-on onboarding"),
         benchmark_tags=("structured_evidence", "current_assumption_consolidation_seed"),
     ),
     TelegramMemoryRegressionCase(
