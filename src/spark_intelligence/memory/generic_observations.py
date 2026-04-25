@@ -27,6 +27,41 @@ _ASK_LIKE_PREFIX_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Emotional self-reports. The user is telling Spark how they feel, not filing
+# a fact for later recall. These messages expect engagement with the emotional
+# state, not a "Noted: ..." filing acknowledgement. The agent's chip-defined
+# empathy_style decides how the LLM responds; the classifier just routes
+# them out of the raw_episode bucket so the LLM actually sees them.
+_FEELING_STATE_INTENSIFIERS = r"(?:so|really|genuinely|kind of|a bit|totally|very|pretty|incredibly|absolutely|honestly|just)"
+_FEELING_STATE_WORDS = (
+    r"anxious|tired|exhausted|frustrated|fried|wrecked|done|burnt|burned|"
+    r"stressed|overwhelmed|depressed|lonely|isolated|worried|nervous|scared|"
+    r"angry|upset|sad|hopeless|helpless|lost|stuck|confused|drained|fed up|"
+    r"pumped|energized|excited|thrilled|elated|amped|hyped|nervous|terrified|"
+    r"freaking out|losing it|cracking|breaking down"
+)
+_FEELING_STATE_PATTERN = re.compile(
+    r"\b(?:"
+    # I'm/I am/I've been + emotional state
+    r"i(?:'m| am)\s+(?:" + _FEELING_STATE_INTENSIFIERS + r"\s+)*(?:" + _FEELING_STATE_WORDS + r")"
+    r"|i(?:'ve| have)\s+been\s+(?:" + _FEELING_STATE_INTENSIFIERS + r"\s+)*(?:" + _FEELING_STATE_WORDS + r")"
+    r"|i\s+(?:feel|felt|am feeling|was feeling)\s+(?:" + _FEELING_STATE_INTENSIFIERS + r"\s+)*(?:" + _FEELING_STATE_WORDS + r")"
+    r"|i(?:'m| am)\s+(?:starting to|getting|going to|about to)\s+(?:lose it|cry|break|crack|snap|panic)"
+    # body/sleep self-reports
+    r"|i(?:'ve| have)\s+been\s+up\s+(?:since|all|for)"
+    r"|i(?:'m| am)\s+up\s+at\s+\d"
+    r"|i\s+(?:haven't|have not|cant|can't|cannot)\s+(?:slept|sleep|focus|think|breathe|stop)"
+    r"|i\s+haven't\s+(?:taken|had)\s+a\s+(?:real\s+)?(?:day|break|night|moment)"
+    # burnout / quitting signals
+    r"|(?:burnt|burned)\s+out"
+    r"|dream(?:ing|t)?\s+about\s+quitting"
+    r"|i\s+want\s+to\s+quit"
+    # general emotional flags appearing anywhere
+    r"|my\s+(?:bandwidth|energy|capacity)\s+is\s+(?:low|gone|tapped|fried)"
+    r")\b",
+    re.IGNORECASE,
+)
+
 _PLAN_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^(?:i|we)\s+plan\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
     re.compile(r"^the\s+plan\s+is\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
@@ -722,6 +757,8 @@ def _is_memoryworthy_text(text: str) -> bool:
     if _SMALL_TALK_PATTERN.fullmatch(text):
         return False
     if _ASK_LIKE_PREFIX_PATTERN.match(text.lstrip()):
+        return False
+    if _FEELING_STATE_PATTERN.search(text):
         return False
     return True
 
