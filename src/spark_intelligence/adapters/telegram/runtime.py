@@ -1378,6 +1378,7 @@ def simulate_telegram_update(
         active_chip_task_type = None
         active_chip_evaluate_used = False
         evidence_summary = None
+    sanitized_outbound_text, _outbound_actions = _sanitize_simulate_outbound(outbound_text)
     detail = {
         "request_id": request_id,
         "simulation": simulation,
@@ -1390,7 +1391,7 @@ def simulate_telegram_update(
         "message_text": effective_text,
         "message_kind": normalized.message_kind,
         "transcript_text": transcript_text,
-        "response_text": outbound_text,
+        "response_text": sanitized_outbound_text,
         "trace_ref": trace_ref,
         "bridge_mode": bridge_mode,
         "routing_decision": routing_decision,
@@ -1398,6 +1399,7 @@ def simulate_telegram_update(
         "active_chip_task_type": active_chip_task_type,
         "active_chip_evaluate_used": active_chip_evaluate_used,
         "attachment_context": attachment_context,
+        "guardrail_actions": _outbound_actions,
     }
     if resolution.allowed:
         append_gateway_trace(
@@ -1417,11 +1419,13 @@ def simulate_telegram_update(
                 "active_chip_key": active_chip_key,
                 "active_chip_task_type": active_chip_task_type,
                 "active_chip_evaluate_used": active_chip_evaluate_used,
-                "response_preview": _preview_text(outbound_text),
-                "response_length": len(outbound_text),
+                "response_preview": _preview_text(sanitized_outbound_text),
+                "response_length": len(sanitized_outbound_text),
+                "user_message_preview": _preview_text(effective_text) if effective_text else None,
+                "user_message_length": len(effective_text) if effective_text else None,
                 "delivery_ok": True,
                 "delivery_error": None,
-                "guardrail_actions": [],
+                "guardrail_actions": _outbound_actions,
                 "simulation": simulation,
                 "origin_surface": origin_surface,
                 "request_id": request_id,
@@ -2556,6 +2560,32 @@ def _preview_text(text: str, *, limit: int = 160) -> str:
     if len(compact) <= limit:
         return compact
     return f"{compact[: limit - 3]}..."
+
+
+def _sanitize_simulate_outbound(text: str) -> tuple[str, list[str]]:
+    """Apply deterministic voice post-fixes on the simulate-update path.
+
+    The simulate path is what the Node bot calls; it does not run through
+    prepare_outbound_text, so we apply the same em-dash family substitution
+    here so the rule applies regardless of which gateway entry point is used.
+    Source of truth lives in spark_character.output_sanitizer.
+    """
+    if not text:
+        return text, []
+    try:
+        from spark_character import sanitize_voice_output  # type: ignore
+        cleaned = sanitize_voice_output(text)
+    except Exception:
+        em_dash_family = ("\u2014", "\u2013", "\u2012", "\u2015", "\u2212")
+        cleaned = text
+        for ch in em_dash_family:
+            cleaned = cleaned.replace(ch, " - ")
+        while "  " in cleaned:
+            cleaned = cleaned.replace("  ", " ")
+    actions: list[str] = []
+    if cleaned != text:
+        actions.append("replace_em_dashes")
+    return cleaned, actions
 
 
 def _load_telegram_persona_surface_state(
