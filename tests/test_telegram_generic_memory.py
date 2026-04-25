@@ -1053,6 +1053,51 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(facts.get("bridge_mode"), "memory_open_recall")
         self.assertIn("structured_evidence", facts.get("retrieved_memory_roles") or [])
 
+    def test_build_researcher_reply_answers_spark_systems_self_knowledge_before_memory_recall(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for Spark systems self-knowledge"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for Spark systems self-knowledge"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.retrieve_memory_evidence_in_memory",
+            side_effect=AssertionError("memory recall should not run for Spark systems self-knowledge"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.inspect_human_memory_in_memory",
+            side_effect=AssertionError("memory inspection should not run for Spark systems self-knowledge"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-spark-systems-self-knowledge",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-spark-systems-self-knowledge",
+                channel_kind="telegram",
+                user_message="What do you know about Spark systems?",
+            )
+
+        self.assertEqual(result.mode, "spark_systems_self_knowledge")
+        self.assertEqual(result.routing_decision, "spark_systems_self_knowledge")
+        self.assertIn("spark-cli", result.reply_text)
+        self.assertIn("spark-intelligence-builder", result.reply_text)
+        self.assertIn("domain-chip-memory", result.reply_text)
+        self.assertIn("spark-researcher", result.reply_text)
+        self.assertIn("spawner-ui", result.reply_text)
+        self.assertIn("spark-telegram-bot", result.reply_text)
+        self.assertIn("Mission Control", result.reply_text)
+        self.assertNotIn("I have saved memory about", result.reply_text)
+        self.assertNotIn("What would you like help with?", result.reply_text)
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        self.assertTrue(tool_events)
+        facts = tool_events[0]["facts_json"] or {}
+        self.assertEqual(facts.get("bridge_mode"), "spark_systems_self_knowledge")
+        self.assertIn("domain-chip-memory", facts.get("starter_modules") or [])
+
     def test_build_researcher_reply_promotes_repeated_evidence_into_belief_recall(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
@@ -4004,7 +4049,7 @@ class TelegramGenericMemoryTests(SparkTestCase):
                 "trace_path": "trace:hypothetical-generic-memory-under-supported",
             }
 
-        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None, **kwargs):
             return {"raw_response": "Noted."}
 
         def fail_execute_with_research(*args, **kwargs):

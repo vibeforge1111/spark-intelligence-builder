@@ -390,6 +390,47 @@ _BELIEF_RECALL_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 
+_SPARK_SYSTEMS_SELF_KNOWLEDGE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"^(?:what|which)\s+do you\s+(?:know|remember|understand)\s+about\s+spark(?:\s+(?:systems?|ecosystem|modules?|stack))?\s*[\?\.\!]*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?:what|which)\s+(?:can|does)\s+spark\s+(?:do|help with|run|install)\s*[\?\.\!]*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?:what|which)\s+can\s+you\s+do\s+with\s+spark\s*[\?\.\!]*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?:what|tell me what)\s+(?:is|are)\s+spark\s+(?:systems?|ecosystem|modules?|stack)\s*[\?\.\!]*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?:how\s+can\s+i\s+use|how\s+do\s+i\s+use)\s+spark\s+(?:systems?|ecosystem|modules?|stack)?\s*[\?\.\!]*$",
+        re.IGNORECASE,
+    ),
+)
+
+
+def _detect_spark_systems_self_knowledge_query(user_message: str) -> bool:
+    normalized = " ".join(str(user_message or "").strip().split())
+    if not normalized:
+        return False
+    return any(pattern.match(normalized) for pattern in _SPARK_SYSTEMS_SELF_KNOWLEDGE_PATTERNS)
+
+
+def _build_spark_systems_self_knowledge_answer() -> str:
+    return (
+        "Spark is a local agent ecosystem: spark-cli installs and starts the stack; "
+        "spark-intelligence-builder handles memory, advisories, and agent wiring; "
+        "domain-chip-memory is the default memory substrate; spark-researcher adds research and advisory runtime; "
+        "spawner-ui provides Kanban and Mission Control for running work; and spark-telegram-bot is the long-polling Telegram gateway. "
+        "I can help check status, configure an LLM provider, connect Builder memory, set up Telegram, start Mission Control, or launch a mission."
+    )
+
+
 def _detect_open_memory_recall_query(user_message: str) -> OpenMemoryRecallQuery | None:
     normalized = " ".join(str(user_message or "").strip().split())
     if not normalized:
@@ -4148,6 +4189,72 @@ def build_researcher_reply(
         except Exception:
             pass
 
+    if (
+        not explicit_memory_message
+        and not personality_context_extra
+        and _detect_spark_systems_self_knowledge_query(user_message)
+    ):
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="spark_systems_self_knowledge",
+            routing_decision="spark_systems_self_knowledge",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = _build_spark_systems_self_knowledge_answer()
+        evidence_summary = "status=spark_systems_self_knowledge source=starter_ecosystem_contract"
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered Spark systems self-knowledge directly.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="spark_systems_self_knowledge",
+            facts=_bridge_event_facts(
+                routing_decision="spark_systems_self_knowledge",
+                bridge_mode="spark_systems_self_knowledge",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "query_text": str(user_message or "").strip(),
+                    "starter_modules": [
+                        "spark-cli",
+                        "spark-intelligence-builder",
+                        "domain-chip-memory",
+                        "spark-researcher",
+                        "spawner-ui",
+                        "spark-telegram-bot",
+                    ],
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="spark_systems_self_knowledge",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="spark_systems_self_knowledge",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+
     if not personality_context_extra and config_manager.get_path("spark.memory.enabled", default=False):
         try:
             detected_profile_fact_query = detect_profile_fact_query(user_message)
@@ -4955,7 +5062,23 @@ def build_researcher_reply(
                 },
             ),
         )
-        # Memory captured above; fall through to conversational reply (was early return mode=memory_structured_evidence_update)
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_structured_evidence_update",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_structured_evidence_observation",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
 
     if (
         assessed_generic_memory_candidate is not None
@@ -5005,7 +5128,23 @@ def build_researcher_reply(
                 },
             ),
         )
-        # Memory captured above; fall through to conversational reply (was early return mode=memory_raw_episode_update)
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_raw_episode_update",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_raw_episode_observation",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
 
     if (
         assessed_generic_memory_candidate is not None
@@ -5057,7 +5196,23 @@ def build_researcher_reply(
                 },
             ),
         )
-        # Memory captured above; fall through to conversational reply (was early return mode=memory_belief_update)
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_belief_update",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_belief_observation",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
 
     if (
         detected_profile_fact_query is not None
