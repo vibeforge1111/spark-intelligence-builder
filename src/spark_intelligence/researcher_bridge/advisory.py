@@ -1513,7 +1513,12 @@ def try_spark_character_fallback(
         return None
     tools = _spark_character_provider_tools(provider)
     try:
-        persona = load_persona()
+        try:
+            from spark_character.persona import detect_provider_kind  # type: ignore
+            kind = detect_provider_kind(provider)
+        except Exception:
+            kind = None
+        persona = load_persona(provider_kind=kind) if kind else load_persona()
         if use_critic:
             result = generate_with_critique(text, provider=provider, persona=persona)
         else:
