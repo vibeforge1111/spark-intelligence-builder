@@ -1518,7 +1518,7 @@ def try_spark_character_fallback(
             kind = detect_provider_kind(provider)
         except Exception:
             kind = None
-        persona = load_persona(provider_kind=kind) if kind else load_persona()
+        persona = _resolve_chip_or_persona(kind=kind)
         if use_critic:
             result = generate_with_critique(text, provider=provider, persona=persona)
         else:
@@ -1527,6 +1527,37 @@ def try_spark_character_fallback(
         return reply or None
     except Exception:
         return None
+
+
+def _resolve_chip_or_persona(*, kind: str | None):
+    """Try chip-rendered persona first (with provider overlay appended),
+    fall back to flat-MD persona if the chip lab is not present.
+
+    Returns a spark_character.PersonaSpec or None on any failure so the
+    caller can decide what to do."""
+    try:
+        from spark_character import (  # type: ignore
+            PersonaSpec,
+            load_chip_by_id,
+            render_chip_to_system_prompt,
+        )
+        from spark_character.persona import load_overlay  # type: ignore
+        chip_id = _resolve_active_personality_chip_id()
+        chip = load_chip_by_id(chip_id)
+        rendered = render_chip_to_system_prompt(chip)
+        if kind:
+            overlay = load_overlay(kind)
+            if overlay:
+                rendered = f"{rendered}\n\n---\n\n{overlay}"
+        return PersonaSpec(
+            version=f"chip:{chip_id}{':' + kind if kind else ''}",
+            text=rendered,
+        )
+    except Exception:
+        try:
+            return load_persona(provider_kind=kind) if kind else load_persona()
+        except Exception:
+            return None
 
 
 def _spark_character_provider_tools(provider) -> list[dict] | None:
@@ -1565,15 +1596,48 @@ def _resolve_spark_character_provider(env_map: dict[str, str]):
     return None
 
 
-def _load_spark_character_persona() -> str:
-    """Load Spark's canonical persona from the spark-character package.
+def _resolve_active_personality_chip_id() -> str:
+    """Resolve the active personality chip id from spark-personality-chip-labs
+    if available, falling back to founder-operator. Cached for the process
+    lifetime - restart the gateway to pick up a switch."""
+    try:
+        from personality_engine.active import get_active_personality_id  # type: ignore
+        active = get_active_personality_id()
+        if active:
+            return str(active)
+    except Exception:
+        pass
+    return "founder-operator"
 
-    Falls back to a minimal inline voice rule set if the package is not
-    installed, so SIB never breaks on a missing optional dependency.
+
+def _load_spark_character_persona() -> str:
+    """Load Spark's canonical persona.
+
+    Resolution order, all soft-failing:
+      1. spark-personality-chip-labs chip (rendered via spark-character's
+         render_chip_to_system_prompt). This is the unified path: chip
+         lab is canonical schema, spark-character is the rendering and
+         evolution engine.
+      2. spark-character flat persona artifact (load_persona) for
+         legacy / chip-lab-not-installed cases.
+      3. A minimal inline voice rule set as the absolute fallback so
+         SIB never breaks on a missing dependency chain.
     """
     global _SPARK_CHARACTER_PERSONA_CACHE
     if _SPARK_CHARACTER_PERSONA_CACHE is not None:
         return _SPARK_CHARACTER_PERSONA_CACHE
+    # Try chip-rendered path first
+    try:
+        from spark_character import load_chip_by_id, render_chip_to_system_prompt  # type: ignore
+        chip_id = _resolve_active_personality_chip_id()
+        chip = load_chip_by_id(chip_id)
+        rendered = render_chip_to_system_prompt(chip)
+        if rendered:
+            _SPARK_CHARACTER_PERSONA_CACHE = rendered
+            return _SPARK_CHARACTER_PERSONA_CACHE
+    except Exception:
+        pass
+    # Fallback: flat MD persona artifact
     try:
         from spark_character import load_persona  # type: ignore
         _SPARK_CHARACTER_PERSONA_CACHE = load_persona().system_prompt
