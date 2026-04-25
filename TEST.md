@@ -25,7 +25,7 @@ These rules are mandatory during all memory testing:
 1. Do not start any competing Telegram receiver.
 2. Do not start the old Builder Telegram poller.
 3. Do not change Telegram webhook or polling ownership from this repo.
-4. Treat `spark-telegram-bot` as the single canonical owner of `@SparkAGI_bot`.
+4. Treat `spark-telegram-bot` as the single canonical owner of the configured Telegram bot token.
 5. Run memory tests behind the existing receiver posture, never around it.
 
 ## Current Memory Surfaces

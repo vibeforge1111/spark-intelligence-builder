@@ -33,14 +33,12 @@ Current live status on that home:
 
 Current Telegram bot identity:
 
-- `@SparkAGI_bot`
+- configured locally in the operator environment
 
 Current live provider path:
 
-- provider: `custom`
-- base URL: `https://api.minimax.io/v1`
-- model: `MiniMax-M2.7`
-- auth ref: `CUSTOM_API_KEY`
+- provider: configured locally
+- auth ref: local secret store
 
 Current live specialization:
 

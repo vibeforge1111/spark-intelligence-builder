@@ -3,7 +3,7 @@
 ## What We Did Today
 
 - Revalidated the real Telegram bot path in the live Builder home.
-- Fixed the live Builder home so Telegram auth passes again for `@SparkAGI_bot`.
+- Fixed the live Builder home so Telegram auth passes again for the configured bot.
 - Kept `startup-yc` pinned as the active chip for the Telegram startup operator path.
 - Tightened the chip-guided direct-provider reply contract for `startup-yc` so Telegram answers are more decisive and less memo-like.
 - Stripped hidden reasoning blocks and inline markdown emphasis from Telegram-visible cleanup.

@@ -2074,7 +2074,7 @@ def build_parser() -> argparse.ArgumentParser:
     identity_link_parser.add_argument(
         "--primary",
         required=True,
-        help="Primary identity in 'channel:user' form (e.g. telegram:8319079055)",
+        help="Primary identity in 'channel:user' form (e.g. telegram:123456789)",
     )
     identity_link_parser.add_argument(
         "--as",
@@ -6866,7 +6866,7 @@ def _parse_identity_pair(value: str) -> tuple[str, str]:
     """Parse 'channel:user' into a (channel, user) tuple. Validates non-empty."""
     if ":" not in value:
         raise ValueError(
-            f"Identity '{value}' must be in 'channel:user' form (e.g. telegram:8319079055)"
+            f"Identity '{value}' must be in 'channel:user' form (e.g. telegram:123456789)"
         )
     channel, user = value.split(":", 1)
     channel = channel.strip()

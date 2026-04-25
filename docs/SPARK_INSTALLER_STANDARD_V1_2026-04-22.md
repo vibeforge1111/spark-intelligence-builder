@@ -438,7 +438,7 @@ Example:
 ```text
 Spark v0.1.0
 
-✓ spark-telegram-bot       ingress owner for @SparkAGI_bot, webhook healthy
+✓ spark-telegram-bot       ingress owner for configured Telegram bot, long polling healthy
 ✓ spark-intelligence       runtime ready, provider connected, memory healthy
 ✓ spawner-ui               http://localhost:4174, mission control ready
 ```

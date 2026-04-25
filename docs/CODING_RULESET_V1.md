@@ -117,7 +117,7 @@ Do not rebuild their internals here.
 
 ### 4.7 Live Telegram Safety
 
-When working on `@SparkAGI_bot`, protect live bot ownership before any test or runtime change.
+When working on the configured Telegram bot, protect live bot ownership before any test or runtime change.
 
 Current operational rule:
 
@@ -141,7 +141,7 @@ Hard requirements before touching Telegram runtime behavior:
 
 Never:
 
-- start the old `spark_intelligence` Telegram poller against `@SparkAGI_bot`
+- start the old `spark_intelligence` Telegram poller against the configured Telegram bot token
 - start a second Telegraf or Telegram receiver with the same token
 - re-enable webhook mode, tunnels, or alternate ingress paths unless explicitly coordinated
 - point Spawner directly at Telegram

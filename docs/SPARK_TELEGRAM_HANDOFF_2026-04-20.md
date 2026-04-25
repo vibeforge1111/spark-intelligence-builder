@@ -27,10 +27,10 @@ Repos affected:
 **Gateway**
 - Home: `<workspace>\\spark-intelligence-builder\.tmp-home-live-telegram-real`
 - Autostart shim: `%AppData%\...\Startup\Spark Intelligence Gateway __tmp-home-live-telegram-real_.cmd` (calls Telegram `close` API before launch to pre-empt poll races)
-- Bot: `@SparkAGI_bot` (id `8667732512`), allowlist mode, 1 allowed user (`8319079055`)
+- Bot: launch Telegram bot, allowlist mode, operator-owned admin ids configured locally
 - Doctor: `ok` (cleared this session by running `jobs tick` — background-freshness watchtower needs a recent `jobs_tick` row to stay green)
-- Provider: MiniMax `MiniMax-M2.7` via `https://api.minimax.io/v1`
-- 409 conflicts: **none since 16:00 UTC today**. Root cause earlier in the session was accidental duplicate gateway processes, not an external consumer. No token rotation needed. `Spark-Comeback/scripts/notify.ps1` shares the token but is send-only (doesn't poll), so no conflict risk.
+- Provider: configured LLM gateway for the local operator environment
+- 409 conflicts: Root cause earlier in the session was accidental duplicate gateway processes, not an external consumer. Keep exactly one long-polling gateway process per Telegram bot token.
 
 **Chip state**
 - Active: `spark-browser`, `spark-personality-chip-labs`, `spark-swarm`, `domain-chip-voice-comms`, `domain-chip-xcontent`, `startup-yc`
@@ -45,7 +45,7 @@ Repos affected:
 
 ## Architecture recap — what happens on a Telegram message
 
-1. `@SparkAGI_bot` receives update via long-poll
+1. The configured Telegram bot receives update via long-poll
 2. Normalize → allowlist check → intent detection (voice transcribe, instruction capture, forget, iteration)
 3. `_run_active_chip_evaluate` → `select_chips_for_message` (relevance-scored over active chips)
 4. Selected chips' `evaluate` hooks run in parallel; `analysis` fields collected
@@ -80,15 +80,15 @@ Repos affected:
 python -m spark_intelligence.cli chips why "<message>" [--history "..."] [--recent-chip xcontent]
 ```
 
-**End-to-end Telegram path (hits MiniMax):**
+**End-to-end Telegram path (uses the configured LLM gateway):**
 ```
-python -m spark_intelligence.cli gateway ask-telegram "<message>" --user-id 8319079055 --json
+python -m spark_intelligence.cli gateway ask-telegram "<message>" --user-id <telegram-user-id> --json
 ```
 
 **Inspect state:**
 ```
-python -m spark_intelligence.cli drafts list --user-id 8319079055 --channel telegram
-python -m spark_intelligence.cli instructions list --user-id 8319079055 --channel telegram
+python -m spark_intelligence.cli drafts list --user-id <telegram-user-id> --channel telegram
+python -m spark_intelligence.cli instructions list --user-id <telegram-user-id> --channel telegram
 python -m spark_intelligence.cli attachments status
 python -m spark_intelligence.cli doctor
 ```
@@ -155,7 +155,7 @@ From the "what else to improve for Telegram" discussion:
 1. Confirm gateway is up: `Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -match 'spark_intelligence' } | Select-Object ProcessId, CreationDate`
 2. If no gateway: launch shim once
 3. `python -m spark_intelligence.cli doctor` — should be `ok`. If degraded on `watchtower-freshness`, run `python -m spark_intelligence.cli jobs tick`
-4. Check message round-trip: `python -m spark_intelligence.cli gateway ask-telegram "healthcheck" --user-id 8319079055 --json`
+4. Check message round-trip: `python -m spark_intelligence.cli gateway ask-telegram "healthcheck" --user-id <telegram-user-id> --json`
 5. Pick next item from priority list above
 
 EOF

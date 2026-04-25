@@ -88,7 +88,7 @@ evaluate per round) -> status JSON -> Telegram reply.
 - [x] B remediation: loop runner now bootstraps a probe candidate when suggest returns empty on cold state (commit ffcfefa)
 - [x] /loop startup-yc post-fix: candidates 0 -> 1, null_metric -> 1.000
 - [x] Compound loop closed: /loop domain-chip-spark-ops-critic post-fix returned verdict=healthy, defect_rate=0.020 (was 0.687)
-- [x] A scheduling: nightly 03:00 local cron (sched-d3460982) DMs the defect brief to chat 8319079055
+- [x] A scheduling: nightly 03:00 local cron DMs the defect brief to the configured operator chat
 
 ---
 

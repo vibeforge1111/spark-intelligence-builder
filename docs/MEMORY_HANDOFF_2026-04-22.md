@@ -36,7 +36,7 @@ These rules still apply tomorrow:
 1. Do not start any competing Telegram receiver.
 2. Do not start the old Builder Telegram poller.
 3. Do not take webhook or polling ownership away from `spark-telegram-bot`.
-4. Treat `spark-telegram-bot` as the single canonical owner of `@SparkAGI_bot`.
+4. Treat `spark-telegram-bot` as the single canonical owner of the configured Telegram bot token.
 5. Run memory work behind the existing Telegram gateway posture, never around it.
 6. Do not touch unrelated dirty files in either repo unless the task explicitly changes scope.
 
@@ -424,4 +424,3 @@ It is making active current-state memory behave like a mature managed system:
 - downgraded deliberately
 - archived deliberately
 - explainable at every step
-

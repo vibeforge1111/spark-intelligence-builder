@@ -50,8 +50,9 @@ Launch config boundaries that matter:
 
 ## 2. Telegram bot - slash commands
 
-Bot handle: `@SparkAGI_bot`. Commands marked `admin-only` require the user
-id allowlist in the bot env. All return structured text replies.
+Use the Telegram bot configured during `spark setup`. Commands marked
+`admin-only` require the user id allowlist in the bot env. All return
+structured text replies.
 
 ### 2.1 System
 
@@ -203,7 +204,7 @@ Per-round status lands in `~/.spark-intelligence/loops/<chip>.status.json`.
 ```bash
 python -m spark_intelligence.cli gateway ask-telegram \
   "what can you do?" \
-  --user-id 8319079055 \
+  --user-id <telegram-user-id> \
   --json
 ```
 
@@ -256,12 +257,12 @@ curl http://127.0.0.1:4174/api/scheduled
 # Create (mission)
 curl -X POST http://127.0.0.1:4174/api/scheduled \
   -H "Content-Type: application/json" \
-  -d '{"cron":"0 9 * * *","action":"mission","payload":{"goal":"daily seedify news scan"},"chatId":"8319079055"}'
+  -d '{"cron":"0 9 * * *","action":"mission","payload":{"goal":"daily seedify news scan"},"chatId":"<telegram-chat-id>"}'
 
 # Create (loop)
 curl -X POST http://127.0.0.1:4174/api/scheduled \
   -H "Content-Type: application/json" \
-  -d '{"cron":"0 */6 * * *","action":"loop","payload":{"chipKey":"startup-yc","rounds":2},"chatId":"8319079055"}'
+  -d '{"cron":"0 */6 * * *","action":"loop","payload":{"chipKey":"startup-yc","rounds":2},"chatId":"<telegram-chat-id>"}'
 
 # Delete
 curl -X DELETE "http://127.0.0.1:4174/api/scheduled?id=sched-abc123"
