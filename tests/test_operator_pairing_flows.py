@@ -4052,9 +4052,9 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(result.ok)
         self.assertEqual(
             result.detail["response_text"],
-            "Web search is blocked right now.\n"
-            "Reason: the browser extension does not have site access for https://duckduckgo.com.\n"
-            "Next: open the extension popup, grant site access for https://duckduckgo.com, then retry.",
+            "I can't open that page yet.\n"
+            "I don't have access to https://duckduckgo.com.\n"
+            "Grant site access for https://duckduckgo.com in the extension popup and I'll try again.",
         )
 
     def test_browser_session_block_reply_is_composed_for_telegram(self) -> None:
@@ -4100,9 +4100,9 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(result.ok)
         self.assertEqual(
             result.detail["response_text"],
-            "Web search is unavailable right now.\n"
-            "Reason: the live browser session is disconnected.\n"
-            "Next: reconnect the Spark Browser session, then retry.",
+            "I can't search the web right now.\n"
+            "My live browser session dropped.\n"
+            "Reconnect it and ask me again.",
         )
 
     def test_browser_evidence_source_capture_warning_gets_next_step_for_telegram(self) -> None:
@@ -4193,9 +4193,9 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(result.ok)
         self.assertEqual(
             result.detail["response_text"],
-            "Researcher is unavailable right now.\n"
-            "Reason: the Spark Researcher bridge is disabled for this workspace.\n"
-            "Next: enable Spark Researcher for this workspace, then retry.",
+            "I can't pull live research for you right now.\n"
+            "Live research is turned off in this workspace.\n"
+            "Try again once it's been turned back on.",
         )
 
     def test_researcher_provider_auth_failure_is_composed_for_telegram(self) -> None:
@@ -4238,10 +4238,10 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(result.ok)
         self.assertEqual(
             result.detail["response_text"],
-            "Researcher is unavailable right now.\n"
-            "Reason: provider authentication is not configured correctly.\n"
+            "I can't pull live research for you right now.\n"
+            "My model credentials aren't set up correctly on this side.\n"
             "Detail: Missing OPENAI_API_KEY for auth profile custom:default\n"
-            "Next: fix the researcher provider auth configuration, then retry.",
+            "Get the model auth fixed, then ask me again.",
         )
 
     def test_researcher_bridge_error_is_composed_for_telegram(self) -> None:
@@ -4284,10 +4284,10 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(result.ok)
         self.assertEqual(
             result.detail["response_text"],
-            "Researcher is unavailable right now.\n"
-            "Reason: the external researcher bridge failed during execution.\n"
+            "I can't pull live research for you right now.\n"
+            "Something on my end failed mid-call.\n"
             "Detail: subprocess timed out after 30s\n"
-            "Next: inspect the researcher runtime, then retry.",
+            "Give it another shot in a minute, or check the runtime if it keeps happening.",
         )
 
     def test_researcher_secret_boundary_block_is_composed_for_telegram(self) -> None:
@@ -4333,9 +4333,9 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(result.ok)
         self.assertEqual(
             result.detail["response_text"],
-            "Research request was blocked.\n"
-            "Reason: sensitive material was detected in model-visible context.\n"
-            "Next: remove the sensitive material from the request, then retry.",
+            "I held off on that one.\n"
+            "There was sensitive material in the request that I'd rather not send out.\n"
+            "Pull the secret bits and ask me again.",
         )
 
     def test_researcher_stub_reply_is_composed_for_telegram(self) -> None:
@@ -4378,9 +4378,9 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(result.ok)
         self.assertEqual(
             result.detail["response_text"],
-            "Researcher is unavailable right now.\n"
-            "Reason: no external Spark Researcher runtime is configured for this workspace.\n"
-            "Next: configure or attach Spark Researcher, then retry.",
+            "I can't pull live research for you right now.\n"
+            "Nothing's wired up to handle that yet in this workspace.\n"
+            "Once it's set up, ask me again.",
         )
 
     def test_status_and_gateway_traces_surface_bridge_route_and_active_chip(self) -> None:

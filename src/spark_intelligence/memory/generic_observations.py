@@ -14,6 +14,18 @@ _SMALL_TALK_PATTERN = re.compile(
     r"^(?:hi|hello|hey|thanks|thank you|ok|okay|cool|lol|noted|got it)[.!]?$",
     re.IGNORECASE,
 )
+# Messages that look like requests, instructions, or questions to the agent
+# should not be filed as raw episodes. They expect a real reply.
+_ASK_LIKE_PREFIX_PATTERN = re.compile(
+    r"^(?:"
+    r"list|explain|tell me|show me|give me|describe|summari[sz]e|compare|help me|"
+    r"draft|write|outline|recommend|suggest|propose|analy[sz]e|review|critique|"
+    r"check|investigate|research|find|search|look up|"
+    r"what|why|how|where|when|which|who|whom|whose|"
+    r"should|can|could|would|will|shall|do|does|did|are|is|was|were|am|may|might|have|has|had"
+    r")\b",
+    re.IGNORECASE,
+)
 
 _PLAN_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^(?:i|we)\s+plan\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
@@ -708,6 +720,8 @@ def _is_memoryworthy_text(text: str) -> bool:
     if _HYPOTHETICAL_PREFIX_PATTERN.search(text):
         return False
     if _SMALL_TALK_PATTERN.fullmatch(text):
+        return False
+    if _ASK_LIKE_PREFIX_PATTERN.match(text.lstrip()):
         return False
     return True
 

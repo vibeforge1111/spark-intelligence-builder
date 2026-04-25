@@ -472,43 +472,43 @@ def _shape_telegram_bridge_reply(reply_text: str, *, bridge_mode: str | None, ro
     if mode == "disabled" or route == "bridge_disabled":
         return "\n".join(
             [
-                "Researcher is unavailable right now.",
-                "Reason: the Spark Researcher bridge is disabled for this workspace.",
-                "Next: enable Spark Researcher for this workspace, then retry.",
+                "I can't pull live research for you right now.",
+                "Live research is turned off in this workspace.",
+                "Try again once it's been turned back on.",
             ]
         )
     if route == "secret_boundary_blocked":
         return "\n".join(
             [
-                "Research request was blocked.",
-                "Reason: sensitive material was detected in model-visible context.",
-                "Next: remove the sensitive material from the request, then retry.",
+                "I held off on that one.",
+                "There was sensitive material in the request that I'd rather not send out.",
+                "Pull the secret bits and ask me again.",
             ]
         )
     if route == "provider_resolution_failed":
         lines = [
-            "Researcher is unavailable right now.",
-            "Reason: provider authentication is not configured correctly.",
+            "I can't pull live research for you right now.",
+            "My model credentials aren't set up correctly on this side.",
         ]
         if detail and detail != text:
             lines.append(f"Detail: {detail}")
-        lines.append("Next: fix the researcher provider auth configuration, then retry.")
+        lines.append("Get the model auth fixed, then ask me again.")
         return "\n".join(lines)
     if route == "bridge_error":
         lines = [
-            "Researcher is unavailable right now.",
-            "Reason: the external researcher bridge failed during execution.",
+            "I can't pull live research for you right now.",
+            "Something on my end failed mid-call.",
         ]
         if detail and detail != text:
             lines.append(f"Detail: {detail}")
-        lines.append("Next: inspect the researcher runtime, then retry.")
+        lines.append("Give it another shot in a minute, or check the runtime if it keeps happening.")
         return "\n".join(lines)
     if route == "stub" or mode == "stub":
         return "\n".join(
             [
-                "Researcher is unavailable right now.",
-                "Reason: no external Spark Researcher runtime is configured for this workspace.",
-                "Next: configure or attach Spark Researcher, then retry.",
+                "I can't pull live research for you right now.",
+                "Nothing's wired up to handle that yet in this workspace.",
+                "Once it's set up, ask me again.",
             ]
         )
     if mode != "blocked":
@@ -518,17 +518,17 @@ def _shape_telegram_bridge_reply(reply_text: str, *, bridge_mode: str | None, ro
         origin = str(origin_match.group(1)).rstrip(".,") if origin_match else "the requested site"
         return "\n".join(
             [
-                "Web search is blocked right now.",
-                f"Reason: the browser extension does not have site access for {origin}.",
-                f"Next: open the extension popup, grant site access for {origin}, then retry.",
+                "I can't open that page yet.",
+                f"I don't have access to {origin}.",
+                f"Grant site access for {origin} in the extension popup and I'll try again.",
             ]
         )
     if route == "browser_unavailable":
         return "\n".join(
             [
-                "Web search is unavailable right now.",
-                "Reason: the live browser session is disconnected.",
-                "Next: reconnect the Spark Browser session, then retry.",
+                "I can't search the web right now.",
+                "My live browser session dropped.",
+                "Reconnect it and ask me again.",
             ]
         )
     return text
