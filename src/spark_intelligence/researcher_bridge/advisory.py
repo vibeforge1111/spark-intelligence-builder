@@ -1765,6 +1765,18 @@ def _render_direct_provider_chat_fallback(
     # the package's persona artifact. SIB-specific operational guidance is
     # appended below.
     persona_prompt = _load_spark_character_persona()
+    # Append surface overlay when the surface is identifiable. The browser
+    # path is the most common non-text surface for the in-pipeline render,
+    # detected via browser_search_context_extra being set.
+    inferred_surface = "browser_extension" if browser_search_context_extra else None
+    if inferred_surface:
+        try:
+            from spark_character.persona import load_surface_overlay  # type: ignore
+            surface_overlay = load_surface_overlay(inferred_surface)
+            if surface_overlay:
+                persona_prompt = f"{persona_prompt}\n\n---\n\n{surface_overlay}"
+        except Exception:
+            pass
     base_system_prompt = (
         f"{persona_prompt}\n\n"
         "Operational rules for this conversation surface:\n"
