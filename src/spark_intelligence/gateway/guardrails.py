@@ -173,6 +173,11 @@ def prepare_outbound_text(
         cleaned = rewritten
         actions.append("normalize_score_percentages")
 
+    sanitized = _strip_em_dashes(cleaned)
+    if sanitized != cleaned:
+        cleaned = sanitized
+        actions.append("replace_em_dashes")
+
     chunk_size = max(max_reply_chars, 32)
     max_chunks = 5
     chunks = _split_text_for_delivery(cleaned, chunk_size=chunk_size, max_chunks=max_chunks)
@@ -196,6 +201,31 @@ _SCORE_LABEL_PATTERN = re.compile(
     r"(?P<trail>\s*\)?)",
     flags=re.IGNORECASE,
 )
+
+
+def _strip_em_dashes(text: str) -> str:
+    """Replace em-dash family characters with hyphens.
+
+    Persona forbids em dashes but production telemetry shows ~50% of LLM
+    replies still emit them. Prompt engineering hasn't been enough, so we
+    apply a deterministic post-output substitution at the outbound boundary.
+    Source of truth lives in spark_character.output_sanitizer; we import
+    inside the function so guardrails don't hard-fail if spark_character
+    isn't installed.
+    """
+    if not text:
+        return text
+    try:
+        from spark_character import sanitize_voice_output  # type: ignore
+    except Exception:
+        em_dash_family = ("\u2014", "\u2013", "\u2012", "\u2015", "\u2212")
+        out = text
+        for ch in em_dash_family:
+            out = out.replace(ch, " - ")
+        while "  " in out:
+            out = out.replace("  ", " ")
+        return out
+    return sanitize_voice_output(text)
 
 
 def _normalize_score_decimals_to_percent(text: str) -> str:

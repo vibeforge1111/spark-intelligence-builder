@@ -293,6 +293,27 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("watchtower-agent-identity", checks)
         self.assertFalse(checks["watchtower-agent-identity"].ok)
 
+    def test_outbound_strips_em_dashes_before_delivery(self) -> None:
+        guarded = prepare_outbound_text(
+            text="Two chips routing live \u2014 X Content and Startup. Yeah \u2014 fair point.",
+            bridge_mode=None,
+            max_reply_chars=4000,
+            redact_secret_like_replies=False,
+        )
+        self.assertIn("replace_em_dashes", guarded["actions"])
+        self.assertNotIn("\u2014", guarded["text"])
+        self.assertIn(" - ", guarded["text"])
+
+    def test_outbound_no_op_when_no_em_dashes(self) -> None:
+        guarded = prepare_outbound_text(
+            text="Plain reply. No funny dashes here.",
+            bridge_mode=None,
+            max_reply_chars=4000,
+            redact_secret_like_replies=False,
+        )
+        self.assertNotIn("replace_em_dashes", guarded["actions"])
+        self.assertEqual(guarded["text"], "Plain reply. No funny dashes here.")
+
     def test_outbound_secret_block_records_violation_and_quarantine(self) -> None:
         guarded = prepare_outbound_text(
             state_db=self.state_db,
