@@ -129,7 +129,8 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertTrue(looks_secret_like("TELEGRAM_BOT_TOKEN=1234567890:abcdefghijklmnopqrstuvwxyzABCDE"))
         self.assertTrue(looks_secret_like("api_key: " + "sk-proj-" + "abcdefghijklmnopqrstuvwxyz123456"))
         self.assertTrue(looks_secret_like("Authorization: Basic dXNlcjpzdXBlci1zZWNyZXQtcGFzc3dvcmQtMTIz"))
-        self.assertTrue(looks_secret_like('{"client_secret":"ZXlKaGJHY2lPaUpJVXpJMU5pSjkuZXlKemRXSWlPaUl4TWpNME5UWTNPRGt3SW4wLnNpZw=="}'))
+        encoded_jwt = "ZXlKaGJHY2lPaUpJVXpJMU5pSjku" + "ZXlKemRXSWlPaUl4TWpNME5UWTNPRGt3SW4wLnNpZw=="
+        self.assertTrue(looks_secret_like('{"client_secret":"' + encoded_jwt + '"}'))
         self.assertTrue(looks_secret_like("database_url=https://operator:Sup3rSecretPassw0rd@example.com/app"))
         self.assertTrue(looks_secret_like("-----BEGIN " + "PRIVATE KEY-----\nabc\n-----END " + "PRIVATE KEY-----"))
         self.assertFalse(looks_secret_like("This is a normal operational note with no credentials in it."))

@@ -1,0 +1,7 @@
+title = "spark-intelligence-builder gitleaks allowlist"
+
+[allowlist]
+description = "Synthetic secret-boundary regression vectors; no live credentials."
+paths = [
+  '''tests/test_builder_prelaunch_contracts\.py''',
+]
