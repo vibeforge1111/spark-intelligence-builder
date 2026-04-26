@@ -167,7 +167,7 @@ class MemoryRegressionTests(SparkTestCase):
                 "ok": False,
                 "decision": "pending_pairing",
                 "detail": {
-                    "response_text": "Unauthorized DM. Pairing approval is required before this agent will respond.",
+                    "response_text": "Access is not authorized for this channel. Ask the operator to review access.",
                 },
             },
         }

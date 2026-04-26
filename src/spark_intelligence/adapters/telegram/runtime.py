@@ -21,7 +21,6 @@ from spark_intelligence.attachments import (
     screen_chip_hook_text,
 )
 from spark_intelligence.auth.runtime import resolve_runtime_provider
-from spark_intelligence.character_runtime import ensure_spark_character_path
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.gateway.guardrails import (
     apply_inbound_rate_limit,
@@ -2591,21 +2590,15 @@ def _sanitize_simulate_outbound(text: str) -> tuple[str, list[str]]:
     The simulate path is what the Node bot calls; it does not run through
     prepare_outbound_text, so we apply the same em-dash family substitution
     here so the rule applies regardless of which gateway entry point is used.
-    Source of truth lives in spark_character.output_sanitizer.
     """
     if not text:
         return text, []
-    try:
-        ensure_spark_character_path()
-        from spark_character import sanitize_voice_output  # type: ignore
-        cleaned = sanitize_voice_output(text)
-    except Exception:
-        em_dash_family = ("\u2014", "\u2013", "\u2012", "\u2015", "\u2212")
-        cleaned = text
-        for ch in em_dash_family:
-            cleaned = cleaned.replace(ch, " - ")
-        while "  " in cleaned:
-            cleaned = cleaned.replace("  ", " ")
+    em_dash_family = ("\u2014", "\u2013", "\u2012", "\u2015", "\u2212")
+    cleaned = text
+    for ch in em_dash_family:
+        cleaned = cleaned.replace(ch, " - ")
+    while "  " in cleaned:
+        cleaned = cleaned.replace("  ", " ")
     actions: list[str] = []
     if cleaned != text:
         actions.append("replace_em_dashes")
@@ -7192,32 +7185,11 @@ def _apply_post_approval_welcome(
     return f"{welcome_text}\n\n{styled_reply}".strip()
 
 
-def _pairing_reply_text(default_text: str, *, inbound_text: str) -> str:
-    normalized = inbound_text.strip().lower()
-    if normalized in {"/start", "start"}:
-        return (
-            "Spark Intelligence received your start request. "
-            "This Telegram account is waiting for operator approval before the agent will respond here."
-        )
-    return default_text
-
-
 def _resolution_reply_text(*, decision: str, default_text: str, inbound_text: str) -> str:
-    normalized = inbound_text.strip().lower()
-    if decision == "pending_pairing":
-        return _pairing_reply_text(default_text, inbound_text=inbound_text)
-    if decision == "held":
-        if normalized in {"/start", "start"}:
-            return "Spark Intelligence received your start request, but this Telegram account is currently on hold pending operator review."
-        return "This Telegram account is currently on hold pending operator review before the agent can reply here."
-    if decision == "revoked":
-        return "This Telegram account is no longer paired with Spark Intelligence. Contact the operator if this is unexpected."
     if decision == "channel_paused":
         return "Spark Intelligence is temporarily paused for this Telegram channel. Try again later."
     if decision == "channel_disabled":
         return "Spark Intelligence is currently disabled for this Telegram channel."
-    if decision == "blocked" and normalized in {"/start", "start"}:
-        return "This Telegram account is not currently paired with Spark Intelligence. Ask the operator to allowlist this account or enable pairing mode."
     return default_text
 
 

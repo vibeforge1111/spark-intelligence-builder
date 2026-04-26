@@ -11,6 +11,7 @@ from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_r
 
 
 LOCAL_OPERATOR_HUMAN_ID = "local-operator"
+PUBLIC_AUTH_DENIED_RESPONSE = "Access is not authorized for this channel. Ask the operator to review access."
 
 
 @dataclass
@@ -1324,7 +1325,7 @@ def resolve_inbound_dm(
             human_id=None,
             agent_id=None,
             session_id=None,
-            response_text="Unauthorized DM. This channel requires a valid external user id.",
+            response_text=PUBLIC_AUTH_DENIED_RESPONSE,
         )
     external_user_id = normalized_external_user_id
     session_id = _canonical_session_id(channel_id, external_user_id)
@@ -1352,7 +1353,7 @@ def resolve_inbound_dm(
                 human_id=None,
                 agent_id=None,
                 session_id=None,
-                response_text="Channel is not configured.",
+                response_text=PUBLIC_AUTH_DENIED_RESPONSE,
             )
 
         channel_status = str(channel_row["status"] or "enabled")
@@ -1448,7 +1449,7 @@ def resolve_inbound_dm(
                     human_id=human_id,
                     agent_id=None,
                     session_id=None,
-                    response_text="Pairing request is currently on hold pending operator review.",
+                    response_text=PUBLIC_AUTH_DENIED_RESPONSE,
                 )
             if pairing_row and pairing_row["status"] == "revoked":
                 return InboundResolution(
@@ -1457,7 +1458,7 @@ def resolve_inbound_dm(
                     human_id=human_id,
                     agent_id=None,
                     session_id=None,
-                    response_text="Access for this pairing has been revoked by the operator.",
+                    response_text=PUBLIC_AUTH_DENIED_RESPONSE,
                 )
             pairing_id = f"pairing:{channel_id}:{external_user_id}"
             conn.execute(
@@ -1475,7 +1476,7 @@ def resolve_inbound_dm(
                 human_id=human_id,
                 agent_id=None,
                 session_id=None,
-                response_text="Unauthorized DM. Pairing approval is required before this agent will respond.",
+                response_text=PUBLIC_AUTH_DENIED_RESPONSE,
             )
 
         return InboundResolution(
@@ -1484,7 +1485,7 @@ def resolve_inbound_dm(
             human_id=None,
             agent_id=None,
             session_id=None,
-            response_text="Unauthorized DM. This channel requires explicit allowlist access.",
+            response_text=PUBLIC_AUTH_DENIED_RESPONSE,
         )
 
 

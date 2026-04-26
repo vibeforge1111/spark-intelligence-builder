@@ -5,7 +5,6 @@ import re
 import time
 from typing import Any
 
-from spark_intelligence.character_runtime import ensure_spark_character_path
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.observability.policy import looks_secret_like
 from spark_intelligence.observability.store import record_event, record_policy_gate_block, record_quarantine
@@ -221,24 +220,19 @@ def _strip_em_dashes(text: str) -> str:
     Persona forbids em dashes but production telemetry shows ~50% of LLM
     replies still emit them. Prompt engineering hasn't been enough, so we
     apply a deterministic post-output substitution at the outbound boundary.
-    Source of truth lives in spark_character.output_sanitizer; we import
-    inside the function so guardrails don't hard-fail if spark_character
-    isn't installed.
+    Keep this boundary intentionally narrow: operational identifiers such as
+    chip keys and session ids frequently use ASCII hyphens and must not be
+    rewritten.
     """
     if not text:
         return text
-    try:
-        ensure_spark_character_path()
-        from spark_character import sanitize_voice_output  # type: ignore
-    except Exception:
-        em_dash_family = ("\u2014", "\u2013", "\u2012", "\u2015", "\u2212")
-        out = text
-        for ch in em_dash_family:
-            out = out.replace(ch, " - ")
-        while "  " in out:
-            out = out.replace("  ", " ")
-        return out
-    return sanitize_voice_output(text)
+    em_dash_family = ("\u2014", "\u2013", "\u2012", "\u2015", "\u2212")
+    out = text
+    for ch in em_dash_family:
+        out = out.replace(ch, " - ")
+    while "  " in out:
+        out = out.replace("  ", " ")
+    return out
 
 
 def _normalize_score_decimals_to_percent(text: str) -> str:

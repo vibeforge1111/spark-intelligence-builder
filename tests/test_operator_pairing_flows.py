@@ -104,7 +104,7 @@ class OperatorPairingFlowTests(SparkTestCase):
 
         self.assertFalse(result.ok)
         self.assertEqual(result.decision, "pending_pairing")
-        self.assertIn("operator approval", str(result.detail["response_text"]))
+        self.assertIn("Access is not authorized for this channel", str(result.detail["response_text"]))
 
         report = review_pairings(self.state_db, channel_id="telegram", status="pending")
         self.assertEqual(len(report.rows), 1)
@@ -1783,7 +1783,7 @@ class OperatorPairingFlowTests(SparkTestCase):
 
         self.assertFalse(follow_up.ok)
         self.assertEqual(follow_up.decision, "revoked")
-        self.assertIn("no longer paired", str(follow_up.detail["response_text"]))
+        self.assertIn("Access is not authorized for this channel", str(follow_up.detail["response_text"]))
 
     def test_narrowing_allowlist_blocks_removed_user_even_after_prior_access(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111", "222"])
@@ -1827,7 +1827,7 @@ class OperatorPairingFlowTests(SparkTestCase):
 
         self.assertFalse(follow_up.ok)
         self.assertEqual(follow_up.decision, "blocked")
-        self.assertIn("requires explicit allowlist access", str(follow_up.detail["response_text"]))
+        self.assertIn("Access is not authorized for this channel", str(follow_up.detail["response_text"]))
 
     def test_revoke_pairing_does_not_override_configured_allowlist_access(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
@@ -2388,16 +2388,20 @@ class OperatorPairingFlowTests(SparkTestCase):
     def test_chip_status_reports_when_no_chips_are_attached(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
-        result = simulate_telegram_update(
-            config_manager=self.config_manager,
-            state_db=self.state_db,
-            update_payload=make_telegram_update(
-                update_id=842,
-                user_id="111",
-                username="alice",
-                text="/chip status",
-            ),
-        )
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.list_chip_records",
+            return_value=[],
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=842,
+                    user_id="111",
+                    username="alice",
+                    text="/chip status",
+                ),
+            )
 
         self.assertTrue(result.ok)
         self.assertIn("No chips are attached in this workspace yet.", str(result.detail["response_text"]))

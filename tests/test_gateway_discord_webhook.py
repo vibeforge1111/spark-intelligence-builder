@@ -276,7 +276,7 @@ class DiscordWebhookIngressTests(SparkTestCase):
         payload = json.loads(response.body)
         self.assertEqual(payload["type"], 4)
         self.assertEqual(payload["data"]["flags"], 64)
-        self.assertIn("Pairing approval is required", payload["data"]["content"])
+        self.assertIn("Access is not authorized for this channel", payload["data"]["content"])
 
     def test_rejects_signed_application_command_with_non_chat_input_type(self) -> None:
         signing_key = SigningKey.generate()
