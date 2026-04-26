@@ -119,8 +119,12 @@ Provider examples can include OpenAI-compatible APIs such as OpenAI, OpenRouter,
 
 Use this README as the entry point. Use deeper docs only when you need a specific contract or implementation detail:
 
+- Current architecture: [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
+- Runtime runbook: [docs/RUNTIME_RUNBOOK.md](./docs/RUNTIME_RUNBOOK.md)
+- Telegram bridge split: [docs/TELEGRAM_BRIDGE.md](./docs/TELEGRAM_BRIDGE.md)
+- Memory contract: [docs/MEMORY_CONTRACT.md](./docs/MEMORY_CONTRACT.md)
 - Product shape: [docs/PRD_SPARK_INTELLIGENCE_V1.md](./docs/PRD_SPARK_INTELLIGENCE_V1.md)
-- Architecture: [docs/ARCHITECTURE_SPARK_INTELLIGENCE_V1.md](./docs/ARCHITECTURE_SPARK_INTELLIGENCE_V1.md)
+- Historical architecture: [docs/ARCHITECTURE_SPARK_INTELLIGENCE_V1.md](./docs/ARCHITECTURE_SPARK_INTELLIGENCE_V1.md)
 - Installer contract: [docs/SPARK_INSTALLER_STANDARD_V1_2026-04-22.md](./docs/SPARK_INSTALLER_STANDARD_V1_2026-04-22.md)
 - Researcher integration: [docs/SPARK_RESEARCHER_INTEGRATION_CONTRACT_V1.md](./docs/SPARK_RESEARCHER_INTEGRATION_CONTRACT_V1.md)
 - Domain chip attachment: [docs/DOMAIN_CHIP_ATTACHMENT_CONTRACT_V1.md](./docs/DOMAIN_CHIP_ATTACHMENT_CONTRACT_V1.md)
