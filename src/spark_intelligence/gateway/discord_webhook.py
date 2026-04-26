@@ -24,6 +24,7 @@ DISCORD_DM_COMMAND_OPTION = "message"
 DISCORD_CHAT_INPUT_COMMAND_TYPE = 1
 DISCORD_STRING_OPTION_TYPE = 3
 DISCORD_MAX_INTERACTION_RESPONSE_CHARS = 2000
+DISCORD_PUBLIC_AUTH_ERROR = "Discord webhook authentication failed."
 
 
 @dataclass(frozen=True)
@@ -84,7 +85,7 @@ def handle_discord_webhook(
                 "status_code": auth_error[0],
             },
         )
-        return _json_error_response(auth_error[0], auth_error[1])
+        return _json_error_response(auth_error[0], DISCORD_PUBLIC_AUTH_ERROR)
 
     try:
         payload = json.loads(body.decode("utf-8-sig"))

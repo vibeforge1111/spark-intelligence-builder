@@ -110,7 +110,7 @@ class DiscordWebhookIngressTests(SparkTestCase):
 
         self.assertEqual(response.status_code, 401)
         payload = json.loads(response.body)
-        self.assertEqual(payload["error"], "Discord webhook secret header is missing.")
+        self.assertEqual(payload["error"], "Discord webhook authentication failed.")
         traces = json.loads(
             gateway_trace_view(
                 self.config_manager,
@@ -139,7 +139,7 @@ class DiscordWebhookIngressTests(SparkTestCase):
 
         self.assertEqual(response.status_code, 401)
         payload = json.loads(response.body)
-        self.assertEqual(payload["error"], "Discord webhook secret is invalid.")
+        self.assertEqual(payload["error"], "Discord webhook authentication failed.")
 
     def test_rejects_when_webhook_secret_is_not_configured(self) -> None:
         self._add_discord_channel(webhook_secret=None, allow_legacy_message_webhook=True)
@@ -155,7 +155,7 @@ class DiscordWebhookIngressTests(SparkTestCase):
 
         self.assertEqual(response.status_code, 503)
         payload = json.loads(response.body)
-        self.assertEqual(payload["error"], "Discord webhook auth secret is not configured.")
+        self.assertEqual(payload["error"], "Discord webhook authentication failed.")
 
     def test_rejects_legacy_message_webhook_when_compatibility_is_disabled(self) -> None:
         self._add_discord_channel(allow_legacy_message_webhook=False)
@@ -171,10 +171,7 @@ class DiscordWebhookIngressTests(SparkTestCase):
 
         self.assertEqual(response.status_code, 503)
         payload = json.loads(response.body)
-        self.assertEqual(
-            payload["error"],
-            "Discord legacy message webhook is disabled. Configure an interaction public key or enable legacy compatibility.",
-        )
+        self.assertEqual(payload["error"], "Discord webhook authentication failed.")
 
     def test_rejects_missing_signature_header_when_public_key_is_configured(self) -> None:
         signing_key = SigningKey.generate()
@@ -191,7 +188,7 @@ class DiscordWebhookIngressTests(SparkTestCase):
 
         self.assertEqual(response.status_code, 401)
         payload = json.loads(response.body)
-        self.assertEqual(payload["error"], "Discord signature header is missing.")
+        self.assertEqual(payload["error"], "Discord webhook authentication failed.")
 
     def test_rejects_invalid_signature_when_public_key_is_configured(self) -> None:
         signing_key = SigningKey.generate()
@@ -211,7 +208,7 @@ class DiscordWebhookIngressTests(SparkTestCase):
 
         self.assertEqual(response.status_code, 401)
         payload = json.loads(response.body)
-        self.assertEqual(payload["error"], "Discord request signature is invalid.")
+        self.assertEqual(payload["error"], "Discord webhook authentication failed.")
         traces = json.loads(
             gateway_trace_view(
                 self.config_manager,

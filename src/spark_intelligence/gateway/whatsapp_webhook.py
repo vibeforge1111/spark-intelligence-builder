@@ -15,6 +15,7 @@ from spark_intelligence.state.db import StateDB
 
 
 WHATSAPP_WEBHOOK_PATH = "/webhooks/whatsapp"
+WHATSAPP_PUBLIC_AUTH_ERROR = "WhatsApp webhook authentication failed."
 
 
 @dataclass(frozen=True)
@@ -160,7 +161,7 @@ def _handle_whatsapp_event_post(
                 "status_code": auth_error[0],
             },
         )
-        return _json_error_response(auth_error[0], auth_error[1])
+        return _json_error_response(auth_error[0], WHATSAPP_PUBLIC_AUTH_ERROR)
 
     try:
         payload = json.loads(body.decode("utf-8-sig"))
