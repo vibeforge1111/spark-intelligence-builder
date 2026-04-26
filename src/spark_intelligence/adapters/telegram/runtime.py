@@ -202,11 +202,31 @@ _SCORE_INTENT_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 
+_PROMPT_INJECTION_INTENT_PATTERN = re.compile(
+    r"("
+    r"\b(ignore|disregard|override|bypass|forget)\b.{0,80}\b(previous|prior|earlier|above|system|developer|safety|policy|instruction|instructions|rules)\b"
+    r"|"
+    r"\b(system|developer|admin|root)\s*(prompt|message|instruction|instructions|rules)\b"
+    r"|"
+    r"\b(reveal|show|print|dump|leak|exfiltrate)\b.{0,80}\b(system|developer|hidden|secret|prompt|instructions|token|key)\b"
+    r"|"
+    r"<\s*/?\s*(system|developer|instructions?)\s*>"
+    r")",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+
 
 def _looks_like_score_request(message: str) -> bool:
     if not message:
         return False
     return bool(_SCORE_INTENT_PATTERN.search(message))
+
+
+def _looks_like_prompt_injection_instruction(message: str) -> bool:
+    if not message:
+        return False
+    compact = " ".join(str(message).split())
+    return bool(_PROMPT_INJECTION_INTENT_PATTERN.search(compact))
 
 
 def _format_chip_metric_value(value: object) -> str:
@@ -389,6 +409,8 @@ def _maybe_capture_user_instruction(
     if not user_message or not external_user_id:
         return reply_text
     if bridge_mode == "memory_generic_observation_delete" or routing_decision == "memory_generic_observation_delete":
+        return reply_text
+    if _looks_like_prompt_injection_instruction(user_message):
         return reply_text
     intent = detect_instruction_intent(user_message)
     if not intent:
@@ -1024,7 +1046,7 @@ def simulate_telegram_update(
                 _pending_delete = None
                 _confirmation_yes = False
                 _confirmation_no = False
-                if effective_text:
+                if effective_text and not _looks_like_prompt_injection_instruction(effective_text):
                     try:
                         from spark_intelligence.user_instructions import (
                             detect_instruction_intent as _detect_instruction_intent,

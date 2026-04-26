@@ -1624,11 +1624,11 @@ def _resolve_spark_character_provider(env_map: dict[str, str]):
          "https://api.openai.com/v1/", "gpt-4o-mini"),
     )
     for key_env, base_env, model_env, default_base, default_model in candidates:
-        api_key = (env_map.get(key_env) or os.environ.get(key_env) or "").strip()
+        api_key = (env_map.get(key_env) or "").strip()
         if not api_key:
             continue
-        base_url = (env_map.get(base_env) or os.environ.get(base_env) or default_base).strip()
-        model = (env_map.get(model_env) or os.environ.get(model_env) or default_model).strip()
+        base_url = (env_map.get(base_env) or default_base).strip()
+        model = (env_map.get(model_env) or default_model).strip()
         return ProviderSpec(base_url=base_url, model=model, api_key=api_key)
     return None
 

@@ -16,6 +16,7 @@ __pycache__/
 .tmp-home/
 .tmp-home-*/
 .tmp/
+.tmp-*/
 .tmp-shadow-*
 .vendor/
 .spark-swarm/

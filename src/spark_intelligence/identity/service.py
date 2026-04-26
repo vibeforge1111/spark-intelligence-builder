@@ -539,6 +539,18 @@ def _canonical_session_id(channel_id: str, external_user_id: str) -> str:
     return f"session:{channel_id}:dm:{external_user_id}"
 
 
+def _normalize_external_user_id(channel_id: str, external_user_id: str) -> str | None:
+    value = str(external_user_id)
+    if channel_id == "telegram":
+        if value != value.strip():
+            return None
+        if not value.isdecimal():
+            return None
+        if int(value) <= 0:
+            return None
+    return value
+
+
 def resolve_canonical_agent_identity(
     *,
     state_db: StateDB,
@@ -1304,6 +1316,17 @@ def resolve_inbound_dm(
     external_user_id: str,
     display_name: str,
 ) -> InboundResolution:
+    normalized_external_user_id = _normalize_external_user_id(channel_id, external_user_id)
+    if normalized_external_user_id is None:
+        return InboundResolution(
+            allowed=False,
+            decision="blocked",
+            human_id=None,
+            agent_id=None,
+            session_id=None,
+            response_text="Unauthorized DM. This channel requires a valid external user id.",
+        )
+    external_user_id = normalized_external_user_id
     session_id = _canonical_session_id(channel_id, external_user_id)
 
     # Identity aliasing: if this (channel, user) is registered as an alias

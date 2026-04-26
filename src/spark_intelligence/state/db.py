@@ -1,7 +1,17 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 from pathlib import Path
+
+
+SQLITE_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _quote_sqlite_identifier(identifier: str) -> str:
+    if not SQLITE_IDENTIFIER_PATTERN.fullmatch(identifier):
+        raise ValueError(f"Unsafe SQLite identifier: {identifier!r}")
+    return f'"{identifier}"'
 
 
 SCHEMA_STATEMENTS = [
@@ -846,10 +856,12 @@ class StateDB:
 
     @staticmethod
     def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        quoted_table = _quote_sqlite_identifier(table)
+        quoted_column = _quote_sqlite_identifier(column)
         columns = {
             str(row["name"])
-            for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+            for row in conn.execute(f"PRAGMA table_info({quoted_table})").fetchall()
         }
         if column in columns:
             return
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+        conn.execute(f"ALTER TABLE {quoted_table} ADD COLUMN {quoted_column} {definition}")

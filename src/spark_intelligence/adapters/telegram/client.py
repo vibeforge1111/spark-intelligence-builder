@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Any, Callable
-from urllib import parse, request
+from urllib import error, parse, request
 
 
 Transport = Callable[[str, dict[str, Any] | None], dict[str, Any]]
+TELEGRAM_BOT_TOKEN_IN_URL = re.compile(r"/bot[^/\s]+")
 
 
 @dataclass
@@ -16,7 +18,7 @@ class TelegramBotApiClient:
     transport: Transport | None = None
 
     def __post_init__(self) -> None:
-        self.base_url = f"https://api.telegram.org/bot{self.token}"
+        self.api_root = "https://api.telegram.org"
 
     def get_me(self) -> dict[str, Any]:
         return self._call("getMe", None)
@@ -125,23 +127,23 @@ class TelegramBotApiClient:
         return result
 
     def download_file(self, *, file_path: str) -> bytes:
-        url = f"https://api.telegram.org/file/bot{self.token}/{str(file_path).lstrip('/')}"
+        url = f"{self.api_root}/file/bot{self.token}/{str(file_path).lstrip('/')}"
         req = request.Request(url, method="GET")
-        with request.urlopen(req, timeout=30) as response:
+        with self._urlopen(req, timeout=30) as response:
             return response.read()
 
     def _call(self, method: str, payload: dict[str, Any] | None) -> dict[str, Any]:
         if self.transport is not None:
             return self.transport(method, payload)
 
-        url = f"{self.base_url}/{method}"
+        url = f"{self.api_root}/bot{self.token}/{method}"
         encoded_payload = None
         headers = {}
         if payload is not None:
             encoded_payload = parse.urlencode(payload).encode("utf-8")
             headers["Content-Type"] = "application/x-www-form-urlencoded"
         req = request.Request(url, data=encoded_payload, headers=headers, method="POST")
-        with request.urlopen(req, timeout=30) as response:
+        with self._urlopen(req, timeout=30) as response:
             body = response.read().decode("utf-8")
         return self._decode_response(method, body)
 
@@ -182,14 +184,21 @@ class TelegramBotApiClient:
             ]
         )
         req = request.Request(
-            f"{self.base_url}/{method}",
+            f"{self.api_root}/bot{self.token}/{method}",
             data=b"".join(body_parts),
             headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
             method="POST",
         )
-        with request.urlopen(req, timeout=30) as response:
+        with self._urlopen(req, timeout=30) as response:
             body = response.read().decode("utf-8")
         return self._decode_response(method, body)
+
+    def _urlopen(self, req: request.Request, *, timeout: int):
+        try:
+            return request.urlopen(req, timeout=timeout)
+        except error.URLError as exc:
+            message = TELEGRAM_BOT_TOKEN_IN_URL.sub("/bot<redacted>", str(exc))
+            raise RuntimeError(f"Telegram API request failed: {message}") from exc
 
     def _decode_response(self, method: str, body: str) -> dict[str, Any]:
         data = json.loads(body)
