@@ -1037,6 +1037,8 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertTrue(checks["watchtower-memory-contract"].ok)
 
     def test_build_researcher_reply_records_chip_influence_provenance(self) -> None:
+        chip_root = create_fake_hook_chip(self.home, chip_key="startup-yc")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
         self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
         self.config_manager.set_path("spark.specialization_paths.active_path_key", "startup-operator")
 
@@ -1054,8 +1056,16 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn(result.routing_decision, {"bridge_disabled", "stub"})
         events = latest_events_by_type(self.state_db, event_type="plugin_or_chip_influence_recorded", limit=10)
         self.assertTrue(events)
-        facts = events[0]["facts_json"]
+        chip_events = [
+            event
+            for event in events
+            if event.get("reason_code") == "attachment_context_applied"
+        ]
+        self.assertTrue(chip_events)
+        facts = chip_events[0]["facts_json"]
         self.assertEqual(facts["keepability"], "ephemeral_context")
+        self.assertEqual(facts["active_chip_key"], "startup-yc")
+        self.assertEqual(chip_events[0]["provenance_json"]["source_kind"], "chip_hook")
 
     def test_environment_parity_accepts_windows_and_wsl_paths_for_same_runtime(self) -> None:
         record_environment_snapshot(
@@ -1088,6 +1098,8 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertTrue(issues["stop_ship_environment_parity"].ok)
 
     def test_build_researcher_reply_records_chip_hook_result_classification(self) -> None:
+        chip_root = create_fake_hook_chip(self.home, chip_key="startup-yc")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
         self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
         self.config_manager.set_path("spark.specialization_paths.active_path_key", "startup-operator")
 

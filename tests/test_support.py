@@ -531,6 +531,8 @@ if __name__ == "__main__":
                     "browser.page.text_extract",
                     "browser.page.snapshot",
                 ],
+                "task_topics": ["startup", "founder"] if chip_key == "startup-yc" else [],
+                "task_keywords": ["startup", "focus", "founder"] if chip_key == "startup-yc" else [],
                 "commands": {
                     "evaluate": ["python", "-m", "fake_startup_chip.chip_hooks", "evaluate"],
                     "suggest": ["python", "-m", "fake_startup_chip.chip_hooks", "suggest"],
