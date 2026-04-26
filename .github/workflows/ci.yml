@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-audit:
+    name: test-and-audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install uv pip-audit
+
+      - name: Check lockfile
+        run: uv lock --check
+
+      - name: Install locked environment
+        run: uv sync --locked
+
+      - name: Run focused tests
+        run: |
+          uv run python -m pytest \
+            tests/test_secret_file_permissions.py \
+            tests/test_gateway_discord_webhook.py \
+            tests/test_builder_prelaunch_contracts.py \
+            -q
+
+      - name: Audit Python dependencies
+        run: pip-audit --progress-spinner off .
+
+  secret-scan:
+    name: secret-scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
