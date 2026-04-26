@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import re
+import secrets
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -12,6 +15,28 @@ from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_r
 
 LOCAL_OPERATOR_HUMAN_ID = "local-operator"
 PUBLIC_AUTH_DENIED_RESPONSE = "Access is not authorized for this channel. Ask the operator to review access."
+PAIRING_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+PAIRING_CODE_LENGTH = 8
+PAIRING_CODE_TTL = timedelta(hours=1)
+PAIRING_CODE_GENERATION_THROTTLE = timedelta(minutes=10)
+PAIRING_CODE_LOCKOUT_WINDOW = timedelta(hours=1)
+PAIRING_CODE_MAX_PENDING_PER_USER = 3
+PAIRING_CODE_MAX_FAILURES = 5
+
+
+@dataclass(frozen=True)
+class PairingCodeIssue:
+    code: str
+    channel_id: str
+    external_user_id: str
+    expires_at: str
+
+
+@dataclass(frozen=True)
+class PairingCodeConsumeResult:
+    ok: bool
+    decision: str
+    message: str
 
 
 @dataclass
@@ -1254,6 +1279,231 @@ def _activate_channel_access(
         conn.commit()
 
     return human_id, agent_id, session_id
+
+
+def _pairing_code_now(now: datetime | None = None) -> datetime:
+    value = now or datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _pairing_code_timestamp(value: datetime) -> str:
+    return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _parse_pairing_code_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value.strip().replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _normalize_pairing_code(code: str) -> str:
+    return re.sub(r"[^A-Z0-9]", "", str(code or "").upper())
+
+
+def _pairing_code_hash(code: str) -> str:
+    normalized = _normalize_pairing_code(code)
+    return hashlib.sha256(f"spark-pairing-code-v1:{normalized}".encode("utf-8")).hexdigest()
+
+
+def _new_pairing_code() -> str:
+    return "".join(secrets.choice(PAIRING_CODE_ALPHABET) for _ in range(PAIRING_CODE_LENGTH))
+
+
+def _pairing_code_rate_key(channel_id: str, external_user_id: str) -> str:
+    return f"pairing_code_rate:{channel_id}:{external_user_id}"
+
+
+def _pairing_code_lock_key(channel_id: str, external_user_id: str) -> str:
+    return f"pairing_code_lock:{channel_id}:{external_user_id}"
+
+
+def _pairing_code_state_prefix(channel_id: str) -> str:
+    return f"pairing_code:{channel_id}:"
+
+
+def _read_runtime_state_json(conn, state_key: str) -> dict[str, Any]:
+    row = conn.execute("SELECT value FROM runtime_state WHERE state_key = ? LIMIT 1", (state_key,)).fetchone()
+    if not row:
+        return {}
+    try:
+        payload = json.loads(str(row["value"] or "{}"))
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _write_runtime_state_json(conn, state_key: str, payload: dict[str, Any]) -> None:
+    conn.execute(
+        """
+        INSERT INTO runtime_state(state_key, value)
+        VALUES (?, ?)
+        ON CONFLICT(state_key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
+        """,
+        (state_key, json.dumps(payload, sort_keys=True)),
+    )
+
+
+def _active_pairing_code_rows(conn, *, channel_id: str, external_user_id: str, now: datetime) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        "SELECT state_key, value FROM runtime_state WHERE state_key LIKE ?",
+        (_pairing_code_state_prefix(channel_id) + "%",),
+    ).fetchall()
+    active: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            payload = json.loads(str(row["value"] or "{}"))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("status") != "pending":
+            continue
+        if str(payload.get("external_user_id") or "") != external_user_id:
+            continue
+        expires_at = _parse_pairing_code_timestamp(payload.get("expires_at"))
+        if expires_at is None or expires_at <= now:
+            continue
+        active.append({"state_key": row["state_key"], **payload})
+    return active
+
+
+def _pairing_code_lockout(conn, *, channel_id: str, external_user_id: str, now: datetime) -> dict[str, Any]:
+    payload = _read_runtime_state_json(conn, _pairing_code_lock_key(channel_id, external_user_id))
+    locked_until = _parse_pairing_code_timestamp(payload.get("locked_until"))
+    if locked_until is not None and locked_until > now:
+        return {"locked": True, "locked_until": _pairing_code_timestamp(locked_until)}
+    return {"locked": False, "strike_count": int(payload.get("strike_count") or 0)}
+
+
+def _record_pairing_code_failure(conn, *, channel_id: str, external_user_id: str, now: datetime) -> None:
+    state_key = _pairing_code_lock_key(channel_id, external_user_id)
+    payload = _read_runtime_state_json(conn, state_key)
+    strike_count = int(payload.get("strike_count") or 0) + 1
+    next_payload: dict[str, Any] = {
+        "strike_count": strike_count,
+        "last_failure_at": _pairing_code_timestamp(now),
+    }
+    if strike_count >= PAIRING_CODE_MAX_FAILURES:
+        next_payload["locked_until"] = _pairing_code_timestamp(now + PAIRING_CODE_LOCKOUT_WINDOW)
+    _write_runtime_state_json(conn, state_key, next_payload)
+
+
+def issue_pairing_code(
+    *,
+    state_db: StateDB,
+    channel_id: str,
+    external_user_id: str,
+    issued_by: str = LOCAL_OPERATOR_HUMAN_ID,
+    now: datetime | None = None,
+) -> PairingCodeIssue:
+    _require_operator(state_db, issued_by)
+    normalized_external_user_id = _normalize_external_user_id(channel_id, external_user_id)
+    if normalized_external_user_id is None:
+        raise ValueError("Pairing code requires a valid external user id.")
+    external_user_id = normalized_external_user_id
+    current = _pairing_code_now(now)
+    with state_db.connect() as conn:
+        channel_row = conn.execute(
+            "SELECT channel_id FROM channel_installations WHERE channel_id = ? LIMIT 1",
+            (channel_id,),
+        ).fetchone()
+        if not channel_row:
+            raise RuntimeError(f"Cannot issue pairing code for unconfigured channel `{channel_id}`.")
+        lockout = _pairing_code_lockout(conn, channel_id=channel_id, external_user_id=external_user_id, now=current)
+        if lockout.get("locked"):
+            raise RuntimeError(f"Pairing code attempts are locked until {lockout['locked_until']}.")
+        rate_payload = _read_runtime_state_json(conn, _pairing_code_rate_key(channel_id, external_user_id))
+        last_issued_at = _parse_pairing_code_timestamp(rate_payload.get("last_issued_at"))
+        if last_issued_at is not None and current - last_issued_at < PAIRING_CODE_GENERATION_THROTTLE:
+            raise RuntimeError("Pairing code generation is rate limited for this user.")
+        active_codes = _active_pairing_code_rows(conn, channel_id=channel_id, external_user_id=external_user_id, now=current)
+        if len(active_codes) >= PAIRING_CODE_MAX_PENDING_PER_USER:
+            raise RuntimeError("Too many pending pairing codes for this channel user.")
+        code = _new_pairing_code()
+        while any(row.get("code_hash") == _pairing_code_hash(code) for row in active_codes):
+            code = _new_pairing_code()
+        expires_at = current + PAIRING_CODE_TTL
+        _write_runtime_state_json(
+            conn,
+            f"{_pairing_code_state_prefix(channel_id)}{uuid4()}",
+            {
+                "channel_id": channel_id,
+                "external_user_id": external_user_id,
+                "code_hash": _pairing_code_hash(code),
+                "status": "pending",
+                "created_at": _pairing_code_timestamp(current),
+                "expires_at": _pairing_code_timestamp(expires_at),
+                "issued_by": issued_by,
+            },
+        )
+        _write_runtime_state_json(
+            conn,
+            _pairing_code_rate_key(channel_id, external_user_id),
+            {"last_issued_at": _pairing_code_timestamp(current)},
+        )
+        conn.commit()
+    return PairingCodeIssue(
+        code=code,
+        channel_id=channel_id,
+        external_user_id=external_user_id,
+        expires_at=_pairing_code_timestamp(expires_at),
+    )
+
+
+def consume_pairing_code(
+    *,
+    state_db: StateDB,
+    channel_id: str,
+    external_user_id: str,
+    code: str,
+    display_name: str | None = None,
+    approved_by: str = LOCAL_OPERATOR_HUMAN_ID,
+    now: datetime | None = None,
+) -> PairingCodeConsumeResult:
+    _require_operator(state_db, approved_by)
+    normalized_external_user_id = _normalize_external_user_id(channel_id, external_user_id)
+    if normalized_external_user_id is None:
+        return PairingCodeConsumeResult(ok=False, decision="invalid_user", message="Pairing code rejected.")
+    external_user_id = normalized_external_user_id
+    normalized_code = _normalize_pairing_code(code)
+    if len(normalized_code) != PAIRING_CODE_LENGTH:
+        return PairingCodeConsumeResult(ok=False, decision="invalid_code", message="Pairing code rejected.")
+    current = _pairing_code_now(now)
+    code_hash = _pairing_code_hash(normalized_code)
+    with state_db.connect() as conn:
+        lockout = _pairing_code_lockout(conn, channel_id=channel_id, external_user_id=external_user_id, now=current)
+        if lockout.get("locked"):
+            return PairingCodeConsumeResult(
+                ok=False,
+                decision="locked",
+                message=f"Pairing code attempts are locked until {lockout['locked_until']}.",
+            )
+        active_codes = _active_pairing_code_rows(conn, channel_id=channel_id, external_user_id=external_user_id, now=current)
+        matched = next((row for row in active_codes if row.get("code_hash") == code_hash), None)
+        if matched is None:
+            _record_pairing_code_failure(conn, channel_id=channel_id, external_user_id=external_user_id, now=current)
+            conn.commit()
+            return PairingCodeConsumeResult(ok=False, decision="invalid_code", message="Pairing code rejected.")
+        _write_runtime_state_json(conn, str(matched["state_key"]), {**matched, "status": "used", "used_at": _pairing_code_timestamp(current)})
+        _write_runtime_state_json(
+            conn,
+            _pairing_code_lock_key(channel_id, external_user_id),
+            {"strike_count": 0, "last_success_at": _pairing_code_timestamp(current)},
+        )
+        conn.commit()
+    message = approve_pairing(
+        state_db=state_db,
+        channel_id=channel_id,
+        external_user_id=external_user_id,
+        display_name=display_name,
+        approved_by=approved_by,
+    )
+    return PairingCodeConsumeResult(ok=True, decision="approved", message=message)
 
 
 def approve_pairing(

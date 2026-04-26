@@ -70,9 +70,11 @@ from spark_intelligence.identity.service import (
     approve_latest_pairing,
     approve_pairing,
     build_spark_swarm_identity_import_payload,
+    consume_pairing_code,
     hold_pairing,
     hold_latest_pairing,
     inspect_canonical_agent,
+    issue_pairing_code,
     link_spark_swarm_agent,
     list_pairings,
     list_sessions,
@@ -1292,6 +1294,18 @@ def build_parser() -> argparse.ArgumentParser:
     operator_approve_pairing_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     operator_approve_pairing_parser.add_argument("--display-name", help="Friendly display name")
     operator_approve_pairing_parser.add_argument("--reason", help="Short audit reason for this approval")
+    operator_issue_pairing_code_parser = operator_subparsers.add_parser("issue-pairing-code", help="Issue a short-lived pairing code")
+    operator_issue_pairing_code_parser.add_argument("channel_id", choices=["telegram", "discord", "whatsapp"])
+    operator_issue_pairing_code_parser.add_argument("external_user_id")
+    operator_issue_pairing_code_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    operator_issue_pairing_code_parser.add_argument("--reason", help="Short audit reason for issuing this code")
+    operator_approve_pairing_code_parser = operator_subparsers.add_parser("approve-pairing-code", help="Approve a pairing by consuming a short-lived code")
+    operator_approve_pairing_code_parser.add_argument("channel_id", choices=["telegram", "discord", "whatsapp"])
+    operator_approve_pairing_code_parser.add_argument("external_user_id")
+    operator_approve_pairing_code_parser.add_argument("code")
+    operator_approve_pairing_code_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    operator_approve_pairing_code_parser.add_argument("--display-name", help="Friendly display name")
+    operator_approve_pairing_code_parser.add_argument("--reason", help="Short audit reason for this approval")
     operator_approve_latest_parser = operator_subparsers.add_parser(
         "approve-latest",
         help="Approve the newest pending pairing for a channel",
@@ -2909,6 +2923,53 @@ def handle_operator_approve_pairing(args: argparse.Namespace) -> int:
     )
     print(result)
     return 0
+
+
+def handle_operator_issue_pairing_code(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    issued = issue_pairing_code(
+        state_db=state_db,
+        channel_id=args.channel_id,
+        external_user_id=args.external_user_id,
+    )
+    log_operator_event(
+        state_db=state_db,
+        action="issue_pairing_code",
+        target_kind="pairing",
+        target_ref=f"{args.channel_id}:{args.external_user_id}",
+        reason=args.reason,
+        details={"expires_at": issued.expires_at},
+    )
+    print(f"Pairing code for {issued.channel_id}:{issued.external_user_id}: {issued.code}")
+    print(f"Expires at: {issued.expires_at}")
+    return 0
+
+
+def handle_operator_approve_pairing_code(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = consume_pairing_code(
+        state_db=state_db,
+        channel_id=args.channel_id,
+        external_user_id=args.external_user_id,
+        code=args.code,
+        display_name=args.display_name,
+    )
+    log_operator_event(
+        state_db=state_db,
+        action="approve_pairing_code",
+        target_kind="pairing",
+        target_ref=f"{args.channel_id}:{args.external_user_id}",
+        reason=args.reason,
+        details={"decision": result.decision, "display_name": args.display_name},
+    )
+    print(result.message)
+    return 0 if result.ok else 1
 
 
 def handle_operator_approve_latest(args: argparse.Namespace) -> int:
@@ -7074,6 +7135,10 @@ def main(argv: list[str] | None = None) -> int:
         return handle_operator_pairing_summary(args)
     if args.command == "operator" and args.operator_command == "approve-pairing":
         return handle_operator_approve_pairing(args)
+    if args.command == "operator" and args.operator_command == "issue-pairing-code":
+        return handle_operator_issue_pairing_code(args)
+    if args.command == "operator" and args.operator_command == "approve-pairing-code":
+        return handle_operator_approve_pairing_code(args)
     if args.command == "operator" and args.operator_command == "approve-latest":
         return handle_operator_approve_latest(args)
     if args.command == "operator" and args.operator_command == "hold-latest":
