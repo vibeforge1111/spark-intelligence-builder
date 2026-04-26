@@ -35,7 +35,7 @@ jobs:
 
       - name: Run focused tests
         run: |
-          uv run python -m pytest \
+          uv run --with pytest python -m pytest \
             tests/test_secret_file_permissions.py \
             tests/test_gateway_discord_webhook.py \
             tests/test_builder_prelaunch_contracts.py \
