@@ -1369,18 +1369,20 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertFalse(checks["watchtower-personality-mirrors"].ok)
         self.assertIn("mirror_drift=1", checks["watchtower-personality-mirrors"].detail)
 
-    def test_watchtower_personality_import_check_flags_missing_personality_hook(self) -> None:
+    def test_watchtower_personality_import_check_flags_inactive_personality_hook(self) -> None:
         resolve_canonical_agent_identity(
             state_db=self.state_db,
             human_id="human:telegram:personality-missing",
             display_name="Personality Missing",
         )
-        self.config_manager.set_path("spark.chips.roots", [])
+        chip_root = create_fake_hook_chip(self.home, chip_key="spark-personality")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+        self.config_manager.set_path("spark.chips.active_keys", [])
         sync_attachment_snapshot(config_manager=self.config_manager, state_db=self.state_db)
 
         snapshot = build_watchtower_snapshot(self.state_db)
         personality_panel = snapshot["panels"]["personality"]
-        self.assertGreaterEqual(personality_panel["counts"]["personality_hook_chip_records"], 1)
+        self.assertEqual(personality_panel["counts"]["personality_hook_chip_records"], 1)
         self.assertEqual(personality_panel["counts"]["personality_hook_active_chip_records"], 0)
         self.assertEqual(personality_panel["counts"]["personality_import_ready"], 0)
         self.assertFalse(personality_panel["personality_import"]["ready"])
