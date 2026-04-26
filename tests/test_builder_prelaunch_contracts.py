@@ -348,6 +348,18 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertNotIn("replace_em_dashes", guarded["actions"])
         self.assertEqual(guarded["text"], "Plain reply. No funny dashes here.")
 
+    def test_outbound_redacts_sensitive_text_before_delivery_chunks(self) -> None:
+        guarded = prepare_outbound_text(
+            text="Use API key sk-proj-abcdefghijklmnopqrstuvwxyz123456 for setup.",
+            bridge_mode=None,
+            max_reply_chars=4000,
+            redact_secret_like_replies=False,
+        )
+
+        self.assertIn("redact_sensitive_text", guarded["actions"])
+        self.assertNotIn("sk-proj-", guarded["text"])
+        self.assertIn("<redacted api key>", guarded["text"])
+
     def test_outbound_secret_block_records_violation_and_quarantine(self) -> None:
         guarded = prepare_outbound_text(
             state_db=self.state_db,

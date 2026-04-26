@@ -9,6 +9,7 @@ from spark_intelligence.character_runtime import ensure_spark_character_path
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.observability.policy import looks_secret_like
 from spark_intelligence.observability.store import record_event, record_policy_gate_block, record_quarantine
+from spark_intelligence.security.redaction import redact_text
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import upsert_runtime_state
 
@@ -174,10 +175,20 @@ def prepare_outbound_text(
         cleaned = rewritten
         actions.append("normalize_score_percentages")
 
+    redacted = redact_text(cleaned)
+    if redacted != cleaned:
+        cleaned = redacted
+        actions.append("redact_sensitive_text")
+
     sanitized = _strip_em_dashes(cleaned)
     if sanitized != cleaned:
         cleaned = sanitized
         actions.append("replace_em_dashes")
+
+    redacted = redact_text(cleaned)
+    if redacted != cleaned:
+        cleaned = redacted
+        actions.append("redact_sensitive_text")
 
     chunk_size = max(max_reply_chars, 32)
     max_chunks = 5

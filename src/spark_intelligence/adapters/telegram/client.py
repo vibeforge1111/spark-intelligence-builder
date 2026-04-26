@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from typing import Any, Callable
 from urllib import error, parse, request
 
+from spark_intelligence.security.redaction import redact_text
+
 
 Transport = Callable[[str, dict[str, Any] | None], dict[str, Any]]
 TELEGRAM_BOT_TOKEN_IN_URL = re.compile(r"/bot[^/\s]+")
@@ -32,7 +34,7 @@ class TelegramBotApiClient:
         return result if isinstance(result, list) else []
 
     def send_message(self, *, chat_id: str, text: str) -> dict[str, Any]:
-        payload = {"chat_id": chat_id, "text": text}
+        payload = {"chat_id": chat_id, "text": redact_text(text)}
         return self._call("sendMessage", payload)
 
     def send_audio(
@@ -51,12 +53,12 @@ class TelegramBotApiClient:
             "mime_type": mime_type or "audio/mpeg",
         }
         if caption:
-            payload["caption"] = caption
+            payload["caption"] = redact_text(caption)
         if self.transport is not None:
             return self.transport("sendAudio", payload)
         return self._call_multipart(
             "sendAudio",
-            fields={"chat_id": chat_id, "caption": caption},
+            fields={"chat_id": chat_id, "caption": redact_text(caption) if caption is not None else None},
             file_field="audio",
             filename=filename,
             mime_type=str(payload["mime_type"]),
@@ -79,12 +81,12 @@ class TelegramBotApiClient:
             "mime_type": mime_type or "audio/ogg",
         }
         if caption:
-            payload["caption"] = caption
+            payload["caption"] = redact_text(caption)
         if self.transport is not None:
             return self.transport("sendVoice", payload)
         return self._call_multipart(
             "sendVoice",
-            fields={"chat_id": chat_id, "caption": caption},
+            fields={"chat_id": chat_id, "caption": redact_text(caption) if caption is not None else None},
             file_field="voice",
             filename=filename,
             mime_type=str(payload["mime_type"]),
@@ -107,12 +109,12 @@ class TelegramBotApiClient:
             "mime_type": mime_type or "application/octet-stream",
         }
         if caption:
-            payload["caption"] = caption
+            payload["caption"] = redact_text(caption)
         if self.transport is not None:
             return self.transport("sendDocument", payload)
         return self._call_multipart(
             "sendDocument",
-            fields={"chat_id": chat_id, "caption": caption},
+            fields={"chat_id": chat_id, "caption": redact_text(caption) if caption is not None else None},
             file_field="document",
             filename=filename,
             mime_type=str(payload["mime_type"]),
@@ -203,6 +205,6 @@ class TelegramBotApiClient:
     def _decode_response(self, method: str, body: str) -> dict[str, Any]:
         data = json.loads(body)
         if not data.get("ok"):
-            description = data.get("description", "unknown Telegram API error")
+            description = redact_text(str(data.get("description", "unknown Telegram API error")))
             raise RuntimeError(f"Telegram API {method} failed: {description}")
         return data
