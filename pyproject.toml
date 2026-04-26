@@ -11,7 +11,7 @@ requires-python = ">=3.11"
 dependencies = [
   "PyNaCl>=1.6.2",
   "PyYAML>=6.0",
-  "spark-character @ git+https://github.com/vibeforge1111/spark-character.git@master",
+  "spark-character @ git+https://github.com/vibeforge1111/spark-character.git@341b33170d5b0e256f1c60d25bfbdb4a24779a87",
 ]
 
 [project.scripts]
