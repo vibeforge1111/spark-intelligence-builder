@@ -452,6 +452,20 @@ class TelegramGenericMemoryTests(SparkTestCase):
 
         self.assertIsNone(candidate)
 
+    def test_assess_telegram_generic_memory_candidate_rejects_direct_questions_without_question_mark(self) -> None:
+        assessment = assess_telegram_generic_memory_candidate("what do you know about Spark systems")
+
+        self.assertEqual(assessment.outcome, "drop")
+        self.assertEqual(assessment.reason, "not_memoryworthy")
+        self.assertIsNone(classify_telegram_generic_memory_candidate("what do you know about Spark systems"))
+
+    def test_assess_telegram_generic_memory_candidate_rejects_emotional_self_reports(self) -> None:
+        assessment = assess_telegram_generic_memory_candidate("I'm anxious about the launch tomorrow")
+
+        self.assertEqual(assessment.outcome, "drop")
+        self.assertEqual(assessment.reason, "not_memoryworthy")
+        self.assertIsNone(classify_telegram_generic_memory_candidate("I'm anxious about the launch tomorrow"))
+
     def test_assess_telegram_generic_memory_candidate_assigns_structured_evidence(self) -> None:
         assessment = assess_telegram_generic_memory_candidate(
             "Users keep dropping during onboarding because Stripe verification fails."

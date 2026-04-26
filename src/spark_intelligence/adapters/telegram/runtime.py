@@ -21,6 +21,7 @@ from spark_intelligence.attachments import (
     screen_chip_hook_text,
 )
 from spark_intelligence.auth.runtime import resolve_runtime_provider
+from spark_intelligence.character_runtime import ensure_spark_character_path
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.gateway.guardrails import (
     apply_inbound_rate_limit,
@@ -2573,6 +2574,7 @@ def _sanitize_simulate_outbound(text: str) -> tuple[str, list[str]]:
     if not text:
         return text, []
     try:
+        ensure_spark_character_path()
         from spark_character import sanitize_voice_output  # type: ignore
         cleaned = sanitize_voice_output(text)
     except Exception:

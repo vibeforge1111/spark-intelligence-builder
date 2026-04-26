@@ -5,6 +5,7 @@ import re
 import time
 from typing import Any
 
+from spark_intelligence.character_runtime import ensure_spark_character_path
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.observability.policy import looks_secret_like
 from spark_intelligence.observability.store import record_event, record_policy_gate_block, record_quarantine
@@ -216,6 +217,7 @@ def _strip_em_dashes(text: str) -> str:
     if not text:
         return text
     try:
+        ensure_spark_character_path()
         from spark_character import sanitize_voice_output  # type: ignore
     except Exception:
         em_dash_family = ("\u2014", "\u2013", "\u2012", "\u2015", "\u2212")

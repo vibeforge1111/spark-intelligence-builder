@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import sys
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 from spark_intelligence.attachments.snapshot import sync_attachment_snapshot
@@ -303,6 +307,36 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("replace_em_dashes", guarded["actions"])
         self.assertNotIn("\u2014", guarded["text"])
         self.assertIn(" - ", guarded["text"])
+
+    def test_outbound_sanitizer_can_load_spark_character_from_module_root(self) -> None:
+        existing_module = sys.modules.pop("spark_character", None)
+        original_path = list(sys.path)
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                package_dir = root / "src" / "spark_character"
+                package_dir.mkdir(parents=True)
+                (package_dir / "__init__.py").write_text(
+                    "def sanitize_voice_output(text):\n"
+                    "    return text.replace('CUSTOM_SENTINEL', 'loaded from SPARK_CHARACTER_ROOT')\n",
+                    encoding="utf-8",
+                )
+
+                with patch.dict(os.environ, {"SPARK_CHARACTER_ROOT": str(root)}):
+                    guarded = prepare_outbound_text(
+                        text="CUSTOM_SENTINEL",
+                        bridge_mode=None,
+                        max_reply_chars=4000,
+                        redact_secret_like_replies=False,
+                    )
+
+            self.assertEqual(guarded["text"], "loaded from SPARK_CHARACTER_ROOT")
+            self.assertIn("replace_em_dashes", guarded["actions"])
+        finally:
+            sys.path[:] = original_path
+            sys.modules.pop("spark_character", None)
+            if existing_module is not None:
+                sys.modules["spark_character"] = existing_module
 
     def test_outbound_no_op_when_no_em_dashes(self) -> None:
         guarded = prepare_outbound_text(

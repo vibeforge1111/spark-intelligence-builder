@@ -34,6 +34,7 @@ from spark_intelligence.browser.service import (
     build_browser_tab_wait_payload,
 )
 from spark_intelligence.capability_router import build_capability_router_prompt_context
+from spark_intelligence.character_runtime import ensure_spark_character_path
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.harness_registry import build_harness_prompt_context
 from spark_intelligence.memory import (
@@ -1496,6 +1497,7 @@ def try_spark_character_fallback(
     if not text:
         return None
     try:
+        ensure_spark_character_path()
         from spark_character import (  # type: ignore
             ProviderSpec,
             generate,
@@ -1554,6 +1556,7 @@ def _resolve_chip_or_persona(*, kind: str | None, surface: str | None = None):
     (short declarative sentences for voice, popup-friendly for browser, etc).
     """
     try:
+        ensure_spark_character_path()
         from spark_character import (  # type: ignore
             PersonaSpec,
             load_chip_by_id,
@@ -1608,6 +1611,7 @@ def _spark_character_provider_tools(provider) -> list[dict] | None:
 
 def _resolve_spark_character_provider(env_map: dict[str, str]):
     try:
+        ensure_spark_character_path()
         from spark_character import ProviderSpec  # type: ignore
     except Exception:
         return None
@@ -1719,6 +1723,7 @@ def _load_spark_character_persona() -> str:
         return _SPARK_CHARACTER_PERSONA_CACHE
     # Try chip-rendered path first
     try:
+        ensure_spark_character_path()
         from spark_character import load_chip_by_id, render_chip_to_system_prompt  # type: ignore
         chip_id = _resolve_active_personality_chip_id()
         chip = load_chip_by_id(chip_id)
@@ -1730,6 +1735,7 @@ def _load_spark_character_persona() -> str:
         pass
     # Fallback: flat MD persona artifact
     try:
+        ensure_spark_character_path()
         from spark_character import load_persona  # type: ignore
         _SPARK_CHARACTER_PERSONA_CACHE = load_persona().system_prompt
     except Exception:
@@ -1771,6 +1777,7 @@ def _render_direct_provider_chat_fallback(
     inferred_surface = "browser_extension" if browser_search_context_extra else None
     if inferred_surface:
         try:
+            ensure_spark_character_path()
             from spark_character.persona import load_surface_overlay  # type: ignore
             surface_overlay = load_surface_overlay(inferred_surface)
             if surface_overlay:

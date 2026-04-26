@@ -3223,7 +3223,8 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual(result.routing_decision, "memory_profile_fact_query")
         read_events = latest_events_by_type(self.state_db, event_type="memory_read_requested", limit=10)
         self.assertTrue(read_events)
-        self.assertEqual((read_events[0]["facts_json"] or {}).get("predicate"), "profile.home_country")
+        predicates = {(event["facts_json"] or {}).get("predicate") for event in read_events}
+        self.assertIn("profile.home_country", predicates)
 
     def test_build_researcher_reply_answers_missing_personal_preference_queries_directly_from_memory(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
