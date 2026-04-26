@@ -114,6 +114,7 @@ from spark_intelligence.personality.loader import (
     build_personality_system_directive,
     build_telegram_persona_reply_contract,
 )
+from spark_intelligence.security.prompt_boundaries import sanitize_prompt_boundary_text
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_runtime_state
 from spark_intelligence.system_registry import (
@@ -3210,13 +3211,13 @@ def _build_contextual_task(
     if spark_self_knowledge_context:
         lines.extend([spark_self_knowledge_context, ""])
     if system_registry_context:
-        lines.extend([system_registry_context, ""])
+        lines.extend([sanitize_prompt_boundary_text(system_registry_context), ""])
     if mission_control_context:
-        lines.extend([mission_control_context, ""])
+        lines.extend([sanitize_prompt_boundary_text(mission_control_context), ""])
     if capability_router_context:
-        lines.extend([capability_router_context, ""])
+        lines.extend([sanitize_prompt_boundary_text(capability_router_context), ""])
     if harness_context:
-        lines.extend([harness_context, ""])
+        lines.extend([sanitize_prompt_boundary_text(harness_context), ""])
     if personality_profile:
         personality_ctx = build_personality_context(personality_profile)
         if personality_ctx:
@@ -3226,9 +3227,9 @@ def _build_contextual_task(
             if telegram_persona_contract:
                 lines.extend(["[Telegram reply contract]", telegram_persona_contract, ""])
     if personality_context_extra:
-        lines.extend([personality_context_extra, ""])
+        lines.extend([sanitize_prompt_boundary_text(personality_context_extra), ""])
     if recent_conversation_context:
-        lines.extend([recent_conversation_context, ""])
+        lines.extend([sanitize_prompt_boundary_text(recent_conversation_context), ""])
     attachment_inventory_context = _build_attachment_inventory_context(attachment_context=attachment_context)
     if attachment_inventory_context:
         lines.extend([
@@ -3240,11 +3241,11 @@ def _build_contextual_task(
             "",
         ])
     if user_instructions_context:
-        lines.extend([user_instructions_context, ""])
+        lines.extend([sanitize_prompt_boundary_text(user_instructions_context), ""])
     if browser_search_context_extra:
-        lines.extend([browser_search_context_extra, ""])
+        lines.extend([sanitize_prompt_boundary_text(browser_search_context_extra), ""])
     if iteration_draft_context:
-        lines.extend([iteration_draft_context, ""])
+        lines.extend([sanitize_prompt_boundary_text(iteration_draft_context), ""])
     if active_chip_evaluate:
         chip_guidance = _summarize_active_chip_guidance(str(active_chip_evaluate.get("analysis") or ""))
         lines.extend(
@@ -3280,7 +3281,7 @@ def _build_contextual_task(
     lines.extend(
         [
         "[User message]",
-        user_message,
+        sanitize_prompt_boundary_text(user_message),
         ]
     )
     return "\n".join(lines)
