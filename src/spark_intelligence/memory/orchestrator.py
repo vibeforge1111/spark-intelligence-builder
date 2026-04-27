@@ -426,6 +426,45 @@ class MemoryRetrievalQueryResult:
 
 
 @dataclass(frozen=True)
+class MemoryKernelReadResult:
+    sdk_module: str
+    query: str
+    subject: str | None
+    predicate: str | None
+    read_method: str
+    source_class: str
+    answer: str | None
+    records: list[dict[str, Any]]
+    provenance: list[dict[str, Any]]
+    runtime: dict[str, Any]
+    abstained: bool
+    reason: str | None
+    ignored_stale_records: list[dict[str, Any]]
+    read_result: MemoryReadResult
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "sdk_module": self.sdk_module,
+            "query": self.query,
+            "subject": self.subject,
+            "predicate": self.predicate,
+            "read_method": self.read_method,
+            "source_class": self.source_class,
+            "answer": self.answer,
+            "records": self.records,
+            "provenance": self.provenance,
+            "runtime": self.runtime,
+            "abstained": self.abstained,
+            "reason": self.reason,
+            "ignored_stale_records": self.ignored_stale_records,
+            "read_result": MemorySdkSmokeResult._read_payload(self.read_result),
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_payload(), indent=2)
+
+
+@dataclass(frozen=True)
 class StructuredEvidenceCurrentStateRule:
     fact_name: str
     canonical_template: str
@@ -1132,6 +1171,321 @@ def inspect_memory_sdk_runtime(
     return payload
 
 
+class MemoryKernelAdapter:
+    """Single read surface for Builder's live memory kernel."""
+
+    def __init__(
+        self,
+        *,
+        config_manager: ConfigManager,
+        state_db: StateDB,
+        sdk_module: str | None = None,
+        actor_id: str = "memory_cli",
+    ) -> None:
+        self.config_manager = config_manager
+        self.state_db = state_db
+        self.actor_id = actor_id
+        self.sdk_module = str(
+            sdk_module
+            or config_manager.get_path("spark.memory.sdk_module", default=DEFAULT_SDK_MODULE)
+            or DEFAULT_SDK_MODULE
+        )
+        self.runtime = inspect_memory_sdk_runtime(config_manager=config_manager, sdk_module=self.sdk_module)
+        self.client = _load_sdk_client_for_module(module_name=self.sdk_module, home_path=config_manager.paths.home)
+
+    def read_current_state(
+        self,
+        *,
+        subject: str,
+        predicate: str | None,
+        predicate_prefix: str | None = None,
+        query: str | None = None,
+        session_id: str | None,
+        turn_id: str | None,
+        source_surface: str,
+        record_activity: bool = True,
+        shadow_only: bool = False,
+    ) -> MemoryKernelReadResult:
+        method = "get_current_state"
+        if self.client is None:
+            read_result = _memory_kernel_abstained_read_result(method=method, reason="sdk_unavailable", shadow_only=shadow_only)
+            if record_activity:
+                _record_memory_read_requested_subject(
+                    state_db=self.state_db,
+                    method=method,
+                    subject=subject,
+                    predicate=predicate,
+                    predicate_prefix=predicate_prefix,
+                    query=query,
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    actor_id=self.actor_id,
+                )
+                _record_memory_read_event(
+                    state_db=self.state_db,
+                    result=read_result,
+                    human_id=_human_id_from_subject(subject),
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    actor_id=self.actor_id,
+                )
+            return _memory_kernel_result(
+                sdk_module=self.sdk_module,
+                runtime=self.runtime,
+                query=query or "",
+                subject=subject,
+                predicate=predicate,
+                read_result=read_result,
+            )
+        _, read_result = _get_current_state_with_subject_fallback(
+            client=self.client,
+            state_db=self.state_db,
+            subject_candidates=_subject_fallback_candidates(subject),
+            predicate=predicate,
+            predicate_prefix=predicate_prefix,
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=self.actor_id,
+            source_surface=source_surface,
+            shadow_only=shadow_only,
+        )
+        if record_activity:
+            _record_memory_read_event(
+                state_db=self.state_db,
+                result=read_result,
+                human_id=_human_id_from_subject(subject),
+                session_id=session_id,
+                turn_id=turn_id,
+                actor_id=self.actor_id,
+            )
+        return _memory_kernel_result(
+            sdk_module=self.sdk_module,
+            runtime=self.runtime,
+            query=query or "",
+            subject=subject,
+            predicate=predicate,
+            read_result=read_result,
+        )
+
+    def read_historical_state(
+        self,
+        *,
+        subject: str,
+        predicate: str,
+        as_of: str,
+        query: str | None = None,
+        session_id: str | None,
+        turn_id: str | None,
+        source_surface: str,
+        record_activity: bool = True,
+        shadow_only: bool = False,
+    ) -> MemoryKernelReadResult:
+        method = "get_historical_state"
+        if self.client is None:
+            read_result = _memory_kernel_abstained_read_result(method=method, reason="sdk_unavailable", shadow_only=shadow_only)
+            if record_activity:
+                _record_memory_read_event(
+                    state_db=self.state_db,
+                    result=read_result,
+                    human_id=_human_id_from_subject(subject),
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    actor_id=self.actor_id,
+                )
+            return _memory_kernel_result(
+                sdk_module=self.sdk_module,
+                runtime=self.runtime,
+                query=query or "",
+                subject=subject,
+                predicate=predicate,
+                read_result=read_result,
+            )
+        _, read_result = _get_historical_state_with_subject_fallback(
+            client=self.client,
+            state_db=self.state_db,
+            subject_candidates=_subject_fallback_candidates(subject),
+            predicate=predicate,
+            as_of=as_of,
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=self.actor_id,
+            source_surface=source_surface,
+            shadow_only=shadow_only,
+        )
+        if record_activity:
+            _record_memory_read_event(
+                state_db=self.state_db,
+                result=read_result,
+                human_id=_human_id_from_subject(subject),
+                session_id=session_id,
+                turn_id=turn_id,
+                actor_id=self.actor_id,
+            )
+        return _memory_kernel_result(
+            sdk_module=self.sdk_module,
+            runtime=self.runtime,
+            query=query or "",
+            subject=subject,
+            predicate=predicate,
+            read_result=read_result,
+        )
+
+    def search(
+        self,
+        *,
+        method: str,
+        query: str,
+        subject: str | None = None,
+        predicate: str | None = None,
+        limit: int = 5,
+        session_id: str | None,
+        turn_id: str | None,
+        source_surface: str,
+        record_activity: bool = True,
+        shadow_only: bool = False,
+    ) -> MemoryKernelReadResult:
+        normalized_query = str(query or "").strip()
+        normalized_subject = _optional_string(subject)
+        normalized_predicate = _optional_string(predicate)
+        if self.client is None:
+            read_result = _memory_kernel_abstained_read_result(method=method, reason="sdk_unavailable", shadow_only=shadow_only)
+            if record_activity:
+                _record_memory_read_event(
+                    state_db=self.state_db,
+                    result=read_result,
+                    human_id=_human_id_from_subject(normalized_subject or ""),
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    actor_id=self.actor_id,
+                )
+            return _memory_kernel_result(
+                sdk_module=self.sdk_module,
+                runtime=self.runtime,
+                query=normalized_query,
+                subject=normalized_subject,
+                predicate=normalized_predicate,
+                read_result=read_result,
+            )
+        if record_activity:
+            _record_memory_read_requested_subject(
+                state_db=self.state_db,
+                method=method,
+                subject=normalized_subject or "",
+                predicate=normalized_predicate,
+                query=normalized_query,
+                session_id=session_id,
+                turn_id=turn_id,
+                actor_id=self.actor_id,
+            )
+        raw = _call_sdk_method(
+            self.client,
+            method,
+            {
+                "query": normalized_query,
+                "subject": normalized_subject,
+                "predicate": normalized_predicate,
+                "limit": limit,
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "timestamp": _now_iso(),
+                "metadata": {"source_surface": source_surface},
+            },
+        )
+        read_result = _normalize_read_result(raw=raw, method=method, shadow_only=shadow_only)
+        if record_activity:
+            _record_memory_read_event(
+                state_db=self.state_db,
+                result=read_result,
+                human_id=_human_id_from_subject(normalized_subject or ""),
+                session_id=session_id,
+                turn_id=turn_id,
+                actor_id=self.actor_id,
+            )
+        return _memory_kernel_result(
+            sdk_module=self.sdk_module,
+            runtime=self.runtime,
+            query=normalized_query,
+            subject=normalized_subject,
+            predicate=normalized_predicate,
+            read_result=read_result,
+        )
+
+
+def read_memory_kernel(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    method: str,
+    query: str = "",
+    subject: str | None = None,
+    predicate: str | None = None,
+    predicate_prefix: str | None = None,
+    as_of: str | None = None,
+    limit: int = 5,
+    sdk_module: str | None = None,
+    actor_id: str = "memory_cli",
+    session_id: str | None = None,
+    turn_id: str | None = None,
+    source_surface: str = "memory_kernel",
+    record_activity: bool = True,
+) -> MemoryKernelReadResult:
+    adapter = MemoryKernelAdapter(
+        config_manager=config_manager,
+        state_db=state_db,
+        sdk_module=sdk_module,
+        actor_id=actor_id,
+    )
+    normalized_method = str(method or "").strip().lower()
+    normalized_subject = _optional_string(subject) or ""
+    if normalized_method == "get_current_state":
+        return adapter.read_current_state(
+            subject=normalized_subject,
+            predicate=_optional_string(predicate),
+            predicate_prefix=predicate_prefix,
+            query=query,
+            session_id=session_id or f"memory-kernel:{actor_id}",
+            turn_id=turn_id or f"{actor_id}:get-current-state",
+            source_surface=source_surface,
+            record_activity=record_activity,
+        )
+    if normalized_method == "get_historical_state":
+        return adapter.read_historical_state(
+            subject=normalized_subject,
+            predicate=_optional_string(predicate) or "",
+            as_of=_optional_string(as_of) or "",
+            query=query,
+            session_id=session_id or f"memory-kernel:{actor_id}",
+            turn_id=turn_id or f"{actor_id}:get-historical-state",
+            source_surface=source_surface,
+            record_activity=record_activity,
+        )
+    if normalized_method in {"retrieve_evidence", "retrieve_events"}:
+        return adapter.search(
+            method=normalized_method,
+            query=query,
+            subject=_optional_string(subject),
+            predicate=_optional_string(predicate),
+            limit=limit,
+            session_id=session_id or f"memory-kernel:{actor_id}",
+            turn_id=turn_id or f"{actor_id}:{normalized_method}",
+            source_surface=source_surface,
+            record_activity=record_activity,
+        )
+    read_result = _memory_kernel_abstained_read_result(
+        method=normalized_method or "unknown",
+        reason="unsupported_memory_kernel_method",
+        shadow_only=False,
+    )
+    return _memory_kernel_result(
+        sdk_module=adapter.sdk_module,
+        runtime=adapter.runtime,
+        query=query,
+        subject=_optional_string(subject),
+        predicate=_optional_string(predicate),
+        read_result=read_result,
+    )
+
+
 def lookup_current_state_in_memory(
     *,
     config_manager: ConfigManager,
@@ -1141,71 +1495,24 @@ def lookup_current_state_in_memory(
     sdk_module: str | None = None,
     actor_id: str = "memory_cli",
 ) -> MemoryCurrentStateLookupResult:
-    module_name = str(sdk_module or config_manager.get_path("spark.memory.sdk_module", default=DEFAULT_SDK_MODULE) or DEFAULT_SDK_MODULE)
-    runtime = inspect_memory_sdk_runtime(config_manager=config_manager, sdk_module=module_name)
-    client = _load_sdk_client_for_module(module_name=module_name, home_path=config_manager.paths.home)
-    if client is None:
-        read_result = MemoryReadResult(
-            status="abstained",
-            method="get_current_state",
-            memory_role="current_state",
-            records=[],
-            provenance=[],
-            retrieval_trace=None,
-            answer_explanation=None,
-            abstained=True,
-            reason="sdk_unavailable",
-            shadow_only=False,
-        )
-        _record_memory_read_requested_subject(
-            state_db=state_db,
-            method="get_current_state",
-            subject=subject,
-            predicate=predicate,
-            session_id=f"memory-lookup:{actor_id}",
-            turn_id=f"{actor_id}:lookup",
-            actor_id=actor_id,
-        )
-        _record_memory_read_event(
-            state_db=state_db,
-            result=read_result,
-            human_id=_human_id_from_subject(subject),
-            session_id=f"memory-lookup:{actor_id}",
-            turn_id=f"{actor_id}:lookup",
-            actor_id=actor_id,
-        )
-        return MemoryCurrentStateLookupResult(
-            sdk_module=module_name,
-            subject=subject,
-            predicate=predicate,
-            runtime=runtime,
-            read_result=read_result,
-        )
-    _, read_result = _get_current_state_with_subject_fallback(
-        client=client,
+    kernel = MemoryKernelAdapter(
+        config_manager=config_manager,
         state_db=state_db,
-        subject_candidates=_subject_fallback_candidates(subject),
-        predicate=predicate,
-        predicate_prefix=None,
-        session_id=f"memory-lookup:{actor_id}",
-        turn_id=f"{actor_id}:lookup",
+        sdk_module=sdk_module,
         actor_id=actor_id,
-        source_surface="memory_cli_lookup",
-    )
-    _record_memory_read_event(
-        state_db=state_db,
-        result=read_result,
-        human_id=_human_id_from_subject(subject),
-        session_id=f"memory-lookup:{actor_id}",
-        turn_id=f"{actor_id}:lookup",
-        actor_id=actor_id,
-    )
-    return MemoryCurrentStateLookupResult(
-        sdk_module=module_name,
+    ).read_current_state(
         subject=subject,
         predicate=predicate,
-        runtime=runtime,
-        read_result=read_result,
+        session_id=f"memory-lookup:{actor_id}",
+        turn_id=f"{actor_id}:lookup",
+        source_surface="memory_cli_lookup",
+    )
+    return MemoryCurrentStateLookupResult(
+        sdk_module=kernel.sdk_module,
+        subject=subject,
+        predicate=predicate,
+        runtime=kernel.runtime,
+        read_result=kernel.read_result,
     )
 
 
@@ -1219,64 +1526,26 @@ def lookup_historical_state_in_memory(
     sdk_module: str | None = None,
     actor_id: str = "memory_cli",
 ) -> MemoryHistoricalStateLookupResult:
-    module_name = str(sdk_module or config_manager.get_path("spark.memory.sdk_module", default=DEFAULT_SDK_MODULE) or DEFAULT_SDK_MODULE)
-    runtime = inspect_memory_sdk_runtime(config_manager=config_manager, sdk_module=module_name)
-    client = _load_sdk_client_for_module(module_name=module_name, home_path=config_manager.paths.home)
-    if client is None:
-        read_result = MemoryReadResult(
-            status="abstained",
-            method="get_historical_state",
-            memory_role="current_state",
-            records=[],
-            provenance=[],
-            retrieval_trace=None,
-            answer_explanation=None,
-            abstained=True,
-            reason="sdk_unavailable",
-            shadow_only=False,
-        )
-        _record_memory_read_event(
-            state_db=state_db,
-            result=read_result,
-            human_id=_human_id_from_subject(subject),
-            session_id=f"memory-history:{actor_id}",
-            turn_id=f"{actor_id}:lookup-history",
-            actor_id=actor_id,
-        )
-        return MemoryHistoricalStateLookupResult(
-            sdk_module=module_name,
-            subject=subject,
-            predicate=predicate,
-            as_of=as_of,
-            runtime=runtime,
-            read_result=read_result,
-        )
-    _, read_result = _get_historical_state_with_subject_fallback(
-        client=client,
+    kernel = MemoryKernelAdapter(
+        config_manager=config_manager,
         state_db=state_db,
-        subject_candidates=_subject_fallback_candidates(subject),
-        predicate=predicate,
-        as_of=as_of,
-        session_id=f"memory-history:{actor_id}",
-        turn_id=f"{actor_id}:lookup-history",
+        sdk_module=sdk_module,
         actor_id=actor_id,
-        source_surface="memory_cli_lookup_historical",
-    )
-    _record_memory_read_event(
-        state_db=state_db,
-        result=read_result,
-        human_id=_human_id_from_subject(subject),
-        session_id=f"memory-history:{actor_id}",
-        turn_id=f"{actor_id}:lookup-history",
-        actor_id=actor_id,
-    )
-    return MemoryHistoricalStateLookupResult(
-        sdk_module=module_name,
+    ).read_historical_state(
         subject=subject,
         predicate=predicate,
         as_of=as_of,
-        runtime=runtime,
-        read_result=read_result,
+        session_id=f"memory-history:{actor_id}",
+        turn_id=f"{actor_id}:lookup-history",
+        source_surface="memory_cli_lookup_historical",
+    )
+    return MemoryHistoricalStateLookupResult(
+        sdk_module=kernel.sdk_module,
+        subject=subject,
+        predicate=predicate,
+        as_of=as_of,
+        runtime=kernel.runtime,
+        read_result=kernel.read_result,
     )
 
 
@@ -3918,6 +4187,129 @@ def _disabled_read_result(reason: str = "memory_disabled") -> MemoryReadResult:
     )
 
 
+def _memory_kernel_abstained_read_result(*, method: str, reason: str, shadow_only: bool) -> MemoryReadResult:
+    return MemoryReadResult(
+        status="abstained",
+        method=method,
+        memory_role="current_state" if method in {"get_current_state", "get_historical_state"} else "unknown",
+        records=[],
+        provenance=[],
+        retrieval_trace=None,
+        answer_explanation=None,
+        abstained=True,
+        reason=reason,
+        shadow_only=shadow_only,
+    )
+
+
+def _memory_kernel_result(
+    *,
+    sdk_module: str,
+    runtime: dict[str, Any],
+    query: str,
+    subject: str | None,
+    predicate: str | None,
+    read_result: MemoryReadResult,
+) -> MemoryKernelReadResult:
+    return MemoryKernelReadResult(
+        sdk_module=sdk_module,
+        query=query,
+        subject=subject,
+        predicate=predicate,
+        read_method=read_result.method,
+        source_class=_memory_kernel_source_class(read_result),
+        answer=_memory_kernel_answer(read_result),
+        records=read_result.records,
+        provenance=read_result.provenance,
+        runtime=runtime,
+        abstained=read_result.abstained,
+        reason=read_result.reason,
+        ignored_stale_records=_memory_kernel_stale_records(read_result),
+        read_result=read_result,
+    )
+
+
+def _memory_kernel_source_class(read_result: MemoryReadResult) -> str:
+    if read_result.abstained:
+        return "abstained"
+    if read_result.method == "get_current_state":
+        return "current_state"
+    if read_result.method == "get_historical_state":
+        return "historical_state"
+    if read_result.method == "retrieve_events":
+        return "event"
+    if read_result.method == "retrieve_evidence":
+        if read_result.memory_role in {"structured_evidence", "belief_candidate", "raw_episode"}:
+            return read_result.memory_role
+        return "evidence"
+    if read_result.method == "explain_answer":
+        return read_result.memory_role if read_result.memory_role != "unknown" else "answer_explanation"
+    return read_result.memory_role if read_result.memory_role != "unknown" else "memory"
+
+
+def _memory_kernel_answer(read_result: MemoryReadResult) -> str | None:
+    explanation = read_result.answer_explanation or {}
+    for key in ("answer", "explanation"):
+        value = _optional_string(explanation.get(key))
+        if value:
+            return value
+    if not read_result.records:
+        return None
+    first = read_result.records[0]
+    for key in ("answer", "value", "text", "summary"):
+        value = _optional_string(first.get(key))
+        if value:
+            return value
+    return None
+
+
+def _memory_kernel_stale_records(read_result: MemoryReadResult) -> list[dict[str, Any]]:
+    candidates = [*read_result.records, *read_result.provenance]
+    stale: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for record in candidates:
+        if not _memory_kernel_record_is_stale(record):
+            continue
+        key = json.dumps(record, sort_keys=True, default=str)
+        if key in seen:
+            continue
+        seen.add(key)
+        stale.append(record)
+    return stale
+
+
+def _memory_kernel_record_is_stale(record: dict[str, Any]) -> bool:
+    lifecycle = record.get("lifecycle")
+    metadata = record.get("metadata")
+    if not isinstance(lifecycle, dict):
+        lifecycle = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    text_fields = " ".join(
+        str(value or "").strip().lower()
+        for value in (
+            lifecycle.get("status"),
+            lifecycle.get("state"),
+            metadata.get("status"),
+            metadata.get("state"),
+            metadata.get("current_state_status"),
+            record.get("status"),
+            record.get("state"),
+        )
+    )
+    if any(marker in text_fields for marker in ("archived", "deleted", "superseded", "historical", "stale")):
+        return True
+    if record.get("deleted_at") or record.get("archived_at") or record.get("invalidated_at"):
+        return True
+    if lifecycle.get("deleted_at") or lifecycle.get("archived_at") or lifecycle.get("invalidated_at"):
+        return True
+    if metadata.get("deleted_at") or metadata.get("archived_at") or metadata.get("invalidated_at"):
+        return True
+    if record.get("is_current") is False or metadata.get("is_current") is False:
+        return True
+    return False
+
+
 def _retrieve_memory_query_in_memory(
     *,
     config_manager: ConfigManager,
@@ -3931,94 +4323,36 @@ def _retrieve_memory_query_in_memory(
     actor_id: str,
     record_activity: bool,
 ) -> MemoryRetrievalQueryResult:
-    module_name = str(sdk_module or config_manager.get_path("spark.memory.sdk_module", default=DEFAULT_SDK_MODULE) or DEFAULT_SDK_MODULE)
-    runtime = inspect_memory_sdk_runtime(config_manager=config_manager, sdk_module=module_name)
-    client = _load_sdk_client_for_module(module_name=module_name, home_path=config_manager.paths.home)
     normalized_query = str(query or "").strip()
     normalized_subject = _optional_string(subject)
     normalized_predicate = _optional_string(predicate)
     session_id = f"{'memory-retrieval' if record_activity else 'memory-internal'}:{actor_id}"
     turn_id = f"{actor_id}:{method}"
-    if client is None:
-        read_result = MemoryReadResult(
-            status="abstained",
-            method=method,
-            memory_role="current_state",
-            records=[],
-            provenance=[],
-            retrieval_trace=None,
-            answer_explanation=None,
-            abstained=True,
-            reason="sdk_unavailable",
-            shadow_only=False,
-        )
-        if record_activity:
-            _record_memory_read_event(
-                state_db=state_db,
-                result=read_result,
-                human_id=_human_id_from_subject(normalized_subject or ""),
-                session_id=session_id,
-                turn_id=turn_id,
-                actor_id=actor_id,
-            )
-        return MemoryRetrievalQueryResult(
-            sdk_module=module_name,
-            method=method,
-            query=normalized_query,
-            subject=normalized_subject,
-            predicate=normalized_predicate,
-            limit=limit,
-            runtime=runtime,
-            read_result=read_result,
-        )
-    if record_activity:
-        _record_memory_read_requested_subject(
-            state_db=state_db,
-            method=method,
-            subject=normalized_subject or "",
-            predicate=normalized_predicate,
-            query=normalized_query,
-            session_id=session_id,
-            turn_id=turn_id,
-            actor_id=actor_id,
-        )
-    raw = _call_sdk_method(
-        client,
-        method,
-        {
-            "query": normalized_query,
-            "subject": normalized_subject,
-            "predicate": normalized_predicate,
-            "limit": limit,
-            "session_id": session_id,
-            "turn_id": turn_id,
-            "timestamp": _now_iso(),
-            "metadata": {
-                "source_surface": (
-                    f"memory_cli_{method}" if record_activity else f"memory_internal_{method}"
-                )
-            },
-        },
-    )
-    read_result = _normalize_read_result(raw=raw, method=method, shadow_only=False)
-    if record_activity:
-        _record_memory_read_event(
-            state_db=state_db,
-            result=read_result,
-            human_id=_human_id_from_subject(normalized_subject or ""),
-            session_id=session_id,
-            turn_id=turn_id,
-            actor_id=actor_id,
-        )
-    return MemoryRetrievalQueryResult(
-        sdk_module=module_name,
+    kernel = MemoryKernelAdapter(
+        config_manager=config_manager,
+        state_db=state_db,
+        sdk_module=sdk_module,
+        actor_id=actor_id,
+    ).search(
         method=method,
         query=normalized_query,
         subject=normalized_subject,
         predicate=normalized_predicate,
         limit=limit,
-        runtime=runtime,
-        read_result=read_result,
+        session_id=session_id,
+        turn_id=turn_id,
+        source_surface=f"memory_cli_{method}" if record_activity else f"memory_internal_{method}",
+        record_activity=record_activity,
+    )
+    return MemoryRetrievalQueryResult(
+        sdk_module=kernel.sdk_module,
+        method=method,
+        query=normalized_query,
+        subject=normalized_subject,
+        predicate=normalized_predicate,
+        limit=limit,
+        runtime=kernel.runtime,
+        read_result=kernel.read_result,
     )
 
 

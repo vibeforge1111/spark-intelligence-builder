@@ -17,6 +17,7 @@ from spark_intelligence.memory import (
     inspect_human_memory_in_memory,
     lookup_current_state_in_memory,
     lookup_historical_state_in_memory,
+    read_memory_kernel,
     retrieve_memory_events_in_memory,
     run_memory_sdk_maintenance,
     run_memory_sdk_smoke_test,
@@ -65,6 +66,8 @@ class _FakeMemoryClient:
         self.observation_calls: list[dict[str, object]] = []
         self.event_calls: list[dict[str, object]] = []
         self.current_state_calls: list[dict[str, object]] = []
+        self.evidence_calls: list[dict[str, object]] = []
+        self.retrieval_event_calls: list[dict[str, object]] = []
 
     def write_observation(self, **payload):
         self.observation_calls.append(payload)
@@ -104,6 +107,39 @@ class _FakeMemoryClient:
             "provenance": [{"memory_role": "current_state", "source": "fake_sdk"}],
             "retrieval_trace": {"trace_id": "mem-trace-read"},
             "answer_explanation": {"method": "get_current_state"},
+        }
+
+    def retrieve_evidence(self, **payload):
+        self.evidence_calls.append(payload)
+        return {
+            "status": "supported",
+            "memory_role": "structured_evidence",
+            "records": [
+                {
+                    "subject": payload.get("subject"),
+                    "predicate": payload.get("predicate") or "profile.current_focus",
+                    "value": "persistent memory quality evaluation",
+                    "text": "Current focus is persistent memory quality evaluation.",
+                }
+            ],
+            "provenance": [{"memory_role": "structured_evidence", "source": "fake_sdk"}],
+            "retrieval_trace": {"trace_id": "mem-trace-evidence"},
+        }
+
+    def retrieve_events(self, **payload):
+        self.retrieval_event_calls.append(payload)
+        return {
+            "status": "supported",
+            "memory_role": "event",
+            "records": [
+                {
+                    "subject": payload.get("subject"),
+                    "predicate": payload.get("predicate") or "memory.maintenance",
+                    "text": "Memory maintenance succeeded.",
+                }
+            ],
+            "provenance": [{"memory_role": "event", "source": "fake_sdk"}],
+            "retrieval_trace": {"trace_id": "mem-trace-events"},
         }
 
 
@@ -146,6 +182,33 @@ class _InvalidMemoryRoleClient(_FakeMemoryClient):
         }
 
 
+class _StaleEvidenceMemoryClient(_FakeMemoryClient):
+    def retrieve_evidence(self, **payload):
+        self.evidence_calls.append(payload)
+        return {
+            "status": "supported",
+            "memory_role": "structured_evidence",
+            "records": [
+                {
+                    "subject": payload.get("subject"),
+                    "predicate": "profile.current_focus",
+                    "value": "persistent memory quality evaluation",
+                    "text": "Current focus is persistent memory quality evaluation.",
+                }
+            ],
+            "provenance": [
+                {"memory_role": "structured_evidence", "source": "fake_sdk", "status": "current"},
+                {
+                    "memory_role": "structured_evidence",
+                    "source": "fake_sdk",
+                    "status": "superseded",
+                    "value": "context capsule verification",
+                },
+            ],
+            "retrieval_trace": {"trace_id": "mem-trace-evidence"},
+        }
+
+
 class _MaintenanceMemoryClient(_FakeMemoryClient):
     def __init__(self) -> None:
         super().__init__()
@@ -176,6 +239,54 @@ class _MaintenanceMemoryClient(_FakeMemoryClient):
 
 
 class MemoryOrchestratorTests(SparkTestCase):
+    def test_memory_kernel_current_state_returns_unified_schema(self) -> None:
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ):
+            result = read_memory_kernel(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                method="get_current_state",
+                subject="human:test",
+                predicate="profile.current_focus",
+                query="What is my current focus?",
+                actor_id="test",
+            )
+
+        self.assertEqual(result.read_method, "get_current_state")
+        self.assertEqual(result.source_class, "current_state")
+        self.assertFalse(result.abstained)
+        self.assertEqual(result.answer, "0.35")
+        self.assertEqual(result.records[0]["subject"], "human:test")
+        self.assertEqual(result.provenance[0]["source"], "fake_sdk")
+        self.assertEqual(result.ignored_stale_records, [])
+        self.assertEqual(len(fake_client.current_state_calls), 1)
+
+    def test_memory_kernel_evidence_marks_stale_provenance_without_using_it_as_answer(self) -> None:
+        fake_client = _StaleEvidenceMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ):
+            result = read_memory_kernel(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                method="retrieve_evidence",
+                subject="human:test",
+                predicate="profile.current_focus",
+                query="What should we evaluate next?",
+                actor_id="test",
+            )
+
+        self.assertEqual(result.read_method, "retrieve_evidence")
+        self.assertEqual(result.source_class, "structured_evidence")
+        self.assertEqual(result.answer, "persistent memory quality evaluation")
+        self.assertEqual(len(result.ignored_stale_records), 1)
+        self.assertEqual(result.ignored_stale_records[0]["value"], "context capsule verification")
+        self.assertEqual(len(fake_client.evidence_calls), 1)
+
     def test_profile_city_detection_and_write_use_structured_current_state_observation(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
