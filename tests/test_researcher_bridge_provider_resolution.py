@@ -70,6 +70,90 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
 
         self.assertEqual(query, "official IANA page about reserved example domains")
 
+    def test_context_source_debug_query_explains_previous_capsule_ledger(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="context_capsule_compiled",
+            component="researcher_bridge",
+            summary="Compiled Spark context capsule for provider prompt.",
+            request_id="req-previous-answer",
+            channel_id="telegram",
+            session_id="session:telegram:dm:111",
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            actor_id="researcher_bridge",
+            reason_code="context_capsule_compiled",
+            facts={
+                "source_counts": {
+                    "current_state": 2,
+                    "diagnostics": 8,
+                    "recent_conversation": 0,
+                    "workflow_state": 6,
+                },
+                "source_ledger": [
+                    {
+                        "source": "current_state",
+                        "priority": 1,
+                        "role": "authority",
+                        "count": 2,
+                        "present": True,
+                    },
+                    {
+                        "source": "diagnostics",
+                        "priority": 2,
+                        "role": "authority",
+                        "count": 8,
+                        "present": True,
+                    },
+                    {
+                        "source": "recent_conversation",
+                        "priority": 3,
+                        "role": "supporting",
+                        "count": 0,
+                        "present": False,
+                    },
+                    {
+                        "source": "workflow_state",
+                        "priority": 4,
+                        "role": "advisory",
+                        "count": 6,
+                        "present": True,
+                    },
+                ],
+            },
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider should not run for source debug"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-source-debug",
+                agent_id="agent:human:telegram:111",
+                human_id="human:telegram:111",
+                session_id="session:telegram:dm:111",
+                channel_kind="telegram",
+                user_message="Why did you answer that?",
+            )
+
+        self.assertEqual(result.routing_decision, "context_source_debug")
+        self.assertEqual(result.output_keepability, "operator_debug_only")
+        self.assertIn("current_state: authority, 2 items", result.reply_text)
+        self.assertIn("diagnostics: authority, 8 items", result.reply_text)
+        self.assertIn("workflow_state: advisory, 6 items", result.reply_text)
+        self.assertIn("Current-state facts are the authority", result.reply_text)
+
+        events = latest_events_by_type(
+            self.state_db,
+            event_type="tool_result_received",
+            limit=1,
+        )
+        self.assertEqual(events[0]["reason_code"], "context_source_debug")
+        self.assertEqual(events[0]["component"], "researcher_bridge")
+        self.assertEqual(events[0]["facts_json"]["explained_request_id"], "req-previous-answer")
+
     def test_normalize_browser_search_query_extracts_domain_from_browse_request(self) -> None:
         query = _normalize_browser_search_query(
             "Go to vibeship.co and tell me what you think."

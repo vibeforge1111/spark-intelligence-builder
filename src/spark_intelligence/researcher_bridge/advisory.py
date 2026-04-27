@@ -4373,9 +4373,10 @@ def _run_active_chip_evaluate(
 
 
 def _bridge_output_classification(*, mode: str, routing_decision: str | None) -> tuple[str, str]:
-    operator_debug_modes = {"blocked", "disabled", "bridge_error", "stub"}
+    operator_debug_modes = {"blocked", "disabled", "bridge_error", "stub", "context_source_debug"}
     operator_debug_decisions = {
         "bridge_disabled",
+        "context_source_debug",
         "provider_resolution_failed",
         "bridge_error",
         "secret_boundary_blocked",
@@ -4430,6 +4431,147 @@ def _bridge_event_facts(
     if extra:
         facts.update(extra)
     return facts
+
+
+def _detect_context_source_debug_query(user_message: str) -> bool:
+    text = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
+    if not text:
+        return False
+    if re.search(r"\bwhy\s+did\s+you\s+(answer|say|reply|respond)\s+(that|this)\b", text):
+        return True
+    if re.search(r"\bwhy\s+was\s+that\s+your\s+(answer|reply|response)\b", text):
+        return True
+    source_markers = (
+        "what sources did you use",
+        "what context did you use",
+        "where did that answer come from",
+        "why did you answer like that",
+        "explain your context",
+        "explain the source",
+        "show me the source ledger",
+        "show the source ledger",
+    )
+    return any(marker in text for marker in source_markers)
+
+
+def _format_context_source_ledger_reply(
+    *,
+    ledger: list[dict[str, Any]],
+    source_counts: dict[str, Any] | None,
+    explained_request_id: str | None,
+) -> str:
+    normalized: list[dict[str, Any]] = []
+    counts = source_counts or {}
+    for item in ledger:
+        if not isinstance(item, dict):
+            continue
+        source = str(item.get("source") or "").strip()
+        if not source:
+            continue
+        role = str(item.get("role") or "").strip() or "unknown"
+        count = item.get("count")
+        if count is None and source in counts:
+            count = counts.get(source)
+        try:
+            count_value = int(count or 0)
+        except (TypeError, ValueError):
+            count_value = 0
+        try:
+            priority = int(item.get("priority") or 999)
+        except (TypeError, ValueError):
+            priority = 999
+        normalized.append(
+            {
+                "source": source,
+                "role": role,
+                "count": count_value,
+                "priority": priority,
+            }
+        )
+    normalized.sort(key=lambda item: (item["priority"], item["source"]))
+    authority = [item for item in normalized if item["role"] == "authority"]
+    supporting = [item for item in normalized if item["role"] != "authority"]
+
+    def render(items: list[dict[str, Any]]) -> list[str]:
+        return [
+            f"- {item['source']}: {item['role']}, {item['count']} items"
+            for item in items
+        ] or ["- none"]
+
+    lines = ["I answered from the latest Spark context capsule."]
+    if explained_request_id:
+        lines.append(f"Explained request: {explained_request_id}")
+    lines.extend(["", "Authority sources:", *render(authority)])
+    lines.extend(["", "Supporting/advisory sources:", *render(supporting)])
+    lines.extend(
+        [
+            "",
+            "Reason:",
+            "Current-state facts are the authority for saved focus and plan. "
+            "Diagnostics are authority for scan and connector health. "
+            "Workflow or mission residue is advisory unless you ask about those systems directly.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _build_context_source_debug_reply(
+    *,
+    state_db: StateDB,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    agent_id: str,
+    request_id: str,
+) -> tuple[str, dict[str, Any]] | None:
+    try:
+        with state_db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT request_id, facts_json, created_at
+                FROM builder_events
+                WHERE component = 'researcher_bridge'
+                  AND event_type = 'context_capsule_compiled'
+                  AND channel_id = ?
+                  AND session_id = ?
+                  AND human_id = ?
+                  AND agent_id = ?
+                ORDER BY created_at DESC, rowid DESC
+                LIMIT 12
+                """,
+                (channel_kind, session_id, human_id, agent_id),
+            ).fetchall()
+    except Exception:
+        return None
+
+    for row in rows:
+        explained_request_id = str(row["request_id"] or "").strip()
+        if explained_request_id and explained_request_id == request_id:
+            continue
+        try:
+            facts = json.loads(row["facts_json"] or "{}")
+        except Exception:
+            continue
+        ledger = facts.get("source_ledger")
+        if not isinstance(ledger, list) or not ledger:
+            continue
+        source_counts_raw = facts.get("source_counts")
+        source_counts = source_counts_raw if isinstance(source_counts_raw, dict) else {}
+        reply = _format_context_source_ledger_reply(
+            ledger=ledger,
+            source_counts=source_counts,
+            explained_request_id=explained_request_id or None,
+        )
+        return (
+            reply,
+            {
+                "explained_request_id": explained_request_id or None,
+                "explained_context_created_at": row["created_at"],
+                "source_ledger": ledger,
+                "source_counts": source_counts,
+            },
+        )
+    return None
 
 
 def _bridge_reply_mutation_facts(
@@ -4708,6 +4850,73 @@ def build_researcher_reply(
                 )
         except Exception:
             pass
+
+    if not personality_context_extra and _detect_context_source_debug_query(user_message):
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        context_source_debug = _build_context_source_debug_reply(
+            state_db=state_db,
+            channel_kind=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            request_id=request_id,
+        )
+        if context_source_debug is not None:
+            reply_text, debug_facts = context_source_debug
+            output_keepability, promotion_disposition = _bridge_output_classification(
+                mode="context_source_debug",
+                routing_decision="context_source_debug",
+            )
+            evidence_summary = (
+                "status=context_source_debug "
+                f"explained_request_id={debug_facts.get('explained_request_id') or 'unknown'}"
+            )
+            record_event(
+                state_db,
+                event_type="tool_result_received",
+                component="researcher_bridge",
+                summary="Researcher bridge explained the latest context source ledger.",
+                run_id=run_id,
+                request_id=request_id,
+                trace_ref=trace_ref,
+                channel_id=channel_kind,
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
+                actor_id="researcher_bridge",
+                reason_code="context_source_debug",
+                facts=_bridge_event_facts(
+                    routing_decision="context_source_debug",
+                    bridge_mode="context_source_debug",
+                    evidence_summary=evidence_summary,
+                    active_chip_key=None,
+                    active_chip_task_type=None,
+                    active_chip_evaluate_used=False,
+                    keepability=output_keepability,
+                    promotion_disposition=promotion_disposition,
+                    extra={
+                        "query_text": str(user_message or "").strip(),
+                        **debug_facts,
+                    },
+                ),
+            )
+            return ResearcherBridgeResult(
+                request_id=request_id,
+                reply_text=reply_text,
+                evidence_summary=evidence_summary,
+                escalation_hint=None,
+                trace_ref=trace_ref,
+                mode="context_source_debug",
+                runtime_root=None,
+                config_path=None,
+                attachment_context=attachment_context,
+                routing_decision="context_source_debug",
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                output_keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+            )
 
     if (
         not explicit_memory_message
