@@ -744,13 +744,21 @@ class _DomainChipMemoryClientAdapter:
     def get_current_state(self, **payload: Any) -> dict[str, Any]:
         subject = _optional_string(payload.get("subject"))
         predicate = _optional_string(payload.get("predicate"))
+        entity_key = _optional_string(payload.get("entity_key"))
         raw_predicate_prefix = payload.get("predicate_prefix")
         predicate_prefix = None if raw_predicate_prefix is None else str(raw_predicate_prefix)
         if subject and raw_predicate_prefix is not None and not predicate:
             return self._get_current_state_prefix(subject=subject, predicate_prefix=predicate_prefix)
         if not subject or not predicate:
             return {"status": "abstained", "reason": "invalid_request", "memory_role": "unknown"}
-        request = self._module.CurrentStateRequest(subject=subject, predicate=predicate)
+        request_kwargs = {"subject": subject, "predicate": predicate}
+        if entity_key:
+            request_kwargs["entity_key"] = entity_key
+        try:
+            request = self._module.CurrentStateRequest(**request_kwargs)
+        except TypeError:
+            request_kwargs.pop("entity_key", None)
+            request = self._module.CurrentStateRequest(**request_kwargs)
         result = self._sdk.get_current_state(request)
         return _normalize_domain_lookup_result(result=result, subject=subject, predicate=predicate)
 
@@ -758,9 +766,17 @@ class _DomainChipMemoryClientAdapter:
         subject = _optional_string(payload.get("subject"))
         predicate = _optional_string(payload.get("predicate"))
         as_of = _optional_string(payload.get("as_of"))
+        entity_key = _optional_string(payload.get("entity_key"))
         if not subject or not predicate or not as_of:
             return {"status": "abstained", "reason": "invalid_request", "memory_role": "unknown"}
-        request = self._module.HistoricalStateRequest(subject=subject, predicate=predicate, as_of=as_of)
+        request_kwargs = {"subject": subject, "predicate": predicate, "as_of": as_of}
+        if entity_key:
+            request_kwargs["entity_key"] = entity_key
+        try:
+            request = self._module.HistoricalStateRequest(**request_kwargs)
+        except TypeError:
+            request_kwargs.pop("entity_key", None)
+            request = self._module.HistoricalStateRequest(**request_kwargs)
         result = self._sdk.get_historical_state(request)
         return _normalize_domain_lookup_result(result=result, subject=subject, predicate=predicate)
 
@@ -1198,6 +1214,7 @@ class MemoryKernelAdapter:
         *,
         subject: str,
         predicate: str | None,
+        entity_key: str | None = None,
         predicate_prefix: str | None = None,
         query: str | None = None,
         session_id: str | None,
@@ -1242,6 +1259,7 @@ class MemoryKernelAdapter:
             state_db=self.state_db,
             subject_candidates=_subject_fallback_candidates(subject),
             predicate=predicate,
+            entity_key=entity_key,
             predicate_prefix=predicate_prefix,
             session_id=session_id,
             turn_id=turn_id,
@@ -1273,6 +1291,7 @@ class MemoryKernelAdapter:
         subject: str,
         predicate: str,
         as_of: str,
+        entity_key: str | None = None,
         query: str | None = None,
         session_id: str | None,
         turn_id: str | None,
@@ -1306,6 +1325,7 @@ class MemoryKernelAdapter:
             subject_candidates=_subject_fallback_candidates(subject),
             predicate=predicate,
             as_of=as_of,
+            entity_key=entity_key,
             session_id=session_id,
             turn_id=turn_id,
             actor_id=self.actor_id,
@@ -1419,6 +1439,7 @@ def read_memory_kernel(
     query: str = "",
     subject: str | None = None,
     predicate: str | None = None,
+    entity_key: str | None = None,
     predicate_prefix: str | None = None,
     as_of: str | None = None,
     limit: int = 5,
@@ -1441,6 +1462,7 @@ def read_memory_kernel(
         return adapter.read_current_state(
             subject=normalized_subject,
             predicate=_optional_string(predicate),
+            entity_key=_optional_string(entity_key),
             predicate_prefix=predicate_prefix,
             query=query,
             session_id=session_id or f"memory-kernel:{actor_id}",
@@ -1453,6 +1475,7 @@ def read_memory_kernel(
             subject=normalized_subject,
             predicate=_optional_string(predicate) or "",
             as_of=_optional_string(as_of) or "",
+            entity_key=_optional_string(entity_key),
             query=query,
             session_id=session_id or f"memory-kernel:{actor_id}",
             turn_id=turn_id or f"{actor_id}:get-historical-state",
@@ -3742,6 +3765,7 @@ def _get_current_state_with_subject_fallback(
     state_db: StateDB,
     subject_candidates: tuple[str, ...],
     predicate: str | None,
+    entity_key: str | None = None,
     predicate_prefix: str | None,
     session_id: str | None,
     turn_id: str | None,
@@ -3772,6 +3796,8 @@ def _get_current_state_with_subject_fallback(
         }
         if predicate is not None:
             payload["predicate"] = predicate
+        if entity_key is not None:
+            payload["entity_key"] = entity_key
         if predicate_prefix is not None:
             payload["predicate_prefix"] = predicate_prefix
         raw = _call_sdk_method(client, "get_current_state", payload)
@@ -3788,6 +3814,7 @@ def _get_historical_state_with_subject_fallback(
     subject_candidates: tuple[str, ...],
     predicate: str,
     as_of: str,
+    entity_key: str | None = None,
     session_id: str | None,
     turn_id: str | None,
     actor_id: str,
@@ -3808,19 +3835,18 @@ def _get_historical_state_with_subject_fallback(
             turn_id=turn_id,
             actor_id=actor_id,
         )
-        raw = _call_sdk_method(
-            client,
-            "get_historical_state",
-            {
-                "subject": subject,
-                "predicate": predicate,
-                "as_of": as_of,
-                "session_id": session_id,
-                "turn_id": turn_id,
-                "timestamp": _now_iso(),
-                "metadata": {"source_surface": source_surface},
-            },
-        )
+        payload = {
+            "subject": subject,
+            "predicate": predicate,
+            "as_of": as_of,
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "timestamp": _now_iso(),
+            "metadata": {"source_surface": source_surface},
+        }
+        if entity_key is not None:
+            payload["entity_key"] = entity_key
+        raw = _call_sdk_method(client, "get_historical_state", payload)
         last_result = _normalize_read_result(raw=raw, method="get_historical_state", shadow_only=shadow_only)
         if last_result.records:
             return subject, last_result

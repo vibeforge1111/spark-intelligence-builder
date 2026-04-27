@@ -265,6 +265,27 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(result.read_result.retrieval_trace["memory_kernel"]["source_class"], "current_state")
         self.assertEqual(len(fake_client.current_state_calls), 1)
 
+    def test_memory_kernel_passes_entity_key_to_current_state_reads(self) -> None:
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ):
+            result = read_memory_kernel(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                method="get_current_state",
+                subject="human:test",
+                predicate="entity.name",
+                entity_key="named-object:tiny-desk-plant",
+                query="What did I name the plant?",
+                actor_id="test",
+            )
+
+        self.assertFalse(result.abstained)
+        self.assertEqual(fake_client.current_state_calls[0]["entity_key"], "named-object:tiny-desk-plant")
+        self.assertEqual(len(fake_client.current_state_calls), 1)
+
     def test_memory_kernel_evidence_marks_stale_provenance_without_using_it_as_answer(self) -> None:
         fake_client = _StaleEvidenceMemoryClient()
         with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
@@ -1718,7 +1739,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(runtime["configured_module"], "domain_chip_memory")
         self.assertEqual(runtime["resolved_module"], "domain_chip_memory")
         self.assertEqual(runtime["runtime_class"], "SparkMemorySDK")
-        self.assertEqual(runtime["runtime_memory_architecture"], "dual_store_event_calendar_hybrid")
+        self.assertEqual(runtime["runtime_memory_architecture"], "summary_synthesis_memory")
         self.assertEqual(runtime["runtime_memory_provider"], "heuristic_v1")
 
     def test_lookup_current_state_uses_legacy_double_prefixed_fallback_for_prefixed_subject(self) -> None:
