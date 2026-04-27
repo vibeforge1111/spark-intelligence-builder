@@ -262,6 +262,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(result.records[0]["subject"], "human:test")
         self.assertEqual(result.provenance[0]["source"], "fake_sdk")
         self.assertEqual(result.ignored_stale_records, [])
+        self.assertEqual(result.read_result.retrieval_trace["memory_kernel"]["source_class"], "current_state")
         self.assertEqual(len(fake_client.current_state_calls), 1)
 
     def test_memory_kernel_evidence_marks_stale_provenance_without_using_it_as_answer(self) -> None:
@@ -285,6 +286,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(result.answer, "persistent memory quality evaluation")
         self.assertEqual(len(result.ignored_stale_records), 1)
         self.assertEqual(result.ignored_stale_records[0]["value"], "context capsule verification")
+        self.assertEqual(result.read_result.retrieval_trace["memory_kernel"]["ignored_stale_record_count"], 1)
         self.assertEqual(len(fake_client.evidence_calls), 1)
 
     def test_profile_city_detection_and_write_use_structured_current_state_observation(self) -> None:

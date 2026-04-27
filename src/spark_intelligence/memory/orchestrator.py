@@ -4211,21 +4211,58 @@ def _memory_kernel_result(
     predicate: str | None,
     read_result: MemoryReadResult,
 ) -> MemoryKernelReadResult:
+    source_class = _memory_kernel_source_class(read_result)
+    answer = _memory_kernel_answer(read_result)
+    ignored_stale_records = _memory_kernel_stale_records(read_result)
+    enriched_read_result = _memory_kernel_enrich_read_result(
+        read_result=read_result,
+        source_class=source_class,
+        answer=answer,
+        ignored_stale_records=ignored_stale_records,
+    )
     return MemoryKernelReadResult(
         sdk_module=sdk_module,
         query=query,
         subject=subject,
         predicate=predicate,
-        read_method=read_result.method,
-        source_class=_memory_kernel_source_class(read_result),
-        answer=_memory_kernel_answer(read_result),
+        read_method=enriched_read_result.method,
+        source_class=source_class,
+        answer=answer,
+        records=enriched_read_result.records,
+        provenance=enriched_read_result.provenance,
+        runtime=runtime,
+        abstained=enriched_read_result.abstained,
+        reason=enriched_read_result.reason,
+        ignored_stale_records=ignored_stale_records,
+        read_result=enriched_read_result,
+    )
+
+
+def _memory_kernel_enrich_read_result(
+    *,
+    read_result: MemoryReadResult,
+    source_class: str,
+    answer: str | None,
+    ignored_stale_records: list[dict[str, Any]],
+) -> MemoryReadResult:
+    trace = dict(read_result.retrieval_trace or {})
+    trace["memory_kernel"] = {
+        "read_method": read_result.method,
+        "source_class": source_class,
+        "answer_present": bool(answer),
+        "ignored_stale_record_count": len(ignored_stale_records),
+    }
+    return MemoryReadResult(
+        status=read_result.status,
+        method=read_result.method,
+        memory_role=read_result.memory_role,
         records=read_result.records,
         provenance=read_result.provenance,
-        runtime=runtime,
+        retrieval_trace=trace,
+        answer_explanation=read_result.answer_explanation,
         abstained=read_result.abstained,
         reason=read_result.reason,
-        ignored_stale_records=_memory_kernel_stale_records(read_result),
-        read_result=read_result,
+        shadow_only=read_result.shadow_only,
     )
 
 
