@@ -1920,6 +1920,7 @@ def _render_direct_provider_chat_fallback(
     trace_ref: str | None = None,
     enable_web_search: bool = False,
     human_id: str = "",
+    session_id: str = "",
 ) -> str:
     # Voice + character: load the canonical persona from spark-character.
     # Anyone running their own Spark inherits the same evolved voice from
@@ -1945,15 +1946,41 @@ def _render_direct_provider_chat_fallback(
         human_id=human_id,
         channel_kind=channel_kind,
     )
-    context_capsule = build_spark_context_capsule(
+    context_capsule_obj = build_spark_context_capsule(
         config_manager=config_manager,
         state_db=state_db,
         human_id=human_id,
-        session_id="",
+        session_id=session_id,
         channel_kind=channel_kind,
         request_id=request_id,
         user_message=user_message,
-    ).render()
+    )
+    context_capsule = context_capsule_obj.render()
+    if context_capsule and request_id:
+        record_event(
+            state_db,
+            event_type="context_capsule_compiled",
+            component="researcher_bridge",
+            summary="Spark context capsule was compiled for the direct-provider fallback prompt.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            actor_id="researcher_bridge",
+            reason_code="context_capsule_compiled_direct_provider",
+            facts={
+                "keepability": "ephemeral_context",
+                "capsule_chars": len(context_capsule),
+                "source_counts": context_capsule_obj.source_counts,
+                "context_route": "direct_provider_fallback",
+            },
+            provenance={
+                "source_kind": "context_compiler",
+                "source_ref": "spark_context_capsule.v1",
+            },
+        )
     base_system_prompt = (
         f"{persona_prompt}\n\n"
         + (f"{current_state_block}\n\n" if current_state_block else "")
@@ -3375,6 +3402,13 @@ def _build_contextual_task(
         f"attached_chip_keys={','.join(str(item) for item in attached_chip_keys) if attached_chip_keys else 'none'}",
         f"attached_path_keys={','.join(str(item) for item in attached_path_keys) if attached_path_keys else 'none'}",
         f"active_path_key={active_path_key or 'none'}",
+        "",
+        "[Context source contract]",
+        "- Current-state facts from Spark Context Capsule or [CURRENT STATE] are the authority for the user's saved focus, plan, blocker, status, and preferences.",
+        "- Latest diagnostics summary from Spark Context Capsule is the authority for the most recent scan counts and clean/failure status.",
+        "- Mission, Spawner, Swarm, chip, and older conversation context are advisory unless the user specifically asks about those systems.",
+        "- If sources conflict, say which source is newer or more authoritative and answer from that source.",
+        "- Do not invent unavailable slash commands such as /recall. If context is present here, use it directly.",
         "",
     ]
     spark_self_knowledge_context = _build_spark_self_knowledge_context(
@@ -7494,7 +7528,7 @@ def build_researcher_reply(
         channel_kind=channel_kind,
         user_message=user_message,
     )
-    context_capsule = build_spark_context_capsule(
+    context_capsule_obj = build_spark_context_capsule(
         config_manager=config_manager,
         state_db=state_db,
         human_id=human_id,
@@ -7502,7 +7536,8 @@ def build_researcher_reply(
         channel_kind=channel_kind,
         request_id=request_id,
         user_message=user_message,
-    ).render()
+    )
+    context_capsule = context_capsule_obj.render()
     if context_capsule:
         record_event(
             state_db,
@@ -7521,6 +7556,8 @@ def build_researcher_reply(
             facts={
                 "keepability": "ephemeral_context",
                 "capsule_chars": len(context_capsule),
+                "source_counts": context_capsule_obj.source_counts,
+                "context_route": "researcher_bridge_provider",
             },
             provenance={
                 "source_kind": "context_compiler",
@@ -7805,6 +7842,7 @@ def build_researcher_reply(
                     request_id=request_id,
                     trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
                     enable_web_search=True,
+                    session_id=session_id,
                     human_id=human_id,
                 )
             except Exception:
@@ -7969,6 +8007,7 @@ def build_researcher_reply(
             run_id=run_id,
             request_id=request_id,
             trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+            session_id=session_id,
             human_id=human_id,
         )
         cleaned_reply, removed_residue = _clean_messaging_reply_with_metadata(
@@ -8153,6 +8192,7 @@ def build_researcher_reply(
                         run_id=run_id,
                         request_id=request_id,
                         trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+                        session_id=session_id,
                         human_id=human_id,
                     )
                     cleaned_reply, removed_residue = _clean_messaging_reply_with_metadata(
@@ -8347,6 +8387,7 @@ def build_researcher_reply(
                         run_id=run_id,
                         request_id=request_id,
                         trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+                        session_id=session_id,
                         human_id=human_id,
                     )
                     cleaned_reply, removed_residue = _clean_messaging_reply_with_metadata(

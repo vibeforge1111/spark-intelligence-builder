@@ -1766,6 +1766,8 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 user_message="What's on my plate this week?",
                 channel_kind="telegram",
                 attachment_context={},
+                request_id="req-direct-l1-state",
+                session_id="session-direct-l1-state",
                 human_id="8319079055",
             )
 
@@ -1775,6 +1777,8 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertNotIn("- current_plan: debug the old plan", str(captured["system_prompt"]))
         self.assertIn("- favorite_color: blue", str(captured["system_prompt"]))
         self.assertIn("Do not say you don't know something that's listed there.", str(captured["system_prompt"]))
+        self.assertIn("[Context source contract]", str(captured["user_prompt"]))
+        self.assertIn("Mission, Spawner, Swarm, chip, and older conversation context are advisory", str(captured["user_prompt"]))
 
     def test_build_researcher_reply_persists_city_profile_fact_before_bridge_execution(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)

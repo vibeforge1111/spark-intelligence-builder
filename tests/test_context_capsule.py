@@ -152,6 +152,8 @@ class ContextCapsuleTests(SparkTestCase):
         def fake_execute_direct_provider_prompt(*, user_prompt, **kwargs):
             self.assertIn("[Spark Context Capsule]", user_prompt)
             self.assertIn("current_focus: automatic memory maintenance verification", user_prompt)
+            self.assertIn("[Context source contract]", user_prompt)
+            self.assertIn("Do not invent unavailable slash commands", user_prompt)
             return {"raw_response": "Your active focus is automatic memory maintenance verification."}
 
         with patch(
@@ -186,3 +188,5 @@ class ContextCapsuleTests(SparkTestCase):
         events = latest_events_by_type(self.state_db, event_type="context_capsule_compiled", limit=5)
         self.assertTrue(events)
         self.assertEqual((events[0]["facts_json"] or {}).get("keepability"), "ephemeral_context")
+        self.assertEqual((events[0]["facts_json"] or {}).get("context_route"), "researcher_bridge_provider")
+        self.assertGreater(((events[0]["facts_json"] or {}).get("source_counts") or {}).get("current_state", 0), 0)
