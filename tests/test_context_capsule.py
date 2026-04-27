@@ -299,6 +299,76 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertIn("Plan \"verify scheduled memory cleanup\" remains open", result.reply_text)
         self.assertIn("Clean diagnostics and successful maintenance are evidence", result.reply_text)
 
+    def test_context_status_next_step_query_recommends_validation_before_closure(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        diagnostics_dir = self.home / "diagnostics"
+        diagnostics_dir.mkdir(parents=True, exist_ok=True)
+        (diagnostics_dir / "spark-diagnostic-2026-04-27T13-38-48+00-00.md").write_text(
+            "\n".join(
+                [
+                    "---",
+                    "generated_at: 2026-04-27T13:38:48+00:00",
+                    "---",
+                    "",
+                    "- scanned lines: `1074`",
+                    "- failure lines: `0`",
+                    "- finding signatures: `0`",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        with self.state_db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE job_records
+                SET last_run_at = ?, last_result = ?
+                WHERE job_id = 'memory:sdk-maintenance'
+                """,
+                (
+                    "2026-04-27T12:46:37Z",
+                    "status=succeeded before=297 after=151 deletions=31 archived=75 superseded=16",
+                ),
+            )
+            conn.commit()
+
+        with patch(
+            "spark_intelligence.context.capsule.inspect_human_memory_in_memory",
+            return_value=SimpleNamespace(
+                read_result=SimpleNamespace(
+                    records=[
+                        {
+                            "predicate": "profile.current_focus",
+                            "value": "context capsule verification",
+                            "timestamp": "2026-04-27T13:38:35Z",
+                        },
+                        {
+                            "predicate": "profile.current_plan",
+                            "value": "verify scheduled memory cleanup",
+                            "timestamp": "2026-04-27T13:02:08Z",
+                        },
+                    ]
+                )
+            ),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-active-context-next",
+                agent_id="agent:human:telegram:8319079055",
+                human_id="human:telegram:8319079055",
+                session_id="session:telegram:dm:8319079055",
+                channel_kind="telegram",
+                user_message="What should we work on next, based on my current focus and what is still open?",
+            )
+
+        self.assertEqual(result.routing_decision, "active_context_status")
+        self.assertIn("Recommended next move", result.reply_text)
+        self.assertIn("Spot-check the cleanup result before closing it", result.reply_text)
+        self.assertIn("archived, deleted, and still-current memories", result.reply_text)
+        self.assertIn("mark \"context capsule verification\" closed", result.reply_text)
+        self.assertNotIn("everything is done", result.reply_text.lower())
+
     def test_researcher_reply_injects_context_capsule_into_provider_prompt(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)

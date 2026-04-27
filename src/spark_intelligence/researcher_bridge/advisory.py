@@ -4590,6 +4590,18 @@ def _detect_active_context_status_query(user_message: str) -> bool:
             "should only be closed",
         )
     )
+    asks_next_step = any(
+        marker in text
+        for marker in (
+            "what should we work on next",
+            "what should i work on next",
+            "what do we work on next",
+            "what next",
+            "next move",
+            "next step",
+            "what should we verify next",
+        )
+    )
     context_anchor = any(
         marker in text
         for marker in (
@@ -4602,7 +4614,23 @@ def _detect_active_context_status_query(user_message: str) -> bool:
             "based on the capsule",
         )
     )
-    return asks_open_status and context_anchor
+    return (asks_open_status or asks_next_step) and context_anchor
+
+
+def _active_context_status_query_wants_next_step(user_message: str) -> bool:
+    text = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
+    return any(
+        marker in text
+        for marker in (
+            "what should we work on next",
+            "what should i work on next",
+            "what do we work on next",
+            "what next",
+            "next move",
+            "next step",
+            "what should we verify next",
+        )
+    )
 
 
 def _capsule_line_value(lines: list[str], label: str) -> str | None:
@@ -4771,6 +4799,20 @@ def _build_active_context_status_reply(
             "- current_state wins over old workflow_state for focus and plan.",
         ]
     )
+    if _active_context_status_query_wants_next_step(user_message):
+        next_steps: list[str] = []
+        if current_plan and memory_jobs:
+            next_steps.append(
+                "Spot-check the cleanup result before closing it: review a small sample of archived, deleted, and still-current memories to confirm the counts match your expectations."
+            )
+        if current_focus:
+            next_steps.append(
+                f'If that spot-check looks right, ask me to mark "{current_focus}" closed and set the next focus.'
+            )
+        if not next_steps:
+            next_steps.append("Pick a new current focus, because the capsule has no active focus or plan saved.")
+        lines.extend(["", "Recommended next move"])
+        lines.extend(f"- {item}" for item in next_steps)
 
     facts = {
         "source_counts": capsule.source_counts,
