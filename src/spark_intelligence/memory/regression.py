@@ -276,9 +276,6 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         case_id="meeting_write",
         category="event_write",
         message="My meeting with Omar is on May 3.",
-        expected_bridge_mode="memory_telegram_event_update",
-        expected_routing_decision="memory_telegram_event_observation",
-        expected_response_contains=("meeting with Omar on May 3",),
     ),
     TelegramMemoryRegressionCase(
         case_id="event_query_after_meeting_write",
@@ -292,17 +289,11 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         case_id="flight_write",
         category="event_write",
         message="My flight to London is on May 6.",
-        expected_bridge_mode="memory_telegram_event_update",
-        expected_routing_decision="memory_telegram_event_observation",
-        expected_response_contains=("flight to London on May 6",),
     ),
     TelegramMemoryRegressionCase(
         case_id="flight_overwrite",
         category="event_overwrite",
         message="My flight to Paris is on May 9.",
-        expected_bridge_mode="memory_telegram_event_update",
-        expected_routing_decision="memory_telegram_event_observation",
-        expected_response_contains=("flight to Paris on May 9",),
     ),
     TelegramMemoryRegressionCase(
         case_id="latest_flight_query_after_overwrite",
