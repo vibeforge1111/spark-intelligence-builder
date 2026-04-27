@@ -1062,6 +1062,8 @@ def simulate_telegram_update(
                 _schedule_intent = None
                 _delete_intent = None
                 _pending_delete = None
+                _generic_memory_observation = None
+                _mission_control_query = False
                 _confirmation_yes = False
                 _confirmation_no = False
                 if effective_text and not _looks_like_prompt_injection_instruction(effective_text):
@@ -1085,6 +1087,25 @@ def simulate_telegram_update(
                                     _instruction_intent = None
                         except Exception:
                             pass
+                    try:
+                        memory_enabled = bool(config_manager.get_path("spark.memory.enabled"))
+                        shadow_mode = bool(config_manager.get_path("spark.memory.shadow_mode"))
+                        if memory_enabled and not shadow_mode:
+                            from spark_intelligence.memory.generic_observations import (
+                                detect_telegram_generic_observation as _detect_generic_memory_observation,
+                            )
+
+                            _generic_memory_observation = _detect_generic_memory_observation(effective_text)
+                    except Exception:
+                        _generic_memory_observation = None
+                    try:
+                        from spark_intelligence.mission_control import (
+                            looks_like_mission_control_query as _looks_like_mission_control_query,
+                        )
+
+                        _mission_control_query = _looks_like_mission_control_query(effective_text)
+                    except Exception:
+                        _mission_control_query = False
                     try:
                         from spark_intelligence.schedule_bridge import (
                             detect_schedule_intent as _detect_schedule_intent,
@@ -1199,7 +1220,9 @@ def simulate_telegram_update(
                         _schedule_create_intent = _detect_sch_create_intent(effective_text)
                     except Exception:
                         _schedule_create_intent = None
-                    if _schedule_create_intent is not None:
+                    if _generic_memory_observation is not None or _mission_control_query:
+                        pass
+                    elif _schedule_create_intent is not None:
                         _shortcircuited = True
                         outbound_text = _fmt_sch_create(_schedule_create_intent)
                         trace_ref = None
@@ -1288,7 +1311,13 @@ def simulate_telegram_update(
                 # message clearly references agent surfaces, ask a single
                 # clarifying question rather than falling through to web
                 # search / chip routing / bridge.
-                if not _shortcircuited and _instruction_intent is None and effective_text:
+                if (
+                    not _shortcircuited
+                    and _instruction_intent is None
+                    and _generic_memory_observation is None
+                    and not _mission_control_query
+                    and effective_text
+                ):
                     try:
                         from spark_intelligence.disambiguation_bridge import (
                             detect_ambiguous_intent as _detect_ambiguous,

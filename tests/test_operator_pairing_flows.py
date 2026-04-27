@@ -4012,6 +4012,102 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertEqual(result.detail["bridge_mode"], "external_configured")
         bridge_mock.assert_called_once()
 
+    def test_current_plan_memory_update_beats_schedule_suggestion_shortcircuit(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            return_value=ResearcherBridgeResult(
+                request_id="req-current-plan-scheduled-memory",
+                reply_text="I'll remember that your current plan is to verify scheduled memory cleanup.",
+                evidence_summary="status=memory_generic_observation_update",
+                escalation_hint=None,
+                trace_ref=None,
+                mode="memory_generic_observation_update",
+                runtime_root=None,
+                config_path=None,
+                attachment_context=None,
+                provider_id=None,
+                provider_auth_profile_id=None,
+                provider_auth_method=None,
+                provider_model=None,
+                provider_model_family=None,
+                provider_execution_transport=None,
+                provider_base_url=None,
+                provider_source=None,
+                routing_decision="memory_generic_observation",
+            ),
+        ) as bridge_mock:
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=219,
+                    user_id="111",
+                    username="alice",
+                    text="Actually, my current plan is verify scheduled memory cleanup.",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            result.detail["response_text"],
+            "I'll remember that your current plan is to verify scheduled memory cleanup.",
+        )
+        self.assertEqual(result.detail["bridge_mode"], "memory_generic_observation_update")
+        bridge_mock.assert_called_once()
+        self.assertEqual(
+            bridge_mock.call_args.kwargs["user_message"],
+            "Actually, my current plan is verify scheduled memory cleanup.",
+        )
+
+    def test_jobs_running_question_beats_mission_board_shortcircuit(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            return_value=ResearcherBridgeResult(
+                request_id="req-jobs-running-mission-control",
+                reply_text="Runtime health: healthy.\nActive loops: job:memory:sdk-maintenance.",
+                evidence_summary="status=mission_control_direct source=verified_runtime_health",
+                escalation_hint=None,
+                trace_ref=None,
+                mode="mission_control_direct",
+                runtime_root=None,
+                config_path=None,
+                attachment_context=None,
+                provider_id=None,
+                provider_auth_profile_id=None,
+                provider_auth_method=None,
+                provider_model=None,
+                provider_model_family=None,
+                provider_execution_transport=None,
+                provider_base_url=None,
+                provider_source=None,
+                routing_decision="mission_control_direct",
+            ),
+        ) as bridge_mock:
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=220,
+                    user_id="111",
+                    username="alice",
+                    text="What jobs are running?",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            result.detail["response_text"],
+            "Runtime health: healthy.\nActive loops: job:memory:sdk-maintenance.",
+        )
+        self.assertEqual(result.detail["bridge_mode"], "mission_control_direct")
+        bridge_mock.assert_called_once()
+
     def test_browser_permission_block_reply_is_composed_for_telegram(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 
