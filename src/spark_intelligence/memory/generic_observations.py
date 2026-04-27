@@ -65,6 +65,15 @@ _FEELING_STATE_PATTERN = re.compile(
 _PLAN_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^(?:i|we)\s+plan\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
     re.compile(r"^the\s+plan\s+is\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(
+        r"^(?:memory\s+update:\s*)?(?:my|our|the)\s+current\s+plan\s+is\s+(?:to\s+)?(.+?)[.!]?\s+"
+        r"please\s+save(?:\s+this)?(?:\s+as\s+my\s+current\s+plan)?[.!]?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?:memory\s+update:\s*)?(?:my|our|the)\s+current\s+plan\s+is\s+(?:to\s+)?(.+?)[.!]?$",
+        re.IGNORECASE,
+    ),
     re.compile(r"^our\s+current\s+plan\s+is\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
     re.compile(r"^the\s+current\s+plan\s+is\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
 )

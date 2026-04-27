@@ -20,7 +20,7 @@ _SIGNAL_PATTERNS = [
     ("chip", re.compile(r"\b(?:chips?|domain[\s\-]chips?)\b", re.IGNORECASE)),
     ("schedule", re.compile(r"\b(?:schedules?|scheduled|cron(?:\s*job)?|autoloops?|routines?|automations?|recurring)\b", re.IGNORECASE)),
     ("loop", re.compile(r"\b(?:loops?|iterate|iterat\w*)\b", re.IGNORECASE)),
-    ("mission", re.compile(r"\b(?:missions?|board|kanban|runs?)\b", re.IGNORECASE)),
+    ("mission", re.compile(r"\b(?:missions?|mission\s+board|board|kanban)\b", re.IGNORECASE)),
     ("critic", re.compile(r"\b(?:critic|self[\s\-]?observ\w*|self[\s\-]?critic)\b", re.IGNORECASE)),
 ]
 

@@ -231,6 +231,47 @@ class TelegramGenericMemoryTests(SparkTestCase):
         )
         self.assertEqual(commitment_query.mode, "memory_profile_fact")
 
+    def test_build_researcher_reply_saves_explicit_current_plan_memory_update(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for explicit plan memory"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for explicit plan memory"),
+        ):
+            plan_update = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-explicit-plan-update",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-explicit-plan",
+                channel_kind="telegram",
+                user_message=(
+                    "Memory update: my current plan is Neon Harbor Telegram memory test. "
+                    "Please save this as my current plan."
+                ),
+            )
+            plan_query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-explicit-plan-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-explicit-plan",
+                channel_kind="telegram",
+                user_message="What is my current plan?",
+            )
+
+        self.assertEqual(plan_update.mode, "memory_generic_observation_update")
+        self.assertEqual(plan_update.routing_decision, "memory_generic_observation")
+        self.assertIn("Neon Harbor Telegram memory test", plan_update.reply_text)
+        self.assertEqual(plan_query.mode, "memory_profile_fact")
+        self.assertIn("Neon Harbor Telegram memory test", plan_query.reply_text)
+
     def test_build_researcher_reply_handles_plan_correction_history_and_deletion(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
