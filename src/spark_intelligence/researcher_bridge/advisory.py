@@ -194,9 +194,12 @@ def _profile_fact_record_turn_key(record: dict[str, Any]) -> str:
 
 
 def _profile_fact_record_value(record: dict[str, Any]) -> str:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
     return str(
         record.get("value")
         or record.get("normalized_value")
+        or metadata.get("value")
+        or metadata.get("normalized_value")
         or record.get("answer")
         or ""
     ).strip()
@@ -362,6 +365,13 @@ class OpenMemoryRecallQuery:
 
 
 @dataclass(frozen=True)
+class EntityStateHistoryQuery:
+    topic: str
+    attribute: str
+    predicate: str
+
+
+@dataclass(frozen=True)
 class BeliefRecallQuery:
     topic: str
 
@@ -468,6 +478,66 @@ _OPEN_MEMORY_RECALL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 
+_ENTITY_STATE_HISTORY_PATTERNS: tuple[tuple[str, str, re.Pattern[str]], ...] = (
+    (
+        "location",
+        "entity.location",
+        re.compile(
+            r"^where\s+was\s+(.+?)\s+before[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "location",
+        "entity.location",
+        re.compile(
+            r"^what\s+was\s+(?:the\s+)?(?:previous\s+)?location\s+of\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "owner",
+        "entity.owner",
+        re.compile(
+            r"^who\s+(?:owned|handled)\s+(.+?)\s+before[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "owner",
+        "entity.owner",
+        re.compile(
+            r"^who\s+was\s+(?:the\s+)?(?:previous\s+)?owner\s+of\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "status",
+        "entity.status",
+        re.compile(
+            r"^what\s+was\s+(?:the\s+)?(?:previous\s+)?status\s+of\s+(.+?)\s+before[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "deadline",
+        "entity.deadline",
+        re.compile(
+            r"^(?:when\s+was\s+(.+?)\s+due\s+before|what\s+was\s+(?:the\s+)?(?:previous\s+)?deadline\s+for\s+(.+?))[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "relation",
+        "entity.relation",
+        re.compile(
+            r"^what\s+was\s+(.+?)\s+related\s+to\s+before[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
+
 _BELIEF_RECALL_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
         r"^(?:what(?:'s| is)|tell me)\s+your\s+(?:current\s+)?belief\s+about\s+(.+?)[\?\.\!]*$",
@@ -537,6 +607,33 @@ def _detect_open_memory_recall_query(user_message: str) -> OpenMemoryRecallQuery
         if not topic or topic in {"me", "my profile"}:
             return None
         return OpenMemoryRecallQuery(topic=topic, query_kind=query_kind)
+    return None
+
+
+def _clean_entity_history_topic(topic: str) -> str:
+    cleaned = str(topic or "").strip(" \t\r\n?!.\"'")
+    cleaned = re.sub(r"^(?:my|the)\s+", "", cleaned, flags=re.IGNORECASE).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned
+
+
+def _detect_entity_state_history_query(user_message: str) -> EntityStateHistoryQuery | None:
+    normalized = " ".join(str(user_message or "").strip().split())
+    if not normalized:
+        return None
+    for attribute, predicate, pattern in _ENTITY_STATE_HISTORY_PATTERNS:
+        match = pattern.match(normalized)
+        if not match:
+            continue
+        topic = next((group for group in match.groups() if group), "")
+        cleaned_topic = _clean_entity_history_topic(topic)
+        if not cleaned_topic or cleaned_topic in {"me", "my profile"}:
+            return None
+        return EntityStateHistoryQuery(
+            topic=cleaned_topic,
+            attribute=attribute,
+            predicate=predicate,
+        )
     return None
 
 
@@ -783,6 +880,85 @@ def _entity_label_matches_open_memory_topic(*, entity_label: str, topic: str) ->
     if len(topic_tokens) == 1:
         return topic_tokens[0] in label_tokens
     return all(token in label_tokens for token in topic_tokens)
+
+
+def _filter_entity_state_history_records(
+    *,
+    query: EntityStateHistoryQuery,
+    records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+    for record in records:
+        predicate = str(record.get("predicate") or "").strip()
+        if predicate != query.predicate:
+            continue
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        entity_label = str(metadata.get("entity_label") or "").strip()
+        if not entity_label or not _entity_label_matches_open_memory_topic(
+            entity_label=entity_label,
+            topic=query.topic,
+        ):
+            continue
+        if not _profile_fact_record_value(record):
+            continue
+        filtered.append(record)
+    return _ordered_profile_fact_event_records(filtered)
+
+
+def _entity_state_record_label(record: dict[str, Any] | None, fallback: str) -> str:
+    if record is None:
+        return fallback
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    label = " ".join(str(metadata.get("entity_label") or "").strip().split())
+    return label or fallback
+
+
+def _entity_state_record_phrase(*, attribute: str, record: dict[str, Any]) -> str:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    value = _profile_fact_record_value(record)
+    if attribute == "location":
+        preposition = str(metadata.get("location_preposition") or "at").strip()
+        return f"{preposition} {value}"
+    if attribute == "owner":
+        return f"owned by {value}"
+    if attribute == "deadline":
+        return f"due {value}"
+    if attribute == "status":
+        return f"status was {value}"
+    if attribute == "relation":
+        return f"related to {value}"
+    if attribute == "name":
+        return f"named {value}"
+    return f"{attribute} was {value}"
+
+
+def _build_entity_state_history_answer(
+    *,
+    query: EntityStateHistoryQuery,
+    records: list[dict[str, Any]],
+) -> str:
+    ordered_records = _ordered_profile_fact_event_records(records)
+    if not ordered_records:
+        return f"I don't currently have saved {query.attribute} history for that."
+    current_record = ordered_records[-1]
+    current_value = _profile_fact_record_value(current_record)
+    previous_record = _select_previous_profile_fact_record(
+        current_value=current_value,
+        records=ordered_records,
+    )
+    if previous_record is None:
+        return f"I don't currently have an earlier saved {query.attribute} for that."
+    label = _entity_state_record_label(current_record, query.topic)
+    if query.attribute == "status":
+        previous_value = _profile_fact_record_value(previous_record)
+        return f"Before the {label} status was {current_value}, it was {previous_value}."
+    current_phrase = _entity_state_record_phrase(attribute=query.attribute, record=current_record)
+    previous_phrase = _entity_state_record_phrase(attribute=query.attribute, record=previous_record)
+    if query.attribute in {"location", "deadline", "relation", "name"}:
+        return f"Before the {label} was {current_phrase}, it was {previous_phrase}."
+    if query.attribute == "owner":
+        return f"Before the {label} was {current_phrase}, it was {previous_phrase}."
+    return f"Before the {label} {current_phrase}, it {previous_phrase}."
 
 
 def _build_open_memory_recall_answer(*, query: OpenMemoryRecallQuery, records: list[dict[str, Any]]) -> str:
@@ -6186,6 +6362,7 @@ def build_researcher_reply(
     detected_profile_fact_query = None
     detected_memory_event = None
     detected_memory_event_query = None
+    detected_entity_state_history_query = None
     detected_open_memory_recall_query = None
     detected_belief_recall_query = None
     detected_generic_memory_candidate = None
@@ -6882,12 +7059,20 @@ def build_researcher_reply(
             if (
                 detected_profile_fact_query is None
                 and detected_memory_event_query is None
+                and detected_entity_state_history_query is None
+            ):
+                detected_entity_state_history_query = _detect_entity_state_history_query(user_message)
+            if (
+                detected_profile_fact_query is None
+                and detected_memory_event_query is None
+                and detected_entity_state_history_query is None
                 and detected_open_memory_recall_query is None
             ):
                 detected_open_memory_recall_query = _detect_open_memory_recall_query(user_message)
             if (
                 detected_profile_fact_query is None
                 and detected_memory_event_query is None
+                and detected_entity_state_history_query is None
                 and detected_open_memory_recall_query is None
                 and detected_belief_recall_query is None
             ):
@@ -8524,6 +8709,105 @@ def build_researcher_reply(
             config_path=None,
             attachment_context=attachment_context,
             routing_decision="memory_profile_event_history_query",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+    if detected_entity_state_history_query is not None:
+        memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
+        target_predicate = str(detected_entity_state_history_query.predicate or "").strip()
+        history_lookup = retrieve_memory_events_in_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            query=str(user_message or "").strip() or f"What was {detected_entity_state_history_query.topic} before?",
+            subject=memory_subject,
+            predicate=target_predicate,
+            limit=12,
+            actor_id="researcher_bridge",
+        )
+        history_records: list[dict[str, Any]] = []
+        if not history_lookup.read_result.abstained and history_lookup.read_result.records:
+            history_records = _filter_entity_state_history_records(
+                query=detected_entity_state_history_query,
+                records=list(history_lookup.read_result.records),
+            )
+        history_read_method = "retrieve_events"
+        if not history_records:
+            direct_inspection = inspect_human_memory_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                human_id=human_id,
+                actor_id="researcher_bridge",
+            )
+            if not direct_inspection.read_result.abstained and direct_inspection.read_result.records:
+                history_records = _filter_entity_state_history_records(
+                    query=detected_entity_state_history_query,
+                    records=list(direct_inspection.read_result.records),
+                )
+                if history_records:
+                    history_read_method = "inspect_memory_records"
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_entity_state_history",
+            routing_decision="memory_entity_state_history_query",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = _build_entity_state_history_answer(
+            query=detected_entity_state_history_query,
+            records=history_records,
+        )
+        evidence_summary = (
+            "status=memory_entity_state_history "
+            f"predicate={target_predicate or 'unknown'} "
+            f"attribute={detected_entity_state_history_query.attribute or 'unknown'} "
+            f"topic={detected_entity_state_history_query.topic or 'unknown'} "
+            f"event_record_count={len(history_records)} "
+            f"read_method={history_read_method}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered an entity state history query directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_entity_state_history_query",
+            facts=_bridge_event_facts(
+                routing_decision="memory_entity_state_history_query",
+                bridge_mode="memory_entity_state_history",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "predicate": target_predicate,
+                    "attribute": detected_entity_state_history_query.attribute,
+                    "topic": detected_entity_state_history_query.topic,
+                    "event_record_count": len(history_records),
+                    "read_method": history_read_method,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_entity_state_history",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_entity_state_history_query",
             active_chip_key=None,
             active_chip_task_type=None,
             active_chip_evaluate_used=False,

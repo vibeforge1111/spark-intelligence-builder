@@ -2682,10 +2682,26 @@ class TelegramGenericMemoryTests(SparkTestCase):
                 channel_kind="telegram",
                 user_message="Where is the desk plant?",
             )
+            history_query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-entity-location-history",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-location-conflict",
+                channel_kind="telegram",
+                user_message="Where was the desk plant before?",
+            )
 
         self.assertEqual(query.mode, "memory_open_recall")
         self.assertEqual(query.reply_text, "The tiny desk plant is on the balcony.")
         self.assertNotIn("kitchen shelf", query.reply_text)
+        self.assertEqual(history_query.mode, "memory_entity_state_history")
+        self.assertEqual(history_query.routing_decision, "memory_entity_state_history_query")
+        self.assertEqual(
+            history_query.reply_text,
+            "Before the tiny desk plant was on the balcony, it was on the kitchen shelf.",
+        )
 
     def test_build_researcher_reply_deletes_one_entity_location_without_affecting_another(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)

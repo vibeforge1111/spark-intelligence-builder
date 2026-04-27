@@ -3413,6 +3413,28 @@ def _write_profile_fact_history_event(
     channel_kind: str | None,
 ) -> None:
     timestamp = _now_iso()
+    metadata = {
+        "entity_type": "human",
+        "channel_kind": channel_kind,
+        "memory_role": "event",
+        "source_surface": "profile_fact_history_capture",
+        "fact_name": fact_name,
+        "normalized_value": value,
+        "value": value,
+        "source_predicate": predicate,
+    }
+    entity_state_fact = parse_entity_state_fact(evidence_text) if predicate.startswith("entity.") else None
+    if entity_state_fact is not None:
+        metadata.update(
+            {
+                "entity_type": "named_object",
+                "entity_key": entity_state_fact.entity_key,
+                "entity_label": entity_state_fact.entity_label,
+                "entity_attribute": entity_state_fact.attribute,
+            }
+        )
+        if entity_state_fact.location_preposition:
+            metadata["location_preposition"] = entity_state_fact.location_preposition
     _call_sdk_method(
         client,
         "write_event",
@@ -3429,16 +3451,7 @@ def _write_profile_fact_history_event(
             "retention_class": _profile_fact_retention_class(predicate),
             "document_time": timestamp,
             "valid_from": timestamp,
-            "metadata": {
-                "entity_type": "human",
-                "channel_kind": channel_kind,
-                "memory_role": "event",
-                "source_surface": "profile_fact_history_capture",
-                "fact_name": fact_name,
-                "normalized_value": value,
-                "value": value,
-                "source_predicate": predicate,
-            },
+            "metadata": metadata,
         },
     )
 
