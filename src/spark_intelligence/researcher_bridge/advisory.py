@@ -36,6 +36,7 @@ from spark_intelligence.browser.service import (
 from spark_intelligence.capability_router import build_capability_router_prompt_context
 from spark_intelligence.character_runtime import ensure_spark_character_path
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.context import build_spark_context_capsule
 from spark_intelligence.harness_registry import build_harness_prompt_context
 from spark_intelligence.memory import (
     archive_belief_from_memory,
@@ -1940,6 +1941,15 @@ def _render_direct_provider_chat_fallback(
         human_id=human_id,
         channel_kind=channel_kind,
     )
+    context_capsule = build_spark_context_capsule(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=human_id,
+        session_id="",
+        channel_kind=channel_kind,
+        request_id=request_id,
+        user_message=user_message,
+    ).render()
     base_system_prompt = (
         f"{persona_prompt}\n\n"
         + (f"{current_state_block}\n\n" if current_state_block else "")
@@ -2024,6 +2034,7 @@ def _render_direct_provider_chat_fallback(
             personality_context_extra=personality_context_extra,
             browser_search_context_extra=browser_search_context_extra,
             recent_conversation_context=recent_conversation_context,
+            context_capsule=context_capsule,
             system_registry_context=system_registry_context,
             mission_control_context=mission_control_context,
             capability_router_context=capability_router_context,
@@ -3340,6 +3351,7 @@ def _build_contextual_task(
     personality_context_extra: str = "",
     browser_search_context_extra: str = "",
     recent_conversation_context: str = "",
+    context_capsule: str = "",
     system_registry_context: str = "",
     mission_control_context: str = "",
     capability_router_context: str = "",
@@ -3367,6 +3379,8 @@ def _build_contextual_task(
     )
     if spark_self_knowledge_context:
         lines.extend([spark_self_knowledge_context, ""])
+    if context_capsule:
+        lines.extend([sanitize_prompt_boundary_text(context_capsule), ""])
     if system_registry_context:
         lines.extend([sanitize_prompt_boundary_text(system_registry_context), ""])
     if mission_control_context:
@@ -7476,6 +7490,39 @@ def build_researcher_reply(
         channel_kind=channel_kind,
         user_message=user_message,
     )
+    context_capsule = build_spark_context_capsule(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=human_id,
+        session_id=session_id,
+        channel_kind=channel_kind,
+        request_id=request_id,
+        user_message=user_message,
+    ).render()
+    if context_capsule:
+        record_event(
+            state_db,
+            event_type="context_capsule_compiled",
+            component="researcher_bridge",
+            summary="Spark context capsule was compiled for the provider prompt.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="context_capsule_compiled",
+            facts={
+                "keepability": "ephemeral_context",
+                "capsule_chars": len(context_capsule),
+            },
+            provenance={
+                "source_kind": "context_compiler",
+                "source_ref": "spark_context_capsule.v1",
+            },
+        )
     contextual_task = _build_contextual_task(
         user_message=user_message,
         channel_kind=channel_kind,
@@ -7485,6 +7532,7 @@ def build_researcher_reply(
         personality_context_extra=personality_context_extra,
         browser_search_context_extra=browser_search_context_extra,
         recent_conversation_context=recent_conversation_context,
+        context_capsule=context_capsule,
         system_registry_context=system_registry_context,
         mission_control_context=mission_control_context,
         capability_router_context=capability_router_context,

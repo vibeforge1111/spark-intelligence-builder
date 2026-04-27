@@ -1,0 +1,158 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from spark_intelligence.auth.runtime import RuntimeProviderResolution
+from spark_intelligence.context import build_spark_context_capsule
+from spark_intelligence.observability.store import latest_events_by_type, record_event
+from spark_intelligence.researcher_bridge.advisory import ResearcherProviderSelection, build_researcher_reply
+
+from tests.test_support import SparkTestCase
+
+
+class ContextCapsuleTests(SparkTestCase):
+    def _memory_inspection(self) -> SimpleNamespace:
+        return SimpleNamespace(
+            read_result=SimpleNamespace(
+                records=[
+                    {
+                        "predicate": "profile.current_focus",
+                        "value": "automatic memory maintenance verification",
+                        "timestamp": "2026-04-27T12:55:00Z",
+                    },
+                    {
+                        "predicate": "profile.current_plan",
+                        "value": "verify scheduled memory cleanup",
+                        "timestamp": "2026-04-27T12:56:00Z",
+                    },
+                ]
+            )
+        )
+
+    def test_context_capsule_compiles_state_conversation_jobs_and_diagnostics(self) -> None:
+        self.config_manager.set_path("workspace.id", "workspace-test")
+        diagnostics_dir = self.home / "diagnostics"
+        diagnostics_dir.mkdir(parents=True, exist_ok=True)
+        (diagnostics_dir / "spark-diagnostic-2026-04-27T12-55-14+00-00.md").write_text(
+            "Spark diagnostics\n\nFailure lines: 0\nFindings: 0\nConnector checks: ok: 11\n",
+            encoding="utf-8",
+        )
+        with self.state_db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE job_records
+                SET last_run_at = ?, last_result = ?
+                WHERE job_id = 'memory:sdk-maintenance'
+                """,
+                (
+                    "2026-04-27T12:50:00Z",
+                    "status=succeeded before=297 after=151 deletions=31",
+                ),
+            )
+            conn.commit()
+        record_event(
+            self.state_db,
+            event_type="intent_committed",
+            component="telegram_runtime",
+            summary="Inbound Telegram message recorded.",
+            channel_id="telegram",
+            session_id="session-1",
+            request_id="req-old-1",
+            facts={"message_text": "What jobs are running?"},
+        )
+        record_event(
+            self.state_db,
+            event_type="delivery_succeeded",
+            component="telegram_runtime",
+            summary="Outbound Telegram reply delivered.",
+            channel_id="telegram",
+            session_id="session-1",
+            request_id="req-old-2",
+            reason_code="telegram_bridge_outbound",
+            facts={"delivered_text": "The memory maintenance job is scheduled."},
+        )
+
+        with patch(
+            "spark_intelligence.context.capsule.inspect_human_memory_in_memory",
+            return_value=self._memory_inspection(),
+        ):
+            capsule = build_spark_context_capsule(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human-1",
+                session_id="session-1",
+                channel_kind="telegram",
+                request_id="req-now",
+                user_message="What is active now?",
+            )
+
+        rendered = capsule.render()
+        self.assertIn("[Spark Context Capsule]", rendered)
+        self.assertIn("current_focus: automatic memory maintenance verification", rendered)
+        self.assertIn("current_plan: verify scheduled memory cleanup", rendered)
+        self.assertIn("assistant: The memory maintenance job is scheduled.", rendered)
+        self.assertIn("memory:sdk-maintenance", rendered)
+        self.assertIn("spark-diagnostic-2026-04-27T12-55-14+00-00.md", rendered)
+        self.assertIn("Connector checks: ok: 11", rendered)
+
+    def test_researcher_reply_injects_context_capsule_into_provider_prompt(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        runtime_root = self.home / "fake-researcher"
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        config_path = runtime_root / "spark-researcher.project.json"
+        config_path.write_text("{}", encoding="utf-8")
+        provider = RuntimeProviderResolution(
+            provider_id="custom",
+            provider_kind="openai_compatible",
+            auth_profile_id="default",
+            auth_method="api_key",
+            api_mode="openai_chat_completions",
+            execution_transport="direct_http",
+            base_url="https://api.example.invalid/v1",
+            default_model="test-model",
+            secret_ref=None,
+            secret_value="test-secret",
+            source="test",
+        )
+
+        def fake_execute_direct_provider_prompt(*, user_prompt, **kwargs):
+            self.assertIn("[Spark Context Capsule]", user_prompt)
+            self.assertIn("current_focus: automatic memory maintenance verification", user_prompt)
+            return {"raw_response": "Your active focus is automatic memory maintenance verification."}
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
+            return_value=(runtime_root, "configured"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
+            return_value=config_path,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            return_value=ResearcherProviderSelection(provider=provider, model_family="generic"),
+        ), patch(
+            "spark_intelligence.context.capsule.inspect_human_memory_in_memory",
+            return_value=self._memory_inspection(),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=fake_execute_direct_provider_prompt,
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-context-capsule",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-context-capsule",
+                channel_kind="telegram",
+                user_message="Give me a quick orientation on the active work.",
+            )
+
+        self.assertEqual(result.routing_decision, "provider_fallback_chat")
+        self.assertIn("automatic memory maintenance", result.reply_text)
+        events = latest_events_by_type(self.state_db, event_type="context_capsule_compiled", limit=5)
+        self.assertTrue(events)
+        self.assertEqual((events[0]["facts_json"] or {}).get("keepability"), "ephemeral_context")
