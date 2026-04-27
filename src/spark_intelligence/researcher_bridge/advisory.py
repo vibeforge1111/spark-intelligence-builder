@@ -4627,6 +4627,63 @@ def _capsule_line_values(lines: list[str], label: str) -> list[str]:
     return values
 
 
+def _format_memory_maintenance_evidence(job_line: str) -> str:
+    text = str(job_line or "").strip()
+    if not text:
+        return ""
+    last_run_match = re.search(r"\blast_run=([^\s]+)", text)
+    result_match = re.search(r"\bresult=(.*)$", text)
+    result_text = result_match.group(1).strip() if result_match else ""
+    fields: dict[str, str] = {}
+    for key, value in re.findall(r"\b([a-z_]+)=([^\s]+)", result_text):
+        fields[key] = value
+    if not fields:
+        return f"Memory maintenance evidence: {text}."
+
+    def field(key: str) -> str | None:
+        value = fields.get(key)
+        return value if value not in {None, ""} else None
+
+    last_run = _format_operator_time_utc(last_run_match.group(1)) if last_run_match else None
+    status = field("status")
+    before = field("before")
+    after = field("after")
+    details: list[str] = []
+    if before and after:
+        details.append(f"{before} items down to {after}")
+    for key, label in (
+        ("deletions", "deleted"),
+        ("archived", "archived"),
+        ("superseded", "superseded"),
+        ("still_current", "still current"),
+        ("stale_preserved", "stale preserved"),
+    ):
+        value = field(key)
+        if value is not None:
+            details.append(f"{value} {label}")
+
+    status_phrase = "and succeeded" if status == "succeeded" else f"with status {status}" if status else ""
+    prefix = "Memory maintenance"
+    if last_run:
+        prefix += f" ran at {last_run}"
+    if status_phrase:
+        prefix += f" {status_phrase}"
+    if details:
+        return f"{prefix}: {', '.join(details)}."
+    return f"{prefix}."
+
+
+def _format_operator_time_utc(raw_timestamp: str | None) -> str | None:
+    raw = str(raw_timestamp or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return parsed.astimezone(timezone.utc).strftime("%H:%M UTC")
+    except ValueError:
+        return raw
+
+
 def _build_active_context_status_reply(
     *,
     config_manager: ConfigManager,
@@ -4686,7 +4743,7 @@ def _build_active_context_status_reply(
     if connector_health:
         verified.append(f"Connector health: {connector_health}.")
     for job in memory_jobs[:1]:
-        verified.append(f"Memory maintenance evidence: {job}.")
+        verified.append(_format_memory_maintenance_evidence(job))
     if not verified:
         verified.append("No diagnostic or maintenance evidence is present in the capsule.")
 
