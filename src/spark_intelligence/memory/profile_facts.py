@@ -1620,6 +1620,10 @@ def active_state_records_past_revalidation(records: list[dict[str, Any]]) -> lis
     for record in records:
         predicate = str(record.get("predicate") or "").strip()
         metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        maintenance_action = str(metadata.get("active_state_maintenance_action") or "").strip()
+        if maintenance_action == "stale_preserved":
+            stale_records.append(record)
+            continue
         revalidate_at = str(metadata.get("revalidate_at") or "").strip()
         if not revalidate_at:
             timestamp = str(record.get("timestamp") or record.get("document_time") or "").strip()

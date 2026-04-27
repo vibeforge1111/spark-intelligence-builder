@@ -258,6 +258,19 @@ def _select_previous_profile_fact_record(
     return distinct_records[-1]
 
 
+def _active_state_maintenance_actions(records: list[dict[str, Any]]) -> list[str]:
+    actions: set[str] = set()
+    for record in records:
+        metadata = record.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        action = str(metadata.get("active_state_maintenance_action") or "").strip()
+        if action:
+            actions.add(action)
+    actions.discard("")
+    return sorted(actions)
+
+
 def _ordered_profile_fact_event_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
         [record for record in records if _profile_fact_record_value(record)],
@@ -5958,6 +5971,7 @@ def build_researcher_reply(
         )
         stale_primary_records = active_state_records_past_revalidation(primary_records)
         stale_current_fact = bool(primary_records) and len(stale_primary_records) == len(primary_records)
+        maintenance_actions = _active_state_maintenance_actions(primary_records)
         output_keepability, promotion_disposition = _bridge_output_classification(
             mode="memory_profile_fact",
             routing_decision="memory_profile_fact_query",
@@ -5972,7 +5986,8 @@ def build_researcher_reply(
             "status=memory_profile_fact "
             f"predicate={detected_profile_fact_query.predicate or 'unknown'} "
             f"value_found={'yes' if direct_fact_value else 'no'} "
-            f"stale_current_fact={'yes' if stale_current_fact else 'no'}"
+            f"stale_current_fact={'yes' if stale_current_fact else 'no'} "
+            f"active_state_maintenance_actions={','.join(maintenance_actions) if maintenance_actions else 'none'}"
         )
         record_event(
             state_db,
@@ -6003,6 +6018,7 @@ def build_researcher_reply(
                     "label": detected_profile_fact_query.label,
                     "value_found": bool(direct_fact_value),
                     "stale_current_fact": stale_current_fact,
+                    "active_state_maintenance_actions": maintenance_actions,
                 },
             ),
         )

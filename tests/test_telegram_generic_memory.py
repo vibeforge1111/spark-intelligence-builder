@@ -1831,6 +1831,71 @@ class TelegramGenericMemoryTests(SparkTestCase):
             'I have an older saved current plan: "simplify onboarding approvals" but it has not been revalidated recently, so I would not treat it as current.',
         )
 
+    def test_build_researcher_reply_treats_maintenance_stale_preserved_as_stale_current_state(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        stale_record = {
+            "memory_role": "current_state",
+            "subject": "human-stale-maintenance",
+            "predicate": "profile.current_plan",
+            "value": "simplify onboarding approvals",
+            "timestamp": "2026-04-20T09:00:00Z",
+            "metadata": {
+                "memory_role": "current_state",
+                "value": "simplify onboarding approvals",
+                "active_state_maintenance_action": "stale_preserved",
+                "active_state_maintenance_reason": "past_revalidate_at",
+            },
+        }
+        lookup_result = SimpleNamespace(
+            read_result=SimpleNamespace(
+                abstained=False,
+                records=[stale_record],
+                memory_role="current_state",
+            )
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.lookup_current_state_in_memory",
+            return_value=lookup_result,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._inspect_profile_fact_records",
+            return_value=([stale_record], []),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for maintenance-stale current-state recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for maintenance-stale current-state recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-maintenance-stale-plan-read",
+                agent_id="agent-1",
+                human_id="human-stale-maintenance",
+                session_id="session-stale-maintenance",
+                channel_kind="telegram",
+                user_message="What is my current plan?",
+            )
+
+        self.assertEqual(result.mode, "memory_profile_fact")
+        self.assertEqual(result.routing_decision, "memory_profile_fact_query")
+        self.assertIn("not been revalidated recently", result.reply_text)
+        self.assertIn("active_state_maintenance_actions=stale_preserved", result.evidence_summary)
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        facts = next(
+            (
+                event["facts_json"] or {}
+                for event in tool_events
+                if (event["facts_json"] or {}).get("routing_decision") == "memory_profile_fact_query"
+            ),
+            {},
+        )
+        self.assertEqual(facts.get("active_state_maintenance_actions"), ["stale_preserved"])
+        self.assertTrue(facts.get("stale_current_fact"))
+
     def test_build_researcher_reply_archives_stale_structured_evidence_when_newer_evidence_exists(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
