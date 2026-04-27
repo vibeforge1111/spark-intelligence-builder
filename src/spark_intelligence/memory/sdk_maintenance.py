@@ -60,6 +60,18 @@ class SdkMaintenanceExportResult:
             lines.append(
                 f"- active_deletion_count: {maintenance.get('active_deletion_count', 0)}"
             )
+            lines.append(
+                f"- active_state_still_current_count: {maintenance.get('active_state_still_current_count', 0)}"
+            )
+            lines.append(
+                f"- active_state_stale_preserved_count: {maintenance.get('active_state_stale_preserved_count', 0)}"
+            )
+            lines.append(
+                f"- active_state_superseded_count: {maintenance.get('active_state_superseded_count', 0)}"
+            )
+            lines.append(
+                f"- active_state_archived_count: {maintenance.get('active_state_archived_count', 0)}"
+            )
         return "\n".join(lines)
 
 
