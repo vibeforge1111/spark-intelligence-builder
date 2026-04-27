@@ -367,6 +367,27 @@ _OPEN_MEMORY_RECALL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         ),
     ),
     (
+        "evidence_recall",
+        re.compile(
+            r"^(?:what|which)\s+did\s+i\s+(?:tell|say|mention|share)\s+(?:to\s+)?you\s+about\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "evidence_recall",
+        re.compile(
+            r"^(?:do\s+you\s+)?(?:remember|recall)\s+what\s+i\s+(?:told|said|mentioned|shared)\s+(?:to\s+)?you\s+about\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "evidence_recall",
+        re.compile(
+            r"^(?:can\s+you\s+)?(?:remember|recall)\s+(?:anything\s+)?about\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "episodic_recall",
         re.compile(
             r"^(?:what|tell me what)\s+happened\s+(?:during|in|around|at)\s+(.+?)[\?\.\!]*$",
@@ -513,7 +534,42 @@ def _record_matches_open_memory_topic(*, record: dict[str, Any], topic: str) -> 
     if not normalized_topic:
         return False
     haystack = _memory_record_text(record).casefold()
-    return bool(haystack) and normalized_topic in haystack
+    if not haystack:
+        return False
+    if normalized_topic in haystack:
+        return True
+    topic_tokens = [
+        token
+        for token in re.findall(r"[a-z0-9][a-z0-9_-]*", normalized_topic)
+        if token
+        and token
+        not in {
+            "a",
+            "an",
+            "and",
+            "about",
+            "for",
+            "from",
+            "in",
+            "it",
+            "me",
+            "my",
+            "of",
+            "on",
+            "our",
+            "that",
+            "the",
+            "this",
+            "to",
+            "with",
+            "you",
+        }
+    ]
+    if not topic_tokens:
+        return False
+    matched_tokens = [token for token in topic_tokens if token in haystack]
+    required_matches = 1 if len(topic_tokens) <= 2 else 2
+    return len(matched_tokens) >= required_matches
 
 
 def _build_open_memory_recall_answer(*, query: OpenMemoryRecallQuery, records: list[dict[str, Any]]) -> str:
@@ -1749,6 +1805,75 @@ def _load_spark_character_persona() -> str:
     return _SPARK_CHARACTER_PERSONA_CACHE
 
 
+_L1_STATE_PREDICATE_LABELS: tuple[tuple[str, str], ...] = (
+    ("profile.cofounder_name", "cofounder"),
+    ("profile.partner_name", "partner"),
+    ("profile.mentor_name", "mentor"),
+    ("profile.assistant_name", "assistant"),
+    ("profile.current_focus", "current_focus"),
+    ("profile.current_plan", "current_plan"),
+    ("profile.current_blocker", "current_blocker"),
+    ("profile.current_decision", "current_decision"),
+    ("profile.current_status", "current_status"),
+    ("profile.current_commitment", "current_commitment"),
+    ("profile.current_milestone", "current_milestone"),
+    ("profile.current_risk", "current_risk"),
+    ("profile.current_dependency", "current_dependency"),
+    ("profile.current_constraint", "current_constraint"),
+    ("profile.current_owner", "current_owner"),
+    ("profile.recent_family_members", "recent_family"),
+    ("profile.favorite_color", "favorite_color"),
+    ("profile.favorite_food", "favorite_food"),
+)
+
+
+def _build_current_state_block(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str,
+    channel_kind: str = "",
+) -> str:
+    """Project current profile facts into an always-on L1 state block."""
+    if not human_id:
+        return ""
+    candidates: list[str] = []
+    if channel_kind and not human_id.startswith(f"{channel_kind}:"):
+        candidates.append(f"{channel_kind}:{human_id}")
+    candidates.append(human_id)
+
+    records: list[dict[str, Any]] = []
+    for candidate in candidates:
+        try:
+            inspection = inspect_human_memory_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                human_id=candidate,
+                actor_id="researcher_bridge_l1_state",
+            )
+        except Exception:
+            continue
+        records = (inspection.read_result.records if inspection.read_result else None) or []
+        if records:
+            break
+
+    by_predicate: dict[str, str] = {}
+    for record in records:
+        predicate = str(record.get("predicate") or "").strip()
+        value = str(record.get("value") or "").strip()
+        if predicate and value and predicate not in by_predicate:
+            by_predicate[predicate] = value
+
+    lines: list[str] = []
+    for predicate, label in _L1_STATE_PREDICATE_LABELS:
+        value = by_predicate.get(predicate)
+        if value:
+            lines.append(f"- {label}: {value}")
+    if not lines:
+        return ""
+    return "[CURRENT STATE]\n" + "\n".join(lines)
+
+
 def _render_direct_provider_chat_fallback(
     *,
     config_manager: ConfigManager,
@@ -1766,6 +1891,7 @@ def _render_direct_provider_chat_fallback(
     request_id: str | None = None,
     trace_ref: str | None = None,
     enable_web_search: bool = False,
+    human_id: str = "",
 ) -> str:
     # Voice + character: load the canonical persona from spark-character.
     # Anyone running their own Spark inherits the same evolved voice from
@@ -1785,14 +1911,22 @@ def _render_direct_provider_chat_fallback(
                 persona_prompt = f"{persona_prompt}\n\n---\n\n{surface_overlay}"
         except Exception:
             pass
+    current_state_block = _build_current_state_block(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=human_id,
+        channel_kind=channel_kind,
+    )
     base_system_prompt = (
         f"{persona_prompt}\n\n"
-        "Operational rules for this conversation surface:\n"
+        + (f"{current_state_block}\n\n" if current_state_block else "")
+        + "Operational rules for this conversation surface:\n"
         "- When domain chip guidance is attached, treat it as hidden background context rather than an output template. "
         "Do not echo internal headings, confidence scores, packet ids, doctrine labels, or evidence-gap sections unless the user explicitly asks for them.\n"
         "- If the user asks for factual, legal, medical, financial, or time-sensitive guidance "
         "and you are not confident, say plainly that you need more context or verification before giving a hard answer.\n"
-        "- When evidence is good enough, make the call. Do not over-hedge. Do not mention internal advisory or verification systems."
+        "- When evidence is good enough, make the call. Do not over-hedge. Do not mention internal advisory or verification systems.\n"
+        "- The [CURRENT STATE] block above is ground truth about the user. Use it to anchor replies. Do not repeat it back verbatim unless asked. Do not say you don't know something that's listed there."
     )
     if browser_search_context_extra:
         base_system_prompt = (
@@ -4764,6 +4898,58 @@ def build_researcher_reply(
             },
         )
 
+    memory_write_should_reply_via_persona = (
+        bool(config_manager.get_path("spark.researcher.enabled", default=True))
+        and channel_kind == "telegram"
+        and not explicit_memory_message
+        and (
+            detected_profile_fact is not None
+            or detected_memory_event is not None
+            or detected_generic_memory_observation is not None
+            or (
+                assessed_generic_memory_candidate is not None
+                and assessed_generic_memory_candidate.outcome in {"structured_evidence", "raw_episode", "belief_candidate"}
+            )
+        )
+    )
+    if memory_write_should_reply_via_persona:
+        memory_label = "memory"
+        if detected_profile_fact is not None:
+            profile_label = (
+                getattr(detected_profile_fact, "label", None)
+                or detected_profile_fact.fact_name
+                or detected_profile_fact.predicate
+            )
+            memory_label = f"profile fact ({profile_label})"
+        elif detected_memory_event is not None:
+            memory_label = f"Telegram event ({detected_memory_event.label or detected_memory_event.event_name})"
+        elif detected_generic_memory_observation is not None:
+            memory_label = (
+                f"{detected_generic_memory_observation.label or detected_generic_memory_observation.fact_name} "
+                "current-state memory"
+            )
+        elif assessed_generic_memory_candidate is not None:
+            memory_role = str(assessed_generic_memory_candidate.memory_role or "memory")
+            memory_outcome = str(assessed_generic_memory_candidate.outcome or "memory")
+            memory_label = f"{memory_role} memory ({memory_outcome})"
+        memory_context = (
+            "[Memory write this turn]\n"
+            f"Spark captured the user's message as {memory_label}. "
+            "Reply to the user's actual message naturally through the persona path. "
+            "Do not respond with only a filing acknowledgement like Logged, Noted, Saved, or Remembered."
+        )
+        personality_context_extra = (
+            f"{personality_context_extra}\n\n{memory_context}"
+            if personality_context_extra
+            else memory_context
+        )
+
+    memory_candidate_should_reply_via_persona = (
+        memory_write_should_reply_via_persona
+        and assessed_generic_memory_candidate is not None
+        and assessed_generic_memory_candidate.outcome in {"structured_evidence", "raw_episode", "belief_candidate"}
+    )
+
     # Periodically trigger self-evolution based on accumulated observations
     try:
         evolved_deltas = maybe_evolve_traits(human_id=human_id, state_db=state_db)
@@ -5025,7 +5211,7 @@ def build_researcher_reply(
             promotion_disposition=promotion_disposition,
         )
 
-    if detected_profile_fact is not None:
+    if detected_profile_fact is not None and not memory_write_should_reply_via_persona:
         output_keepability, promotion_disposition = _bridge_output_classification(
             mode="memory_profile_fact_update",
             routing_decision="memory_profile_fact_observation",
@@ -5085,7 +5271,7 @@ def build_researcher_reply(
             promotion_disposition=promotion_disposition,
         )
 
-    if detected_memory_event is not None:
+    if detected_memory_event is not None and not memory_write_should_reply_via_persona:
         output_keepability, promotion_disposition = _bridge_output_classification(
             mode="memory_telegram_event_update",
             routing_decision="memory_telegram_event_observation",
@@ -5145,7 +5331,7 @@ def build_researcher_reply(
             promotion_disposition=promotion_disposition,
         )
 
-    if detected_generic_memory_observation is not None:
+    if detected_generic_memory_observation is not None and not memory_write_should_reply_via_persona:
         output_keepability, promotion_disposition = _bridge_output_classification(
             mode="memory_generic_observation_update",
             routing_decision="memory_generic_observation",
@@ -5303,6 +5489,7 @@ def build_researcher_reply(
     if (
         assessed_generic_memory_candidate is not None
         and assessed_generic_memory_candidate.outcome == "structured_evidence"
+        and not memory_candidate_should_reply_via_persona
     ):
         output_keepability, promotion_disposition = _bridge_output_classification(
             mode="memory_structured_evidence_update",
@@ -5371,6 +5558,7 @@ def build_researcher_reply(
     if (
         assessed_generic_memory_candidate is not None
         and assessed_generic_memory_candidate.outcome == "raw_episode"
+        and not memory_candidate_should_reply_via_persona
     ):
         output_keepability, promotion_disposition = _bridge_output_classification(
             mode="memory_raw_episode_update",
@@ -5437,6 +5625,7 @@ def build_researcher_reply(
     if (
         assessed_generic_memory_candidate is not None
         and assessed_generic_memory_candidate.outcome == "belief_candidate"
+        and not memory_candidate_should_reply_via_persona
     ):
         output_keepability, promotion_disposition = _bridge_output_classification(
             mode="memory_belief_update",
@@ -7501,6 +7690,7 @@ def build_researcher_reply(
                     request_id=request_id,
                     trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
                     enable_web_search=True,
+                    human_id=human_id,
                 )
             except Exception:
                 web_search_reply = ""
@@ -7664,6 +7854,7 @@ def build_researcher_reply(
             run_id=run_id,
             request_id=request_id,
             trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+            human_id=human_id,
         )
         cleaned_reply, removed_residue = _clean_messaging_reply_with_metadata(
             raw_reply_text,
@@ -7847,6 +8038,7 @@ def build_researcher_reply(
                         run_id=run_id,
                         request_id=request_id,
                         trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+                        human_id=human_id,
                     )
                     cleaned_reply, removed_residue = _clean_messaging_reply_with_metadata(
                         raw_reply_text,
@@ -8040,6 +8232,7 @@ def build_researcher_reply(
                         run_id=run_id,
                         request_id=request_id,
                         trace_ref=f"trace:{agent_id}:{human_id}:{request_id}",
+                        human_id=human_id,
                     )
                     cleaned_reply, removed_residue = _clean_messaging_reply_with_metadata(
                         raw_reply_text,

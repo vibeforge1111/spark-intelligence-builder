@@ -47,7 +47,7 @@ class GatewayAskTelegramTests(SparkTestCase):
 
         self.assertEqual(
             update["result"]["detail"]["bridge_mode"],
-            "memory_generic_observation_update",
+            "external_autodiscovered",
         )
         self.assertEqual(
             deletion["result"]["detail"]["bridge_mode"],
@@ -113,7 +113,7 @@ class GatewayAskTelegramTests(SparkTestCase):
 
                 self.assertEqual(
                     update["result"]["detail"]["bridge_mode"],
-                    "memory_generic_observation_update",
+                    "external_autodiscovered",
                 )
                 self.assertEqual(
                     deletion["result"]["detail"]["bridge_mode"],

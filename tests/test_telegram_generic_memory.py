@@ -6,23 +6,55 @@ from spark_intelligence.memory.generic_observations import (
     assess_telegram_generic_memory_candidate,
     classify_telegram_generic_memory_candidate,
 )
+from spark_intelligence.auth.runtime import RuntimeProviderResolution
 from spark_intelligence.observability.store import latest_events_by_type
-from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
+from spark_intelligence.researcher_bridge.advisory import ResearcherProviderSelection, build_researcher_reply
 
 from tests.test_support import SparkTestCase
 
 
 class TelegramGenericMemoryTests(SparkTestCase):
     def test_build_researcher_reply_persists_generic_relationship_memory_before_provider_resolution(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
+        runtime_root = self.home / "fake-researcher"
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        config_path = runtime_root / "spark-researcher.project.json"
+        config_path.write_text("{}", encoding="utf-8")
+        provider = RuntimeProviderResolution(
+            provider_id="custom",
+            provider_kind="openai_compatible",
+            auth_profile_id="default",
+            auth_method="api_key",
+            api_mode="openai_chat_completions",
+            execution_transport="direct_http",
+            base_url="https://api.example.invalid/v1",
+            default_model="test-model",
+            secret_ref=None,
+            secret_value="test-secret",
+            source="test",
+        )
+
+        def fake_execute_direct_provider_prompt(*, user_prompt, **kwargs):
+            self.assertIn("[Memory write this turn]", user_prompt)
+            self.assertIn("cofounder", user_prompt)
+            self.assertIn("My cofounder is Omar.", user_prompt)
+            return {"raw_response": "Omar is the cofounder. I will use that as context going forward."}
+
         with patch(
+            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
+            return_value=(runtime_root, "configured"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
+            return_value=config_path,
+        ), patch(
             "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
-            side_effect=AssertionError("provider resolution should not run for generic memory observations"),
+            return_value=ResearcherProviderSelection(provider=provider, model_family="generic"),
         ), patch(
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
-            side_effect=AssertionError("provider execution should not run for generic memory observations"),
+            side_effect=fake_execute_direct_provider_prompt,
         ):
             result = build_researcher_reply(
                 config_manager=self.config_manager,
@@ -35,9 +67,10 @@ class TelegramGenericMemoryTests(SparkTestCase):
                 user_message="My cofounder is Omar.",
             )
 
-        self.assertEqual(result.reply_text, "I'll remember that your cofounder is Omar.")
-        self.assertEqual(result.mode, "memory_generic_observation_update")
-        self.assertEqual(result.routing_decision, "memory_generic_observation")
+        self.assertIn("Omar", result.reply_text)
+        self.assertNotIn("I'll remember", result.reply_text)
+        self.assertEqual(result.mode, "external_configured")
+        self.assertEqual(result.routing_decision, "provider_fallback_chat")
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(write_events)
         recorded_observations = (write_events[0]["facts_json"] or {}).get("observations") or []
@@ -45,10 +78,20 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(recorded_observations[0]["value"], "Omar")
         tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
         self.assertTrue(tool_events)
-        facts = tool_events[0]["facts_json"] or {}
-        self.assertEqual(facts.get("domain_pack"), "relationships")
-        self.assertEqual(facts.get("memory_role"), "current_state")
-        self.assertEqual(facts.get("retention_class"), "durable_profile")
+        facts = next(
+            (
+                (event["facts_json"] or {})
+                for event in tool_events
+                if (event["facts_json"] or {}).get("routing_decision") == "provider_fallback_chat"
+            ),
+            {},
+        )
+        self.assertEqual(facts.get("bridge_mode"), "external_configured")
+        self.assertEqual(facts.get("routing_decision"), "provider_fallback_chat")
+        influence_events = latest_events_by_type(self.state_db, event_type="plugin_or_chip_influence_recorded", limit=10)
+        self.assertTrue(influence_events)
+        facts = (influence_events[0]["facts_json"] or {}).get("detected_generic_memory_observation") or {}
+        self.assertEqual(facts.get("predicate"), "profile.cofounder_name")
 
     def test_build_researcher_reply_persists_recent_family_shared_time_memory(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -509,15 +552,50 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(assessment.memory_role, "raw_episode")
 
     def test_build_researcher_reply_records_uncaptured_memory_candidate_assessment(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
+        runtime_root = self.home / "fake-researcher"
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        config_path = runtime_root / "spark-researcher.project.json"
+        config_path.write_text("{}", encoding="utf-8")
+        provider = RuntimeProviderResolution(
+            provider_id="custom",
+            provider_kind="openai_compatible",
+            auth_profile_id="default",
+            auth_method="api_key",
+            api_mode="openai_chat_completions",
+            execution_transport="direct_http",
+            base_url="https://api.example.invalid/v1",
+            default_model="test-model",
+            secret_ref=None,
+            secret_value="test-secret",
+            source="test",
+        )
+
+        def fake_execute_direct_provider_prompt(*, user_prompt, **kwargs):
+            self.assertIn("[Memory write this turn]", user_prompt)
+            self.assertIn("structured_evidence", user_prompt)
+            self.assertIn("Stripe verification fails", user_prompt)
+            return {
+                "raw_response": (
+                    "That Stripe failure is the bottleneck. Fix verification before spending another cycle on onboarding polish."
+                )
+            }
+
         with patch(
+            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
+            return_value=(runtime_root, "configured"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
+            return_value=config_path,
+        ), patch(
             "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
-            side_effect=AssertionError("provider resolution should not run for structured evidence observations"),
+            return_value=ResearcherProviderSelection(provider=provider, model_family="generic"),
         ), patch(
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
-            side_effect=AssertionError("provider execution should not run for structured evidence observations"),
+            side_effect=fake_execute_direct_provider_prompt,
         ):
             result = build_researcher_reply(
                 config_manager=self.config_manager,
@@ -531,10 +609,10 @@ class TelegramGenericMemoryTests(SparkTestCase):
             )
 
         self.assertTrue(result.reply_text)
-        self.assertEqual(result.mode, "memory_structured_evidence_update")
-        self.assertEqual(result.routing_decision, "memory_structured_evidence_observation")
-        self.assertIn("logged", result.reply_text.lower())
-        self.assertIn("Stripe verification fails", result.reply_text)
+        self.assertEqual(result.mode, "external_configured")
+        self.assertEqual(result.routing_decision, "provider_fallback_chat")
+        self.assertIn("Stripe", result.reply_text)
+        self.assertNotIn("logged", result.reply_text.lower())
         assessment_events = latest_events_by_type(self.state_db, event_type="memory_candidate_assessed", limit=10)
         self.assertTrue(assessment_events)
         facts = assessment_events[0]["facts_json"] or {}
@@ -550,21 +628,62 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(recorded_observations[0]["retention_class"], "episodic_archive")
         tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
         self.assertTrue(tool_events)
-        tool_facts = tool_events[0]["facts_json"] or {}
-        self.assertEqual(tool_facts.get("bridge_mode"), "memory_structured_evidence_update")
-        self.assertEqual(tool_facts.get("routing_decision"), "memory_structured_evidence_observation")
-        self.assertEqual(tool_facts.get("memory_role"), "structured_evidence")
+        tool_facts = next(
+            (
+                (event["facts_json"] or {})
+                for event in tool_events
+                if (event["facts_json"] or {}).get("routing_decision") == "provider_fallback_chat"
+            ),
+            {},
+        )
+        self.assertEqual(tool_facts.get("bridge_mode"), "external_configured")
+        self.assertEqual(tool_facts.get("routing_decision"), "provider_fallback_chat")
 
     def test_build_researcher_reply_persists_belief_candidate_as_derived_belief(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
+        runtime_root = self.home / "fake-researcher"
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        config_path = runtime_root / "spark-researcher.project.json"
+        config_path.write_text("{}", encoding="utf-8")
+        provider = RuntimeProviderResolution(
+            provider_id="custom",
+            provider_kind="openai_compatible",
+            auth_profile_id="default",
+            auth_method="api_key",
+            api_mode="openai_chat_completions",
+            execution_transport="direct_http",
+            base_url="https://api.example.invalid/v1",
+            default_model="test-model",
+            secret_ref=None,
+            secret_value="test-secret",
+            source="test",
+        )
+
+        def fake_execute_direct_provider_prompt(*, user_prompt, **kwargs):
+            self.assertIn("[Memory write this turn]", user_prompt)
+            self.assertIn("belief_candidate", user_prompt)
+            self.assertIn("hands-on onboarding", user_prompt)
+            return {
+                "raw_response": (
+                    "I agree with that read. Enterprise teams usually need hands-on onboarding before the product can sell itself."
+                )
+            }
+
         with patch(
+            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
+            return_value=(runtime_root, "configured"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
+            return_value=config_path,
+        ), patch(
             "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
-            side_effect=AssertionError("provider resolution should not run for belief observations"),
+            return_value=ResearcherProviderSelection(provider=provider, model_family="generic"),
         ), patch(
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
-            side_effect=AssertionError("provider execution should not run for belief observations"),
+            side_effect=fake_execute_direct_provider_prompt,
         ):
             result = build_researcher_reply(
                 config_manager=self.config_manager,
@@ -578,10 +697,10 @@ class TelegramGenericMemoryTests(SparkTestCase):
             )
 
         self.assertTrue(result.reply_text)
-        self.assertEqual(result.mode, "memory_belief_update")
-        self.assertEqual(result.routing_decision, "memory_belief_observation")
-        self.assertIn("keep that in mind", result.reply_text.lower())
+        self.assertEqual(result.mode, "external_configured")
+        self.assertEqual(result.routing_decision, "provider_fallback_chat")
         self.assertIn("hands-on onboarding", result.reply_text)
+        self.assertNotIn("keep that in mind", result.reply_text.lower())
         assessment_events = latest_events_by_type(self.state_db, event_type="memory_candidate_assessed", limit=10)
         self.assertTrue(assessment_events)
         facts = assessment_events[0]["facts_json"] or {}
@@ -596,10 +715,16 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(recorded_observations[0]["retention_class"], "derived_belief")
         tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
         self.assertTrue(tool_events)
-        tool_facts = tool_events[0]["facts_json"] or {}
-        self.assertEqual(tool_facts.get("bridge_mode"), "memory_belief_update")
-        self.assertEqual(tool_facts.get("routing_decision"), "memory_belief_observation")
-        self.assertEqual(tool_facts.get("memory_role"), "belief_candidate")
+        tool_facts = next(
+            (
+                (event["facts_json"] or {})
+                for event in tool_events
+                if (event["facts_json"] or {}).get("routing_decision") == "provider_fallback_chat"
+            ),
+            {},
+        )
+        self.assertEqual(tool_facts.get("bridge_mode"), "external_configured")
+        self.assertEqual(tool_facts.get("routing_decision"), "provider_fallback_chat")
 
     def test_build_researcher_reply_answers_belief_recall_from_memory(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -972,15 +1097,49 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(facts.get("stale_belief_count"), 1)
 
     def test_build_researcher_reply_persists_raw_episode_for_meaningful_unpromoted_turn(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
+        runtime_root = self.home / "fake-researcher"
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        config_path = runtime_root / "spark-researcher.project.json"
+        config_path.write_text("{}", encoding="utf-8")
+        provider = RuntimeProviderResolution(
+            provider_id="custom",
+            provider_kind="openai_compatible",
+            auth_profile_id="default",
+            auth_method="api_key",
+            api_mode="openai_chat_completions",
+            execution_transport="direct_http",
+            base_url="https://api.example.invalid/v1",
+            default_model="test-model",
+            secret_ref=None,
+            secret_value="test-secret",
+            source="test",
+        )
+
+        def fake_execute_direct_provider_prompt(*, user_prompt, **kwargs):
+            self.assertIn("[Memory write this turn]", user_prompt)
+            self.assertIn("pricing page felt confusing", user_prompt)
+            return {
+                "raw_response": (
+                    "That demo signal matters. Let's tighten the pricing page before the next walkthrough."
+                )
+            }
+
         with patch(
+            "spark_intelligence.researcher_bridge.advisory.discover_researcher_runtime_root",
+            return_value=(runtime_root, "configured"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.resolve_researcher_config_path",
+            return_value=config_path,
+        ), patch(
             "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
-            side_effect=AssertionError("provider resolution should not run for raw episode observations"),
+            return_value=ResearcherProviderSelection(provider=provider, model_family="generic"),
         ), patch(
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
-            side_effect=AssertionError("provider execution should not run for raw episode observations"),
+            side_effect=fake_execute_direct_provider_prompt,
         ):
             result = build_researcher_reply(
                 config_manager=self.config_manager,
@@ -994,10 +1153,10 @@ class TelegramGenericMemoryTests(SparkTestCase):
             )
 
         self.assertTrue(result.reply_text)
-        self.assertEqual(result.mode, "memory_raw_episode_update")
-        self.assertEqual(result.routing_decision, "memory_raw_episode_observation")
-        self.assertIn("noted", result.reply_text.lower())
-        self.assertIn("pricing page felt confusing", result.reply_text)
+        self.assertEqual(result.mode, "external_configured")
+        self.assertEqual(result.routing_decision, "provider_fallback_chat")
+        self.assertIn("pricing page", result.reply_text)
+        self.assertNotIn("noted", result.reply_text.lower())
         assessment_events = latest_events_by_type(self.state_db, event_type="memory_candidate_assessed", limit=10)
         self.assertTrue(assessment_events)
         facts = assessment_events[0]["facts_json"] or {}
@@ -1012,10 +1171,16 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(recorded_observations[0]["retention_class"], "episodic_archive")
         tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
         self.assertTrue(tool_events)
-        tool_facts = tool_events[0]["facts_json"] or {}
-        self.assertEqual(tool_facts.get("bridge_mode"), "memory_raw_episode_update")
-        self.assertEqual(tool_facts.get("routing_decision"), "memory_raw_episode_observation")
-        self.assertEqual(tool_facts.get("memory_role"), "raw_episode")
+        tool_facts = next(
+            (
+                (event["facts_json"] or {})
+                for event in tool_events
+                if (event["facts_json"] or {}).get("routing_decision") == "provider_fallback_chat"
+            ),
+            {},
+        )
+        self.assertEqual(tool_facts.get("bridge_mode"), "external_configured")
+        self.assertEqual(tool_facts.get("routing_decision"), "provider_fallback_chat")
 
     def test_build_researcher_reply_answers_open_structured_evidence_recall_from_memory(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -1066,6 +1231,44 @@ class TelegramGenericMemoryTests(SparkTestCase):
         )
         self.assertEqual(facts.get("bridge_mode"), "memory_open_recall")
         self.assertIn("structured_evidence", facts.get("retrieved_memory_roles") or [])
+
+    def test_build_researcher_reply_answers_what_i_told_you_recall_from_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-told-you-evidence-write",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-told-you-evidence-write",
+            channel_kind="telegram",
+            user_message="Users keep dropping during onboarding because Stripe verification fails.",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for open memory recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for open memory recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-told-you-evidence-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-told-you-evidence-read",
+                channel_kind="telegram",
+                user_message="What did I tell you about the onboarding demo?",
+            )
+
+        self.assertEqual(result.mode, "memory_open_recall")
+        self.assertEqual(result.routing_decision, "memory_open_recall_query")
+        self.assertIn("onboarding", result.reply_text.lower())
+        self.assertIn("Stripe verification fails", result.reply_text)
 
     def test_build_researcher_reply_answers_spark_systems_self_knowledge_before_memory_recall(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

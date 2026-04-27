@@ -6,7 +6,11 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from spark_intelligence.memory import TelegramMemoryRegressionResult, run_telegram_memory_regression
-from spark_intelligence.memory.regression import DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES, _prepare_regression_identity
+from spark_intelligence.memory.regression import (
+    DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES,
+    _allocate_regression_identity,
+    _prepare_regression_identity,
+)
 
 from tests.test_support import SparkTestCase
 
@@ -156,6 +160,13 @@ class MemoryRegressionTests(SparkTestCase):
             source_ref="memory-regression-setup",
         )
         consume_pairing_welcome_mock.assert_called_once()
+
+    def test_allocate_regression_identity_uses_telegram_compatible_decimal_user_id(self) -> None:
+        user_id, chat_id = _allocate_regression_identity(chat_id=None)
+
+        self.assertTrue(user_id.isdecimal())
+        self.assertGreater(int(user_id), 0)
+        self.assertEqual(chat_id, user_id)
 
     def test_run_telegram_memory_regression_blocks_fast_when_user_is_not_paired(self) -> None:
         output_dir = self.home / "artifacts" / "telegram-memory-regression-blocked"
@@ -600,12 +611,13 @@ class MemoryRegressionTests(SparkTestCase):
                 categories=["abstention"],
             )
 
-        self.assertEqual(
-            seen_pairs,
-            [
-                ("12345-spark_role_abstention", "12345-spark_role_abstention"),
-                ("12345-hack_actor_query_missing", "12345-hack_actor_query_missing"),
-            ],
-        )
+        self.assertEqual(len(seen_pairs), 2)
+        self.assertNotEqual(seen_pairs[0], seen_pairs[1])
+        for user_id, chat_id in seen_pairs:
+            self.assertIsNotNone(user_id)
+            assert user_id is not None
+            self.assertTrue(user_id.isdecimal())
+            self.assertGreater(int(user_id), 0)
+            self.assertEqual(chat_id, user_id)
         self.assertEqual(result.payload["summary"]["case_count"], 2)
         self.assertEqual(result.payload["summary"]["selected_categories"], ["abstention"])

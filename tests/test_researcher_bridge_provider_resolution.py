@@ -1580,7 +1580,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
 
         self.assertEqual(captured["provider_id"], "custom")
         self.assertEqual(captured["provider_model"], "MiniMax-M2.7")
-        self.assertIn("1:1 messaging conversation", str(captured["system_prompt"]))
+        self.assertIn("ongoing 1:1 conversation", str(captured["system_prompt"]))
         self.assertNotIn("decisive startup operator", str(captured["system_prompt"]))
         self.assertIn("[fallback_mode=conversational_under_supported]", str(captured["user_prompt"]))
         self.assertIsNotNone(captured["governance"])
@@ -1707,6 +1707,68 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("Sharp, concise, decision-oriented", str(captured["user_prompt"]))
         self.assertIn("Keep replies shorter unless asked for depth.", str(captured["user_prompt"]))
 
+    def test_render_direct_provider_chat_fallback_injects_l1_current_state(self) -> None:
+        provider = RuntimeProviderResolution(
+            provider_id="custom",
+            provider_kind="custom",
+            auth_profile_id="custom:default",
+            auth_method="api_key_env",
+            api_mode="chat_completions",
+            execution_transport="direct_http",
+            base_url="https://api.minimax.io/v1",
+            default_model="MiniMax-M2.7",
+            secret_ref=None,
+            secret_value="secret",
+            source="config+env",
+        )
+        captured: dict[str, object] = {}
+
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None, tools=None):
+            captured["system_prompt"] = system_prompt
+            captured["user_prompt"] = user_prompt
+            return {"raw_response": "The dashboard is the thing on your plate."}
+
+        def fake_inspect(*, human_id: str, **kwargs):
+            if human_id == "telegram:8319079055":
+                return SimpleNamespace(
+                    read_result=SimpleNamespace(
+                        records=[
+                            {
+                                "predicate": "profile.current_plan",
+                                "value": "ship the new tracking dashboard by friday",
+                            },
+                            {
+                                "predicate": "profile.favorite_color",
+                                "value": "blue",
+                            },
+                        ]
+                    )
+                )
+            return SimpleNamespace(read_result=SimpleNamespace(records=[]))
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.inspect_human_memory_in_memory",
+            side_effect=fake_inspect,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=fake_direct_provider_prompt,
+        ):
+            reply = _render_direct_provider_chat_fallback(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                provider=provider,
+                user_message="What's on my plate this week?",
+                channel_kind="telegram",
+                attachment_context={},
+                human_id="8319079055",
+            )
+
+        self.assertEqual(reply, "The dashboard is the thing on your plate.")
+        self.assertIn("[CURRENT STATE]", str(captured["system_prompt"]))
+        self.assertIn("- current_plan: ship the new tracking dashboard by friday", str(captured["system_prompt"]))
+        self.assertIn("- favorite_color: blue", str(captured["system_prompt"]))
+        self.assertIn("Do not say you don't know something that's listed there.", str(captured["system_prompt"]))
+
     def test_build_researcher_reply_persists_city_profile_fact_before_bridge_execution(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -1742,8 +1804,11 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 "trace_path": "trace:city-under-supported",
             }
 
-        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
-            return {"raw_response": "Noted."}
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None, **kwargs):
+            self.assertIn("[Memory write this turn]", user_prompt)
+            self.assertIn("profile fact", user_prompt)
+            self.assertIn("I moved to Dubai.", user_prompt)
+            return {"raw_response": "Dubai noted. I will treat that as your current city when it matters."}
 
         def fail_execute_with_research(*args, **kwargs):
             raise AssertionError("execute_with_research should not run for direct conversational fallback")
@@ -1775,7 +1840,10 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 user_message="I moved to Dubai.",
             )
 
-        self.assertEqual(result.reply_text, "I'll remember you live in Dubai.")
+        self.assertEqual(result.mode, "external_configured")
+        self.assertEqual(result.routing_decision, "provider_fallback_chat")
+        self.assertIn("Dubai", result.reply_text)
+        self.assertNotIn("I'll remember", result.reply_text)
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(write_events)
         observations = (write_events[0]["facts_json"] or {}).get("observations") or []
@@ -2096,8 +2164,11 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 "trace_path": "trace:timezone-under-supported",
             }
 
-        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
-            return {"raw_response": "Noted."}
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None, **kwargs):
+            self.assertIn("[Memory write this turn]", user_prompt)
+            self.assertIn("profile fact", user_prompt)
+            self.assertIn("My timezone is Asia/Dubai.", user_prompt)
+            return {"raw_response": "Asia/Dubai is now the timezone I will use for you."}
 
         def fail_execute_with_research(*args, **kwargs):
             raise AssertionError("execute_with_research should not run for direct conversational fallback")
@@ -2129,7 +2200,10 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 user_message="My timezone is Asia/Dubai.",
             )
 
-        self.assertEqual(result.reply_text, "I'll remember your timezone is Asia/Dubai.")
+        self.assertEqual(result.mode, "external_configured")
+        self.assertEqual(result.routing_decision, "provider_fallback_chat")
+        self.assertIn("Asia/Dubai", result.reply_text)
+        self.assertNotIn("I'll remember", result.reply_text)
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(write_events)
         observations = (write_events[0]["facts_json"] or {}).get("observations") or []
@@ -2264,8 +2338,11 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 "trace_path": "trace:country-under-supported",
             }
 
-        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
-            return {"raw_response": "Noted."}
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None, **kwargs):
+            self.assertIn("[Memory write this turn]", user_prompt)
+            self.assertIn("profile fact", user_prompt)
+            self.assertIn("My country is UAE.", user_prompt)
+            return {"raw_response": "UAE is now the country context I will use for you."}
 
         def fail_execute_with_research(*args, **kwargs):
             raise AssertionError("execute_with_research should not run for direct conversational fallback")
@@ -2297,7 +2374,10 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 user_message="My country is UAE.",
             )
 
-        self.assertEqual(result.reply_text, "I'll remember your country is UAE.")
+        self.assertEqual(result.mode, "external_configured")
+        self.assertEqual(result.routing_decision, "provider_fallback_chat")
+        self.assertIn("UAE", result.reply_text)
+        self.assertNotIn("I'll remember", result.reply_text)
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(write_events)
         observations = (write_events[0]["facts_json"] or {}).get("observations") or []
@@ -2437,8 +2517,11 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 "trace_path": "trace:name-under-supported",
             }
 
-        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
-            return {"raw_response": "Noted."}
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None, **kwargs):
+            self.assertIn("[Memory write this turn]", user_prompt)
+            self.assertIn("profile fact", user_prompt)
+            self.assertIn("My name is Sarah.", user_prompt)
+            return {"raw_response": "Sarah is the name I will use for you from here."}
 
         def fail_execute_with_research(*args, **kwargs):
             raise AssertionError("execute_with_research should not run for direct conversational fallback")
@@ -2470,7 +2553,10 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 user_message="My name is Sarah.",
             )
 
-        self.assertEqual(result.reply_text, "I'll remember your name is Sarah.")
+        self.assertEqual(result.mode, "external_configured")
+        self.assertEqual(result.routing_decision, "provider_fallback_chat")
+        self.assertIn("Sarah", result.reply_text)
+        self.assertNotIn("I'll remember", result.reply_text)
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(write_events)
         observations = (write_events[0]["facts_json"] or {}).get("observations") or []
