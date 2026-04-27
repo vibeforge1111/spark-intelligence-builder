@@ -4715,6 +4715,47 @@ def _detect_memory_cleanup_sample_query(user_message: str) -> bool:
     return wants_sample and cleanup_anchor and memory_anchor
 
 
+def _build_memory_quality_evaluation_plan_reply() -> tuple[str, dict[str, Any]]:
+    lines = [
+        "Here is the Telegram memory-quality evaluation plan:",
+        "",
+        "1. Natural recall",
+        "- Seed one normal fact in conversation without saying it is a test.",
+        "- After 3-5 unrelated turns, ask for it naturally.",
+        "- Pass: Spark recalls the right fact without asking you to restate it.",
+        "",
+        "2. Stale context avoidance",
+        "- Set an old value, then replace it with a newer value.",
+        "- Ask the same question later in an open-ended way.",
+        "- Pass: Spark uses the newer current-state value and does not revive the stale one.",
+        "",
+        "3. Current-state priority",
+        "- Create a conflict between old workflow residue and current_state.",
+        "- Ask what is active now.",
+        "- Pass: current_state wins, and old workflow_state is treated as advisory only.",
+        "",
+        "4. Source explanation",
+        "- After any memory answer, ask why it answered that way.",
+        "- Pass: Spark names the memory source class it used, such as current_state, recent conversation, diagnostics, or workflow_state.",
+        "",
+        "5. Open-ended synthesis",
+        "- Ask what we should do next without using exact route words like status, diagnostics, or checklist.",
+        "- Pass: Spark reasons from the active focus instead of falling back to the old diagnostics handoff.",
+        "",
+        "Start with natural recall. Give Spark one low-stakes fact, then we will distract it for a few turns and ask for it back.",
+    ]
+    return "\n".join(lines), {
+        "plan_kind": "persistent_memory_quality_evaluation",
+        "dimensions": [
+            "natural_recall",
+            "stale_context_avoidance",
+            "current_state_priority",
+            "source_explanation",
+            "open_ended_synthesis",
+        ],
+    }
+
+
 def _detect_memory_cleanup_closure_query(user_message: str) -> bool:
     text = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
     if not text:
@@ -5698,6 +5739,61 @@ def build_researcher_reply(
                 output_keepability=output_keepability,
                 promotion_disposition=promotion_disposition,
             )
+
+    if not personality_context_extra and _detect_memory_quality_evaluation_plan_query(user_message):
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text, plan_facts = _build_memory_quality_evaluation_plan_reply()
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_quality_evaluation_plan",
+            routing_decision="memory_quality_evaluation_plan",
+        )
+        evidence_summary = "status=memory_quality_evaluation_plan dimensions=5"
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered a persistent memory quality evaluation plan request.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_quality_evaluation_plan",
+            facts=_bridge_event_facts(
+                routing_decision="memory_quality_evaluation_plan",
+                bridge_mode="memory_quality_evaluation_plan",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "query_text": str(user_message or "").strip(),
+                    **plan_facts,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_quality_evaluation_plan",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_quality_evaluation_plan",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
 
     if not personality_context_extra and _detect_memory_cleanup_closure_query(user_message):
         trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"

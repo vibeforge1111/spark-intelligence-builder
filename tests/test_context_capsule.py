@@ -670,6 +670,38 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertNotIn("Every deleted", result.reply_text)
         self.assertNotIn("every deleted entry", result.reply_text)
 
+    def test_memory_quality_evaluation_plan_does_not_fall_back_to_diagnostics_handoff(self) -> None:
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider should not run for memory quality plan"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory._build_browser_search_context",
+            side_effect=AssertionError("browser search should not run for memory source explanation"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-memory-quality-plan",
+                agent_id="agent:human:telegram:8319079055",
+                human_id="human:telegram:8319079055",
+                session_id="session:telegram:dm:8319079055",
+                channel_kind="telegram",
+                user_message=(
+                    "Good. Give me a concrete evaluation plan for persistent memory quality in Telegram. "
+                    "It should test natural recall, stale context avoidance, current-state priority, "
+                    "and whether you can explain what memory sources you used."
+                ),
+            )
+
+        self.assertEqual(result.routing_decision, "memory_quality_evaluation_plan")
+        self.assertIn("Natural recall", result.reply_text)
+        self.assertIn("Stale context avoidance", result.reply_text)
+        self.assertIn("Current-state priority", result.reply_text)
+        self.assertIn("Source explanation", result.reply_text)
+        self.assertIn("Open-ended synthesis", result.reply_text)
+        self.assertNotIn("fresh diagnostics scan", result.reply_text)
+        self.assertNotIn("diagnostic integration upgrades", result.reply_text)
+
     def test_cleanup_samples_ready_to_close_uses_closure_evidence_route(self) -> None:
         record_event(
             self.state_db,
