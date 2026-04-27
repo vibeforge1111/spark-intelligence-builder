@@ -1795,6 +1795,10 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             "do not substitute older diagnostics handoff tasks",
             str(captured["user_prompt"]),
         )
+        self.assertIn(
+            "answer against the active focus/plan first",
+            str(captured["user_prompt"]),
+        )
 
     def test_build_researcher_reply_persists_city_profile_fact_before_bridge_execution(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)

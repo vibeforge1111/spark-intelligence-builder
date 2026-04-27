@@ -166,6 +166,10 @@ class ContextCapsuleTests(SparkTestCase):
                 "verify by naming the current focus, current plan, latest diagnostics status, and maintenance summary",
                 user_prompt,
             )
+            self.assertIn(
+                "what is verified, still open, or only they should close",
+                user_prompt,
+            )
             return {"raw_response": "Your active focus is automatic memory maintenance verification."}
 
         with patch(
