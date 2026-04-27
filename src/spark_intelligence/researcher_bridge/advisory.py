@@ -4880,6 +4880,7 @@ def _build_active_context_status_reply(
 def _build_memory_cleanup_sample_reply(
     *,
     state_db: StateDB,
+    human_id: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     event = _latest_memory_maintenance_event(state_db=state_db)
     if event is None:
@@ -4920,7 +4921,8 @@ def _build_memory_cleanup_sample_reply(
         ("still_current", "Still current"),
     ):
         lines.extend(["", title])
-        bucket_samples = samples.get(bucket) if isinstance(samples.get(bucket), list) else []
+        raw_bucket_samples = samples.get(bucket) if isinstance(samples.get(bucket), list) else []
+        bucket_samples = _rank_memory_cleanup_samples(raw_bucket_samples, human_id=human_id)
         if not bucket_samples:
             lines.append("- none in the latest sample")
             continue
@@ -4949,6 +4951,32 @@ def _build_memory_cleanup_sample_reply(
             "audit_samples": samples,
         },
     )
+
+
+def _rank_memory_cleanup_samples(samples: list[Any], *, human_id: str | None) -> list[dict[str, Any]]:
+    normalized = [sample for sample in samples if isinstance(sample, dict)]
+    target_human = str(human_id or "").strip()
+
+    def score(sample: dict[str, Any]) -> tuple[int, int, str]:
+        subject = str(sample.get("subject") or "").strip()
+        observation_id = str(sample.get("observation_id") or "").strip()
+        predicate = str(sample.get("predicate") or "").strip()
+        same_human = bool(target_human and subject == target_human)
+        smoke_or_sim = (
+            "smoke" in subject.casefold()
+            or observation_id.startswith("sim:")
+            or subject.startswith("human:telegram:949385504366")
+            or subject.startswith("human:telegram:905162608906")
+        )
+        current_profile = predicate.startswith("profile.current_")
+        return (
+            0 if same_human else 1,
+            0 if current_profile else 1,
+            1 if smoke_or_sim else 0,
+            observation_id,
+        )
+
+    return sorted(normalized, key=score)
 
 
 def _latest_memory_maintenance_event(*, state_db: StateDB) -> dict[str, Any] | None:
@@ -5372,7 +5400,10 @@ def build_researcher_reply(
 
     if not personality_context_extra and _detect_memory_cleanup_sample_query(user_message):
         trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
-        reply_text, sample_facts = _build_memory_cleanup_sample_reply(state_db=state_db)
+        reply_text, sample_facts = _build_memory_cleanup_sample_reply(
+            state_db=state_db,
+            human_id=human_id,
+        )
         output_keepability, promotion_disposition = _bridge_output_classification(
             mode="memory_cleanup_sample",
             routing_decision="memory_cleanup_sample",

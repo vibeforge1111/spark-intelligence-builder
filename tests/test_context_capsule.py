@@ -417,23 +417,50 @@ class ContextCapsuleTests(SparkTestCase):
                     "audit_samples": {
                         "archived": [
                             {
+                                "subject": "human:smoke:test",
+                                "predicate": "system.memory.smoke",
+                                "value": "ok",
+                                "reason": "deleted_by_later_state_deletion",
+                                "observation_id": "memory_cli:write:smoke",
+                            },
+                            {
+                                "subject": "human:telegram:8319079055",
                                 "predicate": "current_focus",
                                 "value": "old diagnostics plan",
                                 "reason": "deleted_by_later_state_deletion",
+                                "observation_id": "telegram:1",
                             }
                         ],
                         "deleted": [
                             {
+                                "subject": "human:telegram:949385504366",
+                                "predicate": "current_owner",
+                                "value": "delete current_owner",
+                                "reason": "current_snapshot",
+                                "observation_id": "sim:1",
+                            },
+                            {
+                                "subject": "human:telegram:8319079055",
                                 "predicate": "current_plan",
                                 "value": "old plan",
                                 "reason": "current_snapshot",
+                                "observation_id": "telegram:2",
                             }
                         ],
                         "still_current": [
                             {
+                                "subject": "human:telegram:905162608906",
+                                "predicate": "telegram.summary.latest_flight",
+                                "value": "flight to Paris on May 9",
+                                "reason": "current_snapshot",
+                                "observation_id": "sim:2",
+                            },
+                            {
+                                "subject": "human:telegram:8319079055",
                                 "predicate": "current_focus",
                                 "value": "context capsule verification",
                                 "reason": "current_snapshot",
+                                "observation_id": "telegram:3",
                             }
                         ],
                     }
@@ -456,10 +483,22 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertIn("Here is a small memory cleanup audit sample", result.reply_text)
         self.assertIn("Archived", result.reply_text)
         self.assertIn("current_focus: old diagnostics plan", result.reply_text)
+        self.assertLess(
+            result.reply_text.index("current_focus: old diagnostics plan"),
+            result.reply_text.index("system.memory.smoke: ok"),
+        )
         self.assertIn("Deleted", result.reply_text)
         self.assertIn("current_plan: old plan", result.reply_text)
+        self.assertLess(
+            result.reply_text.index("current_plan: old plan"),
+            result.reply_text.index("current_owner: delete current_owner"),
+        )
         self.assertIn("Still current", result.reply_text)
         self.assertIn("current_focus: context capsule verification", result.reply_text)
+        self.assertLess(
+            result.reply_text.index("current_focus: context capsule verification"),
+            result.reply_text.index("telegram.summary.latest_flight: flight to Paris on May 9"),
+        )
 
     def test_researcher_reply_injects_context_capsule_into_provider_prompt(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
