@@ -2171,6 +2171,8 @@ def _should_collect_browser_search_context(user_message: str) -> bool:
     lowered = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
     if not lowered:
         return False
+    if _detect_memory_quality_evaluation_plan_query(lowered) or _detect_memory_source_explanation_query(lowered):
+        return False
     domain_or_url_hint = re.search(
         r"(https?://\S+|www\.\S+|\b[a-z0-9-]+(?:\.[a-z0-9-]+)+\b)",
         lowered,
@@ -2196,6 +2198,53 @@ def _should_collect_browser_search_context(user_message: str) -> bool:
     return any(signal in lowered for signal in current_fact_signals) and any(
         token in lowered for token in ("search", "look", "find", "source")
     )
+
+
+def _detect_memory_source_explanation_query(user_message: str) -> bool:
+    text = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
+    if not text:
+        return False
+    return "memory" in text and any(
+        marker in text
+        for marker in (
+            "memory sources",
+            "sources you used",
+            "source you used",
+            "what sources",
+            "which sources",
+            "explain what memory",
+        )
+    )
+
+
+def _detect_memory_quality_evaluation_plan_query(user_message: str) -> bool:
+    text = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
+    if not text:
+        return False
+    memory_quality_anchor = any(
+        marker in text
+        for marker in (
+            "persistent memory quality",
+            "memory quality",
+            "natural recall",
+            "stale context avoidance",
+            "current-state priority",
+            "current state priority",
+        )
+    )
+    plan_anchor = any(
+        marker in text
+        for marker in (
+            "evaluation plan",
+            "test plan",
+            "concrete plan",
+            "what should we evaluate",
+            "evaluate next",
+            "quality metric",
+            "benchmark",
+        )
+    )
+    return memory_quality_anchor and plan_anchor
 
 
 def _normalize_browser_search_query(user_message: str) -> str:
@@ -3417,6 +3466,23 @@ def _build_contextual_task(
         "- Do not invent unavailable slash commands such as /recall. If context is present here, use it directly.",
         "",
     ]
+    if _detect_memory_quality_evaluation_plan_query(user_message) or (
+        "current_focus: persistent memory quality evaluation" in str(context_capsule or "")
+        and any(
+            marker in str(user_message or "").lower()
+            for marker in ("evaluation plan", "concrete plan", "evaluate next", "quality")
+        )
+    ):
+        lines.extend(
+            [
+                "[Active focus guard]",
+                "- The active focus is persistent memory quality evaluation. Answer the user's request as a memory-quality evaluation plan.",
+                "- Do not reuse the old diagnostics integration checklist unless the user explicitly asks for diagnostics work.",
+                "- Cover natural recall, stale-context avoidance, current-state priority, and source explanation.",
+                "- Diagnostics and maintenance counts are background evidence only; they are not the next plan.",
+                "",
+            ]
+        )
     spark_self_knowledge_context = _build_spark_self_knowledge_context(
         user_message=user_message,
         attachment_context=attachment_context,

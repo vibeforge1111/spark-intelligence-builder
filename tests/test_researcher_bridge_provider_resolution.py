@@ -70,6 +70,37 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
 
         self.assertEqual(query, "official IANA page about reserved example domains")
 
+    def test_memory_source_quality_plan_does_not_trigger_browser_search(self) -> None:
+        self.assertFalse(
+            _should_collect_browser_search_context(
+                "Good. Give me a concrete evaluation plan for persistent memory quality in Telegram. "
+                "It should test natural recall, stale context avoidance, current-state priority, "
+                "and whether you can explain what memory sources you used."
+            )
+        )
+
+    def test_contextual_task_adds_memory_quality_focus_guard(self) -> None:
+        prompt = _build_contextual_task(
+            user_message=(
+                "Give me a concrete evaluation plan for persistent memory quality in Telegram. "
+                "It should test natural recall, stale context avoidance, current-state priority, "
+                "and whether you can explain what memory sources you used."
+            ),
+            channel_kind="telegram",
+            attachment_context={},
+            context_capsule=(
+                "[Spark Context Capsule]\n"
+                "[current_state]\n"
+                "- current_focus: persistent memory quality evaluation\n"
+                "- current_plan: verify scheduled memory cleanup\n"
+            ),
+        )
+
+        self.assertIn("[Active focus guard]", prompt)
+        self.assertIn("Answer the user's request as a memory-quality evaluation plan", prompt)
+        self.assertIn("Do not reuse the old diagnostics integration checklist", prompt)
+        self.assertIn("natural recall, stale-context avoidance, current-state priority", prompt)
+
     def test_context_source_debug_query_explains_previous_capsule_ledger(self) -> None:
         record_event(
             self.state_db,
