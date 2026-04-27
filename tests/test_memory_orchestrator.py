@@ -452,6 +452,38 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(len(fake_client.observation_calls), 1)
         self.assertEqual(fake_client.observation_calls[0]["predicate"], "profile.current_low_stakes_test_fact")
 
+    def test_direct_entity_state_fact_writes_entity_key_metadata(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator._now_iso",
+            return_value="2026-04-28T10:00:00Z",
+        ):
+            result = write_profile_fact_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                predicate="entity.location",
+                value="the kitchen shelf",
+                evidence_text="For later, the tiny desk plant is on the kitchen shelf.",
+                fact_name="entity_location",
+                session_id="session:entity-location",
+                turn_id="turn:entity-location",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        call = fake_client.observation_calls[0]
+        self.assertEqual(call["predicate"], "entity.location")
+        self.assertEqual(call["retention_class"], "active_state")
+        self.assertEqual(call["metadata"]["entity_key"], "named-object:tiny-desk-plant")
+        self.assertEqual(call["metadata"]["entity_label"], "tiny desk plant")
+        self.assertEqual(call["metadata"]["entity_attribute"], "location")
+        self.assertEqual(call["metadata"]["location_preposition"], "on")
+        self.assertEqual(call["metadata"]["revalidate_after_days"], 21)
+
     def test_profile_current_state_predicates_store_revalidation_metadata(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

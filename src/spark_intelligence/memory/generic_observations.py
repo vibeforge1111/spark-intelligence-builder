@@ -271,6 +271,15 @@ class TelegramGenericPack:
     revalidation_days: int | None = None
 
 
+@dataclass(frozen=True)
+class EntityStateFact:
+    entity_label: str
+    attribute: str
+    value: str
+    entity_key: str
+    location_preposition: str | None = None
+
+
 def _simple_delete_phrases(*targets: str) -> tuple[str, ...]:
     phrases: list[str] = []
     for target in targets:
@@ -720,6 +729,20 @@ def classify_telegram_generic_memory_candidate(user_message: str) -> TelegramGen
                     retention_class=pack.retention_class,
                     domain_pack=pack.domain_pack,
                 )
+
+    entity_state_fact = parse_entity_state_fact(normalized)
+    if entity_state_fact is not None and entity_state_fact.attribute != "name":
+        return TelegramGenericCandidate(
+            predicate=f"entity.{entity_state_fact.attribute}",
+            value=entity_state_fact.value,
+            evidence_text=text,
+            fact_name=f"entity_{entity_state_fact.attribute}",
+            label=f"{entity_state_fact.entity_label} {entity_state_fact.attribute}",
+            operation="update",
+            memory_role="current_state",
+            retention_class="active_state",
+            domain_pack="entity_state",
+        )
     return None
 
 
@@ -779,6 +802,10 @@ def build_telegram_generic_observation_answer(*, observation: TelegramGenericObs
     value = str(observation.value or "").strip()
     if not value:
         return "I'll remember that."
+    if observation.predicate.startswith("entity."):
+        entity_state_fact = parse_entity_state_fact(observation.evidence_text)
+        if entity_state_fact is not None:
+            return _entity_state_observation_answer(entity_state_fact)
     if observation.predicate == "profile.current_plan":
         return f"I'll remember that your current plan is {_current_plan_value_clause(value)}."
     pack = _GENERIC_PACKS_BY_PREDICATE.get(observation.predicate)
@@ -796,6 +823,155 @@ def build_telegram_generic_deletion_answer(*, deletion: TelegramGenericDeletion)
 
 def _clean_text(value: str) -> str:
     return re.sub(r"\s+", " ", str(value or "").strip())
+
+
+def _entity_state_observation_answer(fact: EntityStateFact) -> str:
+    label = fact.entity_label
+    value = fact.value
+    if fact.attribute == "location":
+        preposition = fact.location_preposition or "at"
+        return f"I'll remember that the {label} is {preposition} {value}."
+    if fact.attribute == "owner":
+        return f"I'll remember that the {label} is owned by {value}."
+    if fact.attribute == "deadline":
+        return f"I'll remember that the {label} is due {value}."
+    if fact.attribute == "relation":
+        return f"I'll remember that the {label} is related to {value}."
+    if fact.attribute == "status":
+        return f"I'll remember that the {label} status is {value}."
+    return f"I'll remember that the {label} {fact.attribute} is {value}."
+
+
+def parse_entity_state_fact(value: str) -> EntityStateFact | None:
+    normalized = _strip_correction_prefix(_clean_text(value))
+    normalized = re.sub(r"^(?:for\s+later[:,]?\s*)", "", normalized, flags=re.IGNORECASE).strip()
+    normalized = re.sub(r"^(?:remember\s+that\s+)", "", normalized, flags=re.IGNORECASE).strip()
+    if not normalized:
+        return None
+    for parser in (
+        _parse_entity_name_fact,
+        _parse_entity_location_fact,
+        _parse_entity_owner_fact,
+        _parse_entity_deadline_fact,
+        _parse_entity_relation_fact,
+        _parse_entity_status_fact,
+    ):
+        parsed = parser(normalized)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _entity_key(entity_label: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", _clean_text(entity_label).lower()).strip("-")
+    return f"named-object:{slug or 'unknown'}"
+
+
+def _entity_fact(
+    *,
+    entity_label: str,
+    attribute: str,
+    value: str,
+    location_preposition: str | None = None,
+) -> EntityStateFact | None:
+    clean_label = _clean_entity_label(entity_label)
+    clean_value = _clean_value(value)
+    if not clean_label or not clean_value:
+        return None
+    return EntityStateFact(
+        entity_label=clean_label,
+        attribute=attribute,
+        value=clean_value,
+        entity_key=_entity_key(clean_label),
+        location_preposition=location_preposition,
+    )
+
+
+def _clean_entity_label(value: str) -> str:
+    normalized = _clean_text(value)
+    normalized = re.sub(r"^(?:my|the)\s+", "", normalized, flags=re.IGNORECASE).strip()
+    return normalized
+
+
+def _parse_entity_name_fact(value: str) -> EntityStateFact | None:
+    match = re.fullmatch(
+        r"(?:my|the)\s+(.+?)\s+is\s+(?:named|called)\s+([A-Z][A-Za-z0-9_-]*)[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return _entity_fact(entity_label=match.group(1), attribute="name", value=match.group(2))
+
+
+def _parse_entity_location_fact(value: str) -> EntityStateFact | None:
+    match = re.fullmatch(
+        r"(?:my|the)\s+(.+?)\s+is\s+(in|at|on|inside|near)\s+(.+?)[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return _entity_fact(
+        entity_label=match.group(1),
+        attribute="location",
+        value=match.group(3),
+        location_preposition=match.group(2).lower(),
+    )
+
+
+def _parse_entity_owner_fact(value: str) -> EntityStateFact | None:
+    match = re.fullmatch(
+        r"(?:my|the)\s+(.+?)\s+(?:is\s+owned\s+by|belongs\s+to|is\s+handled\s+by)\s+(.+?)[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return _entity_fact(entity_label=match.group(1), attribute="owner", value=match.group(2))
+    match = re.fullmatch(r"(.+?)\s+owns\s+(?:my|the)\s+(.+?)[.!]?", value, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return _entity_fact(entity_label=match.group(2), attribute="owner", value=match.group(1))
+
+
+def _parse_entity_deadline_fact(value: str) -> EntityStateFact | None:
+    match = re.fullmatch(
+        r"(?:my|the)\s+(.+?)\s+(?:is\s+due|deadline\s+is)\s+(.+?)[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return _entity_fact(entity_label=match.group(1), attribute="deadline", value=match.group(2))
+
+
+def _parse_entity_relation_fact(value: str) -> EntityStateFact | None:
+    match = re.fullmatch(
+        r"(?:my|the)\s+(.+?)\s+(?:depends\s+on|relates\s+to|is\s+for)\s+(.+?)[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return _entity_fact(entity_label=match.group(1), attribute="relation", value=match.group(2))
+
+
+def _parse_entity_status_fact(value: str) -> EntityStateFact | None:
+    match = re.fullmatch(
+        r"(?:my|the)\s+(.+?)\s+status\s+is\s+(.+?)[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return _entity_fact(entity_label=match.group(1), attribute="status", value=match.group(2))
+    match = re.fullmatch(
+        r"(?:my|the)\s+(.+?)\s+is\s+(?:currently\s+|still\s+)?(blocked|paused|active|done|ready|stuck|wilting|healthy|offline|online)[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return _entity_fact(entity_label=match.group(1), attribute="status", value=match.group(2))
 
 
 _CURRENT_PLAN_VERB_STARTERS = {

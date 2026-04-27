@@ -30,6 +30,12 @@ _ORPHAN_REVALIDATION_DAYS: dict[str, int] = {
     "telegram.summary.latest_meeting": 14,
     "telegram.summary.latest_deadline": 14,
     "telegram.summary.latest_shipped": 14,
+    "entity.name": 30,
+    "entity.status": 14,
+    "entity.location": 21,
+    "entity.owner": 21,
+    "entity.deadline": 14,
+    "entity.relation": 30,
 }
 
 

@@ -389,6 +389,41 @@ _OPEN_MEMORY_RECALL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         ),
     ),
     (
+        "location_recall",
+        re.compile(
+            r"^where\s+is\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "owner_recall",
+        re.compile(
+            r"^who\s+(?:owns|handles)\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "owner_recall",
+        re.compile(
+            r"^who\s+is\s+the\s+owner\s+of\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "status_recall",
+        re.compile(
+            r"^(?:what(?:'s| is)\s+)?(?:the\s+)?status\s+of\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "deadline_recall",
+        re.compile(
+            r"^(?:when\s+is\s+|what(?:'s| is)\s+the\s+deadline\s+for\s+)(.+?)(?:\s+due)?[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "evidence_recall",
         re.compile(
             r"^(?:what|which)\s+(?:evidence|saved memory|memory)\s+do you have about\s+(.+?)[\?\.\!]*$",
@@ -560,6 +595,9 @@ def _filter_open_memory_recall_records(records: list[dict[str, Any]]) -> list[di
         if role in {"structured_evidence", "episodic"}:
             filtered.append(record)
             continue
+        if role == "current_state" and predicate.startswith("entity."):
+            filtered.append(record)
+            continue
         if predicate == "profile.current_low_stakes_test_fact":
             filtered.append(record)
             continue
@@ -644,7 +682,39 @@ def _named_object_answer_from_snippet(*, topic: str, snippet: str) -> str | None
     return None
 
 
+def _entity_state_answer_from_record(*, query: OpenMemoryRecallQuery, record: dict[str, Any]) -> str | None:
+    predicate = str(record.get("predicate") or "").strip()
+    if not predicate.startswith("entity."):
+        return None
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    label = " ".join(str(metadata.get("entity_label") or "").strip().split())
+    value = str(record.get("value") or metadata.get("value") or "").strip()
+    if not label or not value:
+        return None
+    if not _record_matches_open_memory_topic(record=record, topic=query.topic):
+        return None
+    attribute = str(metadata.get("entity_attribute") or predicate.split(".", 1)[-1]).strip()
+    if attribute == "name":
+        return f"You named the {label} {value}."
+    if attribute == "location":
+        preposition = str(metadata.get("location_preposition") or "at").strip()
+        return f"The {label} is {preposition} {value}."
+    if attribute == "owner":
+        return f"The {label} is owned by {value}."
+    if attribute == "deadline":
+        return f"The {label} is due {value}."
+    if attribute == "status":
+        return f"The {label} status is {value}."
+    if attribute == "relation":
+        return f"The {label} is related to {value}."
+    return f"The {label} {attribute} is {value}."
+
+
 def _build_open_memory_recall_answer(*, query: OpenMemoryRecallQuery, records: list[dict[str, Any]]) -> str:
+    for record in records:
+        entity_answer = _entity_state_answer_from_record(query=query, record=record)
+        if entity_answer:
+            return entity_answer
     snippets: list[str] = []
     seen: set[str] = set()
     for record in records:
@@ -6950,6 +7020,10 @@ def build_researcher_reply(
         and not (
             detected_generic_memory_observation is not None
             and detected_generic_memory_observation.predicate == "profile.current_low_stakes_test_fact"
+        )
+        and not (
+            detected_generic_memory_observation is not None
+            and detected_generic_memory_observation.predicate.startswith("entity.")
         )
         and (
             detected_profile_fact is not None

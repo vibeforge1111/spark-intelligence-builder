@@ -2520,6 +2520,56 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertIn("the tiny desk plant is named Mira", recorded_values)
         self.assertIn("the tiny desk plant is named Sol", recorded_values)
 
+    def test_build_researcher_reply_recalls_generic_entity_location_fact(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for generic entity memory"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for generic entity memory"),
+        ):
+            update = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-entity-location-update",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-location",
+                channel_kind="telegram",
+                user_message="For later, the tiny desk plant is on the kitchen shelf.",
+            )
+            query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-entity-location-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-location",
+                channel_kind="telegram",
+                user_message="Where is the desk plant?",
+            )
+
+        self.assertEqual(update.mode, "memory_generic_observation_update")
+        self.assertEqual(update.routing_decision, "memory_generic_observation")
+        self.assertEqual(update.reply_text, "I'll remember that the tiny desk plant is on the kitchen shelf.")
+        self.assertEqual(query.mode, "memory_open_recall")
+        self.assertEqual(query.reply_text, "The tiny desk plant is on the kitchen shelf.")
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(write_events)
+        recorded_observations = [
+            observation
+            for event in write_events
+            for observation in ((event["facts_json"] or {}).get("observations") or [])
+        ]
+        entity_records = [item for item in recorded_observations if item["predicate"] == "entity.location"]
+        self.assertTrue(entity_records)
+        self.assertEqual(entity_records[0]["metadata"]["entity_key"], "named-object:tiny-desk-plant")
+        self.assertEqual(entity_records[0]["metadata"]["location_preposition"], "on")
+
     def test_build_researcher_reply_directly_acknowledges_current_focus_correction_with_researcher_enabled(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)

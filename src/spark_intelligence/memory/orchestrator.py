@@ -14,7 +14,7 @@ from types import ModuleType
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
-from spark_intelligence.memory.generic_observations import detect_telegram_generic_observation
+from spark_intelligence.memory.generic_observations import detect_telegram_generic_observation, parse_entity_state_fact
 from spark_intelligence.memory.profile_facts import (
     active_state_revalidate_at,
     active_state_revalidation_days,
@@ -3069,8 +3069,20 @@ def _write_profile_fact_memory_operation(
         "normalized_value": value,
         "evidence_text": evidence_text,
     }
+    entity_state_fact = parse_entity_state_fact(evidence_text) if predicate.startswith("entity.") else None
     if predicate.startswith("profile.current_"):
         metadata["entity_key"] = predicate
+    if predicate.startswith("entity.") and entity_state_fact is not None:
+        metadata.update(
+            {
+                "entity_type": "named_object",
+                "entity_key": entity_state_fact.entity_key,
+                "entity_label": entity_state_fact.entity_label,
+                "entity_attribute": entity_state_fact.attribute,
+            }
+        )
+        if entity_state_fact.location_preposition:
+            metadata["location_preposition"] = entity_state_fact.location_preposition
     if operation != "delete" and revalidate_after_days is not None and revalidate_at:
         metadata["revalidate_after_days"] = revalidate_after_days
         metadata["revalidate_at"] = revalidate_at
@@ -3464,6 +3476,8 @@ def _consolidate_telegram_event_summary_observation(
 def _profile_fact_retention_class(predicate: str | None) -> str:
     normalized = str(predicate or "").strip().lower()
     if normalized.startswith("profile.current_"):
+        return "active_state"
+    if normalized.startswith("entity."):
         return "active_state"
     if normalized.startswith("telegram.summary.latest_"):
         return "active_state"
