@@ -291,9 +291,8 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertIn("Focus: context capsule verification", result.reply_text)
         self.assertIn("Plan: verify scheduled memory cleanup", result.reply_text)
         self.assertIn("Latest diagnostics are clean", result.reply_text)
-        self.assertIn("Memory maintenance ran at 12:46 UTC and succeeded", result.reply_text)
-        self.assertIn("297 items down to 151", result.reply_text)
-        self.assertIn("31 deleted", result.reply_text)
+        self.assertIn("Memory maintenance succeeded", result.reply_text)
+        self.assertNotIn("297 items down to 151", result.reply_text)
         self.assertNotIn("kind=memory_sdk_maintenance", result.reply_text)
         self.assertIn("Focus \"context capsule verification\" remains open", result.reply_text)
         self.assertIn("Plan \"verify scheduled memory cleanup\" remains open", result.reply_text)
@@ -363,10 +362,13 @@ class ContextCapsuleTests(SparkTestCase):
             )
 
         self.assertEqual(result.routing_decision, "active_context_status")
-        self.assertIn("Recommended next move", result.reply_text)
-        self.assertIn("Spot-check the cleanup result before closing it", result.reply_text)
+        self.assertIn("Next", result.reply_text)
+        self.assertIn("Spot-check a small sample", result.reply_text)
         self.assertIn("archived, deleted, and still-current memories", result.reply_text)
         self.assertIn("mark \"context capsule verification\" closed", result.reply_text)
+        self.assertIn("Memory maintenance succeeded", result.reply_text)
+        self.assertNotIn("297 items down to 151", result.reply_text)
+        self.assertNotIn("Closure rule", result.reply_text)
         self.assertNotIn("everything is done", result.reply_text.lower())
 
     def test_researcher_reply_injects_context_capsule_into_provider_prompt(self) -> None:

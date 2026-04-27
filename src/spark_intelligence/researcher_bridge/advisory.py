@@ -4633,6 +4633,20 @@ def _active_context_status_query_wants_next_step(user_message: str) -> bool:
     )
 
 
+def _active_context_status_query_wants_full_status(user_message: str) -> bool:
+    text = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
+    return any(
+        marker in text
+        for marker in (
+            "what is verified",
+            "what's verified",
+            "only be closed by me",
+            "only i should close",
+            "should only be closed",
+        )
+    )
+
+
 def _capsule_line_value(lines: list[str], label: str) -> str | None:
     prefix = f"- {label}:"
     for line in lines:
@@ -4746,6 +4760,8 @@ def _build_active_context_status_reply(
         for value in _capsule_line_values(workflow_state, "job")
         if "memory:sdk-maintenance" in value
     ]
+    wants_next_step = _active_context_status_query_wants_next_step(user_message)
+    wants_full_status = _active_context_status_query_wants_full_status(user_message)
 
     lines = ["Based on the current Spark context capsule:"]
     lines.extend(["", "Current state"])
@@ -4770,13 +4786,21 @@ def _build_active_context_status_reply(
         verified.append(f"Latest diagnostics status is {diagnostic_status}.")
     if connector_health:
         verified.append(f"Connector health: {connector_health}.")
-    for job in memory_jobs[:1]:
-        verified.append(_format_memory_maintenance_evidence(job))
+    if wants_full_status:
+        for job in memory_jobs[:1]:
+            verified.append(_format_memory_maintenance_evidence(job))
+    elif memory_jobs:
+        verified.append("Memory maintenance succeeded.")
     if not verified:
         verified.append("No diagnostic or maintenance evidence is present in the capsule.")
 
-    lines.extend(["", "Verified system evidence"])
-    lines.extend(f"- {item}" for item in verified)
+    lines.extend(["", "Verified"])
+    if wants_next_step and not wants_full_status:
+        lines.append(f"- {verified[0]}")
+        if len(verified) > 1:
+            lines.append(f"- {verified[-1]}")
+    else:
+        lines.extend(f"- {item}" for item in verified)
 
     open_items: list[str] = []
     if current_focus:
@@ -4789,29 +4813,37 @@ def _build_active_context_status_reply(
         )
     if not open_items:
         open_items.append("No active focus or plan is saved in current_state.")
-    lines.extend(["", "Still open"])
-    lines.extend(f"- {item}" for item in open_items)
-    lines.extend(
-        [
-            "",
-            "Closure rule",
-            "- Clean diagnostics and successful maintenance are evidence, not user-level closure.",
-            "- current_state wins over old workflow_state for focus and plan.",
-        ]
-    )
-    if _active_context_status_query_wants_next_step(user_message):
+    lines.extend(["", "Open"])
+    if wants_next_step and not wants_full_status:
+        if current_focus:
+            lines.append(f'- Focus "{current_focus}"')
+        if current_plan:
+            lines.append(f'- Plan "{current_plan}"')
+        if not current_focus and not current_plan:
+            lines.extend(f"- {item}" for item in open_items)
+    else:
+        lines.extend(f"- {item}" for item in open_items)
+        lines.extend(
+            [
+                "",
+                "Closure rule",
+                "- Clean diagnostics and successful maintenance are evidence, not user-level closure.",
+                "- current_state wins over old workflow_state for focus and plan.",
+            ]
+        )
+    if wants_next_step:
         next_steps: list[str] = []
         if current_plan and memory_jobs:
             next_steps.append(
-                "Spot-check the cleanup result before closing it: review a small sample of archived, deleted, and still-current memories to confirm the counts match your expectations."
+                "Spot-check a small sample of archived, deleted, and still-current memories before closing this."
             )
         if current_focus:
             next_steps.append(
-                f'If that spot-check looks right, ask me to mark "{current_focus}" closed and set the next focus.'
+                f'If the sample looks right, mark "{current_focus}" closed and set the next focus.'
             )
         if not next_steps:
             next_steps.append("Pick a new current focus, because the capsule has no active focus or plan saved.")
-        lines.extend(["", "Recommended next move"])
+        lines.extend(["", "Next"])
         lines.extend(f"- {item}" for item in next_steps)
 
     facts = {
