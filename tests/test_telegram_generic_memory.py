@@ -275,6 +275,55 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(plan_query.mode, "memory_profile_fact")
         self.assertEqual(plan_query.reply_text, "Your current plan is Neon Harbor Telegram memory test.")
 
+    def test_build_researcher_reply_saves_set_current_plan_command(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for current plan transition"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for current plan transition"),
+        ):
+            plan_update = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-set-current-plan-update",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-set-current-plan",
+                channel_kind="telegram",
+                user_message="Set my current plan to evaluate open-ended persistent memory recall.",
+            )
+            plan_query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-set-current-plan-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-set-current-plan",
+                channel_kind="telegram",
+                user_message="What is my current plan?",
+            )
+
+        self.assertEqual(plan_update.mode, "current_plan_transition")
+        self.assertEqual(plan_update.routing_decision, "current_plan_transition")
+        self.assertEqual(
+            plan_update.reply_text,
+            "Done. Your current plan is now: evaluate open-ended persistent memory recall.",
+        )
+        self.assertEqual(plan_query.mode, "memory_profile_fact")
+        self.assertEqual(
+            plan_query.reply_text,
+            "Your current plan is to evaluate open-ended persistent memory recall.",
+        )
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=5)
+        plan_event = next(event for event in tool_events if event["reason_code"] == "current_plan_transition")
+        self.assertEqual(plan_event["facts_json"]["predicate"], "profile.current_plan")
+        self.assertEqual(plan_event["facts_json"]["new_plan"], "evaluate open-ended persistent memory recall")
+
     def test_build_researcher_reply_handles_plan_correction_history_and_deletion(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

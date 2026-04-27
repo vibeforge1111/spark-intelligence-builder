@@ -1975,6 +1975,7 @@ _CURRENT_PLAN_VERB_STARTERS = {
     "debug",
     "deploy",
     "do",
+    "evaluate",
     "finish",
     "fix",
     "get",

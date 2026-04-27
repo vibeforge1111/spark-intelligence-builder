@@ -4988,6 +4988,21 @@ def _detect_current_focus_transition_command(user_message: str) -> tuple[str | N
     return closed_focus, new_focus
 
 
+def _detect_current_plan_transition_command(user_message: str) -> str | None:
+    text = re.sub(r"\s+", " ", str(user_message or "").strip())
+    if not text or "?" in text:
+        return None
+    set_match = re.search(
+        r"\bset\s+(?:my|our|the)\s+(?:current\s+)?plan\s+to\s+(.+?)(?:[.!]|$)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if set_match is None:
+        return None
+    new_plan = _truncate_browser_evidence_text(set_match.group(1).strip(), max_chars=180)
+    return new_plan or None
+
+
 def _active_context_status_query_wants_next_step(user_message: str) -> bool:
     text = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
     return any(
@@ -6333,7 +6348,78 @@ def build_researcher_reply(
             promotion_disposition=promotion_disposition,
         )
 
-    focus_transition = None if personality_context_extra else _detect_current_focus_transition_command(memory_user_message)
+    plan_transition = _detect_current_plan_transition_command(memory_user_message)
+    if plan_transition is not None and config_manager.get_path("spark.memory.enabled", default=False):
+        write_result = write_profile_fact_to_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            predicate="profile.current_plan",
+            value=plan_transition,
+            evidence_text=str(user_message or "").strip(),
+            fact_name="profile_current_plan",
+            session_id=session_id,
+            turn_id=request_id,
+            channel_kind=channel_kind,
+            actor_id="current_plan_transition_command",
+        )
+        if write_result.accepted_count > 0:
+            output_keepability, promotion_disposition = _bridge_output_classification(
+                mode="current_plan_transition",
+                routing_decision="current_plan_transition",
+            )
+            trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+            reply_text = f"Done. Your current plan is now: {plan_transition}."
+            evidence_summary = "status=current_plan_transition plan_updated=yes"
+            record_event(
+                state_db,
+                event_type="tool_result_received",
+                component="researcher_bridge",
+                summary="Researcher bridge set a new current plan.",
+                run_id=run_id,
+                request_id=request_id,
+                trace_ref=trace_ref,
+                channel_id=channel_kind,
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
+                actor_id="researcher_bridge",
+                reason_code="current_plan_transition",
+                facts=_bridge_event_facts(
+                    routing_decision="current_plan_transition",
+                    bridge_mode="current_plan_transition",
+                    evidence_summary=evidence_summary,
+                    active_chip_key=None,
+                    active_chip_task_type=None,
+                    active_chip_evaluate_used=False,
+                    keepability=output_keepability,
+                    promotion_disposition=promotion_disposition,
+                    extra={
+                        "query_text": str(user_message or "").strip(),
+                        "new_plan": plan_transition,
+                        "predicate": "profile.current_plan",
+                    },
+                ),
+            )
+            return ResearcherBridgeResult(
+                request_id=request_id,
+                reply_text=reply_text,
+                evidence_summary=evidence_summary,
+                escalation_hint=None,
+                trace_ref=trace_ref,
+                mode="current_plan_transition",
+                runtime_root=None,
+                config_path=None,
+                attachment_context=attachment_context,
+                routing_decision="current_plan_transition",
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                output_keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+            )
+
+    focus_transition = _detect_current_focus_transition_command(memory_user_message)
     if focus_transition is not None and config_manager.get_path("spark.memory.enabled", default=False):
         closed_focus, new_focus = focus_transition
         write_result = write_profile_fact_to_memory(
