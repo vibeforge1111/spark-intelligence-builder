@@ -250,32 +250,75 @@ def _load_accepted_memory_write_requests(*, state_db: StateDB, event_limit: int)
         operation = str(facts.get("operation") or "auto")
         subject_hint = str(facts.get("subject") or f"human:{row['human_id']}" or "").strip()
         method = str(facts.get("method") or "write_observation").strip()
-        observations = facts.get("observations")
-        if not isinstance(observations, list):
+        write_items = facts.get("events") if method == "write_event" else facts.get("observations")
+        if not isinstance(write_items, list):
             continue
-        for index, item in enumerate(observations, start=1):
+        for index, item in enumerate(write_items, start=1):
             if not isinstance(item, dict):
                 continue
+            write_kind = "event" if method == "write_event" else "observation"
             writes.append(
                 {
-                    "write_kind": "event" if method == "write_event" else "observation",
-                    "text": turn_text_by_key.get(request_key, ""),
+                    "write_kind": write_kind,
+                    "text": str(item.get("text") or turn_text_by_key.get(request_key, "") or ""),
                     "speaker": "user",
                     "timestamp": _normalized_timestamp(row["created_at"]),
                     "session_id": request_key[0] or None,
                     "turn_id": request_key[1] or None,
-                    "operation": str(item.get("operation") or operation or "auto"),
+                    "operation": str(item.get("operation") or operation or ("event" if write_kind == "event" else "auto")),
                     "subject": str(item.get("subject") or subject_hint or "").strip() or None,
                     "predicate": str(item.get("predicate") or "").strip() or None,
                     "value": item.get("value"),
-                    "metadata": {
-                        "memory_role": str(item.get("memory_role") or facts.get("memory_role") or "current_state"),
-                        "source": "spark_intelligence_builder",
-                        "write_index": index,
-                    },
+                    "retention_class": item.get("retention_class") or facts.get("retention_class"),
+                    "document_time": item.get("document_time") or facts.get("document_time"),
+                    "event_time": item.get("event_time") or facts.get("event_time"),
+                    "valid_from": item.get("valid_from") or facts.get("valid_from"),
+                    "valid_to": item.get("valid_to") or facts.get("valid_to"),
+                    "deleted_at": item.get("deleted_at") or facts.get("deleted_at"),
+                    "metadata": _render_write_metadata(item=item, facts=facts, index=index, write_kind=write_kind),
                 }
             )
     return writes
+
+
+def _render_write_metadata(
+    *,
+    item: dict[str, Any],
+    facts: dict[str, Any],
+    index: int,
+    write_kind: str,
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    facts_metadata = facts.get("metadata")
+    if isinstance(facts_metadata, dict):
+        metadata.update(facts_metadata)
+    item_metadata = item.get("metadata")
+    if isinstance(item_metadata, dict):
+        metadata.update(item_metadata)
+    metadata["memory_role"] = str(
+        item.get("memory_role")
+        or facts.get("memory_role")
+        or metadata.get("memory_role")
+        or ("event" if write_kind == "event" else "current_state")
+    )
+    metadata.setdefault("source", "spark_intelligence_builder")
+    metadata.setdefault("write_index", index)
+    for field in (
+        "retention_class",
+        "document_time",
+        "event_time",
+        "valid_from",
+        "valid_to",
+        "deleted_at",
+        "supersedes",
+        "conflicts_with",
+    ):
+        value = item.get(field)
+        if value in (None, "", [], {}):
+            value = facts.get(field)
+        if value not in (None, "", [], {}):
+            metadata.setdefault(field, value)
+    return metadata
 
 
 def _render_write(item: dict[str, Any]) -> dict[str, Any]:
@@ -290,6 +333,12 @@ def _render_write(item: dict[str, Any]) -> dict[str, Any]:
         "subject": item.get("subject"),
         "predicate": item.get("predicate"),
         "value": item.get("value"),
+        "retention_class": item.get("retention_class"),
+        "document_time": item.get("document_time"),
+        "event_time": item.get("event_time"),
+        "valid_from": item.get("valid_from"),
+        "valid_to": item.get("valid_to"),
+        "deleted_at": item.get("deleted_at"),
         "metadata": item.get("metadata") or {},
     }
     return {key: value for key, value in rendered.items() if value not in (None, [], {}, "")}

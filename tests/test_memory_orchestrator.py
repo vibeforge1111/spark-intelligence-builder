@@ -235,6 +235,11 @@ class MemoryOrchestratorTests(SparkTestCase):
         metadata = fake_client.observation_calls[0]["metadata"]
         self.assertEqual(metadata["revalidate_after_days"], 30)
         self.assertEqual(metadata["revalidate_at"], "2025-03-31T09:00:00+00:00")
+        events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        observations = (events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(observations[0]["retention_class"], "active_state")
+        self.assertEqual(observations[0]["metadata"]["revalidate_after_days"], 30)
+        self.assertEqual(observations[0]["metadata"]["revalidate_at"], "2025-03-31T09:00:00+00:00")
 
     def test_structured_evidence_writes_use_evidence_role_and_archive_retention(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -3807,6 +3812,11 @@ class MemoryOrchestratorTests(SparkTestCase):
                                     "value": "Dubai",
                                     "operation": "update",
                                     "memory_role": "current_state",
+                                    "retention_class": "active_state",
+                                    "metadata": {
+                                        "entity_key": "primary",
+                                        "revalidate_at": "2026-04-26T10:00:01Z",
+                                    },
                                 }
                             ],
                         }
@@ -3916,6 +3926,10 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(write["subject"], "human:test")
         self.assertEqual(write["predicate"], "profile.city")
         self.assertEqual(write["value"], "Dubai")
+        self.assertEqual(write["retention_class"], "active_state")
+        self.assertEqual(write["metadata"]["retention_class"], "active_state")
+        self.assertEqual(write["metadata"]["revalidate_at"], "2026-04-26T10:00:01Z")
+        self.assertEqual(write["metadata"]["entity_key"], "primary")
         self.assertEqual(payload["checks"]["current_state"][0]["predicate"], "profile.city")
         self.assertNotIn("historical_state", payload["checks"])
 

@@ -2669,6 +2669,11 @@ def _write_profile_fact_memory_operation(
         "memory_role": "current_state",
         "retention_class": retention_class,
         "text": evidence_text,
+        "document_time": timestamp,
+        "valid_from": None if operation == "delete" else timestamp,
+        "valid_to": timestamp if operation == "delete" else None,
+        "deleted_at": timestamp if operation == "delete" else None,
+        "metadata": metadata,
     }
     _record_memory_write_requested_observations(
         state_db=state_db,
