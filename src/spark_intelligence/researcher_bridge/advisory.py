@@ -5115,14 +5115,13 @@ def _build_memory_cleanup_closure_reply(
     deleted_preview = _memory_cleanup_sample_preview(samples, human_id=human_id, bucket="deleted")
     still_preview = _memory_cleanup_sample_preview(samples, human_id=human_id, bucket="still_current")
     if archived_preview or deleted_preview or still_preview:
-        sample_bits = []
+        lines.append("- Audit sample reviewed:")
         if archived_preview:
-            sample_bits.append("archived examples: " + "; ".join(archived_preview))
+            lines.append("  - Archived examples: " + "; ".join(archived_preview))
         if deleted_preview:
-            sample_bits.append("deleted examples: " + "; ".join(deleted_preview))
+            lines.append("  - Deleted examples: " + "; ".join(deleted_preview))
         if still_preview:
-            sample_bits.append("still-current examples: " + "; ".join(still_preview))
-        lines.append("- Audit sample reviewed: " + " | ".join(sample_bits) + ".")
+            lines.append("  - Still-current examples: " + "; ".join(still_preview))
         lines.append("- The sample did not show obvious damage.")
     else:
         lines.append("- No audit sample rows are loaded, so this cannot confirm sample quality.")
