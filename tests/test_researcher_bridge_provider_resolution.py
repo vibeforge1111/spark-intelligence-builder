@@ -1735,7 +1735,13 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                         records=[
                             {
                                 "predicate": "profile.current_plan",
+                                "value": "debug the old plan",
+                                "timestamp": "2026-04-27T09:00:00Z",
+                            },
+                            {
+                                "predicate": "profile.current_plan",
                                 "value": "ship the new tracking dashboard by friday",
+                                "timestamp": "2026-04-27T10:00:00Z",
                             },
                             {
                                 "predicate": "profile.favorite_color",
@@ -1766,6 +1772,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual(reply, "The dashboard is the thing on your plate.")
         self.assertIn("[CURRENT STATE]", str(captured["system_prompt"]))
         self.assertIn("- current_plan: ship the new tracking dashboard by friday", str(captured["system_prompt"]))
+        self.assertNotIn("- current_plan: debug the old plan", str(captured["system_prompt"]))
         self.assertIn("- favorite_color: blue", str(captured["system_prompt"]))
         self.assertIn("Do not say you don't know something that's listed there.", str(captured["system_prompt"]))
 

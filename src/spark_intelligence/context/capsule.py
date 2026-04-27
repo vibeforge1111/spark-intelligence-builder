@@ -137,7 +137,10 @@ def _build_current_state_lines(
     for record in records:
         predicate = str(record.get("predicate") or "").strip()
         value = str(record.get("value") or record.get("normalized_value") or "").strip()
-        if predicate and value and predicate not in by_predicate:
+        if not predicate or not value:
+            continue
+        current = by_predicate.get(predicate)
+        if current is None or _record_timestamp(record) >= _record_timestamp(current):
             by_predicate[predicate] = record
 
     lines: list[str] = []
@@ -378,3 +381,8 @@ def _compact(text: str, max_chars: int) -> str:
     if len(normalized) <= max_chars:
         return normalized
     return normalized[: max_chars - 1].rstrip() + "..."
+
+
+def _record_timestamp(record: dict[str, Any]) -> str:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    return str(record.get("timestamp") or record.get("recorded_at") or metadata.get("document_time") or "").strip()

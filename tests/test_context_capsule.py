@@ -18,6 +18,11 @@ class ContextCapsuleTests(SparkTestCase):
                 records=[
                     {
                         "predicate": "profile.current_focus",
+                        "value": "diagnostics scan verification",
+                        "timestamp": "2026-04-27T12:13:00Z",
+                    },
+                    {
+                        "predicate": "profile.current_focus",
                         "value": "automatic memory maintenance verification",
                         "timestamp": "2026-04-27T12:55:00Z",
                     },
@@ -110,6 +115,7 @@ class ContextCapsuleTests(SparkTestCase):
         rendered = capsule.render()
         self.assertIn("[Spark Context Capsule]", rendered)
         self.assertIn("current_focus: automatic memory maintenance verification", rendered)
+        self.assertNotIn("current_focus: diagnostics scan verification", rendered)
         self.assertIn("current_plan: verify scheduled memory cleanup", rendered)
         self.assertIn("assistant: The memory maintenance job is scheduled.", rendered)
         self.assertIn("memory:sdk-maintenance", rendered)

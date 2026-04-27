@@ -1881,16 +1881,20 @@ def _build_current_state_block(
         if records:
             break
 
-    by_predicate: dict[str, str] = {}
+    by_predicate: dict[str, dict[str, Any]] = {}
     for record in records:
         predicate = str(record.get("predicate") or "").strip()
         value = str(record.get("value") or "").strip()
-        if predicate and value and predicate not in by_predicate:
-            by_predicate[predicate] = value
+        if not predicate or not value:
+            continue
+        current = by_predicate.get(predicate)
+        if current is None or _memory_record_timestamp(record) >= _memory_record_timestamp(current):
+            by_predicate[predicate] = record
 
     lines: list[str] = []
     for predicate, label in _L1_STATE_PREDICATE_LABELS:
-        value = by_predicate.get(predicate)
+        record = by_predicate.get(predicate)
+        value = str(record.get("value") or "").strip() if record else ""
         if value:
             lines.append(f"- {label}: {value}")
     if not lines:
