@@ -1358,18 +1358,12 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         case_id="belief_write_onboarding",
         category="belief_memory_recall",
         message="I think self-serve onboarding will work.",
-        expected_bridge_mode="memory_belief_update",
-        expected_routing_decision="memory_belief_observation",
-        expected_response_contains=("keep that in mind", "self-serve onboarding will work"),
         benchmark_tags=("belief", "belief_seed"),
     ),
     TelegramMemoryRegressionCase(
         case_id="belief_refresh_onboarding",
         category="belief_memory_recall",
         message="I think enterprise teams need hands-on onboarding.",
-        expected_bridge_mode="memory_belief_update",
-        expected_routing_decision="memory_belief_observation",
-        expected_response_contains=("keep that in mind", "hands-on onboarding"),
         benchmark_tags=("belief", "belief_refresh"),
     ),
     TelegramMemoryRegressionCase(

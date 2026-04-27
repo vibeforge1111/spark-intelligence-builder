@@ -505,6 +505,24 @@ def _maybe_spark_character_reply(
     )
 
 
+def _spark_character_delivery_route(
+    *,
+    bridge_mode: str | None,
+    routing_decision: str | None,
+    spark_character_reply: str | None,
+) -> tuple[str | None, str | None, dict[str, str]]:
+    if not spark_character_reply:
+        if bridge_mode == "bridge_error" and routing_decision == "provider_resolution_failed":
+            return "provider_resolution_failed", routing_decision, {}
+        return bridge_mode, routing_decision, {}
+    primary: dict[str, str] = {}
+    if bridge_mode:
+        primary["primary_bridge_mode"] = str(bridge_mode)
+    if routing_decision:
+        primary["primary_routing_decision"] = str(routing_decision)
+    return "spark_character_fallback", "spark_character_fallback", primary
+
+
 def _shape_telegram_bridge_reply(reply_text: str, *, bridge_mode: str | None, routing_decision: str | None) -> str:
     text = str(reply_text or "").strip()
     mode = str(bridge_mode or "").strip()
@@ -936,6 +954,7 @@ def simulate_telegram_update(
         default_text=resolution.response_text,
         inbound_text=normalized.text,
     )
+    delivery_primary_route: dict[str, str] = {}
     effective_text = normalized.text
     transcript_text = None
     if resolution.allowed and resolution.agent_id and resolution.human_id and resolution.session_id:
@@ -1335,6 +1354,11 @@ def simulate_telegram_update(
                             else "telegram"
                         ),
                     )
+                    delivery_bridge_mode, delivery_routing_decision, delivery_primary_route = _spark_character_delivery_route(
+                        bridge_mode=bridge_result.mode,
+                        routing_decision=bridge_result.routing_decision,
+                        spark_character_reply=spark_character_reply,
+                    )
                     shaped_bridge_reply = spark_character_reply or _shape_telegram_bridge_reply(
                         bridge_result.reply_text,
                         bridge_mode=bridge_result.mode,
@@ -1349,9 +1373,9 @@ def simulate_telegram_update(
                         reply_text=shaped_bridge_reply,
                     )
                     trace_ref = bridge_result.trace_ref
-                    bridge_mode = bridge_result.mode
+                    bridge_mode = delivery_bridge_mode
                     attachment_context = bridge_result.attachment_context
-                    routing_decision = bridge_result.routing_decision
+                    routing_decision = delivery_routing_decision
                     active_chip_key = bridge_result.active_chip_key
                     active_chip_task_type = bridge_result.active_chip_task_type
                     active_chip_evaluate_used = bridge_result.active_chip_evaluate_used
@@ -1400,7 +1424,16 @@ def simulate_telegram_update(
         active_chip_task_type = None
         active_chip_evaluate_used = False
         evidence_summary = None
-    sanitized_outbound_text, _outbound_actions = _sanitize_simulate_outbound(outbound_text)
+        delivery_primary_route = {}
+    sanitized_outbound_text, _outbound_actions = _prepare_simulate_outbound(
+        config_manager=config_manager,
+        state_db=state_db,
+        text=outbound_text,
+        bridge_mode=bridge_mode,
+        request_id=request_id,
+        trace_ref=trace_ref,
+        session_id=resolution.session_id,
+    )
     detail = {
         "request_id": request_id,
         "simulation": simulation,
@@ -1417,6 +1450,7 @@ def simulate_telegram_update(
         "trace_ref": trace_ref,
         "bridge_mode": bridge_mode,
         "routing_decision": routing_decision,
+        **delivery_primary_route,
         "active_chip_key": active_chip_key,
         "active_chip_task_type": active_chip_task_type,
         "active_chip_evaluate_used": active_chip_evaluate_used,
@@ -1436,6 +1470,7 @@ def simulate_telegram_update(
                 "trace_ref": trace_ref,
                 "bridge_mode": bridge_mode,
                 "routing_decision": routing_decision,
+                **delivery_primary_route,
                 "evidence_summary": evidence_summary,
                 "attachment_context": attachment_context,
                 "active_chip_key": active_chip_key,
@@ -2070,6 +2105,11 @@ def poll_telegram_updates_once(
                 else "telegram"
             ),
         )
+        delivery_bridge_mode, delivery_routing_decision, delivery_primary_route = _spark_character_delivery_route(
+            bridge_mode=bridge_result.mode,
+            routing_decision=bridge_result.routing_decision,
+            spark_character_reply=spark_character_reply,
+        )
         shaped_bridge_reply = spark_character_reply or _shape_telegram_bridge_reply(
             bridge_result.reply_text,
             bridge_mode=bridge_result.mode,
@@ -2115,8 +2155,8 @@ def poll_telegram_updates_once(
             telegram_user_id=normalized.telegram_user_id,
             session_id=resolution.session_id,
             decision=resolution.decision,
-            bridge_mode=bridge_result.mode,
-            routing_decision=bridge_result.routing_decision,
+            bridge_mode=delivery_bridge_mode,
+            routing_decision=delivery_routing_decision,
             active_chip_key=bridge_result.active_chip_key,
             active_chip_task_type=bridge_result.active_chip_task_type,
             run_id=run.run_id,
@@ -2142,8 +2182,9 @@ def poll_telegram_updates_once(
             close_reason="telegram_update_processed",
             summary=f"Telegram update {normalized.update_id} closed after researcher bridge processing.",
             facts={
-                "bridge_mode": bridge_result.mode,
-                "routing_decision": bridge_result.routing_decision,
+                "bridge_mode": delivery_bridge_mode,
+                "routing_decision": delivery_routing_decision,
+                **delivery_primary_route,
                 "delivery_ok": send_result["ok"],
                 **_build_voice_trace_fields(media_input=media_input, transcript_text=transcript_text),
             },
@@ -2159,8 +2200,9 @@ def poll_telegram_updates_once(
                 "chat_id": normalized.chat_id,
                 "session_id": resolution.session_id,
                 "trace_ref": bridge_result.trace_ref,
-                "bridge_mode": bridge_result.mode,
-                "routing_decision": bridge_result.routing_decision,
+                "bridge_mode": delivery_bridge_mode,
+                "routing_decision": delivery_routing_decision,
+                **delivery_primary_route,
                 "runtime_root": bridge_result.runtime_root,
                 "config_path": bridge_result.config_path,
                 "evidence_summary": bridge_result.evidence_summary,
@@ -2584,25 +2626,33 @@ def _preview_text(text: str, *, limit: int = 160) -> str:
     return f"{compact[: limit - 3]}..."
 
 
-def _sanitize_simulate_outbound(text: str) -> tuple[str, list[str]]:
-    """Apply deterministic voice post-fixes on the simulate-update path.
-
-    The simulate path is what the Node bot calls; it does not run through
-    prepare_outbound_text, so we apply the same em-dash family substitution
-    here so the rule applies regardless of which gateway entry point is used.
-    """
-    if not text:
-        return text, []
-    em_dash_family = ("\u2014", "\u2013", "\u2012", "\u2015", "\u2212")
-    cleaned = text
-    for ch in em_dash_family:
-        cleaned = cleaned.replace(ch, " - ")
-    while "  " in cleaned:
-        cleaned = cleaned.replace("  ", " ")
-    actions: list[str] = []
-    if cleaned != text:
-        actions.append("replace_em_dashes")
-    return cleaned, actions
+def _prepare_simulate_outbound(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    text: str,
+    bridge_mode: str | None,
+    request_id: str | None,
+    trace_ref: str | None,
+    session_id: str | None,
+) -> tuple[str, list[str]]:
+    """Apply the same outbound text boundary used by real Telegram sends."""
+    policy = _telegram_security_policy(config_manager)
+    guarded = prepare_outbound_text(
+        config_manager=config_manager,
+        state_db=state_db,
+        text=text,
+        bridge_mode=bridge_mode,
+        max_reply_chars=policy["max_reply_chars"],
+        redact_secret_like_replies=policy["redact_secret_like_replies"],
+        run_id=None,
+        request_id=request_id,
+        trace_ref=trace_ref,
+        channel_id="telegram",
+        session_id=session_id,
+        actor_id="telegram_runtime",
+    )
+    return str(guarded["text"]), list(guarded["actions"])
 
 
 def _load_telegram_persona_surface_state(

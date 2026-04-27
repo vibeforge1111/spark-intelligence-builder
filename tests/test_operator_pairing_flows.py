@@ -4288,11 +4288,57 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(result.ok)
         self.assertEqual(
             result.detail["response_text"],
-            "I can't pull live research for you right now.\n"
-            "Something on my end failed mid-call.\n"
-            "Detail: subprocess timed out after 30s\n"
-            "Give it another shot in a minute, or check the runtime if it keeps happening.",
+            "Spark Intelligence hit an internal bridge error. The operator can inspect local gateway traces.",
         )
+        self.assertIn("replace_bridge_error", result.detail["guardrail_actions"])
+
+    def test_spark_character_fallback_reply_is_delivered_without_bridge_error_replacement(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            return_value=ResearcherBridgeResult(
+                request_id="req-bridge-error",
+                reply_text="[Spark Researcher bridge error] subprocess timed out after 30s",
+                evidence_summary="External bridge failed closed.",
+                escalation_hint="bridge_error",
+                trace_ref="trace:bridge-error",
+                mode="bridge_error",
+                runtime_root="C:/fake-researcher",
+                config_path="C:/fake-researcher/spark-researcher.project.json",
+                attachment_context={},
+                provider_id="custom",
+                provider_auth_profile_id="custom:default",
+                provider_auth_method="api_key_env",
+                provider_model="MiniMax-M2.7",
+                provider_model_family="generic",
+                provider_execution_transport="direct_http",
+                provider_base_url="https://api.minimax.io/v1",
+                provider_source="config+env",
+                routing_decision="bridge_error",
+            ),
+        ), patch(
+            "spark_intelligence.adapters.telegram.runtime.try_spark_character_fallback",
+            return_value="Fallback answer from Spark Character.",
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=2187,
+                    user_id="111",
+                    username="alice",
+                    text="Research this company for me.",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.detail["response_text"], "Fallback answer from Spark Character.")
+        self.assertEqual(result.detail["bridge_mode"], "spark_character_fallback")
+        self.assertEqual(result.detail["routing_decision"], "spark_character_fallback")
+        self.assertEqual(result.detail["primary_bridge_mode"], "bridge_error")
+        self.assertEqual(result.detail["primary_routing_decision"], "bridge_error")
+        self.assertNotIn("replace_bridge_error", result.detail["guardrail_actions"])
 
     def test_researcher_secret_boundary_block_is_composed_for_telegram(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
