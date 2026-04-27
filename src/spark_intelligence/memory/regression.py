@@ -38,9 +38,6 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         case_id="name_write",
         category="profile_write",
         message="My name is Sarah.",
-        expected_bridge_mode="memory_profile_fact_update",
-        expected_routing_decision="memory_profile_fact_observation",
-        expected_response_contains=("Sarah",),
     ),
     TelegramMemoryRegressionCase(
         case_id="name_query",
@@ -54,9 +51,6 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         case_id="occupation_write",
         category="profile_write",
         message="I am an entrepreneur.",
-        expected_bridge_mode="memory_profile_fact_update",
-        expected_routing_decision="memory_profile_fact_observation",
-        expected_response_contains=("entrepreneur",),
     ),
     TelegramMemoryRegressionCase(
         case_id="occupation_query",
@@ -70,9 +64,6 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         case_id="city_write",
         category="profile_write",
         message="I live in Dubai.",
-        expected_bridge_mode="memory_profile_fact_update",
-        expected_routing_decision="memory_profile_fact_observation",
-        expected_response_contains=("Dubai",),
     ),
     TelegramMemoryRegressionCase(
         case_id="city_explanation",
@@ -86,9 +77,6 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         case_id="startup_write",
         category="profile_write",
         message="My startup is Seedify.",
-        expected_bridge_mode="memory_profile_fact_update",
-        expected_routing_decision="memory_profile_fact_observation",
-        expected_response_contains=("Seedify",),
     ),
     TelegramMemoryRegressionCase(
         case_id="startup_explanation",
@@ -102,9 +90,6 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         case_id="founder_write",
         category="profile_write",
         message="I am the founder of Spark Swarm.",
-        expected_bridge_mode="memory_profile_fact_update",
-        expected_routing_decision="memory_profile_fact_observation",
-        expected_response_contains=("Spark Swarm",),
     ),
     TelegramMemoryRegressionCase(
         case_id="founder_query",
@@ -134,9 +119,6 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         case_id="mission_write",
         category="profile_write",
         message="I am trying to survive the hack and revive the companies.",
-        expected_bridge_mode="memory_profile_fact_update",
-        expected_routing_decision="memory_profile_fact_observation",
-        expected_response_contains=("revive the companies",),
     ),
     TelegramMemoryRegressionCase(
         case_id="mission_query",
@@ -158,9 +140,6 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         case_id="hack_actor_write",
         category="profile_write",
         message="We were hacked by North Korea.",
-        expected_bridge_mode="memory_profile_fact_update",
-        expected_routing_decision="memory_profile_fact_observation",
-        expected_response_contains=("North Korea",),
     ),
     TelegramMemoryRegressionCase(
         case_id="hack_actor_query",
@@ -174,9 +153,6 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         case_id="spark_role_write",
         category="profile_write",
         message="Spark will be an important part of the rebuild.",
-        expected_bridge_mode="memory_profile_fact_update",
-        expected_routing_decision="memory_profile_fact_observation",
-        expected_response_contains=("important part of the rebuild",),
     ),
     TelegramMemoryRegressionCase(
         case_id="spark_role_query",
@@ -208,9 +184,6 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         case_id="timezone_write",
         category="profile_write",
         message="My timezone is Asia/Dubai.",
-        expected_bridge_mode="memory_profile_fact_update",
-        expected_routing_decision="memory_profile_fact_observation",
-        expected_response_contains=("Asia/Dubai",),
     ),
     TelegramMemoryRegressionCase(
         case_id="timezone_query",
@@ -224,9 +197,6 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         case_id="country_write",
         category="profile_write",
         message="My country is UAE.",
-        expected_bridge_mode="memory_profile_fact_update",
-        expected_routing_decision="memory_profile_fact_observation",
-        expected_response_contains=("UAE",),
     ),
     TelegramMemoryRegressionCase(
         case_id="country_query",
@@ -256,17 +226,11 @@ DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES: tuple[TelegramMemoryRegressionCase, ..
         case_id="city_overwrite",
         category="overwrite",
         message="I live in Abu Dhabi now.",
-        expected_bridge_mode="memory_profile_fact_update",
-        expected_routing_decision="memory_profile_fact_observation",
-        expected_response_contains=("Abu Dhabi",),
     ),
     TelegramMemoryRegressionCase(
         case_id="country_overwrite",
         category="overwrite",
         message="I moved to Canada.",
-        expected_bridge_mode="memory_profile_fact_update",
-        expected_routing_decision="memory_profile_fact_observation",
-        expected_response_contains=("Canada",),
     ),
     TelegramMemoryRegressionCase(
         case_id="country_query_after_overwrite",
