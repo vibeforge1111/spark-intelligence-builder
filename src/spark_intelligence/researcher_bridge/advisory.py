@@ -4617,6 +4617,26 @@ def _detect_active_context_status_query(user_message: str) -> bool:
     return (asks_open_status or asks_next_step) and context_anchor
 
 
+def _detect_memory_cleanup_sample_query(user_message: str) -> bool:
+    text = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
+    if not text:
+        return False
+    wants_sample = any(marker in text for marker in ("sample", "examples", "spot-check", "spot check"))
+    cleanup_anchor = any(
+        marker in text
+        for marker in (
+            "cleanup",
+            "maintenance",
+            "archived",
+            "deleted",
+            "still-current",
+            "still current",
+        )
+    )
+    memory_anchor = "memory" in text or "memories" in text
+    return wants_sample and cleanup_anchor and memory_anchor
+
+
 def _active_context_status_query_wants_next_step(user_message: str) -> bool:
     text = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
     return any(
@@ -4855,6 +4875,87 @@ def _build_active_context_status_reply(
         "maintenance_jobs": memory_jobs,
     }
     return "\n".join(lines), facts
+
+
+def _build_memory_cleanup_sample_reply(
+    *,
+    state_db: StateDB,
+) -> tuple[str, dict[str, Any]]:
+    event = _latest_memory_maintenance_event(state_db=state_db)
+    if event is None:
+        reply = (
+            "I only have the cleanup request, not a reviewable sample yet.\n\n"
+            "Next: run memory maintenance once more after the audit-sample patch, then ask for archived, deleted, and still-current samples again."
+        )
+        return reply, {"sample_available": False, "reason": "maintenance_event_missing"}
+    facts = event.get("facts_json") or {}
+    maintenance = facts.get("maintenance") if isinstance(facts.get("maintenance"), dict) else {}
+    samples = maintenance.get("audit_samples") if isinstance(maintenance.get("audit_samples"), dict) else {}
+    if not any(samples.get(bucket) for bucket in ("archived", "deleted", "still_current")):
+        counts = {
+            "archived": maintenance.get("active_state_archived_count", 0),
+            "deleted": maintenance.get("active_deletion_count", 0),
+            "still_current": maintenance.get("active_state_still_current_count", 0),
+        }
+        reply = (
+            "I only have cleanup counts right now, not reviewable sample rows.\n\n"
+            f"Counts: {counts.get('archived', 0)} archived, {counts.get('deleted', 0)} deleted, "
+            f"{counts.get('still_current', 0)} still current.\n\n"
+            "Next: rerun memory maintenance so the new audit-sample field is recorded, then ask me for the samples again."
+        )
+        return (
+            reply,
+            {
+                "sample_available": False,
+                "reason": "audit_samples_missing",
+                "counts": counts,
+                "maintenance_event_id": event.get("event_id"),
+            },
+        )
+
+    lines = ["Here is a small memory cleanup audit sample:"]
+    for bucket, title in (
+        ("archived", "Archived"),
+        ("deleted", "Deleted"),
+        ("still_current", "Still current"),
+    ):
+        lines.extend(["", title])
+        bucket_samples = samples.get(bucket) if isinstance(samples.get(bucket), list) else []
+        if not bucket_samples:
+            lines.append("- none in the latest sample")
+            continue
+        for sample in bucket_samples[:3]:
+            if not isinstance(sample, dict):
+                continue
+            predicate = str(sample.get("predicate") or "unknown").strip()
+            value = _truncate_browser_evidence_text(
+                str(sample.get("value") or sample.get("text") or "").strip(),
+                max_chars=120,
+            )
+            reason = str(sample.get("reason") or "").strip()
+            suffix = f" ({reason})" if reason else ""
+            lines.append(f"- {predicate}: {value or 'no value'}{suffix}")
+    lines.extend(
+        [
+            "",
+            "Use this as a spot-check only. If anything looks wrong, inspect the full maintenance artifact before closing the focus.",
+        ]
+    )
+    return (
+        "\n".join(lines),
+        {
+            "sample_available": True,
+            "maintenance_event_id": event.get("event_id"),
+            "audit_samples": samples,
+        },
+    )
+
+
+def _latest_memory_maintenance_event(*, state_db: StateDB) -> dict[str, Any] | None:
+    for event in latest_events_by_type(state_db, event_type="memory_maintenance_run", limit=20):
+        if event.get("component") == "memory_orchestrator":
+            return event
+    return None
 
 
 def _bridge_reply_mutation_facts(
@@ -5262,6 +5363,64 @@ def build_researcher_reply(
             config_path=None,
             attachment_context=attachment_context,
             routing_decision="active_context_status",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+
+    if not personality_context_extra and _detect_memory_cleanup_sample_query(user_message):
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text, sample_facts = _build_memory_cleanup_sample_reply(state_db=state_db)
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_cleanup_sample",
+            routing_decision="memory_cleanup_sample",
+        )
+        evidence_summary = (
+            "status=memory_cleanup_sample "
+            f"sample_available={'yes' if sample_facts.get('sample_available') else 'no'}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered a memory cleanup sample request.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_cleanup_sample",
+            facts=_bridge_event_facts(
+                routing_decision="memory_cleanup_sample",
+                bridge_mode="memory_cleanup_sample",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "query_text": str(user_message or "").strip(),
+                    **sample_facts,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_cleanup_sample",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_cleanup_sample",
             active_chip_key=None,
             active_chip_task_type=None,
             active_chip_evaluate_used=False,

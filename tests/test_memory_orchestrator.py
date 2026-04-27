@@ -238,6 +238,7 @@ class MemoryOrchestratorTests(SparkTestCase):
 
         self.assertEqual(result.status, "succeeded")
         self.assertEqual(fake_client.observation_calls[0]["retention_class"], "active_state")
+        self.assertEqual(fake_client.observation_calls[0]["metadata"]["entity_key"], "profile.current_plan")
 
     def test_profile_current_state_predicates_store_revalidation_metadata(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

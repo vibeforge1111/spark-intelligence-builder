@@ -371,6 +371,96 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertNotIn("Closure rule", result.reply_text)
         self.assertNotIn("everything is done", result.reply_text.lower())
 
+    def test_cleanup_sample_query_reports_counts_only_when_audit_samples_missing(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="memory_maintenance_run",
+            component="memory_orchestrator",
+            summary="Spark memory SDK maintenance run.",
+            actor_id="memory_cli",
+            facts={
+                "status": "succeeded",
+                "maintenance": {
+                    "active_state_archived_count": 75,
+                    "active_deletion_count": 31,
+                    "active_state_still_current_count": 136,
+                },
+            },
+        )
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-cleanup-sample-missing",
+            agent_id="agent:human:telegram:8319079055",
+            human_id="human:telegram:8319079055",
+            session_id="session:telegram:dm:8319079055",
+            channel_kind="telegram",
+            user_message="Show me a small sample of archived, deleted, and still-current memories from the cleanup.",
+        )
+
+        self.assertEqual(result.routing_decision, "memory_cleanup_sample")
+        self.assertIn("I only have cleanup counts right now", result.reply_text)
+        self.assertIn("75 archived, 31 deleted, 136 still current", result.reply_text)
+        self.assertIn("rerun memory maintenance", result.reply_text)
+
+    def test_cleanup_sample_query_formats_latest_audit_samples(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="memory_maintenance_run",
+            component="memory_orchestrator",
+            summary="Spark memory SDK maintenance run.",
+            actor_id="memory_cli",
+            facts={
+                "status": "succeeded",
+                "maintenance": {
+                    "audit_samples": {
+                        "archived": [
+                            {
+                                "predicate": "current_focus",
+                                "value": "old diagnostics plan",
+                                "reason": "deleted_by_later_state_deletion",
+                            }
+                        ],
+                        "deleted": [
+                            {
+                                "predicate": "current_plan",
+                                "value": "old plan",
+                                "reason": "current_snapshot",
+                            }
+                        ],
+                        "still_current": [
+                            {
+                                "predicate": "current_focus",
+                                "value": "context capsule verification",
+                                "reason": "current_snapshot",
+                            }
+                        ],
+                    }
+                },
+            },
+        )
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-cleanup-sample-present",
+            agent_id="agent:human:telegram:8319079055",
+            human_id="human:telegram:8319079055",
+            session_id="session:telegram:dm:8319079055",
+            channel_kind="telegram",
+            user_message="Show me a small sample of archived, deleted, and still-current memories from the cleanup.",
+        )
+
+        self.assertEqual(result.routing_decision, "memory_cleanup_sample")
+        self.assertIn("Here is a small memory cleanup audit sample", result.reply_text)
+        self.assertIn("Archived", result.reply_text)
+        self.assertIn("current_focus: old diagnostics plan", result.reply_text)
+        self.assertIn("Deleted", result.reply_text)
+        self.assertIn("current_plan: old plan", result.reply_text)
+        self.assertIn("Still current", result.reply_text)
+        self.assertIn("current_focus: context capsule verification", result.reply_text)
+
     def test_researcher_reply_injects_context_capsule_into_provider_prompt(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)

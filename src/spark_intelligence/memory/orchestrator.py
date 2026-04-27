@@ -2774,6 +2774,8 @@ def _write_profile_fact_memory_operation(
         "normalized_value": value,
         "evidence_text": evidence_text,
     }
+    if predicate.startswith("profile.current_"):
+        metadata["entity_key"] = predicate
     if operation != "delete" and revalidate_after_days is not None and revalidate_at:
         metadata["revalidate_after_days"] = revalidate_after_days
         metadata["revalidate_at"] = revalidate_at
