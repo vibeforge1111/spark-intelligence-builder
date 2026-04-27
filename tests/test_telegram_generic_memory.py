@@ -2454,6 +2454,36 @@ class TelegramGenericMemoryTests(SparkTestCase):
                 channel_kind="telegram",
                 user_message="Desk plant?",
             )
+            correction = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-natural-named-object-correction",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-natural-named-object",
+                channel_kind="telegram",
+                user_message="Actually, the tiny desk plant is named Sol.",
+            )
+            updated_query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-natural-named-object-updated-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-natural-named-object",
+                channel_kind="telegram",
+                user_message="What did I name the plant?",
+            )
+            history_query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-natural-named-object-history-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-natural-named-object",
+                channel_kind="telegram",
+                user_message="What was the plant called before?",
+            )
 
         self.assertEqual(update.mode, "memory_generic_observation_update")
         self.assertEqual(update.routing_decision, "memory_generic_observation")
@@ -2466,11 +2496,29 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(query.reply_text, "You named the tiny desk plant Mira.")
         self.assertEqual(fragment_query.mode, "memory_open_recall")
         self.assertEqual(fragment_query.reply_text, "You named the tiny desk plant Mira.")
+        self.assertEqual(correction.mode, "memory_generic_observation_update")
+        self.assertEqual(
+            correction.reply_text,
+            "I'll remember that your low-stakes test fact is that the tiny desk plant is named Sol.",
+        )
+        self.assertEqual(updated_query.mode, "memory_open_recall")
+        self.assertEqual(updated_query.reply_text, "You named the tiny desk plant Sol.")
+        self.assertEqual(history_query.mode, "memory_profile_fact_history")
+        self.assertEqual(history_query.reply_text, "Before Sol, the tiny desk plant was named Mira.")
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(write_events)
-        recorded_observations = (write_events[0]["facts_json"] or {}).get("observations") or []
-        self.assertEqual(recorded_observations[0]["predicate"], "profile.current_low_stakes_test_fact")
-        self.assertEqual(recorded_observations[0]["value"], "the tiny desk plant is named Mira")
+        recorded_observations = [
+            observation
+            for event in write_events
+            for observation in ((event["facts_json"] or {}).get("observations") or [])
+        ]
+        recorded_values = {
+            observation["value"]
+            for observation in recorded_observations
+            if observation["predicate"] == "profile.current_low_stakes_test_fact"
+        }
+        self.assertIn("the tiny desk plant is named Mira", recorded_values)
+        self.assertIn("the tiny desk plant is named Sol", recorded_values)
 
     def test_build_researcher_reply_directly_acknowledges_current_focus_correction_with_researcher_enabled(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)

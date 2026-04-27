@@ -416,6 +416,22 @@ def _detect_profile_fact_history_query(text: str) -> ProfileFactQuery | None:
     if any(
         phrase in text
         for phrase in (
+            "what was the plant called before",
+            "what was the plant named before",
+            "what did i name the plant before",
+            "what was the desk plant called before",
+            "what was the desk plant named before",
+        )
+    ):
+        return _history_fact_query(
+            predicate="profile.current_low_stakes_test_fact",
+            fact_name="profile_current_low_stakes_test_fact",
+            label="low-stakes test fact",
+            query_kind="fact_history",
+        )
+    if any(
+        phrase in text
+        for phrase in (
             "where did i live before",
             "where was i living before",
             "what city did i live in before",
@@ -1791,6 +1807,23 @@ def build_profile_fact_history_answer(
         if normalized_current and normalized_current != normalized_previous:
             return _ensure_sentence(f"Before your current owner was {normalized_current}, it was {normalized_previous}")
         return _ensure_sentence(f"An earlier saved current owner was {normalized_previous}")
+    if predicate == "profile.current_low_stakes_test_fact":
+        current_object, current_name = _parse_named_object_fact(normalized_current)
+        previous_object, previous_name = _parse_named_object_fact(normalized_previous)
+        object_label = current_object or previous_object
+        if previous_name and current_name and current_name != previous_name:
+            if object_label:
+                return _ensure_sentence(f"Before {current_name}, the {object_label} was named {previous_name}")
+            return _ensure_sentence(f"Before {current_name}, it was named {previous_name}")
+        if previous_name:
+            if object_label:
+                return _ensure_sentence(f"An earlier saved name for the {object_label} was {previous_name}")
+            return _ensure_sentence(f"An earlier saved name was {previous_name}")
+        if normalized_current and normalized_current != normalized_previous:
+            return _ensure_sentence(
+                f"Before your current low-stakes test fact was that {normalized_current}, it was that {normalized_previous}"
+            )
+        return _ensure_sentence(f"An earlier saved low-stakes test fact was that {normalized_previous}")
     if predicate == "profile.cofounder_name":
         if normalized_current and normalized_current != normalized_previous:
             return _ensure_sentence(f"Before {normalized_current}, your cofounder was {normalized_previous}")
@@ -1962,6 +1995,22 @@ def _ensure_sentence(text: str) -> str:
     if normalized[-1] in ".!?":
         return normalized
     return f"{normalized}."
+
+
+def _parse_named_object_fact(value: str) -> tuple[str, str]:
+    normalized = " ".join(str(value or "").strip().split())
+    if not normalized:
+        return "", ""
+    match = re.search(
+        r"^(?:my|the)\s+(?P<object>.+?)\s+is\s+named\s+(?P<name>[A-Z][A-Za-z0-9_-]*)$",
+        normalized,
+        re.I,
+    )
+    if not match:
+        return "", ""
+    object_label = str(match.group("object") or "").strip()
+    name = str(match.group("name") or "").strip()
+    return object_label, name
 
 
 _CURRENT_PLAN_VERB_STARTERS = {
