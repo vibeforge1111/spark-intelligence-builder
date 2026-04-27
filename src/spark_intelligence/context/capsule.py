@@ -16,6 +16,7 @@ from spark_intelligence.state.db import StateDB
 _STATE_PREDICATE_LABELS: tuple[tuple[str, str], ...] = (
     ("profile.current_focus", "current_focus"),
     ("profile.current_plan", "current_plan"),
+    ("profile.current_low_stakes_test_fact", "low_stakes_test_fact"),
     ("profile.current_blocker", "current_blocker"),
     ("profile.current_decision", "current_decision"),
     ("profile.current_status", "current_status"),

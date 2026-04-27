@@ -2253,6 +2253,59 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(focus_query.mode, "memory_profile_fact")
         self.assertEqual(focus_query.reply_text, "Your current focus is Telegram memory routing cleanup.")
 
+    def test_build_researcher_reply_saves_low_stakes_test_fact_for_direct_recall(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for low-stakes test fact memory"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for low-stakes test fact memory"),
+        ):
+            update = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-low-stakes-test-fact-update",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-low-stakes-test-fact",
+                channel_kind="telegram",
+                user_message=(
+                    "For the natural recall test: remember that my low-stakes test fact "
+                    "is that the tiny desk plant is named Mira."
+                ),
+            )
+            query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-low-stakes-test-fact-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-low-stakes-test-fact",
+                channel_kind="telegram",
+                user_message="What was the low-stakes test fact I gave you?",
+            )
+
+        self.assertEqual(update.mode, "memory_generic_observation_update")
+        self.assertEqual(update.routing_decision, "memory_generic_observation")
+        self.assertEqual(
+            update.reply_text,
+            "I'll remember that your low-stakes test fact is that the tiny desk plant is named Mira.",
+        )
+        self.assertEqual(query.mode, "memory_profile_fact")
+        self.assertEqual(
+            query.reply_text,
+            "Your low-stakes test fact was that the tiny desk plant is named Mira.",
+        )
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(write_events)
+        recorded_observations = (write_events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(recorded_observations[0]["predicate"], "profile.current_low_stakes_test_fact")
+        self.assertEqual(recorded_observations[0]["value"], "the tiny desk plant is named Mira")
+
     def test_build_researcher_reply_directly_acknowledges_current_focus_correction_with_researcher_enabled(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)

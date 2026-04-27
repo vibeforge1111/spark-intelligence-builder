@@ -1273,6 +1273,24 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
     if any(
         phrase in text
         for phrase in (
+            "what was the low-stakes test fact",
+            "what was the low stakes test fact",
+            "what was my low-stakes test fact",
+            "what was my low stakes test fact",
+            "what was my test fact",
+            "what low-stakes fact did i give you",
+            "what low stakes fact did i give you",
+            "what test fact did i give you",
+        )
+    ):
+        return ProfileFactQuery(
+            predicate="profile.current_low_stakes_test_fact",
+            fact_name="profile_current_low_stakes_test_fact",
+            label="low-stakes test fact",
+        )
+    if any(
+        phrase in text
+        for phrase in (
             "what is my current decision",
             "what's my current decision",
             "what is our current decision",
@@ -1884,6 +1902,8 @@ def _build_profile_fact_concise_answer(*, query: ProfileFactQuery, value: str) -
         return _ensure_sentence(f"Your current plan is {_current_plan_value_clause(normalized_value)}")
     if predicate == "profile.current_focus":
         return _ensure_sentence(f"Your current focus is {normalized_value}")
+    if predicate == "profile.current_low_stakes_test_fact":
+        return _ensure_sentence(f"Your low-stakes test fact was that {normalized_value}")
     if predicate == "profile.current_decision":
         return _ensure_sentence(f"Your current decision is {normalized_value}")
     if predicate == "profile.current_blocker":

@@ -88,6 +88,18 @@ _FOCUS_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^the\s+current\s+focus\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
 )
 
+_LOW_STAKES_TEST_FACT_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"^(?:for\s+the\s+(?:natural\s+recall|recall|memory\s+quality)\s+test[:,]?\s*)?"
+        r"(?:please\s+)?remember\s+that\s+(?:my|the)\s+(?:low[-\s]stakes\s+)?test\s+fact\s+is\s+(?:that\s+)?(.+?)[.!]?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?:my|the)\s+(?:low[-\s]stakes\s+)?test\s+fact\s+is\s+(?:that\s+)?(.+?)[.!]?$",
+        re.IGNORECASE,
+    ),
+)
+
 _DECISION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^(?:i|we)\s+decided\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
     re.compile(r"^(?:i|we)\s+decided\s+that\s+(.+?)[.!]?$", re.IGNORECASE),
@@ -422,6 +434,18 @@ _GENERIC_PACKS: tuple[TelegramGenericPack, ...] = (
         delete_phrases=_simple_delete_phrases("my current focus", "our priority"),
         deletion_answer_template="I'll forget your current focus.",
         revalidation_days=21,
+    ),
+    TelegramGenericPack(
+        domain_pack="memory_quality",
+        predicate="profile.current_low_stakes_test_fact",
+        fact_name="low_stakes_test_fact",
+        label="low-stakes test fact",
+        retention_class="active_state",
+        update_patterns=_LOW_STAKES_TEST_FACT_PATTERNS,
+        delete_phrases=_simple_delete_phrases("my low-stakes test fact", "my test fact", "the test fact"),
+        observation_answer_template="I'll remember that your low-stakes test fact is that {value}.",
+        deletion_answer_template="I'll forget your low-stakes test fact.",
+        revalidation_days=7,
     ),
     TelegramGenericPack(
         domain_pack="plans_and_commitments",

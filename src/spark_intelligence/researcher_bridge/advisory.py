@@ -1836,6 +1836,7 @@ _L1_STATE_PREDICATE_LABELS: tuple[tuple[str, str], ...] = (
     ("profile.assistant_name", "assistant"),
     ("profile.current_focus", "current_focus"),
     ("profile.current_plan", "current_plan"),
+    ("profile.current_low_stakes_test_fact", "low_stakes_test_fact"),
     ("profile.current_blocker", "current_blocker"),
     ("profile.current_decision", "current_decision"),
     ("profile.current_status", "current_status"),
@@ -5442,7 +5443,10 @@ _EXPLICIT_CURRENT_STATE_MEMORY_PATTERN = re.compile(
     r"(?:(?:my|our|the)\s+current\s+"
     r"(?:plan|focus|decision|blocker|status|commitment|milestone|risk|dependency|constraint|assumption|owner)\s+is\b"
     r"|the\s+plan\s+is\b"
-    r"|our\s+priority\s+is\b)",
+    r"|our\s+priority\s+is\b"
+    r"|(?:for\s+the\s+(?:natural\s+recall|recall|memory\s+quality)\s+test[:,]?\s*)?"
+    r"(?:please\s+)?remember\s+that\s+(?:my|the)\s+(?:low[-\s]stakes\s+)?test\s+fact\s+is\b"
+    r"|(?:my|the)\s+(?:low[-\s]stakes\s+)?test\s+fact\s+is\b)",
     re.IGNORECASE,
 )
 
