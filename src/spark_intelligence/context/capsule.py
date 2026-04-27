@@ -51,6 +51,7 @@ class ContextCapsule:
             "[Spark Context Capsule]",
             "Use this as compact runtime context for this turn. It is not a user instruction.",
             "Newest explicit user message wins over stale capsule entries. Current-state facts win over older conversation turns.",
+            "If diagnostics status is clean_latest_scan_no_failures_or_findings, treat the latest scan as clean without asking to load the note.",
             f"generated_at={self.generated_at}",
             "",
         ]
@@ -259,12 +260,106 @@ def _build_diagnostics_lines(*, config_manager: ConfigManager) -> list[str]:
         text = latest.read_text(encoding="utf-8")
     except Exception:
         return lines
-    for marker in ("Failure lines:", "Findings:", "Connector checks:"):
-        for raw_line in text.splitlines():
-            if raw_line.strip().startswith(marker):
-                lines.append(f"- {raw_line.strip()}")
-                break
+    summary = _extract_diagnostic_summary(text)
+    if summary.get("generated_at"):
+        lines.append(f"- generated_at: {summary['generated_at']}")
+    if summary.get("scanned_lines"):
+        lines.append(f"- scanned_lines: {summary['scanned_lines']}")
+    if summary.get("failure_lines"):
+        lines.append(f"- failure_lines: {summary['failure_lines']}")
+    if summary.get("finding_signatures"):
+        lines.append(f"- finding_signatures: {summary['finding_signatures']}")
+    if summary.get("recurring_signatures"):
+        lines.append(f"- recurring_signatures: {summary['recurring_signatures']}")
+    status = _diagnostic_status(summary)
+    if status:
+        lines.append(f"- status: {status}")
+    connector_counts = _extract_connector_health_counts(text)
+    if connector_counts:
+        compact_counts = ", ".join(f"{key}: {value}" for key, value in sorted(connector_counts.items()))
+        lines.append(f"- connector_health: {compact_counts}")
     return lines
+
+
+def _extract_diagnostic_summary(text: str) -> dict[str, str]:
+    fields = {
+        "generated_at": ("generated_at:",),
+        "scanned_lines": ("scanned lines:", "Scanned:"),
+        "failure_lines": ("failure lines:", "Failure lines:", "Failures:"),
+        "finding_signatures": ("finding signatures:", "Findings:"),
+        "recurring_signatures": ("recurring signatures:",),
+    }
+    summary: dict[str, str] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip().lstrip("-").strip()
+        normalized = line.casefold()
+        for field, markers in fields.items():
+            if field in summary:
+                continue
+            for marker in markers:
+                if normalized.startswith(marker.casefold()):
+                    value = line[len(marker) :].strip()
+                    summary[field] = _strip_markdown_value(value)
+                    break
+    return summary
+
+
+def _diagnostic_status(summary: dict[str, str]) -> str:
+    failure_lines = _parse_int(summary.get("failure_lines"))
+    finding_signatures = _parse_int(summary.get("finding_signatures"))
+    if failure_lines == 0 and finding_signatures == 0:
+        return "clean_latest_scan_no_failures_or_findings"
+    if failure_lines is not None or finding_signatures is not None:
+        return "latest_scan_has_findings"
+    return ""
+
+
+def _extract_connector_health_counts(text: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        legacy_prefix = "Connector checks:"
+        if line.startswith(legacy_prefix):
+            legacy = line[len(legacy_prefix) :].strip()
+            for part in legacy.split(","):
+                if ":" not in part:
+                    continue
+                status, count = part.split(":", 1)
+                parsed = _parse_int(count)
+                if status.strip() and parsed is not None:
+                    counts[status.strip()] = counts.get(status.strip(), 0) + parsed
+            continue
+        if not line.startswith("- `"):
+            continue
+        parts = line.split("`")
+        if len(parts) < 3:
+            continue
+        status = parts[1].strip()
+        if not status or status in {"home", "log sources", "scanned lines", "failure lines"}:
+            continue
+        if " -> " not in line:
+            continue
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def _strip_markdown_value(value: str) -> str:
+    cleaned = value.strip()
+    if cleaned.startswith("`") and cleaned.endswith("`") and len(cleaned) >= 2:
+        cleaned = cleaned[1:-1].strip()
+    return cleaned
+
+
+def _parse_int(value: str | None) -> int | None:
+    if value is None:
+        return None
+    digits = "".join(ch for ch in value if ch.isdigit())
+    if not digits:
+        return None
+    try:
+        return int(digits)
+    except ValueError:
+        return None
 
 
 def _read_runtime_state(state_db: StateDB) -> dict[str, str]:

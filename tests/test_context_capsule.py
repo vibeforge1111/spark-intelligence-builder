@@ -35,7 +35,27 @@ class ContextCapsuleTests(SparkTestCase):
         diagnostics_dir = self.home / "diagnostics"
         diagnostics_dir.mkdir(parents=True, exist_ok=True)
         (diagnostics_dir / "spark-diagnostic-2026-04-27T12-55-14+00-00.md").write_text(
-            "Spark diagnostics\n\nFailure lines: 0\nFindings: 0\nConnector checks: ok: 11\n",
+            "\n".join(
+                [
+                    "---",
+                    "type: spark-diagnostic-report",
+                    "generated_at: 2026-04-27T12-55-14+00-00",
+                    "---",
+                    "",
+                    "## Summary",
+                    "",
+                    "- scanned lines: `1062`",
+                    "- failure lines: `0`",
+                    "- finding signatures: `0`",
+                    "- recurring signatures: `0`",
+                    "",
+                    "## Connector Health",
+                    "",
+                    "- `ok` `spark-telegram-bot` required -> http://127.0.0.1:8789/health - ready",
+                    "- `ok` `spawner-ui` required -> http://127.0.0.1:5173/api/providers - ready",
+                ]
+            )
+            + "\n",
             encoding="utf-8",
         )
         with self.state_db.connect() as conn:
@@ -94,7 +114,11 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertIn("assistant: The memory maintenance job is scheduled.", rendered)
         self.assertIn("memory:sdk-maintenance", rendered)
         self.assertIn("spark-diagnostic-2026-04-27T12-55-14+00-00.md", rendered)
-        self.assertIn("Connector checks: ok: 11", rendered)
+        self.assertIn("scanned_lines: 1062", rendered)
+        self.assertIn("failure_lines: 0", rendered)
+        self.assertIn("finding_signatures: 0", rendered)
+        self.assertIn("status: clean_latest_scan_no_failures_or_findings", rendered)
+        self.assertIn("connector_health: ok: 2", rendered)
 
     def test_researcher_reply_injects_context_capsule_into_provider_prompt(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
