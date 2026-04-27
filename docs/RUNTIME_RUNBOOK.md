@@ -1,6 +1,6 @@
 # Spark Intelligence Builder Runtime Runbook
 
-Last updated: 2026-04-26
+Last updated: 2026-04-27
 
 This runbook is for local operators and future implementation sessions. It captures the safe checks to run before calling Builder healthy.
 
@@ -48,6 +48,36 @@ Rules:
 - Prefer `--api-key-env` and `--bot-token-env` over literal secret values.
 - Do not run Builder as a second live Telegram ingress if `spark-telegram-bot` owns the token.
 - Run `spark-intelligence doctor` after bootstrap and before declaring the runtime ready.
+
+## Telegram Runtime Refresh Policy
+
+Do not restart Telegram profiles after every Builder change by habit. The live
+`spark-telegram-bot` profiles are Node/ts-node processes, but normal
+Builder-backed chat calls `spark_intelligence.cli gateway simulate-telegram-update`
+through a fresh Python process per Telegram update. That Python process gets
+`PYTHONPATH` pointed at the installed Builder source.
+
+For Python-side `spark-intelligence-builder` changes, usually do this first:
+
+```powershell
+git pull origin main
+```
+
+from:
+
+```text
+C:\Users\USER\.spark\modules\spark-intelligence-builder\source
+```
+
+Then test one live Telegram turn. Restart Telegram only when:
+
+- `spark-telegram-bot` TypeScript/Node code changed.
+- Environment variables or profile config loaded at Node startup changed.
+- The bot appears to be in a stale or unhealthy process state.
+- A live test must eliminate process-state doubt across both Telegram profiles.
+
+If only Builder Python prompt/context logic changed, pulling the installed source
+should be enough because the next bridge call starts a fresh Python process.
 
 ## Provider Rotation
 
