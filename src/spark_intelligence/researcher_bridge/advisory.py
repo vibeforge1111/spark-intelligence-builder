@@ -368,6 +368,27 @@ class BeliefRecallQuery:
 
 _OPEN_MEMORY_RECALL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
+        "name_recall",
+        re.compile(
+            r"^(?:what|which)\s+did\s+i\s+name\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "name_recall",
+        re.compile(
+            r"^(?:what(?:'s| is)\s+)?(?:the\s+)?name\s+of\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "name_recall",
+        re.compile(
+            r"^((?:the\s+)?[a-z0-9][a-z0-9\s_-]*\bplant)\s*[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "evidence_recall",
         re.compile(
             r"^(?:what|which)\s+(?:evidence|saved memory|memory)\s+do you have about\s+(.+?)[\?\.\!]*$",
@@ -539,6 +560,9 @@ def _filter_open_memory_recall_records(records: list[dict[str, Any]]) -> list[di
         if role in {"structured_evidence", "episodic"}:
             filtered.append(record)
             continue
+        if predicate == "profile.current_low_stakes_test_fact":
+            filtered.append(record)
+            continue
         if predicate == "raw_turn" or predicate.startswith("evidence.telegram."):
             filtered.append(record)
     return filtered
@@ -587,6 +611,39 @@ def _record_matches_open_memory_topic(*, record: dict[str, Any], topic: str) -> 
     return len(matched_tokens) >= required_matches
 
 
+def _named_object_answer_from_snippet(*, topic: str, snippet: str) -> str | None:
+    topic_tokens = [
+        token
+        for token in re.findall(r"[a-z0-9][a-z0-9_-]*", str(topic or "").casefold())
+        if token
+        and token
+        not in {
+            "a",
+            "an",
+            "and",
+            "did",
+            "i",
+            "my",
+            "name",
+            "of",
+            "the",
+        }
+    ]
+    for match in re.finditer(
+        r"\b(?:my|the)\s+(.+?)\s+is\s+named\s+([A-Z][A-Za-z0-9_-]*)\b",
+        str(snippet or ""),
+    ):
+        object_label = " ".join(str(match.group(1) or "").strip().split())
+        name = str(match.group(2) or "").strip()
+        if not object_label or not name:
+            continue
+        normalized_object = object_label.casefold()
+        if topic_tokens and not any(token in normalized_object for token in topic_tokens):
+            continue
+        return f"You named the {object_label} {name}."
+    return None
+
+
 def _build_open_memory_recall_answer(*, query: OpenMemoryRecallQuery, records: list[dict[str, Any]]) -> str:
     snippets: list[str] = []
     seen: set[str] = set()
@@ -603,6 +660,11 @@ def _build_open_memory_recall_answer(*, query: OpenMemoryRecallQuery, records: l
             break
     if not snippets:
         return "I don't currently have saved memory about that."
+    if query.query_kind == "name_recall":
+        for snippet in snippets:
+            named_answer = _named_object_answer_from_snippet(topic=query.topic, snippet=snippet)
+            if named_answer:
+                return named_answer
     if len(snippets) == 1:
         return f'I have saved memory about {query.topic}: "{snippets[0]}"'
     return f'I have saved memory about {query.topic}: "{snippets[0]}" Also: "{snippets[1]}"'
@@ -6884,6 +6946,10 @@ def build_researcher_reply(
         and not (
             detected_generic_memory_observation is not None
             and detected_generic_memory_observation.predicate == "profile.recent_family_members"
+        )
+        and not (
+            detected_generic_memory_observation is not None
+            and detected_generic_memory_observation.predicate == "profile.current_low_stakes_test_fact"
         )
         and (
             detected_profile_fact is not None

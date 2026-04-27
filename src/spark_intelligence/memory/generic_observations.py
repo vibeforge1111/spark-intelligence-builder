@@ -90,6 +90,10 @@ _FOCUS_PATTERNS: tuple[re.Pattern[str], ...] = (
 
 _LOW_STAKES_TEST_FACT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
+        r"^(?:for\s+later[:,]?\s*)?((?:my|the)\s+.+?\s+is\s+named\s+[A-Z][A-Za-z0-9_-]*)[.!]?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
         r"^(?:for\s+the\s+(?:natural\s+recall|recall|memory\s+quality)\s+test[:,]?\s*)?"
         r"(?:please\s+)?remember\s+that\s+(?:my|the)\s+(?:low[-\s]stakes\s+)?test\s+fact\s+is\s+(?:that\s+)?(.+?)[.!]?$",
         re.IGNORECASE,

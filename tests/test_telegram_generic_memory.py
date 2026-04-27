@@ -2412,6 +2412,66 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(recorded_observations[0]["predicate"], "profile.current_low_stakes_test_fact")
         self.assertEqual(recorded_observations[0]["value"], "the tiny desk plant is named Mira")
 
+    def test_build_researcher_reply_recalls_natural_named_object_fact(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for natural named-object memory"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for natural named-object memory"),
+        ):
+            update = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-natural-named-object-update",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-natural-named-object",
+                channel_kind="telegram",
+                user_message="For later, the tiny desk plant is named Mira.",
+            )
+            query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-natural-named-object-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-natural-named-object",
+                channel_kind="telegram",
+                user_message="What did I name the plant?",
+            )
+            fragment_query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-natural-named-object-fragment-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-natural-named-object",
+                channel_kind="telegram",
+                user_message="Desk plant?",
+            )
+
+        self.assertEqual(update.mode, "memory_generic_observation_update")
+        self.assertEqual(update.routing_decision, "memory_generic_observation")
+        self.assertEqual(
+            update.reply_text,
+            "I'll remember that your low-stakes test fact is that the tiny desk plant is named Mira.",
+        )
+        self.assertEqual(query.mode, "memory_open_recall")
+        self.assertEqual(query.routing_decision, "memory_open_recall_query")
+        self.assertEqual(query.reply_text, "You named the tiny desk plant Mira.")
+        self.assertEqual(fragment_query.mode, "memory_open_recall")
+        self.assertEqual(fragment_query.reply_text, "You named the tiny desk plant Mira.")
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        self.assertTrue(write_events)
+        recorded_observations = (write_events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual(recorded_observations[0]["predicate"], "profile.current_low_stakes_test_fact")
+        self.assertEqual(recorded_observations[0]["value"], "the tiny desk plant is named Mira")
+
     def test_build_researcher_reply_directly_acknowledges_current_focus_correction_with_researcher_enabled(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)
