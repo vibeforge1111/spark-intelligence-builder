@@ -1046,6 +1046,52 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(result.routing_decision, "memory_belief_recall_query")
         self.assertEqual(result.reply_text, "I don't currently have a saved belief about that.")
 
+    def test_build_researcher_reply_belief_recall_reports_direct_evidence_without_saved_belief(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        for request_id, message in (
+            ("req-evidence-only-1", "Users keep dropping during onboarding because Stripe verification fails."),
+            (
+                "req-evidence-only-2",
+                "Users still drop during onboarding because Stripe verification fails and the retry flow is confusing.",
+            ),
+        ):
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id=request_id,
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-evidence-only-belief",
+                channel_kind="telegram",
+                user_message=message,
+            )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for evidence-only belief recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for evidence-only belief recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-evidence-only-belief-read",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-evidence-only-belief",
+                channel_kind="telegram",
+                user_message="What is your current belief about onboarding?",
+            )
+
+        self.assertEqual(result.mode, "memory_belief_recall")
+        self.assertIn("newer direct evidence", result.reply_text.lower())
+        self.assertIn("Stripe verification fails", result.reply_text)
+        self.assertNotIn("My saved belief", result.reply_text)
+        self.assertNotIn("This is an inferred belief", result.reply_text)
+
     def test_build_researcher_reply_belief_recall_downgrades_stale_unrevalidated_belief(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
@@ -1315,7 +1361,7 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(facts.get("bridge_mode"), "spark_systems_self_knowledge")
         self.assertIn("domain-chip-memory", facts.get("starter_modules") or [])
 
-    def test_build_researcher_reply_promotes_repeated_evidence_into_belief_recall(self) -> None:
+    def test_build_researcher_reply_reports_repeated_evidence_in_belief_recall(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
 
@@ -1356,11 +1402,12 @@ class TelegramGenericMemoryTests(SparkTestCase):
                 session_id="session-evidence-belief-read",
                 channel_kind="telegram",
                 user_message="What is your current belief about onboarding?",
-            )
+        )
 
         self.assertEqual(result.mode, "memory_belief_recall")
-        self.assertIn("inferred belief", result.reply_text.lower())
+        self.assertIn("newer direct evidence", result.reply_text.lower())
         self.assertIn("stripe verification fails", result.reply_text.lower())
+        self.assertNotIn("My saved belief", result.reply_text)
         tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
         self.assertTrue(tool_events)
         facts = next(
@@ -1371,7 +1418,8 @@ class TelegramGenericMemoryTests(SparkTestCase):
             ),
             {},
         )
-        self.assertIn("belief", facts.get("retrieved_memory_roles") or [])
+        self.assertEqual(facts.get("newer_evidence_count"), 2)
+        self.assertEqual(facts.get("read_method"), "retrieve_evidence(evidence_only)")
 
     def test_build_researcher_reply_promotes_repeated_evidence_into_current_blocker(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

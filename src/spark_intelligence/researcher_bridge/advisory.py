@@ -912,6 +912,16 @@ def _build_belief_recall_answer(
             if len(snippets) >= 2:
                 break
         if snippets:
+            if not records and not stale_belief_records:
+                if len(snippets) == 1:
+                    return (
+                        f'I do not currently have a saved inferred belief about {query.topic}, '
+                        f'but newer direct evidence says: "{snippets[0]}"'
+                    )
+                return (
+                    f'I do not currently have saved inferred beliefs about {query.topic}, '
+                    f'but newer direct evidence says: "{snippets[0]}" Also: "{snippets[1]}"'
+                )
             if len(snippets) == 1:
                 return (
                     f'I have an older inferred belief about {query.topic}, but newer direct evidence says: "{snippets[0]}" '
@@ -6945,12 +6955,28 @@ def build_researcher_reply(
                 synthetic_source_records.extend(evidence_lookup.read_result.records)
             if direct_inspection is not None and not direct_inspection.read_result.abstained and direct_inspection.read_result.records:
                 synthetic_source_records.extend(direct_inspection.read_result.records)
-            belief_records = _synthesize_belief_records_from_consolidated_memory(
-                records=synthetic_source_records,
-                topic=detected_belief_recall_query.topic,
-            )
-            if belief_records:
-                read_method = "synthesized_from_current_state"
+            topical_evidence_records = [
+                record
+                for record in _filter_structured_evidence_records(synthetic_source_records)
+                if _record_matches_open_memory_topic(
+                    record=record,
+                    topic=detected_belief_recall_query.topic,
+                )
+            ]
+            if topical_evidence_records:
+                newer_evidence_records = sorted(
+                    topical_evidence_records,
+                    key=_memory_record_timestamp,
+                    reverse=True,
+                )
+                read_method = "retrieve_evidence(evidence_only)"
+            else:
+                belief_records = _synthesize_belief_records_from_consolidated_memory(
+                    records=synthetic_source_records,
+                    topic=detected_belief_recall_query.topic,
+                )
+                if belief_records:
+                    read_method = "synthesized_from_current_state"
         retrieved_memory_roles = sorted(
             {
                 str(record.get("memory_role") or "").strip()
