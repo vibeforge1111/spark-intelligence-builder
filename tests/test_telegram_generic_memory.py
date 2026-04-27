@@ -2211,6 +2211,47 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(recorded_observations[0]["predicate"], "profile.current_focus")
         self.assertEqual(recorded_observations[0]["value"], "fixing onboarding retention")
 
+    def test_build_researcher_reply_saves_explicit_current_focus_memory_update(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for explicit focus memory"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for explicit focus memory"),
+        ):
+            focus_update = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-explicit-focus-update",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-explicit-focus",
+                channel_kind="telegram",
+                user_message="Memory update: my current focus is Telegram memory routing cleanup.",
+            )
+            focus_query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-explicit-focus-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-explicit-focus",
+                channel_kind="telegram",
+                user_message="What is my current focus?",
+            )
+
+        self.assertEqual(focus_update.mode, "memory_generic_observation_update")
+        self.assertEqual(focus_update.routing_decision, "memory_generic_observation")
+        self.assertEqual(
+            focus_update.reply_text,
+            "I'll remember that your current focus is Telegram memory routing cleanup.",
+        )
+        self.assertEqual(focus_query.mode, "memory_profile_fact")
+        self.assertEqual(focus_query.reply_text, "Your current focus is Telegram memory routing cleanup.")
+
     def test_build_researcher_reply_persists_generic_decision_memory(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

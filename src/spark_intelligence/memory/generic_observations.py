@@ -81,6 +81,7 @@ _PLAN_PATTERNS: tuple[re.Pattern[str], ...] = (
 _FOCUS_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^(?:i(?:'m| am)|we(?:'re| are))\s+focusing\s+on\s+(.+?)[.!]?$", re.IGNORECASE),
     re.compile(r"^our\s+priority\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^(?:memory\s+update:\s*)?(?:my|our|the)\s+current\s+focus\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
     re.compile(r"^our\s+current\s+focus\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
     re.compile(r"^the\s+current\s+focus\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
 )
