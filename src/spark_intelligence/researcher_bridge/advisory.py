@@ -4415,6 +4415,23 @@ def _normalize_explicit_memory_message(user_message: str) -> tuple[bool, str]:
     return True, normalized
 
 
+_EXPLICIT_CURRENT_STATE_MEMORY_PATTERN = re.compile(
+    r"^(?:(?:actually|update|correction)[:,]?\s+)?(?:memory\s+update:\s*)?"
+    r"(?:(?:my|our|the)\s+current\s+"
+    r"(?:plan|focus|decision|blocker|status|commitment|milestone|risk|dependency|constraint|assumption|owner)\s+is\b"
+    r"|the\s+plan\s+is\b"
+    r"|our\s+priority\s+is\b)",
+    re.IGNORECASE,
+)
+
+
+def _should_direct_acknowledge_current_state_memory(user_message: str) -> bool:
+    text = " ".join(str(user_message or "").strip().split())
+    if not text:
+        return False
+    return bool(_EXPLICIT_CURRENT_STATE_MEMORY_PATTERN.search(text))
+
+
 def _build_direct_preference_update_answer(*, user_message: str) -> str:
     if re.search(r"\b(?:reply|response|style|tone|voice|concise|warm|direct)\b", user_message, flags=re.I):
         return "Saved that reply style preference."
@@ -4925,6 +4942,10 @@ def build_researcher_reply(
         bool(config_manager.get_path("spark.researcher.enabled", default=True))
         and channel_kind == "telegram"
         and not explicit_memory_message
+        and not (
+            detected_generic_memory_observation is not None
+            and _should_direct_acknowledge_current_state_memory(memory_user_message)
+        )
         and (
             detected_profile_fact is not None
             or detected_memory_event is not None
