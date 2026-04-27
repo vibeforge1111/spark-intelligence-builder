@@ -126,6 +126,91 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertIn("status: clean_latest_scan_no_failures_or_findings", rendered)
         self.assertIn("connector_health: ok: 2", rendered)
 
+    def test_context_capsule_contract_covers_telegram_arbitration_regressions(self) -> None:
+        prompts = [
+            "What is my current focus?",
+            "What is my current plan?",
+            "What is verified, what is still open, and what should only be closed by me?",
+            (
+                "Before we close this, verify whether my focus, plan, latest diagnostics, "
+                "and maintenance summary survived this turn."
+            ),
+        ]
+
+        diagnostics_dir = self.home / "diagnostics"
+        diagnostics_dir.mkdir(parents=True, exist_ok=True)
+        (diagnostics_dir / "spark-diagnostic-2026-04-27T13-38-48+00-00.md").write_text(
+            "\n".join(
+                [
+                    "---",
+                    "type: spark-diagnostic-report",
+                    "generated_at: 2026-04-27T13:38:48+00:00",
+                    "---",
+                    "",
+                    "- scanned lines: `1074`",
+                    "- failure lines: `0`",
+                    "- finding signatures: `0`",
+                    "- recurring signatures: `0`",
+                    "",
+                    "## Connector Health",
+                    "",
+                    "- `ok` `spark-telegram-bot` required -> http://127.0.0.1:8789/health - ready",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        with self.state_db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE job_records
+                SET last_run_at = ?, last_result = ?
+                WHERE job_id = 'memory:sdk-maintenance'
+                """,
+                (
+                    "2026-04-27T12:46:37Z",
+                    "status=succeeded before=297 after=151 deletions=31 still_current=136 stale_preserved=0 superseded=16 archived=75",
+                ),
+            )
+            conn.commit()
+
+        for prompt in prompts:
+            with self.subTest(prompt=prompt), patch(
+                "spark_intelligence.context.capsule.inspect_human_memory_in_memory",
+                return_value=SimpleNamespace(
+                    read_result=SimpleNamespace(
+                        records=[
+                            {
+                                "predicate": "profile.current_focus",
+                                "value": "context capsule verification",
+                                "timestamp": "2026-04-27T13:38:35Z",
+                            },
+                            {
+                                "predicate": "profile.current_plan",
+                                "value": "verify scheduled memory cleanup",
+                                "timestamp": "2026-04-27T13:02:08Z",
+                            },
+                        ]
+                    )
+                ),
+            ):
+                rendered = build_spark_context_capsule(
+                    config_manager=self.config_manager,
+                    state_db=self.state_db,
+                    human_id="human:telegram:8319079055",
+                    session_id="session:telegram:dm:8319079055",
+                    channel_kind="telegram",
+                    request_id="telegram-regression",
+                    user_message=prompt,
+                ).render()
+
+            self.assertIn("current_focus: context capsule verification", rendered)
+            self.assertIn("current_plan: verify scheduled memory cleanup", rendered)
+            self.assertIn("status: clean_latest_scan_no_failures_or_findings", rendered)
+            self.assertIn("memory:sdk-maintenance", rendered)
+            self.assertIn("do not replace that with an older handoff checklist", rendered)
+            self.assertIn("older missions, apps, and workflow residue are out of scope", rendered)
+
     def test_researcher_reply_injects_context_capsule_into_provider_prompt(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)
