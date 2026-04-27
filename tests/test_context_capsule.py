@@ -371,6 +371,55 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertNotIn("Closure rule", result.reply_text)
         self.assertNotIn("everything is done", result.reply_text.lower())
 
+    def test_context_status_recent_closure_matches_canonical_human_id(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge closed an old focus label and set a new current focus.",
+            human_id="telegram:8319079055",
+            agent_id="agent:human:telegram:8319079055",
+            request_id="req-transition-raw-human-id",
+            actor_id="researcher_bridge",
+            reason_code="current_focus_transition",
+            facts={
+                "routing_decision": "current_focus_transition",
+                "closed_focus": "context capsule verification",
+                "new_focus": "persistent memory quality evaluation",
+            },
+        )
+
+        with patch(
+            "spark_intelligence.context.capsule.inspect_human_memory_in_memory",
+            return_value=SimpleNamespace(
+                read_result=SimpleNamespace(
+                    records=[
+                        {
+                            "predicate": "profile.current_focus",
+                            "value": "persistent memory quality evaluation",
+                            "timestamp": "2026-04-27T16:56:22Z",
+                        },
+                    ]
+                )
+            ),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-transition-canonical-human-query",
+                agent_id="agent:human:telegram:8319079055",
+                human_id="human:telegram:8319079055",
+                session_id="session:telegram:dm:8319079055",
+                channel_kind="telegram",
+                user_message="What is my current focus, what did we just close, and what should we evaluate next?",
+            )
+
+        self.assertEqual(result.routing_decision, "active_context_status")
+        self.assertIn("Focus: persistent memory quality evaluation", result.reply_text)
+        self.assertIn("Recently closed", result.reply_text)
+        self.assertIn("- context capsule verification", result.reply_text)
+
     def test_cleanup_sample_query_reports_counts_only_when_audit_samples_missing(self) -> None:
         record_event(
             self.state_db,

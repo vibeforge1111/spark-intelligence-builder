@@ -4764,14 +4764,22 @@ def _active_context_status_query_wants_recent_closure(user_message: str) -> bool
     )
 
 
+def _canonical_event_human_id(value: str | None) -> str:
+    raw = str(value or "").strip()
+    if raw.startswith("human:"):
+        raw = raw[len("human:") :]
+    return raw
+
+
 def _latest_current_focus_transition_event(*, state_db: StateDB, human_id: str) -> dict[str, Any] | None:
+    target_human = _canonical_event_human_id(human_id)
     for event in latest_events_by_type(state_db, event_type="tool_result_received", limit=50):
         facts = event.get("facts_json") or {}
         if not isinstance(facts, dict):
             continue
         if facts.get("routing_decision") != "current_focus_transition":
             continue
-        if str(event.get("human_id") or "") != str(human_id or ""):
+        if _canonical_event_human_id(event.get("human_id")) != target_human:
             continue
         return event
     return None
