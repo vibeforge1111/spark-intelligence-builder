@@ -125,6 +125,12 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertIn("finding_signatures: 0", rendered)
         self.assertIn("status: clean_latest_scan_no_failures_or_findings", rendered)
         self.assertIn("connector_health: ok: 2", rendered)
+        ledger = capsule.source_ledger()
+        self.assertEqual([item["source"] for item in ledger], ["current_state", "diagnostics", "recent_conversation", "workflow_state"])
+        self.assertEqual(ledger[0]["role"], "authority")
+        self.assertEqual(ledger[1]["role"], "authority")
+        self.assertEqual(ledger[3]["role"], "advisory")
+        self.assertIn("does not close user goals", ledger[1]["note"])
 
     def test_context_capsule_contract_covers_telegram_arbitration_regressions(self) -> None:
         prompts = [
@@ -295,3 +301,9 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertTrue(
             any(((facts.get("source_counts") or {}).get("current_state", 0) > 0) for facts in event_facts)
         )
+        self.assertTrue(any(facts.get("source_ledger") for facts in event_facts))
+        provider_ledger = next(facts["source_ledger"] for facts in event_facts if facts.get("source_ledger"))
+        self.assertEqual(provider_ledger[0]["source"], "current_state")
+        self.assertEqual(provider_ledger[0]["role"], "authority")
+        self.assertEqual(provider_ledger[-1]["source"], "workflow_state")
+        self.assertEqual(provider_ledger[-1]["role"], "advisory")

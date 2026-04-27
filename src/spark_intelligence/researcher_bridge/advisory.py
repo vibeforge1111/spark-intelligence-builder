@@ -1974,6 +1974,7 @@ def _render_direct_provider_chat_fallback(
                 "keepability": "ephemeral_context",
                 "capsule_chars": len(context_capsule),
                 "source_counts": context_capsule_obj.source_counts,
+                "source_ledger": context_capsule_obj.source_ledger(),
                 "context_route": "direct_provider_fallback",
             },
             provenance={
@@ -7562,6 +7563,7 @@ def build_researcher_reply(
                 "keepability": "ephemeral_context",
                 "capsule_chars": len(context_capsule),
                 "source_counts": context_capsule_obj.source_counts,
+                "source_ledger": context_capsule_obj.source_ledger(),
                 "context_route": "researcher_bridge_provider",
             },
             provenance={

@@ -44,6 +44,34 @@ class ContextCapsule:
     def is_empty(self) -> bool:
         return not any(lines for lines in self.sections.values())
 
+    def source_ledger(self) -> list[dict[str, Any]]:
+        priorities = {
+            "current_state": (1, "authority"),
+            "diagnostics": (2, "authority"),
+            "recent_conversation": (3, "supporting"),
+            "workflow_state": (4, "advisory"),
+        }
+        notes = {
+            "current_state": "Saved focus, plan, blocker, status, and preferences. Use first when active current facts exist.",
+            "diagnostics": "Latest scan counts and clean/failure status. Health evidence only; does not close user goals.",
+            "recent_conversation": "Recent same-session turns. Useful for continuity, but lower priority than current-state facts.",
+            "workflow_state": "Jobs, routes, and operational residue. Advisory unless the user asks about those systems.",
+        }
+        ledger: list[dict[str, Any]] = []
+        for source, lines in self.sections.items():
+            priority, role = priorities.get(source, (99, "advisory"))
+            ledger.append(
+                {
+                    "source": source,
+                    "count": len(lines),
+                    "priority": priority,
+                    "role": role,
+                    "present": bool(lines),
+                    "note": notes.get(source, "Additional context source."),
+                }
+            )
+        return sorted(ledger, key=lambda item: int(item["priority"]))
+
     def render(self, *, max_chars: int = 5000) -> str:
         if self.is_empty():
             return ""
