@@ -324,6 +324,63 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(plan_event["facts_json"]["predicate"], "profile.current_plan")
         self.assertEqual(plan_event["facts_json"]["new_plan"], "evaluate open-ended persistent memory recall")
 
+    def test_build_researcher_reply_answers_combined_current_focus_and_plan_query(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for current focus and plan query"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for current focus and plan query"),
+        ):
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-set-current-focus-for-combined-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-current-focus-plan",
+                channel_kind="telegram",
+                user_message="Set my current focus to persistent memory quality evaluation.",
+            )
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-set-current-plan-for-combined-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-current-focus-plan",
+                channel_kind="telegram",
+                user_message="Set my current plan to evaluate open-ended persistent memory recall.",
+            )
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-current-focus-plan-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-current-focus-plan",
+                channel_kind="telegram",
+                user_message="What is my current focus and plan?",
+            )
+
+        self.assertEqual(result.mode, "memory_current_focus_plan")
+        self.assertEqual(result.routing_decision, "memory_current_focus_plan_query")
+        self.assertEqual(
+            result.reply_text,
+            "Your current focus is persistent memory quality evaluation.\n"
+            "Your current plan is to evaluate open-ended persistent memory recall.",
+        )
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=5)
+        combined_event = next(event for event in tool_events if event["reason_code"] == "memory_current_focus_plan_query")
+        self.assertEqual(combined_event["facts_json"]["current_focus"], "persistent memory quality evaluation")
+        self.assertEqual(combined_event["facts_json"]["current_plan"], "evaluate open-ended persistent memory recall")
+        self.assertEqual(combined_event["facts_json"]["focus_source_class"], "current_state")
+        self.assertEqual(combined_event["facts_json"]["plan_source_class"], "current_state")
+
     def test_build_researcher_reply_handles_plan_correction_history_and_deletion(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

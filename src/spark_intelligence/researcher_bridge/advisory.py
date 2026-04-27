@@ -4858,6 +4858,25 @@ def _detect_open_ended_memory_next_step_query(user_message: str) -> bool:
     return any(marker in text for marker in next_step_markers)
 
 
+def _detect_current_focus_plan_query(user_message: str) -> bool:
+    text = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
+    if not text:
+        return False
+    asks_current_state = any(
+        marker in text
+        for marker in (
+            "what is",
+            "what's",
+            "what are",
+            "show me",
+            "tell me",
+        )
+    )
+    has_focus = "current focus" in text
+    has_plan = "current plan" in text or "focus and plan" in text or "plan and focus" in text
+    return asks_current_state and has_focus and has_plan
+
+
 def _detect_memory_cleanup_sample_query(user_message: str) -> bool:
     text = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
     if not text:
@@ -5406,6 +5425,68 @@ def _build_open_ended_memory_next_step_reply(
         "focus_trace": (focus_lookup.read_result.retrieval_trace or {}).get("memory_kernel"),
         "plan_trace": (plan_lookup.read_result.retrieval_trace or {}).get("memory_kernel"),
         "evidence_trace": (evidence_lookup.read_result.retrieval_trace or {}).get("memory_kernel"),
+    }
+    return "\n".join(lines), facts
+
+
+def _build_current_focus_plan_reply(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str,
+    session_id: str,
+    request_id: str,
+    user_message: str,
+) -> tuple[str, dict[str, Any]]:
+    memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
+    focus_lookup = read_memory_kernel(
+        config_manager=config_manager,
+        state_db=state_db,
+        method="get_current_state",
+        subject=memory_subject,
+        predicate="profile.current_focus",
+        query=user_message,
+        actor_id="researcher_bridge",
+        session_id=session_id,
+        turn_id=f"{request_id}:focus",
+        source_surface="telegram_current_focus_plan_query",
+    )
+    plan_lookup = read_memory_kernel(
+        config_manager=config_manager,
+        state_db=state_db,
+        method="get_current_state",
+        subject=memory_subject,
+        predicate="profile.current_plan",
+        query=user_message,
+        actor_id="researcher_bridge",
+        session_id=session_id,
+        turn_id=f"{request_id}:plan",
+        source_surface="telegram_current_focus_plan_query",
+    )
+    focus = focus_lookup.answer if not focus_lookup.abstained else None
+    plan = plan_lookup.answer if not plan_lookup.abstained else None
+    focus_query = detect_profile_fact_query("What is my current focus?")
+    plan_query = detect_profile_fact_query("What is my current plan?")
+    lines = [
+        build_profile_fact_query_answer(query=focus_query, value=focus, stale=False)
+        if focus_query is not None
+        else f"Your current focus is {focus}." if focus else "I don't currently have your current focus saved.",
+        build_profile_fact_query_answer(query=plan_query, value=plan, stale=False)
+        if plan_query is not None
+        else f"Your current plan is {plan}." if plan else "I don't currently have your current plan saved.",
+    ]
+    facts = {
+        "memory_kernel_used": True,
+        "current_focus": focus,
+        "current_plan": plan,
+        "focus_found": bool(focus),
+        "plan_found": bool(plan),
+        "focus_read_method": focus_lookup.read_method,
+        "focus_source_class": focus_lookup.source_class,
+        "plan_read_method": plan_lookup.read_method,
+        "plan_source_class": plan_lookup.source_class,
+        "focus_trace": (focus_lookup.read_result.retrieval_trace or {}).get("memory_kernel"),
+        "plan_trace": (plan_lookup.read_result.retrieval_trace or {}).get("memory_kernel"),
     }
     return "\n".join(lines), facts
 
@@ -7723,6 +7804,77 @@ def build_researcher_reply(
             config_path=None,
             attachment_context=attachment_context,
             routing_decision="memory_profile_fact_explanation",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+
+    if (
+        config_manager.get_path("spark.memory.enabled", default=False)
+        and _detect_current_focus_plan_query(user_message)
+    ):
+        reply_text, focus_plan_facts = _build_current_focus_plan_reply(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            session_id=session_id,
+            request_id=request_id,
+            user_message=user_message,
+        )
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_current_focus_plan",
+            routing_decision="memory_current_focus_plan_query",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        evidence_summary = (
+            "status=memory_current_focus_plan "
+            f"focus_found={'yes' if focus_plan_facts.get('current_focus') else 'no'} "
+            f"plan_found={'yes' if focus_plan_facts.get('current_plan') else 'no'} "
+            f"focus_source_class={focus_plan_facts.get('focus_source_class') or 'unknown'} "
+            f"plan_source_class={focus_plan_facts.get('plan_source_class') or 'unknown'}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered a combined current focus and plan query from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_current_focus_plan_query",
+            facts=_bridge_event_facts(
+                routing_decision="memory_current_focus_plan_query",
+                bridge_mode="memory_current_focus_plan",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "query_text": str(user_message or "").strip(),
+                    **focus_plan_facts,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_current_focus_plan",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_current_focus_plan_query",
             active_chip_key=None,
             active_chip_task_type=None,
             active_chip_evaluate_used=False,
