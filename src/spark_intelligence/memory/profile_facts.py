@@ -42,6 +42,14 @@ _SPARK_ROLE_PATTERNS = [
         re.I,
     ),
 ]
+
+
+@dataclass(frozen=True)
+class NamedObjectFact:
+    entity_label: str
+    attribute: str
+    value: str
+    entity_key: str
 _OCCUPATION_PATTERNS = [
     re.compile(r"\bi(?:'m| am)\s+an\s+(entrepreneur)(?:\s+(?:now|today|currently))?(?:[.!?,]|$)", re.I),
 ]
@@ -2011,6 +2019,26 @@ def _parse_named_object_fact(value: str) -> tuple[str, str]:
     object_label = str(match.group("object") or "").strip()
     name = str(match.group("name") or "").strip()
     return object_label, name
+
+
+def named_object_entity_key(entity_label: str) -> str:
+    normalized = " ".join(str(entity_label or "").strip().lower().split())
+    slug = re.sub(r"[^a-z0-9]+", "-", normalized).strip("-")
+    if not slug:
+        slug = "unknown"
+    return f"named-object:{slug}"
+
+
+def parse_named_object_fact(value: str) -> NamedObjectFact | None:
+    entity_label, name = _parse_named_object_fact(value)
+    if not entity_label or not name:
+        return None
+    return NamedObjectFact(
+        entity_label=entity_label,
+        attribute="name",
+        value=name,
+        entity_key=named_object_entity_key(entity_label),
+    )
 
 
 _CURRENT_PLAN_VERB_STARTERS = {

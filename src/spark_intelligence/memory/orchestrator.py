@@ -18,6 +18,7 @@ from spark_intelligence.memory.generic_observations import detect_telegram_gener
 from spark_intelligence.memory.profile_facts import (
     active_state_revalidate_at,
     active_state_revalidation_days,
+    parse_named_object_fact,
 )
 from spark_intelligence.memory_contracts import (
     annotate_contract_trace,
@@ -1526,6 +1527,7 @@ def lookup_current_state_in_memory(
     ).read_current_state(
         subject=subject,
         predicate=predicate,
+        entity_key=_default_current_state_entity_key(predicate),
         session_id=f"memory-lookup:{actor_id}",
         turn_id=f"{actor_id}:lookup",
         source_surface="memory_cli_lookup",
@@ -1558,6 +1560,7 @@ def lookup_historical_state_in_memory(
         subject=subject,
         predicate=predicate,
         as_of=as_of,
+        entity_key=_default_current_state_entity_key(predicate),
         session_id=f"memory-history:{actor_id}",
         turn_id=f"{actor_id}:lookup-history",
         source_surface="memory_cli_lookup_historical",
@@ -3085,11 +3088,26 @@ def _write_profile_fact_memory_operation(
         "deleted_at": timestamp if operation == "delete" else None,
         "metadata": metadata,
     }
+    projected_observation = _named_object_profile_fact_projection(
+        subject=subject,
+        predicate=predicate,
+        value=value,
+        source_text=evidence_text,
+        fact_name=fact_name,
+        timestamp=timestamp,
+        session_id=session_id,
+        turn_id=turn_id,
+        channel_kind=channel_kind,
+        operation=operation,
+    )
+    observations = [observation]
+    if projected_observation is not None:
+        observations.append(projected_observation)
     _record_memory_write_requested_observations(
         state_db=state_db,
         operation=operation,
         human_id=human_id,
-        observations=[observation],
+        observations=observations,
         session_id=session_id,
         turn_id=turn_id,
         actor_id=actor_id,
@@ -3116,6 +3134,29 @@ def _write_profile_fact_memory_operation(
         },
     )
     result = _normalize_write_result(raw=raw, operation=operation)
+    if result.accepted_count > 0 and projected_observation is not None:
+        projection_turn_id = f"{turn_id}:entity-projection" if turn_id else None
+        _call_sdk_method(
+            client,
+            "write_observation",
+            {
+                "operation": projected_observation["operation"],
+                "subject": projected_observation["subject"],
+                "predicate": projected_observation["predicate"],
+                "value": projected_observation["value"],
+                "text": projected_observation["text"],
+                "memory_role": projected_observation["memory_role"],
+                "session_id": session_id,
+                "turn_id": projection_turn_id,
+                "timestamp": timestamp,
+                "retention_class": projected_observation["retention_class"],
+                "document_time": projected_observation["document_time"],
+                "valid_from": projected_observation["valid_from"],
+                "valid_to": projected_observation["valid_to"],
+                "deleted_at": projected_observation["deleted_at"],
+                "metadata": projected_observation["metadata"],
+            },
+        )
     if result.accepted_count > 0 and operation == "update":
         _write_profile_fact_history_event(
             client=client,
@@ -3137,6 +3178,57 @@ def _write_profile_fact_memory_operation(
         actor_id=actor_id,
     )
     return result
+
+
+def _named_object_profile_fact_projection(
+    *,
+    subject: str,
+    predicate: str,
+    value: str | None,
+    source_text: str,
+    fact_name: str,
+    timestamp: str,
+    session_id: str | None,
+    turn_id: str | None,
+    channel_kind: str | None,
+    operation: str,
+) -> dict[str, Any] | None:
+    if operation == "delete" or predicate != "profile.current_low_stakes_test_fact":
+        return None
+    named_fact = parse_named_object_fact(str(value or ""))
+    if named_fact is None:
+        return None
+    text = f"{named_fact.entity_label} is named {named_fact.value}."
+    metadata = {
+        "entity_type": "named_object",
+        "entity_key": named_fact.entity_key,
+        "entity_label": named_fact.entity_label,
+        "entity_attribute": named_fact.attribute,
+        "field_name": named_fact.attribute,
+        "channel_kind": channel_kind,
+        "memory_role": "current_state",
+        "source_surface": "researcher_bridge",
+        "source_predicate": predicate,
+        "source_fact_name": fact_name,
+        "source_value": value,
+        "source_text": source_text,
+        "session_id": session_id,
+        "source_turn_id": turn_id,
+    }
+    return {
+        "subject": subject,
+        "predicate": f"entity.{named_fact.attribute}",
+        "value": named_fact.value,
+        "operation": "update",
+        "memory_role": "current_state",
+        "retention_class": "active_state",
+        "text": text,
+        "document_time": timestamp,
+        "valid_from": timestamp,
+        "valid_to": None,
+        "deleted_at": None,
+        "metadata": metadata,
+    }
 
 
 def write_telegram_event_to_memory(
@@ -3757,6 +3849,13 @@ def _subject_fallback_candidates(subject: str) -> tuple[str, ...]:
     if normalized_subject.startswith("human:") and not normalized_subject.startswith("human:human:"):
         candidates.append(f"human:{normalized_subject}")
     return tuple(dict.fromkeys(candidates))
+
+
+def _default_current_state_entity_key(predicate: str | None) -> str | None:
+    normalized = str(predicate or "").strip()
+    if normalized.startswith("profile.current_"):
+        return normalized
+    return None
 
 
 def _get_current_state_with_subject_fallback(

@@ -286,6 +286,20 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(fake_client.current_state_calls[0]["entity_key"], "named-object:tiny-desk-plant")
         self.assertEqual(len(fake_client.current_state_calls), 1)
 
+    def test_lookup_current_state_uses_profile_current_entity_key(self) -> None:
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client):
+            result = lookup_current_state_in_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                subject="human:test",
+                predicate="profile.current_plan",
+                actor_id="test",
+            )
+
+        self.assertFalse(result.read_result.abstained)
+        self.assertEqual(fake_client.current_state_calls[0]["entity_key"], "profile.current_plan")
+
     def test_memory_kernel_evidence_marks_stale_provenance_without_using_it_as_answer(self) -> None:
         fake_client = _StaleEvidenceMemoryClient()
         with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
@@ -373,6 +387,70 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(result.status, "succeeded")
         self.assertEqual(fake_client.observation_calls[0]["retention_class"], "active_state")
         self.assertEqual(fake_client.observation_calls[0]["metadata"]["entity_key"], "profile.current_plan")
+
+    def test_named_object_profile_fact_writes_generic_entity_state_projection(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator._now_iso",
+            return_value="2026-04-28T09:00:00Z",
+        ):
+            result = write_profile_fact_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                predicate="profile.current_low_stakes_test_fact",
+                value="the tiny desk plant is named Mira",
+                evidence_text="For later, the tiny desk plant is named Mira.",
+                fact_name="current_low_stakes_test_fact",
+                session_id="session:plant",
+                turn_id="turn:plant",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        self.assertEqual(len(fake_client.observation_calls), 2)
+        profile_call = fake_client.observation_calls[0]
+        entity_call = fake_client.observation_calls[1]
+        self.assertEqual(profile_call["predicate"], "profile.current_low_stakes_test_fact")
+        self.assertEqual(profile_call["metadata"]["entity_key"], "profile.current_low_stakes_test_fact")
+        self.assertEqual(entity_call["predicate"], "entity.name")
+        self.assertEqual(entity_call["value"], "Mira")
+        self.assertEqual(entity_call["turn_id"], "turn:plant:entity-projection")
+        self.assertEqual(entity_call["retention_class"], "active_state")
+        self.assertEqual(entity_call["metadata"]["entity_type"], "named_object")
+        self.assertEqual(entity_call["metadata"]["entity_key"], "named-object:tiny-desk-plant")
+        self.assertEqual(entity_call["metadata"]["entity_label"], "tiny desk plant")
+        self.assertEqual(entity_call["metadata"]["source_turn_id"], "turn:plant")
+        self.assertEqual(entity_call["metadata"]["source_predicate"], "profile.current_low_stakes_test_fact")
+        events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        observations = (events[0]["facts_json"] or {}).get("observations") or []
+        self.assertEqual([item["predicate"] for item in observations], ["profile.current_low_stakes_test_fact", "entity.name"])
+
+    def test_non_named_low_stakes_fact_does_not_write_entity_projection(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            result = write_profile_fact_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                predicate="profile.current_low_stakes_test_fact",
+                value="the tester code is seven blue chairs",
+                evidence_text="For later, the tester code is seven blue chairs.",
+                fact_name="current_low_stakes_test_fact",
+                session_id="session:test-fact",
+                turn_id="turn:test-fact",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        self.assertEqual(len(fake_client.observation_calls), 1)
+        self.assertEqual(fake_client.observation_calls[0]["predicate"], "profile.current_low_stakes_test_fact")
 
     def test_profile_current_state_predicates_store_revalidation_metadata(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
