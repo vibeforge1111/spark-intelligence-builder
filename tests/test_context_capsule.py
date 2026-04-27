@@ -500,6 +500,165 @@ class ContextCapsuleTests(SparkTestCase):
             result.reply_text.index("telegram.summary.latest_flight: flight to Paris on May 9"),
         )
 
+    def test_cleanup_closure_evidence_does_not_overclaim_sample_review(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        diagnostics_dir = self.home / "diagnostics"
+        diagnostics_dir.mkdir(parents=True, exist_ok=True)
+        (diagnostics_dir / "spark-diagnostic-2026-04-27T13-38-48+00-00.md").write_text(
+            "\n".join(
+                [
+                    "---",
+                    "generated_at: 2026-04-27T13:38:48+00:00",
+                    "---",
+                    "",
+                    "- scanned lines: `1074`",
+                    "- failure lines: `0`",
+                    "- finding signatures: `0`",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        record_event(
+            self.state_db,
+            event_type="memory_maintenance_run",
+            component="memory_orchestrator",
+            summary="Spark memory SDK maintenance run.",
+            actor_id="memory_cli",
+            facts={
+                "status": "succeeded",
+                "maintenance": {
+                    "manual_observations_before": 305,
+                    "manual_observations_after": 150,
+                    "active_state_archived_count": 75,
+                    "active_deletion_count": 30,
+                    "active_state_superseded_count": 21,
+                    "active_state_still_current_count": 135,
+                    "active_state_stale_preserved_count": 0,
+                    "audit_samples": {
+                        "archived": [
+                            {
+                                "subject": "human:telegram:8319079055",
+                                "predicate": "profile.current_focus",
+                                "value": "diagnostics scan verification",
+                                "reason": "deleted_by_later_state_deletion",
+                            }
+                        ],
+                        "deleted": [
+                            {
+                                "subject": "human:telegram:8319079055",
+                                "predicate": "profile.current_owner",
+                                "value": "delete profile.current_owner",
+                                "reason": "current_snapshot",
+                            }
+                        ],
+                        "still_current": [
+                            {
+                                "subject": "human:telegram:8319079055",
+                                "predicate": "profile.current_focus",
+                                "value": "context capsule verification",
+                                "reason": "current_snapshot",
+                            },
+                            {
+                                "subject": "human:telegram:8319079055",
+                                "predicate": "profile.current_plan",
+                                "value": "verify scheduled memory cleanup",
+                                "reason": "current_snapshot",
+                            },
+                        ],
+                    },
+                },
+            },
+        )
+
+        with patch(
+            "spark_intelligence.context.capsule.inspect_human_memory_in_memory",
+            return_value=SimpleNamespace(
+                read_result=SimpleNamespace(
+                    records=[
+                        {
+                            "predicate": "profile.current_focus",
+                            "value": "context capsule verification",
+                            "timestamp": "2026-04-27T13:38:35Z",
+                        },
+                        {
+                            "predicate": "profile.current_plan",
+                            "value": "verify scheduled memory cleanup",
+                            "timestamp": "2026-04-27T13:02:08Z",
+                        },
+                    ]
+                )
+            ),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider should not run for cleanup closure evidence"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-cleanup-closure-evidence",
+                agent_id="agent:human:telegram:8319079055",
+                human_id="human:telegram:8319079055",
+                session_id="session:telegram:dm:8319079055",
+                channel_kind="telegram",
+                user_message="What exact evidence are you using to say it is ready to close?",
+            )
+
+        self.assertEqual(result.routing_decision, "memory_cleanup_closure_evidence")
+        self.assertIn("not enough to prove every memory was reviewed", result.reply_text)
+        self.assertIn("Memory maintenance succeeded: 305 -> 150", result.reply_text)
+        self.assertIn("Audit sample reviewed", result.reply_text)
+        self.assertIn("I reviewed a small audit sample", result.reply_text)
+        self.assertIn("not every archived or deleted memory", result.reply_text)
+        self.assertIn('Focus "context capsule verification"', result.reply_text)
+        self.assertIn('Plan "verify scheduled memory cleanup"', result.reply_text)
+        self.assertNotIn("Every archived", result.reply_text)
+        self.assertNotIn("every archived entry", result.reply_text)
+        self.assertNotIn("Every deleted", result.reply_text)
+        self.assertNotIn("every deleted entry", result.reply_text)
+
+    def test_cleanup_samples_ready_to_close_uses_closure_evidence_route(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="memory_maintenance_run",
+            component="memory_orchestrator",
+            summary="Spark memory SDK maintenance run.",
+            actor_id="memory_cli",
+            facts={
+                "status": "succeeded",
+                "maintenance": {
+                    "active_state_archived_count": 75,
+                    "active_deletion_count": 30,
+                    "active_state_still_current_count": 135,
+                    "audit_samples": {
+                        "still_current": [
+                            {
+                                "subject": "human:telegram:8319079055",
+                                "predicate": "profile.current_focus",
+                                "value": "context capsule verification",
+                            }
+                        ]
+                    },
+                },
+            },
+        )
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-cleanup-ready-close",
+            agent_id="agent:human:telegram:8319079055",
+            human_id="human:telegram:8319079055",
+            session_id="session:telegram:dm:8319079055",
+            channel_kind="telegram",
+            user_message="Based on the cleanup samples, is my current focus ready to close? What should only I decide?",
+        )
+
+        self.assertEqual(result.routing_decision, "memory_cleanup_closure_evidence")
+        self.assertIn("Only you should close", result.reply_text)
+        self.assertIn("not every archived or deleted memory", result.reply_text)
+        self.assertNotEqual(result.routing_decision, "active_context_status")
+
     def test_researcher_reply_injects_context_capsule_into_provider_prompt(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)

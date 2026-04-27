@@ -4637,6 +4637,52 @@ def _detect_memory_cleanup_sample_query(user_message: str) -> bool:
     return wants_sample and cleanup_anchor and memory_anchor
 
 
+def _detect_memory_cleanup_closure_query(user_message: str) -> bool:
+    text = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
+    if not text:
+        return False
+    cleanup_anchor = any(
+        marker in text
+        for marker in (
+            "cleanup",
+            "maintenance",
+            "archived",
+            "deleted",
+            "still-current",
+            "still current",
+            "cleanup samples",
+        )
+    )
+    evidence_anchor = any(
+        marker in text
+        for marker in (
+            "what exact evidence",
+            "what evidence are you using",
+            "evidence are you using",
+        )
+    )
+    close_anchor = any(
+        marker in text
+        for marker in (
+            "ready to close",
+            "ready for close",
+            "close this",
+            "close it",
+            "close the focus",
+            "current focus ready",
+        )
+    )
+    closure_anchor = close_anchor or evidence_anchor or any(
+        marker in text
+        for marker in (
+            "what should only i decide",
+            "only i decide",
+        )
+    )
+    focus_anchor = "current focus" in text or "current plan" in text or "focus" in text or "plan" in text
+    return (cleanup_anchor and closure_anchor and focus_anchor) or (evidence_anchor and close_anchor)
+
+
 def _active_context_status_query_wants_next_step(user_message: str) -> bool:
     text = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
     return any(
@@ -4949,6 +4995,160 @@ def _build_memory_cleanup_sample_reply(
             "sample_available": True,
             "maintenance_event_id": event.get("event_id"),
             "audit_samples": samples,
+        },
+    )
+
+
+def _maintenance_count(
+    maintenance: dict[str, Any],
+    *keys: str,
+) -> Any:
+    for key in keys:
+        value = maintenance.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def _memory_cleanup_sample_preview(
+    samples: dict[str, Any],
+    *,
+    human_id: str | None,
+    bucket: str,
+    limit: int = 2,
+) -> list[str]:
+    raw_bucket_samples = samples.get(bucket) if isinstance(samples.get(bucket), list) else []
+    preview: list[str] = []
+    for sample in _rank_memory_cleanup_samples(raw_bucket_samples, human_id=human_id)[:limit]:
+        predicate = str(sample.get("predicate") or "unknown").strip()
+        value = _truncate_browser_evidence_text(
+            str(sample.get("value") or sample.get("text") or "").strip(),
+            max_chars=80,
+        )
+        if value:
+            preview.append(f"{predicate}: {value}")
+        else:
+            preview.append(predicate)
+    return preview
+
+
+def _build_memory_cleanup_closure_reply(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str,
+    session_id: str,
+    channel_kind: str,
+    request_id: str,
+    user_message: str,
+) -> tuple[str, dict[str, Any]]:
+    capsule = build_spark_context_capsule(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=human_id,
+        session_id=session_id,
+        channel_kind=channel_kind,
+        request_id=request_id,
+        user_message=user_message,
+    )
+    current_state = capsule.sections.get("current_state") or []
+    diagnostics = capsule.sections.get("diagnostics") or []
+    current_focus = _capsule_line_value(current_state, "current_focus")
+    current_plan = _capsule_line_value(current_state, "current_plan")
+    diagnostic_status = _capsule_line_value(diagnostics, "status")
+    scanned_lines = _capsule_line_value(diagnostics, "scanned_lines")
+    failure_lines = _capsule_line_value(diagnostics, "failure_lines")
+    finding_signatures = _capsule_line_value(diagnostics, "finding_signatures")
+
+    event = _latest_memory_maintenance_event(state_db=state_db)
+    facts = event.get("facts_json") if event else {}
+    facts = facts if isinstance(facts, dict) else {}
+    maintenance = facts.get("maintenance") if isinstance(facts.get("maintenance"), dict) else {}
+    samples = maintenance.get("audit_samples") if isinstance(maintenance.get("audit_samples"), dict) else {}
+
+    before = _maintenance_count(maintenance, "manual_observations_before", "before")
+    after = _maintenance_count(maintenance, "manual_observations_after", "after")
+    archived = _maintenance_count(maintenance, "active_state_archived_count", "archived")
+    deleted = _maintenance_count(maintenance, "active_deletion_count", "deletions", "deleted")
+    superseded = _maintenance_count(maintenance, "active_state_superseded_count", "superseded")
+    still_current = _maintenance_count(maintenance, "active_state_still_current_count", "still_current")
+    stale_preserved = _maintenance_count(maintenance, "active_state_stale_preserved_count", "stale_preserved")
+
+    lines = [
+        "The evidence is enough to say this is closeable if you are satisfied, not enough to prove every memory was reviewed.",
+        "",
+        "Evidence I have",
+    ]
+    if diagnostic_status == "clean_latest_scan_no_failures_or_findings":
+        details = []
+        if scanned_lines:
+            details.append(f"{scanned_lines} lines")
+        if failure_lines is not None:
+            details.append(f"{failure_lines} failures")
+        if finding_signatures is not None:
+            details.append(f"{finding_signatures} findings")
+        lines.append("- Latest diagnostics are clean" + (f": {', '.join(details)}." if details else "."))
+    elif diagnostic_status:
+        lines.append(f"- Latest diagnostics status: {diagnostic_status}.")
+    else:
+        lines.append("- No latest diagnostic summary is loaded in the capsule.")
+
+    if maintenance:
+        count_parts = []
+        if before is not None and after is not None:
+            count_parts.append(f"{before} -> {after}")
+        if archived is not None:
+            count_parts.append(f"{archived} archived")
+        if deleted is not None:
+            count_parts.append(f"{deleted} deletion markers")
+        if superseded is not None:
+            count_parts.append(f"{superseded} superseded")
+        if still_current is not None:
+            count_parts.append(f"{still_current} still current")
+        if stale_preserved is not None:
+            count_parts.append(f"{stale_preserved} stale preserved")
+        lines.append("- Memory maintenance succeeded" + (f": {', '.join(count_parts)}." if count_parts else "."))
+    else:
+        lines.append("- No memory maintenance artifact is loaded for this question.")
+
+    archived_preview = _memory_cleanup_sample_preview(samples, human_id=human_id, bucket="archived")
+    deleted_preview = _memory_cleanup_sample_preview(samples, human_id=human_id, bucket="deleted")
+    still_preview = _memory_cleanup_sample_preview(samples, human_id=human_id, bucket="still_current")
+    if archived_preview or deleted_preview or still_preview:
+        sample_bits = []
+        if archived_preview:
+            sample_bits.append("archived examples: " + "; ".join(archived_preview))
+        if deleted_preview:
+            sample_bits.append("deleted examples: " + "; ".join(deleted_preview))
+        if still_preview:
+            sample_bits.append("still-current examples: " + "; ".join(still_preview))
+        lines.append("- Audit sample reviewed: " + " | ".join(sample_bits) + ".")
+        lines.append("- The sample did not show obvious damage.")
+    else:
+        lines.append("- No audit sample rows are loaded, so this cannot confirm sample quality.")
+
+    lines.extend(
+        [
+            "",
+            "Limits",
+            "- I reviewed a small audit sample, not every archived or deleted memory.",
+            "- I cannot decide whether a stale or deleted item mattered strategically to you.",
+            "",
+            "Only you should close",
+            f'- Focus "{current_focus}"' if current_focus else "- The current focus, if you still consider it active.",
+            f'- Plan "{current_plan}"' if current_plan else "- The current plan, if you still consider it active.",
+        ]
+    )
+    return (
+        "\n".join(lines),
+        {
+            "source_counts": capsule.source_counts,
+            "source_ledger": capsule.source_ledger(),
+            "current_focus": current_focus,
+            "current_plan": current_plan,
+            "diagnostic_status": diagnostic_status,
+            "maintenance_event_id": event.get("event_id") if event else None,
+            "sample_available": bool(archived_preview or deleted_preview or still_preview),
         },
     )
 
@@ -5329,6 +5529,73 @@ def build_researcher_reply(
                 output_keepability=output_keepability,
                 promotion_disposition=promotion_disposition,
             )
+
+    if not personality_context_extra and _detect_memory_cleanup_closure_query(user_message):
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text, closure_facts = _build_memory_cleanup_closure_reply(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            session_id=session_id,
+            channel_kind=channel_kind,
+            request_id=request_id,
+            user_message=user_message,
+        )
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_cleanup_closure_evidence",
+            routing_decision="memory_cleanup_closure_evidence",
+        )
+        evidence_summary = (
+            "status=memory_cleanup_closure_evidence "
+            f"sample_available={'yes' if closure_facts.get('sample_available') else 'no'} "
+            f"diagnostics={closure_facts.get('diagnostic_status') or 'unknown'}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered cleanup closure evidence without overclaiming full review.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_cleanup_closure_evidence",
+            facts=_bridge_event_facts(
+                routing_decision="memory_cleanup_closure_evidence",
+                bridge_mode="memory_cleanup_closure_evidence",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "query_text": str(user_message or "").strip(),
+                    **closure_facts,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_cleanup_closure_evidence",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_cleanup_closure_evidence",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
 
     if not personality_context_extra and _detect_active_context_status_query(user_message):
         trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
