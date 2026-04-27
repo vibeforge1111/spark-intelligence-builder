@@ -81,6 +81,8 @@ _PLAN_PATTERNS: tuple[re.Pattern[str], ...] = (
 _FOCUS_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^(?:i(?:'m| am)|we(?:'re| are))\s+focusing\s+on\s+(.+?)[.!]?$", re.IGNORECASE),
     re.compile(r"^our\s+priority\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^(?:please\s+)?set\s+(?:my|our|the)\s+current\s+focus\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
+    re.compile(r"^(?:please\s+)?set\s+(?:my|our|the)\s+new\s+focus\s+to\s+(.+?)[.!]?$", re.IGNORECASE),
     re.compile(r"^(?:memory\s+update:\s*)?(?:my|our|the)\s+current\s+focus\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
     re.compile(r"^our\s+current\s+focus\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
     re.compile(r"^the\s+current\s+focus\s+is\s+(.+?)[.!]?$", re.IGNORECASE),
@@ -638,21 +640,23 @@ def classify_telegram_generic_memory_candidate(user_message: str) -> TelegramGen
     if not _is_memoryworthy_text(text):
         return None
     normalized = _strip_correction_prefix(text)
-    lowered = normalized.lower()
+    variants = _candidate_text_variants(normalized)
 
-    for pack in _GENERIC_PACKS:
-        if lowered in pack.delete_phrases:
-            return TelegramGenericCandidate(
-                predicate=pack.predicate,
-                value=None,
-                evidence_text=text,
-                fact_name=pack.fact_name,
-                label=pack.label,
-                operation="delete",
-                memory_role="current_state",
-                retention_class=pack.retention_class,
-                domain_pack=pack.domain_pack,
-            )
+    for variant in variants:
+        lowered = variant.lower()
+        for pack in _GENERIC_PACKS:
+            if lowered in pack.delete_phrases:
+                return TelegramGenericCandidate(
+                    predicate=pack.predicate,
+                    value=None,
+                    evidence_text=text,
+                    fact_name=pack.fact_name,
+                    label=pack.label,
+                    operation="delete",
+                    memory_role="current_state",
+                    retention_class=pack.retention_class,
+                    domain_pack=pack.domain_pack,
+                )
 
     family_shared_time_value = _family_shared_time_members_value(normalized)
     if family_shared_time_value:
@@ -668,26 +672,39 @@ def classify_telegram_generic_memory_candidate(user_message: str) -> TelegramGen
             domain_pack="relationships",
         )
 
-    for pack in _GENERIC_PACKS:
-        for pattern in pack.update_patterns:
-            match = pattern.fullmatch(normalized)
-            if match is None:
-                continue
-            value = _clean_value(match.group(1))
-            if not value:
-                continue
-            return TelegramGenericCandidate(
-                predicate=pack.predicate,
-                value=value,
-                evidence_text=text,
-                fact_name=pack.fact_name,
-                label=pack.label,
-                operation="update",
-                memory_role="current_state",
-                retention_class=pack.retention_class,
-                domain_pack=pack.domain_pack,
-            )
+    for variant in variants:
+        for pack in _GENERIC_PACKS:
+            for pattern in pack.update_patterns:
+                match = pattern.fullmatch(variant)
+                if match is None:
+                    continue
+                value = _clean_value(match.group(1))
+                if not value:
+                    continue
+                return TelegramGenericCandidate(
+                    predicate=pack.predicate,
+                    value=value,
+                    evidence_text=text,
+                    fact_name=pack.fact_name,
+                    label=pack.label,
+                    operation="update",
+                    memory_role="current_state",
+                    retention_class=pack.retention_class,
+                    domain_pack=pack.domain_pack,
+                )
     return None
+
+
+def _candidate_text_variants(text: str) -> list[str]:
+    normalized = _clean_text(text)
+    if not normalized:
+        return []
+    variants = [normalized]
+    for chunk in re.split(r"(?<=[.!?])\s+|\s+(?:and\s+then|then)\s+", normalized, flags=re.IGNORECASE):
+        cleaned = _clean_text(chunk)
+        if cleaned and cleaned not in variants:
+            variants.append(cleaned)
+    return variants
 
 
 def _family_shared_time_members_value(text: str) -> str | None:

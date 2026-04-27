@@ -4600,6 +4600,18 @@ def _detect_active_context_status_query(user_message: str) -> bool:
             "next move",
             "next step",
             "what should we verify next",
+            "what should we evaluate next",
+            "what should i evaluate next",
+            "evaluate next",
+        )
+    )
+    asks_recent_closure = any(
+        marker in text
+        for marker in (
+            "what did we just close",
+            "what did i just close",
+            "what was just closed",
+            "what we just closed",
         )
     )
     context_anchor = any(
@@ -4614,7 +4626,7 @@ def _detect_active_context_status_query(user_message: str) -> bool:
             "based on the capsule",
         )
     )
-    return (asks_open_status or asks_next_step) and context_anchor
+    return (asks_open_status or asks_next_step or asks_recent_closure) and context_anchor
 
 
 def _detect_memory_cleanup_sample_query(user_message: str) -> bool:
@@ -4683,6 +4695,29 @@ def _detect_memory_cleanup_closure_query(user_message: str) -> bool:
     return (cleanup_anchor and closure_anchor and focus_anchor) or (evidence_anchor and close_anchor)
 
 
+def _detect_current_focus_transition_command(user_message: str) -> tuple[str | None, str] | None:
+    text = re.sub(r"\s+", " ", str(user_message or "").strip())
+    if not text or "?" in text:
+        return None
+    set_match = re.search(
+        r"\bset\s+(?:my|our|the)\s+(?:current\s+)?focus\s+to\s+(.+?)(?:[.!]|$)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if set_match is None:
+        return None
+    new_focus = _truncate_browser_evidence_text(set_match.group(1).strip(), max_chars=180)
+    if not new_focus:
+        return None
+    close_match = re.search(
+        r"\bmark\s+(.+?)\s+(?:as\s+)?closed\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    closed_focus = _truncate_browser_evidence_text(close_match.group(1).strip(), max_chars=180) if close_match else None
+    return closed_focus, new_focus
+
+
 def _active_context_status_query_wants_next_step(user_message: str) -> bool:
     text = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
     return any(
@@ -4695,6 +4730,9 @@ def _active_context_status_query_wants_next_step(user_message: str) -> bool:
             "next move",
             "next step",
             "what should we verify next",
+            "what should we evaluate next",
+            "what should i evaluate next",
+            "evaluate next",
         )
     )
 
@@ -4711,6 +4749,32 @@ def _active_context_status_query_wants_full_status(user_message: str) -> bool:
             "should only be closed",
         )
     )
+
+
+def _active_context_status_query_wants_recent_closure(user_message: str) -> bool:
+    text = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
+    return any(
+        marker in text
+        for marker in (
+            "what did we just close",
+            "what did i just close",
+            "what was just closed",
+            "what we just closed",
+        )
+    )
+
+
+def _latest_current_focus_transition_event(*, state_db: StateDB, human_id: str) -> dict[str, Any] | None:
+    for event in latest_events_by_type(state_db, event_type="tool_result_received", limit=50):
+        facts = event.get("facts_json") or {}
+        if not isinstance(facts, dict):
+            continue
+        if facts.get("routing_decision") != "current_focus_transition":
+            continue
+        if str(event.get("human_id") or "") != str(human_id or ""):
+            continue
+        return event
+    return None
 
 
 def _capsule_line_value(lines: list[str], label: str) -> str | None:
@@ -4828,11 +4892,25 @@ def _build_active_context_status_reply(
     ]
     wants_next_step = _active_context_status_query_wants_next_step(user_message)
     wants_full_status = _active_context_status_query_wants_full_status(user_message)
+    wants_recent_closure = _active_context_status_query_wants_recent_closure(user_message)
+    focus_transition_event = _latest_current_focus_transition_event(state_db=state_db, human_id=human_id)
+    focus_transition_facts = (
+        focus_transition_event.get("facts_json") if focus_transition_event is not None else {}
+    )
+    focus_transition_facts = focus_transition_facts if isinstance(focus_transition_facts, dict) else {}
+    recently_closed_focus = str(focus_transition_facts.get("closed_focus") or "").strip() or None
+    transition_new_focus = str(focus_transition_facts.get("new_focus") or "").strip() or None
 
     lines = ["Based on the current Spark context capsule:"]
     lines.extend(["", "Current state"])
     lines.append(f"- Focus: {current_focus or 'not saved'}")
     lines.append(f"- Plan: {current_plan or 'not saved'}")
+    if wants_recent_closure:
+        lines.extend(["", "Recently closed"])
+        if recently_closed_focus:
+            lines.append(f"- {recently_closed_focus}")
+        else:
+            lines.append("- No recent focus-closure event is recorded.")
 
     verified: list[str] = []
     if diagnostic_status == "clean_latest_scan_no_failures_or_findings":
@@ -4907,6 +4985,12 @@ def _build_active_context_status_reply(
             next_steps.append(
                 f'If the sample looks right, mark "{current_focus}" closed and set the next focus.'
             )
+        if (current_focus or transition_new_focus) == "persistent memory quality evaluation":
+            next_steps = [
+                "Evaluate whether current focus updates survive across a new turn.",
+                "Test open-ended recall against the same facts without triggering deterministic helper routes.",
+                "Check whether old workflow_state ever outranks current_state again.",
+            ]
         if not next_steps:
             next_steps.append("Pick a new current focus, because the capsule has no active focus or plan saved.")
         lines.extend(["", "Next"])
@@ -4919,6 +5003,8 @@ def _build_active_context_status_reply(
         "current_plan": current_plan,
         "diagnostic_status": diagnostic_status,
         "maintenance_jobs": memory_jobs,
+        "recently_closed_focus": recently_closed_focus,
+        "transition_new_focus": transition_new_focus,
     }
     return "\n".join(lines), facts
 
@@ -5734,6 +5820,92 @@ def build_researcher_reply(
             output_keepability=output_keepability,
             promotion_disposition=promotion_disposition,
         )
+
+    focus_transition = None if personality_context_extra else _detect_current_focus_transition_command(memory_user_message)
+    if focus_transition is not None and config_manager.get_path("spark.memory.enabled", default=False):
+        closed_focus, new_focus = focus_transition
+        write_result = write_profile_fact_to_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            predicate="profile.current_focus",
+            value=new_focus,
+            evidence_text=str(user_message or "").strip(),
+            fact_name="profile_current_focus",
+            session_id=session_id,
+            turn_id=request_id,
+            channel_kind=channel_kind,
+            actor_id="current_focus_transition_command",
+        )
+        if write_result.accepted_count > 0:
+            output_keepability, promotion_disposition = _bridge_output_classification(
+                mode="current_focus_transition",
+                routing_decision="current_focus_transition",
+            )
+            trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+            lines = []
+            if closed_focus:
+                lines.append(f"Done. {closed_focus} is closed.")
+                lines.append("")
+            lines.append(f"New focus: {new_focus}.")
+            lines.extend(
+                [
+                    "",
+                    "Next",
+                    "- Evaluate whether Spark recalls this new focus across turns.",
+                    "- Test whether it can explain what was closed without confusing old workflow state for current state.",
+                ]
+            )
+            reply_text = "\n".join(lines)
+            evidence_summary = "status=current_focus_transition focus_updated=yes"
+            record_event(
+                state_db,
+                event_type="tool_result_received",
+                component="researcher_bridge",
+                summary="Researcher bridge closed an old focus label and set a new current focus.",
+                run_id=run_id,
+                request_id=request_id,
+                trace_ref=trace_ref,
+                channel_id=channel_kind,
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
+                actor_id="researcher_bridge",
+                reason_code="current_focus_transition",
+                facts=_bridge_event_facts(
+                    routing_decision="current_focus_transition",
+                    bridge_mode="current_focus_transition",
+                    evidence_summary=evidence_summary,
+                    active_chip_key=None,
+                    active_chip_task_type=None,
+                    active_chip_evaluate_used=False,
+                    keepability=output_keepability,
+                    promotion_disposition=promotion_disposition,
+                    extra={
+                        "query_text": str(user_message or "").strip(),
+                        "closed_focus": closed_focus,
+                        "new_focus": new_focus,
+                        "predicate": "profile.current_focus",
+                    },
+                ),
+            )
+            return ResearcherBridgeResult(
+                request_id=request_id,
+                reply_text=reply_text,
+                evidence_summary=evidence_summary,
+                escalation_hint=None,
+                trace_ref=trace_ref,
+                mode="current_focus_transition",
+                runtime_root=None,
+                config_path=None,
+                attachment_context=attachment_context,
+                routing_decision="current_focus_transition",
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                output_keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+            )
 
     if (
         not explicit_memory_message

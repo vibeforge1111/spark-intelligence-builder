@@ -2283,6 +2283,62 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "I'll remember that your current focus is diagnostics scan verification.",
         )
 
+    def test_build_researcher_reply_closes_focus_and_sets_new_focus_durably(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for current focus transition"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for current focus transition"),
+        ):
+            transition = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-focus-transition",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-focus-transition",
+                channel_kind="telegram",
+                user_message=(
+                    "Mark context capsule verification closed. "
+                    "Set my current focus to persistent memory quality evaluation."
+                ),
+            )
+            focus_query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-focus-transition-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-focus-transition",
+                channel_kind="telegram",
+                user_message="What is my current focus?",
+            )
+            compound_query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-focus-transition-compound-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-focus-transition",
+                channel_kind="telegram",
+                user_message="What is my current focus, what did we just close, and what should we evaluate next?",
+            )
+
+        self.assertEqual(transition.routing_decision, "current_focus_transition")
+        self.assertIn("context capsule verification is closed", transition.reply_text)
+        self.assertIn("New focus: persistent memory quality evaluation.", transition.reply_text)
+        self.assertEqual(focus_query.reply_text, "Your current focus is persistent memory quality evaluation.")
+        self.assertEqual(compound_query.routing_decision, "active_context_status")
+        self.assertIn("Focus: persistent memory quality evaluation", compound_query.reply_text)
+        self.assertIn("Recently closed", compound_query.reply_text)
+        self.assertIn("context capsule verification", compound_query.reply_text)
+        self.assertIn("Evaluate whether current focus updates survive across a new turn", compound_query.reply_text)
+
     def test_build_researcher_reply_persists_generic_decision_memory(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
