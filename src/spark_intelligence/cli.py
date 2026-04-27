@@ -52,6 +52,7 @@ from spark_intelligence.channel.service import (
     test_configured_telegram_channel,
 )
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.diagnostics import build_diagnostic_report
 from spark_intelligence.doctor.checks import run_doctor
 from spark_intelligence.gateway.runtime import (
     gateway_ask_telegram,
@@ -1204,6 +1205,20 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser = subparsers.add_parser("doctor", help="Run environment and state checks")
     doctor_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     doctor_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+
+    diagnostics_parser = subparsers.add_parser("diagnostics", help="Passively scan logs and write Obsidian diagnostics")
+    diagnostics_subparsers = diagnostics_parser.add_subparsers(dest="diagnostics_command", required=True)
+    diagnostics_scan_parser = diagnostics_subparsers.add_parser(
+        "scan",
+        help="Parse Builder, memory, Researcher, and adjacent subsystem logs",
+    )
+    diagnostics_scan_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    diagnostics_scan_parser.add_argument("--logs-root", help="Override or add an explicit logs root/file to scan")
+    diagnostics_scan_parser.add_argument("--output-dir", help="Directory for Obsidian-flavored markdown output")
+    diagnostics_scan_parser.add_argument("--max-lines-per-file", type=int, default=2000, help="Tail window per log source")
+    diagnostics_scan_parser.add_argument("--recurring-threshold", type=int, default=2, help="Count needed to mark a signature recurring")
+    diagnostics_scan_parser.add_argument("--no-write", action="store_true", help="Do not write markdown; only print the scan result")
+    diagnostics_scan_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     status_parser = subparsers.add_parser("status", help="Show unified runtime, bridge, and attachment state")
     status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
@@ -2857,6 +2872,26 @@ def handle_doctor(args: argparse.Namespace) -> int:
     else:
         print(report.to_text())
     return 0 if report.ok else 1
+
+
+def handle_diagnostics_scan(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    state_db = StateDB(config_manager.paths.state_db)
+    state_db.initialize()
+    report = build_diagnostic_report(
+        config_manager,
+        logs_root=Path(args.logs_root).expanduser() if args.logs_root else None,
+        max_lines_per_file=max(1, int(args.max_lines_per_file)),
+        recurring_threshold=max(1, int(args.recurring_threshold)),
+        write_markdown=not bool(args.no_write),
+        output_dir=Path(args.output_dir).expanduser() if args.output_dir else None,
+    )
+    if args.json:
+        print(report.to_json())
+    else:
+        print(report.to_text())
+    return 0
 
 
 def handle_operator_set_bridge(args: argparse.Namespace) -> int:
@@ -7115,6 +7150,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_uninstall_autostart(args)
     if args.command == "doctor":
         return handle_doctor(args)
+    if args.command == "diagnostics" and args.diagnostics_command == "scan":
+        return handle_diagnostics_scan(args)
     if args.command == "status":
         return handle_status(args)
     if args.command == "mission" and args.mission_command == "status":
