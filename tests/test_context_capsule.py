@@ -158,6 +158,10 @@ class ContextCapsuleTests(SparkTestCase):
                 "Do not infer that an active focus, plan, or blocker is resolved",
                 user_prompt,
             )
+            self.assertIn(
+                "the system evidence is green but the focus/plan remains open until the user closes it",
+                user_prompt,
+            )
             return {"raw_response": "Your active focus is automatic memory maintenance verification."}
 
         with patch(
