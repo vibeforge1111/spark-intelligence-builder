@@ -4527,6 +4527,7 @@ def _format_context_source_ledger_reply(
     ledger: list[dict[str, Any]],
     source_counts: dict[str, Any] | None,
     explained_request_id: str | None,
+    route_facts: dict[str, Any] | None = None,
 ) -> str:
     normalized: list[dict[str, Any]] = []
     counts = source_counts or {}
@@ -4566,6 +4567,59 @@ def _format_context_source_ledger_reply(
             for item in items
         ] or ["- none"]
 
+    route_facts = route_facts or {}
+    routing_decision = str(route_facts.get("routing_decision") or "").strip()
+    if routing_decision == "memory_kernel_next_step":
+        lines = ["I answered from the memory kernel next-step route for the previous Telegram turn."]
+        route_lines = [
+            "",
+            "Route:",
+            "- routing_decision: memory_kernel_next_step",
+        ]
+        current_focus = str(route_facts.get("current_focus") or "").strip()
+        current_plan = str(route_facts.get("current_plan") or "").strip()
+        if current_focus:
+            route_lines.append(f"- current_focus: {current_focus}")
+        if current_plan:
+            route_lines.append(f"- current_plan: {current_plan}")
+        focus_source = str(route_facts.get("focus_source_class") or "").strip()
+        focus_method = str(route_facts.get("focus_read_method") or "").strip()
+        if focus_source or focus_method:
+            route_lines.append(
+                f"- focus source: {focus_source or 'unknown'}"
+                + (f" via {focus_method}" if focus_method else "")
+            )
+        plan_source = str(route_facts.get("plan_source_class") or "").strip()
+        plan_method = str(route_facts.get("plan_read_method") or "").strip()
+        if plan_source or plan_method:
+            route_lines.append(
+                f"- plan source: {plan_source or 'unknown'}"
+                + (f" via {plan_method}" if plan_method else "")
+            )
+        evidence_source = str(route_facts.get("evidence_source_class") or "").strip()
+        evidence_method = str(route_facts.get("evidence_read_method") or "").strip()
+        if evidence_source or evidence_method:
+            route_lines.append(
+                f"- supporting evidence: {evidence_source or 'unknown'}"
+                + (f" via {evidence_method}" if evidence_method else "")
+            )
+        try:
+            ignored_count = int(route_facts.get("ignored_stale_record_count") or 0)
+        except (TypeError, ValueError):
+            ignored_count = 0
+        if ignored_count:
+            route_lines.append(f"- ignored stale records: {ignored_count}")
+        lines.extend(route_lines)
+        lines.extend(
+            [
+                "",
+                "Reason:",
+                "The previous answer was a direct memory-kernel read. "
+                "Current-state facts supplied the active focus and plan, and stale records were advisory only.",
+            ]
+        )
+        return "\n".join(lines)
+
     lines = ["I answered from the latest Spark context capsule for the previous Telegram turn."]
     lines.extend(["", "Authority sources:", *render(authority)])
     lines.extend(["", "Supporting/advisory sources:", *render(supporting)])
@@ -4592,6 +4646,21 @@ def _build_context_source_debug_reply(
 ) -> tuple[str, dict[str, Any]] | None:
     try:
         with state_db.connect() as conn:
+            tool_rows = conn.execute(
+                """
+                SELECT request_id, facts_json, created_at
+                FROM builder_events
+                WHERE component = 'researcher_bridge'
+                  AND event_type = 'tool_result_received'
+                  AND channel_id = ?
+                  AND session_id = ?
+                  AND human_id = ?
+                  AND agent_id = ?
+                ORDER BY created_at DESC, rowid DESC
+                LIMIT 12
+                """,
+                (channel_kind, session_id, human_id, agent_id),
+            ).fetchall()
             rows = conn.execute(
                 """
                 SELECT request_id, facts_json, created_at
@@ -4610,6 +4679,49 @@ def _build_context_source_debug_reply(
     except Exception:
         return None
 
+    previous_route_request_id: str | None = None
+    previous_route_created_at: str | None = None
+    previous_route_facts: dict[str, Any] | None = None
+    for row in tool_rows:
+        explained_request_id = str(row["request_id"] or "").strip()
+        if explained_request_id and explained_request_id == request_id:
+            continue
+        try:
+            facts = json.loads(row["facts_json"] or "{}")
+        except Exception:
+            continue
+        if not isinstance(facts, dict):
+            continue
+        routing_decision = str(facts.get("routing_decision") or facts.get("bridge_mode") or "").strip()
+        if not routing_decision or routing_decision == "context_source_debug":
+            continue
+        previous_route_request_id = explained_request_id or None
+        previous_route_created_at = row["created_at"]
+        previous_route_facts = facts
+        break
+
+    if (
+        previous_route_facts is not None
+        and str(previous_route_facts.get("routing_decision") or "") == "memory_kernel_next_step"
+    ):
+        reply = _format_context_source_ledger_reply(
+            ledger=[],
+            source_counts={},
+            explained_request_id=previous_route_request_id,
+            route_facts=previous_route_facts,
+        )
+        return (
+            reply,
+            {
+                "explained_request_id": previous_route_request_id,
+                "explained_tool_result_created_at": previous_route_created_at,
+                "explained_routing_decision": previous_route_facts.get("routing_decision"),
+                "source_ledger": [],
+                "source_counts": {},
+                **previous_route_facts,
+            },
+        )
+
     for row in rows:
         explained_request_id = str(row["request_id"] or "").strip()
         if explained_request_id and explained_request_id == request_id:
@@ -4627,6 +4739,7 @@ def _build_context_source_debug_reply(
             ledger=ledger,
             source_counts=source_counts,
             explained_request_id=explained_request_id or None,
+            route_facts=previous_route_facts if previous_route_request_id == explained_request_id else None,
         )
         return (
             reply,
