@@ -217,6 +217,84 @@ class ContextCapsuleTests(SparkTestCase):
             self.assertIn("do not replace that with an older handoff checklist", rendered)
             self.assertIn("older missions, apps, and workflow residue are out of scope", rendered)
 
+    def test_context_status_query_does_not_collapse_to_single_focus_fact(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        diagnostics_dir = self.home / "diagnostics"
+        diagnostics_dir.mkdir(parents=True, exist_ok=True)
+        (diagnostics_dir / "spark-diagnostic-2026-04-27T13-38-48+00-00.md").write_text(
+            "\n".join(
+                [
+                    "---",
+                    "generated_at: 2026-04-27T13:38:48+00:00",
+                    "---",
+                    "",
+                    "- scanned lines: `1074`",
+                    "- failure lines: `0`",
+                    "- finding signatures: `0`",
+                    "",
+                    "## Connector Health",
+                    "",
+                    "- `ok` `spark-telegram-bot` required -> http://127.0.0.1:8789/health - ready",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        with self.state_db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE job_records
+                SET last_run_at = ?, last_result = ?
+                WHERE job_id = 'memory:sdk-maintenance'
+                """,
+                (
+                    "2026-04-27T12:46:37Z",
+                    "status=succeeded before=297 after=151 deletions=31 archived=75 superseded=16",
+                ),
+            )
+            conn.commit()
+
+        with patch(
+            "spark_intelligence.context.capsule.inspect_human_memory_in_memory",
+            return_value=SimpleNamespace(
+                read_result=SimpleNamespace(
+                    records=[
+                        {
+                            "predicate": "profile.current_focus",
+                            "value": "context capsule verification",
+                            "timestamp": "2026-04-27T13:38:35Z",
+                        },
+                        {
+                            "predicate": "profile.current_plan",
+                            "value": "verify scheduled memory cleanup",
+                            "timestamp": "2026-04-27T13:02:08Z",
+                        },
+                    ]
+                )
+            ),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider should not run for active context status"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-active-context-status",
+                agent_id="agent:human:telegram:8319079055",
+                human_id="human:telegram:8319079055",
+                session_id="session:telegram:dm:8319079055",
+                channel_kind="telegram",
+                user_message="Based on those sources, what is my current focus and what is still open?",
+            )
+
+        self.assertEqual(result.routing_decision, "active_context_status")
+        self.assertIn("Focus: context capsule verification", result.reply_text)
+        self.assertIn("Plan: verify scheduled memory cleanup", result.reply_text)
+        self.assertIn("Latest diagnostics are clean", result.reply_text)
+        self.assertIn("Focus \"context capsule verification\" remains open", result.reply_text)
+        self.assertIn("Plan \"verify scheduled memory cleanup\" remains open", result.reply_text)
+        self.assertIn("Clean diagnostics and successful maintenance are evidence", result.reply_text)
+
     def test_researcher_reply_injects_context_capsule_into_provider_prompt(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)

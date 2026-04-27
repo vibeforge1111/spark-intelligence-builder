@@ -4572,6 +4572,160 @@ def _build_context_source_debug_reply(
     return None
 
 
+def _detect_active_context_status_query(user_message: str) -> bool:
+    text = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
+    if not text:
+        return False
+    asks_open_status = any(
+        marker in text
+        for marker in (
+            "still open",
+            "what is open",
+            "what's open",
+            "what remains open",
+            "what is verified",
+            "what's verified",
+            "only be closed by me",
+            "only i should close",
+            "should only be closed",
+        )
+    )
+    context_anchor = any(
+        marker in text
+        for marker in (
+            "current focus",
+            "current plan",
+            "those sources",
+            "these sources",
+            "based on sources",
+            "based on those sources",
+            "based on the capsule",
+        )
+    )
+    return asks_open_status and context_anchor
+
+
+def _capsule_line_value(lines: list[str], label: str) -> str | None:
+    prefix = f"- {label}:"
+    for line in lines:
+        if not line.startswith(prefix):
+            continue
+        value = line[len(prefix) :].strip()
+        value = re.sub(r"\s+\(as_of=.*\)$", "", value).strip()
+        return value or None
+    return None
+
+
+def _capsule_line_values(lines: list[str], label: str) -> list[str]:
+    prefix = f"- {label}:"
+    values: list[str] = []
+    for line in lines:
+        if line.startswith(prefix):
+            value = line[len(prefix) :].strip()
+            if value:
+                values.append(value)
+    return values
+
+
+def _build_active_context_status_reply(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str,
+    session_id: str,
+    channel_kind: str,
+    request_id: str,
+    user_message: str,
+) -> tuple[str, dict[str, Any]]:
+    capsule = build_spark_context_capsule(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=human_id,
+        session_id=session_id,
+        channel_kind=channel_kind,
+        request_id=request_id,
+        user_message=user_message,
+    )
+    current_state = capsule.sections.get("current_state") or []
+    diagnostics = capsule.sections.get("diagnostics") or []
+    workflow_state = capsule.sections.get("workflow_state") or []
+    current_focus = _capsule_line_value(current_state, "current_focus")
+    current_plan = _capsule_line_value(current_state, "current_plan")
+    diagnostic_status = _capsule_line_value(diagnostics, "status")
+    scanned_lines = _capsule_line_value(diagnostics, "scanned_lines")
+    failure_lines = _capsule_line_value(diagnostics, "failure_lines")
+    finding_signatures = _capsule_line_value(diagnostics, "finding_signatures")
+    connector_health = _capsule_line_value(diagnostics, "connector_health")
+    memory_jobs = [
+        value
+        for value in _capsule_line_values(workflow_state, "job")
+        if "memory:sdk-maintenance" in value
+    ]
+
+    lines = ["Based on the current Spark context capsule:"]
+    lines.extend(["", "Current state"])
+    lines.append(f"- Focus: {current_focus or 'not saved'}")
+    lines.append(f"- Plan: {current_plan or 'not saved'}")
+
+    verified: list[str] = []
+    if diagnostic_status == "clean_latest_scan_no_failures_or_findings":
+        detail_parts = []
+        if scanned_lines:
+            detail_parts.append(f"{scanned_lines} lines scanned")
+        if failure_lines is not None:
+            detail_parts.append(f"{failure_lines} failures")
+        if finding_signatures is not None:
+            detail_parts.append(f"{finding_signatures} findings")
+        verified.append(
+            "Latest diagnostics are clean"
+            + (f" ({', '.join(detail_parts)})" if detail_parts else "")
+            + "."
+        )
+    elif diagnostic_status:
+        verified.append(f"Latest diagnostics status is {diagnostic_status}.")
+    if connector_health:
+        verified.append(f"Connector health: {connector_health}.")
+    for job in memory_jobs[:1]:
+        verified.append(f"Memory maintenance evidence: {job}.")
+    if not verified:
+        verified.append("No diagnostic or maintenance evidence is present in the capsule.")
+
+    lines.extend(["", "Verified system evidence"])
+    lines.extend(f"- {item}" for item in verified)
+
+    open_items: list[str] = []
+    if current_focus:
+        open_items.append(
+            f'Focus "{current_focus}" remains open until you explicitly close it.'
+        )
+    if current_plan:
+        open_items.append(
+            f'Plan "{current_plan}" remains open until you confirm it meets your standard.'
+        )
+    if not open_items:
+        open_items.append("No active focus or plan is saved in current_state.")
+    lines.extend(["", "Still open"])
+    lines.extend(f"- {item}" for item in open_items)
+    lines.extend(
+        [
+            "",
+            "Closure rule",
+            "- Clean diagnostics and successful maintenance are evidence, not user-level closure.",
+            "- current_state wins over old workflow_state for focus and plan.",
+        ]
+    )
+
+    facts = {
+        "source_counts": capsule.source_counts,
+        "source_ledger": capsule.source_ledger(),
+        "current_focus": current_focus,
+        "current_plan": current_plan,
+        "diagnostic_status": diagnostic_status,
+        "maintenance_jobs": memory_jobs,
+    }
+    return "\n".join(lines), facts
+
+
 def _bridge_reply_mutation_facts(
     *,
     raw_text: str,
@@ -4915,6 +5069,74 @@ def build_researcher_reply(
                 output_keepability=output_keepability,
                 promotion_disposition=promotion_disposition,
             )
+
+    if not personality_context_extra and _detect_active_context_status_query(user_message):
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text, status_facts = _build_active_context_status_reply(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            session_id=session_id,
+            channel_kind=channel_kind,
+            request_id=request_id,
+            user_message=user_message,
+        )
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="active_context_status",
+            routing_decision="active_context_status",
+        )
+        evidence_summary = (
+            "status=active_context_status "
+            f"focus_found={'yes' if status_facts.get('current_focus') else 'no'} "
+            f"plan_found={'yes' if status_facts.get('current_plan') else 'no'} "
+            f"diagnostics={status_facts.get('diagnostic_status') or 'unknown'}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge summarized active context status from the capsule.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="active_context_status",
+            facts=_bridge_event_facts(
+                routing_decision="active_context_status",
+                bridge_mode="active_context_status",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "query_text": str(user_message or "").strip(),
+                    **status_facts,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="active_context_status",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="active_context_status",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
 
     if (
         not explicit_memory_message
