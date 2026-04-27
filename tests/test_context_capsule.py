@@ -162,6 +162,10 @@ class ContextCapsuleTests(SparkTestCase):
                 "the system evidence is green but the focus/plan remains open until the user closes it",
                 user_prompt,
             )
+            self.assertIn(
+                "verify by naming the current focus, current plan, latest diagnostics status, and maintenance summary",
+                user_prompt,
+            )
             return {"raw_response": "Your active focus is automatic memory maintenance verification."}
 
         with patch(
@@ -195,6 +199,10 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertIn("automatic memory maintenance", result.reply_text)
         events = latest_events_by_type(self.state_db, event_type="context_capsule_compiled", limit=5)
         self.assertTrue(events)
-        self.assertEqual((events[0]["facts_json"] or {}).get("keepability"), "ephemeral_context")
-        self.assertEqual((events[0]["facts_json"] or {}).get("context_route"), "researcher_bridge_provider")
-        self.assertGreater(((events[0]["facts_json"] or {}).get("source_counts") or {}).get("current_state", 0), 0)
+        event_facts = [event["facts_json"] or {} for event in events]
+        self.assertTrue(all(facts.get("keepability") == "ephemeral_context" for facts in event_facts))
+        self.assertIn("researcher_bridge_provider", {facts.get("context_route") for facts in event_facts})
+        self.assertIn("direct_provider_fallback", {facts.get("context_route") for facts in event_facts})
+        self.assertTrue(
+            any(((facts.get("source_counts") or {}).get("current_state", 0) > 0) for facts in event_facts)
+        )

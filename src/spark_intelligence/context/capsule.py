@@ -54,6 +54,7 @@ class ContextCapsule:
             "If diagnostics status is clean_latest_scan_no_failures_or_findings, treat the latest scan as clean without asking to load the note.",
             "Do not infer that an active focus, plan, or blocker is resolved only because diagnostics or maintenance checks are clean.",
             "If current_state lists an active focus or plan and there is no explicit closure evidence, say the system evidence is green but the focus/plan remains open until the user closes it.",
+            "If the user asks whether context survived across turns, verify by naming the current focus, current plan, latest diagnostics status, and maintenance summary from this capsule; do not replace that with an older handoff checklist or new mission proposal.",
             f"generated_at={self.generated_at}",
             "",
         ]

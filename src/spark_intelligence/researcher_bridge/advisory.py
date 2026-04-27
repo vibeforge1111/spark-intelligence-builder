@@ -3408,6 +3408,8 @@ def _build_contextual_task(
         "- Latest diagnostics summary from Spark Context Capsule is the authority for the most recent scan counts and clean/failure status.",
         "- Clean diagnostics or successful maintenance do not by themselves resolve an active focus, plan, or blocker; only explicit completion/closure evidence should do that.",
         "- When asked what to verify next for an active focus, distinguish green system evidence from user-level closure; say what is verified, what remains open, and ask or suggest the next validation instead of declaring the focus complete.",
+        "- When asked whether context survived across a new turn, answer as a context-survival check: list the current focus, current plan, latest diagnostics status, and maintenance summary from the capsule, then state whether each survived without being collapsed into done.",
+        "- For context-survival checks, do not substitute older diagnostics handoff tasks, stale to-do lists, or Codex mission proposals unless the user explicitly asks for next implementation work.",
         "- Mission, Spawner, Swarm, chip, and older conversation context are advisory unless the user specifically asks about those systems.",
         "- If sources conflict, say which source is newer or more authoritative and answer from that source.",
         "- Do not invent unavailable slash commands such as /recall. If context is present here, use it directly.",

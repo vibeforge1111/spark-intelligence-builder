@@ -1787,6 +1787,14 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             "distinguish green system evidence from user-level closure",
             str(captured["user_prompt"]),
         )
+        self.assertIn(
+            "answer as a context-survival check",
+            str(captured["user_prompt"]),
+        )
+        self.assertIn(
+            "do not substitute older diagnostics handoff tasks",
+            str(captured["user_prompt"]),
+        )
 
     def test_build_researcher_reply_persists_city_profile_fact_before_bridge_execution(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
