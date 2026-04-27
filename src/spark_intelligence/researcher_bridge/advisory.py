@@ -6210,6 +6210,10 @@ def build_researcher_reply(
             detected_generic_memory_observation is not None
             and _should_direct_acknowledge_current_state_memory(memory_user_message)
         )
+        and not (
+            detected_generic_memory_observation is not None
+            and detected_generic_memory_observation.predicate == "profile.recent_family_members"
+        )
         and (
             detected_profile_fact is not None
             or detected_memory_event is not None
