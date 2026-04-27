@@ -101,6 +101,30 @@ class ObservabilityFilterTests(SparkTestCase):
         self.assertEqual(payload[0]["update_id"], 301)
         self.assertFalse(payload[0]["delivery_ok"])
 
+    def test_gateway_trace_redacts_secret_values_before_logging(self) -> None:
+        append_gateway_trace(
+            self.config_manager,
+            {
+                "event": "telegram_update_processed",
+                "telegram_user_id": "111",
+                "bot_token": "1234567890:AAabcdefghijklmnopqrstuvwxyz1234567890",
+                "detail": {
+                    "message": "Authorization: Bearer sk-proj-secretvalue1234567890",
+                    "safe": "keep this",
+                },
+            },
+        )
+
+        payload = json.loads(gateway_trace_view(self.config_manager, limit=1, as_json=True))[0]
+
+        self.assertEqual(payload["telegram_user_id"], "111")
+        self.assertEqual(payload["bot_token"], "[REDACTED]")
+        self.assertEqual(payload["detail"]["message"], "Authorization: [REDACTED] [REDACTED]")
+        self.assertEqual(payload["detail"]["safe"], "keep this")
+        serialized = json.dumps(payload)
+        self.assertNotIn("1234567890:AA", serialized)
+        self.assertNotIn("sk-proj-secretvalue", serialized)
+
     def test_review_pairings_filters_status_and_limit(self) -> None:
         self.add_telegram_channel()
         for update_id, user_id in ((401, "111"), (402, "222")):
