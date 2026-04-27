@@ -371,6 +371,79 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertNotIn("Closure rule", result.reply_text)
         self.assertNotIn("everything is done", result.reply_text.lower())
 
+    def test_open_ended_next_step_query_uses_memory_kernel_when_focus_is_saved(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        kernel_calls: list[dict[str, object]] = []
+
+        def fake_read_memory_kernel(**payload):
+            kernel_calls.append(payload)
+            method = payload.get("method")
+            predicate = payload.get("predicate")
+            if method == "get_current_state" and predicate == "profile.current_focus":
+                return SimpleNamespace(
+                    abstained=False,
+                    answer="persistent memory quality evaluation",
+                    read_method="get_current_state",
+                    source_class="current_state",
+                    reason=None,
+                    ignored_stale_records=[],
+                    read_result=SimpleNamespace(retrieval_trace={"memory_kernel": {"source_class": "current_state"}}),
+                )
+            if method == "get_current_state" and predicate == "profile.current_plan":
+                return SimpleNamespace(
+                    abstained=False,
+                    answer="evaluate open-ended recall",
+                    read_method="get_current_state",
+                    source_class="current_state",
+                    reason=None,
+                    ignored_stale_records=[],
+                    read_result=SimpleNamespace(retrieval_trace={"memory_kernel": {"source_class": "current_state"}}),
+                )
+            return SimpleNamespace(
+                abstained=False,
+                answer="supporting evidence",
+                read_method="retrieve_evidence",
+                source_class="structured_evidence",
+                reason=None,
+                ignored_stale_records=[{"value": "context capsule verification"}],
+                read_result=SimpleNamespace(
+                    retrieval_trace={
+                        "memory_kernel": {
+                            "source_class": "structured_evidence",
+                            "ignored_stale_record_count": 1,
+                        }
+                    }
+                ),
+            )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.read_memory_kernel",
+            side_effect=fake_read_memory_kernel,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider should not run for memory kernel next-step route"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-memory-kernel-next",
+                agent_id="agent:human:telegram:8319079055",
+                human_id="human:telegram:8319079055",
+                session_id="session:telegram:dm:8319079055",
+                channel_kind="telegram",
+                user_message="What should we focus on next?",
+            )
+
+        self.assertEqual(result.routing_decision, "memory_kernel_next_step")
+        self.assertIn("Your active focus is persistent memory quality evaluation.", result.reply_text)
+        self.assertIn("Run an open-ended recall check", result.reply_text)
+        self.assertIn("I ignored 1 stale memory record", result.reply_text)
+        self.assertEqual([call.get("method") for call in kernel_calls], ["get_current_state", "get_current_state", "retrieve_evidence"])
+        bridge_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=1)
+        self.assertEqual((bridge_events[0]["facts_json"] or {}).get("routing_decision"), "memory_kernel_next_step")
+        self.assertEqual((bridge_events[0]["facts_json"] or {}).get("focus_source_class"), "current_state")
+        self.assertEqual((bridge_events[0]["facts_json"] or {}).get("ignored_stale_record_count"), 1)
+
     def test_context_status_recent_closure_matches_canonical_human_id(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         record_event(

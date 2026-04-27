@@ -47,6 +47,7 @@ from spark_intelligence.memory import (
     inspect_human_memory_in_memory,
     lookup_current_state_in_memory,
     lookup_historical_state_in_memory,
+    read_memory_kernel,
     retrieve_memory_evidence_in_memory,
     retrieve_memory_events_in_memory,
     write_belief_to_memory,
@@ -4696,6 +4697,45 @@ def _detect_active_context_status_query(user_message: str) -> bool:
     return (asks_open_status or asks_next_step or asks_recent_closure) and context_anchor
 
 
+def _detect_open_ended_memory_next_step_query(user_message: str) -> bool:
+    text = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
+    if not text:
+        return False
+    if any(
+        marker in text
+        for marker in (
+            "based on my current focus",
+            "based on the current focus",
+            "current focus",
+            "current plan",
+            "what is verified",
+            "still open",
+            "what remains open",
+        )
+    ):
+        return False
+    if len(text) > 140:
+        return False
+    next_step_markers = (
+        "what should we work on next",
+        "what should i work on next",
+        "what do we work on next",
+        "what should we focus on next",
+        "what should i focus on next",
+        "what should we evaluate next",
+        "what should i evaluate next",
+        "what should we verify next",
+        "what's next",
+        "whats next",
+        "what next",
+        "next move",
+        "next step",
+        "continue on",
+        "continue?",
+    )
+    return any(marker in text for marker in next_step_markers)
+
+
 def _detect_memory_cleanup_sample_query(user_message: str) -> bool:
     text = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
     if not text:
@@ -5121,6 +5161,114 @@ def _build_active_context_status_reply(
         "maintenance_jobs": memory_jobs,
         "recently_closed_focus": recently_closed_focus,
         "transition_new_focus": transition_new_focus,
+    }
+    return "\n".join(lines), facts
+
+
+def _build_open_ended_memory_next_step_reply(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str,
+    session_id: str,
+    request_id: str,
+    user_message: str,
+) -> tuple[str | None, dict[str, Any]]:
+    memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
+    focus_lookup = read_memory_kernel(
+        config_manager=config_manager,
+        state_db=state_db,
+        method="get_current_state",
+        subject=memory_subject,
+        predicate="profile.current_focus",
+        query=user_message,
+        actor_id="researcher_bridge",
+        session_id=session_id,
+        turn_id=request_id,
+        source_surface="telegram_open_ended_next_step",
+    )
+    if focus_lookup.abstained or not focus_lookup.answer:
+        return None, {
+            "memory_kernel_used": True,
+            "focus_found": False,
+            "focus_read_method": focus_lookup.read_method,
+            "focus_source_class": focus_lookup.source_class,
+            "focus_reason": focus_lookup.reason,
+        }
+    plan_lookup = read_memory_kernel(
+        config_manager=config_manager,
+        state_db=state_db,
+        method="get_current_state",
+        subject=memory_subject,
+        predicate="profile.current_plan",
+        query=user_message,
+        actor_id="researcher_bridge",
+        session_id=session_id,
+        turn_id=f"{request_id}:plan",
+        source_surface="telegram_open_ended_next_step",
+    )
+    evidence_lookup = read_memory_kernel(
+        config_manager=config_manager,
+        state_db=state_db,
+        method="retrieve_evidence",
+        subject=memory_subject,
+        query=user_message,
+        limit=5,
+        actor_id="researcher_bridge",
+        session_id=session_id,
+        turn_id=f"{request_id}:evidence",
+        source_surface="telegram_open_ended_next_step",
+        record_activity=False,
+    )
+    focus = focus_lookup.answer
+    plan = plan_lookup.answer if not plan_lookup.abstained else None
+    lines = [
+        f"Your active focus is {focus}.",
+    ]
+    if plan:
+        lines.append(f"Your active plan is {plan}.")
+    if str(focus or "").strip().lower() == "persistent memory quality evaluation":
+        lines.extend(
+            [
+                "",
+                "Next:",
+                "- Run an open-ended recall check without using exact helper wording.",
+                "- Create a stale/current conflict and verify current_state wins.",
+                "- Ask why it answered that way and confirm the source class is named.",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "",
+                "Next:",
+                "- Use this focus to define one concrete validation question.",
+                "- Check whether current_state, recent conversation, or older workflow residue answers it.",
+                "- Only close the focus after you confirm the result matches your standard.",
+            ]
+        )
+    if evidence_lookup.ignored_stale_records:
+        lines.extend(
+            [
+                "",
+                "Note:",
+                f"- I ignored {len(evidence_lookup.ignored_stale_records)} stale memory record(s) while checking supporting evidence.",
+            ]
+        )
+    facts = {
+        "memory_kernel_used": True,
+        "current_focus": focus,
+        "current_plan": plan,
+        "focus_read_method": focus_lookup.read_method,
+        "focus_source_class": focus_lookup.source_class,
+        "plan_read_method": plan_lookup.read_method,
+        "plan_source_class": plan_lookup.source_class,
+        "evidence_read_method": evidence_lookup.read_method,
+        "evidence_source_class": evidence_lookup.source_class,
+        "ignored_stale_record_count": len(evidence_lookup.ignored_stale_records),
+        "focus_trace": (focus_lookup.read_result.retrieval_trace or {}).get("memory_kernel"),
+        "plan_trace": (plan_lookup.read_result.retrieval_trace or {}).get("memory_kernel"),
+        "evidence_trace": (evidence_lookup.read_result.retrieval_trace or {}).get("memory_kernel"),
     }
     return "\n".join(lines), facts
 
@@ -5933,6 +6081,74 @@ def build_researcher_reply(
             output_keepability=output_keepability,
             promotion_disposition=promotion_disposition,
         )
+
+    if not personality_context_extra and _detect_open_ended_memory_next_step_query(user_message):
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text, kernel_facts = _build_open_ended_memory_next_step_reply(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            session_id=session_id,
+            request_id=request_id,
+            user_message=user_message,
+        )
+        if reply_text:
+            output_keepability, promotion_disposition = _bridge_output_classification(
+                mode="memory_kernel_next_step",
+                routing_decision="memory_kernel_next_step",
+            )
+            evidence_summary = (
+                "status=memory_kernel_next_step "
+                f"focus_found={'yes' if kernel_facts.get('current_focus') else 'no'} "
+                f"read_method={kernel_facts.get('focus_read_method') or 'unknown'} "
+                f"source_class={kernel_facts.get('focus_source_class') or 'unknown'}"
+            )
+            record_event(
+                state_db,
+                event_type="tool_result_received",
+                component="researcher_bridge",
+                summary="Researcher bridge answered an open-ended next-step query through the memory kernel.",
+                run_id=run_id,
+                request_id=request_id,
+                trace_ref=trace_ref,
+                channel_id=channel_kind,
+                session_id=session_id,
+                human_id=human_id,
+                agent_id=agent_id,
+                actor_id="researcher_bridge",
+                reason_code="memory_kernel_next_step",
+                facts=_bridge_event_facts(
+                    routing_decision="memory_kernel_next_step",
+                    bridge_mode="memory_kernel_next_step",
+                    evidence_summary=evidence_summary,
+                    active_chip_key=None,
+                    active_chip_task_type=None,
+                    active_chip_evaluate_used=False,
+                    keepability=output_keepability,
+                    promotion_disposition=promotion_disposition,
+                    extra={
+                        "query_text": str(user_message or "").strip(),
+                        **kernel_facts,
+                    },
+                ),
+            )
+            return ResearcherBridgeResult(
+                request_id=request_id,
+                reply_text=reply_text,
+                evidence_summary=evidence_summary,
+                escalation_hint=None,
+                trace_ref=trace_ref,
+                mode="memory_kernel_next_step",
+                runtime_root=None,
+                config_path=None,
+                attachment_context=attachment_context,
+                routing_decision="memory_kernel_next_step",
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                output_keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+            )
 
     if not personality_context_extra and _detect_memory_cleanup_sample_query(user_message):
         trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
