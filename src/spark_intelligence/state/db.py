@@ -847,6 +847,17 @@ class StateDB:
                     updated_at=CURRENT_TIMESTAMP
                 """
             )
+            conn.execute(
+                """
+                INSERT INTO job_records(job_id, job_kind, status, schedule_expr)
+                VALUES ('memory:sdk-maintenance', 'memory_sdk_maintenance', 'scheduled', 'builtin:memory_sdk_maintenance')
+                ON CONFLICT(job_id) DO UPDATE SET
+                    job_kind=excluded.job_kind,
+                    status=excluded.status,
+                    schedule_expr=excluded.schedule_expr,
+                    updated_at=CURRENT_TIMESTAMP
+                """
+            )
             conn.commit()
 
     def connect(self) -> sqlite3.Connection:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from spark_intelligence.attachments.snapshot import sync_attachment_snapshot
@@ -483,7 +484,23 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(resolved_rows[0]["contradiction_key"], "stop_ship:stop_ship_intent_without_proof")
 
     def test_jobs_tick_records_closed_background_run(self) -> None:
-        jobs_tick(self.config_manager, self.state_db)
+        with patch(
+            "spark_intelligence.jobs.service.run_memory_sdk_maintenance",
+            return_value=SimpleNamespace(
+                status="succeeded",
+                reason=None,
+                maintenance={
+                    "manual_observations_before": 4,
+                    "manual_observations_after": 3,
+                    "active_deletion_count": 1,
+                    "active_state_still_current_count": 2,
+                    "active_state_stale_preserved_count": 0,
+                    "active_state_superseded_count": 1,
+                    "active_state_archived_count": 0,
+                },
+            ),
+        ):
+            jobs_tick(self.config_manager, self.state_db)
 
         with self.state_db.connect() as conn:
             row = conn.execute(
@@ -499,6 +516,40 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIsNotNone(row)
         self.assertEqual(row["status"], "closed")
         self.assertEqual(row["close_reason"], "job_completed")
+
+    def test_jobs_tick_runs_memory_sdk_maintenance_job(self) -> None:
+        fake_result = SimpleNamespace(
+            status="succeeded",
+            reason=None,
+            maintenance={
+                "manual_observations_before": 5,
+                "manual_observations_after": 3,
+                "active_deletion_count": 1,
+                "active_state_still_current_count": 2,
+                "active_state_stale_preserved_count": 0,
+                "active_state_superseded_count": 1,
+                "active_state_archived_count": 1,
+            },
+        )
+
+        with patch("spark_intelligence.jobs.service.run_memory_sdk_maintenance", return_value=fake_result) as maintenance:
+            output = jobs_tick(self.config_manager, self.state_db)
+
+        self.assertIn("memory:sdk-maintenance", output)
+        self.assertIn("status=succeeded before=5 after=3", output)
+        maintenance.assert_called_once()
+        self.assertEqual(maintenance.call_args.kwargs["actor_id"], "jobs_tick")
+        with self.state_db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT last_result
+                FROM job_records
+                WHERE job_id = 'memory:sdk-maintenance'
+                LIMIT 1
+                """
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertIn("superseded=1", row["last_result"])
 
     def test_jobs_tick_records_failed_run_on_exception(self) -> None:
         with patch("spark_intelligence.jobs.service.run_oauth_refresh_maintenance", side_effect=RuntimeError("boom")):

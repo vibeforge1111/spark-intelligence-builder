@@ -6,11 +6,13 @@ from datetime import UTC, datetime, timedelta
 from spark_intelligence.auth.service import run_oauth_refresh_maintenance
 from spark_intelligence.auth.runtime import AuthStatusReport, build_auth_status_report
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.memory.orchestrator import run_memory_sdk_maintenance
 from spark_intelligence.observability.store import close_run, open_run, record_environment_snapshot
 from spark_intelligence.state.db import StateDB
 
 
 OAUTH_MAINTENANCE_JOB_ID = "auth:oauth-refresh-maintenance"
+MEMORY_MAINTENANCE_JOB_ID = "memory:sdk-maintenance"
 OAUTH_MAINTENANCE_STALE_SECONDS = 900
 
 
@@ -166,6 +168,39 @@ def _run_job(
                 close_reason="job_completed",
                 summary=f"Job {job_id} completed.",
                 facts={"job_id": job_id, "job_kind": job_kind, "result": result},
+            )
+            return result
+        if job_kind == "memory_sdk_maintenance":
+            payload = run_memory_sdk_maintenance(
+                config_manager=config_manager,
+                state_db=state_db,
+                actor_id="jobs_tick",
+            )
+            result = (
+                f"status={payload.status} "
+                f"before={payload.maintenance.get('manual_observations_before', 0)} "
+                f"after={payload.maintenance.get('manual_observations_after', 0)} "
+                f"deletions={payload.maintenance.get('active_deletion_count', 0)} "
+                f"still_current={payload.maintenance.get('active_state_still_current_count', 0)} "
+                f"stale_preserved={payload.maintenance.get('active_state_stale_preserved_count', 0)} "
+                f"superseded={payload.maintenance.get('active_state_superseded_count', 0)} "
+                f"archived={payload.maintenance.get('active_state_archived_count', 0)}"
+            )
+            _record_job_result(state_db=state_db, job_id=job_id, result=result)
+            close_run(
+                state_db,
+                run_id=run.run_id,
+                status="closed" if payload.status == "succeeded" else "stalled",
+                close_reason="job_completed" if payload.status == "succeeded" else "memory_maintenance_abstained",
+                summary=f"Job {job_id} completed.",
+                facts={
+                    "job_id": job_id,
+                    "job_kind": job_kind,
+                    "result": result,
+                    "maintenance_status": payload.status,
+                    "maintenance": payload.maintenance,
+                    "reason": payload.reason,
+                },
             )
             return result
         result = "unsupported_job_kind"
