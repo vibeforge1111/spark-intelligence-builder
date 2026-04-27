@@ -4498,9 +4498,7 @@ def _format_context_source_ledger_reply(
             for item in items
         ] or ["- none"]
 
-    lines = ["I answered from the latest Spark context capsule."]
-    if explained_request_id:
-        lines.append(f"Explained request: {explained_request_id}")
+    lines = ["I answered from the latest Spark context capsule for the previous Telegram turn."]
     lines.extend(["", "Authority sources:", *render(authority)])
     lines.extend(["", "Supporting/advisory sources:", *render(supporting)])
     lines.extend(

@@ -140,6 +140,8 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
 
         self.assertEqual(result.routing_decision, "context_source_debug")
         self.assertEqual(result.output_keepability, "operator_debug_only")
+        self.assertIn("previous Telegram turn", result.reply_text)
+        self.assertNotIn("req-previous-answer", result.reply_text)
         self.assertIn("current_state: authority, 2 items", result.reply_text)
         self.assertIn("diagnostics: authority, 8 items", result.reply_text)
         self.assertIn("workflow_state: advisory, 6 items", result.reply_text)
