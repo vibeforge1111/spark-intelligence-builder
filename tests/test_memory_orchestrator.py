@@ -14,6 +14,7 @@ from spark_intelligence.memory import (
     build_sdk_maintenance_payload,
     build_shadow_replay_payload,
     export_shadow_replay_batch,
+    hybrid_memory_retrieve,
     inspect_human_memory_in_memory,
     lookup_current_state_in_memory,
     lookup_historical_state_in_memory,
@@ -182,6 +183,60 @@ class _InvalidMemoryRoleClient(_FakeMemoryClient):
         }
 
 
+class _HybridRetrievalMemoryClient(_FakeMemoryClient):
+    def get_current_state(self, **payload):
+        self.current_state_calls.append(payload)
+        return {
+            "status": "supported",
+            "memory_role": "current_state",
+            "records": [
+                {
+                    "subject": payload["subject"],
+                    "predicate": payload["predicate"],
+                    "value": "persistent memory quality evaluation",
+                    "metadata": {"source_surface": "current_state_test"},
+                }
+            ],
+            "provenance": [{"memory_role": "current_state", "source": "fake_sdk"}],
+            "retrieval_trace": {"trace_id": "mem-trace-current"},
+        }
+
+    def retrieve_evidence(self, **payload):
+        self.evidence_calls.append(payload)
+        return {
+            "status": "supported",
+            "memory_role": "structured_evidence",
+            "records": [
+                {
+                    "subject": payload.get("subject"),
+                    "predicate": payload.get("predicate"),
+                    "value": "verify scheduled memory cleanup",
+                    "text": "Old workflow residue says verify scheduled memory cleanup.",
+                    "metadata": {"status": "stale", "source_surface": "workflow_state"},
+                }
+            ],
+            "provenance": [{"memory_role": "structured_evidence", "source": "fake_sdk"}],
+            "retrieval_trace": {"trace_id": "mem-trace-evidence"},
+        }
+
+    def retrieve_events(self, **payload):
+        self.retrieval_event_calls.append(payload)
+        return {
+            "status": "supported",
+            "memory_role": "event",
+            "records": [
+                {
+                    "subject": payload.get("subject"),
+                    "predicate": "diagnostics.latest",
+                    "text": "Diagnostics were clean.",
+                    "metadata": {"source_surface": "diagnostics"},
+                }
+            ],
+            "provenance": [{"memory_role": "event", "source": "fake_sdk"}],
+            "retrieval_trace": {"trace_id": "mem-trace-events"},
+        }
+
+
 class _StaleEvidenceMemoryClient(_FakeMemoryClient):
     def retrieve_evidence(self, **payload):
         self.evidence_calls.append(payload)
@@ -323,6 +378,61 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(result.ignored_stale_records[0]["value"], "context capsule verification")
         self.assertEqual(result.read_result.retrieval_trace["memory_kernel"]["ignored_stale_record_count"], 1)
         self.assertEqual(len(fake_client.evidence_calls), 1)
+
+    def test_hybrid_memory_retrieve_prefers_current_state_and_traces_discarded_stale_residue(self) -> None:
+        fake_client = _HybridRetrievalMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ):
+            result = hybrid_memory_retrieve(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                query="What should we focus on next?",
+                subject="human:test",
+                predicate="profile.current_focus",
+                limit=2,
+                actor_id="test",
+            )
+
+        self.assertFalse(result.read_result.abstained)
+        self.assertEqual(result.read_result.method, "hybrid_memory_retrieve")
+        self.assertEqual(result.read_result.records[0]["value"], "persistent memory quality evaluation")
+        trace = result.read_result.retrieval_trace["hybrid_memory_retrieve"]
+        self.assertEqual(trace["selected_count"], 2)
+        self.assertIn("current_state", {lane["lane"] for lane in trace["lane_summaries"]})
+        self.assertIn("typed_temporal_graph", {lane["lane"] for lane in trace["lane_summaries"]})
+        current_candidates = [candidate for candidate in result.candidates if candidate.lane == "current_state"]
+        stale_candidates = [candidate for candidate in result.candidates if candidate.reason_discarded == "stale_or_superseded"]
+        self.assertTrue(current_candidates)
+        self.assertTrue(current_candidates[0].selected)
+        self.assertTrue(stale_candidates)
+        self.assertEqual(len(fake_client.current_state_calls), 1)
+        self.assertEqual(len(fake_client.evidence_calls), 1)
+        self.assertEqual(len(fake_client.retrieval_event_calls), 1)
+
+    def test_memory_kernel_dispatches_hybrid_memory_retrieve(self) -> None:
+        fake_client = _HybridRetrievalMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ):
+            result = read_memory_kernel(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                method="hybrid_memory_retrieve",
+                query="What should we focus on next?",
+                subject="human:test",
+                predicate="profile.current_focus",
+                limit=2,
+                actor_id="test",
+            )
+
+        self.assertEqual(result.read_method, "hybrid_memory_retrieve")
+        self.assertEqual(result.source_class, "hybrid")
+        self.assertEqual(result.answer, "persistent memory quality evaluation")
+        self.assertEqual(result.read_result.retrieval_trace["memory_kernel"]["source_class"], "hybrid")
+        self.assertEqual(len(fake_client.current_state_calls), 1)
 
     def test_profile_city_detection_and_write_use_structured_current_state_observation(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

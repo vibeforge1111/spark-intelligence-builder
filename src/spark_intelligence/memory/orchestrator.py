@@ -470,6 +470,61 @@ class MemoryKernelReadResult:
 
 
 @dataclass(frozen=True)
+class HybridMemoryCandidate:
+    lane: str
+    source_class: str
+    score: float
+    selected: bool
+    record: dict[str, Any]
+    reason_selected: str | None = None
+    reason_discarded: str | None = None
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "lane": self.lane,
+            "source_class": self.source_class,
+            "score": self.score,
+            "selected": self.selected,
+            "reason_selected": self.reason_selected,
+            "reason_discarded": self.reason_discarded,
+            "record": self.record,
+        }
+
+
+@dataclass(frozen=True)
+class HybridMemoryRetrievalResult:
+    sdk_module: str
+    query: str
+    subject: str | None
+    predicate: str | None
+    entity_key: str | None
+    as_of: str | None
+    runtime: dict[str, Any]
+    read_result: MemoryReadResult
+    candidates: list[HybridMemoryCandidate]
+    lane_summaries: list[dict[str, Any]]
+    shadow_only_eval: bool = True
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "sdk_module": self.sdk_module,
+            "query": self.query,
+            "subject": self.subject,
+            "predicate": self.predicate,
+            "entity_key": self.entity_key,
+            "as_of": self.as_of,
+            "runtime": self.runtime,
+            "shadow_only_eval": self.shadow_only_eval,
+            "lane_summaries": self.lane_summaries,
+            "candidates": [candidate.to_payload() for candidate in self.candidates],
+            "read_result": MemorySdkSmokeResult._read_payload(self.read_result),
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_payload(), indent=2)
+
+
+@dataclass(frozen=True)
 class StructuredEvidenceCurrentStateRule:
     fact_name: str
     canonical_template: str
@@ -1499,6 +1554,31 @@ def read_memory_kernel(
             source_surface=source_surface,
             record_activity=record_activity,
         )
+    if normalized_method in {"hybrid_memory_retrieve", "hybrid_retrieve"}:
+        hybrid = hybrid_memory_retrieve(
+            config_manager=config_manager,
+            state_db=state_db,
+            query=query,
+            subject=_optional_string(subject),
+            predicate=_optional_string(predicate),
+            entity_key=_optional_string(entity_key),
+            as_of=_optional_string(as_of),
+            limit=limit,
+            sdk_module=sdk_module,
+            actor_id=actor_id,
+            session_id=session_id or f"memory-kernel:{actor_id}",
+            turn_id=turn_id or f"{actor_id}:hybrid-memory-retrieve",
+            source_surface=source_surface,
+            record_activity=record_activity,
+        )
+        return _memory_kernel_result(
+            sdk_module=hybrid.sdk_module,
+            runtime=hybrid.runtime,
+            query=hybrid.query,
+            subject=hybrid.subject,
+            predicate=hybrid.predicate,
+            read_result=hybrid.read_result,
+        )
     read_result = _memory_kernel_abstained_read_result(
         method=normalized_method or "unknown",
         reason="unsupported_memory_kernel_method",
@@ -1511,6 +1591,267 @@ def read_memory_kernel(
         subject=_optional_string(subject),
         predicate=_optional_string(predicate),
         read_result=read_result,
+    )
+
+
+def hybrid_memory_retrieve(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    query: str,
+    subject: str | None = None,
+    predicate: str | None = None,
+    entity_key: str | None = None,
+    as_of: str | None = None,
+    limit: int = 5,
+    sdk_module: str | None = None,
+    actor_id: str = "memory_cli",
+    session_id: str | None = None,
+    turn_id: str | None = None,
+    source_surface: str = "hybrid_memory_retrieve",
+    record_activity: bool = True,
+) -> HybridMemoryRetrievalResult:
+    adapter = MemoryKernelAdapter(
+        config_manager=config_manager,
+        state_db=state_db,
+        sdk_module=sdk_module,
+        actor_id=actor_id,
+    )
+    normalized_query = str(query or "").strip()
+    normalized_subject = _optional_string(subject)
+    normalized_predicate = _optional_string(predicate)
+    normalized_entity_key = _optional_string(entity_key)
+    normalized_as_of = _optional_string(as_of)
+    normalized_limit = max(1, int(limit or 1))
+    session_id = session_id or f"hybrid-memory:{actor_id}"
+    turn_id = turn_id or f"{actor_id}:hybrid-memory-retrieve"
+    lane_summaries: list[dict[str, Any]] = []
+    ranked_entries: list[dict[str, Any]] = []
+
+    def add_lane(lane: str, kernel: MemoryKernelReadResult) -> None:
+        lane_summaries.append(
+            {
+                "lane": lane,
+                "read_method": kernel.read_method,
+                "source_class": kernel.source_class,
+                "status": kernel.read_result.status,
+                "abstained": kernel.abstained,
+                "record_count": len(kernel.records),
+                "reason": kernel.reason,
+            }
+        )
+        for index, record in enumerate(kernel.records):
+            source_class = _hybrid_memory_source_class(lane=lane, kernel=kernel, record=record)
+            score, score_reasons = _score_hybrid_memory_record(
+                lane=lane,
+                source_class=source_class,
+                record=record,
+                query=normalized_query,
+                predicate=normalized_predicate,
+                entity_key=normalized_entity_key,
+            )
+            ranked_entries.append(
+                {
+                    "lane": lane,
+                    "source_class": source_class,
+                    "score": score,
+                    "score_reasons": score_reasons,
+                    "record": record,
+                    "record_key": _hybrid_memory_record_key(record),
+                    "rank_tiebreak": index,
+                }
+            )
+
+    if normalized_subject and normalized_predicate:
+        add_lane(
+            "current_state",
+            adapter.read_current_state(
+                subject=normalized_subject,
+                predicate=normalized_predicate,
+                entity_key=normalized_entity_key,
+                query=normalized_query,
+                session_id=session_id,
+                turn_id=f"{turn_id}:current-state",
+                source_surface=f"{source_surface}:current_state",
+                record_activity=False,
+            ),
+        )
+    if normalized_subject and normalized_predicate and normalized_as_of:
+        add_lane(
+            "historical_state",
+            adapter.read_historical_state(
+                subject=normalized_subject,
+                predicate=normalized_predicate,
+                as_of=normalized_as_of,
+                entity_key=normalized_entity_key,
+                query=normalized_query,
+                session_id=session_id,
+                turn_id=f"{turn_id}:historical-state",
+                source_surface=f"{source_surface}:historical_state",
+                record_activity=False,
+            ),
+        )
+    add_lane(
+        "evidence",
+        adapter.search(
+            method="retrieve_evidence",
+            query=normalized_query,
+            subject=normalized_subject,
+            predicate=normalized_predicate,
+            limit=normalized_limit,
+            session_id=session_id,
+            turn_id=f"{turn_id}:evidence",
+            source_surface=f"{source_surface}:evidence",
+            record_activity=False,
+        ),
+    )
+    add_lane(
+        "events",
+        adapter.search(
+            method="retrieve_events",
+            query=normalized_query,
+            subject=normalized_subject,
+            predicate=normalized_predicate,
+            limit=normalized_limit,
+            session_id=session_id,
+            turn_id=f"{turn_id}:events",
+            source_surface=f"{source_surface}:events",
+            record_activity=False,
+        ),
+    )
+    lane_summaries.append(
+        {
+            "lane": "typed_temporal_graph",
+            "read_method": "graph_sidecar_retrieve",
+            "source_class": "graph_sidecar",
+            "status": "not_wired",
+            "abstained": True,
+            "record_count": 0,
+            "reason": "graph_runtime_bridge_pending",
+        }
+    )
+
+    ranked_entries.sort(
+        key=lambda entry: (
+            float(entry["score"]),
+            -int(entry["rank_tiebreak"]),
+        ),
+        reverse=True,
+    )
+    selected_records: list[dict[str, Any]] = []
+    candidates: list[HybridMemoryCandidate] = []
+    seen_keys: set[str] = set()
+    for entry in ranked_entries:
+        record = entry["record"]
+        record_key = str(entry["record_key"])
+        stale = entry["lane"] != "historical_state" and _memory_kernel_record_is_stale(record)
+        selected = False
+        reason_selected = None
+        reason_discarded = None
+        if record_key in seen_keys:
+            reason_discarded = "duplicate_lower_rank"
+        elif stale:
+            reason_discarded = "stale_or_superseded"
+            seen_keys.add(record_key)
+        elif len(selected_records) >= normalized_limit:
+            reason_discarded = "outside_context_budget"
+            seen_keys.add(record_key)
+        else:
+            selected = True
+            reason_selected = ",".join(entry["score_reasons"]) or "ranked_candidate"
+            selected_records.append(record)
+            seen_keys.add(record_key)
+        candidates.append(
+            HybridMemoryCandidate(
+                lane=str(entry["lane"]),
+                source_class=str(entry["source_class"]),
+                score=round(float(entry["score"]), 3),
+                selected=selected,
+                record=record,
+                reason_selected=reason_selected,
+                reason_discarded=reason_discarded,
+            )
+        )
+
+    retrieval_trace = {
+        "hybrid_memory_retrieve": {
+            "query": normalized_query,
+            "subject": normalized_subject,
+            "predicate": normalized_predicate,
+            "entity_key": normalized_entity_key,
+            "as_of": normalized_as_of,
+            "limit": normalized_limit,
+            "lane_summaries": lane_summaries,
+            "candidate_count": len(candidates),
+            "selected_count": len(selected_records),
+            "candidates": [
+                {
+                    "lane": candidate.lane,
+                    "source_class": candidate.source_class,
+                    "score": candidate.score,
+                    "selected": candidate.selected,
+                    "reason_selected": candidate.reason_selected,
+                    "reason_discarded": candidate.reason_discarded,
+                    "predicate": candidate.record.get("predicate"),
+                    "memory_role": candidate.record.get("memory_role"),
+                }
+                for candidate in candidates
+            ],
+        }
+    }
+    read_result = MemoryReadResult(
+        status="supported" if selected_records else "abstained",
+        method="hybrid_memory_retrieve",
+        memory_role="hybrid",
+        records=selected_records,
+        provenance=[
+            {
+                "lane": candidate.lane,
+                "source_class": candidate.source_class,
+                "score": candidate.score,
+                "predicate": candidate.record.get("predicate"),
+                "memory_role": candidate.record.get("memory_role"),
+            }
+            for candidate in candidates
+            if candidate.selected
+        ],
+        retrieval_trace=retrieval_trace,
+        answer_explanation={
+            "method": "hybrid_memory_retrieve",
+            "selected_count": len(selected_records),
+            "authority_order": [
+                "current_state",
+                "historical_state",
+                "events",
+                "evidence",
+                "typed_temporal_graph",
+            ],
+        },
+        abstained=not bool(selected_records),
+        reason=None if selected_records else ("no_hybrid_candidates" if not candidates else "all_candidates_discarded"),
+        shadow_only=False,
+    )
+    if record_activity:
+        _record_memory_read_event(
+            state_db=state_db,
+            result=read_result,
+            human_id=_human_id_from_subject(normalized_subject or ""),
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=actor_id,
+        )
+    return HybridMemoryRetrievalResult(
+        sdk_module=adapter.sdk_module,
+        query=normalized_query,
+        subject=normalized_subject,
+        predicate=normalized_predicate,
+        entity_key=normalized_entity_key,
+        as_of=normalized_as_of,
+        runtime=adapter.runtime,
+        read_result=read_result,
+        candidates=candidates,
+        lane_summaries=lane_summaries,
+        shadow_only_eval=False,
     )
 
 
@@ -4516,6 +4857,136 @@ def _memory_kernel_record_is_stale(record: dict[str, Any]) -> bool:
     if record.get("is_current") is False or metadata.get("is_current") is False:
         return True
     return False
+
+
+def _hybrid_memory_source_class(*, lane: str, kernel: MemoryKernelReadResult, record: dict[str, Any]) -> str:
+    if lane == "current_state":
+        return "current_state"
+    if lane == "historical_state":
+        return "historical_state"
+    if lane == "events":
+        return "event"
+    if lane == "evidence":
+        memory_role = str(record.get("memory_role") or kernel.read_result.memory_role or "").strip()
+        if memory_role in {"structured_evidence", "belief", "belief_candidate", "raw_episode"}:
+            return memory_role
+        return "evidence"
+    return kernel.source_class or lane
+
+
+def _hybrid_memory_record_text(record: dict[str, Any]) -> str:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    parts = [
+        record.get("value"),
+        record.get("normalized_value"),
+        record.get("text"),
+        record.get("summary"),
+        record.get("answer"),
+        metadata.get("value"),
+        metadata.get("normalized_value"),
+        metadata.get("entity_label"),
+        metadata.get("source_text"),
+        metadata.get("evidence_text"),
+    ]
+    return " ".join(str(part or "").strip() for part in parts if str(part or "").strip())
+
+
+def _hybrid_memory_record_key(record: dict[str, Any]) -> str:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    stable_id = _optional_string(record.get("observation_id")) or _optional_string(metadata.get("observation_id"))
+    if stable_id:
+        return stable_id
+    return "|".join(
+        [
+            str(record.get("subject") or "").strip(),
+            str(record.get("predicate") or "").strip(),
+            str(metadata.get("entity_key") or "").strip(),
+            _hybrid_memory_record_text(record).casefold(),
+        ]
+    )
+
+
+def _hybrid_memory_query_tokens(query: str) -> set[str]:
+    stopwords = {
+        "a",
+        "an",
+        "and",
+        "are",
+        "about",
+        "did",
+        "do",
+        "for",
+        "from",
+        "have",
+        "i",
+        "in",
+        "is",
+        "it",
+        "me",
+        "my",
+        "of",
+        "on",
+        "our",
+        "should",
+        "the",
+        "this",
+        "to",
+        "was",
+        "what",
+        "where",
+        "with",
+        "you",
+    }
+    return {
+        token
+        for token in re.findall(r"[a-z0-9][a-z0-9_-]*", str(query or "").casefold())
+        if token and token not in stopwords
+    }
+
+
+def _score_hybrid_memory_record(
+    *,
+    lane: str,
+    source_class: str,
+    record: dict[str, Any],
+    query: str,
+    predicate: str | None,
+    entity_key: str | None,
+) -> tuple[float, list[str]]:
+    lane_authority = {
+        "current_state": 100.0,
+        "historical_state": 82.0,
+        "events": 58.0,
+        "evidence": 52.0,
+        "typed_temporal_graph": 46.0,
+    }
+    score = lane_authority.get(lane, 40.0)
+    reasons = [f"authority:{lane}"]
+    record_predicate = str(record.get("predicate") or "").strip()
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    if predicate and record_predicate == predicate:
+        score += 15.0
+        reasons.append("predicate_match")
+    if entity_key and str(metadata.get("entity_key") or "").strip() == entity_key:
+        score += 18.0
+        reasons.append("entity_match")
+    query_tokens = _hybrid_memory_query_tokens(query)
+    if query_tokens:
+        text = _hybrid_memory_record_text(record).casefold()
+        matched = {token for token in query_tokens if token in text}
+        if matched:
+            score += min(12.0, float(len(matched) * 3))
+            reasons.append(f"query_overlap:{len(matched)}")
+    if record.get("provenance") or metadata.get("source_surface") or metadata.get("source_text"):
+        score += 2.0
+        reasons.append("provenance_present")
+    if lane != "historical_state" and _memory_kernel_record_is_stale(record):
+        score -= 120.0
+        reasons.append("stale_penalty")
+    if source_class == "current_state":
+        score += 4.0
+        reasons.append("current_state_source")
+    return score, reasons
 
 
 def _retrieve_memory_query_in_memory(
