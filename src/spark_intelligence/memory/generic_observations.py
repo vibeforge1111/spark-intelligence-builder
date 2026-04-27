@@ -733,6 +733,8 @@ def build_telegram_generic_observation_answer(*, observation: TelegramGenericObs
     value = str(observation.value or "").strip()
     if not value:
         return "I'll remember that."
+    if observation.predicate == "profile.current_plan":
+        return f"I'll remember that your current plan is {_current_plan_value_clause(value)}."
     pack = _GENERIC_PACKS_BY_PREDICATE.get(observation.predicate)
     if pack is not None and pack.observation_answer_template:
         return pack.observation_answer_template.format(label=observation.label, value=value)
@@ -748,6 +750,60 @@ def build_telegram_generic_deletion_answer(*, deletion: TelegramGenericDeletion)
 
 def _clean_text(value: str) -> str:
     return re.sub(r"\s+", " ", str(value or "").strip())
+
+
+_CURRENT_PLAN_VERB_STARTERS = {
+    "add",
+    "analyze",
+    "build",
+    "check",
+    "complete",
+    "confirm",
+    "create",
+    "debug",
+    "deploy",
+    "do",
+    "finish",
+    "fix",
+    "get",
+    "improve",
+    "inspect",
+    "launch",
+    "make",
+    "migrate",
+    "patch",
+    "refactor",
+    "restart",
+    "review",
+    "run",
+    "save",
+    "seed",
+    "send",
+    "ship",
+    "simplify",
+    "start",
+    "test",
+    "update",
+    "validate",
+    "verify",
+    "wire",
+    "work",
+    "write",
+}
+
+
+def _current_plan_value_clause(value: str) -> str:
+    normalized = _clean_text(value)
+    if not normalized:
+        return ""
+    lowered = normalized.lower()
+    if lowered.startswith("to "):
+        return normalized
+    first_word_match = re.match(r"[a-z']+", lowered)
+    first_word = first_word_match.group(0) if first_word_match else ""
+    if first_word in _CURRENT_PLAN_VERB_STARTERS:
+        return f"to {normalized}"
+    return normalized
 
 
 def _strip_correction_prefix(text: str) -> str:

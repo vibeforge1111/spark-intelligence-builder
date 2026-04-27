@@ -1707,8 +1707,12 @@ def build_profile_fact_history_answer(
         return _ensure_sentence(f"An earlier saved timezone was {normalized_previous}")
     if predicate == "profile.current_plan":
         if normalized_current and normalized_current != normalized_previous:
-            return _ensure_sentence(f"Before your current plan was to {normalized_current}, it was to {normalized_previous}")
-        return _ensure_sentence(f"An earlier saved current plan was to {normalized_previous}")
+            return _ensure_sentence(
+                "Before your current plan was "
+                f"{_current_plan_value_clause(normalized_current)}, it was "
+                f"{_current_plan_value_clause(normalized_previous)}"
+            )
+        return _ensure_sentence(f"An earlier saved current plan was {_current_plan_value_clause(normalized_previous)}")
     if predicate == "profile.current_focus":
         if normalized_current and normalized_current != normalized_previous:
             return _ensure_sentence(f"Before your current focus was {normalized_current}, it was {normalized_previous}")
@@ -1841,6 +1845,8 @@ def build_profile_fact_observation_answer(*, observation: ProfileFactObservation
         return _ensure_sentence(f"I'll remember the hack actor was {value}")
     if predicate == "profile.current_mission":
         return _ensure_sentence(f"I'll remember your current mission is to {value}")
+    if predicate == "profile.current_plan":
+        return _ensure_sentence(f"I'll remember your current plan is {_current_plan_value_clause(value)}")
     if predicate == "profile.spark_role":
         return _ensure_sentence(f"I'll remember {_spark_role_sentence(value)}")
     if predicate == "profile.home_country":
@@ -1875,7 +1881,7 @@ def _build_profile_fact_concise_answer(*, query: ProfileFactQuery, value: str) -
     if predicate == "profile.favorite_food":
         return _ensure_sentence(f"Your favorite food is {normalized_value}")
     if predicate == "profile.current_plan":
-        return _ensure_sentence(f"Your current plan is to {normalized_value}")
+        return _ensure_sentence(f"Your current plan is {_current_plan_value_clause(normalized_value)}")
     if predicate == "profile.current_focus":
         return _ensure_sentence(f"Your current focus is {normalized_value}")
     if predicate == "profile.current_decision":
@@ -1936,6 +1942,60 @@ def _ensure_sentence(text: str) -> str:
     if normalized[-1] in ".!?":
         return normalized
     return f"{normalized}."
+
+
+_CURRENT_PLAN_VERB_STARTERS = {
+    "add",
+    "analyze",
+    "build",
+    "check",
+    "complete",
+    "confirm",
+    "create",
+    "debug",
+    "deploy",
+    "do",
+    "finish",
+    "fix",
+    "get",
+    "improve",
+    "inspect",
+    "launch",
+    "make",
+    "migrate",
+    "patch",
+    "refactor",
+    "restart",
+    "review",
+    "run",
+    "save",
+    "seed",
+    "send",
+    "ship",
+    "simplify",
+    "start",
+    "test",
+    "update",
+    "validate",
+    "verify",
+    "wire",
+    "work",
+    "write",
+}
+
+
+def _current_plan_value_clause(value: str) -> str:
+    normalized = " ".join(str(value or "").strip().split())
+    if not normalized:
+        return ""
+    lowered = normalized.lower()
+    if lowered.startswith("to "):
+        return normalized
+    first_word_match = re.match(r"[a-z']+", lowered)
+    first_word = first_word_match.group(0) if first_word_match else ""
+    if first_word in _CURRENT_PLAN_VERB_STARTERS:
+        return f"to {normalized}"
+    return normalized
 
 
 def _spark_role_sentence(value: str) -> str:

@@ -268,9 +268,12 @@ class TelegramGenericMemoryTests(SparkTestCase):
 
         self.assertEqual(plan_update.mode, "memory_generic_observation_update")
         self.assertEqual(plan_update.routing_decision, "memory_generic_observation")
-        self.assertIn("Neon Harbor Telegram memory test", plan_update.reply_text)
+        self.assertEqual(
+            plan_update.reply_text,
+            "I'll remember that your current plan is Neon Harbor Telegram memory test.",
+        )
         self.assertEqual(plan_query.mode, "memory_profile_fact")
-        self.assertIn("Neon Harbor Telegram memory test", plan_query.reply_text)
+        self.assertEqual(plan_query.reply_text, "Your current plan is Neon Harbor Telegram memory test.")
 
     def test_build_researcher_reply_handles_plan_correction_history_and_deletion(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
