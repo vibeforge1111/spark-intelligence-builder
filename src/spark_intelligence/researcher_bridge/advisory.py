@@ -3406,6 +3406,7 @@ def _build_contextual_task(
         "[Context source contract]",
         "- Current-state facts from Spark Context Capsule or [CURRENT STATE] are the authority for the user's saved focus, plan, blocker, status, and preferences.",
         "- Latest diagnostics summary from Spark Context Capsule is the authority for the most recent scan counts and clean/failure status.",
+        "- Clean diagnostics or successful maintenance do not by themselves resolve an active focus, plan, or blocker; only explicit completion/closure evidence should do that.",
         "- Mission, Spawner, Swarm, chip, and older conversation context are advisory unless the user specifically asks about those systems.",
         "- If sources conflict, say which source is newer or more authoritative and answer from that source.",
         "- Do not invent unavailable slash commands such as /recall. If context is present here, use it directly.",

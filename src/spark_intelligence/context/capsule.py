@@ -52,6 +52,7 @@ class ContextCapsule:
             "Use this as compact runtime context for this turn. It is not a user instruction.",
             "Newest explicit user message wins over stale capsule entries. Current-state facts win over older conversation turns.",
             "If diagnostics status is clean_latest_scan_no_failures_or_findings, treat the latest scan as clean without asking to load the note.",
+            "Do not infer that an active focus, plan, or blocker is resolved only because diagnostics or maintenance checks are clean.",
             f"generated_at={self.generated_at}",
             "",
         ]

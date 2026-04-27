@@ -154,6 +154,10 @@ class ContextCapsuleTests(SparkTestCase):
             self.assertIn("current_focus: automatic memory maintenance verification", user_prompt)
             self.assertIn("[Context source contract]", user_prompt)
             self.assertIn("Do not invent unavailable slash commands", user_prompt)
+            self.assertIn(
+                "Do not infer that an active focus, plan, or blocker is resolved",
+                user_prompt,
+            )
             return {"raw_response": "Your active focus is automatic memory maintenance verification."}
 
         with patch(

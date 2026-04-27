@@ -1779,6 +1779,10 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("Do not say you don't know something that's listed there.", str(captured["system_prompt"]))
         self.assertIn("[Context source contract]", str(captured["user_prompt"]))
         self.assertIn("Mission, Spawner, Swarm, chip, and older conversation context are advisory", str(captured["user_prompt"]))
+        self.assertIn(
+            "Clean diagnostics or successful maintenance do not by themselves resolve an active focus",
+            str(captured["user_prompt"]),
+        )
 
     def test_build_researcher_reply_persists_city_profile_fact_before_bridge_execution(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
