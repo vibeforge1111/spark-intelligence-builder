@@ -14,7 +14,11 @@ from types import ModuleType
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
-from spark_intelligence.memory.generic_observations import detect_telegram_generic_observation, parse_entity_state_fact
+from spark_intelligence.memory.generic_observations import (
+    detect_telegram_generic_observation,
+    parse_entity_state_deletion,
+    parse_entity_state_fact,
+)
 from spark_intelligence.memory.profile_facts import (
     active_state_revalidate_at,
     active_state_revalidation_days,
@@ -3069,7 +3073,13 @@ def _write_profile_fact_memory_operation(
         "normalized_value": value,
         "evidence_text": evidence_text,
     }
-    entity_state_fact = parse_entity_state_fact(evidence_text) if predicate.startswith("entity.") else None
+    entity_state_fact = None
+    entity_state_deletion = None
+    if predicate.startswith("entity."):
+        if operation == "delete":
+            entity_state_deletion = parse_entity_state_deletion(evidence_text)
+        else:
+            entity_state_fact = parse_entity_state_fact(evidence_text)
     if predicate.startswith("profile.current_"):
         metadata["entity_key"] = predicate
     if predicate.startswith("entity.") and entity_state_fact is not None:
@@ -3083,6 +3093,15 @@ def _write_profile_fact_memory_operation(
         )
         if entity_state_fact.location_preposition:
             metadata["location_preposition"] = entity_state_fact.location_preposition
+    if predicate.startswith("entity.") and entity_state_deletion is not None:
+        metadata.update(
+            {
+                "entity_type": "named_object",
+                "entity_key": entity_state_deletion.entity_key,
+                "entity_label": entity_state_deletion.entity_label,
+                "entity_attribute": entity_state_deletion.attribute,
+            }
+        )
     if operation != "delete" and revalidate_after_days is not None and revalidate_at:
         metadata["revalidate_after_days"] = revalidate_after_days
         metadata["revalidate_at"] = revalidate_at

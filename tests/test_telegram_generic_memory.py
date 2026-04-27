@@ -2570,6 +2570,206 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(entity_records[0]["metadata"]["entity_key"], "named-object:tiny-desk-plant")
         self.assertEqual(entity_records[0]["metadata"]["location_preposition"], "on")
 
+    def test_build_researcher_reply_keeps_unrelated_entity_locations_isolated(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for generic entity memory"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for generic entity memory"),
+        ):
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-entity-desk-location-update",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-isolation",
+                channel_kind="telegram",
+                user_message="For later, the tiny desk plant is on the kitchen shelf.",
+            )
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-entity-office-location-update",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-isolation",
+                channel_kind="telegram",
+                user_message="For later, the office plant is on the balcony.",
+            )
+            desk_query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-entity-desk-location-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-isolation",
+                channel_kind="telegram",
+                user_message="Where is the desk plant?",
+            )
+            office_query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-entity-office-location-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-isolation",
+                channel_kind="telegram",
+                user_message="Where is the office plant?",
+            )
+
+        self.assertEqual(desk_query.mode, "memory_open_recall")
+        self.assertEqual(desk_query.reply_text, "The tiny desk plant is on the kitchen shelf.")
+        self.assertEqual(office_query.mode, "memory_open_recall")
+        self.assertEqual(office_query.reply_text, "The office plant is on the balcony.")
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        recorded_observations = [
+            observation
+            for event in write_events
+            for observation in ((event["facts_json"] or {}).get("observations") or [])
+        ]
+        entity_keys = {
+            item["metadata"]["entity_key"]
+            for item in recorded_observations
+            if item["predicate"] == "entity.location"
+        }
+        self.assertEqual(entity_keys, {"named-object:tiny-desk-plant", "named-object:office-plant"})
+
+    def test_build_researcher_reply_uses_newer_entity_location_after_conflict(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for generic entity memory"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for generic entity memory"),
+        ):
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-entity-location-old",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-location-conflict",
+                channel_kind="telegram",
+                user_message="For later, the tiny desk plant is on the kitchen shelf.",
+            )
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-entity-location-new",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-location-conflict",
+                channel_kind="telegram",
+                user_message="Actually, the tiny desk plant is on the balcony.",
+            )
+            query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-entity-location-current",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-location-conflict",
+                channel_kind="telegram",
+                user_message="Where is the desk plant?",
+            )
+
+        self.assertEqual(query.mode, "memory_open_recall")
+        self.assertEqual(query.reply_text, "The tiny desk plant is on the balcony.")
+        self.assertNotIn("kitchen shelf", query.reply_text)
+
+    def test_build_researcher_reply_deletes_one_entity_location_without_affecting_another(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for generic entity memory"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for generic entity memory"),
+        ):
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-entity-delete-desk-seed",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-delete",
+                channel_kind="telegram",
+                user_message="For later, the tiny desk plant is on the kitchen shelf.",
+            )
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-entity-delete-office-seed",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-delete",
+                channel_kind="telegram",
+                user_message="For later, the office plant is on the balcony.",
+            )
+            deletion = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-entity-delete-desk",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-delete",
+                channel_kind="telegram",
+                user_message="Forget where the tiny desk plant is.",
+            )
+            desk_query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-entity-delete-desk-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-delete",
+                channel_kind="telegram",
+                user_message="Where is the desk plant?",
+            )
+            office_query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-entity-delete-office-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-delete",
+                channel_kind="telegram",
+                user_message="Where is the office plant?",
+            )
+
+        self.assertEqual(deletion.mode, "memory_generic_observation_delete")
+        self.assertEqual(deletion.reply_text, "I'll forget the tiny desk plant location.")
+        self.assertEqual(desk_query.mode, "memory_open_recall")
+        self.assertEqual(desk_query.reply_text, "I don't currently have saved memory about that.")
+        self.assertEqual(office_query.mode, "memory_open_recall")
+        self.assertEqual(office_query.reply_text, "The office plant is on the balcony.")
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        recorded_observations = [
+            observation
+            for event in write_events
+            for observation in ((event["facts_json"] or {}).get("observations") or [])
+        ]
+        deletion_records = [
+            item
+            for item in recorded_observations
+            if item["predicate"] == "entity.location" and item["operation"] == "delete"
+        ]
+        self.assertTrue(deletion_records)
+        self.assertEqual(deletion_records[0]["metadata"]["entity_key"], "named-object:tiny-desk-plant")
+
     def test_build_researcher_reply_directly_acknowledges_current_focus_correction_with_researcher_enabled(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)

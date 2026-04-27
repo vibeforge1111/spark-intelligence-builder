@@ -574,18 +574,33 @@ def _memory_record_text(record: dict[str, Any]) -> str:
 
 def _filter_open_memory_recall_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     superseded_ids: set[str] = set()
+    deleted_scopes: list[tuple[str, str, str, str]] = []
     for record in records:
         lifecycle = record.get("lifecycle") if isinstance(record.get("lifecycle"), dict) else {}
         metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
         supersedes = str(lifecycle.get("supersedes") or metadata.get("supersedes") or "").strip()
         if supersedes:
             superseded_ids.add(supersedes)
+        role = str(record.get("memory_role") or "").strip()
+        operation = str(record.get("operation") or metadata.get("write_operation") or "").strip().lower()
+        target_predicate = str(metadata.get("target_predicate") or "").strip()
+        if role == "state_deletion" or operation == "delete" or target_predicate:
+            deleted_scopes.append(
+                (
+                    str(record.get("subject") or "").strip(),
+                    target_predicate or str(record.get("predicate") or "").strip(),
+                    str(metadata.get("entity_key") or "").strip(),
+                    _memory_record_lifecycle_time(record),
+                )
+            )
     filtered: list[dict[str, Any]] = []
     for record in records:
         predicate = str(record.get("predicate") or "").strip()
         role = str(record.get("memory_role") or "").strip()
         record_id = str(record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or "").strip()
         metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        if _record_is_suppressed_by_state_deletion(record=record, deleted_scopes=deleted_scopes):
+            continue
         if role == "state_deletion" or str(record.get("operation") or "").strip().lower() == "delete":
             continue
         if record_id and record_id in superseded_ids:
@@ -606,10 +621,52 @@ def _filter_open_memory_recall_records(records: list[dict[str, Any]]) -> list[di
     return filtered
 
 
+def _memory_record_lifecycle_time(record: dict[str, Any]) -> str:
+    lifecycle = record.get("lifecycle") if isinstance(record.get("lifecycle"), dict) else {}
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    return str(
+        lifecycle.get("deleted_at")
+        or lifecycle.get("created_at")
+        or lifecycle.get("document_time")
+        or metadata.get("deleted_at")
+        or metadata.get("created_at")
+        or metadata.get("document_time")
+        or ""
+    ).strip()
+
+
+def _record_is_suppressed_by_state_deletion(
+    *,
+    record: dict[str, Any],
+    deleted_scopes: list[tuple[str, str, str, str]],
+) -> bool:
+    if not deleted_scopes:
+        return False
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    subject = str(record.get("subject") or "").strip()
+    predicate = str(record.get("predicate") or "").strip()
+    entity_key = str(metadata.get("entity_key") or "").strip()
+    record_time = _memory_record_lifecycle_time(record)
+    for deleted_subject, deleted_predicate, deleted_entity_key, deleted_time in deleted_scopes:
+        if subject != deleted_subject or predicate != deleted_predicate:
+            continue
+        if deleted_entity_key and entity_key != deleted_entity_key:
+            continue
+        if deleted_time and record_time and record_time > deleted_time:
+            continue
+        return True
+    return False
+
+
 def _record_matches_open_memory_topic(*, record: dict[str, Any], topic: str) -> bool:
     normalized_topic = str(topic or "").strip().casefold()
     if not normalized_topic:
         return False
+    predicate = str(record.get("predicate") or "").strip()
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    if predicate.startswith("entity."):
+        entity_label = str(metadata.get("entity_label") or "").strip()
+        return bool(entity_label) and _entity_label_matches_open_memory_topic(entity_label=entity_label, topic=topic)
     haystack = _memory_record_text(record).casefold()
     if not haystack:
         return False
@@ -691,7 +748,7 @@ def _entity_state_answer_from_record(*, query: OpenMemoryRecallQuery, record: di
     value = str(record.get("value") or metadata.get("value") or "").strip()
     if not label or not value:
         return None
-    if not _record_matches_open_memory_topic(record=record, topic=query.topic):
+    if not _entity_label_matches_open_memory_topic(entity_label=label, topic=query.topic):
         return None
     attribute = str(metadata.get("entity_attribute") or predicate.split(".", 1)[-1]).strip()
     if attribute == "name":
@@ -708,6 +765,24 @@ def _entity_state_answer_from_record(*, query: OpenMemoryRecallQuery, record: di
     if attribute == "relation":
         return f"The {label} is related to {value}."
     return f"The {label} {attribute} is {value}."
+
+
+def _entity_label_matches_open_memory_topic(*, entity_label: str, topic: str) -> bool:
+    label_tokens = {
+        token
+        for token in re.findall(r"[a-z0-9][a-z0-9_-]*", str(entity_label or "").casefold())
+        if token and token not in {"a", "an", "my", "of", "the"}
+    }
+    topic_tokens = [
+        token
+        for token in re.findall(r"[a-z0-9][a-z0-9_-]*", str(topic or "").casefold())
+        if token and token not in {"a", "an", "is", "my", "of", "the", "where"}
+    ]
+    if not label_tokens or not topic_tokens:
+        return False
+    if len(topic_tokens) == 1:
+        return topic_tokens[0] in label_tokens
+    return all(token in label_tokens for token in topic_tokens)
 
 
 def _build_open_memory_recall_answer(*, query: OpenMemoryRecallQuery, records: list[dict[str, Any]]) -> str:

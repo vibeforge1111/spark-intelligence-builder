@@ -280,6 +280,13 @@ class EntityStateFact:
     location_preposition: str | None = None
 
 
+@dataclass(frozen=True)
+class EntityStateDeletion:
+    entity_label: str
+    attribute: str
+    entity_key: str
+
+
 def _simple_delete_phrases(*targets: str) -> tuple[str, ...]:
     phrases: list[str] = []
     for target in targets:
@@ -695,6 +702,21 @@ def classify_telegram_generic_memory_candidate(user_message: str) -> TelegramGen
                     domain_pack=pack.domain_pack,
                 )
 
+    for variant in variants:
+        entity_state_deletion = parse_entity_state_deletion(variant)
+        if entity_state_deletion is not None:
+            return TelegramGenericCandidate(
+                predicate=f"entity.{entity_state_deletion.attribute}",
+                value=None,
+                evidence_text=text,
+                fact_name=f"entity_{entity_state_deletion.attribute}",
+                label=f"{entity_state_deletion.entity_label} {entity_state_deletion.attribute}",
+                operation="delete",
+                memory_role="current_state",
+                retention_class="active_state",
+                domain_pack="entity_state",
+            )
+
     family_shared_time_value = _family_shared_time_members_value(normalized)
     if family_shared_time_value:
         return TelegramGenericCandidate(
@@ -815,6 +837,10 @@ def build_telegram_generic_observation_answer(*, observation: TelegramGenericObs
 
 
 def build_telegram_generic_deletion_answer(*, deletion: TelegramGenericDeletion) -> str:
+    if deletion.predicate.startswith("entity."):
+        entity_state_deletion = parse_entity_state_deletion(deletion.evidence_text)
+        if entity_state_deletion is not None:
+            return f"I'll forget the {entity_state_deletion.entity_label} {entity_state_deletion.attribute}."
     pack = _GENERIC_PACKS_BY_PREDICATE.get(deletion.predicate)
     if pack is not None and pack.deletion_answer_template:
         return pack.deletion_answer_template.format(label=deletion.label)
@@ -862,9 +888,38 @@ def parse_entity_state_fact(value: str) -> EntityStateFact | None:
     return None
 
 
+def parse_entity_state_deletion(value: str) -> EntityStateDeletion | None:
+    normalized = _strip_correction_prefix(_clean_text(value))
+    normalized = re.sub(r"^(?:please\s+)", "", normalized, flags=re.IGNORECASE).strip()
+    if not normalized:
+        return None
+    for parser in (
+        _parse_entity_location_deletion,
+        _parse_entity_owner_deletion,
+        _parse_entity_deadline_deletion,
+        _parse_entity_attribute_deletion,
+    ):
+        parsed = parser(normalized)
+        if parsed is not None:
+            return parsed
+    return None
+
+
 def _entity_key(entity_label: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", _clean_text(entity_label).lower()).strip("-")
     return f"named-object:{slug or 'unknown'}"
+
+
+def _entity_deletion(*, entity_label: str, attribute: str) -> EntityStateDeletion | None:
+    clean_label = _clean_entity_label(entity_label)
+    clean_attribute = _clean_entity_attribute(attribute)
+    if not clean_label or clean_attribute is None:
+        return None
+    return EntityStateDeletion(
+        entity_label=clean_label,
+        attribute=clean_attribute,
+        entity_key=_entity_key(clean_label),
+    )
 
 
 def _entity_fact(
@@ -891,6 +946,89 @@ def _clean_entity_label(value: str) -> str:
     normalized = _clean_text(value)
     normalized = re.sub(r"^(?:my|the)\s+", "", normalized, flags=re.IGNORECASE).strip()
     return normalized
+
+
+def _clean_entity_attribute(value: str) -> str | None:
+    normalized = _clean_text(value).lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "name": "name",
+        "status": "status",
+        "location": "location",
+        "place": "location",
+        "owner": "owner",
+        "handler": "owner",
+        "deadline": "deadline",
+        "due_date": "deadline",
+        "relation": "relation",
+        "relationship": "relation",
+    }
+    return aliases.get(normalized)
+
+
+def _parse_entity_location_deletion(value: str) -> EntityStateDeletion | None:
+    match = re.fullmatch(
+        r"(?:forget|delete|remove)\s+where\s+(?:my|the)\s+(.+?)\s+is[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return _entity_deletion(entity_label=match.group(1), attribute="location")
+    match = re.fullmatch(
+        r"(?:forget|delete|remove)\s+(?:the\s+)?location\s+of\s+(?:my|the)\s+(.+?)[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return _entity_deletion(entity_label=match.group(1), attribute="location")
+    return None
+
+
+def _parse_entity_owner_deletion(value: str) -> EntityStateDeletion | None:
+    match = re.fullmatch(
+        r"(?:forget|delete|remove)\s+who\s+(?:owns|handles)\s+(?:my|the)\s+(.+?)[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return _entity_deletion(entity_label=match.group(1), attribute="owner")
+    match = re.fullmatch(
+        r"(?:forget|delete|remove)\s+(?:the\s+)?owner\s+of\s+(?:my|the)\s+(.+?)[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return _entity_deletion(entity_label=match.group(1), attribute="owner")
+    return None
+
+
+def _parse_entity_deadline_deletion(value: str) -> EntityStateDeletion | None:
+    match = re.fullmatch(
+        r"(?:forget|delete|remove)\s+when\s+(?:my|the)\s+(.+?)\s+is\s+due[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return _entity_deletion(entity_label=match.group(1), attribute="deadline")
+    return None
+
+
+def _parse_entity_attribute_deletion(value: str) -> EntityStateDeletion | None:
+    attribute_words = r"name|status|location|place|owner|handler|deadline|due[-_\s]?date|relation|relationship"
+    match = re.fullmatch(
+        rf"(?:forget|delete|remove)\s+(?:the\s+)?({attribute_words})\s+of\s+(?:my|the)\s+(.+?)[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return _entity_deletion(entity_label=match.group(2), attribute=match.group(1))
+    match = re.fullmatch(
+        rf"(?:forget|delete|remove)\s+(?:my|the)\s+(.+?)\s+({attribute_words})[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return _entity_deletion(entity_label=match.group(1), attribute=match.group(2))
+    return None
 
 
 def _parse_entity_name_fact(value: str) -> EntityStateFact | None:

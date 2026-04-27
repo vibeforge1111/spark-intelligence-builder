@@ -484,6 +484,39 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(call["metadata"]["location_preposition"], "on")
         self.assertEqual(call["metadata"]["revalidate_after_days"], 21)
 
+    def test_direct_entity_state_deletion_writes_entity_key_metadata(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator._now_iso",
+            return_value="2026-04-28T10:30:00Z",
+        ):
+            result = memory_orchestrator.delete_profile_fact_from_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                predicate="entity.location",
+                evidence_text="Forget where the tiny desk plant is.",
+                fact_name="entity_location",
+                session_id="session:entity-location-delete",
+                turn_id="turn:entity-location-delete",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        call = fake_client.observation_calls[0]
+        self.assertEqual(call["operation"], "delete")
+        self.assertEqual(call["predicate"], "entity.location")
+        self.assertIsNone(call["value"])
+        self.assertEqual(call["valid_to"], "2026-04-28T10:30:00Z")
+        self.assertEqual(call["deleted_at"], "2026-04-28T10:30:00Z")
+        self.assertEqual(call["metadata"]["entity_type"], "named_object")
+        self.assertEqual(call["metadata"]["entity_key"], "named-object:tiny-desk-plant")
+        self.assertEqual(call["metadata"]["entity_label"], "tiny desk plant")
+        self.assertEqual(call["metadata"]["entity_attribute"], "location")
+
     def test_profile_current_state_predicates_store_revalidation_metadata(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
