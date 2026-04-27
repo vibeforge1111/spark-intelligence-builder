@@ -902,6 +902,42 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(exported["writes"][0]["text"], "I moved to Dubai.")
         self.assertEqual(exported["checks"]["current_state"][0]["predicate"], "profile.city")
 
+    def test_memory_run_sdk_maintenance_reports_active_state_counts(self) -> None:
+        fake_result = SimpleNamespace(
+            status="succeeded",
+            to_json=lambda: json.dumps(
+                {
+                    "sdk_module": "domain_chip_memory",
+                    "status": "succeeded",
+                    "maintenance": {
+                        "active_state_stale_preserved_count": 1,
+                        "active_state_superseded_count": 1,
+                        "active_state_archived_count": 0,
+                    },
+                    "trace": {"operation": "reconsolidate_manual_memory"},
+                }
+            ),
+            to_text=lambda: "Spark memory SDK maintenance\n- status: succeeded",
+        )
+
+        with patch("spark_intelligence.cli.run_memory_sdk_maintenance", return_value=fake_result) as maintenance:
+            exit_code, stdout, stderr = self.run_cli(
+                "memory",
+                "run-sdk-maintenance",
+                "--home",
+                str(self.home),
+                "--now",
+                "2025-04-02T09:00:00Z",
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["status"], "succeeded")
+        self.assertEqual(payload["maintenance"]["active_state_stale_preserved_count"], 1)
+        maintenance.assert_called_once()
+        self.assertEqual(maintenance.call_args.kwargs["now"], "2025-04-02T09:00:00Z")
+
     def test_setup_creates_bootstrap_and_doctor_and_status_report_clean_temp_home(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             home = Path(tempdir)
@@ -1864,7 +1900,7 @@ class CliSmokeTests(SparkTestCase):
             display_name="Alice",
         )
         # Pairing now creates the agent with an empty agent_name (Finding G
-        # fix in docs/PERSONALITY_PHASE1_AUDIT_2026-04-10.md §11). Give it a
+        # fix in docs/PERSONALITY_PHASE1_AUDIT_2026-04-10.md Ã‚Â§11). Give it a
         # user-defined name before inspecting so the assertion remains
         # meaningful.
         rename_agent_identity(

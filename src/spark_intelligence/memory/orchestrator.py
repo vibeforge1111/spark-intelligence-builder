@@ -7,7 +7,7 @@ import re
 import sys
 import time
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import ModuleType
@@ -172,6 +172,49 @@ class MemorySdkSmokeResult:
             "reason": result.reason,
             "shadow_only": result.shadow_only,
         }
+
+
+@dataclass(frozen=True)
+class MemoryMaintenanceRunResult:
+    sdk_module: str
+    status: str
+    runtime: dict[str, Any]
+    maintenance: dict[str, Any]
+    trace: dict[str, Any]
+    reason: str | None = None
+    shadow_only_eval: bool = True
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "sdk_module": self.sdk_module,
+                "status": self.status,
+                "reason": self.reason,
+                "runtime": self.runtime,
+                "maintenance": self.maintenance,
+                "trace": self.trace,
+                "shadow_only_eval": self.shadow_only_eval,
+            },
+            indent=2,
+        )
+
+    def to_text(self) -> str:
+        lines = ["Spark memory SDK maintenance"]
+        lines.append(f"- sdk_module: {self.sdk_module}")
+        lines.append(f"- status: {self.status}")
+        if self.reason:
+            lines.append(f"- reason: {self.reason}")
+        for field in (
+            "manual_observations_before",
+            "manual_observations_after",
+            "active_deletion_count",
+            "active_state_still_current_count",
+            "active_state_stale_preserved_count",
+            "active_state_superseded_count",
+            "active_state_archived_count",
+        ):
+            lines.append(f"- {field}: {self.maintenance.get(field, 0)}")
+        return "\n".join(lines)
 
 
 @dataclass(frozen=True)
@@ -755,6 +798,15 @@ class _DomainChipMemoryClientAdapter:
             },
         }
 
+    def reconsolidate_manual_memory(self, **payload: Any) -> Any:
+        now = _optional_string(payload.get("now"))
+        if now:
+            result = self._sdk.reconsolidate_manual_memory(now=now)
+        else:
+            result = self._sdk.reconsolidate_manual_memory()
+        self._persist_manual_state()
+        return result
+
     def _get_current_state_prefix(self, *, subject: str, predicate_prefix: str) -> dict[str, Any]:
         observations = self._sdk._current_state_observations()
         normalized_subject = self._sdk._normalize_subject(subject)
@@ -930,6 +982,70 @@ def run_memory_sdk_smoke_test(
         cleanup_result=cleanup_result,
     )
     _record_memory_smoke_event(state_db=state_db, result=result, actor_id=actor_id)
+    return result
+
+
+def run_memory_sdk_maintenance(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    sdk_module: str | None = None,
+    now: str | None = None,
+    actor_id: str = "memory_cli",
+) -> MemoryMaintenanceRunResult:
+    module_name = str(
+        sdk_module
+        or config_manager.get_path("spark.memory.sdk_module", default=DEFAULT_SDK_MODULE)
+        or DEFAULT_SDK_MODULE
+    )
+    runtime = inspect_memory_sdk_runtime(config_manager=config_manager, sdk_module=module_name)
+    client = _load_sdk_client_for_module(module_name=module_name, home_path=config_manager.paths.home)
+    if client is None:
+        result = MemoryMaintenanceRunResult(
+            sdk_module=module_name,
+            status="abstained",
+            runtime=runtime,
+            maintenance={},
+            trace={},
+            reason="sdk_unavailable",
+        )
+        _record_memory_maintenance_event(state_db=state_db, result=result, actor_id=actor_id)
+        return result
+    target = getattr(client, "reconsolidate_manual_memory", None)
+    if not callable(target):
+        result = MemoryMaintenanceRunResult(
+            sdk_module=module_name,
+            status="abstained",
+            runtime=runtime,
+            maintenance={},
+            trace={},
+            reason="method_missing",
+        )
+        _record_memory_maintenance_event(state_db=state_db, result=result, actor_id=actor_id)
+        return result
+    try:
+        raw = target(now=now) if now else target()
+    except Exception as exc:
+        result = MemoryMaintenanceRunResult(
+            sdk_module=module_name,
+            status="failed",
+            runtime=runtime,
+            maintenance={},
+            trace={},
+            reason=f"{type(exc).__name__}: {exc}",
+        )
+        _record_memory_maintenance_event(state_db=state_db, result=result, actor_id=actor_id)
+        return result
+    maintenance = _normalize_memory_maintenance_payload(raw)
+    trace = maintenance.get("trace") if isinstance(maintenance.get("trace"), dict) else {}
+    result = MemoryMaintenanceRunResult(
+        sdk_module=module_name,
+        status="succeeded",
+        runtime=runtime,
+        maintenance=maintenance,
+        trace=dict(trace),
+    )
+    _record_memory_maintenance_event(state_db=state_db, result=result, actor_id=actor_id)
     return result
 
 
@@ -3738,6 +3854,29 @@ def _normalize_record_dict(raw: dict[str, Any]) -> dict[str, Any]:
     return record
 
 
+def _normalize_memory_maintenance_payload(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return dict(raw)
+    if is_dataclass(raw):
+        return asdict(raw)
+    payload: dict[str, Any] = {}
+    for field in (
+        "manual_observations_before",
+        "manual_observations_after",
+        "current_state_snapshot_count",
+        "active_deletion_count",
+        "manual_events_count",
+        "active_state_still_current_count",
+        "active_state_stale_preserved_count",
+        "active_state_superseded_count",
+        "active_state_archived_count",
+        "trace",
+    ):
+        if hasattr(raw, field):
+            payload[field] = getattr(raw, field)
+    return payload
+
+
 def _memory_enabled(config_manager: ConfigManager) -> bool:
     return bool(config_manager.get_path("spark.memory.enabled", default=False))
 
@@ -3921,6 +4060,29 @@ def _record_memory_write_requested(
             "observations": observations,
         },
         provenance={"memory_role": "current_state"},
+    )
+
+
+def _record_memory_maintenance_event(
+    *,
+    state_db: StateDB,
+    result: MemoryMaintenanceRunResult,
+    actor_id: str,
+) -> None:
+    record_event(
+        state_db,
+        event_type="memory_maintenance_run",
+        component="memory_orchestrator",
+        summary="Spark memory SDK maintenance run.",
+        actor_id=actor_id,
+        facts={
+            "sdk_module": result.sdk_module,
+            "status": result.status,
+            "reason": result.reason,
+            "maintenance": result.maintenance,
+            "trace": result.trace,
+        },
+        provenance={"memory_role": "maintenance"},
     )
 
 

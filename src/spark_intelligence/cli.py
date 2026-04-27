@@ -100,6 +100,7 @@ from spark_intelligence.memory import (
     inspect_memory_sdk_runtime,
     lookup_current_state_in_memory,
     run_memory_sdk_smoke_test,
+    run_memory_sdk_maintenance,
     run_telegram_memory_architecture_soak,
     run_telegram_memory_regression,
 )
@@ -1858,6 +1859,14 @@ def build_parser() -> argparse.ArgumentParser:
     memory_maintenance_parser.add_argument("--run-report", action="store_true", help="Run run-sdk-maintenance-report after export")
     memory_maintenance_parser.add_argument("--report-write", help="Optional output path for the generated SDK maintenance report JSON")
     memory_maintenance_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_run_maintenance_parser = memory_subparsers.add_parser(
+        "run-sdk-maintenance",
+        help="Run live SDK memory maintenance and record active-state lifecycle counts",
+    )
+    memory_run_maintenance_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_run_maintenance_parser.add_argument("--sdk-module", help="Override the SDK module for this maintenance run")
+    memory_run_maintenance_parser.add_argument("--now", help="Override maintenance clock timestamp for deterministic runs")
+    memory_run_maintenance_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_compile_kb_parser = memory_subparsers.add_parser(
         "compile-telegram-kb",
         help="Compile a Spark KB/wiki vault directly from Builder Telegram state.db events",
@@ -2091,7 +2100,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     identity_parser = subparsers.add_parser(
         "identity",
-        help="Manage cross-surface identity aliases (one agent across telegram + tui + …)",
+        help="Manage cross-surface identity aliases (one agent across telegram + tui + Ã¢â‚¬Â¦)",
     )
     identity_subparsers = identity_parser.add_subparsers(dest="identity_command", required=True)
 
@@ -5552,6 +5561,22 @@ def handle_memory_export_sdk_maintenance_replay(args: argparse.Namespace) -> int
     return 0
 
 
+def handle_memory_run_sdk_maintenance(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = run_memory_sdk_maintenance(
+        config_manager=config_manager,
+        state_db=state_db,
+        sdk_module=args.sdk_module,
+        now=args.now,
+        actor_id="memory_cli",
+    )
+    print(result.to_json() if args.json else result.to_text())
+    return 0 if result.status == "succeeded" else 1
+
+
 def handle_memory_compile_telegram_kb(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
@@ -7007,7 +7032,7 @@ def handle_identity_link(args: argparse.Namespace) -> int:
         print(json.dumps(payload, indent=2))
     else:
         print(
-            f"Linked {payload['alias']} → {payload['primary']}\n"
+            f"Linked {payload['alias']} Ã¢â€ â€™ {payload['primary']}\n"
             f"  human_id: {alias.primary_human_id}\n"
             f"  agent_id: {alias.primary_agent_id}"
         )
@@ -7077,7 +7102,7 @@ def handle_identity_list(args: argparse.Namespace) -> int:
             for a in aliases:
                 print(
                     f"  {a.alias_channel}:{a.alias_external_user}"
-                    f"  →  {a.primary_channel}:{a.primary_external_user}"
+                    f"  Ã¢â€ â€™  {a.primary_channel}:{a.primary_external_user}"
                 )
                 print(f"      human_id: {a.primary_human_id}")
                 print(f"      agent_id: {a.primary_agent_id}")
@@ -7304,6 +7329,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_memory_export_shadow_replay_batch(args)
     if args.command == "memory" and args.memory_command == "export-sdk-maintenance-replay":
         return handle_memory_export_sdk_maintenance_replay(args)
+    if args.command == "memory" and args.memory_command == "run-sdk-maintenance":
+        return handle_memory_run_sdk_maintenance(args)
     if args.command == "memory" and args.memory_command == "compile-telegram-kb":
         return handle_memory_compile_telegram_kb(args)
     if args.command == "memory" and args.memory_command == "run-telegram-regression":

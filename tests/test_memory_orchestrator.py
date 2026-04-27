@@ -18,6 +18,7 @@ from spark_intelligence.memory import (
     lookup_current_state_in_memory,
     lookup_historical_state_in_memory,
     retrieve_memory_events_in_memory,
+    run_memory_sdk_maintenance,
     run_memory_sdk_smoke_test,
     write_belief_to_memory,
     write_profile_fact_to_memory,
@@ -145,6 +146,35 @@ class _InvalidMemoryRoleClient(_FakeMemoryClient):
         }
 
 
+class _MaintenanceMemoryClient(_FakeMemoryClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.maintenance_calls: list[dict[str, object]] = []
+
+    def reconsolidate_manual_memory(self, *, now: str | None = None):
+        self.maintenance_calls.append({"now": now})
+        return SimpleNamespace(
+            manual_observations_before=4,
+            manual_observations_after=3,
+            current_state_snapshot_count=2,
+            active_deletion_count=1,
+            manual_events_count=0,
+            active_state_still_current_count=1,
+            active_state_stale_preserved_count=1,
+            active_state_superseded_count=1,
+            active_state_archived_count=0,
+            trace={
+                "operation": "reconsolidate_manual_memory",
+                "active_state_maintenance": {
+                    "still_current": 1,
+                    "stale_preserved": 1,
+                    "superseded": 1,
+                    "archived": 0,
+                },
+            },
+        )
+
+
 class MemoryOrchestratorTests(SparkTestCase):
     def test_profile_city_detection_and_write_use_structured_current_state_observation(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -240,6 +270,32 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(observations[0]["retention_class"], "active_state")
         self.assertEqual(observations[0]["metadata"]["revalidate_after_days"], 30)
         self.assertEqual(observations[0]["metadata"]["revalidate_at"], "2025-03-31T09:00:00+00:00")
+
+    def test_run_memory_sdk_maintenance_records_active_state_counts(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _MaintenanceMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client):
+            result = run_memory_sdk_maintenance(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                sdk_module="domain_chip_memory",
+                now="2025-04-02T09:00:00Z",
+                actor_id="memory_test",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        self.assertEqual(fake_client.maintenance_calls, [{"now": "2025-04-02T09:00:00Z"}])
+        self.assertEqual(result.maintenance["active_state_stale_preserved_count"], 1)
+        self.assertEqual(result.maintenance["active_state_superseded_count"], 1)
+        self.assertEqual(result.trace["operation"], "reconsolidate_manual_memory")
+        events = latest_events_by_type(self.state_db, event_type="memory_maintenance_run", limit=10)
+        self.assertTrue(events)
+        facts = events[0]["facts_json"] or {}
+        self.assertEqual(facts["status"], "succeeded")
+        self.assertEqual(facts["maintenance"]["active_state_stale_preserved_count"], 1)
+        self.assertEqual(facts["trace"]["active_state_maintenance"]["superseded"], 1)
 
     def test_structured_evidence_writes_use_evidence_role_and_archive_retention(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -3938,7 +3994,7 @@ class RuntimeArchitecturePinTests(SparkTestCase):
     def test_pin_constants_exported(self) -> None:
         self.assertEqual(
             memory_orchestrator.PINNED_RUNTIME_MEMORY_ARCHITECTURE,
-            "dual_store_event_calendar_hybrid",
+            "summary_synthesis_memory",
         )
         self.assertEqual(
             memory_orchestrator.PINNED_RUNTIME_MEMORY_PROVIDER,
