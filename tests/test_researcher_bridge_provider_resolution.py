@@ -266,11 +266,13 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         events = latest_events_by_type(
             self.state_db,
             event_type="tool_result_received",
-            limit=1,
+            limit=5,
         )
-        self.assertEqual(events[0]["reason_code"], "context_source_debug")
-        self.assertEqual(events[0]["facts_json"]["explained_request_id"], "req-memory-kernel-next-step")
-        self.assertEqual(events[0]["facts_json"]["explained_routing_decision"], "memory_kernel_next_step")
+        debug_event = next(event for event in events if event["reason_code"] == "context_source_debug")
+        self.assertEqual(debug_event["facts_json"]["routing_decision"], "context_source_debug")
+        self.assertEqual(debug_event["facts_json"]["explained_request_id"], "req-memory-kernel-next-step")
+        self.assertEqual(debug_event["facts_json"]["explained_routing_decision"], "memory_kernel_next_step")
+        self.assertEqual(debug_event["facts_json"]["explained_focus_source_class"], "current_state")
 
     def test_normalize_browser_search_query_extracts_domain_from_browse_request(self) -> None:
         query = _normalize_browser_search_query(
