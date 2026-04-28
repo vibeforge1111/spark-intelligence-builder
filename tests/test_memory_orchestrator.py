@@ -241,6 +241,38 @@ class _HybridRetrievalMemoryClient(_FakeMemoryClient):
         }
 
 
+class _SupportingOnlyHybridRetrievalMemoryClient(_HybridRetrievalMemoryClient):
+    def get_current_state(self, **payload):
+        self.current_state_calls.append(payload)
+        return {
+            "status": "abstained",
+            "reason": "not_found",
+            "memory_role": "current_state",
+            "records": [],
+            "provenance": [],
+            "retrieval_trace": {"trace_id": "mem-trace-current-miss"},
+        }
+
+    def retrieve_evidence(self, **payload):
+        self.evidence_calls.append(payload)
+        return {
+            "status": "supported",
+            "memory_role": "structured_evidence",
+            "records": [
+                {
+                    "subject": payload.get("subject"),
+                    "predicate": payload.get("predicate"),
+                    "value": f"supporting memory evaluation note {index}",
+                    "text": f"Supporting memory evaluation note {index}.",
+                    "metadata": {"source_surface": "workflow_state"},
+                }
+                for index in range(3)
+            ],
+            "provenance": [{"memory_role": "structured_evidence", "source": "fake_sdk"}],
+            "retrieval_trace": {"trace_id": "mem-trace-evidence"},
+        }
+
+
 class _StaleEvidenceMemoryClient(_FakeMemoryClient):
     def retrieve_evidence(self, **payload):
         self.evidence_calls.append(payload)
@@ -411,6 +443,10 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(packet["sections"][0]["authority"], "authority")
         self.assertEqual(packet["source_mix"]["current_state"], 1)
         self.assertTrue(packet["trace"]["score_adaptive_truncation"])
+        gates = packet["trace"]["promotion_gates"]
+        self.assertEqual(gates["status"], "pass")
+        self.assertEqual(gates["gates"]["stale_current_conflict"]["status"], "pass")
+        self.assertEqual(gates["gates"]["source_swamp_resistance"]["status"], "pass")
         self.assertIn("diagnostics", {section["section"] for section in packet["sections"]})
         self.assertTrue(any(candidate["survived_context_budget"] for candidate in trace["candidates"]))
         graph_lane = next(lane for lane in trace["lane_summaries"] if lane["lane"] == "typed_temporal_graph")
@@ -427,6 +463,33 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(len(fake_client.current_state_calls), 1)
         self.assertEqual(len(fake_client.evidence_calls), 1)
         self.assertEqual(len(fake_client.retrieval_event_calls), 1)
+
+    def test_hybrid_memory_context_packet_warns_when_supporting_sources_swamp_authority(self) -> None:
+        fake_client = _SupportingOnlyHybridRetrievalMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ):
+            result = hybrid_memory_retrieve(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                query="What memory evaluation notes are available?",
+                subject="human:test",
+                predicate="profile.current_focus",
+                limit=4,
+                actor_id="test",
+            )
+
+        packet = result.context_packet
+        self.assertIsNotNone(packet)
+        assert packet is not None
+        gates = packet.trace["promotion_gates"]
+        self.assertEqual(gates["status"], "warn")
+        self.assertEqual(gates["mode"], "trace_only")
+        self.assertEqual(gates["gates"]["source_swamp_resistance"]["status"], "warn")
+        self.assertEqual(gates["gates"]["stale_current_conflict"]["status"], "pass")
+        self.assertEqual(gates["gates"]["source_swamp_resistance"]["evidence"]["authority_count"], 0)
+        self.assertGreaterEqual(gates["gates"]["source_swamp_resistance"]["evidence"]["supporting_count"], 3)
 
     def test_hybrid_memory_retrieve_prepares_graphiti_shadow_lane_without_selecting_it(self) -> None:
         self.config_manager.set_path("spark.memory.sidecars.graphiti.enabled", True)
@@ -600,6 +663,10 @@ class MemoryOrchestratorTests(SparkTestCase):
         sections = {section["section"]: section for section in packet.sections}
         self.assertIn("recent_conversation", sections)
         self.assertEqual(packet.source_mix["recent_conversation"], 1)
+        recent_gate = packet.trace["promotion_gates"]["gates"]["recent_conversation_noise"]
+        self.assertEqual(recent_gate["status"], "pass")
+        self.assertEqual(recent_gate["evidence"]["recent_selected_count"], 1)
+        self.assertEqual(recent_gate["evidence"]["recent_noise_count"], 0)
 
     def test_memory_kernel_dispatches_hybrid_memory_retrieve(self) -> None:
         fake_client = _HybridRetrievalMemoryClient()

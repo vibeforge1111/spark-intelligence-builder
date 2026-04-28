@@ -1929,6 +1929,7 @@ def hybrid_memory_retrieve(
             ],
             "context_packet_sections": [section["section"] for section in context_packet.sections],
             "context_packet_source_mix": context_packet.source_mix,
+            "context_packet_promotion_gates": context_packet.trace.get("promotion_gates"),
         },
         abstained=not bool(selected_records),
         reason=None if selected_records else ("no_hybrid_candidates" if not candidates else "all_candidates_discarded"),
@@ -5023,6 +5024,12 @@ def _build_hybrid_memory_context_packet(
         (section for section in sections_by_name.values() if section["items"]),
         key=lambda section: section_order.get(str(section["section"]), 99),
     )
+    promotion_gates = _hybrid_memory_context_promotion_gates(
+        candidates=candidates,
+        sections=sections,
+        source_mix=source_mix,
+        lane_summaries=lane_summaries,
+    )
     conflict_notes = [
         {
             "lane": candidate.lane,
@@ -5048,8 +5055,144 @@ def _build_hybrid_memory_context_packet(
             "selected_candidate_count": len(selected_candidates),
             "section_count": len(sections),
             "score_adaptive_truncation": True,
+            "promotion_gates": promotion_gates,
         },
     )
+
+
+_AUTHORITY_MEMORY_SOURCE_CLASSES: set[str] = {"current_state", "historical_state"}
+_RECENT_CONVERSATION_NOISE_MARKERS: tuple[str, ...] = (
+    "diagnostic",
+    "maintenance",
+    "config",
+    "policy",
+    "doctor",
+)
+
+
+def _hybrid_memory_context_promotion_gates(
+    *,
+    candidates: list[HybridMemoryCandidate],
+    sections: list[dict[str, Any]],
+    source_mix: dict[str, int],
+    lane_summaries: list[dict[str, Any]],
+) -> dict[str, Any]:
+    packet_candidate_keys = {
+        str(item.get("candidate_key") or "")
+        for section in sections
+        for item in list(section.get("items") or [])
+        if isinstance(item, dict)
+    }
+    packet_candidates = [
+        candidate for candidate in candidates if candidate.selected and _hybrid_memory_candidate_key(candidate) in packet_candidate_keys
+    ]
+    total_packet_items = len(packet_candidates)
+    authority_count = sum(1 for candidate in packet_candidates if candidate.source_class in _AUTHORITY_MEMORY_SOURCE_CLASSES)
+    supporting_count = max(0, total_packet_items - authority_count)
+    stale_selected_count = sum(1 for candidate in packet_candidates if _memory_kernel_record_is_stale(candidate.record))
+    stale_discarded_count = sum(1 for candidate in candidates if candidate.reason_discarded == "stale_or_superseded")
+    recent_candidates = [candidate for candidate in packet_candidates if candidate.source_class == "recent_conversation"]
+    recent_lane = next((lane for lane in lane_summaries if lane.get("lane") == "recent_conversation"), {})
+    recent_noise_count = sum(1 for candidate in recent_candidates if _recent_conversation_candidate_is_noise(candidate))
+    dominant_source = max(source_mix, key=source_mix.get) if source_mix else None
+    dominant_count = int(source_mix.get(dominant_source, 0)) if dominant_source else 0
+    dominant_fraction = round(dominant_count / max(1, sum(source_mix.values())), 3) if source_mix else 0.0
+
+    gates = {
+        "source_swamp_resistance": _promotion_gate(
+            status=(
+                "pass"
+                if authority_count > 0 or supporting_count <= 2
+                else "warn"
+            ),
+            reason=(
+                "authority_present_or_small_supporting_packet"
+                if authority_count > 0 or supporting_count <= 2
+                else "supporting_sources_without_authority"
+            ),
+            evidence={
+                "authority_count": authority_count,
+                "supporting_count": supporting_count,
+                "packet_candidate_count": total_packet_items,
+            },
+        ),
+        "stale_current_conflict": _promotion_gate(
+            status="pass" if stale_selected_count == 0 else "fail",
+            reason="stale_candidates_discarded" if stale_selected_count == 0 else "stale_candidate_survived_packet",
+            evidence={
+                "stale_selected_count": stale_selected_count,
+                "stale_discarded_count": stale_discarded_count,
+                "current_state_selected": any(candidate.source_class == "current_state" for candidate in packet_candidates),
+            },
+        ),
+        "recent_conversation_noise": _promotion_gate(
+            status=(
+                "pass"
+                if not recent_candidates or (recent_noise_count == 0 and bool(recent_lane.get("query_overlap_required")))
+                else "warn"
+            ),
+            reason=(
+                "no_recent_conversation_selected"
+                if not recent_candidates
+                else (
+                    "recent_conversation_query_gated_and_clean"
+                    if recent_noise_count == 0 and bool(recent_lane.get("query_overlap_required"))
+                    else "recent_conversation_needs_stronger_filtering"
+                )
+            ),
+            evidence={
+                "recent_selected_count": len(recent_candidates),
+                "recent_noise_count": recent_noise_count,
+                "query_overlap_required": bool(recent_lane.get("query_overlap_required")),
+            },
+        ),
+        "source_mix_stability": _promotion_gate(
+            status=(
+                "pass"
+                if total_packet_items <= 2
+                or dominant_fraction <= 0.75
+                or dominant_source in _AUTHORITY_MEMORY_SOURCE_CLASSES
+                else "warn"
+            ),
+            reason=(
+                "small_or_balanced_packet"
+                if total_packet_items <= 2 or dominant_fraction <= 0.75
+                else (
+                    "authority_source_dominates"
+                    if dominant_source in _AUTHORITY_MEMORY_SOURCE_CLASSES
+                    else "single_supporting_source_dominates_packet"
+                )
+            ),
+            evidence={
+                "source_mix": dict(source_mix),
+                "dominant_source": dominant_source,
+                "dominant_fraction": dominant_fraction,
+            },
+        ),
+    }
+    statuses = {str(gate.get("status") or "warn") for gate in gates.values()}
+    overall_status = "fail" if "fail" in statuses else ("warn" if "warn" in statuses else "pass")
+    return {
+        "status": overall_status,
+        "mode": "trace_only",
+        "gates": gates,
+        "rollback_condition": "treat warn/fail gates as acceptance-test blockers before promoting the memory layer",
+    }
+
+
+def _promotion_gate(*, status: str, reason: str, evidence: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": status,
+        "reason": reason,
+        "evidence": evidence,
+    }
+
+
+def _recent_conversation_candidate_is_noise(candidate: HybridMemoryCandidate) -> bool:
+    metadata = candidate.record.get("metadata") if isinstance(candidate.record.get("metadata"), dict) else {}
+    event_type = str(metadata.get("event_type") or "").casefold()
+    component = str(metadata.get("component") or "").casefold()
+    return any(marker in event_type or marker in component for marker in _RECENT_CONVERSATION_NOISE_MARKERS)
 
 
 def _build_recent_conversation_lane(
