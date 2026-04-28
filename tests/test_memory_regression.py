@@ -282,6 +282,7 @@ class MemoryRegressionTests(SparkTestCase):
                     "entity_location_recall_desk": "memory_open_recall",
                     "entity_location_recall_office": "memory_open_recall",
                     "entity_location_updated_recall_desk": "memory_open_recall",
+                    "entity_location_recall_source_explanation": "context_source_debug",
                     "entity_location_history_recall_desk": "memory_entity_state_history",
                     "entity_owner_recall_launch": "memory_open_recall",
                     "entity_owner_recall_investor": "memory_open_recall",
@@ -310,6 +311,7 @@ class MemoryRegressionTests(SparkTestCase):
                     "entity_location_recall_desk": "memory_open_recall_query",
                     "entity_location_recall_office": "memory_open_recall_query",
                     "entity_location_updated_recall_desk": "memory_open_recall_query",
+                    "entity_location_recall_source_explanation": "context_source_debug",
                     "entity_location_history_recall_desk": "memory_entity_state_history_query",
                     "entity_owner_recall_launch": "memory_open_recall_query",
                     "entity_owner_recall_investor": "memory_open_recall_query",
@@ -356,6 +358,10 @@ class MemoryRegressionTests(SparkTestCase):
                     "entity_location_recall_office": "The office plant is on the balcony.",
                     "entity_location_replace_desk": "I'll remember that the tiny desk plant is on the windowsill.",
                     "entity_location_updated_recall_desk": "The tiny desk plant is on the windowsill.",
+                    "entity_location_recall_source_explanation": (
+                        "I answered from the entity-state current recall route. "
+                        "query_kind: location_recall read_method: get_current_state entity-scoped location records"
+                    ),
                     "entity_location_history_recall_desk": (
                         "Before the tiny desk plant was on the windowsill, it was on the kitchen shelf."
                     ),
@@ -481,6 +487,7 @@ class MemoryRegressionTests(SparkTestCase):
                                 "entity_location_recall_desk": "memory_open_recall",
                                 "entity_location_recall_office": "memory_open_recall",
                                 "entity_location_updated_recall_desk": "memory_open_recall",
+                                "entity_location_recall_source_explanation": "context_source_debug",
                                 "entity_location_history_recall_desk": "memory_entity_state_history",
                                 "entity_owner_recall_launch": "memory_open_recall",
                                 "entity_owner_recall_investor": "memory_open_recall",
@@ -509,6 +516,7 @@ class MemoryRegressionTests(SparkTestCase):
                                 "entity_location_recall_desk": "memory_open_recall_query",
                                 "entity_location_recall_office": "memory_open_recall_query",
                                 "entity_location_updated_recall_desk": "memory_open_recall_query",
+                                "entity_location_recall_source_explanation": "context_source_debug",
                                 "entity_location_history_recall_desk": "memory_entity_state_history_query",
                                 "entity_owner_recall_launch": "memory_open_recall_query",
                                 "entity_owner_recall_investor": "memory_open_recall_query",
@@ -564,6 +572,10 @@ class MemoryRegressionTests(SparkTestCase):
                     "entity_location_recall_office": "The office plant is on the balcony.",
                     "entity_location_replace_desk": "I'll remember that the tiny desk plant is on the windowsill.",
                     "entity_location_updated_recall_desk": "The tiny desk plant is on the windowsill.",
+                    "entity_location_recall_source_explanation": (
+                        "I answered from the entity-state current recall route. "
+                        "query_kind: location_recall read_method: get_current_state entity-scoped location records"
+                    ),
                     "entity_location_history_recall_desk": (
                         "Before the tiny desk plant was on the windowsill, it was on the kitchen shelf."
                     ),

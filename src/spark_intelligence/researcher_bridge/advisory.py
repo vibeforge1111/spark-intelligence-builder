@@ -9206,7 +9206,7 @@ def build_researcher_reply(
         read_method = "get_current_state"
         entity_attribute = _open_memory_recall_entity_attribute(detected_open_memory_recall_query.query_kind)
         entity_key = _open_memory_recall_entity_key(detected_open_memory_recall_query)
-        if entity_attribute and entity_attribute != "location" and entity_key:
+        if entity_attribute:
             direct_state_lookup = read_memory_kernel(
                 config_manager=config_manager,
                 state_db=state_db,
@@ -9237,6 +9237,36 @@ def build_researcher_reply(
                 query=detected_open_memory_recall_query,
                 records=direct_state_records,
             )
+            if not recall_records:
+                direct_state_lookup = read_memory_kernel(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    method="get_current_state",
+                    query=str(user_message or "").strip() or detected_open_memory_recall_query.topic,
+                    subject=memory_subject,
+                    predicate_prefix=f"entity.{entity_attribute}",
+                    actor_id="researcher_bridge",
+                    session_id=session_id,
+                    turn_id=f"{request_id}:entity-current-state-prefix",
+                    source_surface="researcher_bridge:entity_current_recall_prefix",
+                )
+                direct_state_records = [
+                    record
+                    for record in _filter_open_memory_recall_records(
+                        [
+                            _open_memory_recall_enriched_entity_record(
+                                query=detected_open_memory_recall_query,
+                                record=record,
+                            )
+                            for record in list(direct_state_lookup.read_result.records or [])
+                        ]
+                    )
+                    if _entity_state_answer_from_record(query=detected_open_memory_recall_query, record=record)
+                ]
+                recall_records = _open_memory_recall_decisive_records(
+                    query=detected_open_memory_recall_query,
+                    records=direct_state_records,
+                )
         if not recall_records:
             read_method = "retrieve_evidence"
             evidence_lookup = retrieve_memory_evidence_in_memory(

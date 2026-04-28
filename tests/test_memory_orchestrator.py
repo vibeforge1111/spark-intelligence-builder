@@ -910,6 +910,49 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(call["metadata"]["location_preposition"], "on")
         self.assertEqual(call["metadata"]["revalidate_after_days"], 21)
 
+    def test_current_state_lookup_preserves_matching_provenance_metadata(self) -> None:
+        raw = memory_orchestrator._normalize_domain_lookup_result(
+            result=SimpleNamespace(
+                found=True,
+                value="windowsill",
+                text="human:test entity.location windowsill",
+                memory_role="current_state",
+                trace={"trace_id": "lookup-trace"},
+                provenance=[
+                    SimpleNamespace(
+                        memory_role="current_state",
+                        subject="human:test",
+                        predicate="entity.location",
+                        text="For later, the tiny desk plant is on the windowsill.",
+                        session_id="session:entity-location",
+                        turn_ids=["turn:entity-location"],
+                        timestamp="2026-04-28T10:00:00Z",
+                        observation_id="obs-location",
+                        event_id="event-location",
+                        retention_class="active_state",
+                        lifecycle={},
+                        metadata={
+                            "value": "windowsill",
+                            "entity_key": "named-object:tiny-desk-plant",
+                            "entity_label": "tiny desk plant",
+                            "entity_attribute": "location",
+                            "location_preposition": "on",
+                        },
+                    )
+                ],
+            ),
+            subject="human:test",
+            predicate="entity.location",
+        )
+
+        self.assertEqual(raw["status"], "supported")
+        record = raw["records"][0]
+        self.assertEqual(record["value"], "windowsill")
+        self.assertEqual(record["observation_id"], "obs-location")
+        self.assertEqual(record["metadata"]["entity_key"], "named-object:tiny-desk-plant")
+        self.assertEqual(record["metadata"]["entity_label"], "tiny desk plant")
+        self.assertEqual(record["metadata"]["location_preposition"], "on")
+
     def test_direct_entity_state_deletion_writes_entity_key_metadata(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

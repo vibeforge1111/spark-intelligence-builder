@@ -162,6 +162,20 @@ DEFAULT_TELEGRAM_MEMORY_ACCEPTANCE_CASES: tuple[TelegramMemoryAcceptanceCase, ..
         expected_response_excludes=("Sol", "kitchen shelf"),
     ),
     TelegramMemoryAcceptanceCase(
+        case_id="entity_location_recall_source_explanation",
+        category="source_explanation",
+        message="Why did you answer that?",
+        expected_bridge_mode="context_source_debug",
+        expected_routing_decision="context_source_debug",
+        expected_response_contains=(
+            "entity-state current recall route",
+            "query_kind: location_recall",
+            "read_method: get_current_state",
+            "entity-scoped location records",
+        ),
+        expected_response_excludes=("diagnostics: authority", "location history"),
+    ),
+    TelegramMemoryAcceptanceCase(
         case_id="entity_location_history_recall_desk",
         category="stale_current_conflict",
         message="Where was the desk plant before?",

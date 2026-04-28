@@ -4492,16 +4492,60 @@ def _normalize_domain_write_result(*, result: Any, operation: str, default_role:
     }
 
 
+def _domain_lookup_matching_provenance(
+    *,
+    provenance: list[dict[str, Any]],
+    subject: str,
+    predicate: str,
+    value: Any,
+) -> dict[str, Any] | None:
+    normalized_value = str(value or "").strip()
+    matches = [
+        record
+        for record in provenance
+        if str(record.get("subject") or "").strip() == subject
+        and str(record.get("predicate") or "").strip() == predicate
+    ]
+    if normalized_value:
+        exact_matches = [
+            record
+            for record in matches
+            if str(record.get("value") or (record.get("metadata") or {}).get("value") or "").strip() == normalized_value
+        ]
+        if exact_matches:
+            return exact_matches[-1]
+    return matches[-1] if matches else None
+
+
 def _normalize_domain_lookup_result(*, result: Any, subject: str, predicate: str) -> dict[str, Any]:
     provenance = [_domain_record_to_dict(item) for item in list(getattr(result, "provenance", []) or [])]
     records = []
     if bool(getattr(result, "found", False)):
+        value = getattr(result, "value", None)
+        matching_provenance = _domain_lookup_matching_provenance(
+            provenance=provenance,
+            subject=subject,
+            predicate=predicate,
+            value=value,
+        )
+        metadata = dict((matching_provenance or {}).get("metadata") or {})
+        if value is not None:
+            metadata.setdefault("value", value)
         records.append(
             {
                 "subject": subject,
                 "predicate": predicate,
-                "value": getattr(result, "value", None),
+                "value": value,
                 "text": getattr(result, "text", None),
+                "memory_role": (matching_provenance or {}).get("memory_role"),
+                "session_id": (matching_provenance or {}).get("session_id"),
+                "turn_ids": list((matching_provenance or {}).get("turn_ids") or []),
+                "timestamp": (matching_provenance or {}).get("timestamp"),
+                "observation_id": (matching_provenance or {}).get("observation_id"),
+                "event_id": (matching_provenance or {}).get("event_id"),
+                "retention_class": (matching_provenance or {}).get("retention_class"),
+                "lifecycle": dict((matching_provenance or {}).get("lifecycle") or {}),
+                "metadata": metadata,
             }
         )
     raw_memory_role = getattr(result, "memory_role", "unknown")

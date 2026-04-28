@@ -2605,6 +2605,19 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(update.reply_text, "I'll remember that the tiny desk plant is on the kitchen shelf.")
         self.assertEqual(query.mode, "memory_open_recall")
         self.assertEqual(query.reply_text, "The tiny desk plant is on the kitchen shelf.")
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
+        location_event = next(
+            event
+            for event in tool_events
+            if event["request_id"] == "req-entity-location-query"
+        )
+        location_facts = location_event["facts_json"] or {}
+        self.assertEqual(location_facts.get("record_count"), 1)
+        self.assertEqual(location_facts.get("candidate_record_count"), 1)
+        self.assertEqual(location_facts.get("read_method"), "get_current_state")
+        self.assertEqual(location_facts.get("retrieved_memory_roles"), ["entity_state"])
+        self.assertEqual(location_facts.get("candidate_memory_roles"), ["entity_state"])
+        self.assertIn("read_method=get_current_state", location_facts.get("evidence_summary") or "")
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(write_events)
         recorded_observations = [
