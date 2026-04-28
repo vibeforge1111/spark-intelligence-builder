@@ -89,7 +89,32 @@ DEFAULT_TELEGRAM_MEMORY_ACCEPTANCE_CASES: tuple[TelegramMemoryAcceptanceCase, ..
         case_id="natural_fact_recall",
         category="natural_recall",
         message="What did I name the plant?",
+        expected_bridge_mode="memory_open_recall",
+        expected_routing_decision="memory_open_recall_query",
         expected_response_contains=("Mira",),
+    ),
+    TelegramMemoryAcceptanceCase(
+        case_id="natural_fact_replace",
+        category="stale_current_conflict",
+        message="Actually, the tiny desk plant is named Sol.",
+        expected_response_contains=("Sol",),
+    ),
+    TelegramMemoryAcceptanceCase(
+        case_id="natural_fact_updated_recall",
+        category="natural_recall",
+        message="What did I name the plant?",
+        expected_bridge_mode="memory_open_recall",
+        expected_routing_decision="memory_open_recall_query",
+        expected_response_contains=("Sol",),
+        expected_response_excludes=("Mira",),
+    ),
+    TelegramMemoryAcceptanceCase(
+        case_id="natural_fact_history_recall",
+        category="stale_current_conflict",
+        message="What was the plant called before?",
+        expected_bridge_mode="memory_profile_fact_history",
+        expected_routing_decision="memory_profile_fact_history_query",
+        expected_response_contains=("Mira", "Sol"),
     ),
 )
 
