@@ -872,6 +872,16 @@ def _entity_state_observation_answer(fact: EntityStateFact) -> str:
         return f"I'll remember that the {label} preference is {value}."
     if fact.attribute == "project":
         return f"I'll remember that the {label} project is {value}."
+    if fact.attribute == "blocker":
+        return f"I'll remember that the {label} blocker is {value}."
+    if fact.attribute == "priority":
+        return f"I'll remember that the {label} priority is {value}."
+    if fact.attribute == "decision":
+        return f"I'll remember that the {label} decision is {value}."
+    if fact.attribute == "next_action":
+        return f"I'll remember that the {label} next action is {value}."
+    if fact.attribute == "metric":
+        return f"I'll remember that the {label} metric is {value}."
     return f"I'll remember that the {label} {fact.attribute} is {value}."
 
 
@@ -889,6 +899,11 @@ def parse_entity_state_fact(value: str) -> EntityStateFact | None:
         _parse_entity_project_fact,
         _parse_entity_relation_fact,
         _parse_entity_preference_fact,
+        _parse_entity_blocker_fact,
+        _parse_entity_priority_fact,
+        _parse_entity_decision_fact,
+        _parse_entity_next_action_fact,
+        _parse_entity_metric_fact,
         _parse_entity_status_fact,
     ):
         parsed = parser(normalized)
@@ -975,6 +990,16 @@ def _clean_entity_attribute(value: str) -> str | None:
         "preferred_style": "preference",
         "project": "project",
         "active_project": "project",
+        "blocker": "blocker",
+        "blocking_issue": "blocker",
+        "bottleneck": "blocker",
+        "priority": "priority",
+        "decision": "decision",
+        "next_action": "next_action",
+        "next_step": "next_action",
+        "todo": "next_action",
+        "metric": "metric",
+        "kpi": "metric",
     }
     return aliases.get(normalized)
 
@@ -1029,7 +1054,8 @@ def _parse_entity_deadline_deletion(value: str) -> EntityStateDeletion | None:
 def _parse_entity_attribute_deletion(value: str) -> EntityStateDeletion | None:
     attribute_words = (
         r"name|status|location|place|owner|handler|deadline|due[-_\s]?date|relation|relationship|"
-        r"preference|preferred[-_\s]?(?:mode|style)|project|active[-_\s]?project"
+        r"preference|preferred[-_\s]?(?:mode|style)|project|active[-_\s]?project|"
+        r"blocker|blocking[-_\s]?issue|bottleneck|priority|decision|next[-_\s]?(?:action|step)|todo|metric|kpi"
     )
     match = re.fullmatch(
         rf"(?:forget|delete|remove)\s+(?:the\s+)?({attribute_words})\s+of\s+(?:my|the)\s+(.+?)[.!]?",
@@ -1145,6 +1171,82 @@ def _parse_entity_preference_fact(value: str) -> EntityStateFact | None:
     if not match:
         return None
     return _entity_fact(entity_label=match.group(1), attribute="preference", value=match.group(2))
+
+
+def _parse_entity_blocker_fact(value: str) -> EntityStateFact | None:
+    match = re.fullmatch(
+        r"(?:my|the)\s+(.+?)\s+(?:blocker|blocking\s+issue|bottleneck)\s+is\s+(.+?)[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return _entity_fact(entity_label=match.group(1), attribute="blocker", value=match.group(2))
+    match = re.fullmatch(
+        r"(?:my|the)\s+(.+?)\s+is\s+blocked\s+on\s+(.+?)[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return _entity_fact(entity_label=match.group(1), attribute="blocker", value=match.group(2))
+
+
+def _parse_entity_priority_fact(value: str) -> EntityStateFact | None:
+    match = re.fullmatch(
+        r"(?:my|the)\s+(.+?)\s+priority\s+is\s+(.+?)[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return _entity_fact(entity_label=match.group(1), attribute="priority", value=match.group(2))
+    match = re.fullmatch(
+        r"(?:my|the)\s+(.+?)\s+prioritizes\s+(.+?)[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return _entity_fact(entity_label=match.group(1), attribute="priority", value=match.group(2))
+
+
+def _parse_entity_decision_fact(value: str) -> EntityStateFact | None:
+    match = re.fullmatch(
+        r"(?:my|the)\s+(.+?)\s+decision\s+is\s+(.+?)[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return _entity_fact(entity_label=match.group(1), attribute="decision", value=match.group(2))
+    match = re.fullmatch(
+        r"(?:my|the)\s+(.+?)\s+decided\s+(?:to\s+)?(.+?)[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return _entity_fact(entity_label=match.group(1), attribute="decision", value=match.group(2))
+
+
+def _parse_entity_next_action_fact(value: str) -> EntityStateFact | None:
+    match = re.fullmatch(
+        r"(?:my|the)\s+(.+?)\s+(?:next\s+action|next\s+step|todo)\s+is\s+(.+?)[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return _entity_fact(entity_label=match.group(1), attribute="next_action", value=match.group(2))
+
+
+def _parse_entity_metric_fact(value: str) -> EntityStateFact | None:
+    match = re.fullmatch(
+        r"(?:my|the)\s+(.+?)\s+(?:metric|kpi)\s+is\s+(.+?)[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return _entity_fact(entity_label=match.group(1), attribute="metric", value=match.group(2))
 
 
 def _parse_entity_status_fact(value: str) -> EntityStateFact | None:

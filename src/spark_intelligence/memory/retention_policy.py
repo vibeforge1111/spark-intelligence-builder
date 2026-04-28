@@ -36,6 +36,13 @@ _ORPHAN_REVALIDATION_DAYS: dict[str, int] = {
     "entity.owner": 21,
     "entity.deadline": 14,
     "entity.relation": 30,
+    "entity.preference": 30,
+    "entity.project": 21,
+    "entity.blocker": 14,
+    "entity.priority": 14,
+    "entity.decision": 30,
+    "entity.next_action": 14,
+    "entity.metric": 14,
 }
 
 

@@ -2977,6 +2977,40 @@ class TelegramGenericMemoryTests(SparkTestCase):
             project_query = ask("req-entity-project-query", "What project is the launch checklist for?")
             project_history = ask("req-entity-project-history", "What was the previous project for the launch checklist?")
 
+            ask("req-entity-blocker-old", "For later, the GTM launch blocker is landing page copy.")
+            ask("req-entity-blocker-new", "Actually, the GTM launch blocker is creator approvals.")
+            blocker_query = ask("req-entity-blocker-query", "What is the blocker for the GTM launch?")
+            blocker_history = ask("req-entity-blocker-history", "What was the previous blocker for the GTM launch?")
+
+            ask("req-entity-priority-old", "For later, the startup ops priority is hiring pipeline.")
+            ask("req-entity-priority-new", "Actually, the startup ops priority is revenue instrumentation.")
+            priority_query = ask("req-entity-priority-query", "What is the priority for startup ops?")
+            priority_history = ask("req-entity-priority-history", "What was the previous priority for startup ops?")
+
+            ask("req-entity-decision-old", "For later, the investor update decision is founder-led notes.")
+            ask("req-entity-decision-new", "Actually, the investor update decision is concise metrics first.")
+            decision_query = ask("req-entity-decision-query", "What is the decision for the investor update?")
+            decision_history = ask(
+                "req-entity-decision-history",
+                "What was the previous decision for the investor update?",
+            )
+
+            ask("req-entity-next-action-old", "For later, the onboarding sprint next action is draft QA prompts.")
+            ask("req-entity-next-action-new", "Actually, the onboarding sprint next action is test Stripe recovery.")
+            next_action_query = ask(
+                "req-entity-next-action-query",
+                "What is the next action for the onboarding sprint?",
+            )
+            next_action_history = ask(
+                "req-entity-next-action-history",
+                "What was the previous next action for the onboarding sprint?",
+            )
+
+            ask("req-entity-metric-old", "For later, the creator campaign metric is replies.")
+            ask("req-entity-metric-new", "Actually, the creator campaign metric is booked calls.")
+            metric_query = ask("req-entity-metric-query", "What is the metric for the creator campaign?")
+            metric_history = ask("req-entity-metric-history", "What was the previous metric for the creator campaign?")
+
         self.assertEqual(status_query.mode, "memory_open_recall")
         self.assertEqual(status_query.reply_text, "The launch checklist status is ready.")
         self.assertEqual(
@@ -3003,7 +3037,32 @@ class TelegramGenericMemoryTests(SparkTestCase):
             project_history.reply_text,
             "Before the launch checklist project was Seed Round, it was Neon Harbor.",
         )
-        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=30)
+        self.assertEqual(blocker_query.reply_text, "The GTM launch blocker is creator approvals.")
+        self.assertEqual(
+            blocker_history.reply_text,
+            "Before the GTM launch blocker was creator approvals, it was landing page copy.",
+        )
+        self.assertEqual(priority_query.reply_text, "The startup ops priority is revenue instrumentation.")
+        self.assertEqual(
+            priority_history.reply_text,
+            "Before the startup ops priority was revenue instrumentation, it was hiring pipeline.",
+        )
+        self.assertEqual(decision_query.reply_text, "The investor update decision is concise metrics first.")
+        self.assertEqual(
+            decision_history.reply_text,
+            "Before the investor update decision was concise metrics first, it was founder-led notes.",
+        )
+        self.assertEqual(next_action_query.reply_text, "The onboarding sprint next action is test Stripe recovery.")
+        self.assertEqual(
+            next_action_history.reply_text,
+            "Before the onboarding sprint next action was test Stripe recovery, it was draft QA prompts.",
+        )
+        self.assertEqual(metric_query.reply_text, "The creator campaign metric is booked calls.")
+        self.assertEqual(
+            metric_history.reply_text,
+            "Before the creator campaign metric was booked calls, it was replies.",
+        )
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=70)
         preference_event = next(
             event
             for event in tool_events
@@ -3034,6 +3093,11 @@ class TelegramGenericMemoryTests(SparkTestCase):
                 "entity.relation",
                 "entity.preference",
                 "entity.project",
+                "entity.blocker",
+                "entity.priority",
+                "entity.decision",
+                "entity.next_action",
+                "entity.metric",
             }.issubset(predicates)
         )
 

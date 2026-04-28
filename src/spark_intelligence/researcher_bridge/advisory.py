@@ -456,6 +456,55 @@ _OPEN_MEMORY_RECALL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         ),
     ),
     (
+        "blocker_recall",
+        re.compile(
+            r"^what(?:'s| is)\s+(?:the\s+)?blocker\s+for\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "blocker_recall",
+        re.compile(
+            r"^what(?:'s| is)\s+blocking\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "priority_recall",
+        re.compile(
+            r"^what(?:'s| is)\s+(?:the\s+)?priority\s+for\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "priority_recall",
+        re.compile(
+            r"^what\s+should\s+(.+?)\s+prioritize[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "decision_recall",
+        re.compile(
+            r"^(?:what(?:'s| is)\s+(?:the\s+)?decision\s+for\s+|what\s+did\s+we\s+decide\s+for\s+)(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "next_action_recall",
+        re.compile(
+            r"^(?:what(?:'s| is)\s+(?:the\s+)?(?:next\s+action|next\s+step|todo)\s+for\s+)(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "metric_recall",
+        re.compile(
+            r"^(?:what(?:'s| is)\s+(?:the\s+)?(?:metric|kpi)\s+for\s+)(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "evidence_recall",
         re.compile(
             r"^(?:what|which)\s+(?:evidence|saved memory|memory)\s+do you have about\s+(.+?)[\?\.\!]*$",
@@ -570,6 +619,46 @@ _ENTITY_STATE_HISTORY_PATTERNS: tuple[tuple[str, str, re.Pattern[str]], ...] = (
         "entity.project",
         re.compile(
             r"^what\s+was\s+(?:the\s+)?(?:previous\s+)?project\s+for\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "blocker",
+        "entity.blocker",
+        re.compile(
+            r"^(?:what\s+was\s+(?:blocking\s+)?(.+?)\s+before|what\s+was\s+(?:the\s+)?(?:previous\s+)?blocker\s+for\s+(.+?))[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "priority",
+        "entity.priority",
+        re.compile(
+            r"^what\s+was\s+(?:the\s+)?(?:previous\s+)?priority\s+for\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "decision",
+        "entity.decision",
+        re.compile(
+            r"^what\s+was\s+(?:the\s+)?(?:previous\s+)?decision\s+for\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "next_action",
+        "entity.next_action",
+        re.compile(
+            r"^what\s+was\s+(?:the\s+)?(?:previous\s+)?(?:next\s+action|next\s+step|todo)\s+for\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "metric",
+        "entity.metric",
+        re.compile(
+            r"^what\s+was\s+(?:the\s+)?(?:previous\s+)?(?:metric|kpi)\s+for\s+(.+?)[\?\.\!]*$",
             re.IGNORECASE,
         ),
     ),
@@ -906,6 +995,16 @@ def _entity_state_answer_from_record(*, query: OpenMemoryRecallQuery, record: di
         return f"The {label} preference is {value}."
     if attribute == "project":
         return f"The {label} project is {value}."
+    if attribute == "blocker":
+        return f"The {label} blocker is {value}."
+    if attribute == "priority":
+        return f"The {label} priority is {value}."
+    if attribute == "decision":
+        return f"The {label} decision is {value}."
+    if attribute == "next_action":
+        return f"The {label} next action is {value}."
+    if attribute == "metric":
+        return f"The {label} metric is {value}."
     return f"The {label} {attribute} is {value}."
 
 
@@ -992,6 +1091,11 @@ def _open_memory_recall_entity_attribute(query_kind: str | None) -> str | None:
         "relation_recall": "relation",
         "preference_recall": "preference",
         "project_recall": "project",
+        "blocker_recall": "blocker",
+        "priority_recall": "priority",
+        "decision_recall": "decision",
+        "next_action_recall": "next_action",
+        "metric_recall": "metric",
     }.get(str(query_kind or "").strip())
 
 
@@ -1062,6 +1166,16 @@ def _entity_state_record_phrase(*, attribute: str, record: dict[str, Any]) -> st
         return f"preference was {value}"
     if attribute == "project":
         return f"project was {value}"
+    if attribute == "blocker":
+        return f"blocker was {value}"
+    if attribute == "priority":
+        return f"priority was {value}"
+    if attribute == "decision":
+        return f"decision was {value}"
+    if attribute == "next_action":
+        return f"next action was {value}"
+    if attribute == "metric":
+        return f"metric was {value}"
     if attribute == "name":
         return f"named {value}"
     return f"{attribute} was {value}"
@@ -1093,6 +1207,21 @@ def _build_entity_state_history_answer(
     if query.attribute == "project":
         previous_value = _profile_fact_record_value(previous_record)
         return f"Before the {label} project was {current_value}, it was {previous_value}."
+    if query.attribute == "blocker":
+        previous_value = _profile_fact_record_value(previous_record)
+        return f"Before the {label} blocker was {current_value}, it was {previous_value}."
+    if query.attribute == "priority":
+        previous_value = _profile_fact_record_value(previous_record)
+        return f"Before the {label} priority was {current_value}, it was {previous_value}."
+    if query.attribute == "decision":
+        previous_value = _profile_fact_record_value(previous_record)
+        return f"Before the {label} decision was {current_value}, it was {previous_value}."
+    if query.attribute == "next_action":
+        previous_value = _profile_fact_record_value(previous_record)
+        return f"Before the {label} next action was {current_value}, it was {previous_value}."
+    if query.attribute == "metric":
+        previous_value = _profile_fact_record_value(previous_record)
+        return f"Before the {label} metric was {current_value}, it was {previous_value}."
     current_phrase = _entity_state_record_phrase(attribute=query.attribute, record=current_record)
     previous_phrase = _entity_state_record_phrase(attribute=query.attribute, record=previous_record)
     if query.attribute in {"location", "deadline", "relation", "name"}:
