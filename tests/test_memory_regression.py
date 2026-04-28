@@ -284,6 +284,7 @@ class MemoryRegressionTests(SparkTestCase):
                     "entity_location_updated_recall_desk": "memory_open_recall",
                     "entity_location_recall_source_explanation": "context_source_debug",
                     "entity_location_history_recall_desk": "memory_entity_state_history",
+                    "entity_location_history_source_explanation": "context_source_debug",
                     "entity_owner_recall_launch": "memory_open_recall",
                     "entity_owner_recall_investor": "memory_open_recall",
                     "entity_owner_updated_recall_launch": "memory_open_recall",
@@ -313,6 +314,7 @@ class MemoryRegressionTests(SparkTestCase):
                     "entity_location_updated_recall_desk": "memory_open_recall_query",
                     "entity_location_recall_source_explanation": "context_source_debug",
                     "entity_location_history_recall_desk": "memory_entity_state_history_query",
+                    "entity_location_history_source_explanation": "context_source_debug",
                     "entity_owner_recall_launch": "memory_open_recall_query",
                     "entity_owner_recall_investor": "memory_open_recall_query",
                     "entity_owner_updated_recall_launch": "memory_open_recall_query",
@@ -365,6 +367,11 @@ class MemoryRegressionTests(SparkTestCase):
                     "entity_location_history_recall_desk": (
                         "Before the tiny desk plant was on the windowsill, it was on the kitchen shelf."
                     ),
+                    "entity_location_history_source_explanation": (
+                        "I answered from the entity-state history route. "
+                        "predicate=entity.location attribute=location read_method=get_historical_state "
+                        "entity-scoped location history"
+                    ),
                     "entity_owner_seed_launch": "I'll remember that the launch checklist is owned by Omar.",
                     "entity_owner_seed_investor": "I'll remember that the investor update is owned by Lina.",
                     "entity_owner_recall_launch": "The launch checklist is owned by Omar.",
@@ -376,7 +383,7 @@ class MemoryRegressionTests(SparkTestCase):
                     ),
                     "entity_owner_history_source_explanation": (
                         "I answered from the entity-state history route. "
-                        "predicate=entity.owner attribute=owner entity-scoped owner history"
+                        "predicate=entity.owner attribute=owner read_method=get_historical_state entity-scoped owner history"
                     ),
                     "entity_status_seed_launch": "I'll remember that the launch checklist status is blocked.",
                     "entity_status_replace_launch": "I'll remember that the launch checklist status is ready.",
@@ -489,6 +496,7 @@ class MemoryRegressionTests(SparkTestCase):
                                 "entity_location_updated_recall_desk": "memory_open_recall",
                                 "entity_location_recall_source_explanation": "context_source_debug",
                                 "entity_location_history_recall_desk": "memory_entity_state_history",
+                                "entity_location_history_source_explanation": "context_source_debug",
                                 "entity_owner_recall_launch": "memory_open_recall",
                                 "entity_owner_recall_investor": "memory_open_recall",
                                 "entity_owner_updated_recall_launch": "memory_open_recall",
@@ -518,6 +526,7 @@ class MemoryRegressionTests(SparkTestCase):
                                 "entity_location_updated_recall_desk": "memory_open_recall_query",
                                 "entity_location_recall_source_explanation": "context_source_debug",
                                 "entity_location_history_recall_desk": "memory_entity_state_history_query",
+                                "entity_location_history_source_explanation": "context_source_debug",
                                 "entity_owner_recall_launch": "memory_open_recall_query",
                                 "entity_owner_recall_investor": "memory_open_recall_query",
                                 "entity_owner_updated_recall_launch": "memory_open_recall_query",
@@ -579,6 +588,11 @@ class MemoryRegressionTests(SparkTestCase):
                     "entity_location_history_recall_desk": (
                         "Before the tiny desk plant was on the windowsill, it was on the kitchen shelf."
                     ),
+                    "entity_location_history_source_explanation": (
+                        "I answered from the entity-state history route. "
+                        "predicate=entity.location attribute=location read_method=get_historical_state "
+                        "entity-scoped location history"
+                    ),
                     "entity_owner_seed_launch": "I'll remember that the launch checklist is owned by Omar.",
                     "entity_owner_seed_investor": "I'll remember that the investor update is owned by Lina.",
                     "entity_owner_recall_launch": "The launch checklist is owned by Omar.",
@@ -590,7 +604,7 @@ class MemoryRegressionTests(SparkTestCase):
                     ),
                     "entity_owner_history_source_explanation": (
                         "I answered from the entity-state history route. "
-                        "predicate=entity.owner attribute=owner entity-scoped owner history"
+                        "predicate=entity.owner attribute=owner read_method=get_historical_state entity-scoped owner history"
                     ),
                     "entity_status_seed_launch": "I'll remember that the launch checklist status is blocked.",
                     "entity_status_replace_launch": "I'll remember that the launch checklist status is ready.",

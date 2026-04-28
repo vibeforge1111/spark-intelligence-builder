@@ -846,7 +846,12 @@ class _DomainChipMemoryClientAdapter:
             request_kwargs.pop("entity_key", None)
             request = self._module.CurrentStateRequest(**request_kwargs)
         result = self._sdk.get_current_state(request)
-        return _normalize_domain_lookup_result(result=result, subject=subject, predicate=predicate)
+        return _normalize_domain_lookup_result(
+            result=result,
+            subject=subject,
+            predicate=predicate,
+            method="get_current_state",
+        )
 
     def get_historical_state(self, **payload: Any) -> dict[str, Any]:
         subject = _optional_string(payload.get("subject"))
@@ -864,7 +869,12 @@ class _DomainChipMemoryClientAdapter:
             request_kwargs.pop("entity_key", None)
             request = self._module.HistoricalStateRequest(**request_kwargs)
         result = self._sdk.get_historical_state(request)
-        return _normalize_domain_lookup_result(result=result, subject=subject, predicate=predicate)
+        return _normalize_domain_lookup_result(
+            result=result,
+            subject=subject,
+            predicate=predicate,
+            method="get_historical_state",
+        )
 
     def retrieve_evidence(self, **payload: Any) -> dict[str, Any]:
         request = self._module.EvidenceRetrievalRequest(
@@ -4517,7 +4527,13 @@ def _domain_lookup_matching_provenance(
     return matches[-1] if matches else None
 
 
-def _normalize_domain_lookup_result(*, result: Any, subject: str, predicate: str) -> dict[str, Any]:
+def _normalize_domain_lookup_result(
+    *,
+    result: Any,
+    subject: str,
+    predicate: str,
+    method: str = "get_current_state",
+) -> dict[str, Any]:
     provenance = [_domain_record_to_dict(item) for item in list(getattr(result, "provenance", []) or [])]
     records = []
     if bool(getattr(result, "found", False)):
@@ -4553,7 +4569,7 @@ def _normalize_domain_lookup_result(*, result: Any, subject: str, predicate: str
     retrieval_trace = dict(getattr(result, "trace", {}) or {})
     contract_reason = memory_contract_reason(
         memory_role=raw_memory_role,
-        method="get_current_state",
+        method=method,
         allow_unknown=not records,
     )
     if contract_reason:
@@ -4567,7 +4583,7 @@ def _normalize_domain_lookup_result(*, result: Any, subject: str, predicate: str
                 scope="domain_lookup_result",
                 reason=contract_reason,
                 observed_role=memory_role,
-                method="get_current_state",
+                method=method,
             ),
             "reason": contract_reason,
         }

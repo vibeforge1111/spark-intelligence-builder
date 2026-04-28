@@ -961,6 +961,27 @@ def _open_memory_recall_entity_key(query: OpenMemoryRecallQuery) -> str | None:
     return f"named-object:{slug or 'unknown'}"
 
 
+def _entity_state_history_entity_key(query: EntityStateHistoryQuery) -> str | None:
+    entity_label = _clean_entity_history_topic(query.topic)
+    if not entity_label:
+        return None
+    slug = re.sub(r"[^a-z0-9]+", "-", entity_label.lower()).strip("-")
+    return f"named-object:{slug or 'unknown'}"
+
+
+def _entity_state_record_entity_key(record: dict[str, Any]) -> str | None:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    value = str(metadata.get("entity_key") or "").strip()
+    return value or None
+
+
+def _entity_state_history_as_of_before(record: dict[str, Any]) -> str | None:
+    timestamp = _parse_memory_timestamp(_memory_record_timestamp(record))
+    if timestamp is None:
+        return None
+    return (timestamp - timedelta(microseconds=1)).astimezone(timezone.utc).isoformat(timespec="microseconds")
+
+
 def _open_memory_recall_entity_attribute(query_kind: str | None) -> str | None:
     return {
         "name_recall": "name",
@@ -8997,22 +9018,89 @@ def build_researcher_reply(
     if detected_entity_state_history_query is not None:
         memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
         target_predicate = str(detected_entity_state_history_query.predicate or "").strip()
-        history_lookup = retrieve_memory_events_in_memory(
+        history_records: list[dict[str, Any]] = []
+        history_read_method = "get_historical_state"
+        entity_key = _entity_state_history_entity_key(detected_entity_state_history_query)
+        current_lookup = read_memory_kernel(
             config_manager=config_manager,
             state_db=state_db,
+            method="get_current_state",
             query=str(user_message or "").strip() or f"What was {detected_entity_state_history_query.topic} before?",
             subject=memory_subject,
             predicate=target_predicate,
-            limit=12,
+            entity_key=entity_key,
             actor_id="researcher_bridge",
+            session_id=session_id,
+            turn_id=f"{request_id}:entity-history-current-state",
+            source_surface="researcher_bridge:entity_history_current_state",
         )
-        history_records: list[dict[str, Any]] = []
-        if not history_lookup.read_result.abstained and history_lookup.read_result.records:
-            history_records = _filter_entity_state_history_records(
-                query=detected_entity_state_history_query,
-                records=list(history_lookup.read_result.records),
+        current_records = _filter_entity_state_history_records(
+            query=detected_entity_state_history_query,
+            records=list(current_lookup.read_result.records or []),
+        )
+        if not current_records:
+            current_lookup = read_memory_kernel(
+                config_manager=config_manager,
+                state_db=state_db,
+                method="get_current_state",
+                query=str(user_message or "").strip() or f"What was {detected_entity_state_history_query.topic} before?",
+                subject=memory_subject,
+                predicate_prefix=target_predicate,
+                actor_id="researcher_bridge",
+                session_id=session_id,
+                turn_id=f"{request_id}:entity-history-current-state-prefix",
+                source_surface="researcher_bridge:entity_history_current_state_prefix",
             )
-        history_read_method = "retrieve_events"
+            current_records = _filter_entity_state_history_records(
+                query=detected_entity_state_history_query,
+                records=list(current_lookup.read_result.records or []),
+            )
+        if current_records:
+            current_record = _ordered_profile_fact_event_records(current_records)[-1]
+            historical_entity_key = _entity_state_record_entity_key(current_record) or entity_key
+            as_of = _entity_state_history_as_of_before(current_record)
+            if historical_entity_key and as_of:
+                historical_lookup = read_memory_kernel(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    method="get_historical_state",
+                    query=str(user_message or "").strip() or f"What was {detected_entity_state_history_query.topic} before?",
+                    subject=memory_subject,
+                    predicate=target_predicate,
+                    entity_key=historical_entity_key,
+                    as_of=as_of,
+                    actor_id="researcher_bridge",
+                    session_id=session_id,
+                    turn_id=f"{request_id}:entity-history-historical-state",
+                    source_surface="researcher_bridge:entity_history_historical_state",
+                )
+                previous_records = [
+                    record
+                    for record in _filter_entity_state_history_records(
+                        query=detected_entity_state_history_query,
+                        records=list(historical_lookup.read_result.records or []),
+                    )
+                    if _profile_fact_record_value(record) != _profile_fact_record_value(current_record)
+                ]
+                if previous_records:
+                    previous_record = _ordered_profile_fact_event_records(previous_records)[-1]
+                    history_records = [previous_record, current_record]
+        if not history_records:
+            history_lookup = retrieve_memory_events_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                query=str(user_message or "").strip() or f"What was {detected_entity_state_history_query.topic} before?",
+                subject=memory_subject,
+                predicate=target_predicate,
+                limit=12,
+                actor_id="researcher_bridge",
+            )
+            if not history_lookup.read_result.abstained and history_lookup.read_result.records:
+                history_records = _filter_entity_state_history_records(
+                    query=detected_entity_state_history_query,
+                    records=list(history_lookup.read_result.records),
+                )
+            history_read_method = "retrieve_events"
         if not history_records:
             direct_inspection = inspect_human_memory_in_memory(
                 config_manager=config_manager,

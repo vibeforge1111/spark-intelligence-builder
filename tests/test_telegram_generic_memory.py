@@ -2785,6 +2785,16 @@ class TelegramGenericMemoryTests(SparkTestCase):
             history_query.reply_text,
             "Before the tiny desk plant was on the balcony, it was on the kitchen shelf.",
         )
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=20)
+        history_event = next(
+            event
+            for event in tool_events
+            if event["request_id"] == "req-entity-location-history"
+        )
+        history_facts = history_event["facts_json"] or {}
+        self.assertEqual(history_facts.get("read_method"), "get_historical_state")
+        self.assertEqual(history_facts.get("event_record_count"), 2)
+        self.assertIn("read_method=get_historical_state", history_facts.get("evidence_summary") or "")
 
     def test_build_researcher_reply_uses_newer_entity_owner_after_conflict(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
@@ -2886,6 +2896,16 @@ class TelegramGenericMemoryTests(SparkTestCase):
             history_query.reply_text,
             "Before the launch checklist was owned by Maya, it was owned by Omar.",
         )
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=20)
+        history_event = next(
+            event
+            for event in tool_events
+            if event["request_id"] == "req-entity-owner-history"
+        )
+        history_facts = history_event["facts_json"] or {}
+        self.assertEqual(history_facts.get("read_method"), "get_historical_state")
+        self.assertEqual(history_facts.get("event_record_count"), 2)
+        self.assertIn("read_method=get_historical_state", history_facts.get("evidence_summary") or "")
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         recorded_observations = [
             observation

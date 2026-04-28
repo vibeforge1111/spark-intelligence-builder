@@ -953,6 +953,49 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(record["metadata"]["entity_label"], "tiny desk plant")
         self.assertEqual(record["metadata"]["location_preposition"], "on")
 
+    def test_historical_state_lookup_accepts_structured_evidence_contract(self) -> None:
+        raw = memory_orchestrator._normalize_domain_lookup_result(
+            result=SimpleNamespace(
+                found=True,
+                value="kitchen shelf",
+                text="human:test entity.location kitchen shelf",
+                memory_role="structured_evidence",
+                trace={"trace_id": "historical-trace"},
+                provenance=[
+                    SimpleNamespace(
+                        memory_role="structured_evidence",
+                        subject="human:test",
+                        predicate="entity.location",
+                        text="For later, the tiny desk plant is on the kitchen shelf.",
+                        session_id="session:entity-location",
+                        turn_ids=["turn:old-location"],
+                        timestamp="2026-04-28T09:00:00Z",
+                        observation_id="obs-old-location",
+                        event_id="event-old-location",
+                        retention_class="active_state",
+                        lifecycle={},
+                        metadata={
+                            "value": "kitchen shelf",
+                            "entity_key": "named-object:tiny-desk-plant",
+                            "entity_label": "tiny desk plant",
+                            "entity_attribute": "location",
+                            "location_preposition": "on",
+                        },
+                    )
+                ],
+            ),
+            subject="human:test",
+            predicate="entity.location",
+            method="get_historical_state",
+        )
+
+        self.assertEqual(raw["status"], "supported")
+        record = raw["records"][0]
+        self.assertEqual(record["value"], "kitchen shelf")
+        self.assertEqual(record["memory_role"], "structured_evidence")
+        self.assertEqual(record["metadata"]["entity_key"], "named-object:tiny-desk-plant")
+        self.assertEqual(record["metadata"]["location_preposition"], "on")
+
     def test_direct_entity_state_deletion_writes_entity_key_metadata(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
