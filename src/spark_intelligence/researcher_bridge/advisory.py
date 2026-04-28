@@ -5331,11 +5331,23 @@ def _format_memory_route_source_reply(*, route_facts: dict[str, Any]) -> str | N
     if routing_decision == "memory_entity_state_history_query" or bridge_mode == "memory_entity_state_history":
         route_label = "entity-state history route"
         source_line = "entity_state history records"
-        reason = (
-            "The previous answer was a temporal entity-memory read. "
-            f"It used entity-scoped {attribute_label} history for the named object, so the current value and previous value "
-            "came from entity-state records rather than diagnostics or workflow residue."
-        )
+        previous_value_found = route_facts.get("previous_value_found")
+        if previous_value_found is None and evidence_summary:
+            match = re.search(r"\bprevious_value_found=(yes|no)", evidence_summary)
+            if match:
+                previous_value_found = match.group(1) == "yes"
+        if previous_value_found is False:
+            reason = (
+                "The previous answer was a temporal entity-memory read. "
+                f"It used entity-scoped {attribute_label} history for the named object, but found no distinct previous value. "
+                "Duplicate same-value records were not treated as a previous value."
+            )
+        else:
+            reason = (
+                "The previous answer was a temporal entity-memory read. "
+                f"It used entity-scoped {attribute_label} history for the named object, so the current value and previous value "
+                "came from entity-state records rather than diagnostics or workflow residue."
+            )
     elif routing_decision == "memory_open_recall_query" or bridge_mode == "memory_open_recall":
         if open_recall_attribute:
             route_label = "entity-state current recall route"
@@ -9203,18 +9215,21 @@ def build_researcher_reply(
                     turn_id=f"{request_id}:entity-history-historical-state",
                     source_surface="researcher_bridge:entity_history_historical_state",
                 )
+                historical_records = _filter_entity_state_history_records(
+                    query=detected_entity_state_history_query,
+                    records=list(historical_lookup.read_result.records or []),
+                )
                 previous_records = [
                     record
-                    for record in _filter_entity_state_history_records(
-                        query=detected_entity_state_history_query,
-                        records=list(historical_lookup.read_result.records or []),
-                    )
+                    for record in historical_records
                     if _profile_fact_record_value(record) != _profile_fact_record_value(current_record)
                 ]
                 if previous_records:
                     previous_record = _ordered_profile_fact_event_records(previous_records)[-1]
                     history_records = [previous_record, current_record]
-        if not history_records:
+                elif historical_records:
+                    history_records = [current_record]
+        if not history_records and not current_records:
             history_lookup = retrieve_memory_events_in_memory(
                 config_manager=config_manager,
                 state_db=state_db,
@@ -9230,7 +9245,7 @@ def build_researcher_reply(
                     records=list(history_lookup.read_result.records),
                 )
             history_read_method = "retrieve_events"
-        if not history_records:
+        if not history_records and not current_records:
             direct_inspection = inspect_human_memory_in_memory(
                 config_manager=config_manager,
                 state_db=state_db,
@@ -9253,12 +9268,22 @@ def build_researcher_reply(
             query=detected_entity_state_history_query,
             records=history_records,
         )
+        previous_value_found = (
+            _select_previous_profile_fact_record(
+                current_value=_profile_fact_record_value(_ordered_profile_fact_event_records(history_records)[-1])
+                if history_records
+                else "",
+                records=history_records,
+            )
+            is not None
+        )
         evidence_summary = (
             "status=memory_entity_state_history "
             f"predicate={target_predicate or 'unknown'} "
             f"attribute={detected_entity_state_history_query.attribute or 'unknown'} "
             f"topic={detected_entity_state_history_query.topic or 'unknown'} "
             f"event_record_count={len(history_records)} "
+            f"previous_value_found={'yes' if previous_value_found else 'no'} "
             f"read_method={history_read_method}"
         )
         record_event(
@@ -9289,6 +9314,7 @@ def build_researcher_reply(
                     "attribute": detected_entity_state_history_query.attribute,
                     "topic": detected_entity_state_history_query.topic,
                     "event_record_count": len(history_records),
+                    "previous_value_found": previous_value_found,
                     "read_method": history_read_method,
                 },
             ),

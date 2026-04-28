@@ -3101,6 +3101,62 @@ class TelegramGenericMemoryTests(SparkTestCase):
             }.issubset(predicates)
         )
 
+    def test_entity_history_does_not_treat_duplicate_same_value_as_previous(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        def ask(request_id: str, message: str):
+            return build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id=request_id,
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-duplicate-history",
+                channel_kind="telegram",
+                user_message=message,
+            )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for generic entity memory"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for generic entity memory"),
+        ):
+            ask("req-entity-next-action-dup-1", "For later, the onboarding sprint next action is draft QA prompts.")
+            ask("req-entity-next-action-dup-2", "For later, the onboarding sprint next action is draft QA prompts.")
+            current_query = ask("req-entity-next-action-dup-current", "What is the next action for the onboarding sprint?")
+            history_query = ask(
+                "req-entity-next-action-dup-history",
+                "What was the previous next action for the onboarding sprint?",
+            )
+            source_query = ask("req-entity-next-action-dup-source", "Why did you answer that?")
+
+        self.assertEqual(current_query.reply_text, "The onboarding sprint next action is draft QA prompts.")
+        self.assertEqual(history_query.mode, "memory_entity_state_history")
+        self.assertEqual(
+            history_query.reply_text,
+            "I don't currently have an earlier saved next_action for that.",
+        )
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=20)
+        history_event = next(
+            event
+            for event in tool_events
+            if event["request_id"] == "req-entity-next-action-dup-history"
+        )
+        history_facts = history_event["facts_json"] or {}
+        self.assertEqual(history_facts.get("read_method"), "get_historical_state")
+        self.assertFalse(history_facts.get("previous_value_found"))
+        self.assertIn("previous_value_found=no", history_facts.get("evidence_summary") or "")
+        self.assertIn("read_method=get_historical_state", history_facts.get("evidence_summary") or "")
+        self.assertNotIn("read_method=retrieve_events", history_facts.get("evidence_summary") or "")
+        self.assertEqual(source_query.mode, "context_source_debug")
+        self.assertIn("no distinct previous value", source_query.reply_text)
+        self.assertIn("read_method: get_historical_state", source_query.reply_text)
+        self.assertNotIn("read_method: retrieve_events", source_query.reply_text)
+
     def test_build_researcher_reply_deletes_one_entity_location_without_affecting_another(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)
