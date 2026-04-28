@@ -5038,6 +5038,9 @@ def _format_context_source_ledger_reply(
             ]
         )
         return "\n".join(lines)
+    route_reply = _format_memory_route_source_reply(route_facts=route_facts)
+    if route_reply:
+        return route_reply
 
     lines = ["I answered from the latest Spark context capsule for the previous Telegram turn."]
     lines.extend(["", "Authority sources:", *render(authority)])
@@ -5051,6 +5054,47 @@ def _format_context_source_ledger_reply(
             "Workflow or mission residue is advisory unless you ask about those systems directly.",
         ]
     )
+    return "\n".join(lines)
+
+
+def _format_memory_route_source_reply(*, route_facts: dict[str, Any]) -> str | None:
+    routing_decision = str(route_facts.get("routing_decision") or "").strip()
+    bridge_mode = str(route_facts.get("bridge_mode") or "").strip()
+    evidence_summary = str(route_facts.get("evidence_summary") or "").strip()
+    route_label: str | None = None
+    source_line: str | None = None
+    reason: str | None = None
+    if routing_decision == "memory_entity_state_history_query" or bridge_mode == "memory_entity_state_history":
+        route_label = "entity-state history route"
+        source_line = "entity_state history records"
+        reason = (
+            "The previous answer was a temporal entity-memory read. "
+            "It used entity-scoped location history for the named object, so the current value and previous value "
+            "came from entity-state records rather than diagnostics or workflow residue."
+        )
+    elif routing_decision == "memory_open_recall_query" or bridge_mode == "memory_open_recall":
+        route_label = "open memory recall route"
+        source_line = "entity_state/current_state records plus relevant evidence"
+        reason = (
+            "The previous answer was an open memory recall. "
+            "It selected records matching the question topic and requested attribute, while stale or wrong-attribute "
+            "records stayed out of the final answer."
+        )
+    if route_label is None:
+        return None
+    lines = [f"I answered from the {route_label} for the previous Telegram turn."]
+    lines.extend(
+        [
+            "",
+            "Route:",
+            f"- routing_decision: {routing_decision or 'unknown'}",
+            f"- bridge_mode: {bridge_mode or 'unknown'}",
+            f"- source: {source_line}",
+        ]
+    )
+    if evidence_summary:
+        lines.append(f"- evidence_summary: {evidence_summary}")
+    lines.extend(["", "Reason:", reason or "The previous answer came from the named memory route."])
     return "\n".join(lines)
 
 
@@ -5150,6 +5194,21 @@ def _build_context_source_debug_reply(
                 "source_counts": {},
             },
         )
+    if previous_route_facts is not None:
+        route_reply = _format_memory_route_source_reply(route_facts=previous_route_facts)
+        if route_reply:
+            return (
+                route_reply,
+                {
+                    "explained_request_id": previous_route_request_id,
+                    "explained_tool_result_created_at": previous_route_created_at,
+                    "explained_routing_decision": previous_route_facts.get("routing_decision"),
+                    "explained_bridge_mode": previous_route_facts.get("bridge_mode"),
+                    "explained_evidence_summary": previous_route_facts.get("evidence_summary"),
+                    "source_ledger": [],
+                    "source_counts": {},
+                },
+            )
 
     for row in rows:
         explained_request_id = str(row["request_id"] or "").strip()

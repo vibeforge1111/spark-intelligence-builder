@@ -292,6 +292,92 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual(debug_event["facts_json"]["explained_focus_source_class"], "current_state")
         self.assertEqual(debug_event["facts_json"]["context_packet_promotion_gates"]["status"], "pass")
 
+    def test_context_source_debug_query_explains_previous_entity_history_route(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="context_capsule_compiled",
+            component="researcher_bridge",
+            summary="Compiled older Spark context capsule.",
+            request_id="req-older-capsule",
+            channel_id="telegram",
+            session_id="session:telegram:dm:111",
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            actor_id="researcher_bridge",
+            reason_code="context_capsule_compiled",
+            facts={
+                "source_counts": {"diagnostics": 8},
+                "source_ledger": [
+                    {
+                        "source": "diagnostics",
+                        "priority": 2,
+                        "role": "authority",
+                        "count": 8,
+                        "present": True,
+                    }
+                ],
+            },
+        )
+        evidence_summary = (
+            "status=memory_entity_state_history predicate=entity.location "
+            "attribute=location topic=the desk plant event_record_count=2 read_method=inspect_memory_records"
+        )
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered entity-state history.",
+            request_id="req-entity-history",
+            channel_id="telegram",
+            session_id="session:telegram:dm:111",
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            actor_id="researcher_bridge",
+            reason_code="memory_entity_state_history_query",
+            facts={
+                "routing_decision": "memory_entity_state_history_query",
+                "bridge_mode": "memory_entity_state_history",
+                "evidence_summary": evidence_summary,
+            },
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider should not run for source debug"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-source-debug",
+                agent_id="agent:human:telegram:111",
+                human_id="human:telegram:111",
+                session_id="session:telegram:dm:111",
+                channel_kind="telegram",
+                user_message="Why did you answer that?",
+            )
+
+        self.assertEqual(result.routing_decision, "context_source_debug")
+        self.assertIn("entity-state history route", result.reply_text)
+        self.assertIn("routing_decision: memory_entity_state_history_query", result.reply_text)
+        self.assertIn("source: entity_state history records", result.reply_text)
+        self.assertIn("predicate=entity.location", result.reply_text)
+        self.assertIn("attribute=location", result.reply_text)
+        self.assertIn("temporal entity-memory read", result.reply_text)
+        self.assertNotIn("diagnostics: authority, 8 items", result.reply_text)
+
+        events = latest_events_by_type(
+            self.state_db,
+            event_type="tool_result_received",
+            limit=5,
+        )
+        debug_event = next(event for event in events if event["reason_code"] == "context_source_debug")
+        self.assertEqual(debug_event["facts_json"]["explained_request_id"], "req-entity-history")
+        self.assertEqual(
+            debug_event["facts_json"]["explained_routing_decision"],
+            "memory_entity_state_history_query",
+        )
+        self.assertEqual(debug_event["facts_json"]["explained_evidence_summary"], evidence_summary)
+
     def test_normalize_browser_search_query_extracts_domain_from_browse_request(self) -> None:
         query = _normalize_browser_search_query(
             "Go to vibeship.co and tell me what you think."
