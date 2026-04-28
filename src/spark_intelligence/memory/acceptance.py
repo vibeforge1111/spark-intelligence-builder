@@ -185,6 +185,7 @@ def run_telegram_memory_acceptance(
         memory_subject=memory_subject,
     )
     gate_mismatches = gate_assertions.get("mismatches") if isinstance(gate_assertions, dict) else []
+    gate_enforcement = gate_assertions.get("enforcement") if isinstance(gate_assertions, dict) else {}
     status = "passed" if not mismatches and not gate_mismatches else "failed"
     summary = {
         "status": status,
@@ -193,6 +194,8 @@ def run_telegram_memory_acceptance(
         "mismatched_case_count": len(mismatches),
         "promotion_gate_status": gate_assertions.get("status"),
         "promotion_gate_mismatch_count": len(gate_mismatches or []),
+        "promotion_gate_enforcement": (gate_enforcement or {}).get("mode") or "blocking_acceptance",
+        "promotion_gate_blocking": bool((gate_enforcement or {}).get("blocking")),
         "selected_user_id": selected_user_id,
         "selected_chat_id": selected_chat_id,
         "human_id": memory_subject,
@@ -310,9 +313,16 @@ def _build_acceptance_gate_assertions(
         current_state_count = 0
     if current_state_count < 1:
         mismatches.append("source_mix:current_state_missing")
+    enforcement = {
+        "mode": "blocking_acceptance",
+        "accepted_statuses": ["pass"],
+        "blocking": bool(mismatches),
+        "blockers": list(mismatches),
+    }
     return {
         "status": promotion_gates.get("status") or "missing",
         "mismatches": mismatches,
+        "enforcement": enforcement,
         "promotion_gates": promotion_gates,
         "source_mix": source_mix if isinstance(source_mix, dict) else {},
         "context_packet_sections": [
