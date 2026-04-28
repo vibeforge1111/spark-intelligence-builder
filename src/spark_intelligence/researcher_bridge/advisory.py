@@ -931,6 +931,36 @@ def _open_memory_recall_record_role(record: dict[str, Any]) -> str:
     return str(record.get("memory_role") or metadata.get("memory_role") or "").strip()
 
 
+def _open_memory_recall_enriched_entity_record(
+    *,
+    query: OpenMemoryRecallQuery,
+    record: dict[str, Any],
+) -> dict[str, Any]:
+    attribute = _open_memory_recall_entity_attribute(query.query_kind)
+    if not attribute or str(record.get("predicate") or "").strip() != f"entity.{attribute}":
+        return record
+    enriched = dict(record)
+    metadata = dict(record.get("metadata") if isinstance(record.get("metadata"), dict) else {})
+    metadata.setdefault("entity_attribute", attribute)
+    metadata.setdefault("entity_label", _clean_entity_history_topic(query.topic))
+    entity_key = _open_memory_recall_entity_key(query)
+    if entity_key:
+        metadata.setdefault("entity_key", entity_key)
+    enriched["metadata"] = metadata
+    enriched.setdefault("memory_role", "current_state")
+    return enriched
+
+
+def _open_memory_recall_entity_key(query: OpenMemoryRecallQuery) -> str | None:
+    if not _open_memory_recall_entity_attribute(query.query_kind):
+        return None
+    entity_label = _clean_entity_history_topic(query.topic)
+    if not entity_label:
+        return None
+    slug = re.sub(r"[^a-z0-9]+", "-", entity_label.lower()).strip("-")
+    return f"named-object:{slug or 'unknown'}"
+
+
 def _open_memory_recall_entity_attribute(query_kind: str | None) -> str | None:
     return {
         "name_recall": "name",
@@ -9172,25 +9202,60 @@ def build_researcher_reply(
         archived_raw_episode_count = 0
         archived_structured_evidence_count = 0
         direct_inspection = None
-        evidence_lookup = retrieve_memory_evidence_in_memory(
-            config_manager=config_manager,
-            state_db=state_db,
-            query=str(user_message or "").strip() or detected_open_memory_recall_query.topic,
-            subject=memory_subject,
-            limit=6,
-            actor_id="researcher_bridge",
-        )
         recall_records: list[dict[str, Any]] = []
-        read_method = "retrieve_evidence"
-        if not evidence_lookup.read_result.abstained and evidence_lookup.read_result.records:
-            recall_records = [
+        read_method = "get_current_state"
+        entity_attribute = _open_memory_recall_entity_attribute(detected_open_memory_recall_query.query_kind)
+        entity_key = _open_memory_recall_entity_key(detected_open_memory_recall_query)
+        if entity_attribute and entity_attribute != "location" and entity_key:
+            direct_state_lookup = read_memory_kernel(
+                config_manager=config_manager,
+                state_db=state_db,
+                method="get_current_state",
+                query=str(user_message or "").strip() or detected_open_memory_recall_query.topic,
+                subject=memory_subject,
+                predicate=f"entity.{entity_attribute}",
+                entity_key=entity_key,
+                actor_id="researcher_bridge",
+                session_id=session_id,
+                turn_id=f"{request_id}:entity-current-state",
+                source_surface="researcher_bridge:entity_current_recall",
+            )
+            direct_state_records = [
                 record
-                for record in _filter_open_memory_recall_records(evidence_lookup.read_result.records)
-                if _record_matches_open_memory_topic(
-                    record=record,
-                    topic=detected_open_memory_recall_query.topic,
+                for record in _filter_open_memory_recall_records(
+                    [
+                        _open_memory_recall_enriched_entity_record(
+                            query=detected_open_memory_recall_query,
+                            record=record,
+                        )
+                        for record in list(direct_state_lookup.read_result.records or [])
+                    ]
                 )
+                if _entity_state_answer_from_record(query=detected_open_memory_recall_query, record=record)
             ]
+            recall_records = _open_memory_recall_decisive_records(
+                query=detected_open_memory_recall_query,
+                records=direct_state_records,
+            )
+        if not recall_records:
+            read_method = "retrieve_evidence"
+            evidence_lookup = retrieve_memory_evidence_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                query=str(user_message or "").strip() or detected_open_memory_recall_query.topic,
+                subject=memory_subject,
+                limit=6,
+                actor_id="researcher_bridge",
+            )
+            if not evidence_lookup.read_result.abstained and evidence_lookup.read_result.records:
+                recall_records = [
+                    record
+                    for record in _filter_open_memory_recall_records(evidence_lookup.read_result.records)
+                    if _record_matches_open_memory_topic(
+                        record=record,
+                        topic=detected_open_memory_recall_query.topic,
+                    )
+                ]
             direct_inspection = inspect_human_memory_in_memory(
                 config_manager=config_manager,
                 state_db=state_db,

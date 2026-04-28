@@ -355,6 +355,7 @@ DEFAULT_TELEGRAM_MEMORY_ACCEPTANCE_CASES: tuple[TelegramMemoryAcceptanceCase, ..
         expected_response_contains=(
             "entity-state current recall route",
             "query_kind: preference_recall",
+            "read_method: get_current_state",
             "entity-scoped preference records",
         ),
         expected_response_excludes=("diagnostics: authority", "preference history"),

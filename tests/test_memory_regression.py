@@ -395,7 +395,7 @@ class MemoryRegressionTests(SparkTestCase):
                     "entity_preference_recall_launch": "The launch checklist preference is short sections.",
                     "entity_preference_recall_source_explanation": (
                         "I answered from the entity-state current recall route. "
-                        "query_kind: preference_recall entity-scoped preference records"
+                        "query_kind: preference_recall read_method: get_current_state entity-scoped preference records"
                     ),
                     "entity_preference_history_launch": (
                         "Before the launch checklist preference was short sections, it was concise bullets."
@@ -603,7 +603,7 @@ class MemoryRegressionTests(SparkTestCase):
                     "entity_preference_recall_launch": "The launch checklist preference is short sections.",
                     "entity_preference_recall_source_explanation": (
                         "I answered from the entity-state current recall route. "
-                        "query_kind: preference_recall entity-scoped preference records"
+                        "query_kind: preference_recall read_method: get_current_state entity-scoped preference records"
                     ),
                     "entity_preference_history_launch": (
                         "Before the launch checklist preference was short sections, it was concise bullets."

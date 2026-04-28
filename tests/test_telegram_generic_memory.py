@@ -2978,10 +2978,13 @@ class TelegramGenericMemoryTests(SparkTestCase):
         )
         preference_facts = preference_event["facts_json"] or {}
         self.assertEqual(preference_facts.get("record_count"), 1)
-        self.assertGreaterEqual(preference_facts.get("candidate_record_count") or 0, 1)
+        self.assertEqual(preference_facts.get("candidate_record_count"), 1)
+        self.assertEqual(preference_facts.get("read_method"), "get_current_state")
         self.assertEqual(preference_facts.get("retrieved_memory_roles"), ["entity_state"])
-        self.assertIn("entity_state", preference_facts.get("candidate_memory_roles") or [])
+        self.assertEqual(preference_facts.get("candidate_memory_roles"), ["entity_state"])
         self.assertIn("record_count=1", preference_facts.get("evidence_summary") or "")
+        self.assertIn("candidate_record_count=1", preference_facts.get("evidence_summary") or "")
+        self.assertIn("read_method=get_current_state", preference_facts.get("evidence_summary") or "")
         self.assertIn("retrieved_roles=entity_state", preference_facts.get("evidence_summary") or "")
 
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=20)
