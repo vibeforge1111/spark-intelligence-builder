@@ -4980,12 +4980,15 @@ def _build_hybrid_memory_context_packet(
 
     section_order = {
         "active_current_state": 0,
-        "historical_state": 1,
-        "relevant_events": 2,
-        "relevant_evidence": 3,
-        "compiled_project_knowledge": 4,
-        "graph_sidecar_hits": 5,
-        "supporting_context": 6,
+        "entity_state": 1,
+        "historical_state": 2,
+        "recent_conversation": 3,
+        "diagnostics": 4,
+        "relevant_events": 5,
+        "relevant_evidence": 6,
+        "compiled_project_knowledge": 7,
+        "graph_sidecar_hits": 8,
+        "supporting_context": 9,
     }
     sections = sorted(
         (section for section in sections_by_name.values() if section["items"]),
@@ -5021,6 +5024,17 @@ def _build_hybrid_memory_context_packet(
 
 
 def _hybrid_memory_context_section(candidate: HybridMemoryCandidate) -> str:
+    record = candidate.record
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    predicate = str(record.get("predicate") or "").strip()
+    memory_role = str(record.get("memory_role") or metadata.get("memory_role") or "").strip()
+    source_surface = str(metadata.get("source_surface") or "").strip()
+    if predicate.startswith("entity.") or metadata.get("entity_key"):
+        return "entity_state"
+    if predicate.startswith("diagnostics.") or source_surface == "diagnostics":
+        return "diagnostics"
+    if memory_role in {"raw_episode", "episodic"} or candidate.source_class == "recent_conversation":
+        return "recent_conversation"
     if candidate.lane == "current_state":
         return "active_current_state"
     if candidate.lane == "historical_state":
@@ -5049,7 +5063,10 @@ def _hybrid_memory_context_authority(candidate: HybridMemoryCandidate) -> str:
 def _hybrid_memory_context_section_budget(section_name: str, max_chars: int) -> int:
     fractions = {
         "active_current_state": 0.34,
+        "entity_state": 0.28,
         "historical_state": 0.24,
+        "recent_conversation": 0.16,
+        "diagnostics": 0.14,
         "relevant_events": 0.20,
         "relevant_evidence": 0.22,
         "compiled_project_knowledge": 0.18,
