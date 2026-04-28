@@ -1732,6 +1732,34 @@ def hybrid_memory_retrieve(
             local_records=[entry["record"] for entry in ranked_entries],
         )
     )
+    wiki_lane, wiki_records = _build_wiki_packet_lane(
+        config_manager=config_manager,
+        sdk_module=adapter.sdk_module,
+        query=normalized_query,
+        limit=normalized_limit,
+    )
+    lane_summaries.append(wiki_lane)
+    for index, record in enumerate(wiki_records):
+        source_class = "obsidian_llm_wiki_packets"
+        score, score_reasons = _score_hybrid_memory_record(
+            lane="wiki_packets",
+            source_class=source_class,
+            record=record,
+            query=normalized_query,
+            predicate=normalized_predicate,
+            entity_key=normalized_entity_key,
+        )
+        ranked_entries.append(
+            {
+                "lane": "wiki_packets",
+                "source_class": source_class,
+                "score": score,
+                "score_reasons": score_reasons,
+                "record": record,
+                "record_key": _hybrid_memory_record_key(record),
+                "rank_tiebreak": index,
+            }
+        )
 
     ranked_entries.sort(
         key=lambda entry: (
@@ -4945,6 +4973,117 @@ def _build_graph_sidecar_shadow_lane(
     return lane
 
 
+def _build_wiki_packet_lane(
+    *,
+    config_manager: ConfigManager,
+    sdk_module: str,
+    query: str,
+    limit: int,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    paths = _wiki_packet_paths(config_manager)
+    lane = {
+        "lane": "wiki_packets",
+        "read_method": "retrieve_markdown_knowledge_packets",
+        "source_class": "obsidian_llm_wiki_packets",
+        "status": "not_configured",
+        "abstained": True,
+        "record_count": 0,
+        "reason": "wiki_packet_paths_not_configured",
+        "authority": "supporting_not_authoritative",
+        "paths": [str(path) for path in paths],
+    }
+    if not paths:
+        return lane, []
+    try:
+        module = _import_memory_sdk_module(sdk_module or DEFAULT_SDK_MODULE)
+        retrieve_packets = getattr(module, "retrieve_markdown_knowledge_packets")
+    except Exception as exc:
+        lane.update(
+            {
+                "status": "unavailable",
+                "reason": "wiki_packet_reader_unavailable",
+                "error": exc.__class__.__name__,
+            }
+        )
+        return lane, []
+    try:
+        result = retrieve_packets(paths=paths, query=query, top_k=limit)
+        hits = list(getattr(result, "hits", []) or [])
+        records = [_wiki_packet_hit_to_record(hit) for hit in hits]
+        lane.update(
+            {
+                "status": "supported" if records else "not_found",
+                "abstained": not bool(records),
+                "record_count": len(records),
+                "reason": None if records else "no_matching_wiki_packets",
+                "retrieval_trace": getattr(result, "trace", {}),
+            }
+        )
+        return lane, records
+    except Exception as exc:
+        lane.update(
+            {
+                "status": "error",
+                "reason": "wiki_packet_reader_error",
+                "error": exc.__class__.__name__,
+            }
+        )
+        return lane, []
+
+
+def _wiki_packet_paths(config_manager: ConfigManager) -> list[Path]:
+    raw_paths = config_manager.get_path("spark.memory.wiki_packet_paths", default=None)
+    paths: list[Path] = []
+    if isinstance(raw_paths, list):
+        paths.extend(Path(str(item)).expanduser() for item in raw_paths if str(item or "").strip())
+    elif isinstance(raw_paths, str) and raw_paths.strip():
+        separators = [";", os.pathsep]
+        chunks = [raw_paths]
+        for separator in separators:
+            chunks = [piece for chunk in chunks for piece in chunk.split(separator)]
+        paths.extend(Path(chunk.strip()).expanduser() for chunk in chunks if chunk.strip())
+
+    home = Path(config_manager.paths.home)
+    for candidate in (home / "wiki", home / "knowledge", home / "diagnostics"):
+        if candidate.exists():
+            paths.append(candidate)
+
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for path in paths:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(path)
+    return deduped
+
+
+def _wiki_packet_hit_to_record(hit: Any) -> dict[str, Any]:
+    provenance = getattr(hit, "provenance", {}) or {}
+    metadata = getattr(hit, "metadata", {}) or {}
+    title = str(getattr(hit, "title", "") or "").strip()
+    text = str(getattr(hit, "text", "") or "").strip()
+    packet_id = str(getattr(hit, "packet_id", "") or "").strip()
+    return {
+        "subject": "spark:project_knowledge",
+        "predicate": "knowledge.packet",
+        "value": title,
+        "text": text,
+        "summary": title,
+        "memory_role": "structured_evidence",
+        "source_class": "obsidian_llm_wiki_packets",
+        "metadata": {
+            **dict(metadata),
+            "packet_id": packet_id,
+            "source_path": provenance.get("source_path"),
+            "source_surface": "obsidian_llm_wiki_packets",
+            "authority": "supporting_not_authoritative",
+        },
+        "provenance": [dict(provenance)],
+    }
+
+
 def _sidecar_record_namespace(record: dict[str, Any]) -> SimpleNamespace:
     metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
     lifecycle = record.get("lifecycle") if isinstance(record.get("lifecycle"), dict) else {}
@@ -4988,6 +5127,8 @@ def _hybrid_memory_source_class(*, lane: str, kernel: MemoryKernelReadResult, re
         return "historical_state"
     if lane == "events":
         return "event"
+    if lane == "wiki_packets":
+        return "obsidian_llm_wiki_packets"
     if lane == "evidence":
         memory_role = str(record.get("memory_role") or kernel.read_result.memory_role or "").strip()
         if memory_role in {"structured_evidence", "belief", "belief_candidate", "raw_episode"}:
@@ -5081,6 +5222,7 @@ def _score_hybrid_memory_record(
         "events": 58.0,
         "evidence": 52.0,
         "typed_temporal_graph": 46.0,
+        "wiki_packets": 44.0,
     }
     score = lane_authority.get(lane, 40.0)
     reasons = [f"authority:{lane}"]
