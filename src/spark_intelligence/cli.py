@@ -729,6 +729,8 @@ class MemoryCapsuleInspection:
         packet = self.payload.get("context_packet") or {}
         sections = packet.get("sections") if isinstance(packet, dict) else []
         source_mix = packet.get("source_mix") if isinstance(packet, dict) else {}
+        packet_trace = packet.get("trace") if isinstance(packet, dict) else {}
+        promotion_gates = packet_trace.get("promotion_gates") if isinstance(packet_trace, dict) else {}
         lines = ["Spark memory capsule inspect"]
         lines.append(f"- query: {self.payload.get('query') or ''}")
         lines.append(
@@ -741,6 +743,19 @@ class MemoryCapsuleInspection:
                 "- source mix: "
                 + ", ".join(f"{source}={count}" for source, count in sorted(source_mix.items()))
             )
+        if isinstance(promotion_gates, dict) and promotion_gates:
+            gates = promotion_gates.get("gates") if isinstance(promotion_gates.get("gates"), dict) else {}
+            lines.append(
+                f"- promotion gates: status={promotion_gates.get('status') or 'unknown'} "
+                f"mode={promotion_gates.get('mode') or 'unknown'}"
+            )
+            for gate_name, gate in sorted(gates.items()):
+                if not isinstance(gate, dict):
+                    continue
+                lines.append(
+                    f"  - {gate_name}: {gate.get('status') or 'unknown'} "
+                    f"reason={gate.get('reason') or 'n/a'}"
+                )
         if sections:
             lines.append("- sections:")
             for section in sections:
@@ -5555,6 +5570,12 @@ def handle_memory_inspect_capsule(args: argparse.Namespace) -> int:
         source_surface="memory_cli_inspect_capsule",
     )
     context_packet = result.context_packet.to_payload() if result.context_packet is not None else None
+    context_packet_trace = context_packet.get("trace") if isinstance(context_packet, dict) else {}
+    promotion_gates = (
+        context_packet_trace.get("promotion_gates")
+        if isinstance(context_packet_trace, dict)
+        else {}
+    )
     payload = {
         "sdk_module": result.sdk_module,
         "query": result.query,
@@ -5568,6 +5589,7 @@ def handle_memory_inspect_capsule(args: argparse.Namespace) -> int:
         "candidate_count": len(result.candidates),
         "selected_count": len([candidate for candidate in result.candidates if candidate.selected]),
         "source_mix": context_packet.get("source_mix", {}) if isinstance(context_packet, dict) else {},
+        "promotion_gates": promotion_gates if isinstance(promotion_gates, dict) else {},
     }
     inspection = MemoryCapsuleInspection(payload=payload)
     print(inspection.to_json() if args.json else inspection.to_text())

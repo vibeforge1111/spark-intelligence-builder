@@ -237,6 +237,20 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 "evidence_read_method": "retrieve_evidence",
                 "evidence_source_class": "structured_evidence",
                 "ignored_stale_record_count": 1,
+                "context_packet_promotion_gates": {
+                    "status": "pass",
+                    "mode": "trace_only",
+                    "gates": {
+                        "source_swamp_resistance": {
+                            "status": "pass",
+                            "reason": "authority_present_or_small_supporting_packet",
+                        },
+                        "stale_current_conflict": {
+                            "status": "pass",
+                            "reason": "stale_candidates_discarded",
+                        },
+                    },
+                },
             },
         )
 
@@ -261,6 +275,9 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("focus source: current_state via get_current_state", result.reply_text)
         self.assertIn("supporting evidence: structured_evidence via retrieve_evidence", result.reply_text)
         self.assertIn("ignored stale records: 1", result.reply_text)
+        self.assertIn("promotion gates: pass", result.reply_text)
+        self.assertIn("source_swamp_resistance: pass", result.reply_text)
+        self.assertIn("stale_current_conflict: pass", result.reply_text)
         self.assertNotIn("diagnostics: authority, 8 items", result.reply_text)
 
         events = latest_events_by_type(
@@ -273,6 +290,7 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual(debug_event["facts_json"]["explained_request_id"], "req-memory-kernel-next-step")
         self.assertEqual(debug_event["facts_json"]["explained_routing_decision"], "memory_kernel_next_step")
         self.assertEqual(debug_event["facts_json"]["explained_focus_source_class"], "current_state")
+        self.assertEqual(debug_event["facts_json"]["context_packet_promotion_gates"]["status"], "pass")
 
     def test_normalize_browser_search_query_extracts_domain_from_browse_request(self) -> None:
         query = _normalize_browser_search_query(

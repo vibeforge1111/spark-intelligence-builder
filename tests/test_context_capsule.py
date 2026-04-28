@@ -416,9 +416,30 @@ class ContextCapsuleTests(SparkTestCase):
                 ),
             )
 
+        fake_promotion_gates = {
+            "status": "pass",
+            "mode": "trace_only",
+            "gates": {
+                "source_swamp_resistance": {"status": "pass", "reason": "authority_present_or_small_supporting_packet"},
+                "stale_current_conflict": {"status": "pass", "reason": "stale_candidates_discarded"},
+                "recent_conversation_noise": {"status": "pass", "reason": "no_recent_conversation_selected"},
+                "source_mix_stability": {"status": "pass", "reason": "small_or_balanced_packet"},
+            },
+        }
+
+        def fake_hybrid_memory_retrieve(**payload):
+            return SimpleNamespace(
+                context_packet=SimpleNamespace(
+                    trace={"promotion_gates": fake_promotion_gates},
+                )
+            )
+
         with patch(
             "spark_intelligence.researcher_bridge.advisory.read_memory_kernel",
             side_effect=fake_read_memory_kernel,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.hybrid_memory_retrieve",
+            side_effect=fake_hybrid_memory_retrieve,
         ), patch(
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider should not run for memory kernel next-step route"),
@@ -443,6 +464,7 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertEqual((bridge_events[0]["facts_json"] or {}).get("routing_decision"), "memory_kernel_next_step")
         self.assertEqual((bridge_events[0]["facts_json"] or {}).get("focus_source_class"), "current_state")
         self.assertEqual((bridge_events[0]["facts_json"] or {}).get("ignored_stale_record_count"), 1)
+        self.assertEqual((bridge_events[0]["facts_json"] or {}).get("context_packet_promotion_gates", {}).get("status"), "pass")
 
     def test_context_status_recent_closure_matches_canonical_human_id(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

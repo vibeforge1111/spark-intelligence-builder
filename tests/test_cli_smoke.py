@@ -630,6 +630,8 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["sdk_module"], "domain_chip_memory")
         self.assertGreaterEqual(payload["selected_count"], 1)
         self.assertEqual(payload["source_mix"]["current_state"], 1)
+        self.assertEqual(payload["promotion_gates"]["status"], "pass")
+        self.assertEqual(payload["promotion_gates"]["gates"]["stale_current_conflict"]["status"], "pass")
         self.assertEqual(payload["context_packet"]["sections"][0]["section"], "active_current_state")
 
     def test_memory_export_shadow_replay_writes_contract_shaped_json(self) -> None:

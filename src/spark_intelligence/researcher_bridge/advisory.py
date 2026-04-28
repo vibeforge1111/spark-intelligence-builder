@@ -44,6 +44,7 @@ from spark_intelligence.memory import (
     archive_structured_evidence_from_memory,
     delete_profile_fact_from_memory,
     explain_memory_answer_in_memory,
+    hybrid_memory_retrieve,
     inspect_human_memory_in_memory,
     lookup_current_state_in_memory,
     lookup_historical_state_in_memory,
@@ -4992,13 +4993,32 @@ def _format_context_source_ledger_reply(
             ignored_count = 0
         if ignored_count:
             route_lines.append(f"- ignored stale records: {ignored_count}")
+        promotion_gates = route_facts.get("context_packet_promotion_gates")
+        if isinstance(promotion_gates, dict) and promotion_gates:
+            gate_status = str(promotion_gates.get("status") or "unknown").strip()
+            route_lines.append(f"- promotion gates: {gate_status}")
+            gates = promotion_gates.get("gates") if isinstance(promotion_gates.get("gates"), dict) else {}
+            for gate_name in (
+                "source_swamp_resistance",
+                "stale_current_conflict",
+                "recent_conversation_noise",
+                "source_mix_stability",
+            ):
+                gate = gates.get(gate_name) if isinstance(gates, dict) else None
+                if not isinstance(gate, dict):
+                    continue
+                route_lines.append(
+                    f"  - {gate_name}: {gate.get('status') or 'unknown'}"
+                    + (f" ({gate.get('reason')})" if gate.get("reason") else "")
+                )
         lines.extend(route_lines)
         lines.extend(
             [
                 "",
                 "Reason:",
                 "The previous answer was a direct memory-kernel read. "
-                "Current-state facts supplied the active focus and plan, and stale records were advisory only.",
+                "Current-state facts supplied the active focus and plan, stale records were advisory only, "
+                "and the hybrid promotion gates describe packet quality before acceptance.",
             ]
         )
         return "\n".join(lines)
@@ -5109,6 +5129,7 @@ def _build_context_source_debug_reply(
                 "explained_evidence_read_method": previous_route_facts.get("evidence_read_method"),
                 "explained_evidence_source_class": previous_route_facts.get("evidence_source_class"),
                 "explained_ignored_stale_record_count": previous_route_facts.get("ignored_stale_record_count"),
+                "context_packet_promotion_gates": previous_route_facts.get("context_packet_promotion_gates"),
                 "source_ledger": [],
                 "source_counts": {},
             },
@@ -5759,6 +5780,13 @@ def _build_open_ended_memory_next_step_reply(
         source_surface="telegram_open_ended_next_step",
         record_activity=False,
     )
+    promotion_gates = _build_memory_next_step_promotion_gates(
+        config_manager=config_manager,
+        state_db=state_db,
+        memory_subject=memory_subject,
+        user_message=user_message,
+        request_id=request_id,
+    )
     focus = focus_lookup.answer
     plan = plan_lookup.answer if not plan_lookup.abstained else None
     lines = [
@@ -5805,11 +5833,51 @@ def _build_open_ended_memory_next_step_reply(
         "evidence_read_method": evidence_lookup.read_method,
         "evidence_source_class": evidence_lookup.source_class,
         "ignored_stale_record_count": len(evidence_lookup.ignored_stale_records),
+        "context_packet_promotion_gates": promotion_gates,
         "focus_trace": (focus_lookup.read_result.retrieval_trace or {}).get("memory_kernel"),
         "plan_trace": (plan_lookup.read_result.retrieval_trace or {}).get("memory_kernel"),
         "evidence_trace": (evidence_lookup.read_result.retrieval_trace or {}).get("memory_kernel"),
     }
     return "\n".join(lines), facts
+
+
+def _build_memory_next_step_promotion_gates(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    memory_subject: str,
+    user_message: str,
+    request_id: str,
+) -> dict[str, Any]:
+    try:
+        result = hybrid_memory_retrieve(
+            config_manager=config_manager,
+            state_db=state_db,
+            query=user_message,
+            subject=memory_subject,
+            predicate="profile.current_focus",
+            limit=5,
+            actor_id="researcher_bridge",
+            source_surface="telegram_open_ended_next_step_gate_probe",
+            record_activity=False,
+        )
+    except Exception as exc:
+        return {
+            "status": "warn",
+            "mode": "trace_only",
+            "reason": "promotion_gate_probe_failed",
+            "error": exc.__class__.__name__,
+            "gates": {},
+        }
+    if result.context_packet is None:
+        return {
+            "status": "warn",
+            "mode": "trace_only",
+            "reason": "context_packet_missing",
+            "gates": {},
+        }
+    gates = result.context_packet.trace.get("promotion_gates")
+    return gates if isinstance(gates, dict) else {}
 
 
 def _build_current_focus_plan_reply(
