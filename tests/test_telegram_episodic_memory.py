@@ -78,7 +78,7 @@ class TelegramEpisodicMemoryTests(SparkTestCase):
                 "trace_path": "trace:hypothetical-event-under-supported",
             }
 
-        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None):
+        def fake_direct_provider_prompt(*, provider, system_prompt: str, user_prompt: str, governance=None, **kwargs):
             return {"raw_response": "Noted."}
 
         def fail_execute_with_research(*args, **kwargs):

@@ -78,6 +78,12 @@ from spark_intelligence.memory.shadow_replay import (
     validate_shadow_replay,
     validate_shadow_replay_batch,
 )
+from spark_intelligence.memory.session_summaries import (
+    SessionSummary,
+    build_session_memory_summary,
+    build_session_summary,
+    write_session_summary_to_memory,
+)
 
 __all__ = [
     "HumanMemoryInspectionResult",
@@ -93,6 +99,7 @@ __all__ = [
     "MemoryRetrievalQueryResult",
     "MemorySdkSmokeResult",
     "MemoryWriteResult",
+    "SessionSummary",
     "archive_belief_from_memory",
     "archive_raw_episode_from_memory",
     "archive_structured_evidence_from_memory",
@@ -108,6 +115,8 @@ __all__ = [
     "benchmark_memory_architectures",
     "build_sdk_maintenance_payload",
     "build_shadow_replay_payload",
+    "build_session_memory_summary",
+    "build_session_summary",
     "build_telegram_state_knowledge_base",
     "compare_telegram_memory_architectures",
     "delete_profile_fact_from_memory",
@@ -134,6 +143,7 @@ __all__ = [
     "run_telegram_memory_regression",
     "write_profile_fact_to_memory",
     "write_raw_episode_to_memory",
+    "write_session_summary_to_memory",
     "write_structured_evidence_to_memory",
     "write_telegram_event_to_memory",
     "run_sdk_maintenance_report",
