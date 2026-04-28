@@ -663,6 +663,19 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(candidate.retention_class, "active_state")
         self.assertEqual(candidate.domain_pack, "project_state")
 
+    def test_classify_telegram_generic_memory_candidate_prioritizes_entity_owner_corrections(self) -> None:
+        candidate = classify_telegram_generic_memory_candidate("Actually, Maya owns the launch checklist.")
+
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        self.assertEqual(candidate.predicate, "entity.owner")
+        self.assertEqual(candidate.value, "Maya")
+        self.assertEqual(candidate.label, "launch checklist owner")
+        self.assertEqual(candidate.operation, "update")
+        self.assertEqual(candidate.memory_role, "current_state")
+        self.assertEqual(candidate.retention_class, "active_state")
+        self.assertEqual(candidate.domain_pack, "entity_state")
+
     def test_classify_telegram_generic_memory_candidate_detects_delete_operation(self) -> None:
         candidate = classify_telegram_generic_memory_candidate("Forget our owner.")
 
@@ -2758,6 +2771,122 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(
             history_query.reply_text,
             "Before the tiny desk plant was on the balcony, it was on the kitchen shelf.",
+        )
+
+    def test_build_researcher_reply_uses_newer_entity_owner_after_conflict(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for generic entity memory"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for generic entity memory"),
+        ):
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-entity-owner-old",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-owner-conflict",
+                channel_kind="telegram",
+                user_message="For later, Omar owns the launch checklist.",
+            )
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-entity-owner-unrelated",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-owner-conflict",
+                channel_kind="telegram",
+                user_message="For later, Lina owns the investor update.",
+            )
+            old_query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-entity-owner-old-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-owner-conflict",
+                channel_kind="telegram",
+                user_message="Who owns the launch checklist?",
+            )
+            unrelated_query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-entity-owner-unrelated-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-owner-conflict",
+                channel_kind="telegram",
+                user_message="Who owns the investor update?",
+            )
+            correction = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-entity-owner-new",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-owner-conflict",
+                channel_kind="telegram",
+                user_message="Actually, Maya owns the launch checklist.",
+            )
+            current_query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-entity-owner-current",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-owner-conflict",
+                channel_kind="telegram",
+                user_message="Who owns the launch checklist?",
+            )
+            history_query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-entity-owner-history",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-owner-conflict",
+                channel_kind="telegram",
+                user_message="Who owned the launch checklist before?",
+            )
+
+        self.assertEqual(old_query.mode, "memory_open_recall")
+        self.assertEqual(old_query.reply_text, "The launch checklist is owned by Omar.")
+        self.assertEqual(unrelated_query.mode, "memory_open_recall")
+        self.assertEqual(unrelated_query.reply_text, "The investor update is owned by Lina.")
+        self.assertEqual(correction.mode, "memory_generic_observation_update")
+        self.assertEqual(correction.routing_decision, "memory_generic_observation")
+        self.assertEqual(correction.reply_text, "I'll remember that the launch checklist is owned by Maya.")
+        self.assertEqual(current_query.mode, "memory_open_recall")
+        self.assertEqual(current_query.reply_text, "The launch checklist is owned by Maya.")
+        self.assertNotIn("Omar", current_query.reply_text)
+        self.assertNotIn("Lina", current_query.reply_text)
+        self.assertEqual(history_query.mode, "memory_entity_state_history")
+        self.assertEqual(history_query.routing_decision, "memory_entity_state_history_query")
+        self.assertEqual(
+            history_query.reply_text,
+            "Before the launch checklist was owned by Maya, it was owned by Omar.",
+        )
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        recorded_observations = [
+            observation
+            for event in write_events
+            for observation in ((event["facts_json"] or {}).get("observations") or [])
+        ]
+        owner_records = [item for item in recorded_observations if item["predicate"] == "entity.owner"]
+        self.assertEqual(
+            {(item["metadata"]["entity_key"], item["value"]) for item in owner_records},
+            {
+                ("named-object:launch-checklist", "Omar"),
+                ("named-object:investor-update", "Lina"),
+                ("named-object:launch-checklist", "Maya"),
+            },
         )
 
     def test_build_researcher_reply_deletes_one_entity_location_without_affecting_another(self) -> None:

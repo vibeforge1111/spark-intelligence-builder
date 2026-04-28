@@ -733,6 +733,21 @@ def classify_telegram_generic_memory_candidate(user_message: str) -> TelegramGen
         )
 
     for variant in variants:
+        entity_state_fact = parse_entity_state_fact(variant)
+        if entity_state_fact is not None and entity_state_fact.attribute != "name":
+            return TelegramGenericCandidate(
+                predicate=f"entity.{entity_state_fact.attribute}",
+                value=entity_state_fact.value,
+                evidence_text=text,
+                fact_name=f"entity_{entity_state_fact.attribute}",
+                label=f"{entity_state_fact.entity_label} {entity_state_fact.attribute}",
+                operation="update",
+                memory_role="current_state",
+                retention_class="active_state",
+                domain_pack="entity_state",
+            )
+
+    for variant in variants:
         for pack in _GENERIC_PACKS:
             for pattern in pack.update_patterns:
                 match = pattern.fullmatch(variant)
@@ -753,19 +768,6 @@ def classify_telegram_generic_memory_candidate(user_message: str) -> TelegramGen
                     domain_pack=pack.domain_pack,
                 )
 
-    entity_state_fact = parse_entity_state_fact(normalized)
-    if entity_state_fact is not None and entity_state_fact.attribute != "name":
-        return TelegramGenericCandidate(
-            predicate=f"entity.{entity_state_fact.attribute}",
-            value=entity_state_fact.value,
-            evidence_text=text,
-            fact_name=f"entity_{entity_state_fact.attribute}",
-            label=f"{entity_state_fact.entity_label} {entity_state_fact.attribute}",
-            operation="update",
-            memory_role="current_state",
-            retention_class="active_state",
-            domain_pack="entity_state",
-        )
     return None
 
 

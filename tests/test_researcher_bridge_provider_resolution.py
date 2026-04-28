@@ -319,8 +319,8 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
             },
         )
         evidence_summary = (
-            "status=memory_entity_state_history predicate=entity.location "
-            "attribute=location topic=the desk plant event_record_count=2 read_method=inspect_memory_records"
+            "status=memory_entity_state_history predicate=entity.owner "
+            "attribute=owner topic=launch checklist event_record_count=2 read_method=retrieve_events"
         )
         record_event(
             self.state_db,
@@ -360,8 +360,10 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("entity-state history route", result.reply_text)
         self.assertIn("routing_decision: memory_entity_state_history_query", result.reply_text)
         self.assertIn("source: entity_state history records", result.reply_text)
-        self.assertIn("predicate=entity.location", result.reply_text)
-        self.assertIn("attribute=location", result.reply_text)
+        self.assertIn("predicate=entity.owner", result.reply_text)
+        self.assertIn("attribute=owner", result.reply_text)
+        self.assertIn("entity-scoped owner history", result.reply_text)
+        self.assertNotIn("location history", result.reply_text)
         self.assertIn("temporal entity-memory read", result.reply_text)
         self.assertNotIn("diagnostics: authority, 8 items", result.reply_text)
 

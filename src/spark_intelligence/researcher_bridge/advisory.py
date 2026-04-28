@@ -5061,6 +5061,8 @@ def _format_memory_route_source_reply(*, route_facts: dict[str, Any]) -> str | N
     routing_decision = str(route_facts.get("routing_decision") or "").strip()
     bridge_mode = str(route_facts.get("bridge_mode") or "").strip()
     evidence_summary = str(route_facts.get("evidence_summary") or "").strip()
+    attribute_match = re.search(r"\battribute=([^\s]+)", evidence_summary)
+    attribute_label = attribute_match.group(1).replace("_", " ") if attribute_match else "entity"
     route_label: str | None = None
     source_line: str | None = None
     reason: str | None = None
@@ -5069,7 +5071,7 @@ def _format_memory_route_source_reply(*, route_facts: dict[str, Any]) -> str | N
         source_line = "entity_state history records"
         reason = (
             "The previous answer was a temporal entity-memory read. "
-            "It used entity-scoped location history for the named object, so the current value and previous value "
+            f"It used entity-scoped {attribute_label} history for the named object, so the current value and previous value "
             "came from entity-state records rather than diagnostics or workflow residue."
         )
     elif routing_decision == "memory_open_recall_query" or bridge_mode == "memory_open_recall":

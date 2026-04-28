@@ -283,6 +283,11 @@ class MemoryRegressionTests(SparkTestCase):
                     "entity_location_recall_office": "memory_open_recall",
                     "entity_location_updated_recall_desk": "memory_open_recall",
                     "entity_location_history_recall_desk": "memory_entity_state_history",
+                    "entity_owner_recall_launch": "memory_open_recall",
+                    "entity_owner_recall_investor": "memory_open_recall",
+                    "entity_owner_updated_recall_launch": "memory_open_recall",
+                    "entity_owner_history_recall_launch": "memory_entity_state_history",
+                    "entity_owner_history_source_explanation": "context_source_debug",
                 }.get(case.case_id, "memory_generic_observation_update"),
                 {
                     "current_focus_plan_query": "memory_current_focus_plan_query",
@@ -295,6 +300,11 @@ class MemoryRegressionTests(SparkTestCase):
                     "entity_location_recall_office": "memory_open_recall_query",
                     "entity_location_updated_recall_desk": "memory_open_recall_query",
                     "entity_location_history_recall_desk": "memory_entity_state_history_query",
+                    "entity_owner_recall_launch": "memory_open_recall_query",
+                    "entity_owner_recall_investor": "memory_open_recall_query",
+                    "entity_owner_updated_recall_launch": "memory_open_recall_query",
+                    "entity_owner_history_recall_launch": "memory_entity_state_history_query",
+                    "entity_owner_history_source_explanation": "context_source_debug",
                 }.get(case.case_id, "memory_generic_observation"),
                 {
                     "seed_focus": "I'll remember that your current focus is persistent memory quality evaluation.",
@@ -326,6 +336,19 @@ class MemoryRegressionTests(SparkTestCase):
                     "entity_location_updated_recall_desk": "The tiny desk plant is on the windowsill.",
                     "entity_location_history_recall_desk": (
                         "Before the tiny desk plant was on the windowsill, it was on the kitchen shelf."
+                    ),
+                    "entity_owner_seed_launch": "I'll remember that the launch checklist is owned by Omar.",
+                    "entity_owner_seed_investor": "I'll remember that the investor update is owned by Lina.",
+                    "entity_owner_recall_launch": "The launch checklist is owned by Omar.",
+                    "entity_owner_recall_investor": "The investor update is owned by Lina.",
+                    "entity_owner_replace_launch": "I'll remember that the launch checklist is owned by Maya.",
+                    "entity_owner_updated_recall_launch": "The launch checklist is owned by Maya.",
+                    "entity_owner_history_recall_launch": (
+                        "Before the launch checklist was owned by Maya, it was owned by Omar."
+                    ),
+                    "entity_owner_history_source_explanation": (
+                        "I answered from the entity-state history route. "
+                        "predicate=entity.owner attribute=owner entity-scoped owner history"
                     ),
                 }[case.case_id],
             )
@@ -403,6 +426,11 @@ class MemoryRegressionTests(SparkTestCase):
                                 "entity_location_recall_office": "memory_open_recall",
                                 "entity_location_updated_recall_desk": "memory_open_recall",
                                 "entity_location_history_recall_desk": "memory_entity_state_history",
+                                "entity_owner_recall_launch": "memory_open_recall",
+                                "entity_owner_recall_investor": "memory_open_recall",
+                                "entity_owner_updated_recall_launch": "memory_open_recall",
+                                "entity_owner_history_recall_launch": "memory_entity_state_history",
+                                "entity_owner_history_source_explanation": "context_source_debug",
                             }.get(case.case_id, "memory_generic_observation_update"),
                             "routing_decision": {
                                 "current_focus_plan_query": "memory_current_focus_plan_query",
@@ -415,6 +443,11 @@ class MemoryRegressionTests(SparkTestCase):
                                 "entity_location_recall_office": "memory_open_recall_query",
                                 "entity_location_updated_recall_desk": "memory_open_recall_query",
                                 "entity_location_history_recall_desk": "memory_entity_state_history_query",
+                                "entity_owner_recall_launch": "memory_open_recall_query",
+                                "entity_owner_recall_investor": "memory_open_recall_query",
+                                "entity_owner_updated_recall_launch": "memory_open_recall_query",
+                                "entity_owner_history_recall_launch": "memory_entity_state_history_query",
+                                "entity_owner_history_source_explanation": "context_source_debug",
                             }.get(case.case_id, "memory_generic_observation"),
                             "trace_ref": "trace:test",
                         },
@@ -455,6 +488,19 @@ class MemoryRegressionTests(SparkTestCase):
                     "entity_location_updated_recall_desk": "The tiny desk plant is on the windowsill.",
                     "entity_location_history_recall_desk": (
                         "Before the tiny desk plant was on the windowsill, it was on the kitchen shelf."
+                    ),
+                    "entity_owner_seed_launch": "I'll remember that the launch checklist is owned by Omar.",
+                    "entity_owner_seed_investor": "I'll remember that the investor update is owned by Lina.",
+                    "entity_owner_recall_launch": "The launch checklist is owned by Omar.",
+                    "entity_owner_recall_investor": "The investor update is owned by Lina.",
+                    "entity_owner_replace_launch": "I'll remember that the launch checklist is owned by Maya.",
+                    "entity_owner_updated_recall_launch": "The launch checklist is owned by Maya.",
+                    "entity_owner_history_recall_launch": (
+                        "Before the launch checklist was owned by Maya, it was owned by Omar."
+                    ),
+                    "entity_owner_history_source_explanation": (
+                        "I answered from the entity-state history route. "
+                        "predicate=entity.owner attribute=owner entity-scoped owner history"
                     ),
                 }[case.case_id],
             )
