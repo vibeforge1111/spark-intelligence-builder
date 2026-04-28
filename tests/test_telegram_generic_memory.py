@@ -2585,6 +2585,16 @@ class TelegramGenericMemoryTests(SparkTestCase):
             build_researcher_reply(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
+                request_id="req-entity-plant-name-update",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-isolation",
+                channel_kind="telegram",
+                user_message="For later, the tiny desk plant is named Sol.",
+            )
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
                 request_id="req-entity-desk-location-update",
                 agent_id="agent-1",
                 human_id="human-1",
@@ -2625,8 +2635,10 @@ class TelegramGenericMemoryTests(SparkTestCase):
 
         self.assertEqual(desk_query.mode, "memory_open_recall")
         self.assertEqual(desk_query.reply_text, "The tiny desk plant is on the kitchen shelf.")
+        self.assertNotIn("Sol", desk_query.reply_text)
         self.assertEqual(office_query.mode, "memory_open_recall")
         self.assertEqual(office_query.reply_text, "The office plant is on the balcony.")
+        self.assertNotIn("Sol", office_query.reply_text)
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         recorded_observations = [
             observation
@@ -2652,6 +2664,16 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
             side_effect=AssertionError("provider execution should not run for generic entity memory"),
         ):
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-entity-location-name",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-location-conflict",
+                channel_kind="telegram",
+                user_message="For later, the tiny desk plant is named Sol.",
+            )
             build_researcher_reply(
                 config_manager=self.config_manager,
                 state_db=self.state_db,
@@ -2695,6 +2717,7 @@ class TelegramGenericMemoryTests(SparkTestCase):
 
         self.assertEqual(query.mode, "memory_open_recall")
         self.assertEqual(query.reply_text, "The tiny desk plant is on the balcony.")
+        self.assertNotIn("Sol", query.reply_text)
         self.assertNotIn("kitchen shelf", query.reply_text)
         self.assertEqual(history_query.mode, "memory_entity_state_history")
         self.assertEqual(history_query.routing_decision, "memory_entity_state_history_query")
@@ -2769,7 +2792,7 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(deletion.mode, "memory_generic_observation_delete")
         self.assertEqual(deletion.reply_text, "I'll forget the tiny desk plant location.")
         self.assertEqual(desk_query.mode, "memory_open_recall")
-        self.assertEqual(desk_query.reply_text, "I don't currently have saved memory about that.")
+        self.assertEqual(desk_query.reply_text, "I don't currently have saved location for that.")
         self.assertEqual(office_query.mode, "memory_open_recall")
         self.assertEqual(office_query.reply_text, "The office plant is on the balcony.")
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)

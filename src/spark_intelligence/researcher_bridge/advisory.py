@@ -395,7 +395,7 @@ _OPEN_MEMORY_RECALL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "name_recall",
         re.compile(
-            r"^((?:the\s+)?[a-z0-9][a-z0-9\s_-]*\bplant)\s*[\?\.\!]*$",
+            r"^(?!(?:where|what|who|when|which|why|how)\b)((?:the\s+)?[a-z0-9][a-z0-9\s_-]*\bplant)\s*[\?\.\!]*$",
             re.IGNORECASE,
         ),
     ),
@@ -849,6 +849,9 @@ def _entity_state_answer_from_record(*, query: OpenMemoryRecallQuery, record: di
     if not _entity_label_matches_open_memory_topic(entity_label=label, topic=query.topic):
         return None
     attribute = str(metadata.get("entity_attribute") or predicate.split(".", 1)[-1]).strip()
+    expected_attribute = _open_memory_recall_entity_attribute(query.query_kind)
+    if expected_attribute and attribute != expected_attribute:
+        return None
     if attribute == "name":
         return f"You named the {label} {value}."
     if attribute == "location":
@@ -863,6 +866,16 @@ def _entity_state_answer_from_record(*, query: OpenMemoryRecallQuery, record: di
     if attribute == "relation":
         return f"The {label} is related to {value}."
     return f"The {label} {attribute} is {value}."
+
+
+def _open_memory_recall_entity_attribute(query_kind: str | None) -> str | None:
+    return {
+        "name_recall": "name",
+        "location_recall": "location",
+        "owner_recall": "owner",
+        "status_recall": "status",
+        "deadline_recall": "deadline",
+    }.get(str(query_kind or "").strip())
 
 
 def _entity_label_matches_open_memory_topic(*, entity_label: str, topic: str) -> bool:
@@ -963,10 +976,13 @@ def _build_entity_state_history_answer(
 
 
 def _build_open_memory_recall_answer(*, query: OpenMemoryRecallQuery, records: list[dict[str, Any]]) -> str:
+    expected_attribute = _open_memory_recall_entity_attribute(query.query_kind)
     for record in records:
         entity_answer = _entity_state_answer_from_record(query=query, record=record)
         if entity_answer:
             return entity_answer
+    if expected_attribute:
+        return f"I don't currently have saved {expected_attribute} for that."
     snippets: list[str] = []
     seen: set[str] = set()
     for record in records:

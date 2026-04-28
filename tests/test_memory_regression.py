@@ -279,6 +279,10 @@ class MemoryRegressionTests(SparkTestCase):
                     "natural_fact_recall": "memory_open_recall",
                     "natural_fact_updated_recall": "memory_open_recall",
                     "natural_fact_history_recall": "memory_profile_fact_history",
+                    "entity_location_recall_desk": "memory_open_recall",
+                    "entity_location_recall_office": "memory_open_recall",
+                    "entity_location_updated_recall_desk": "memory_open_recall",
+                    "entity_location_history_recall_desk": "memory_entity_state_history",
                 }.get(case.case_id, "memory_generic_observation_update"),
                 {
                     "current_focus_plan_query": "memory_current_focus_plan_query",
@@ -287,6 +291,10 @@ class MemoryRegressionTests(SparkTestCase):
                     "natural_fact_recall": "memory_open_recall_query",
                     "natural_fact_updated_recall": "memory_open_recall_query",
                     "natural_fact_history_recall": "memory_profile_fact_history_query",
+                    "entity_location_recall_desk": "memory_open_recall_query",
+                    "entity_location_recall_office": "memory_open_recall_query",
+                    "entity_location_updated_recall_desk": "memory_open_recall_query",
+                    "entity_location_history_recall_desk": "memory_entity_state_history_query",
                 }.get(case.case_id, "memory_generic_observation"),
                 {
                     "seed_focus": "I'll remember that your current focus is persistent memory quality evaluation.",
@@ -310,6 +318,15 @@ class MemoryRegressionTests(SparkTestCase):
                     "natural_fact_replace": "I'll remember that the tiny desk plant is named Sol.",
                     "natural_fact_updated_recall": "You named the tiny desk plant Sol.",
                     "natural_fact_history_recall": "Before Sol, the tiny desk plant was named Mira.",
+                    "entity_location_seed_desk": "I'll remember that the tiny desk plant is on the kitchen shelf.",
+                    "entity_location_seed_office": "I'll remember that the office plant is on the balcony.",
+                    "entity_location_recall_desk": "The tiny desk plant is on the kitchen shelf.",
+                    "entity_location_recall_office": "The office plant is on the balcony.",
+                    "entity_location_replace_desk": "I'll remember that the tiny desk plant is on the windowsill.",
+                    "entity_location_updated_recall_desk": "The tiny desk plant is on the windowsill.",
+                    "entity_location_history_recall_desk": (
+                        "Before the tiny desk plant was on the windowsill, it was on the kitchen shelf."
+                    ),
                 }[case.case_id],
             )
             for case in DEFAULT_TELEGRAM_MEMORY_ACCEPTANCE_CASES
@@ -382,6 +399,10 @@ class MemoryRegressionTests(SparkTestCase):
                                 "natural_fact_recall": "memory_open_recall",
                                 "natural_fact_updated_recall": "memory_open_recall",
                                 "natural_fact_history_recall": "memory_profile_fact_history",
+                                "entity_location_recall_desk": "memory_open_recall",
+                                "entity_location_recall_office": "memory_open_recall",
+                                "entity_location_updated_recall_desk": "memory_open_recall",
+                                "entity_location_history_recall_desk": "memory_entity_state_history",
                             }.get(case.case_id, "memory_generic_observation_update"),
                             "routing_decision": {
                                 "current_focus_plan_query": "memory_current_focus_plan_query",
@@ -390,6 +411,10 @@ class MemoryRegressionTests(SparkTestCase):
                                 "natural_fact_recall": "memory_open_recall_query",
                                 "natural_fact_updated_recall": "memory_open_recall_query",
                                 "natural_fact_history_recall": "memory_profile_fact_history_query",
+                                "entity_location_recall_desk": "memory_open_recall_query",
+                                "entity_location_recall_office": "memory_open_recall_query",
+                                "entity_location_updated_recall_desk": "memory_open_recall_query",
+                                "entity_location_history_recall_desk": "memory_entity_state_history_query",
                             }.get(case.case_id, "memory_generic_observation"),
                             "trace_ref": "trace:test",
                         },
@@ -422,6 +447,15 @@ class MemoryRegressionTests(SparkTestCase):
                     "natural_fact_replace": "I'll remember that the tiny desk plant is named Sol.",
                     "natural_fact_updated_recall": "You named the tiny desk plant Sol.",
                     "natural_fact_history_recall": "Before Sol, the tiny desk plant was named Mira.",
+                    "entity_location_seed_desk": "I'll remember that the tiny desk plant is on the kitchen shelf.",
+                    "entity_location_seed_office": "I'll remember that the office plant is on the balcony.",
+                    "entity_location_recall_desk": "The tiny desk plant is on the kitchen shelf.",
+                    "entity_location_recall_office": "The office plant is on the balcony.",
+                    "entity_location_replace_desk": "I'll remember that the tiny desk plant is on the windowsill.",
+                    "entity_location_updated_recall_desk": "The tiny desk plant is on the windowsill.",
+                    "entity_location_history_recall_desk": (
+                        "Before the tiny desk plant was on the windowsill, it was on the kitchen shelf."
+                    ),
                 }[case.case_id],
             )
             for case in DEFAULT_TELEGRAM_MEMORY_ACCEPTANCE_CASES
