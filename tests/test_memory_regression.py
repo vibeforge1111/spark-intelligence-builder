@@ -6,8 +6,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from spark_intelligence.memory import (
+    TelegramMemoryAcceptancePackExportResult,
     TelegramMemoryAcceptanceResult,
     TelegramMemoryRegressionResult,
+    export_telegram_memory_acceptance_pack,
     run_telegram_memory_acceptance,
     run_telegram_memory_regression,
 )
@@ -186,6 +188,64 @@ class MemoryRegressionTests(SparkTestCase):
         self.assertEqual(kwargs["user_id"], "12345")
         self.assertEqual(kwargs["chat_id"], "12345")
         self.assertEqual(kwargs["write_path"], str(write_path))
+
+    def test_memory_export_telegram_acceptance_pack_dispatches_exporter(self) -> None:
+        output_dir = self.home / "artifacts" / "telegram-memory-acceptance-supervised"
+        write_path = output_dir / "pack.json"
+        markdown_path = output_dir / "pack.md"
+        payload = {
+            "summary": {
+                "pack_kind": "telegram_memory_acceptance_supervised",
+                "case_count": len(DEFAULT_TELEGRAM_MEMORY_ACCEPTANCE_CASES),
+            },
+            "artifact_paths": {
+                "pack_json": str(write_path),
+                "operator_markdown": str(markdown_path),
+            },
+        }
+
+        with patch(
+            "spark_intelligence.cli.export_telegram_memory_acceptance_pack",
+            return_value=TelegramMemoryAcceptancePackExportResult(output_dir=output_dir, payload=payload),
+        ) as export_pack:
+            exit_code, stdout, stderr = self.run_cli(
+                "memory",
+                "export-telegram-acceptance-pack",
+                "--home",
+                str(self.home),
+                "--output-dir",
+                str(output_dir),
+                "--write",
+                str(write_path),
+                "--markdown",
+                str(markdown_path),
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertEqual(json.loads(stdout)["summary"]["pack_kind"], "telegram_memory_acceptance_supervised")
+        kwargs = export_pack.call_args.kwargs
+        self.assertEqual(kwargs["config_manager"].paths.home, Path(self.home))
+        self.assertEqual(kwargs["output_dir"], str(output_dir))
+        self.assertEqual(kwargs["write_path"], str(write_path))
+        self.assertEqual(kwargs["markdown_path"], str(markdown_path))
+
+    def test_export_telegram_memory_acceptance_pack_writes_operator_files(self) -> None:
+        output_dir = self.home / "artifacts" / "telegram-memory-acceptance-supervised"
+
+        result = export_telegram_memory_acceptance_pack(
+            config_manager=self.config_manager,
+            output_dir=output_dir,
+        )
+
+        pack_json = output_dir / "telegram-memory-acceptance-pack.json"
+        pack_markdown = output_dir / "telegram-memory-acceptance-pack.md"
+        self.assertTrue(pack_json.exists())
+        self.assertTrue(pack_markdown.exists())
+        self.assertEqual(result.payload["summary"]["case_count"], len(DEFAULT_TELEGRAM_MEMORY_ACCEPTANCE_CASES))
+        self.assertEqual(result.payload["cases"][0]["case_id"], "seed_focus")
+        self.assertIn("Set my current focus to persistent memory quality evaluation.", pack_markdown.read_text(encoding="utf-8"))
+        self.assertEqual(result.payload["capture_template"][0]["live_response"], "")
 
     def test_run_telegram_memory_acceptance_asserts_cases_and_promotion_gates(self) -> None:
         output_dir = self.home / "artifacts" / "telegram-memory-acceptance-runner"

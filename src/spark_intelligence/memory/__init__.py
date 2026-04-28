@@ -58,7 +58,9 @@ from spark_intelligence.memory.architecture_soak import (
     run_telegram_memory_architecture_soak,
 )
 from spark_intelligence.memory.acceptance import (
+    TelegramMemoryAcceptancePackExportResult,
     TelegramMemoryAcceptanceResult,
+    export_telegram_memory_acceptance_pack,
     run_telegram_memory_acceptance,
 )
 from spark_intelligence.memory.regression import (
@@ -99,6 +101,7 @@ __all__ = [
     "ShadowReplayExportResult",
     "TelegramArchitectureLiveComparisonResult",
     "TelegramArchitectureSoakResult",
+    "TelegramMemoryAcceptancePackExportResult",
     "TelegramMemoryAcceptanceResult",
     "TelegramStateKnowledgeBaseResult",
     "TelegramMemoryRegressionResult",
@@ -113,6 +116,7 @@ __all__ = [
     "export_sdk_maintenance_replay",
     "export_shadow_replay",
     "export_shadow_replay_batch",
+    "export_telegram_memory_acceptance_pack",
     "hybrid_memory_retrieve",
     "inspect_human_memory_in_memory",
     "inspect_memory_sdk_runtime",

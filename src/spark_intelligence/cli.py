@@ -96,6 +96,7 @@ from spark_intelligence.memory import (
     export_sdk_maintenance_replay,
     export_shadow_replay,
     export_shadow_replay_batch,
+    export_telegram_memory_acceptance_pack,
     hybrid_memory_retrieve,
     inspect_human_memory_in_memory,
     inspect_memory_sdk_runtime,
@@ -1979,6 +1980,15 @@ def build_parser() -> argparse.ArgumentParser:
     memory_acceptance_parser.add_argument("--chat-id", help="Explicit Telegram chat id override")
     memory_acceptance_parser.add_argument("--write", help="Optional output path for the acceptance summary JSON payload")
     memory_acceptance_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_acceptance_export_parser = memory_subparsers.add_parser(
+        "export-telegram-acceptance-pack",
+        help="Export the supervised Telegram memory-quality acceptance prompt pack",
+    )
+    memory_acceptance_export_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_acceptance_export_parser.add_argument("--output-dir", help="Acceptance prompt-pack output directory")
+    memory_acceptance_export_parser.add_argument("--write", help="Optional prompt-pack JSON output path")
+    memory_acceptance_export_parser.add_argument("--markdown", help="Optional operator Markdown prompt-pack output path")
+    memory_acceptance_export_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_architecture_benchmark_parser = memory_subparsers.add_parser(
         "benchmark-architectures",
         help="Benchmark Builder's memory substrate against the domain-chip-memory ProductMemory architecture variants",
@@ -5771,6 +5781,19 @@ def handle_memory_run_telegram_acceptance(args: argparse.Namespace) -> int:
     return 0 if isinstance(summary, dict) and summary.get("status") == "passed" else 1
 
 
+def handle_memory_export_telegram_acceptance_pack(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    result = export_telegram_memory_acceptance_pack(
+        config_manager=config_manager,
+        output_dir=args.output_dir,
+        write_path=args.write,
+        markdown_path=args.markdown,
+    )
+    print(result.to_json() if args.json else result.to_text())
+    return 0
+
+
 def handle_memory_benchmark_architectures(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
@@ -7480,6 +7503,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_memory_run_telegram_regression(args)
     if args.command == "memory" and args.memory_command == "run-telegram-acceptance":
         return handle_memory_run_telegram_acceptance(args)
+    if args.command == "memory" and args.memory_command == "export-telegram-acceptance-pack":
+        return handle_memory_export_telegram_acceptance_pack(args)
     if args.command == "memory" and args.memory_command == "benchmark-architectures":
         return handle_memory_benchmark_architectures(args)
     if args.command == "memory" and args.memory_command == "soak-architectures":

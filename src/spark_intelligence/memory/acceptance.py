@@ -131,6 +131,79 @@ class TelegramMemoryAcceptanceResult:
         return "\n".join(lines)
 
 
+@dataclass(frozen=True)
+class TelegramMemoryAcceptancePackExportResult:
+    output_dir: Path
+    payload: dict[str, Any]
+
+    def to_json(self) -> str:
+        return json.dumps(self.payload, indent=2)
+
+    def to_text(self) -> str:
+        summary = self.payload.get("summary") if isinstance(self.payload, dict) else {}
+        artifact_paths = self.payload.get("artifact_paths") if isinstance(self.payload, dict) else {}
+        lines = ["Spark Telegram memory acceptance pack export"]
+        lines.append(f"- output_dir: {self.output_dir}")
+        if isinstance(summary, dict):
+            lines.append(f"- cases: {summary.get('case_count', 0)}")
+            lines.append(f"- pack_kind: {summary.get('pack_kind') or 'unknown'}")
+        if isinstance(artifact_paths, dict):
+            if artifact_paths.get("pack_json"):
+                lines.append(f"- pack_json: {artifact_paths['pack_json']}")
+            if artifact_paths.get("operator_markdown"):
+                lines.append(f"- operator_markdown: {artifact_paths['operator_markdown']}")
+        return "\n".join(lines)
+
+
+def export_telegram_memory_acceptance_pack(
+    *,
+    config_manager: ConfigManager,
+    output_dir: str | Path | None = None,
+    write_path: str | Path | None = None,
+    markdown_path: str | Path | None = None,
+    cases: tuple[TelegramMemoryAcceptanceCase, ...] = DEFAULT_TELEGRAM_MEMORY_ACCEPTANCE_CASES,
+) -> TelegramMemoryAcceptancePackExportResult:
+    resolved_output_dir = Path(output_dir) if output_dir else config_manager.paths.home / "artifacts" / "telegram-memory-acceptance-supervised"
+    resolved_output_dir.mkdir(parents=True, exist_ok=True)
+    resolved_write_path = Path(write_path) if write_path else resolved_output_dir / "telegram-memory-acceptance-pack.json"
+    resolved_markdown_path = Path(markdown_path) if markdown_path else resolved_output_dir / "telegram-memory-acceptance-pack.md"
+
+    case_payloads = [_case_to_operator_payload(index=index, case=case) for index, case in enumerate(cases, start=1)]
+    payload = {
+        "summary": {
+            "pack_kind": "telegram_memory_acceptance_supervised",
+            "case_count": len(case_payloads),
+            "operator_flow": "send_each_prompt_to_spark_agi_or_tester_and_capture_the_exact_reply",
+            "acceptance_gate": "compare_live_replies_against_expected_fragments_then_run_local_blocking_acceptance",
+        },
+        "cases": case_payloads,
+        "shadow_telegram_pack": [
+            {
+                "message": case.message,
+                "case_id": case.case_id,
+                "category": case.category,
+            }
+            for case in cases
+        ],
+        "capture_template": [
+            {
+                "case_id": case.case_id,
+                "prompt": case.message,
+                "live_response": "",
+                "operator_notes": "",
+            }
+            for case in cases
+        ],
+        "artifact_paths": {
+            "pack_json": str(resolved_write_path),
+            "operator_markdown": str(resolved_markdown_path),
+        },
+    }
+    resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    resolved_markdown_path.write_text(_render_operator_acceptance_markdown(payload), encoding="utf-8")
+    return TelegramMemoryAcceptancePackExportResult(output_dir=resolved_output_dir, payload=payload)
+
+
 def run_telegram_memory_acceptance(
     *,
     config_manager: ConfigManager,
@@ -212,6 +285,67 @@ def run_telegram_memory_acceptance(
     }
     resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return TelegramMemoryAcceptanceResult(output_dir=resolved_output_dir, payload=payload)
+
+
+def _case_to_operator_payload(*, index: int, case: TelegramMemoryAcceptanceCase) -> dict[str, Any]:
+    return {
+        "index": index,
+        "case_id": case.case_id,
+        "category": case.category,
+        "prompt": case.message,
+        "expected_bridge_mode": case.expected_bridge_mode,
+        "expected_routing_decision": case.expected_routing_decision,
+        "expected_response_contains": list(case.expected_response_contains),
+        "expected_response_excludes": list(case.expected_response_excludes),
+    }
+
+
+def _render_operator_acceptance_markdown(payload: dict[str, Any]) -> str:
+    cases = payload.get("cases") if isinstance(payload.get("cases"), list) else []
+    lines = [
+        "# Telegram Memory Acceptance Pack",
+        "",
+        "Send each prompt to Spark AGI or Tester in order. Capture the exact reply under each case.",
+        "",
+        "Pass rule: every expected fragment must appear, every excluded fragment must be absent, and source/gate explanations must stay aligned with the local blocking acceptance run.",
+        "",
+    ]
+    for item in cases:
+        if not isinstance(item, dict):
+            continue
+        lines.extend(
+            [
+                f"## {item.get('index')}. {item.get('case_id')}",
+                "",
+                f"Category: `{item.get('category')}`",
+                "",
+                "Prompt:",
+                "",
+                "```text",
+                str(item.get("prompt") or ""),
+                "```",
+                "",
+            ]
+        )
+        expected_contains = [str(value) for value in item.get("expected_response_contains") or []]
+        expected_excludes = [str(value) for value in item.get("expected_response_excludes") or []]
+        if item.get("expected_bridge_mode") or item.get("expected_routing_decision"):
+            lines.append("Expected route:")
+            if item.get("expected_bridge_mode"):
+                lines.append(f"- bridge_mode: `{item.get('expected_bridge_mode')}`")
+            if item.get("expected_routing_decision"):
+                lines.append(f"- routing_decision: `{item.get('expected_routing_decision')}`")
+            lines.append("")
+        if expected_contains:
+            lines.append("Expected response fragments:")
+            lines.extend(f"- `{fragment}`" for fragment in expected_contains)
+            lines.append("")
+        if expected_excludes:
+            lines.append("Forbidden response fragments:")
+            lines.extend(f"- `{fragment}`" for fragment in expected_excludes)
+            lines.append("")
+        lines.extend(["Live response:", "", "```text", "", "```", ""])
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def _prepare_acceptance_identity(*, state_db: StateDB, external_user_id: str, username: str) -> None:
