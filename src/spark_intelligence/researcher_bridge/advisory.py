@@ -9514,6 +9514,31 @@ def build_researcher_reply(
             candidate_record_count += len(records)
             if records:
                 records_by_attribute[attribute] = records[-1]
+        direct_attribute_count = len(records_by_attribute)
+        inspection_record_count = 0
+        if len(records_by_attribute) < len(_ENTITY_STATE_SUMMARY_ATTRIBUTES):
+            direct_inspection = inspect_human_memory_in_memory(
+                config_manager=config_manager,
+                state_db=state_db,
+                human_id=human_id,
+                actor_id="researcher_bridge",
+            )
+            if not direct_inspection.read_result.abstained and direct_inspection.read_result.records:
+                inspection_records = list(direct_inspection.read_result.records or [])
+                for attribute, predicate, _display_label in _ENTITY_STATE_SUMMARY_ATTRIBUTES:
+                    if attribute in records_by_attribute:
+                        continue
+                    records = _filter_entity_state_summary_records(
+                        query=detected_entity_state_summary_query,
+                        attribute=attribute,
+                        predicate=predicate,
+                        records=inspection_records,
+                    )
+                    inspection_record_count += len(records)
+                    if records:
+                        records_by_attribute[attribute] = records[-1]
+                if len(records_by_attribute) > direct_attribute_count:
+                    read_method = "get_current_state+inspect_memory_records"
         output_keepability, promotion_disposition = _bridge_output_classification(
             mode="memory_entity_state_summary",
             routing_decision="memory_entity_state_summary_query",
@@ -9534,6 +9559,7 @@ def build_researcher_reply(
             f"entity_key={entity_key or 'unknown'} "
             f"attribute_count={len(attributes)} "
             f"candidate_record_count={candidate_record_count} "
+            f"inspection_record_count={inspection_record_count} "
             f"read_method={read_method}"
         )
         record_event(
@@ -9564,6 +9590,7 @@ def build_researcher_reply(
                     "entity_key": entity_key,
                     "attribute_count": len(attributes),
                     "candidate_record_count": candidate_record_count,
+                    "inspection_record_count": inspection_record_count,
                     "attributes": attributes,
                     "read_method": read_method,
                 },
