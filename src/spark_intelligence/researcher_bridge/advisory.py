@@ -909,6 +909,28 @@ def _entity_state_answer_from_record(*, query: OpenMemoryRecallQuery, record: di
     return f"The {label} {attribute} is {value}."
 
 
+def _open_memory_recall_decisive_records(
+    *,
+    query: OpenMemoryRecallQuery,
+    records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    expected_attribute = _open_memory_recall_entity_attribute(query.query_kind)
+    if not expected_attribute:
+        return records
+    for record in records:
+        if _entity_state_answer_from_record(query=query, record=record):
+            return [record]
+    return records
+
+
+def _open_memory_recall_record_role(record: dict[str, Any]) -> str:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    predicate = str(record.get("predicate") or "").strip()
+    if predicate.startswith("entity.") or metadata.get("entity_key") or metadata.get("entity_attribute"):
+        return "entity_state"
+    return str(record.get("memory_role") or metadata.get("memory_role") or "").strip()
+
+
 def _open_memory_recall_entity_attribute(query_kind: str | None) -> str | None:
     return {
         "name_recall": "name",
@@ -9437,13 +9459,6 @@ def build_researcher_reply(
                         ]
                 if recall_records:
                     read_method = "inspect_memory_records"
-        retrieved_memory_roles = sorted(
-            {
-                str(record.get("memory_role") or "").strip()
-                for record in recall_records
-                if str(record.get("memory_role") or "").strip()
-            }
-        )
         output_keepability, promotion_disposition = _bridge_output_classification(
             mode="memory_open_recall",
             routing_decision="memory_open_recall_query",
@@ -9453,15 +9468,35 @@ def build_researcher_reply(
             query=detected_open_memory_recall_query,
             records=recall_records,
         )
+        decisive_records = _open_memory_recall_decisive_records(
+            query=detected_open_memory_recall_query,
+            records=recall_records,
+        )
+        retrieved_memory_roles = sorted(
+            {
+                role
+                for role in (_open_memory_recall_record_role(record) for record in decisive_records)
+                if role
+            }
+        )
+        candidate_memory_roles = sorted(
+            {
+                role
+                for role in (_open_memory_recall_record_role(record) for record in recall_records)
+                if role
+            }
+        )
         evidence_summary = (
             "status=memory_open_recall "
             f"topic={detected_open_memory_recall_query.topic or 'unknown'} "
             f"query_kind={detected_open_memory_recall_query.query_kind or 'unknown'} "
-            f"record_count={len(recall_records)} "
+            f"record_count={len(decisive_records)} "
+            f"candidate_record_count={len(recall_records)} "
             f"archived_structured_evidence_count={archived_structured_evidence_count} "
             f"archived_raw_episode_count={archived_raw_episode_count} "
             f"read_method={read_method} "
-            f"retrieved_roles={','.join(retrieved_memory_roles) if retrieved_memory_roles else 'none'}"
+            f"retrieved_roles={','.join(retrieved_memory_roles) if retrieved_memory_roles else 'none'} "
+            f"candidate_roles={','.join(candidate_memory_roles) if candidate_memory_roles else 'none'}"
         )
         record_event(
             state_db,
@@ -9489,11 +9524,13 @@ def build_researcher_reply(
                 extra={
                     "topic": detected_open_memory_recall_query.topic,
                     "query_kind": detected_open_memory_recall_query.query_kind,
-                    "record_count": len(recall_records),
+                    "record_count": len(decisive_records),
+                    "candidate_record_count": len(recall_records),
                     "archived_structured_evidence_count": archived_structured_evidence_count,
                     "archived_raw_episode_count": archived_raw_episode_count,
                     "read_method": read_method,
                     "retrieved_memory_roles": retrieved_memory_roles,
+                    "candidate_memory_roles": candidate_memory_roles,
                 },
             ),
         )
