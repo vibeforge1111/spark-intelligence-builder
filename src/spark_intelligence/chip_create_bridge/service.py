@@ -117,14 +117,11 @@ def format_chip_create_suggestion(brief: str) -> str:
     if not trimmed:
         return (
             "Sounds like you want me to scaffold a new chip.\n\n"
-            "Give me a one-line description and tap:\n"
-            "/chip create <description>"
+            "Give me a one-line description of what it should do and I will turn it into a chip brief."
         )
     # Three short paragraphs, blank line between each.
     return (
-        f"Got it - a chip for:\n{trimmed}\n\n"
-        f"Tap this to scaffold it (takes 30-60s):\n"
-        f"/chip create {trimmed}\n\n"
-        f"I hand off to the slash command so you see the scaffolder's output "
-        f"live and can cancel if the brief needs tweaking."
+        f"Got it. I can scaffold a domain chip for: {trimmed}\n\n"
+        f"I will treat that as a natural-language chip creation request and keep the scaffolding flow in chat.\n\n"
+        f"Expected shape: purpose, activation rules, examples, verification notes, and router metadata."
     )
