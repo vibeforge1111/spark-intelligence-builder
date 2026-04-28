@@ -273,6 +273,38 @@ class _SupportingOnlyHybridRetrievalMemoryClient(_HybridRetrievalMemoryClient):
         }
 
 
+class _AuthorityAnchoredDominantEvidenceMemoryClient(_HybridRetrievalMemoryClient):
+    def retrieve_events(self, **payload):
+        self.retrieval_event_calls.append(payload)
+        return {
+            "status": "abstained",
+            "reason": "not_found",
+            "memory_role": "event",
+            "records": [],
+            "provenance": [],
+            "retrieval_trace": {"trace_id": "mem-trace-events-empty"},
+        }
+
+    def retrieve_evidence(self, **payload):
+        self.evidence_calls.append(payload)
+        return {
+            "status": "supported",
+            "memory_role": "structured_evidence",
+            "records": [
+                {
+                    "subject": payload.get("subject"),
+                    "predicate": payload.get("predicate"),
+                    "value": f"clean supporting evidence {index}",
+                    "text": f"Clean supporting evidence {index}.",
+                    "metadata": {"status": "current", "source_surface": "evidence"},
+                }
+                for index in range(4)
+            ],
+            "provenance": [{"memory_role": "structured_evidence", "source": "fake_sdk"}],
+            "retrieval_trace": {"trace_id": "mem-trace-evidence-dominant"},
+        }
+
+
 class _StaleEvidenceMemoryClient(_FakeMemoryClient):
     def retrieve_evidence(self, **payload):
         self.evidence_calls.append(payload)
@@ -490,6 +522,33 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(gates["gates"]["stale_current_conflict"]["status"], "pass")
         self.assertEqual(gates["gates"]["source_swamp_resistance"]["evidence"]["authority_count"], 0)
         self.assertGreaterEqual(gates["gates"]["source_swamp_resistance"]["evidence"]["supporting_count"], 3)
+
+    def test_hybrid_memory_context_packet_allows_clean_authority_anchored_supporting_mix(self) -> None:
+        fake_client = _AuthorityAnchoredDominantEvidenceMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ):
+            result = hybrid_memory_retrieve(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                query="What should we focus on next?",
+                subject="human:test",
+                predicate="profile.current_focus",
+                limit=6,
+                actor_id="test",
+            )
+
+        packet = result.context_packet
+        self.assertIsNotNone(packet)
+        assert packet is not None
+        gates = packet.trace["promotion_gates"]
+        mix_gate = gates["gates"]["source_mix_stability"]
+        self.assertEqual(gates["status"], "pass")
+        self.assertEqual(mix_gate["status"], "pass")
+        self.assertEqual(mix_gate["reason"], "authority_anchor_with_clean_supporting_mix")
+        self.assertEqual(mix_gate["evidence"]["authority_count"], 1)
+        self.assertGreater(mix_gate["evidence"]["dominant_fraction"], 0.75)
 
     def test_hybrid_memory_retrieve_prepares_graphiti_shadow_lane_without_selecting_it(self) -> None:
         self.config_manager.set_path("spark.memory.sidecars.graphiti.enabled", True)

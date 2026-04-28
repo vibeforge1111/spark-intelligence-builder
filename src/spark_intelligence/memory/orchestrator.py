@@ -5097,6 +5097,7 @@ def _hybrid_memory_context_promotion_gates(
     dominant_source = max(source_mix, key=source_mix.get) if source_mix else None
     dominant_count = int(source_mix.get(dominant_source, 0)) if dominant_source else 0
     dominant_fraction = round(dominant_count / max(1, sum(source_mix.values())), 3) if source_mix else 0.0
+    clean_authority_anchor = authority_count > 0 and stale_selected_count == 0 and recent_noise_count == 0
 
     gates = {
         "source_swamp_resistance": _promotion_gate(
@@ -5152,6 +5153,7 @@ def _hybrid_memory_context_promotion_gates(
                 if total_packet_items <= 2
                 or dominant_fraction <= 0.75
                 or dominant_source in _AUTHORITY_MEMORY_SOURCE_CLASSES
+                or clean_authority_anchor
                 else "warn"
             ),
             reason=(
@@ -5160,13 +5162,18 @@ def _hybrid_memory_context_promotion_gates(
                 else (
                     "authority_source_dominates"
                     if dominant_source in _AUTHORITY_MEMORY_SOURCE_CLASSES
-                    else "single_supporting_source_dominates_packet"
+                    else (
+                        "authority_anchor_with_clean_supporting_mix"
+                        if clean_authority_anchor
+                        else "single_supporting_source_dominates_packet"
+                    )
                 )
             ),
             evidence={
                 "source_mix": dict(source_mix),
                 "dominant_source": dominant_source,
                 "dominant_fraction": dominant_fraction,
+                "authority_count": authority_count,
             },
         ),
     }
