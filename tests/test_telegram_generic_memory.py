@@ -8,12 +8,46 @@ from spark_intelligence.memory.generic_observations import (
 )
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
 from spark_intelligence.observability.store import latest_events_by_type
-from spark_intelligence.researcher_bridge.advisory import ResearcherProviderSelection, build_researcher_reply
+from spark_intelligence.researcher_bridge.advisory import (
+    OpenMemoryRecallQuery,
+    ResearcherProviderSelection,
+    _build_open_memory_recall_answer,
+    _filter_open_memory_recall_records,
+    build_researcher_reply,
+)
 
 from tests.test_support import SparkTestCase
 
 
 class TelegramGenericMemoryTests(SparkTestCase):
+    def test_open_recall_keeps_metadata_role_entity_current_state_records(self) -> None:
+        records = [
+            {
+                "observation_id": "telegram:plant-location:1",
+                "subject": "human:telegram:8319079055",
+                "predicate": "entity.location",
+                "text": "human:telegram:8319079055 entity.location the windowsill",
+                "metadata": {
+                    "memory_role": "current_state",
+                    "entity_type": "named_object",
+                    "entity_key": "named-object:tiny-desk-plant",
+                    "entity_label": "tiny desk plant",
+                    "entity_attribute": "location",
+                    "location_preposition": "on",
+                    "value": "the windowsill",
+                },
+            }
+        ]
+
+        filtered = _filter_open_memory_recall_records(records)
+        reply = _build_open_memory_recall_answer(
+            query=OpenMemoryRecallQuery(topic="the desk plant", query_kind="location_recall"),
+            records=filtered,
+        )
+
+        self.assertEqual(filtered, records)
+        self.assertEqual(reply, "The tiny desk plant is on the windowsill.")
+
     def test_build_researcher_reply_persists_generic_relationship_memory_before_provider_resolution(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)

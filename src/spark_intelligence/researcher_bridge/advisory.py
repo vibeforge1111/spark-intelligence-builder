@@ -679,7 +679,7 @@ def _filter_open_memory_recall_records(records: list[dict[str, Any]]) -> list[di
         supersedes = str(lifecycle.get("supersedes") or metadata.get("supersedes") or "").strip()
         if supersedes:
             superseded_ids.add(supersedes)
-        role = str(record.get("memory_role") or "").strip()
+        role = str(record.get("memory_role") or metadata.get("memory_role") or "").strip()
         operation = str(record.get("operation") or metadata.get("write_operation") or "").strip().lower()
         target_predicate = str(metadata.get("target_predicate") or "").strip()
         if role == "state_deletion" or operation == "delete" or target_predicate:
@@ -694,9 +694,9 @@ def _filter_open_memory_recall_records(records: list[dict[str, Any]]) -> list[di
     filtered: list[dict[str, Any]] = []
     for record in records:
         predicate = str(record.get("predicate") or "").strip()
-        role = str(record.get("memory_role") or "").strip()
         record_id = str(record.get("observation_id") or (record.get("metadata") or {}).get("observation_id") or "").strip()
         metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        role = str(record.get("memory_role") or metadata.get("memory_role") or "").strip()
         if _record_is_suppressed_by_state_deletion(record=record, deleted_scopes=deleted_scopes):
             continue
         if role == "state_deletion" or str(record.get("operation") or "").strip().lower() == "delete":
