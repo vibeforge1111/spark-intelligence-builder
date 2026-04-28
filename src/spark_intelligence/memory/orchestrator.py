@@ -492,6 +492,30 @@ class HybridMemoryCandidate:
 
 
 @dataclass(frozen=True)
+class HybridMemoryContextPacket:
+    query: str
+    max_chars: int
+    used_chars: int
+    sections: list[dict[str, Any]]
+    source_mix: dict[str, int]
+    dropped_count: int
+    conflict_notes: list[dict[str, Any]]
+    trace: dict[str, Any]
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "query": self.query,
+            "max_chars": self.max_chars,
+            "used_chars": self.used_chars,
+            "sections": self.sections,
+            "source_mix": self.source_mix,
+            "dropped_count": self.dropped_count,
+            "conflict_notes": self.conflict_notes,
+            "trace": self.trace,
+        }
+
+
+@dataclass(frozen=True)
 class HybridMemoryRetrievalResult:
     sdk_module: str
     query: str
@@ -503,6 +527,7 @@ class HybridMemoryRetrievalResult:
     read_result: MemoryReadResult
     candidates: list[HybridMemoryCandidate]
     lane_summaries: list[dict[str, Any]]
+    context_packet: HybridMemoryContextPacket | None = None
     shadow_only_eval: bool = True
 
     def to_payload(self) -> dict[str, Any]:
@@ -517,6 +542,7 @@ class HybridMemoryRetrievalResult:
             "shadow_only_eval": self.shadow_only_eval,
             "lane_summaries": self.lane_summaries,
             "candidates": [candidate.to_payload() for candidate in self.candidates],
+            "context_packet": self.context_packet.to_payload() if self.context_packet is not None else None,
             "read_result": MemorySdkSmokeResult._read_payload(self.read_result),
         }
 
@@ -1803,6 +1829,19 @@ def hybrid_memory_retrieve(
             )
         )
 
+    max_context_chars = int(config_manager.get_path("spark.memory.hybrid_context.max_chars", default=3600) or 3600)
+    context_packet = _build_hybrid_memory_context_packet(
+        query=normalized_query,
+        candidates=candidates,
+        lane_summaries=lane_summaries,
+        max_chars=max_context_chars,
+    )
+    packet_candidate_keys = {
+        str(item.get("candidate_key") or "")
+        for section in context_packet.sections
+        for item in list(section.get("items") or [])
+        if isinstance(item, dict)
+    }
     retrieval_trace = {
         "hybrid_memory_retrieve": {
             "query": normalized_query,
@@ -1812,6 +1851,7 @@ def hybrid_memory_retrieve(
             "as_of": normalized_as_of,
             "limit": normalized_limit,
             "lane_summaries": lane_summaries,
+            "context_packet": context_packet.to_payload(),
             "candidate_count": len(candidates),
             "selected_count": len(selected_records),
             "candidates": [
@@ -1820,6 +1860,7 @@ def hybrid_memory_retrieve(
                     "source_class": candidate.source_class,
                     "score": candidate.score,
                     "selected": candidate.selected,
+                    "survived_context_budget": _hybrid_memory_candidate_key(candidate) in packet_candidate_keys,
                     "reason_selected": candidate.reason_selected,
                     "reason_discarded": candidate.reason_discarded,
                     "predicate": candidate.record.get("predicate"),
@@ -1854,8 +1895,11 @@ def hybrid_memory_retrieve(
                 "historical_state",
                 "events",
                 "evidence",
+                "wiki_packets",
                 "typed_temporal_graph",
             ],
+            "context_packet_sections": [section["section"] for section in context_packet.sections],
+            "context_packet_source_mix": context_packet.source_mix,
         },
         abstained=not bool(selected_records),
         reason=None if selected_records else ("no_hybrid_candidates" if not candidates else "all_candidates_discarded"),
@@ -1881,6 +1925,7 @@ def hybrid_memory_retrieve(
         read_result=read_result,
         candidates=candidates,
         lane_summaries=lane_summaries,
+        context_packet=context_packet,
         shadow_only_eval=False,
     )
 
@@ -4887,6 +4932,163 @@ def _memory_kernel_record_is_stale(record: dict[str, Any]) -> bool:
     if record.get("is_current") is False or metadata.get("is_current") is False:
         return True
     return False
+
+
+def _build_hybrid_memory_context_packet(
+    *,
+    query: str,
+    candidates: list[HybridMemoryCandidate],
+    lane_summaries: list[dict[str, Any]],
+    max_chars: int,
+) -> HybridMemoryContextPacket:
+    normalized_budget = max(600, int(max_chars or 3600))
+    sections_by_name: dict[str, dict[str, Any]] = {}
+    used_chars = 0
+    dropped_count = 0
+    source_mix: dict[str, int] = {}
+    selected_candidates = [candidate for candidate in candidates if candidate.selected]
+    for candidate in selected_candidates:
+        section_name = _hybrid_memory_context_section(candidate)
+        section = sections_by_name.setdefault(
+            section_name,
+            {
+                "section": section_name,
+                "authority": _hybrid_memory_context_authority(candidate),
+                "items": [],
+                "used_chars": 0,
+            },
+        )
+        remaining_total = normalized_budget - used_chars
+        if remaining_total <= 0:
+            dropped_count += 1
+            continue
+        section_budget = _hybrid_memory_context_section_budget(section_name, normalized_budget)
+        remaining_section = section_budget - int(section["used_chars"])
+        allowance = max(0, min(remaining_total, remaining_section))
+        if allowance < 80 and section["items"]:
+            dropped_count += 1
+            continue
+        item = _hybrid_memory_context_item(candidate, max_chars=max(80, allowance))
+        item_chars = int(item["char_count"])
+        if item_chars > remaining_total:
+            dropped_count += 1
+            continue
+        section["items"].append(item)
+        section["used_chars"] = int(section["used_chars"]) + item_chars
+        used_chars += item_chars
+        source_mix[candidate.source_class] = source_mix.get(candidate.source_class, 0) + 1
+
+    section_order = {
+        "active_current_state": 0,
+        "historical_state": 1,
+        "relevant_events": 2,
+        "relevant_evidence": 3,
+        "compiled_project_knowledge": 4,
+        "graph_sidecar_hits": 5,
+        "supporting_context": 6,
+    }
+    sections = sorted(
+        (section for section in sections_by_name.values() if section["items"]),
+        key=lambda section: section_order.get(str(section["section"]), 99),
+    )
+    conflict_notes = [
+        {
+            "lane": candidate.lane,
+            "source_class": candidate.source_class,
+            "reason_discarded": candidate.reason_discarded,
+            "predicate": candidate.record.get("predicate"),
+            "summary": _clip_text(_hybrid_memory_record_text(candidate.record), max_chars=180),
+        }
+        for candidate in candidates
+        if candidate.reason_discarded in {"stale_or_superseded", "duplicate_lower_rank"}
+    ][:6]
+    return HybridMemoryContextPacket(
+        query=query,
+        max_chars=normalized_budget,
+        used_chars=used_chars,
+        sections=sections,
+        source_mix=source_mix,
+        dropped_count=dropped_count,
+        conflict_notes=conflict_notes,
+        trace={
+            "operation": "build_hybrid_memory_context_packet",
+            "lane_count": len(lane_summaries),
+            "selected_candidate_count": len(selected_candidates),
+            "section_count": len(sections),
+            "score_adaptive_truncation": True,
+        },
+    )
+
+
+def _hybrid_memory_context_section(candidate: HybridMemoryCandidate) -> str:
+    if candidate.lane == "current_state":
+        return "active_current_state"
+    if candidate.lane == "historical_state":
+        return "historical_state"
+    if candidate.lane == "events":
+        return "relevant_events"
+    if candidate.lane == "evidence":
+        return "relevant_evidence"
+    if candidate.lane == "wiki_packets":
+        return "compiled_project_knowledge"
+    if candidate.lane == "typed_temporal_graph":
+        return "graph_sidecar_hits"
+    return "supporting_context"
+
+
+def _hybrid_memory_context_authority(candidate: HybridMemoryCandidate) -> str:
+    if candidate.source_class in {"current_state", "historical_state"}:
+        return "authority"
+    if candidate.source_class in {"obsidian_llm_wiki_packets", "graphiti_temporal_graph"}:
+        return "supporting_not_authoritative"
+    if _memory_kernel_record_is_stale(candidate.record):
+        return "advisory_stale"
+    return "supporting"
+
+
+def _hybrid_memory_context_section_budget(section_name: str, max_chars: int) -> int:
+    fractions = {
+        "active_current_state": 0.34,
+        "historical_state": 0.24,
+        "relevant_events": 0.20,
+        "relevant_evidence": 0.22,
+        "compiled_project_knowledge": 0.18,
+        "graph_sidecar_hits": 0.16,
+        "supporting_context": 0.12,
+    }
+    return max(240, int(max_chars * fractions.get(section_name, 0.12)))
+
+
+def _hybrid_memory_context_item(candidate: HybridMemoryCandidate, *, max_chars: int) -> dict[str, Any]:
+    record = candidate.record
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    text = _hybrid_memory_record_text(record) or str(record.get("value") or record.get("summary") or "").strip()
+    clipped = _clip_text(text, max_chars=max_chars)
+    return {
+        "candidate_key": _hybrid_memory_candidate_key(candidate),
+        "lane": candidate.lane,
+        "source_class": candidate.source_class,
+        "score": candidate.score,
+        "authority": _hybrid_memory_context_authority(candidate),
+        "predicate": record.get("predicate"),
+        "value": record.get("value"),
+        "text": clipped,
+        "source_path": metadata.get("source_path"),
+        "entity_key": metadata.get("entity_key"),
+        "reason_selected": candidate.reason_selected,
+        "char_count": len(clipped),
+    }
+
+
+def _hybrid_memory_candidate_key(candidate: HybridMemoryCandidate) -> str:
+    return f"{candidate.lane}:{candidate.source_class}:{_hybrid_memory_record_key(candidate.record)}"
+
+
+def _clip_text(text: str, *, max_chars: int) -> str:
+    normalized = str(text or "").strip()
+    if len(normalized) <= max_chars:
+        return normalized
+    return normalized[: max(0, max_chars - 3)].rstrip() + "..."
 
 
 def _build_graph_sidecar_shadow_lane(

@@ -1,5 +1,6 @@
 from spark_intelligence.memory.orchestrator import (
     HumanMemoryInspectionResult,
+    HybridMemoryContextPacket,
     MemoryAnswerExplanationResult,
     MemoryCurrentStateLookupResult,
     MemoryHistoricalStateLookupResult,
@@ -74,6 +75,7 @@ from spark_intelligence.memory.shadow_replay import (
 
 __all__ = [
     "HumanMemoryInspectionResult",
+    "HybridMemoryContextPacket",
     "HybridMemoryRetrievalResult",
     "MemoryAnswerExplanationResult",
     "MemoryArchitectureBenchmarkResult",
