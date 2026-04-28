@@ -5,7 +5,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from spark_intelligence.memory import TelegramMemoryRegressionResult, run_telegram_memory_regression
+from spark_intelligence.memory import (
+    TelegramMemoryAcceptanceResult,
+    TelegramMemoryRegressionResult,
+    run_telegram_memory_acceptance,
+    run_telegram_memory_regression,
+)
+from spark_intelligence.memory.acceptance import DEFAULT_TELEGRAM_MEMORY_ACCEPTANCE_CASES
 from spark_intelligence.memory.regression import (
     DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES,
     _allocate_regression_identity,
@@ -136,6 +142,151 @@ class MemoryRegressionTests(SparkTestCase):
             kwargs["baseline_names"],
             ["summary_synthesis_memory", "dual_store_event_calendar_hybrid"],
         )
+
+    def test_memory_run_telegram_acceptance_dispatches_runner(self) -> None:
+        output_dir = self.home / "artifacts" / "telegram-memory-acceptance"
+        write_path = output_dir / "summary.json"
+        payload = {
+            "summary": {
+                "status": "passed",
+                "case_count": len(DEFAULT_TELEGRAM_MEMORY_ACCEPTANCE_CASES),
+                "matched_case_count": len(DEFAULT_TELEGRAM_MEMORY_ACCEPTANCE_CASES),
+                "mismatched_case_count": 0,
+                "promotion_gate_status": "pass",
+                "selected_user_id": "12345",
+                "selected_chat_id": "12345",
+            }
+        }
+
+        with patch(
+            "spark_intelligence.cli.run_telegram_memory_acceptance",
+            return_value=TelegramMemoryAcceptanceResult(output_dir=output_dir, payload=payload),
+        ) as run_acceptance:
+            exit_code, stdout, stderr = self.run_cli(
+                "memory",
+                "run-telegram-acceptance",
+                "--home",
+                str(self.home),
+                "--output-dir",
+                str(output_dir),
+                "--user-id",
+                "12345",
+                "--chat-id",
+                "12345",
+                "--write",
+                str(write_path),
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertEqual(json.loads(stdout)["summary"]["status"], "passed")
+        kwargs = run_acceptance.call_args.kwargs
+        self.assertEqual(kwargs["config_manager"].paths.home, Path(self.home))
+        self.assertEqual(kwargs["output_dir"], str(output_dir))
+        self.assertEqual(kwargs["user_id"], "12345")
+        self.assertEqual(kwargs["chat_id"], "12345")
+        self.assertEqual(kwargs["write_path"], str(write_path))
+
+    def test_run_telegram_memory_acceptance_asserts_cases_and_promotion_gates(self) -> None:
+        output_dir = self.home / "artifacts" / "telegram-memory-acceptance-runner"
+
+        def allowed_payload(message: str, bridge_mode: str, routing_decision: str, response_text: str) -> str:
+            return json.dumps(
+                {
+                    "message": message,
+                    "user_id": "12345",
+                    "chat_id": "12345",
+                    "result": {
+                        "ok": True,
+                        "decision": "allowed",
+                        "detail": {
+                            "response_text": response_text,
+                            "bridge_mode": bridge_mode,
+                            "routing_decision": routing_decision,
+                            "trace_ref": "trace:test",
+                        },
+                    },
+                }
+            )
+
+        gateway_payloads = [
+            allowed_payload(
+                case.message,
+                {
+                    "current_focus_plan_query": "memory_current_focus_plan",
+                    "open_ended_next_step": "memory_kernel_next_step",
+                    "source_explanation": "context_source_debug",
+                }.get(case.case_id, "memory_generic_observation_update"),
+                {
+                    "current_focus_plan_query": "memory_current_focus_plan_query",
+                    "open_ended_next_step": "memory_kernel_next_step",
+                    "source_explanation": "context_source_debug",
+                }.get(case.case_id, "memory_generic_observation"),
+                {
+                    "seed_focus": "I'll remember that your current focus is persistent memory quality evaluation.",
+                    "seed_old_plan": "Done. Your current plan is now: verify scheduled memory cleanup.",
+                    "replace_plan": "Done. Your current plan is now: evaluate open-ended persistent memory recall.",
+                    "natural_fact_seed": "I'll remember that the tiny desk plant is named Mira.",
+                    "current_focus_plan_query": (
+                        "Your current focus is persistent memory quality evaluation.\n"
+                        "Your current plan is to evaluate open-ended persistent memory recall."
+                    ),
+                    "open_ended_next_step": (
+                        "Your active focus is persistent memory quality evaluation.\n"
+                        "Your active plan is evaluate open-ended persistent memory recall."
+                    ),
+                    "source_explanation": (
+                        "I answered from the memory kernel next-step route.\n"
+                        "- promotion gates: pass\n"
+                        "- focus source: current_state via get_current_state"
+                    ),
+                    "natural_fact_recall": "You named the tiny desk plant Mira.",
+                }[case.case_id],
+            )
+            for case in DEFAULT_TELEGRAM_MEMORY_ACCEPTANCE_CASES
+        ]
+        fake_packet = SimpleNamespace(
+            to_payload=lambda: {
+                "source_mix": {"current_state": 1, "structured_evidence": 1},
+                "sections": [{"section": "active_current_state"}],
+                "trace": {
+                    "promotion_gates": {
+                        "status": "pass",
+                        "mode": "trace_only",
+                        "gates": {
+                            "source_swamp_resistance": {"status": "pass"},
+                            "stale_current_conflict": {"status": "pass"},
+                            "recent_conversation_noise": {"status": "pass"},
+                            "source_mix_stability": {"status": "pass"},
+                        },
+                    }
+                },
+            }
+        )
+
+        with patch(
+            "spark_intelligence.gateway.runtime.gateway_ask_telegram",
+            side_effect=gateway_payloads,
+        ) as ask_telegram, patch(
+            "spark_intelligence.memory.acceptance.hybrid_memory_retrieve",
+            return_value=SimpleNamespace(context_packet=fake_packet),
+        ) as retrieve:
+            result = run_telegram_memory_acceptance(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                output_dir=output_dir,
+                user_id="12345",
+                chat_id="12345",
+            )
+
+        self.assertEqual(result.payload["summary"]["status"], "passed")
+        self.assertEqual(result.payload["summary"]["promotion_gate_status"], "pass")
+        self.assertEqual(result.payload["summary"]["mismatched_case_count"], 0)
+        self.assertEqual(result.payload["gate_assertions"]["mismatches"], [])
+        self.assertEqual(ask_telegram.call_count, len(DEFAULT_TELEGRAM_MEMORY_ACCEPTANCE_CASES))
+        self.assertEqual(retrieve.call_args.kwargs["subject"], "human:telegram:12345")
+        self.assertEqual(retrieve.call_args.kwargs["predicate"], "profile.current_focus")
+        self.assertTrue((output_dir / "telegram-memory-acceptance.json").exists())
 
     def test_prepare_regression_identity_sets_agent_name_before_runtime(self) -> None:
         with patch(
