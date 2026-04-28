@@ -5116,7 +5116,13 @@ def _format_memory_route_source_reply(*, route_facts: dict[str, Any]) -> str | N
     bridge_mode = str(route_facts.get("bridge_mode") or "").strip()
     evidence_summary = str(route_facts.get("evidence_summary") or "").strip()
     attribute_match = re.search(r"\battribute=([^\s]+)", evidence_summary)
-    attribute_label = attribute_match.group(1).replace("_", " ") if attribute_match else "entity"
+    query_kind = str(route_facts.get("query_kind") or "").strip()
+    open_recall_attribute = _open_memory_recall_entity_attribute(query_kind)
+    attribute_label = (
+        attribute_match.group(1).replace("_", " ")
+        if attribute_match
+        else (open_recall_attribute.replace("_", " ") if open_recall_attribute else "entity")
+    )
     route_label: str | None = None
     source_line: str | None = None
     reason: str | None = None
@@ -5129,13 +5135,22 @@ def _format_memory_route_source_reply(*, route_facts: dict[str, Any]) -> str | N
             "came from entity-state records rather than diagnostics or workflow residue."
         )
     elif routing_decision == "memory_open_recall_query" or bridge_mode == "memory_open_recall":
-        route_label = "open memory recall route"
-        source_line = "entity_state/current_state records plus relevant evidence"
-        reason = (
-            "The previous answer was an open memory recall. "
-            "It selected records matching the question topic and requested attribute, while stale or wrong-attribute "
-            "records stayed out of the final answer."
-        )
+        if open_recall_attribute:
+            route_label = "entity-state current recall route"
+            source_line = "entity_state current records"
+            reason = (
+                "The previous answer was a current entity-memory read. "
+                f"It used entity-scoped {attribute_label} records for the named object, so the current value "
+                "came from entity-state records rather than diagnostics or workflow residue."
+            )
+        else:
+            route_label = "open memory recall route"
+            source_line = "entity_state/current_state records plus relevant evidence"
+            reason = (
+                "The previous answer was an open memory recall. "
+                "It selected records matching the question topic and requested attribute, while stale or wrong-attribute "
+                "records stayed out of the final answer."
+            )
     if route_label is None:
         return None
     lines = [f"I answered from the {route_label} for the previous Telegram turn."]
@@ -5148,6 +5163,15 @@ def _format_memory_route_source_reply(*, route_facts: dict[str, Any]) -> str | N
             f"- source: {source_line}",
         ]
     )
+    for key, label in (
+        ("query_kind", "query_kind"),
+        ("topic", "topic"),
+        ("record_count", "record_count"),
+        ("read_method", "read_method"),
+    ):
+        value = route_facts.get(key)
+        if value is not None and str(value).strip():
+            lines.append(f"- {label}: {value}")
     if evidence_summary:
         lines.append(f"- evidence_summary: {evidence_summary}")
     lines.extend(["", "Reason:", reason or "The previous answer came from the named memory route."])
@@ -5261,6 +5285,10 @@ def _build_context_source_debug_reply(
                     "explained_routing_decision": previous_route_facts.get("routing_decision"),
                     "explained_bridge_mode": previous_route_facts.get("bridge_mode"),
                     "explained_evidence_summary": previous_route_facts.get("evidence_summary"),
+                    "explained_topic": previous_route_facts.get("topic"),
+                    "explained_query_kind": previous_route_facts.get("query_kind"),
+                    "explained_record_count": previous_route_facts.get("record_count"),
+                    "explained_read_method": previous_route_facts.get("read_method"),
                     "source_ledger": [],
                     "source_counts": {},
                 },
@@ -9428,6 +9456,7 @@ def build_researcher_reply(
         evidence_summary = (
             "status=memory_open_recall "
             f"topic={detected_open_memory_recall_query.topic or 'unknown'} "
+            f"query_kind={detected_open_memory_recall_query.query_kind or 'unknown'} "
             f"record_count={len(recall_records)} "
             f"archived_structured_evidence_count={archived_structured_evidence_count} "
             f"archived_raw_episode_count={archived_raw_episode_count} "

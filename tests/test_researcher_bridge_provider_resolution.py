@@ -380,6 +380,92 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         )
         self.assertEqual(debug_event["facts_json"]["explained_evidence_summary"], evidence_summary)
 
+    def test_context_source_debug_query_explains_previous_entity_current_recall_route(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="context_capsule_compiled",
+            component="researcher_bridge",
+            summary="Compiled older Spark context capsule.",
+            request_id="req-older-capsule",
+            channel_id="telegram",
+            session_id="session:telegram:dm:111",
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            actor_id="researcher_bridge",
+            reason_code="context_capsule_compiled",
+            facts={
+                "routing_decision": "provider_fallback",
+                "bridge_mode": "direct_provider",
+            },
+        )
+        evidence_summary = (
+            "status=memory_open_recall topic=launch checklist query_kind=preference_recall "
+            "record_count=1 archived_structured_evidence_count=0 archived_raw_episode_count=0 "
+            "read_method=retrieve_evidence retrieved_roles=entity_state"
+        )
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered entity-state current recall.",
+            request_id="req-entity-current-recall",
+            channel_id="telegram",
+            session_id="session:telegram:dm:111",
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            actor_id="researcher_bridge",
+            reason_code="memory_open_recall_query",
+            facts={
+                "routing_decision": "memory_open_recall_query",
+                "bridge_mode": "memory_open_recall",
+                "evidence_summary": evidence_summary,
+                "topic": "launch checklist",
+                "query_kind": "preference_recall",
+                "record_count": 1,
+                "read_method": "retrieve_evidence",
+                "retrieved_memory_roles": ["entity_state"],
+            },
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider should not run for source debug"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-source-debug",
+                agent_id="agent:human:telegram:111",
+                human_id="human:telegram:111",
+                session_id="session:telegram:dm:111",
+                channel_kind="telegram",
+                user_message="Why did you answer that?",
+            )
+
+        self.assertEqual(result.routing_decision, "context_source_debug")
+        self.assertIn("entity-state current recall route", result.reply_text)
+        self.assertIn("routing_decision: memory_open_recall_query", result.reply_text)
+        self.assertIn("source: entity_state current records", result.reply_text)
+        self.assertIn("query_kind: preference_recall", result.reply_text)
+        self.assertIn("topic: launch checklist", result.reply_text)
+        self.assertIn("entity-scoped preference records", result.reply_text)
+        self.assertIn("current entity-memory read", result.reply_text)
+        self.assertNotIn("diagnostics: authority, 8 items", result.reply_text)
+        self.assertNotIn("preference history", result.reply_text)
+
+        events = latest_events_by_type(
+            self.state_db,
+            event_type="tool_result_received",
+            limit=5,
+        )
+        debug_event = next(event for event in events if event["reason_code"] == "context_source_debug")
+        self.assertEqual(debug_event["facts_json"]["explained_request_id"], "req-entity-current-recall")
+        self.assertEqual(
+            debug_event["facts_json"]["explained_routing_decision"],
+            "memory_open_recall_query",
+        )
+        self.assertEqual(debug_event["facts_json"]["explained_query_kind"], "preference_recall")
+
     def test_normalize_browser_search_query_extracts_domain_from_browse_request(self) -> None:
         query = _normalize_browser_search_query(
             "Go to vibeship.co and tell me what you think."

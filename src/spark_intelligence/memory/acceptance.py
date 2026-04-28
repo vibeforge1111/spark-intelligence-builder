@@ -347,6 +347,19 @@ DEFAULT_TELEGRAM_MEMORY_ACCEPTANCE_CASES: tuple[TelegramMemoryAcceptanceCase, ..
         expected_response_excludes=("concise bullets",),
     ),
     TelegramMemoryAcceptanceCase(
+        case_id="entity_preference_recall_source_explanation",
+        category="source_explanation",
+        message="Why did you answer that?",
+        expected_bridge_mode="context_source_debug",
+        expected_routing_decision="context_source_debug",
+        expected_response_contains=(
+            "entity-state current recall route",
+            "query_kind: preference_recall",
+            "entity-scoped preference records",
+        ),
+        expected_response_excludes=("diagnostics: authority", "preference history"),
+    ),
+    TelegramMemoryAcceptanceCase(
         case_id="entity_preference_history_launch",
         category="stale_current_conflict",
         message="What did the launch checklist prefer before?",

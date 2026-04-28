@@ -295,6 +295,7 @@ class MemoryRegressionTests(SparkTestCase):
                     "entity_relation_recall_launch": "memory_open_recall",
                     "entity_relation_history_launch": "memory_entity_state_history",
                     "entity_preference_recall_launch": "memory_open_recall",
+                    "entity_preference_recall_source_explanation": "context_source_debug",
                     "entity_preference_history_launch": "memory_entity_state_history",
                     "entity_project_recall_launch": "memory_open_recall",
                     "entity_project_history_launch": "memory_entity_state_history",
@@ -322,6 +323,7 @@ class MemoryRegressionTests(SparkTestCase):
                     "entity_relation_recall_launch": "memory_open_recall_query",
                     "entity_relation_history_launch": "memory_entity_state_history_query",
                     "entity_preference_recall_launch": "memory_open_recall_query",
+                    "entity_preference_recall_source_explanation": "context_source_debug",
                     "entity_preference_history_launch": "memory_entity_state_history_query",
                     "entity_project_recall_launch": "memory_open_recall_query",
                     "entity_project_history_launch": "memory_entity_state_history_query",
@@ -391,6 +393,10 @@ class MemoryRegressionTests(SparkTestCase):
                     "entity_preference_seed_launch": "I'll remember that the launch checklist preference is concise bullets.",
                     "entity_preference_replace_launch": "I'll remember that the launch checklist preference is short sections.",
                     "entity_preference_recall_launch": "The launch checklist preference is short sections.",
+                    "entity_preference_recall_source_explanation": (
+                        "I answered from the entity-state current recall route. "
+                        "query_kind: preference_recall entity-scoped preference records"
+                    ),
                     "entity_preference_history_launch": (
                         "Before the launch checklist preference was short sections, it was concise bullets."
                     ),
@@ -488,6 +494,7 @@ class MemoryRegressionTests(SparkTestCase):
                                 "entity_relation_recall_launch": "memory_open_recall",
                                 "entity_relation_history_launch": "memory_entity_state_history",
                                 "entity_preference_recall_launch": "memory_open_recall",
+                                "entity_preference_recall_source_explanation": "context_source_debug",
                                 "entity_preference_history_launch": "memory_entity_state_history",
                                 "entity_project_recall_launch": "memory_open_recall",
                                 "entity_project_history_launch": "memory_entity_state_history",
@@ -515,6 +522,7 @@ class MemoryRegressionTests(SparkTestCase):
                                 "entity_relation_recall_launch": "memory_open_recall_query",
                                 "entity_relation_history_launch": "memory_entity_state_history_query",
                                 "entity_preference_recall_launch": "memory_open_recall_query",
+                                "entity_preference_recall_source_explanation": "context_source_debug",
                                 "entity_preference_history_launch": "memory_entity_state_history_query",
                                 "entity_project_recall_launch": "memory_open_recall_query",
                                 "entity_project_history_launch": "memory_entity_state_history_query",
@@ -593,6 +601,10 @@ class MemoryRegressionTests(SparkTestCase):
                     "entity_preference_seed_launch": "I'll remember that the launch checklist preference is concise bullets.",
                     "entity_preference_replace_launch": "I'll remember that the launch checklist preference is short sections.",
                     "entity_preference_recall_launch": "The launch checklist preference is short sections.",
+                    "entity_preference_recall_source_explanation": (
+                        "I answered from the entity-state current recall route. "
+                        "query_kind: preference_recall entity-scoped preference records"
+                    ),
                     "entity_preference_history_launch": (
                         "Before the launch checklist preference was short sections, it was concise bullets."
                     ),
