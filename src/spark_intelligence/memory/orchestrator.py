@@ -24,13 +24,14 @@ from spark_intelligence.memory.profile_facts import (
     active_state_revalidation_days,
     parse_named_object_fact,
 )
+from spark_intelligence.memory.salience import MemorySalienceDecision, evaluate_memory_salience
 from spark_intelligence.memory_contracts import (
     annotate_contract_trace,
     effective_memory_role,
     memory_contract_reason,
     normalize_memory_role,
 )
-from spark_intelligence.observability.store import record_event
+from spark_intelligence.observability.store import record_event, record_policy_gate_block
 from spark_intelligence.state.db import StateDB
 
 
@@ -3490,6 +3491,46 @@ def _write_profile_fact_memory_operation(
         return _disabled_write_result(operation=operation)
     if not bool(config_manager.get_path("spark.memory.write_profile_facts", default=True)):
         return _disabled_write_result(operation=operation, reason="profile_fact_memory_writes_disabled")
+    salience_decision = evaluate_memory_salience(
+        predicate=predicate,
+        value=value,
+        evidence_text=evidence_text,
+        operation=operation,
+    )
+    if not salience_decision.should_write:
+        result = MemoryWriteResult(
+            status="skipped",
+            operation=operation,
+            method="write_observation",
+            memory_role="current_state",
+            accepted_count=0,
+            rejected_count=1,
+            skipped_count=0,
+            abstained=False,
+            retrieval_trace={"memory_salience": salience_decision.metadata()},
+            provenance=[],
+            reason=salience_decision.reason_code,
+        )
+        _record_memory_salience_policy_block(
+            state_db=state_db,
+            human_id=human_id,
+            predicate=predicate,
+            value=value,
+            evidence_text=evidence_text,
+            decision=salience_decision,
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=actor_id,
+        )
+        _record_memory_write_event(
+            state_db=state_db,
+            result=result,
+            human_id=human_id,
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=actor_id,
+        )
+        return result
     client = _load_sdk_client(config_manager)
     if client is None:
         result = MemoryWriteResult(
@@ -3528,6 +3569,7 @@ def _write_profile_fact_memory_operation(
         "fact_name": fact_name,
         "normalized_value": value,
         "evidence_text": evidence_text,
+        **salience_decision.metadata(),
     }
     entity_state_fact = None
     entity_state_deletion = None
@@ -3598,6 +3640,7 @@ def _write_profile_fact_memory_operation(
         session_id=session_id,
         turn_id=turn_id,
         actor_id=actor_id,
+        salience_decision=salience_decision,
     )
     raw = _call_sdk_method(
         client,
@@ -6009,8 +6052,10 @@ def _record_memory_write_requested_observations(
     actor_id: str,
     memory_role: str = "current_state",
     summary: str = "Spark memory write requested for durable structured facts.",
+    salience_decision: MemorySalienceDecision | None = None,
 ) -> None:
     subject = _subject_for_human_id(human_id)
+    salience_facts = salience_decision.metadata() if salience_decision is not None else {}
     record_event(
         state_db,
         event_type="memory_write_requested",
@@ -6028,8 +6073,54 @@ def _record_memory_write_requested_observations(
             "predicate_count": len(observations),
             "predicates": [str(item.get("predicate") or "") for item in observations if item.get("predicate")],
             "observations": observations,
+            **salience_facts,
         },
         provenance={"memory_role": memory_role},
+    )
+
+
+def _record_memory_salience_policy_block(
+    *,
+    state_db: StateDB,
+    human_id: str,
+    predicate: str,
+    value: str | None,
+    evidence_text: str,
+    decision: MemorySalienceDecision,
+    session_id: str | None,
+    turn_id: str | None,
+    actor_id: str,
+) -> None:
+    record_policy_gate_block(
+        state_db,
+        component="memory_orchestrator",
+        policy_domain="memory_salience",
+        gate_name="memory.salience",
+        source_kind="memory_candidate",
+        source_ref=turn_id,
+        summary="Spark memory salience gate blocked a durable memory write.",
+        action="blocked",
+        reason_code=decision.reason_code,
+        blocked_stage="before_sdk_write",
+        input_ref=turn_id,
+        severity="high" if decision.reason_code == "salience_secret_like_material" else "medium",
+        request_id=turn_id,
+        session_id=session_id,
+        actor_id=actor_id,
+        provenance={"memory_role": "current_state", "human_id": human_id},
+        facts={
+            "subject": _subject_for_human_id(human_id),
+            "predicate": predicate,
+            "value": value,
+            "evidence_text": evidence_text,
+            "keepability": decision.keepability,
+            "promotion_disposition": decision.promotion_disposition,
+            "promotion_stage": decision.promotion_stage,
+            "salience_score": decision.salience_score,
+            "confidence": decision.confidence,
+            "why_saved": decision.why_saved,
+            "salience_reasons": list(decision.reasons),
+        },
     )
 
 

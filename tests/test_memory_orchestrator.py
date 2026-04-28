@@ -52,6 +52,8 @@ from spark_intelligence.observability.store import (
     build_watchtower_snapshot,
     latest_events_by_type,
     record_event,
+    recent_memory_lane_records,
+    recent_policy_gate_records,
     recent_reset_sensitive_state_registry,
 )
 from spark_intelligence.personality.loader import (
@@ -813,6 +815,71 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(result.status, "succeeded")
         self.assertEqual(fake_client.observation_calls[0]["retention_class"], "active_state")
         self.assertEqual(fake_client.observation_calls[0]["metadata"]["entity_key"], "profile.current_plan")
+
+    def test_profile_fact_write_records_salience_and_memory_lane(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            result = write_profile_fact_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                predicate="profile.preferred_name",
+                value="Cem",
+                evidence_text="I'm not Maya by the way, I'm Cem.",
+                fact_name="profile_preferred_name",
+                session_id="session:identity",
+                turn_id="turn:identity",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        metadata = fake_client.observation_calls[0]["metadata"]
+        self.assertEqual(metadata["promotion_stage"], "current_state_confirmed")
+        self.assertEqual(metadata["why_saved"], "identity_correction_supersession")
+        self.assertEqual(metadata["promotion_disposition"], "promote_current_state")
+        self.assertGreaterEqual(metadata["salience_score"], 0.75)
+
+        events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
+        facts = events[0]["facts_json"] or {}
+        self.assertEqual(facts["why_saved"], "identity_correction_supersession")
+        self.assertEqual(facts["promotion_stage"], "current_state_confirmed")
+        self.assertEqual(facts["promotion_disposition"], "promote_current_state")
+
+        lane_records = recent_memory_lane_records(self.state_db, limit=10)
+        self.assertTrue(lane_records)
+        self.assertEqual(lane_records[0]["promotion_disposition"], "promote_current_state")
+        self.assertEqual(lane_records[0]["status"], "candidate")
+
+    def test_profile_fact_salience_gate_blocks_secret_like_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            result = write_profile_fact_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                predicate="profile.current_plan",
+                value="use api key sk-testsecret123456",
+                evidence_text="My current plan is to use api key sk-testsecret123456.",
+                fact_name="profile_current_plan",
+                session_id="session:secret",
+                turn_id="turn:secret",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "skipped")
+        self.assertEqual(result.reason, "salience_secret_like_material")
+        self.assertEqual(len(fake_client.observation_calls), 0)
+
+        policy_records = recent_policy_gate_records(self.state_db, limit=10)
+        self.assertTrue(policy_records)
+        self.assertEqual(policy_records[0]["gate_name"], "memory.salience")
+        self.assertEqual(policy_records[0]["reason_code"], "salience_secret_like_material")
 
     def test_named_object_profile_fact_writes_generic_entity_state_projection(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -2146,6 +2213,13 @@ class MemoryOrchestratorTests(SparkTestCase):
         assert detected is not None
         self.assertEqual(detected.predicate, "profile.preferred_name")
         self.assertEqual(detected.value, "Sarah")
+
+    def test_profile_name_correction_detection_overrides_wrong_prior_name(self) -> None:
+        detected = detect_profile_fact_observation("I'm not Maya by the way, I'm Cem.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.preferred_name")
+        self.assertEqual(detected.value, "Cem")
 
     def test_profile_occupation_detection_accepts_temporal_tail_words(self) -> None:
         detected = detect_profile_fact_observation("I am an entrepreneur now.")
