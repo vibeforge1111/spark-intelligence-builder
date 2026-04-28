@@ -402,6 +402,12 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(trace["selected_count"], 2)
         self.assertIn("current_state", {lane["lane"] for lane in trace["lane_summaries"]})
         self.assertIn("typed_temporal_graph", {lane["lane"] for lane in trace["lane_summaries"]})
+        graph_lane = next(lane for lane in trace["lane_summaries"] if lane["lane"] == "typed_temporal_graph")
+        self.assertEqual(graph_lane["source_class"], "graphiti_temporal_graph")
+        self.assertEqual(graph_lane["status"], "disabled")
+        self.assertTrue(graph_lane["shadow_only"])
+        self.assertEqual(graph_lane["reason"], "graph_sidecar_shadow_disabled")
+        self.assertGreaterEqual(graph_lane["episode_export_count"], 1)
         current_candidates = [candidate for candidate in result.candidates if candidate.lane == "current_state"]
         stale_candidates = [candidate for candidate in result.candidates if candidate.reason_discarded == "stale_or_superseded"]
         self.assertTrue(current_candidates)
@@ -410,6 +416,35 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(len(fake_client.current_state_calls), 1)
         self.assertEqual(len(fake_client.evidence_calls), 1)
         self.assertEqual(len(fake_client.retrieval_event_calls), 1)
+
+    def test_hybrid_memory_retrieve_prepares_graphiti_shadow_lane_without_selecting_it(self) -> None:
+        self.config_manager.set_path("spark.memory.sidecars.graphiti.enabled", True)
+        fake_client = _HybridRetrievalMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ):
+            result = hybrid_memory_retrieve(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                query="What should we focus on next?",
+                subject="human:test",
+                predicate="profile.current_focus",
+                limit=2,
+                actor_id="test",
+            )
+
+        self.assertEqual(result.read_result.records[0]["value"], "persistent memory quality evaluation")
+        graph_lane = next(
+            lane
+            for lane in result.read_result.retrieval_trace["hybrid_memory_retrieve"]["lane_summaries"]
+            if lane["lane"] == "typed_temporal_graph"
+        )
+        self.assertEqual(graph_lane["status"], "prepared")
+        self.assertEqual(graph_lane["mode"], "shadow")
+        self.assertEqual(graph_lane["reason"], "graph_sidecar_shadow_prepared_backend_not_configured")
+        self.assertEqual(graph_lane["sidecar_hit_count"], 0)
+        self.assertFalse(any(candidate.lane == "typed_temporal_graph" for candidate in result.candidates))
 
     def test_memory_kernel_dispatches_hybrid_memory_retrieve(self) -> None:
         fake_client = _HybridRetrievalMemoryClient()

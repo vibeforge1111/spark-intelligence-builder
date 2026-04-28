@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
@@ -1720,15 +1720,17 @@ def hybrid_memory_retrieve(
         ),
     )
     lane_summaries.append(
-        {
-            "lane": "typed_temporal_graph",
-            "read_method": "graph_sidecar_retrieve",
-            "source_class": "graph_sidecar",
-            "status": "not_wired",
-            "abstained": True,
-            "record_count": 0,
-            "reason": "graph_runtime_bridge_pending",
-        }
+        _build_graph_sidecar_shadow_lane(
+            config_manager=config_manager,
+            sdk_module=adapter.sdk_module,
+            query=normalized_query,
+            subject=normalized_subject,
+            predicate=normalized_predicate,
+            entity_key=normalized_entity_key,
+            as_of=normalized_as_of,
+            limit=normalized_limit,
+            local_records=[entry["record"] for entry in ranked_entries],
+        )
     )
 
     ranked_entries.sort(
@@ -4857,6 +4859,126 @@ def _memory_kernel_record_is_stale(record: dict[str, Any]) -> bool:
     if record.get("is_current") is False or metadata.get("is_current") is False:
         return True
     return False
+
+
+def _build_graph_sidecar_shadow_lane(
+    *,
+    config_manager: ConfigManager,
+    sdk_module: str,
+    query: str,
+    subject: str | None,
+    predicate: str | None,
+    entity_key: str | None,
+    as_of: str | None,
+    limit: int,
+    local_records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    enabled = bool(config_manager.get_path("spark.memory.sidecars.graphiti.enabled", default=False))
+    lane = {
+        "lane": "typed_temporal_graph",
+        "read_method": "graph_sidecar_retrieve",
+        "source_class": "graphiti_temporal_graph",
+        "status": "unavailable",
+        "abstained": True,
+        "record_count": 0,
+        "reason": "graph_sidecar_contract_unavailable",
+        "shadow_only": True,
+        "authority": "supporting_not_authoritative",
+        "episode_export_count": 0,
+        "sidecar_hit_count": 0,
+    }
+    try:
+        module = _import_memory_sdk_module(sdk_module or DEFAULT_SDK_MODULE)
+        build_sidecars = getattr(module, "build_default_memory_sidecars")
+        request_cls = getattr(module, "MemorySidecarRetrievalRequest")
+        to_episode = getattr(module, "memory_record_to_sidecar_episode")
+    except Exception as exc:
+        lane["error"] = exc.__class__.__name__
+        return lane
+
+    try:
+        sidecars = build_sidecars(enable_graphiti=enabled, enable_mem0_shadow=False)
+        graph_sidecar = sidecars["graphiti_temporal_graph"]
+        episodes = [
+            to_episode(_sidecar_record_namespace(record), source_class=_hybrid_memory_dict_source_class(record))
+            for record in local_records
+        ]
+        upsert_traces = [graph_sidecar.upsert_episode(episode).trace for episode in episodes[:limit]]
+        request = request_cls(
+            query=query,
+            subject=subject,
+            scope=predicate or "hybrid_memory_retrieve",
+            time_window={"as_of": as_of} if as_of else {},
+            entity_keys=[entity_key] if entity_key else [],
+            top_k=limit,
+        )
+        retrieval = graph_sidecar.retrieve(request)
+        health = graph_sidecar.health()
+        lane.update(
+            {
+                "status": getattr(retrieval, "trace", {}).get("status") or getattr(health, "status", None) or "prepared",
+                "abstained": True,
+                "record_count": len(getattr(retrieval, "hits", []) or []),
+                "reason": (
+                    "graph_sidecar_shadow_disabled"
+                    if not enabled
+                    else "graph_sidecar_shadow_prepared_backend_not_configured"
+                ),
+                "mode": getattr(graph_sidecar, "mode", "disabled"),
+                "enabled": enabled,
+                "episode_export_count": len(episodes),
+                "upsert_preview_count": len(upsert_traces),
+                "sidecar_hit_count": len(getattr(retrieval, "hits", []) or []),
+                "retrieval_trace": getattr(retrieval, "trace", {}),
+                "health": asdict(health) if is_dataclass(health) else health,
+                "upsert_trace_samples": upsert_traces[:2],
+            }
+        )
+    except Exception as exc:
+        lane.update(
+            {
+                "status": "error",
+                "reason": "graph_sidecar_shadow_error",
+                "error": exc.__class__.__name__,
+            }
+        )
+    return lane
+
+
+def _sidecar_record_namespace(record: dict[str, Any]) -> SimpleNamespace:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    lifecycle = record.get("lifecycle") if isinstance(record.get("lifecycle"), dict) else {}
+    turn_ids = record.get("turn_ids") or metadata.get("turn_ids") or []
+    if not isinstance(turn_ids, list):
+        turn_ids = [turn_ids]
+    return SimpleNamespace(
+        observation_id=record.get("observation_id") or metadata.get("observation_id") or record.get("id") or "",
+        event_id=record.get("event_id") or metadata.get("event_id") or "",
+        session_id=record.get("session_id") or metadata.get("session_id") or "",
+        turn_ids=[str(item) for item in turn_ids if str(item or "").strip()],
+        memory_role=record.get("memory_role") or metadata.get("memory_role") or "structured_evidence",
+        text=_hybrid_memory_record_text(record),
+        subject=record.get("subject") or metadata.get("subject") or "",
+        predicate=record.get("predicate") or metadata.get("predicate") or "",
+        timestamp=record.get("timestamp") or metadata.get("timestamp") or record.get("created_at") or "",
+        metadata=metadata,
+        lifecycle=lifecycle,
+        retention_class=record.get("retention_class") or metadata.get("retention_class"),
+    )
+
+
+def _hybrid_memory_dict_source_class(record: dict[str, Any]) -> str:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    memory_role = str(record.get("memory_role") or metadata.get("memory_role") or "").strip()
+    if memory_role == "event":
+        return "retrieved_events"
+    if memory_role == "current_state":
+        return "current_state"
+    if memory_role == "state_deletion":
+        return "state_deletion"
+    if memory_role in {"episodic", "raw_episode"}:
+        return "recent_conversation"
+    return "retrieved_evidence"
 
 
 def _hybrid_memory_source_class(*, lane: str, kernel: MemoryKernelReadResult, record: dict[str, Any]) -> str:
