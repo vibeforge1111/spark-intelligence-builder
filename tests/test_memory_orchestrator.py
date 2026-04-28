@@ -816,6 +816,20 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(fake_client.observation_calls[0]["retention_class"], "active_state")
         self.assertEqual(fake_client.observation_calls[0]["metadata"]["entity_key"], "profile.current_plan")
 
+    def test_lookup_current_state_uses_profile_preferred_name_entity_key(self) -> None:
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client):
+            result = lookup_current_state_in_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                subject="human:test",
+                predicate="profile.preferred_name",
+                actor_id="test",
+            )
+
+        self.assertFalse(result.read_result.abstained)
+        self.assertEqual(fake_client.current_state_calls[0]["entity_key"], "profile.preferred_name")
+
     def test_profile_fact_write_records_salience_and_memory_lane(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
@@ -841,6 +855,10 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(metadata["why_saved"], "identity_correction_supersession")
         self.assertEqual(metadata["promotion_disposition"], "promote_current_state")
         self.assertGreaterEqual(metadata["salience_score"], 0.75)
+        self.assertEqual(metadata["entity_key"], "profile.preferred_name")
+        self.assertEqual(metadata["authority"], "identity_current_state")
+        self.assertEqual(metadata["supersession_kind"], "identity_correction")
+        self.assertTrue(metadata["stale_prior_values"])
 
         events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         facts = events[0]["facts_json"] or {}

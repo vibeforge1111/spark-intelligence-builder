@@ -3578,8 +3578,16 @@ def _write_profile_fact_memory_operation(
             entity_state_deletion = parse_entity_state_deletion(evidence_text)
         else:
             entity_state_fact = parse_entity_state_fact(evidence_text)
-    if predicate.startswith("profile.current_"):
+    if predicate.startswith("profile.current_") or predicate == "profile.preferred_name":
         metadata["entity_key"] = predicate
+    if predicate == "profile.preferred_name" and salience_decision.why_saved == "identity_correction_supersession":
+        metadata.update(
+            {
+                "authority": "identity_current_state",
+                "supersession_kind": "identity_correction",
+                "stale_prior_values": True,
+            }
+        )
     if predicate.startswith("entity.") and entity_state_fact is not None:
         metadata.update(
             {
@@ -4398,7 +4406,7 @@ def _subject_fallback_candidates(subject: str) -> tuple[str, ...]:
 
 def _default_current_state_entity_key(predicate: str | None) -> str | None:
     normalized = str(predicate or "").strip()
-    if normalized.startswith("profile.current_"):
+    if normalized.startswith("profile.current_") or normalized == "profile.preferred_name":
         return normalized
     return None
 
