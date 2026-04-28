@@ -153,6 +153,22 @@ class TelegramMemoryAcceptanceResult:
         if gate_mismatches:
             lines.append("- gate mismatches:")
             lines.extend(f"  - {item}" for item in gate_mismatches)
+        promotion_gates = gate_assertions.get("promotion_gates") if isinstance(gate_assertions, dict) else {}
+        gates = promotion_gates.get("gates") if isinstance(promotion_gates, dict) else {}
+        if isinstance(gates, dict) and gates:
+            lines.append("- promotion gates:")
+            for name, gate in gates.items():
+                if not isinstance(gate, dict):
+                    continue
+                lines.append(
+                    f"  - {name}: {gate.get('status') or 'unknown'} "
+                    f"(evidence: {gate.get('evidence', '?')})"
+                )
+        source_mix = gate_assertions.get("source_mix") if isinstance(gate_assertions, dict) else {}
+        if isinstance(source_mix, dict) and source_mix:
+            lines.append("- source_mix:")
+            for key, value in source_mix.items():
+                lines.append(f"  - {key}: {value}")
         return "\n".join(lines)
 
 
