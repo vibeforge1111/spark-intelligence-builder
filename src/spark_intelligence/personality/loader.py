@@ -845,6 +845,11 @@ def build_telegram_persona_reply_contract(profile: dict[str, Any]) -> str:
     parts.append("Treat Telegram like an ongoing 1:1 conversation, not a canned assistant greeting.")
     parts.append("Continue from the user's actual message or project context instead of resetting the conversation.")
     parts.append(
+        "When discussing existing Spawner UI, Kanban, Canvas, Mission Control, relay state, or task execution, "
+        "assume those surfaces already exist in spawner-ui. Do not suggest a standalone app or ask whether it should "
+        "be standalone unless the user explicitly asks for a separate tool."
+    )
+    parts.append(
         "Do not fall back to generic check-in questions like 'What's on your mind?', "
         "'What are you working on?', or 'How can I help today?' unless the user explicitly asks for an open-ended check-in."
     )

@@ -547,6 +547,8 @@ class AgentIdentityContractTests(SparkTestCase):
         self.assertIn("Sound human and present, not sterile or robotic.", contract)
         self.assertIn("Do not force humor, banter, or performative enthusiasm.", contract)
         self.assertIn("Treat Telegram like an ongoing 1:1 conversation", contract)
+        self.assertIn("assume those surfaces already exist in spawner-ui", contract)
+        self.assertIn("Do not suggest a standalone app", contract)
         self.assertIn("Do not fall back to generic check-in questions", contract)
         self.assertIn("ask at most one specific question tied to the user's last message", contract)
         self.assertIn("Honor these saved Telegram reply rules", contract)
