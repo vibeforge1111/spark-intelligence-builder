@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from spark_intelligence.memory.salience import MemorySalienceDecision, evaluate_generic_memory_salience
+
 
 _CORRECTION_PREFIX_PATTERN = re.compile(r"^(?:actually|update|correction)[:,]?\s+", re.IGNORECASE)
 _HYPOTHETICAL_PREFIX_PATTERN = re.compile(
@@ -620,63 +622,106 @@ class TelegramGenericAssessment:
     operation: TelegramGenericOperation | None = None
     fact_name: str | None = None
     label: str | None = None
+    salience_decision: MemorySalienceDecision | None = None
+
+    def salience_metadata(self) -> dict[str, object]:
+        if self.salience_decision is None:
+            return {}
+        return {
+            **self.salience_decision.metadata(),
+            "salience_reason_code": self.salience_decision.reason_code,
+        }
+
+
+def _with_salience(assessment: TelegramGenericAssessment) -> TelegramGenericAssessment:
+    return TelegramGenericAssessment(
+        outcome=assessment.outcome,
+        evidence_text=assessment.evidence_text,
+        reason=assessment.reason,
+        memory_role=assessment.memory_role,
+        retention_class=assessment.retention_class,
+        domain_pack=assessment.domain_pack,
+        predicate=assessment.predicate,
+        value=assessment.value,
+        operation=assessment.operation,
+        fact_name=assessment.fact_name,
+        label=assessment.label,
+        salience_decision=evaluate_generic_memory_salience(
+            outcome=assessment.outcome,
+            memory_role=assessment.memory_role,
+            retention_class=assessment.retention_class,
+            predicate=assessment.predicate,
+            value=assessment.value,
+            evidence_text=assessment.evidence_text,
+            reason=assessment.reason,
+            operation=assessment.operation,
+        ),
+    )
 
 
 def assess_telegram_generic_memory_candidate(user_message: str) -> TelegramGenericAssessment:
     text = _clean_text(user_message)
     if not text:
-        return TelegramGenericAssessment(outcome="drop", evidence_text=text, reason="empty")
+        return _with_salience(TelegramGenericAssessment(outcome="drop", evidence_text=text, reason="empty"))
 
     candidate = classify_telegram_generic_memory_candidate(user_message)
     if candidate is not None:
-        return TelegramGenericAssessment(
-            outcome="current_state",
-            evidence_text=candidate.evidence_text,
-            reason="domain_pack_match",
-            memory_role="current_state",
-            retention_class=candidate.retention_class,
-            domain_pack=candidate.domain_pack,
-            predicate=candidate.predicate,
-            value=candidate.value,
-            operation=candidate.operation,
-            fact_name=candidate.fact_name,
-            label=candidate.label,
+        return _with_salience(
+            TelegramGenericAssessment(
+                outcome="current_state",
+                evidence_text=candidate.evidence_text,
+                reason="domain_pack_match",
+                memory_role="current_state",
+                retention_class=candidate.retention_class,
+                domain_pack=candidate.domain_pack,
+                predicate=candidate.predicate,
+                value=candidate.value,
+                operation=candidate.operation,
+                fact_name=candidate.fact_name,
+                label=candidate.label,
+            )
         )
 
     if not _is_memoryworthy_text(text):
-        return TelegramGenericAssessment(outcome="drop", evidence_text=text, reason="not_memoryworthy")
+        return _with_salience(TelegramGenericAssessment(outcome="drop", evidence_text=text, reason="not_memoryworthy"))
 
     normalized = _strip_correction_prefix(text)
     if _BELIEF_PREFIX_PATTERN.search(normalized):
-        return TelegramGenericAssessment(
-            outcome="belief_candidate",
-            evidence_text=text,
-            reason="belief_marker",
-            memory_role="belief_candidate",
-            retention_class="derived_belief",
-            domain_pack="beliefs_and_inferences",
-            value=normalized,
+        return _with_salience(
+            TelegramGenericAssessment(
+                outcome="belief_candidate",
+                evidence_text=text,
+                reason="belief_marker",
+                memory_role="belief_candidate",
+                retention_class="derived_belief",
+                domain_pack="beliefs_and_inferences",
+                value=normalized,
+            )
         )
 
     if _STRUCTURED_EVIDENCE_PATTERN.search(normalized):
-        return TelegramGenericAssessment(
-            outcome="structured_evidence",
-            evidence_text=text,
-            reason="evidence_marker",
-            memory_role="structured_evidence",
-            retention_class="episodic_archive",
-            domain_pack="evidence",
-            value=normalized,
+        return _with_salience(
+            TelegramGenericAssessment(
+                outcome="structured_evidence",
+                evidence_text=text,
+                reason="evidence_marker",
+                memory_role="structured_evidence",
+                retention_class="episodic_archive",
+                domain_pack="evidence",
+                value=normalized,
+            )
         )
 
-    return TelegramGenericAssessment(
-        outcome="raw_episode",
-        evidence_text=text,
-        reason="meaningful_but_unpromoted",
-        memory_role="raw_episode",
-        retention_class="episodic_archive",
-        domain_pack="raw_episode",
-        value=normalized,
+    return _with_salience(
+        TelegramGenericAssessment(
+            outcome="raw_episode",
+            evidence_text=text,
+            reason="meaningful_but_unpromoted",
+            memory_role="raw_episode",
+            retention_class="episodic_archive",
+            domain_pack="raw_episode",
+            value=normalized,
+        )
     )
 
 

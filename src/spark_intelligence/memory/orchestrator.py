@@ -2389,6 +2389,7 @@ def write_structured_evidence_to_memory(
     turn_id: str | None,
     channel_kind: str | None,
     actor_id: str = "structured_evidence_loader",
+    salience_decision: MemorySalienceDecision | None = None,
 ) -> MemoryWriteResult:
     def _belief_record_observation_id(record: dict[str, Any]) -> str | None:
         return _optional_string(record.get("observation_id")) or _optional_string(
@@ -2663,6 +2664,7 @@ def write_structured_evidence_to_memory(
         "memory_role": "structured_evidence",
         "retention_class": "episodic_archive",
         "text": normalized_text,
+        **(salience_decision.metadata() if salience_decision is not None else {}),
     }
     if invalidated_belief_ids:
         observation["conflicts_with"] = list(invalidated_belief_ids)
@@ -2677,6 +2679,7 @@ def write_structured_evidence_to_memory(
         actor_id=actor_id,
         memory_role="structured_evidence",
         summary="Spark memory write requested for structured evidence.",
+        salience_decision=salience_decision,
     )
     raw = _call_sdk_method(
         client,
@@ -2709,6 +2712,7 @@ def write_structured_evidence_to_memory(
                 "invalidated_belief_texts": list(invalidated_belief_texts),
                 "archive_after_days": STRUCTURED_EVIDENCE_ARCHIVE_DAYS,
                 "archive_at": archive_at,
+                **(salience_decision.metadata() if salience_decision is not None else {}),
             },
         },
     )
@@ -2892,6 +2896,7 @@ def write_belief_to_memory(
     turn_id: str | None,
     channel_kind: str | None,
     actor_id: str = "belief_loader",
+    salience_decision: MemorySalienceDecision | None = None,
 ) -> MemoryWriteResult:
     def _belief_record_observation_id(record: dict[str, Any]) -> str | None:
         return _optional_string(record.get("observation_id")) or _optional_string(
@@ -3013,6 +3018,7 @@ def write_belief_to_memory(
         "memory_role": "belief",
         "retention_class": "derived_belief",
         "text": normalized_text,
+        **(salience_decision.metadata() if salience_decision is not None else {}),
     }
     if supersedes:
         observation["supersedes"] = supersedes
@@ -3028,6 +3034,7 @@ def write_belief_to_memory(
         actor_id=actor_id,
         memory_role="belief",
         summary="Spark memory write requested for derived belief capture.",
+        salience_decision=salience_decision,
     )
     raw = _call_sdk_method(
         client,
@@ -3060,6 +3067,7 @@ def write_belief_to_memory(
                 "previous_belief_text": prior_belief_text or None,
                 "revalidate_after_days": BELIEF_REVALIDATION_DAYS,
                 "revalidate_at": revalidate_at,
+                **(salience_decision.metadata() if salience_decision is not None else {}),
             },
         },
     )
@@ -3312,6 +3320,7 @@ def write_raw_episode_to_memory(
     turn_id: str | None,
     channel_kind: str | None,
     actor_id: str = "raw_episode_loader",
+    salience_decision: MemorySalienceDecision | None = None,
 ) -> MemoryWriteResult:
     normalized_text = str(episode_text or "").strip()
     if not normalized_text:
@@ -3370,6 +3379,7 @@ def write_raw_episode_to_memory(
         "memory_role": "episodic",
         "retention_class": "episodic_archive",
         "text": normalized_text,
+        **(salience_decision.metadata() if salience_decision is not None else {}),
     }
     _record_memory_write_requested_observations(
         state_db=state_db,
@@ -3381,6 +3391,7 @@ def write_raw_episode_to_memory(
         actor_id=actor_id,
         memory_role="episodic",
         summary="Spark memory write requested for raw episode capture.",
+        salience_decision=salience_decision,
     )
     raw = _call_sdk_method(
         client,
@@ -3409,6 +3420,7 @@ def write_raw_episode_to_memory(
                 "value": normalized_text,
                 "archive_after_days": RAW_EPISODE_ARCHIVE_DAYS,
                 "archive_at": archive_at,
+                **(salience_decision.metadata() if salience_decision is not None else {}),
             },
         },
     )

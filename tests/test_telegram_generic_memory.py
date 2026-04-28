@@ -7,7 +7,7 @@ from spark_intelligence.memory.generic_observations import (
     classify_telegram_generic_memory_candidate,
 )
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
-from spark_intelligence.observability.store import latest_events_by_type
+from spark_intelligence.observability.store import latest_events_by_type, recent_memory_lane_records
 from spark_intelligence.researcher_bridge.advisory import (
     OpenMemoryRecallQuery,
     ResearcherProviderSelection,
@@ -816,13 +816,21 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(facts.get("outcome"), "structured_evidence")
         self.assertEqual(facts.get("memory_role"), "structured_evidence")
         self.assertEqual(facts.get("retention_class"), "episodic_archive")
+        self.assertEqual(facts.get("promotion_stage"), "structured_evidence")
+        self.assertEqual(facts.get("keepability"), "durable_intelligence_memory")
+        self.assertEqual(facts.get("promotion_disposition"), "promote_structured_evidence")
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(write_events)
         write_facts = write_events[0]["facts_json"] or {}
         self.assertEqual(write_facts.get("memory_role"), "structured_evidence")
+        self.assertEqual(write_facts.get("promotion_stage"), "structured_evidence")
+        self.assertEqual(write_facts.get("why_saved"), "evidence_marker")
         recorded_observations = write_facts.get("observations") or []
         self.assertEqual(recorded_observations[0]["predicate"], "evidence.telegram.evidence")
         self.assertEqual(recorded_observations[0]["retention_class"], "episodic_archive")
+        self.assertEqual(recorded_observations[0]["promotion_stage"], "structured_evidence")
+        lane_records = recent_memory_lane_records(self.state_db, limit=10)
+        self.assertTrue(any(record.get("keepability") == "durable_intelligence_memory" for record in lane_records))
         tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
         self.assertTrue(tool_events)
         tool_facts = next(
@@ -903,13 +911,17 @@ class TelegramGenericMemoryTests(SparkTestCase):
         facts = assessment_events[0]["facts_json"] or {}
         self.assertEqual(facts.get("outcome"), "belief_candidate")
         self.assertEqual(facts.get("retention_class"), "derived_belief")
+        self.assertEqual(facts.get("promotion_stage"), "belief_candidate")
+        self.assertEqual(facts.get("promotion_disposition"), "promote_belief_candidate")
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(write_events)
         write_facts = write_events[0]["facts_json"] or {}
         self.assertEqual(write_facts.get("memory_role"), "belief")
+        self.assertEqual(write_facts.get("promotion_stage"), "belief_candidate")
         recorded_observations = write_facts.get("observations") or []
         self.assertEqual(recorded_observations[0]["predicate"], "belief.telegram.beliefs_and_inferences")
         self.assertEqual(recorded_observations[0]["retention_class"], "derived_belief")
+        self.assertEqual(recorded_observations[0]["promotion_stage"], "belief_candidate")
         tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
         self.assertTrue(tool_events)
         tool_facts = next(
@@ -1405,13 +1417,17 @@ class TelegramGenericMemoryTests(SparkTestCase):
         facts = assessment_events[0]["facts_json"] or {}
         self.assertEqual(facts.get("outcome"), "raw_episode")
         self.assertEqual(facts.get("memory_role"), "raw_episode")
+        self.assertEqual(facts.get("promotion_stage"), "raw_episode")
+        self.assertEqual(facts.get("promotion_disposition"), "capture_raw_episode")
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(write_events)
         write_facts = write_events[0]["facts_json"] or {}
         self.assertEqual(write_facts.get("memory_role"), "episodic")
+        self.assertEqual(write_facts.get("promotion_stage"), "raw_episode")
         recorded_observations = write_facts.get("observations") or []
         self.assertEqual(recorded_observations[0]["predicate"], "raw_turn")
         self.assertEqual(recorded_observations[0]["retention_class"], "episodic_archive")
+        self.assertEqual(recorded_observations[0]["promotion_stage"], "raw_episode")
         tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
         self.assertTrue(tool_events)
         tool_facts = next(

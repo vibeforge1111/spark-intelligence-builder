@@ -169,3 +169,87 @@ def evaluate_memory_salience(
         reason_code="salience_write_allowed",
         reasons=tuple(reasons),
     )
+
+
+def evaluate_generic_memory_salience(
+    *,
+    outcome: str,
+    memory_role: str | None,
+    retention_class: str | None,
+    predicate: str | None,
+    value: str | None,
+    evidence_text: str,
+    reason: str | None,
+    operation: str | None = "create",
+) -> MemorySalienceDecision:
+    """Classify non-profile Telegram memory candidates before persistence.
+
+    Generic observations can become current state, structured evidence, raw
+    episodes, derived beliefs, or drops. They need the same lane metadata as
+    profile facts so later maintenance can tell "useful but weak" apart from
+    "never should have been saved".
+    """
+
+    normalized_outcome = str(outcome or "drop").strip()
+    normalized_role = str(memory_role or normalized_outcome or "").strip()
+    normalized_retention = str(retention_class or "").strip()
+    normalized_reason = str(reason or "").strip() or normalized_outcome
+
+    if normalized_outcome == "current_state":
+        return evaluate_memory_salience(
+            predicate=str(predicate or ""),
+            value=value,
+            evidence_text=evidence_text,
+            operation=str(operation or "update"),
+        )
+
+    if normalized_outcome == "structured_evidence":
+        return MemorySalienceDecision(
+            action="write",
+            salience_score=0.68,
+            confidence=0.78,
+            promotion_stage="structured_evidence",
+            keepability="durable_intelligence_memory",
+            promotion_disposition="promote_structured_evidence",
+            why_saved=normalized_reason,
+            reason_code="salience_structured_evidence_allowed",
+            reasons=("structured_evidence_marker", normalized_retention or "episodic_archive"),
+        )
+
+    if normalized_outcome == "belief_candidate":
+        return MemorySalienceDecision(
+            action="write",
+            salience_score=0.58,
+            confidence=0.68,
+            promotion_stage="belief_candidate",
+            keepability="supporting_memory",
+            promotion_disposition="promote_belief_candidate",
+            why_saved=normalized_reason,
+            reason_code="salience_belief_candidate_allowed",
+            reasons=("belief_marker", normalized_retention or "derived_belief"),
+        )
+
+    if normalized_outcome == "raw_episode":
+        return MemorySalienceDecision(
+            action="write",
+            salience_score=0.38,
+            confidence=0.58,
+            promotion_stage="raw_episode",
+            keepability="episodic_trace",
+            promotion_disposition="capture_raw_episode",
+            why_saved=normalized_reason,
+            reason_code="salience_raw_episode_observed",
+            reasons=("meaningful_but_unpromoted", normalized_role or "raw_episode"),
+        )
+
+    return MemorySalienceDecision(
+        action="drop",
+        salience_score=0.0,
+        confidence=0.75,
+        promotion_stage="drop",
+        keepability="not_keepable",
+        promotion_disposition="blocked",
+        why_saved=normalized_reason,
+        reason_code="salience_generic_candidate_dropped",
+        reasons=("not_memoryworthy", normalized_reason),
+    )

@@ -1082,7 +1082,7 @@ def _open_memory_recall_decisive_records(
 def _open_memory_recall_record_role(record: dict[str, Any]) -> str:
     metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
     predicate = str(record.get("predicate") or "").strip()
-    if predicate.startswith("entity.") or metadata.get("entity_key") or metadata.get("entity_attribute"):
+    if predicate.startswith("entity.") or metadata.get("entity_attribute"):
         return "entity_state"
     return str(record.get("memory_role") or metadata.get("memory_role") or "").strip()
 
@@ -7793,6 +7793,7 @@ def build_researcher_reply(
                     turn_id=request_id,
                     channel_kind=channel_kind,
                     actor_id="telegram_structured_evidence_loader",
+                    salience_decision=assessed_generic_memory_candidate.salience_decision,
                 )
             except Exception:
                 pass
@@ -7808,6 +7809,7 @@ def build_researcher_reply(
                     turn_id=request_id,
                     channel_kind=channel_kind,
                     actor_id="telegram_raw_episode_loader",
+                    salience_decision=assessed_generic_memory_candidate.salience_decision,
                 )
             except Exception:
                 pass
@@ -7824,6 +7826,7 @@ def build_researcher_reply(
                     turn_id=request_id,
                     channel_kind=channel_kind,
                     actor_id="telegram_belief_loader",
+                    salience_decision=assessed_generic_memory_candidate.salience_decision,
                 )
             except Exception:
                 pass
@@ -7852,6 +7855,7 @@ def build_researcher_reply(
                 "operation": assessed_generic_memory_candidate.operation,
                 "fact_name": assessed_generic_memory_candidate.fact_name,
                 "label": assessed_generic_memory_candidate.label,
+                **assessed_generic_memory_candidate.salience_metadata(),
             },
         )
 
