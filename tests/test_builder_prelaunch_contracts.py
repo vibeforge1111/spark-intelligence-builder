@@ -749,8 +749,8 @@ class BuilderPrelaunchContractTests(SparkTestCase):
 
         self.assertEqual(len(lane_records), 1)
         self.assertEqual(lane_records[0]["artifact_kind"], "bridge_output")
-        self.assertEqual(lane_records[0]["artifact_lane"], "execution_evidence")
-        self.assertEqual(lane_records[0]["promotion_target_lane"], "durable_intelligence_memory")
+        self.assertEqual(lane_records[0]["artifact_lane"], "working_scratchpad")
+        self.assertIsNone(lane_records[0]["promotion_target_lane"])
         self.assertEqual(lane_records[0]["status"], "blocked")
 
     def test_watchtower_memory_lane_panel_uses_typed_lane_records(self) -> None:
@@ -784,7 +784,7 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(panel["counts"]["promotion_attempts"], 2)
         self.assertEqual(panel["counts"]["blocked_promotions"], 2)
         self.assertEqual(panel["counts"]["ops_residue_volume"], 1)
-        self.assertTrue(panel["lane_labels_present"]["execution_evidence"])
+        self.assertTrue(panel["lane_labels_present"]["working_scratchpad"])
         self.assertTrue(panel["lane_labels_present"]["ops_transcripts"])
         self.assertFalse(panel["lane_labels_present"]["durable_intelligence_memory"])
 

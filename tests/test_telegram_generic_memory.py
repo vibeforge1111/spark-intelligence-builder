@@ -749,6 +749,8 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(facts.get("outcome"), "drop")
         self.assertEqual(facts.get("promotion_stage"), "drop")
         self.assertEqual(facts.get("keepability"), "not_keepable")
+        lane_records = recent_memory_lane_records(self.state_db, limit=10)
+        self.assertTrue(any(record.get("artifact_lane") == "rejected_memory_candidates" for record in lane_records))
 
     def test_assess_telegram_generic_memory_candidate_rejects_emotional_self_reports(self) -> None:
         assessment = assess_telegram_generic_memory_candidate("I'm anxious about the launch tomorrow")
@@ -1479,6 +1481,8 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(recorded_observations[0]["predicate"], "raw_turn")
         self.assertEqual(recorded_observations[0]["retention_class"], "episodic_archive")
         self.assertEqual(recorded_observations[0]["promotion_stage"], "raw_episode")
+        lane_records = recent_memory_lane_records(self.state_db, limit=10)
+        self.assertTrue(any(record.get("artifact_lane") == "episodic_trace" for record in lane_records))
         tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=10)
         self.assertTrue(tool_events)
         tool_facts = next(

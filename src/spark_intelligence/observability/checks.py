@@ -47,8 +47,10 @@ NON_PROMOTABLE_KEEPABILITY = {
     "ephemeral_context",
     "user_preference_ephemeral",
     "operator_debug_only",
+    "not_keepable",
 }
 NON_PROMOTABLE_DISPOSITIONS = {
+    "blocked",
     "not_promotable",
     "quarantined",
     "quarantined_blocked",
@@ -56,10 +58,22 @@ NON_PROMOTABLE_DISPOSITIONS = {
 
 
 def _expected_artifact_lane(keepability: str) -> str:
+    if keepability == "not_keepable":
+        return "rejected_memory_candidates"
+    if keepability == "ephemeral_context":
+        return "working_scratchpad"
     if keepability == "operator_debug_only":
         return "ops_transcripts"
     if keepability == "user_preference_ephemeral":
         return "user_history"
+    if keepability == "durable_user_memory":
+        return "durable_user_memory"
+    if keepability == "durable_intelligence_memory":
+        return "durable_intelligence_memory"
+    if keepability == "supporting_memory":
+        return "supporting_memory"
+    if keepability == "episodic_trace":
+        return "episodic_trace"
     return "execution_evidence"
 
 

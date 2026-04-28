@@ -7776,6 +7776,36 @@ def build_researcher_reply(
                     ):
                         assessed_generic_memory_candidate = assess_telegram_generic_memory_candidate(memory_user_message)
                         if assessed_generic_memory_candidate.outcome == "drop":
+                            record_event(
+                                state_db,
+                                event_type="memory_candidate_assessed",
+                                component="researcher_bridge",
+                                summary=(
+                                    "Researcher bridge assessed and dropped a Telegram generic memory candidate."
+                                ),
+                                run_id=run_id,
+                                request_id=request_id,
+                                channel_id=channel_kind,
+                                session_id=session_id,
+                                human_id=human_id,
+                                agent_id=agent_id,
+                                actor_id="researcher_bridge",
+                                reason_code="memory_candidate_drop",
+                                facts={
+                                    "message_text": str(user_message or "").strip(),
+                                    "outcome": assessed_generic_memory_candidate.outcome,
+                                    "reason": assessed_generic_memory_candidate.reason,
+                                    "memory_role": assessed_generic_memory_candidate.memory_role,
+                                    "retention_class": assessed_generic_memory_candidate.retention_class,
+                                    "domain_pack": assessed_generic_memory_candidate.domain_pack,
+                                    "predicate": assessed_generic_memory_candidate.predicate,
+                                    "value": assessed_generic_memory_candidate.value,
+                                    "operation": assessed_generic_memory_candidate.operation,
+                                    "fact_name": assessed_generic_memory_candidate.fact_name,
+                                    "label": assessed_generic_memory_candidate.label,
+                                    **assessed_generic_memory_candidate.salience_metadata(),
+                                },
+                            )
                             record_policy_gate_block(
                                 state_db,
                                 component="researcher_bridge",

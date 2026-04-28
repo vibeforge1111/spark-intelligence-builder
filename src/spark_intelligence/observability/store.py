@@ -31,8 +31,10 @@ NON_PROMOTABLE_KEEPABILITY = {
     "ephemeral_context",
     "user_preference_ephemeral",
     "operator_debug_only",
+    "not_keepable",
 }
 NON_PROMOTABLE_DISPOSITIONS = {
+    "blocked",
     "not_promotable",
     "quarantined",
     "quarantined_blocked",
@@ -2064,6 +2066,8 @@ def _mirror_memory_lane_event(
     if not keepability and not promotion_disposition:
         return
     artifact_lane = _artifact_lane_from_keepability(keepability)
+    promotion_target_lane = _promotion_target_lane(promotion_disposition)
+    status = _promotion_record_status(promotion_disposition)
     conn.execute(
         """
         INSERT OR REPLACE INTO memory_lane_records(
@@ -2107,17 +2111,20 @@ def _mirror_memory_lane_event(
             request_id,
             trace_ref,
             artifact_lane,
-            _promotion_target_lane(promotion_disposition),
+            promotion_target_lane,
             keepability or None,
             promotion_disposition or None,
-            _promotion_record_status(promotion_disposition),
+            status,
             reason_code,
             _json_or_none(
                 {
                     "component": component,
                     "event_type": event_type,
+                    "artifact_lane": artifact_lane,
+                    "promotion_target_lane": promotion_target_lane,
                     "keepability": keepability or None,
                     "promotion_disposition": promotion_disposition or None,
+                    "status": status,
                 }
             ),
         ),
@@ -2233,7 +2240,7 @@ def _record_follow_on_promotion_gate_block_if_needed(
                 "promotion_keepability_blocked",
             )
         )
-    if artifact_lane in {"ops_transcripts", "execution_evidence"}:
+    if artifact_lane in {"ops_transcripts", "execution_evidence", "working_scratchpad"}:
         gate_records.append(
             (
                 "residue_check",
@@ -2441,24 +2448,46 @@ def repair_missing_memory_lane_records(state_db: StateDB, *, limit: int = 1000) 
 
 def _artifact_lane_from_keepability(value: str) -> str:
     keepability = str(value or "")
+    if keepability == "not_keepable":
+        return "rejected_memory_candidates"
+    if keepability == "ephemeral_context":
+        return "working_scratchpad"
     if keepability == "operator_debug_only":
         return "ops_transcripts"
     if keepability == "user_preference_ephemeral":
         return "user_history"
+    if keepability == "durable_user_memory":
+        return "durable_user_memory"
     if keepability == "durable_intelligence_memory":
         return "durable_intelligence_memory"
+    if keepability == "supporting_memory":
+        return "supporting_memory"
+    if keepability == "episodic_trace":
+        return "episodic_trace"
     return "execution_evidence"
 
 
 def _promotion_target_lane(disposition: str) -> str | None:
     if not disposition:
         return None
+    if disposition in NON_PROMOTABLE_DISPOSITIONS:
+        return None
+    if disposition == "promote_current_state":
+        return "durable_user_memory"
+    if disposition == "promote_structured_evidence":
+        return "durable_intelligence_memory"
+    if disposition == "promote_belief_candidate":
+        return "belief_candidates"
+    if disposition == "capture_raw_episode":
+        return "episodic_trace"
     return "durable_intelligence_memory"
 
 
 def _promotion_record_status(disposition: str) -> str:
     if disposition in NON_PROMOTABLE_DISPOSITIONS:
         return "blocked"
+    if disposition == "capture_raw_episode":
+        return "captured"
     if disposition:
         return "candidate"
     return "observed"
@@ -2870,7 +2899,14 @@ def _build_memory_lane_hygiene_panel(state_db: StateDB) -> dict[str, Any]:
     ops_residue_volume = sum(
         1 for record in lane_records if str(record.get("artifact_lane") or "") == "ops_transcripts"
     )
+    rejected_candidate_volume = sum(
+        1 for record in lane_records if str(record.get("artifact_lane") or "") == "rejected_memory_candidates"
+    )
     lanes = {str(record.get("artifact_lane") or "") for record in lane_records}
+    lane_counts: dict[str, int] = {}
+    for record in lane_records:
+        lane = str(record.get("artifact_lane") or "unknown")
+        lane_counts[lane] = lane_counts.get(lane, 0) + 1
     contradiction_rows = recent_contradictions(state_db, limit=100, status="open")
     resume_integrity_incidents = [
         row
@@ -2883,11 +2919,18 @@ def _build_memory_lane_hygiene_panel(state_db: StateDB) -> dict[str, Any]:
             "promotion_attempts": promotion_attempts,
             "blocked_promotions": blocked_promotions,
             "ops_residue_volume": ops_residue_volume,
+            "rejected_candidate_volume": rejected_candidate_volume,
             "reset_or_resume_integrity_incidents": len(resume_integrity_incidents),
         },
+        "lane_counts": lane_counts,
         "lane_labels_present": {
             "execution_evidence": "execution_evidence" in lanes,
             "durable_intelligence_memory": "durable_intelligence_memory" in lanes,
+            "durable_user_memory": "durable_user_memory" in lanes,
+            "supporting_memory": "supporting_memory" in lanes,
+            "episodic_trace": "episodic_trace" in lanes,
+            "rejected_memory_candidates": "rejected_memory_candidates" in lanes,
+            "working_scratchpad": "working_scratchpad" in lanes,
             "ops_transcripts": "ops_transcripts" in lanes,
             "user_history": "user_history" in lanes,
         },
