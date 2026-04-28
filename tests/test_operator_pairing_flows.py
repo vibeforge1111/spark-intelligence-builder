@@ -4047,7 +4047,7 @@ class OperatorPairingFlowTests(SparkTestCase):
                     update_id=219,
                     user_id="111",
                     username="alice",
-                    text="Actually, my current plan is verify scheduled memory cleanup.",
+                    text="Set my current plan to verify scheduled memory cleanup.",
                 ),
             )
 
@@ -4060,7 +4060,7 @@ class OperatorPairingFlowTests(SparkTestCase):
         bridge_mock.assert_called_once()
         self.assertEqual(
             bridge_mock.call_args.kwargs["user_message"],
-            "Actually, my current plan is verify scheduled memory cleanup.",
+            "Set my current plan to verify scheduled memory cleanup.",
         )
 
     def test_jobs_running_question_beats_mission_board_shortcircuit(self) -> None:
