@@ -7,7 +7,11 @@ from spark_intelligence.memory.generic_observations import (
     classify_telegram_generic_memory_candidate,
 )
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
-from spark_intelligence.observability.store import latest_events_by_type, recent_memory_lane_records
+from spark_intelligence.observability.store import (
+    latest_events_by_type,
+    recent_memory_lane_records,
+    recent_policy_gate_records,
+)
 from spark_intelligence.researcher_bridge.advisory import (
     OpenMemoryRecallQuery,
     ResearcherProviderSelection,
@@ -698,6 +702,53 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(assessment.outcome, "drop")
         self.assertEqual(assessment.reason, "not_memoryworthy")
         self.assertIsNone(classify_telegram_generic_memory_candidate("what do you know about Spark systems"))
+
+    def test_build_researcher_reply_records_policy_gate_for_rejected_generic_memory_candidate(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        provider = RuntimeProviderResolution(
+            provider_id="custom",
+            provider_kind="openai_compatible",
+            auth_profile_id="default",
+            auth_method="api_key",
+            api_mode="openai_chat_completions",
+            execution_transport="direct_http",
+            base_url="https://api.example.invalid/v1",
+            default_model="test-model",
+            secret_ref=None,
+            secret_value="test-secret",
+            source="test",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            return_value=ResearcherProviderSelection(provider=provider, model_family="generic"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            return_value={"raw_response": "Spark systems are the operating layer we are improving."},
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-rejected-generic-memory",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-rejected-generic-memory",
+                channel_kind="telegram",
+                user_message="maybe the launch could work someday",
+            )
+
+        self.assertTrue(result.reply_text)
+        gate_records = recent_policy_gate_records(self.state_db, limit=10, gate_name="memory.generic_candidate")
+        self.assertTrue(gate_records)
+        evidence = gate_records[0]["evidence_json"] or {}
+        facts = evidence.get("facts") or {}
+        self.assertEqual(gate_records[0]["reason_code"], "salience_generic_candidate_dropped")
+        self.assertEqual(facts.get("outcome"), "drop")
+        self.assertEqual(facts.get("promotion_stage"), "drop")
+        self.assertEqual(facts.get("keepability"), "not_keepable")
 
     def test_assess_telegram_generic_memory_candidate_rejects_emotional_self_reports(self) -> None:
         assessment = assess_telegram_generic_memory_candidate("I'm anxious about the launch tomorrow")

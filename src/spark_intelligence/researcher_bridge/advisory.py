@@ -100,6 +100,7 @@ from spark_intelligence.observability.store import (
     build_text_mutation_facts,
     record_environment_snapshot,
     record_event,
+    record_policy_gate_block,
     record_quarantine,
 )
 from spark_intelligence.observability.store import latest_events_by_type, latest_snapshots_by_surface
@@ -7775,6 +7776,39 @@ def build_researcher_reply(
                     ):
                         assessed_generic_memory_candidate = assess_telegram_generic_memory_candidate(memory_user_message)
                         if assessed_generic_memory_candidate.outcome == "drop":
+                            record_policy_gate_block(
+                                state_db,
+                                component="researcher_bridge",
+                                policy_domain="memory_salience",
+                                gate_name="memory.generic_candidate",
+                                source_kind="telegram_message",
+                                source_ref=request_id,
+                                summary="Researcher bridge rejected a Telegram generic memory candidate before persistence.",
+                                action="blocked",
+                                reason_code=(
+                                    assessed_generic_memory_candidate.salience_decision.reason_code
+                                    if assessed_generic_memory_candidate.salience_decision is not None
+                                    else f"memory_candidate_{assessed_generic_memory_candidate.reason}"
+                                ),
+                                blocked_stage="generic_candidate_assessment",
+                                input_ref=request_id,
+                                severity="low",
+                                run_id=run_id,
+                                request_id=request_id,
+                                channel_id=channel_kind,
+                                session_id=session_id,
+                                actor_id="researcher_bridge",
+                                provenance={"memory_role": "none", "human_id": human_id},
+                                facts={
+                                    "message_text": str(user_message or "").strip(),
+                                    "outcome": assessed_generic_memory_candidate.outcome,
+                                    "reason": assessed_generic_memory_candidate.reason,
+                                    "memory_role": assessed_generic_memory_candidate.memory_role,
+                                    "retention_class": assessed_generic_memory_candidate.retention_class,
+                                    "domain_pack": assessed_generic_memory_candidate.domain_pack,
+                                    **assessed_generic_memory_candidate.salience_metadata(),
+                                },
+                            )
                             assessed_generic_memory_candidate = None
         except Exception:
             pass
