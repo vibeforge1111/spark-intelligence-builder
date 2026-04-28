@@ -51,6 +51,7 @@ from spark_intelligence.memory.profile_facts import (
 from spark_intelligence.observability.store import (
     build_watchtower_snapshot,
     latest_events_by_type,
+    record_event,
     recent_reset_sensitive_state_registry,
 )
 from spark_intelligence.personality.loader import (
@@ -548,6 +549,57 @@ class MemoryOrchestratorTests(SparkTestCase):
         assert packet is not None
         self.assertEqual(packet.sections[0]["section"], "entity_state")
         self.assertEqual(packet.sections[0]["items"][0]["entity_key"], "named-object:tiny-desk-plant")
+
+    def test_hybrid_memory_retrieve_adds_recent_conversation_lane_with_query_overlap(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="telegram_message_received",
+            component="telegram_gateway",
+            summary="User said the tiny desk plant is named Mira.",
+            session_id="session:recent",
+            human_id="test",
+            facts={
+                "role": "user",
+                "message_text": "The tiny desk plant is named Mira.",
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="diagnostics_scan_complete",
+            component="diagnostics",
+            summary="Diagnostics mentioned Mira only as noise.",
+            session_id="session:recent",
+            human_id="test",
+            facts={"message_text": "Mira diagnostics noise."},
+        )
+        fake_client = _HybridRetrievalMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ):
+            result = hybrid_memory_retrieve(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                query="What did I say about Mira?",
+                subject="human:test",
+                predicate="profile.current_focus",
+                limit=4,
+                actor_id="test",
+            )
+
+        trace = result.read_result.retrieval_trace["hybrid_memory_retrieve"]
+        recent_lane = next(lane for lane in trace["lane_summaries"] if lane["lane"] == "recent_conversation")
+        self.assertEqual(recent_lane["status"], "supported")
+        self.assertEqual(recent_lane["record_count"], 1)
+        recent_candidates = [candidate for candidate in result.candidates if candidate.lane == "recent_conversation"]
+        self.assertEqual(len(recent_candidates), 1)
+        self.assertEqual(recent_candidates[0].record["metadata"]["role"], "user")
+        packet = result.context_packet
+        self.assertIsNotNone(packet)
+        assert packet is not None
+        sections = {section["section"]: section for section in packet.sections}
+        self.assertIn("recent_conversation", sections)
+        self.assertEqual(packet.source_mix["recent_conversation"], 1)
 
     def test_memory_kernel_dispatches_hybrid_memory_retrieve(self) -> None:
         fake_client = _HybridRetrievalMemoryClient()

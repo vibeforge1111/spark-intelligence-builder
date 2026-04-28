@@ -1745,6 +1745,35 @@ def hybrid_memory_retrieve(
             record_activity=False,
         ),
     )
+    recent_lane, recent_records = _build_recent_conversation_lane(
+        state_db=state_db,
+        query=normalized_query,
+        subject=normalized_subject,
+        session_id=session_id,
+        limit=normalized_limit,
+    )
+    lane_summaries.append(recent_lane)
+    for index, record in enumerate(recent_records):
+        source_class = "recent_conversation"
+        score, score_reasons = _score_hybrid_memory_record(
+            lane="recent_conversation",
+            source_class=source_class,
+            record=record,
+            query=normalized_query,
+            predicate=normalized_predicate,
+            entity_key=normalized_entity_key,
+        )
+        ranked_entries.append(
+            {
+                "lane": "recent_conversation",
+                "source_class": source_class,
+                "score": score,
+                "score_reasons": score_reasons,
+                "record": record,
+                "record_key": _hybrid_memory_record_key(record),
+                "rank_tiebreak": index,
+            }
+        )
     lane_summaries.append(
         _build_graph_sidecar_shadow_lane(
             config_manager=config_manager,
@@ -5023,6 +5052,178 @@ def _build_hybrid_memory_context_packet(
     )
 
 
+def _build_recent_conversation_lane(
+    *,
+    state_db: StateDB,
+    query: str,
+    subject: str | None,
+    session_id: str | None,
+    limit: int,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    human_id = _human_id_from_subject(subject or "")
+    row_limit = max(20, int(limit or 5) * 12)
+    sql = """
+        SELECT event_id, event_type, component, session_id, human_id, summary, facts_json, created_at
+        FROM builder_events
+    """
+    conditions: list[str] = []
+    params: list[Any] = []
+    if human_id:
+        conditions.append("human_id = ?")
+        params.append(human_id)
+    if session_id:
+        conditions.append("session_id = ?")
+        params.append(session_id)
+    if conditions:
+        sql += " WHERE " + " OR ".join(f"({condition})" for condition in conditions)
+    sql += " ORDER BY created_at DESC, event_id DESC LIMIT ?"
+    params.append(row_limit)
+
+    records: list[dict[str, Any]] = []
+    scanned = 0
+    query_tokens = _hybrid_memory_query_tokens(query)
+    try:
+        with state_db.connect() as conn:
+            rows = conn.execute(sql, tuple(params)).fetchall()
+    except Exception as exc:
+        return (
+            {
+                "lane": "recent_conversation",
+                "read_method": "retrieve_recent_conversation",
+                "source_class": "recent_conversation",
+                "status": "error",
+                "abstained": True,
+                "record_count": 0,
+                "reason": "recent_conversation_query_error",
+                "error": exc.__class__.__name__,
+            },
+            [],
+        )
+    for row in rows:
+        scanned += 1
+        facts = _json_object(row["facts_json"])
+        if not _is_recent_conversation_row(row=row, facts=facts):
+            continue
+        text = _recent_conversation_text(row=row, facts=facts)
+        if not text:
+            continue
+        if query_tokens and not _text_overlaps_query(text, query_tokens):
+            continue
+        record = _recent_conversation_record(row=row, facts=facts, text=text)
+        records.append(record)
+        if len(records) >= max(1, int(limit or 1)):
+            break
+    return (
+        {
+            "lane": "recent_conversation",
+            "read_method": "retrieve_recent_conversation",
+            "source_class": "recent_conversation",
+            "status": "supported" if records else "not_found",
+            "abstained": not bool(records),
+            "record_count": len(records),
+            "reason": None if records else "no_matching_recent_conversation",
+            "scanned_count": scanned,
+            "query_overlap_required": bool(query_tokens),
+        },
+        records,
+    )
+
+
+def _json_object(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return dict(raw)
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(str(raw))
+    except Exception:
+        return {}
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
+def _is_recent_conversation_row(*, row: Any, facts: dict[str, Any]) -> bool:
+    event_type = str(row["event_type"] or "").casefold()
+    component = str(row["component"] or "").casefold()
+    if event_type.startswith("memory_"):
+        return False
+    if any(marker in event_type for marker in ("diagnostic", "maintenance", "config", "policy", "doctor")):
+        return False
+    if any(marker in component for marker in ("diagnostic", "maintenance", "config", "policy", "doctor")):
+        return False
+    if any(_optional_string(facts.get(key)) for key in _RECENT_CONVERSATION_TEXT_KEYS):
+        return True
+    if _optional_string(facts.get("role")) or _optional_string(facts.get("conversation_role")):
+        return True
+    return any(marker in event_type for marker in ("telegram", "message", "conversation", "user_turn", "assistant_turn"))
+
+
+_RECENT_CONVERSATION_TEXT_KEYS: tuple[str, ...] = (
+    "message_text",
+    "text",
+    "content",
+    "user_text",
+    "assistant_text",
+    "response_text",
+    "input_text",
+    "output_text",
+    "prompt",
+)
+
+
+def _recent_conversation_text(*, row: Any, facts: dict[str, Any]) -> str:
+    for key in _RECENT_CONVERSATION_TEXT_KEYS:
+        value = _optional_string(facts.get(key))
+        if value:
+            return value
+    return str(row["summary"] or "").strip()
+
+
+def _recent_conversation_role(*, row: Any, facts: dict[str, Any]) -> str:
+    role = str(facts.get("role") or facts.get("conversation_role") or "").strip().lower()
+    if role in {"user", "assistant", "system"}:
+        return role
+    event_type = str(row["event_type"] or "").casefold()
+    if "assistant" in event_type or "reply" in event_type or "response" in event_type:
+        return "assistant"
+    return "user"
+
+
+def _text_overlaps_query(text: str, query_tokens: set[str]) -> bool:
+    haystack = str(text or "").casefold()
+    return any(token in haystack for token in query_tokens)
+
+
+def _recent_conversation_record(*, row: Any, facts: dict[str, Any], text: str) -> dict[str, Any]:
+    event_id = str(row["event_id"] or "").strip()
+    role = _recent_conversation_role(row=row, facts=facts)
+    return {
+        "subject": _optional_string(f"human:{row['human_id']}") if row["human_id"] else None,
+        "predicate": "conversation.recent_turn",
+        "value": text,
+        "text": text,
+        "memory_role": "raw_episode",
+        "source_class": "recent_conversation",
+        "event_id": event_id,
+        "session_id": _optional_string(row["session_id"]),
+        "timestamp": _optional_string(row["created_at"]),
+        "metadata": {
+            "source_surface": "recent_conversation",
+            "event_type": row["event_type"],
+            "component": row["component"],
+            "role": role,
+            "authority": "supporting_not_authoritative",
+            "source_event_id": event_id,
+        },
+        "provenance": [
+            {
+                "source": "builder_events",
+                "event_id": event_id,
+                "created_at": row["created_at"],
+            }
+        ],
+    }
+
+
 def _hybrid_memory_context_section(candidate: HybridMemoryCandidate) -> str:
     record = candidate.record
     metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
@@ -5346,6 +5547,8 @@ def _hybrid_memory_source_class(*, lane: str, kernel: MemoryKernelReadResult, re
         return "historical_state"
     if lane == "events":
         return "event"
+    if lane == "recent_conversation":
+        return "recent_conversation"
     if lane == "wiki_packets":
         return "obsidian_llm_wiki_packets"
     if lane == "evidence":
@@ -5440,6 +5643,7 @@ def _score_hybrid_memory_record(
         "historical_state": 82.0,
         "events": 58.0,
         "evidence": 52.0,
+        "recent_conversation": 50.0,
         "typed_temporal_graph": 46.0,
         "wiki_packets": 44.0,
     }
