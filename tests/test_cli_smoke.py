@@ -594,6 +594,44 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(predicates, {"system.memory.one", "system.memory.two"})
         self.assertTrue(payload["recent_events"])
 
+    def test_memory_inspect_capsule_reports_source_mix_and_sections(self) -> None:
+        smoke_exit, _, smoke_stderr = self.run_cli(
+            "memory",
+            "direct-smoke",
+            "--home",
+            str(self.home),
+            "--subject",
+            "human:capsule:test",
+            "--predicate",
+            "profile.current_focus",
+            "--value",
+            "persistent memory quality evaluation",
+            "--no-cleanup",
+            "--json",
+        )
+        self.assertEqual(smoke_exit, 0, smoke_stderr)
+
+        exit_code, stdout, stderr = self.run_cli(
+            "memory",
+            "inspect-capsule",
+            "--home",
+            str(self.home),
+            "--query",
+            "What is my current focus?",
+            "--subject",
+            "human:capsule:test",
+            "--predicate",
+            "profile.current_focus",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["sdk_module"], "domain_chip_memory")
+        self.assertGreaterEqual(payload["selected_count"], 1)
+        self.assertEqual(payload["source_mix"]["current_state"], 1)
+        self.assertEqual(payload["context_packet"]["sections"][0]["section"], "active_current_state")
+
     def test_memory_export_shadow_replay_writes_contract_shaped_json(self) -> None:
         with self.state_db.connect() as conn:
             conn.execute(

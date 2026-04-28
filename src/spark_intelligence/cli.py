@@ -96,6 +96,7 @@ from spark_intelligence.memory import (
     export_sdk_maintenance_replay,
     export_shadow_replay,
     export_shadow_replay_batch,
+    hybrid_memory_retrieve,
     inspect_human_memory_in_memory,
     inspect_memory_sdk_runtime,
     lookup_current_state_in_memory,
@@ -713,6 +714,42 @@ class MemoryHumanInspection:
                     f"{event.get('created_at') or 'unknown'} "
                     f"reason={event.get('reason') or 'n/a'} "
                     f"predicate={event.get('predicate') or event.get('predicate_prefix') or 'n/a'}"
+                )
+        return "\n".join(lines)
+
+
+@dataclass
+class MemoryCapsuleInspection:
+    payload: dict[str, object]
+
+    def to_json(self) -> str:
+        return json.dumps(self.payload, indent=2)
+
+    def to_text(self) -> str:
+        packet = self.payload.get("context_packet") or {}
+        sections = packet.get("sections") if isinstance(packet, dict) else []
+        source_mix = packet.get("source_mix") if isinstance(packet, dict) else {}
+        lines = ["Spark memory capsule inspect"]
+        lines.append(f"- query: {self.payload.get('query') or ''}")
+        lines.append(
+            f"- budget: used={packet.get('used_chars', 0) if isinstance(packet, dict) else 0} "
+            f"max={packet.get('max_chars', 0) if isinstance(packet, dict) else 0} "
+            f"dropped={packet.get('dropped_count', 0) if isinstance(packet, dict) else 0}"
+        )
+        if isinstance(source_mix, dict) and source_mix:
+            lines.append(
+                "- source mix: "
+                + ", ".join(f"{source}={count}" for source, count in sorted(source_mix.items()))
+            )
+        if sections:
+            lines.append("- sections:")
+            for section in sections:
+                if not isinstance(section, dict):
+                    continue
+                items = section.get("items") if isinstance(section.get("items"), list) else []
+                lines.append(
+                    f"  - {section.get('section') or 'unknown'} "
+                    f"authority={section.get('authority') or 'unknown'} items={len(items)}"
                 )
         return "\n".join(lines)
 
@@ -1821,6 +1858,19 @@ def build_parser() -> argparse.ArgumentParser:
     memory_inspect_human_parser.add_argument("--human-id", required=True, help="Builder human id to inspect")
     memory_inspect_human_parser.add_argument("--event-limit", type=int, default=10, help="Maximum recent memory events to include")
     memory_inspect_human_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_inspect_capsule_parser = memory_subparsers.add_parser(
+        "inspect-capsule",
+        help="Compile and inspect the hybrid memory context packet for one query",
+    )
+    memory_inspect_capsule_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_inspect_capsule_parser.add_argument("--sdk-module", help="Override the SDK module for this inspection")
+    memory_inspect_capsule_parser.add_argument("--query", required=True, help="Question or user turn to compile memory context for")
+    memory_inspect_capsule_parser.add_argument("--subject", help="Structured memory subject to scope retrieval")
+    memory_inspect_capsule_parser.add_argument("--predicate", help="Structured memory predicate to scope retrieval")
+    memory_inspect_capsule_parser.add_argument("--entity-key", help="Optional entity key to scope retrieval")
+    memory_inspect_capsule_parser.add_argument("--as-of", help="Optional timestamp for historical-state retrieval")
+    memory_inspect_capsule_parser.add_argument("--limit", type=int, default=5, help="Maximum ranked memory candidates")
+    memory_inspect_capsule_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_export_parser = memory_subparsers.add_parser(
         "export-shadow-replay",
         help="Export a Spark shadow replay JSON file for domain-chip-memory validation",
@@ -5486,6 +5536,44 @@ def handle_memory_inspect_human(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_memory_inspect_capsule(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = hybrid_memory_retrieve(
+        config_manager=config_manager,
+        state_db=state_db,
+        query=args.query,
+        subject=args.subject,
+        predicate=args.predicate,
+        entity_key=args.entity_key,
+        as_of=args.as_of,
+        limit=args.limit,
+        sdk_module=args.sdk_module,
+        actor_id="memory_cli",
+        source_surface="memory_cli_inspect_capsule",
+    )
+    context_packet = result.context_packet.to_payload() if result.context_packet is not None else None
+    payload = {
+        "sdk_module": result.sdk_module,
+        "query": result.query,
+        "subject": result.subject,
+        "predicate": result.predicate,
+        "entity_key": result.entity_key,
+        "as_of": result.as_of,
+        "runtime": result.runtime,
+        "lane_summaries": result.lane_summaries,
+        "context_packet": context_packet,
+        "candidate_count": len(result.candidates),
+        "selected_count": len([candidate for candidate in result.candidates if candidate.selected]),
+        "source_mix": context_packet.get("source_mix", {}) if isinstance(context_packet, dict) else {},
+    }
+    inspection = MemoryCapsuleInspection(payload=payload)
+    print(inspection.to_json() if args.json else inspection.to_text())
+    return 0
+
+
 def handle_memory_export_shadow_replay(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -7323,6 +7411,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_memory_lookup_current_state(args)
     if args.command == "memory" and args.memory_command == "inspect-human":
         return handle_memory_inspect_human(args)
+    if args.command == "memory" and args.memory_command == "inspect-capsule":
+        return handle_memory_inspect_capsule(args)
     if args.command == "memory" and args.memory_command == "export-shadow-replay":
         return handle_memory_export_shadow_replay(args)
     if args.command == "memory" and args.memory_command == "export-shadow-replay-batch":
