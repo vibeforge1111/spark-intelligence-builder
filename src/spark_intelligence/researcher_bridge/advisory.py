@@ -373,8 +373,50 @@ class EntityStateHistoryQuery:
 
 
 @dataclass(frozen=True)
+class EntityStateSummaryQuery:
+    topic: str
+
+
+@dataclass(frozen=True)
 class BeliefRecallQuery:
     topic: str
+
+
+_ENTITY_STATE_SUMMARY_ATTRIBUTES: tuple[tuple[str, str, str], ...] = (
+    ("status", "entity.status", "Status"),
+    ("owner", "entity.owner", "Owner"),
+    ("deadline", "entity.deadline", "Deadline"),
+    ("blocker", "entity.blocker", "Blocker"),
+    ("priority", "entity.priority", "Priority"),
+    ("decision", "entity.decision", "Decision"),
+    ("next_action", "entity.next_action", "Next action"),
+    ("metric", "entity.metric", "Metric"),
+    ("project", "entity.project", "Project"),
+    ("relation", "entity.relation", "Related to"),
+    ("preference", "entity.preference", "Preference"),
+    ("location", "entity.location", "Location"),
+    ("name", "entity.name", "Name"),
+)
+
+
+_ENTITY_STATE_SUMMARY_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"^(?:what|which)\s+do you\s+(?:know|remember|have saved)\s+about\s+(.+?)[\?\.\!]*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?:what(?:'s| is)\s+(?:the\s+)?state\s+of\s+)(.+?)[\?\.\!]*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?:summarize|summary\s+of)\s+(.+?)[\?\.\!]*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^what\s+is\s+open\s+on\s+(.+?)[\?\.\!]*$",
+        re.IGNORECASE,
+    ),
+)
 
 
 _OPEN_MEMORY_RECALL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -737,6 +779,21 @@ def _detect_open_memory_recall_query(user_message: str) -> OpenMemoryRecallQuery
     return None
 
 
+def _detect_entity_state_summary_query(user_message: str) -> EntityStateSummaryQuery | None:
+    normalized = " ".join(str(user_message or "").strip().split())
+    if not normalized:
+        return None
+    for pattern in _ENTITY_STATE_SUMMARY_PATTERNS:
+        match = pattern.match(normalized)
+        if not match:
+            continue
+        topic = _clean_entity_history_topic(str(match.group(1) or ""))
+        if not topic or topic in {"me", "my profile"}:
+            return None
+        return EntityStateSummaryQuery(topic=topic)
+    return None
+
+
 def _clean_entity_history_topic(topic: str) -> str:
     cleaned = str(topic or "").strip(" \t\r\n?!.\"'")
     cleaned = re.sub(r"^(?:my|the)\s+", "", cleaned, flags=re.IGNORECASE).strip()
@@ -1068,6 +1125,14 @@ def _entity_state_history_entity_key(query: EntityStateHistoryQuery) -> str | No
     return f"named-object:{slug or 'unknown'}"
 
 
+def _entity_state_summary_entity_key(query: EntityStateSummaryQuery) -> str | None:
+    entity_label = _clean_entity_history_topic(query.topic)
+    if not entity_label:
+        return None
+    slug = re.sub(r"[^a-z0-9]+", "-", entity_label.lower()).strip("-")
+    return f"named-object:{slug or 'unknown'}"
+
+
 def _entity_state_record_entity_key(record: dict[str, Any]) -> str | None:
     metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
     value = str(metadata.get("entity_key") or "").strip()
@@ -1140,6 +1205,38 @@ def _filter_entity_state_history_records(
     return _ordered_profile_fact_event_records(filtered)
 
 
+def _filter_entity_state_summary_records(
+    *,
+    query: EntityStateSummaryQuery,
+    attribute: str,
+    predicate: str,
+    records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    entity_key = _entity_state_summary_entity_key(query)
+    filtered: list[dict[str, Any]] = []
+    for record in records:
+        record_predicate = str(record.get("predicate") or "").strip()
+        if record_predicate != predicate:
+            continue
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        record_attribute = str(metadata.get("entity_attribute") or record_predicate.split(".", 1)[-1]).strip()
+        if record_attribute != attribute:
+            continue
+        record_entity_key = str(metadata.get("entity_key") or "").strip()
+        entity_label = str(metadata.get("entity_label") or "").strip()
+        if entity_key and record_entity_key and record_entity_key != entity_key:
+            continue
+        if not record_entity_key and (
+            not entity_label
+            or not _entity_label_matches_open_memory_topic(entity_label=entity_label, topic=query.topic)
+        ):
+            continue
+        if not _profile_fact_record_value(record):
+            continue
+        filtered.append(record)
+    return _ordered_profile_fact_event_records(_filter_open_memory_recall_records(filtered))
+
+
 def _entity_state_record_label(record: dict[str, Any] | None, fallback: str) -> str:
     if record is None:
         return fallback
@@ -1179,6 +1276,34 @@ def _entity_state_record_phrase(*, attribute: str, record: dict[str, Any]) -> st
     if attribute == "name":
         return f"named {value}"
     return f"{attribute} was {value}"
+
+
+def _entity_state_summary_value(*, attribute: str, record: dict[str, Any]) -> str:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    value = _profile_fact_record_value(record)
+    if attribute == "location":
+        preposition = str(metadata.get("location_preposition") or "at").strip()
+        return f"{preposition} {value}".strip()
+    return value
+
+
+def _build_entity_state_summary_answer(
+    *,
+    query: EntityStateSummaryQuery,
+    records_by_attribute: dict[str, dict[str, Any]],
+) -> str:
+    label = _entity_state_record_label(next(iter(records_by_attribute.values()), None), query.topic)
+    if not records_by_attribute:
+        return f"I don't currently have saved entity state for {query.topic}."
+    lines = [f"Here is what I have for the {label}:", ""]
+    for attribute, _, display_label in _ENTITY_STATE_SUMMARY_ATTRIBUTES:
+        record = records_by_attribute.get(attribute)
+        if not record:
+            continue
+        value = _entity_state_summary_value(attribute=attribute, record=record)
+        if value:
+            lines.append(f"- {display_label}: {value}")
+    return "\n".join(lines)
 
 
 def _build_entity_state_history_answer(
@@ -5328,7 +5453,15 @@ def _format_memory_route_source_reply(*, route_facts: dict[str, Any]) -> str | N
     route_label: str | None = None
     source_line: str | None = None
     reason: str | None = None
-    if routing_decision == "memory_entity_state_history_query" or bridge_mode == "memory_entity_state_history":
+    if routing_decision == "memory_entity_state_summary_query" or bridge_mode == "memory_entity_state_summary":
+        route_label = "entity-state summary route"
+        source_line = "entity_state current summary records"
+        reason = (
+            "The previous answer was an entity-state summary read. "
+            "It gathered current entity-scoped records across attributes for the named object, so current state was "
+            "the authority and historical or workflow residue was not used."
+        )
+    elif routing_decision == "memory_entity_state_history_query" or bridge_mode == "memory_entity_state_history":
         route_label = "entity-state history route"
         source_line = "entity_state history records"
         previous_value_found = route_facts.get("previous_value_found")
@@ -5381,11 +5514,16 @@ def _format_memory_route_source_reply(*, route_facts: dict[str, Any]) -> str | N
         ("query_kind", "query_kind"),
         ("topic", "topic"),
         ("record_count", "record_count"),
+        ("attribute_count", "attribute_count"),
+        ("candidate_record_count", "candidate_record_count"),
         ("read_method", "read_method"),
     ):
         value = route_facts.get(key)
         if value is not None and str(value).strip():
             lines.append(f"- {label}: {value}")
+    attributes = route_facts.get("attributes")
+    if isinstance(attributes, list) and attributes:
+        lines.append("- attributes: " + ", ".join(str(item) for item in attributes if str(item).strip()))
     if evidence_summary:
         lines.append(f"- evidence_summary: {evidence_summary}")
     lines.extend(["", "Reason:", reason or "The previous answer came from the named memory route."])
@@ -6804,6 +6942,7 @@ def build_researcher_reply(
     detected_memory_event = None
     detected_memory_event_query = None
     detected_entity_state_history_query = None
+    detected_entity_state_summary_query = None
     detected_open_memory_recall_query = None
     detected_belief_recall_query = None
     detected_generic_memory_candidate = None
@@ -7501,12 +7640,21 @@ def build_researcher_reply(
                 detected_profile_fact_query is None
                 and detected_memory_event_query is None
                 and detected_entity_state_history_query is None
+                and detected_entity_state_summary_query is None
             ):
                 detected_entity_state_history_query = _detect_entity_state_history_query(user_message)
             if (
                 detected_profile_fact_query is None
                 and detected_memory_event_query is None
                 and detected_entity_state_history_query is None
+                and detected_entity_state_summary_query is None
+            ):
+                detected_entity_state_summary_query = _detect_entity_state_summary_query(user_message)
+            if (
+                detected_profile_fact_query is None
+                and detected_memory_event_query is None
+                and detected_entity_state_history_query is None
+                and detected_entity_state_summary_query is None
                 and detected_open_memory_recall_query is None
             ):
                 detected_open_memory_recall_query = _detect_open_memory_recall_query(user_message)
@@ -7514,6 +7662,7 @@ def build_researcher_reply(
                 detected_profile_fact_query is None
                 and detected_memory_event_query is None
                 and detected_entity_state_history_query is None
+                and detected_entity_state_summary_query is None
                 and detected_open_memory_recall_query is None
                 and detected_belief_recall_query is None
             ):
@@ -9330,6 +9479,107 @@ def build_researcher_reply(
             config_path=None,
             attachment_context=attachment_context,
             routing_decision="memory_entity_state_history_query",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+    if detected_entity_state_summary_query is not None:
+        memory_subject = human_id if str(human_id or "").startswith("human:") else f"human:{human_id}"
+        entity_key = _entity_state_summary_entity_key(detected_entity_state_summary_query)
+        records_by_attribute: dict[str, dict[str, Any]] = {}
+        candidate_record_count = 0
+        read_method = "get_current_state"
+        for attribute, predicate, _display_label in _ENTITY_STATE_SUMMARY_ATTRIBUTES:
+            lookup = read_memory_kernel(
+                config_manager=config_manager,
+                state_db=state_db,
+                method="get_current_state",
+                query=str(user_message or "").strip() or f"What do you know about {detected_entity_state_summary_query.topic}?",
+                subject=memory_subject,
+                predicate=predicate,
+                entity_key=entity_key,
+                actor_id="researcher_bridge",
+                session_id=session_id,
+                turn_id=f"{request_id}:entity-summary-{attribute}",
+                source_surface="researcher_bridge:entity_state_summary",
+            )
+            records = _filter_entity_state_summary_records(
+                query=detected_entity_state_summary_query,
+                attribute=attribute,
+                predicate=predicate,
+                records=list(lookup.read_result.records or []),
+            )
+            candidate_record_count += len(records)
+            if records:
+                records_by_attribute[attribute] = records[-1]
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_entity_state_summary",
+            routing_decision="memory_entity_state_summary_query",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = _build_entity_state_summary_answer(
+            query=detected_entity_state_summary_query,
+            records_by_attribute=records_by_attribute,
+        )
+        attributes = [
+            attribute
+            for attribute, _predicate, _display_label in _ENTITY_STATE_SUMMARY_ATTRIBUTES
+            if attribute in records_by_attribute
+        ]
+        evidence_summary = (
+            "status=memory_entity_state_summary "
+            f"topic={detected_entity_state_summary_query.topic or 'unknown'} "
+            f"entity_key={entity_key or 'unknown'} "
+            f"attribute_count={len(attributes)} "
+            f"candidate_record_count={candidate_record_count} "
+            f"read_method={read_method}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered an entity state summary query directly from memory.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_entity_state_summary_query",
+            facts=_bridge_event_facts(
+                routing_decision="memory_entity_state_summary_query",
+                bridge_mode="memory_entity_state_summary",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "topic": detected_entity_state_summary_query.topic,
+                    "entity_key": entity_key,
+                    "attribute_count": len(attributes),
+                    "candidate_record_count": candidate_record_count,
+                    "attributes": attributes,
+                    "read_method": read_method,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_entity_state_summary",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_entity_state_summary_query",
             active_chip_key=None,
             active_chip_task_type=None,
             active_chip_evaluate_used=False,

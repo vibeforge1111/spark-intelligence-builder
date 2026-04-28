@@ -3101,6 +3101,80 @@ class TelegramGenericMemoryTests(SparkTestCase):
             }.issubset(predicates)
         )
 
+    def test_build_researcher_reply_summarizes_entity_state_across_attributes(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        def ask(request_id: str, message: str):
+            return build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id=request_id,
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-state-summary",
+                channel_kind="telegram",
+                user_message=message,
+            )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for entity state summary memory"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for entity state summary memory"),
+        ):
+            ask("req-entity-summary-status", "For later, the GTM launch status is ready.")
+            ask("req-entity-summary-owner", "For later, Omar owns the GTM launch.")
+            ask("req-entity-summary-deadline", "For later, the GTM launch deadline is Friday.")
+            ask("req-entity-summary-blocker", "For later, the GTM launch blocker is creator approvals.")
+            ask("req-entity-summary-priority", "For later, the GTM launch priority is creator approvals.")
+            ask("req-entity-summary-decision", "For later, the GTM launch decision is concise landing page first.")
+            ask("req-entity-summary-next-action", "For later, the GTM launch next action is get creator signoff.")
+            ask("req-entity-summary-metric", "For later, the GTM launch metric is booked calls.")
+            summary_query = ask("req-entity-summary-query", "What do you know about the GTM launch?")
+            source_query = ask("req-entity-summary-source", "Why did you answer that?")
+
+        self.assertEqual(summary_query.mode, "memory_entity_state_summary")
+        self.assertEqual(summary_query.routing_decision, "memory_entity_state_summary_query")
+        self.assertIn("Here is what I have for the GTM launch:", summary_query.reply_text)
+        for expected_line in (
+            "- Status: ready",
+            "- Owner: Omar",
+            "- Deadline: Friday",
+            "- Blocker: creator approvals",
+            "- Priority: creator approvals",
+            "- Decision: concise landing page first",
+            "- Next action: get creator signoff",
+            "- Metric: booked calls",
+        ):
+            self.assertIn(expected_line, summary_query.reply_text)
+        self.assertNotEqual(summary_query.reply_text, "The GTM launch blocker is creator approvals.")
+
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=20)
+        summary_event = next(
+            event
+            for event in tool_events
+            if event["request_id"] == "req-entity-summary-query"
+        )
+        summary_facts = summary_event["facts_json"] or {}
+        self.assertEqual(summary_facts.get("bridge_mode"), "memory_entity_state_summary")
+        self.assertEqual(summary_facts.get("read_method"), "get_current_state")
+        self.assertEqual(summary_facts.get("attribute_count"), 8)
+        self.assertEqual(
+            summary_facts.get("attributes"),
+            ["status", "owner", "deadline", "blocker", "priority", "decision", "next_action", "metric"],
+        )
+        self.assertIn("attribute_count=8", summary_facts.get("evidence_summary") or "")
+        self.assertIn("read_method=get_current_state", summary_facts.get("evidence_summary") or "")
+
+        self.assertEqual(source_query.mode, "context_source_debug")
+        self.assertIn("entity-state summary route", source_query.reply_text)
+        self.assertIn("source: entity_state current summary records", source_query.reply_text)
+        self.assertIn("attributes: status, owner, deadline, blocker, priority, decision, next_action, metric", source_query.reply_text)
+        self.assertIn("current state was the authority", source_query.reply_text)
+
     def test_entity_history_does_not_treat_duplicate_same_value_as_previous(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)
