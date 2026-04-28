@@ -868,6 +868,10 @@ def _entity_state_observation_answer(fact: EntityStateFact) -> str:
         return f"I'll remember that the {label} is related to {value}."
     if fact.attribute == "status":
         return f"I'll remember that the {label} status is {value}."
+    if fact.attribute == "preference":
+        return f"I'll remember that the {label} preference is {value}."
+    if fact.attribute == "project":
+        return f"I'll remember that the {label} project is {value}."
     return f"I'll remember that the {label} {fact.attribute} is {value}."
 
 
@@ -882,7 +886,9 @@ def parse_entity_state_fact(value: str) -> EntityStateFact | None:
         _parse_entity_location_fact,
         _parse_entity_owner_fact,
         _parse_entity_deadline_fact,
+        _parse_entity_project_fact,
         _parse_entity_relation_fact,
+        _parse_entity_preference_fact,
         _parse_entity_status_fact,
     ):
         parsed = parser(normalized)
@@ -964,6 +970,11 @@ def _clean_entity_attribute(value: str) -> str | None:
         "due_date": "deadline",
         "relation": "relation",
         "relationship": "relation",
+        "preference": "preference",
+        "preferred_mode": "preference",
+        "preferred_style": "preference",
+        "project": "project",
+        "active_project": "project",
     }
     return aliases.get(normalized)
 
@@ -1016,7 +1027,10 @@ def _parse_entity_deadline_deletion(value: str) -> EntityStateDeletion | None:
 
 
 def _parse_entity_attribute_deletion(value: str) -> EntityStateDeletion | None:
-    attribute_words = r"name|status|location|place|owner|handler|deadline|due[-_\s]?date|relation|relationship"
+    attribute_words = (
+        r"name|status|location|place|owner|handler|deadline|due[-_\s]?date|relation|relationship|"
+        r"preference|preferred[-_\s]?(?:mode|style)|project|active[-_\s]?project"
+    )
     match = re.fullmatch(
         rf"(?:forget|delete|remove)\s+(?:the\s+)?({attribute_words})\s+of\s+(?:my|the)\s+(.+?)[.!]?",
         value,
@@ -1086,6 +1100,24 @@ def _parse_entity_deadline_fact(value: str) -> EntityStateFact | None:
     return _entity_fact(entity_label=match.group(1), attribute="deadline", value=match.group(2))
 
 
+def _parse_entity_project_fact(value: str) -> EntityStateFact | None:
+    match = re.fullmatch(
+        r"(?:my|the)\s+(.+?)\s+(?:active\s+project|project)\s+is\s+(.+?)[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return _entity_fact(entity_label=match.group(1), attribute="project", value=match.group(2))
+    match = re.fullmatch(
+        r"(?:my|the)\s+(.+?)\s+is\s+for\s+project\s+(.+?)[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return _entity_fact(entity_label=match.group(1), attribute="project", value=match.group(2))
+
+
 def _parse_entity_relation_fact(value: str) -> EntityStateFact | None:
     match = re.fullmatch(
         r"(?:my|the)\s+(.+?)\s+(?:depends\s+on|relates\s+to|is\s+for)\s+(.+?)[.!]?",
@@ -1095,6 +1127,24 @@ def _parse_entity_relation_fact(value: str) -> EntityStateFact | None:
     if not match:
         return None
     return _entity_fact(entity_label=match.group(1), attribute="relation", value=match.group(2))
+
+
+def _parse_entity_preference_fact(value: str) -> EntityStateFact | None:
+    match = re.fullmatch(
+        r"(?:my|the)\s+(.+?)\s+(?:preference|preferred\s+(?:mode|style))\s+is\s+(.+?)[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return _entity_fact(entity_label=match.group(1), attribute="preference", value=match.group(2))
+    match = re.fullmatch(
+        r"(?:my|the)\s+(.+?)\s+prefers\s+(.+?)[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return _entity_fact(entity_label=match.group(1), attribute="preference", value=match.group(2))
 
 
 def _parse_entity_status_fact(value: str) -> EntityStateFact | None:

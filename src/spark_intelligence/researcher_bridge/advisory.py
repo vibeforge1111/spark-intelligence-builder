@@ -435,6 +435,27 @@ _OPEN_MEMORY_RECALL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         ),
     ),
     (
+        "relation_recall",
+        re.compile(
+            r"^what\s+is\s+(.+?)\s+related\s+to[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "preference_recall",
+        re.compile(
+            r"^(?:what\s+does\s+(.+?)\s+prefer|what(?:'s| is)\s+(?:the\s+)?preference\s+of\s+(.+?))[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "project_recall",
+        re.compile(
+            r"^(?:what\s+project\s+is\s+(.+?)\s+for|what(?:'s| is)\s+(?:the\s+)?(?:active\s+)?project\s+for\s+(.+?))[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "evidence_recall",
         re.compile(
             r"^(?:what|which)\s+(?:evidence|saved memory|memory)\s+do you have about\s+(.+?)[\?\.\!]*$",
@@ -536,6 +557,22 @@ _ENTITY_STATE_HISTORY_PATTERNS: tuple[tuple[str, str, re.Pattern[str]], ...] = (
             re.IGNORECASE,
         ),
     ),
+    (
+        "preference",
+        "entity.preference",
+        re.compile(
+            r"^(?:what\s+did\s+(.+?)\s+prefer\s+before|what\s+was\s+(?:the\s+)?(?:previous\s+)?preference\s+of\s+(.+?))[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "project",
+        "entity.project",
+        re.compile(
+            r"^what\s+was\s+(?:the\s+)?(?:previous\s+)?project\s+for\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
 )
 
 
@@ -604,7 +641,7 @@ def _detect_open_memory_recall_query(user_message: str) -> OpenMemoryRecallQuery
         match = pattern.match(normalized)
         if not match:
             continue
-        topic = str(match.group(1) or "").strip(" \t\r\n?!.\"'")
+        topic = str(next((group for group in match.groups() if group), "")).strip(" \t\r\n?!.\"'")
         if not topic or topic in {"me", "my profile"}:
             return None
         return OpenMemoryRecallQuery(topic=topic, query_kind=query_kind)
@@ -865,6 +902,10 @@ def _entity_state_answer_from_record(*, query: OpenMemoryRecallQuery, record: di
         return f"The {label} status is {value}."
     if attribute == "relation":
         return f"The {label} is related to {value}."
+    if attribute == "preference":
+        return f"The {label} preference is {value}."
+    if attribute == "project":
+        return f"The {label} project is {value}."
     return f"The {label} {attribute} is {value}."
 
 
@@ -875,6 +916,9 @@ def _open_memory_recall_entity_attribute(query_kind: str | None) -> str | None:
         "owner_recall": "owner",
         "status_recall": "status",
         "deadline_recall": "deadline",
+        "relation_recall": "relation",
+        "preference_recall": "preference",
+        "project_recall": "project",
     }.get(str(query_kind or "").strip())
 
 
@@ -941,6 +985,10 @@ def _entity_state_record_phrase(*, attribute: str, record: dict[str, Any]) -> st
         return f"status was {value}"
     if attribute == "relation":
         return f"related to {value}"
+    if attribute == "preference":
+        return f"preference was {value}"
+    if attribute == "project":
+        return f"project was {value}"
     if attribute == "name":
         return f"named {value}"
     return f"{attribute} was {value}"
@@ -966,6 +1014,12 @@ def _build_entity_state_history_answer(
     if query.attribute == "status":
         previous_value = _profile_fact_record_value(previous_record)
         return f"Before the {label} status was {current_value}, it was {previous_value}."
+    if query.attribute == "preference":
+        previous_value = _profile_fact_record_value(previous_record)
+        return f"Before the {label} preference was {current_value}, it was {previous_value}."
+    if query.attribute == "project":
+        previous_value = _profile_fact_record_value(previous_record)
+        return f"Before the {label} project was {current_value}, it was {previous_value}."
     current_phrase = _entity_state_record_phrase(attribute=query.attribute, record=current_record)
     previous_phrase = _entity_state_record_phrase(attribute=query.attribute, record=previous_record)
     if query.attribute in {"location", "deadline", "relation", "name"}:

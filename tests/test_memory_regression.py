@@ -288,6 +288,16 @@ class MemoryRegressionTests(SparkTestCase):
                     "entity_owner_updated_recall_launch": "memory_open_recall",
                     "entity_owner_history_recall_launch": "memory_entity_state_history",
                     "entity_owner_history_source_explanation": "context_source_debug",
+                    "entity_status_recall_launch": "memory_open_recall",
+                    "entity_status_history_launch": "memory_entity_state_history",
+                    "entity_deadline_recall_launch": "memory_open_recall",
+                    "entity_deadline_history_launch": "memory_entity_state_history",
+                    "entity_relation_recall_launch": "memory_open_recall",
+                    "entity_relation_history_launch": "memory_entity_state_history",
+                    "entity_preference_recall_launch": "memory_open_recall",
+                    "entity_preference_history_launch": "memory_entity_state_history",
+                    "entity_project_recall_launch": "memory_open_recall",
+                    "entity_project_history_launch": "memory_entity_state_history",
                 }.get(case.case_id, "memory_generic_observation_update"),
                 {
                     "current_focus_plan_query": "memory_current_focus_plan_query",
@@ -305,6 +315,16 @@ class MemoryRegressionTests(SparkTestCase):
                     "entity_owner_updated_recall_launch": "memory_open_recall_query",
                     "entity_owner_history_recall_launch": "memory_entity_state_history_query",
                     "entity_owner_history_source_explanation": "context_source_debug",
+                    "entity_status_recall_launch": "memory_open_recall_query",
+                    "entity_status_history_launch": "memory_entity_state_history_query",
+                    "entity_deadline_recall_launch": "memory_open_recall_query",
+                    "entity_deadline_history_launch": "memory_entity_state_history_query",
+                    "entity_relation_recall_launch": "memory_open_recall_query",
+                    "entity_relation_history_launch": "memory_entity_state_history_query",
+                    "entity_preference_recall_launch": "memory_open_recall_query",
+                    "entity_preference_history_launch": "memory_entity_state_history_query",
+                    "entity_project_recall_launch": "memory_open_recall_query",
+                    "entity_project_history_launch": "memory_entity_state_history_query",
                 }.get(case.case_id, "memory_generic_observation"),
                 {
                     "seed_focus": "I'll remember that your current focus is persistent memory quality evaluation.",
@@ -349,6 +369,36 @@ class MemoryRegressionTests(SparkTestCase):
                     "entity_owner_history_source_explanation": (
                         "I answered from the entity-state history route. "
                         "predicate=entity.owner attribute=owner entity-scoped owner history"
+                    ),
+                    "entity_status_seed_launch": "I'll remember that the launch checklist status is blocked.",
+                    "entity_status_replace_launch": "I'll remember that the launch checklist status is ready.",
+                    "entity_status_recall_launch": "The launch checklist status is ready.",
+                    "entity_status_history_launch": (
+                        "Before the launch checklist status was ready, it was blocked."
+                    ),
+                    "entity_deadline_seed_launch": "I'll remember that the launch checklist is due Friday.",
+                    "entity_deadline_replace_launch": "I'll remember that the launch checklist is due Monday.",
+                    "entity_deadline_recall_launch": "The launch checklist is due Monday.",
+                    "entity_deadline_history_launch": (
+                        "Before the launch checklist was due Monday, it was due Friday."
+                    ),
+                    "entity_relation_seed_launch": "I'll remember that the launch checklist is related to investor update.",
+                    "entity_relation_replace_launch": "I'll remember that the launch checklist is related to board prep.",
+                    "entity_relation_recall_launch": "The launch checklist is related to board prep.",
+                    "entity_relation_history_launch": (
+                        "Before the launch checklist was related to board prep, it was related to investor update."
+                    ),
+                    "entity_preference_seed_launch": "I'll remember that the launch checklist preference is concise bullets.",
+                    "entity_preference_replace_launch": "I'll remember that the launch checklist preference is short sections.",
+                    "entity_preference_recall_launch": "The launch checklist preference is short sections.",
+                    "entity_preference_history_launch": (
+                        "Before the launch checklist preference was short sections, it was concise bullets."
+                    ),
+                    "entity_project_seed_launch": "I'll remember that the launch checklist project is Neon Harbor.",
+                    "entity_project_replace_launch": "I'll remember that the launch checklist project is Seed Round.",
+                    "entity_project_recall_launch": "The launch checklist project is Seed Round.",
+                    "entity_project_history_launch": (
+                        "Before the launch checklist project was Seed Round, it was Neon Harbor."
                     ),
                 }[case.case_id],
             )
@@ -431,6 +481,16 @@ class MemoryRegressionTests(SparkTestCase):
                                 "entity_owner_updated_recall_launch": "memory_open_recall",
                                 "entity_owner_history_recall_launch": "memory_entity_state_history",
                                 "entity_owner_history_source_explanation": "context_source_debug",
+                                "entity_status_recall_launch": "memory_open_recall",
+                                "entity_status_history_launch": "memory_entity_state_history",
+                                "entity_deadline_recall_launch": "memory_open_recall",
+                                "entity_deadline_history_launch": "memory_entity_state_history",
+                                "entity_relation_recall_launch": "memory_open_recall",
+                                "entity_relation_history_launch": "memory_entity_state_history",
+                                "entity_preference_recall_launch": "memory_open_recall",
+                                "entity_preference_history_launch": "memory_entity_state_history",
+                                "entity_project_recall_launch": "memory_open_recall",
+                                "entity_project_history_launch": "memory_entity_state_history",
                             }.get(case.case_id, "memory_generic_observation_update"),
                             "routing_decision": {
                                 "current_focus_plan_query": "memory_current_focus_plan_query",
@@ -448,6 +508,16 @@ class MemoryRegressionTests(SparkTestCase):
                                 "entity_owner_updated_recall_launch": "memory_open_recall_query",
                                 "entity_owner_history_recall_launch": "memory_entity_state_history_query",
                                 "entity_owner_history_source_explanation": "context_source_debug",
+                                "entity_status_recall_launch": "memory_open_recall_query",
+                                "entity_status_history_launch": "memory_entity_state_history_query",
+                                "entity_deadline_recall_launch": "memory_open_recall_query",
+                                "entity_deadline_history_launch": "memory_entity_state_history_query",
+                                "entity_relation_recall_launch": "memory_open_recall_query",
+                                "entity_relation_history_launch": "memory_entity_state_history_query",
+                                "entity_preference_recall_launch": "memory_open_recall_query",
+                                "entity_preference_history_launch": "memory_entity_state_history_query",
+                                "entity_project_recall_launch": "memory_open_recall_query",
+                                "entity_project_history_launch": "memory_entity_state_history_query",
                             }.get(case.case_id, "memory_generic_observation"),
                             "trace_ref": "trace:test",
                         },
@@ -501,6 +571,36 @@ class MemoryRegressionTests(SparkTestCase):
                     "entity_owner_history_source_explanation": (
                         "I answered from the entity-state history route. "
                         "predicate=entity.owner attribute=owner entity-scoped owner history"
+                    ),
+                    "entity_status_seed_launch": "I'll remember that the launch checklist status is blocked.",
+                    "entity_status_replace_launch": "I'll remember that the launch checklist status is ready.",
+                    "entity_status_recall_launch": "The launch checklist status is ready.",
+                    "entity_status_history_launch": (
+                        "Before the launch checklist status was ready, it was blocked."
+                    ),
+                    "entity_deadline_seed_launch": "I'll remember that the launch checklist is due Friday.",
+                    "entity_deadline_replace_launch": "I'll remember that the launch checklist is due Monday.",
+                    "entity_deadline_recall_launch": "The launch checklist is due Monday.",
+                    "entity_deadline_history_launch": (
+                        "Before the launch checklist was due Monday, it was due Friday."
+                    ),
+                    "entity_relation_seed_launch": "I'll remember that the launch checklist is related to investor update.",
+                    "entity_relation_replace_launch": "I'll remember that the launch checklist is related to board prep.",
+                    "entity_relation_recall_launch": "The launch checklist is related to board prep.",
+                    "entity_relation_history_launch": (
+                        "Before the launch checklist was related to board prep, it was related to investor update."
+                    ),
+                    "entity_preference_seed_launch": "I'll remember that the launch checklist preference is concise bullets.",
+                    "entity_preference_replace_launch": "I'll remember that the launch checklist preference is short sections.",
+                    "entity_preference_recall_launch": "The launch checklist preference is short sections.",
+                    "entity_preference_history_launch": (
+                        "Before the launch checklist preference was short sections, it was concise bullets."
+                    ),
+                    "entity_project_seed_launch": "I'll remember that the launch checklist project is Neon Harbor.",
+                    "entity_project_replace_launch": "I'll remember that the launch checklist project is Seed Round.",
+                    "entity_project_recall_launch": "The launch checklist project is Seed Round.",
+                    "entity_project_history_launch": (
+                        "Before the launch checklist project was Seed Round, it was Neon Harbor."
                     ),
                 }[case.case_id],
             )

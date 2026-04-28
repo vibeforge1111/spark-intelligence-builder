@@ -2889,6 +2889,105 @@ class TelegramGenericMemoryTests(SparkTestCase):
             },
         )
 
+    def test_build_researcher_reply_handles_extended_entity_attributes(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        def ask(request_id: str, message: str):
+            return build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id=request_id,
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-extended-attributes",
+                channel_kind="telegram",
+                user_message=message,
+            )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for generic entity memory"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for generic entity memory"),
+        ):
+            ask("req-entity-status-old", "For later, the launch checklist status is blocked.")
+            ask("req-entity-status-new", "Actually, the launch checklist status is ready.")
+            status_query = ask("req-entity-status-query", "What is the status of the launch checklist?")
+            status_history = ask(
+                "req-entity-status-history",
+                "What was the previous status of the launch checklist before?",
+            )
+
+            ask("req-entity-deadline-old", "For later, the launch checklist deadline is Friday.")
+            ask("req-entity-deadline-new", "Actually, the launch checklist is due Monday.")
+            deadline_query = ask("req-entity-deadline-query", "When is the launch checklist due?")
+            deadline_history = ask("req-entity-deadline-history", "When was the launch checklist due before?")
+
+            ask("req-entity-relation-old", "For later, the launch checklist relates to investor update.")
+            ask("req-entity-relation-new", "Actually, the launch checklist relates to board prep.")
+            relation_query = ask("req-entity-relation-query", "What is the launch checklist related to?")
+            relation_history = ask(
+                "req-entity-relation-history",
+                "What was the launch checklist related to before?",
+            )
+
+            ask("req-entity-preference-old", "For later, the launch checklist preference is concise bullets.")
+            ask("req-entity-preference-new", "Actually, the launch checklist prefers short sections.")
+            preference_query = ask("req-entity-preference-query", "What does the launch checklist prefer?")
+            preference_history = ask("req-entity-preference-history", "What did the launch checklist prefer before?")
+
+            ask("req-entity-project-old", "For later, the launch checklist active project is Neon Harbor.")
+            ask("req-entity-project-new", "Actually, the launch checklist project is Seed Round.")
+            project_query = ask("req-entity-project-query", "What project is the launch checklist for?")
+            project_history = ask("req-entity-project-history", "What was the previous project for the launch checklist?")
+
+        self.assertEqual(status_query.mode, "memory_open_recall")
+        self.assertEqual(status_query.reply_text, "The launch checklist status is ready.")
+        self.assertEqual(
+            status_history.reply_text,
+            "Before the launch checklist status was ready, it was blocked.",
+        )
+        self.assertEqual(deadline_query.reply_text, "The launch checklist is due Monday.")
+        self.assertEqual(
+            deadline_history.reply_text,
+            "Before the launch checklist was due Monday, it was due Friday.",
+        )
+        self.assertEqual(relation_query.reply_text, "The launch checklist is related to board prep.")
+        self.assertEqual(
+            relation_history.reply_text,
+            "Before the launch checklist was related to board prep, it was related to investor update.",
+        )
+        self.assertEqual(preference_query.reply_text, "The launch checklist preference is short sections.")
+        self.assertEqual(
+            preference_history.reply_text,
+            "Before the launch checklist preference was short sections, it was concise bullets.",
+        )
+        self.assertEqual(project_query.reply_text, "The launch checklist project is Seed Round.")
+        self.assertEqual(
+            project_history.reply_text,
+            "Before the launch checklist project was Seed Round, it was Neon Harbor.",
+        )
+
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=20)
+        recorded_observations = [
+            observation
+            for event in write_events
+            for observation in ((event["facts_json"] or {}).get("observations") or [])
+        ]
+        predicates = {item["predicate"] for item in recorded_observations}
+        self.assertTrue(
+            {
+                "entity.status",
+                "entity.deadline",
+                "entity.relation",
+                "entity.preference",
+                "entity.project",
+            }.issubset(predicates)
+        )
+
     def test_build_researcher_reply_deletes_one_entity_location_without_affecting_another(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)
