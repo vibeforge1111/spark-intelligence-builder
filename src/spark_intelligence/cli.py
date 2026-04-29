@@ -1888,6 +1888,11 @@ def build_parser() -> argparse.ArgumentParser:
     memory_inspect_capsule_parser.add_argument("--entity-key", help="Optional entity key to scope retrieval")
     memory_inspect_capsule_parser.add_argument("--as-of", help="Optional timestamp for historical-state retrieval")
     memory_inspect_capsule_parser.add_argument("--limit", type=int, default=5, help="Maximum ranked memory candidates")
+    memory_inspect_capsule_parser.add_argument(
+        "--no-record-activity",
+        action="store_true",
+        help="Do not write a memory-read event for this inspection",
+    )
     memory_inspect_capsule_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_export_parser = memory_subparsers.add_parser(
         "export-shadow-replay",
@@ -5591,6 +5596,7 @@ def handle_memory_inspect_capsule(args: argparse.Namespace) -> int:
         sdk_module=args.sdk_module,
         actor_id="memory_cli",
         source_surface="memory_cli_inspect_capsule",
+        record_activity=not getattr(args, "no_record_activity", False),
     )
     context_packet = result.context_packet.to_payload() if result.context_packet is not None else None
     context_packet_trace = context_packet.get("trace") if isinstance(context_packet, dict) else {}

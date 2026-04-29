@@ -52,6 +52,7 @@ python -c "import spark_intelligence.cli; print('Spark runtime core is importabl
 ## What Builder Owns
 
 - Runtime identity, sessions, pairings, and operator controls.
+- Conversation context harness policy: hot-turn preservation, artifact extraction, reference resolution, and compaction budgets used by adapters.
 - Provider/auth configuration and health checks.
 - Memory bridge behavior used by Telegram and future adapters.
 - Contracts for Researcher, domain chips, Swarm, and gateway integrations.
@@ -123,6 +124,7 @@ Use this README as the entry point. Use deeper docs only when you need a specifi
 - Runtime runbook: [docs/RUNTIME_RUNBOOK.md](./docs/RUNTIME_RUNBOOK.md)
 - Telegram bridge split: [docs/TELEGRAM_BRIDGE.md](./docs/TELEGRAM_BRIDGE.md)
 - Memory contract: [docs/MEMORY_CONTRACT.md](./docs/MEMORY_CONTRACT.md)
+- Conversation context harness: [docs/CONVERSATION_CONTEXT_HARNESS_2026-04-29.md](./docs/CONVERSATION_CONTEXT_HARNESS_2026-04-29.md)
 - Product shape: [docs/PRD_SPARK_INTELLIGENCE_V1.md](./docs/PRD_SPARK_INTELLIGENCE_V1.md)
 - Historical architecture: [docs/ARCHITECTURE_SPARK_INTELLIGENCE_V1.md](./docs/ARCHITECTURE_SPARK_INTELLIGENCE_V1.md)
 - Installer contract: [docs/SPARK_INSTALLER_STANDARD_V1_2026-04-22.md](./docs/SPARK_INSTALLER_STANDARD_V1_2026-04-22.md)
