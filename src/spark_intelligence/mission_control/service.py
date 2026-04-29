@@ -8,6 +8,7 @@ from typing import Any
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.system_registry import build_system_registry
+from spark_intelligence.target_confirmation import evaluate_target_repo_confirmation
 
 _WATCHTOWER_DIMENSION_LABELS = {
     "ingress_health": "ingress",
@@ -262,6 +263,7 @@ def build_mission_control_plan(
     task: str,
     forced_harness_id: str | None = None,
     forced_recipe_id: str | None = None,
+    forced_target_repo: str | None = None,
 ) -> MissionControlPlan:
     from spark_intelligence.capability_router import build_capability_route_decision
     from spark_intelligence.harness_registry import (
@@ -277,6 +279,12 @@ def build_mission_control_plan(
         config_manager=config_manager,
         state_db=state_db,
         task=normalized_task,
+    ).to_payload()
+    target_confirmation = evaluate_target_repo_confirmation(
+        config_manager,
+        task=normalized_task,
+        forced_repo_key=forced_target_repo,
+        probe_git=False,
     ).to_payload()
 
     recipe_payload = None
@@ -344,6 +352,7 @@ def build_mission_control_plan(
         harness=harness,
         recipe=recipe_payload,
         degraded_surfaces=degraded_surfaces,
+        target_confirmation=target_confirmation,
     )
     next_actions = _derive_plan_next_actions(
         mission_summary=summary,
@@ -351,6 +360,7 @@ def build_mission_control_plan(
         harness=harness,
         recipe=recipe_payload,
         blockers=blockers,
+        target_confirmation=target_confirmation,
     )
     selected_system = str(harness.get("owner_system") or route.get("target_system") or "")
     plan_summary = {
@@ -361,6 +371,9 @@ def build_mission_control_plan(
         "selected_harness": harness.get("harness_id") or "",
         "selected_recipe": (recipe_payload or {}).get("recipe_id") or None,
         "selection_mode": selection_mode,
+        "selected_target_repo": target_confirmation.get("selected_repo_key"),
+        "target_confirmation_required": bool(target_confirmation.get("required")),
+        "target_confirmation_reason": target_confirmation.get("reason_code"),
         "blockers": blockers,
         "degraded_surfaces": degraded_surfaces,
         "next_actions": next_actions,
@@ -369,6 +382,7 @@ def build_mission_control_plan(
         "route": route,
         "harness": harness,
         "recipe": recipe_payload,
+        "target_confirmation": target_confirmation,
         "active_channels": list(summary.get("active_channels") or []),
         "active_loops": list(summary.get("active_loops") or []),
         "current_capabilities": list(summary.get("current_capabilities") or []),
@@ -640,8 +654,11 @@ def _derive_plan_blockers(
     harness: dict[str, Any],
     recipe: dict[str, Any] | None,
     degraded_surfaces: list[str],
+    target_confirmation: dict[str, Any],
 ) -> list[str]:
     blockers: list[str] = []
+    if bool(target_confirmation.get("required")):
+        blockers.extend(str(item) for item in (target_confirmation.get("blockers") or []) if str(item))
     availability = route.get("availability") or {}
     route_mode = str(route.get("route_mode") or "")
     if route_mode == "browser_grounded" and not bool(availability.get("browser")):
@@ -669,8 +686,13 @@ def _derive_plan_next_actions(
     harness: dict[str, Any],
     recipe: dict[str, Any] | None,
     blockers: list[str],
+    target_confirmation: dict[str, Any],
 ) -> list[str]:
     actions: list[str] = []
+    if bool(target_confirmation.get("required")):
+        actions.extend(str(item) for item in (target_confirmation.get("next_actions") or []) if str(item))
+    elif target_confirmation.get("selected_repo_key"):
+        actions.extend(str(item) for item in (target_confirmation.get("next_actions") or []) if str(item))
     if recipe is not None:
         if recipe.get("selection_mode") == "auto":
             actions.append(

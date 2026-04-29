@@ -1295,6 +1295,7 @@ def build_parser() -> argparse.ArgumentParser:
     mission_plan_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     mission_plan_parser.add_argument("--harness-id", help="Force a specific harness id")
     mission_plan_parser.add_argument("--recipe", help="Force a named harness recipe")
+    mission_plan_parser.add_argument("--target-repo", help="Confirm the target local repo for build/file-writing work")
     mission_plan_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     connect_parser = subparsers.add_parser("connect", help="Inspect phased system-connection progress")
@@ -6394,6 +6395,7 @@ def handle_mission_plan(args: argparse.Namespace) -> int:
         task=args.task,
         forced_harness_id=args.harness_id,
         forced_recipe_id=args.recipe,
+        forced_target_repo=args.target_repo,
     )
     if args.json:
         print(plan.to_json())
@@ -6406,6 +6408,10 @@ def handle_mission_plan(args: argparse.Namespace) -> int:
         lines.append(f"- harness: {summary.get('selected_harness') or 'unknown'}")
         if summary.get("selected_recipe"):
             lines.append(f"- recipe: {summary['selected_recipe']}")
+        if summary.get("selected_target_repo"):
+            lines.append(f"- target repo: {summary['selected_target_repo']}")
+        if summary.get("target_confirmation_required"):
+            lines.append(f"- target confirmation: required ({summary.get('target_confirmation_reason') or 'unknown'})")
         lines.append(f"- selection mode: {summary.get('selection_mode') or 'unknown'}")
         if summary.get("current_focus"):
             lines.append(f"- focus: {summary['current_focus']}")

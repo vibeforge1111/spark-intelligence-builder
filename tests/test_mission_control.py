@@ -6,6 +6,7 @@ from spark_intelligence.gateway.guardrails import set_runtime_state_value
 from spark_intelligence.jobs.service import OAUTH_MAINTENANCE_JOB_ID
 from spark_intelligence.mission_control import (
     build_mission_control_direct_reply,
+    build_mission_control_plan,
     build_mission_control_prompt_context,
     build_mission_control_snapshot,
     looks_like_mission_control_query,
@@ -168,6 +169,70 @@ class MissionControlTests(SparkTestCase):
         self.assertIn(f"job:{OAUTH_MAINTENANCE_JOB_ID}", summary["active_loops"])
         self.assertNotIn("Scheduled maintenance pending", summary["degraded_surfaces"])
         self.assertNotIn("Run `spark-intelligence jobs tick` to execute due maintenance work.", summary["recommended_actions"])
+
+    def test_mission_control_plan_blocks_build_without_confirmed_target_repo(self) -> None:
+        repo_root = self.home / "spawner-ui"
+        repo_root.mkdir(parents=True)
+        (repo_root / "package.json").write_text("{}", encoding="utf-8")
+        self.config_manager.set_path("spark.local_projects.include_known_spark_repos", False)
+        self.config_manager.set_path("spark.local_projects.include_attachment_repos", False)
+        self.config_manager.set_path("spark.local_projects.roots", [str(repo_root)])
+
+        plan = build_mission_control_plan(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="Build the operator dashboard route.",
+        ).to_payload()
+
+        summary = plan["summary"]
+        target = plan["details"]["target_confirmation"]
+        self.assertTrue(summary["target_confirmation_required"])
+        self.assertEqual(summary["selected_target_repo"], "spawner-ui")
+        self.assertEqual(target["reason_code"], "target_repo_unconfirmed")
+        self.assertIn("Target repo `spawner-ui` was inferred", summary["blockers"][0])
+        self.assertIn("Ask the operator to confirm `spawner-ui`", summary["next_actions"][0])
+
+    def test_mission_control_plan_allows_explicit_target_repo(self) -> None:
+        repo_root = self.home / "spawner-ui"
+        repo_root.mkdir(parents=True)
+        (repo_root / "package.json").write_text("{}", encoding="utf-8")
+        self.config_manager.set_path("spark.local_projects.include_known_spark_repos", False)
+        self.config_manager.set_path("spark.local_projects.include_attachment_repos", False)
+        self.config_manager.set_path("spark.local_projects.roots", [str(repo_root)])
+
+        plan = build_mission_control_plan(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="Build the memory quality dashboard route in spawner-ui.",
+        ).to_payload()
+
+        summary = plan["summary"]
+        target = plan["details"]["target_confirmation"]
+        self.assertFalse(summary["target_confirmation_required"])
+        self.assertEqual(summary["selected_target_repo"], "spawner-ui")
+        self.assertEqual(target["reason_code"], "target_repo_explicitly_confirmed")
+        self.assertIn("Proceed with explicitly named target repo `spawner-ui`.", summary["next_actions"])
+
+    def test_mission_control_plan_accepts_forced_target_repo(self) -> None:
+        repo_root = self.home / "domain-chip-memory"
+        repo_root.mkdir(parents=True)
+        (repo_root / "pyproject.toml").write_text("[project]\nname='domain-chip-memory'\n", encoding="utf-8")
+        self.config_manager.set_path("spark.local_projects.include_known_spark_repos", False)
+        self.config_manager.set_path("spark.local_projects.include_attachment_repos", False)
+        self.config_manager.set_path("spark.local_projects.roots", [str(repo_root)])
+
+        plan = build_mission_control_plan(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            task="Patch the memory eval harness.",
+            forced_target_repo="domain-chip-memory",
+        ).to_payload()
+
+        summary = plan["summary"]
+        target = plan["details"]["target_confirmation"]
+        self.assertFalse(summary["target_confirmation_required"])
+        self.assertEqual(summary["selected_target_repo"], "domain-chip-memory")
+        self.assertEqual(target["reason_code"], "forced_target_repo_confirmed")
 
     def test_mission_control_query_detection_catches_runtime_health_language(self) -> None:
         self.assertTrue(looks_like_mission_control_query("What is degraded right now?"))

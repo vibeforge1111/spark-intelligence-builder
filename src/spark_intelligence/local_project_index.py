@@ -115,25 +115,29 @@ def _candidate_project_roots(config_manager: ConfigManager) -> list[tuple[Path, 
     for item in list(config_manager.get_path("spark.local_projects.roots", default=[]) or []):
         add(item, "config_root")
 
-    try:
-        attachment_context = build_attachment_context(config_manager)
-    except Exception:
-        attachment_context = {}
-    for item in list(attachment_context.get("attached_chip_records") or []) + list(
-        attachment_context.get("attached_path_records") or []
-    ):
-        if isinstance(item, dict):
-            add(item.get("repo_root"), "attachment", item)
+    include_attachments = bool(config_manager.get_path("spark.local_projects.include_attachment_repos", default=True))
+    if include_attachments:
+        try:
+            attachment_context = build_attachment_context(config_manager)
+        except Exception:
+            attachment_context = {}
+        for item in list(attachment_context.get("attached_chip_records") or []) + list(
+            attachment_context.get("attached_path_records") or []
+        ):
+            if isinstance(item, dict):
+                add(item.get("repo_root"), "attachment", item)
 
-    current_repo = Path(__file__).resolve().parents[2]
-    add(current_repo, "builder_runtime")
-    parent = current_repo.parent
-    for repo_name in _KNOWN_SPARK_REPOS:
-        add(parent / repo_name, "known_spark_repo")
-    desktop = Path.home() / "Desktop"
-    if desktop != parent:
+    include_known = bool(config_manager.get_path("spark.local_projects.include_known_spark_repos", default=True))
+    if include_known:
+        current_repo = Path(__file__).resolve().parents[2]
+        add(current_repo, "builder_runtime")
+        parent = current_repo.parent
         for repo_name in _KNOWN_SPARK_REPOS:
-            add(desktop / repo_name, "known_desktop_repo")
+            add(parent / repo_name, "known_spark_repo")
+        desktop = Path.home() / "Desktop"
+        if desktop != parent:
+            for repo_name in _KNOWN_SPARK_REPOS:
+                add(desktop / repo_name, "known_desktop_repo")
     return candidates
 
 
