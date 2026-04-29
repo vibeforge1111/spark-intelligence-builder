@@ -1545,6 +1545,26 @@ class TelegramGenericMemoryTests(SparkTestCase):
         )
         self.assertEqual(facts.get("bridge_mode"), "memory_open_recall")
         self.assertIn("structured_evidence", facts.get("retrieved_memory_roles") or [])
+        self.assertEqual((facts.get("graph_shadow_trace") or {}).get("status"), "recorded")
+        read_events = latest_events_by_type(self.state_db, event_type="memory_read_succeeded", limit=20)
+        hybrid_read = next(
+            (
+                event
+                for event in read_events
+                if (event["facts_json"] or {}).get("method") == "hybrid_memory_retrieve"
+                and event.get("request_id") == "req-open-evidence-read:graph-shadow"
+            ),
+            None,
+        )
+        self.assertIsNotNone(hybrid_read)
+        graph_lane = next(
+            lane
+            for lane in ((hybrid_read["facts_json"] or {}).get("retrieval_trace") or {})
+            .get("hybrid_memory_retrieve", {})
+            .get("lane_summaries", [])
+            if lane.get("lane") == "typed_temporal_graph"
+        )
+        self.assertEqual(graph_lane.get("source_class"), "graphiti_temporal_graph")
 
     def test_build_researcher_reply_answers_what_i_told_you_recall_from_memory(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

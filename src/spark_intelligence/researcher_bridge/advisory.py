@@ -6345,6 +6345,7 @@ def _build_open_ended_memory_next_step_reply(
         memory_subject=memory_subject,
         user_message=user_message,
         request_id=request_id,
+        session_id=session_id,
     )
     focus = focus_lookup.answer
     plan = plan_lookup.answer if not plan_lookup.abstained else None
@@ -6407,6 +6408,7 @@ def _build_memory_next_step_promotion_gates(
     memory_subject: str,
     user_message: str,
     request_id: str,
+    session_id: str,
 ) -> dict[str, Any]:
     try:
         result = hybrid_memory_retrieve(
@@ -6417,8 +6419,10 @@ def _build_memory_next_step_promotion_gates(
             predicate="profile.current_focus",
             limit=5,
             actor_id="researcher_bridge",
+            session_id=session_id,
+            turn_id=f"{request_id}:graph-shadow-gate",
             source_surface="telegram_open_ended_next_step_gate_probe",
-            record_activity=False,
+            record_activity=True,
         )
     except Exception as exc:
         return {
@@ -6437,6 +6441,75 @@ def _build_memory_next_step_promotion_gates(
         }
     gates = result.context_packet.trace.get("promotion_gates")
     return gates if isinstance(gates, dict) else {}
+
+
+def _record_memory_graph_shadow_probe(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    query: str,
+    subject: str,
+    predicate: str | None,
+    entity_key: str | None,
+    session_id: str,
+    turn_id: str,
+    source_surface: str,
+    limit: int = 5,
+) -> dict[str, Any]:
+    """Record an observational hybrid read so graph sidecar lanes are visible without changing the answer."""
+    try:
+        result = hybrid_memory_retrieve(
+            config_manager=config_manager,
+            state_db=state_db,
+            query=query,
+            subject=subject,
+            predicate=predicate,
+            entity_key=entity_key,
+            limit=limit,
+            actor_id="researcher_bridge",
+            session_id=session_id,
+            turn_id=turn_id,
+            source_surface=source_surface,
+            record_activity=True,
+        )
+    except Exception as exc:
+        return {"status": "error", "error": exc.__class__.__name__, "turn_id": turn_id}
+
+    graph_lane = _graph_sidecar_lane_from_hybrid_trace(result.read_result.retrieval_trace)
+    return {
+        "status": "recorded",
+        "turn_id": turn_id,
+        "source_surface": source_surface,
+        "selected_count": len([candidate for candidate in result.candidates if candidate.selected]),
+        "candidate_count": len(result.candidates),
+        "graph_lane": graph_lane,
+    }
+
+
+def _graph_sidecar_lane_from_hybrid_trace(trace: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(trace, dict):
+        return None
+    hybrid_trace = trace.get("hybrid_memory_retrieve")
+    if not isinstance(hybrid_trace, dict):
+        return None
+    lane_summaries = hybrid_trace.get("lane_summaries")
+    if not isinstance(lane_summaries, list):
+        return None
+    for lane in lane_summaries:
+        if not isinstance(lane, dict):
+            continue
+        if lane.get("lane") == "typed_temporal_graph" or lane.get("source_class") == "graphiti_temporal_graph":
+            return {
+                "lane": lane.get("lane"),
+                "source_class": lane.get("source_class"),
+                "status": lane.get("status"),
+                "reason": lane.get("reason"),
+                "mode": lane.get("mode"),
+                "shadow_only": lane.get("shadow_only"),
+                "episode_export_count": lane.get("episode_export_count"),
+                "sidecar_hit_count": lane.get("sidecar_hit_count"),
+            }
+    return None
 
 
 def _build_current_focus_plan_reply(
@@ -9667,6 +9740,18 @@ def build_researcher_reply(
             )
             is not None
         )
+        graph_shadow_trace = _record_memory_graph_shadow_probe(
+            config_manager=config_manager,
+            state_db=state_db,
+            query=str(user_message or "").strip() or f"What was {detected_entity_state_history_query.topic} before?",
+            subject=memory_subject,
+            predicate=target_predicate,
+            entity_key=entity_key,
+            session_id=session_id,
+            turn_id=f"{request_id}:entity-history-graph-shadow",
+            source_surface="researcher_bridge:entity_state_history_graph_shadow",
+            limit=5,
+        )
         evidence_summary = (
             "status=memory_entity_state_history "
             f"predicate={target_predicate or 'unknown'} "
@@ -9706,6 +9791,7 @@ def build_researcher_reply(
                     "event_record_count": len(history_records),
                     "previous_value_found": previous_value_found,
                     "read_method": history_read_method,
+                    "graph_shadow_trace": graph_shadow_trace,
                 },
             ),
         )
@@ -9803,6 +9889,18 @@ def build_researcher_reply(
             f"inspection_record_count={inspection_record_count} "
             f"read_method={read_method}"
         )
+        graph_shadow_trace = _record_memory_graph_shadow_probe(
+            config_manager=config_manager,
+            state_db=state_db,
+            query=str(user_message or "").strip() or f"What do you know about {detected_entity_state_summary_query.topic}?",
+            subject=memory_subject,
+            predicate=None,
+            entity_key=entity_key,
+            session_id=session_id,
+            turn_id=f"{request_id}:entity-summary-graph-shadow",
+            source_surface="researcher_bridge:entity_state_summary_graph_shadow",
+            limit=8,
+        )
         record_event(
             state_db,
             event_type="tool_result_received",
@@ -9834,6 +9932,7 @@ def build_researcher_reply(
                     "inspection_record_count": inspection_record_count,
                     "attributes": attributes,
                     "read_method": read_method,
+                    "graph_shadow_trace": graph_shadow_trace,
                 },
             ),
         )
@@ -10342,6 +10441,18 @@ def build_researcher_reply(
                 if role
             }
         )
+        graph_shadow_trace = _record_memory_graph_shadow_probe(
+            config_manager=config_manager,
+            state_db=state_db,
+            query=str(user_message or "").strip() or detected_open_memory_recall_query.topic,
+            subject=memory_subject,
+            predicate=f"entity.{entity_attribute}" if entity_attribute else None,
+            entity_key=entity_key,
+            session_id=session_id,
+            turn_id=f"{request_id}:graph-shadow",
+            source_surface="researcher_bridge:memory_open_recall_graph_shadow",
+            limit=5,
+        )
         evidence_summary = (
             "status=memory_open_recall "
             f"topic={detected_open_memory_recall_query.topic or 'unknown'} "
@@ -10387,6 +10498,7 @@ def build_researcher_reply(
                     "read_method": read_method,
                     "retrieved_memory_roles": retrieved_memory_roles,
                     "candidate_memory_roles": candidate_memory_roles,
+                    "graph_shadow_trace": graph_shadow_trace,
                 },
             ),
         )

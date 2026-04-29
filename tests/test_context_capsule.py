@@ -488,8 +488,10 @@ class ContextCapsuleTests(SparkTestCase):
                 "source_mix_stability": {"status": "pass", "reason": "small_or_balanced_packet"},
             },
         }
+        hybrid_calls: list[dict[str, object]] = []
 
         def fake_hybrid_memory_retrieve(**payload):
+            hybrid_calls.append(payload)
             return SimpleNamespace(
                 context_packet=SimpleNamespace(
                     trace={"promotion_gates": fake_promotion_gates},
@@ -522,6 +524,10 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertIn("Run an open-ended recall check", result.reply_text)
         self.assertIn("I ignored 1 stale memory record", result.reply_text)
         self.assertEqual([call.get("method") for call in kernel_calls], ["get_current_state", "get_current_state", "retrieve_evidence"])
+        self.assertEqual(len(hybrid_calls), 1)
+        self.assertTrue(hybrid_calls[0].get("record_activity"))
+        self.assertEqual(hybrid_calls[0].get("session_id"), "session:telegram:dm:8319079055")
+        self.assertEqual(hybrid_calls[0].get("turn_id"), "req-memory-kernel-next:graph-shadow-gate")
         bridge_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=1)
         self.assertEqual((bridge_events[0]["facts_json"] or {}).get("routing_decision"), "memory_kernel_next_step")
         self.assertEqual((bridge_events[0]["facts_json"] or {}).get("focus_source_class"), "current_state")
