@@ -269,7 +269,7 @@ def _build_recent_conversation_lines(
 
 def _build_runtime_capability_lines(*, config_manager: ConfigManager, state_db: StateDB) -> list[str]:
     try:
-        payload = build_system_registry(config_manager, state_db, probe_browser=False).to_payload()
+        payload = build_system_registry(config_manager, state_db, probe_browser=False, probe_git=False).to_payload()
     except Exception:
         return []
     lines: list[str] = []
@@ -296,6 +296,21 @@ def _build_runtime_capability_lines(*, config_manager: ConfigManager, state_db: 
         limitations = [str(item).strip() for item in (record.get("limitations") or []) if str(item).strip()]
         if limitations:
             line += f" limitation={_compact(limitations[0], 180)}"
+        lines.append(line)
+    repo_records = [
+        record
+        for record in (payload.get("records") or [])
+        if isinstance(record, dict) and str(record.get("kind") or "") == "repo" and bool(record.get("available"))
+    ]
+    for record in repo_records[:6]:
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        components = ",".join(str(item) for item in (metadata.get("components") or [])[:5] if str(item))
+        line = f"- repo: {record.get('key')} status={record.get('status') or 'unknown'}"
+        if components:
+            line += f" components={components}"
+        path = str(metadata.get("path") or "").strip()
+        if path:
+            line += f" path={_compact(path, 160)}"
         lines.append(line)
     return lines
 

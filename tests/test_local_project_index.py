@@ -1,0 +1,41 @@
+from __future__ import annotations
+
+from spark_intelligence.local_project_index import build_local_project_index
+
+from tests.test_support import SparkTestCase
+
+
+class LocalProjectIndexTests(SparkTestCase):
+    def test_build_local_project_index_reads_configured_project_roots(self) -> None:
+        spawner_root = self.home / "spawner-ui"
+        spawner_root.mkdir(parents=True)
+        (spawner_root / "package.json").write_text('{"scripts":{"test":"vitest"}}', encoding="utf-8")
+        (spawner_root / "src").mkdir()
+        self.config_manager.set_path(
+            "spark.local_projects.records",
+            {
+                "spawner-ui": {
+                    "path": str(spawner_root),
+                    "label": "Spawner UI",
+                    "components": ["mission_control", "memory_quality_dashboard"],
+                    "capabilities": ["operator_dashboard"],
+                    "aliases": ["spawner", "mission control"],
+                }
+            },
+        )
+
+        payload = build_local_project_index(self.config_manager, probe_git=False).to_payload()
+        records = {record["key"]: record for record in payload["records"]}
+
+        self.assertIn("spawner-ui", records)
+        record = records["spawner-ui"]
+        self.assertTrue(record["exists"])
+        self.assertEqual(record["label"], "Spawner UI")
+        self.assertIn("mission_control", record["components"])
+        self.assertIn("memory_quality_dashboard", record["components"])
+        self.assertIn("node_app", record["components"])
+        self.assertIn("operator_dashboard", record["capabilities"])
+        self.assertIn("frontend_or_node_runtime", record["capabilities"])
+        self.assertIn("mission control", record["aliases"])
+        self.assertEqual(record["owner_system"], "spark_spawner")
+

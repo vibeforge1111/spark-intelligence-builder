@@ -134,6 +134,23 @@ class SystemRegistryTests(SparkTestCase):
         self.assertIn("Spark Local Work:", reply)
         self.assertIn("Local repo/file inspection is available", reply)
 
+    def test_build_system_registry_surfaces_local_repo_index(self) -> None:
+        repo_root = self.home / "spawner-ui"
+        repo_root.mkdir(parents=True)
+        (repo_root / "package.json").write_text("{}", encoding="utf-8")
+        self.config_manager.set_path("spark.local_projects.roots", [str(repo_root)])
+
+        payload = build_system_registry(self.config_manager, self.state_db, probe_browser=False, probe_git=False).to_payload()
+        records = {(str(record["kind"]), str(record["key"])): record for record in payload["records"]}
+
+        self.assertGreaterEqual(payload["summary"]["repo_count"], 1)
+        self.assertEqual(records[("repo", "spawner-ui")]["kind"], "repo")
+        self.assertEqual(records[("repo", "spawner-ui")]["status"], "ready")
+        self.assertIn("frontend_or_node_runtime", records[("repo", "spawner-ui")]["capabilities"])
+        self.assertTrue(
+            any(str(item).startswith("local repo index:") for item in payload["summary"]["current_capabilities"])
+        )
+
     def test_system_registry_query_detection_covers_capability_and_surroundings_questions(self) -> None:
         self.assertTrue(looks_like_system_registry_query("What can you do right now?"))
         self.assertTrue(looks_like_system_registry_query("What are you connected to?"))

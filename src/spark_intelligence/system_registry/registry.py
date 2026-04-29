@@ -12,6 +12,7 @@ from spark_intelligence.attachments import (
 )
 from spark_intelligence.browser.service import build_browser_status_payload
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.local_project_index import build_local_project_index
 from spark_intelligence.state.db import StateDB
 
 
@@ -103,6 +104,8 @@ class SystemRegistrySnapshot:
                 "provider_count": len([record for record in self.records if record.kind == "provider"]),
                 "chip_count": len([record for record in self.records if record.kind == "chip"]),
                 "path_count": len([record for record in self.records if record.kind == "path"]),
+                "repo_count": len([record for record in self.records if record.kind == "repo"]),
+                "dirty_repo_count": len([record for record in self.records if record.kind == "repo" and record.status == "dirty"]),
                 "onboarding_contract_count": len(
                     [
                         record
@@ -152,7 +155,13 @@ def looks_like_system_registry_query(message: str) -> bool:
     return any(signal in lowered_message for signal in direct_signals)
 
 
-def build_system_registry(config_manager: ConfigManager, state_db: StateDB, *, probe_browser: bool = True) -> SystemRegistrySnapshot:
+def build_system_registry(
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    *,
+    probe_browser: bool = True,
+    probe_git: bool = True,
+) -> SystemRegistrySnapshot:
     from spark_intelligence.auth.runtime import build_auth_status_report
     from spark_intelligence.gateway.runtime import gateway_status
     from spark_intelligence.researcher_bridge import researcher_bridge_status
@@ -165,6 +174,7 @@ def build_system_registry(config_manager: ConfigManager, state_db: StateDB, *, p
     swarm = swarm_status(config_manager, state_db)
     auth_report = build_auth_status_report(config_manager=config_manager, state_db=state_db)
     browser = _collect_browser_registry_payload(config_manager) if probe_browser else None
+    project_index = build_local_project_index(config_manager, probe_git=probe_git).to_payload()
     config = config_manager.load()
     active_chip_keys = set(str(item) for item in (attachment_context.get("active_chip_keys") or []) if str(item))
     pinned_chip_keys = set(str(item) for item in (attachment_context.get("pinned_chip_keys") or []) if str(item))
@@ -191,7 +201,7 @@ def build_system_registry(config_manager: ConfigManager, state_db: StateDB, *, p
             ),
             _build_memory_record(),
             _build_spawner_record(config_manager=config_manager),
-            _build_local_work_record(config_manager=config_manager),
+            _build_local_work_record(config_manager=config_manager, project_index=project_index),
         ]
     )
     records.extend(_build_adapter_records(channel_records=channel_records))
@@ -209,6 +219,7 @@ def build_system_registry(config_manager: ConfigManager, state_db: StateDB, *, p
             active_path_key=active_path_key,
         )
     )
+    records.extend(_build_project_records(project_index=project_index))
     records.sort(key=lambda item: (item.kind, item.key))
     if attachment_scan.warnings:
         records.append(
@@ -265,6 +276,9 @@ def build_system_registry_prompt_context(
     onboarding_lines = _prompt_onboarding_lines(payload["records"])
     if onboarding_lines:
         lines.extend(onboarding_lines)
+    repo_lines = _prompt_repo_lines(payload["records"])
+    if repo_lines:
+        lines.extend(repo_lines)
     capability_lines = payload.get("summary", {}).get("current_capabilities") or []
     if capability_lines:
         lines.append("[Current capabilities]")
@@ -324,6 +338,14 @@ def build_system_registry_direct_reply(
         and bool(record.get("active"))
         and str(record.get("key") or "").strip()
     ]
+    local_repos = [
+        str(record.get("key") or "").strip()
+        for record in (payload.get("records") or [])
+        if isinstance(record, dict)
+        and str(record.get("kind") or "") == "repo"
+        and bool(record.get("available"))
+        and str(record.get("key") or "").strip()
+    ]
 
     lines = ["Here's what is connected right now:"]
     for system_key in (
@@ -348,6 +370,8 @@ def build_system_registry_direct_reply(
         lines.append(f"Active chips: {', '.join(active_chips[:10])}.")
     if active_paths:
         lines.append(f"Active paths: {', '.join(active_paths[:5])}.")
+    if local_repos:
+        lines.append(f"Known local repos: {', '.join(local_repos[:8])}.")
     return "\n".join(lines)
 
 
@@ -575,8 +599,9 @@ def _build_spawner_record(*, config_manager: ConfigManager) -> SystemRegistryRec
     )
 
 
-def _build_local_work_record(*, config_manager: ConfigManager) -> SystemRegistryRecord:
+def _build_local_work_record(*, config_manager: ConfigManager, project_index: dict[str, Any]) -> SystemRegistryRecord:
     workspace_home = str(config_manager.get_path("workspace.home", default=config_manager.paths.home) or "").strip()
+    index_summary = project_index.get("summary") if isinstance(project_index.get("summary"), dict) else {}
     return SystemRegistryRecord(
         record_id="system:spark_local_work",
         kind="system",
@@ -595,8 +620,59 @@ def _build_local_work_record(*, config_manager: ConfigManager) -> SystemRegistry
             "Use operator-governed Codex/Spawner workflows for local repo/file inspection; do not imply raw Telegram filesystem access.",
             "Confirm the target repo/component before file-writing or build-quality claims.",
         ],
-        metadata={"workspace_home": workspace_home or None},
+        metadata={
+            "workspace_home": workspace_home or None,
+            "repo_index": index_summary,
+        },
     )
+
+
+def _build_project_records(*, project_index: dict[str, Any]) -> list[SystemRegistryRecord]:
+    records: list[SystemRegistryRecord] = []
+    for item in list(project_index.get("records") or []):
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("key") or "").strip()
+        if not key:
+            continue
+        exists = bool(item.get("exists"))
+        is_git = bool(item.get("is_git"))
+        dirty = item.get("dirty")
+        limitations: list[str] = []
+        if not exists:
+            limitations.append("Configured or known repo path does not exist on this machine.")
+        if dirty is True:
+            limitations.append("Working tree has uncommitted changes; inspect status before editing or rating work.")
+        records.append(
+            SystemRegistryRecord(
+                record_id=f"repo:{key}",
+                kind="repo",
+                key=key,
+                label=str(item.get("label") or key),
+                role=f"Local project repo owned by {item.get('owner_system') or 'spark_local_work'}.",
+                status="dirty" if dirty is True else "ready" if exists else "missing",
+                attached=True,
+                active=exists,
+                pinned=False,
+                available=exists,
+                degraded=dirty is True or not exists,
+                requires_restart=False,
+                capabilities=[str(cap) for cap in (item.get("capabilities") or []) if str(cap)],
+                limitations=limitations,
+                metadata={
+                    "path": item.get("path"),
+                    "is_git": is_git,
+                    "dirty": dirty,
+                    "branch": item.get("branch"),
+                    "remote_url": item.get("remote_url"),
+                    "source": item.get("source"),
+                    "owner_system": item.get("owner_system"),
+                    "components": item.get("components") or [],
+                    "aliases": item.get("aliases") or [],
+                },
+            )
+        )
+    return records
 
 
 def _build_adapter_records(*, channel_records: dict[str, Any]) -> list[SystemRegistryRecord]:
@@ -776,6 +852,7 @@ def _derive_current_capabilities(records: list[SystemRegistryRecord]) -> list[st
     providers = sorted(record.key for record in records if record.kind == "provider" and record.available)
     active_chips = sorted(record.key for record in records if record.kind == "chip" and record.active)
     active_paths = sorted(record.key for record in records if record.kind == "path" and record.active)
+    local_repos = sorted(record.key for record in records if record.kind == "repo" and record.available)
 
     if "spark_researcher" in active_systems:
         capabilities.append("provider-backed advisory through Spark Researcher")
@@ -789,6 +866,8 @@ def _derive_current_capabilities(records: list[SystemRegistryRecord]) -> list[st
         capabilities.append("Spawner mission, schedule, Kanban, and workflow control")
     if "spark_local_work" in active_systems:
         capabilities.append("operator-governed local repo/file inspection through Codex or Spawner workflows")
+    if local_repos:
+        capabilities.append(f"local repo index: {', '.join(local_repos[:6])}")
     if adapters:
         capabilities.append(f"messaging on {', '.join(adapters)}")
     if providers:
@@ -926,6 +1005,25 @@ def _prompt_onboarding_lines(records: list[dict[str, Any]]) -> list[str]:
     if not section_lines:
         return []
     return ["[Onboarded contracts]", *section_lines]
+
+
+def _prompt_repo_lines(records: list[dict[str, Any]]) -> list[str]:
+    section_lines: list[str] = []
+    for record in records:
+        if not isinstance(record, dict) or str(record.get("kind") or "") != "repo":
+            continue
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        path = str(metadata.get("path") or "").strip()
+        components = [str(item) for item in (metadata.get("components") or []) if str(item)]
+        line = f"- {record['key']}: status={record['status']}"
+        if components:
+            line += f" components={','.join(components[:5])}"
+        if path:
+            line += f" path={path}"
+        section_lines.append(line)
+    if not section_lines:
+        return []
+    return ["[Local repos]", *section_lines[:8]]
 
 
 def _now_iso() -> str:
