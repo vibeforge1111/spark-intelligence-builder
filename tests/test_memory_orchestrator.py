@@ -492,7 +492,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(graph_lane["status"], "disabled")
         self.assertTrue(graph_lane["shadow_only"])
         self.assertEqual(graph_lane["reason"], "graph_sidecar_shadow_disabled")
-        self.assertGreaterEqual(graph_lane["episode_export_count"], 1)
+        self.assertGreaterEqual(graph_lane["raw_local_record_count"], 1)
         current_candidates = [candidate for candidate in result.candidates if candidate.lane == "current_state"]
         stale_candidates = [candidate for candidate in result.candidates if candidate.reason_discarded == "stale_or_superseded"]
         self.assertTrue(current_candidates)
@@ -738,6 +738,25 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(graph_lane["reason"], "graph_sidecar_shadow_upsert_error")
         self.assertEqual(graph_lane["retrieval_trace"]["status"], "skipped")
         self.assertFalse(any(candidate.lane == "typed_temporal_graph" for candidate in result.candidates))
+
+    def test_hybrid_memory_retrieve_filters_raw_episodes_before_graphiti_export(self) -> None:
+        raw_record = {
+            "memory_role": "episodic",
+            "predicate": "raw_turn",
+            "value": "recall what i told you about the demo",
+            "text": "recall what i told you about the demo",
+            "metadata": {"raw_episode": True},
+        }
+        structured_record = {
+            "memory_role": "current_state",
+            "predicate": "entity.status",
+            "value": "ready",
+            "text": "The GTM launch status is ready.",
+            "metadata": {"entity_key": "named-object:gtm-launch"},
+        }
+
+        self.assertFalse(memory_orchestrator._graph_sidecar_exportable_record(raw_record))
+        self.assertTrue(memory_orchestrator._graph_sidecar_exportable_record(structured_record))
 
     def test_hybrid_memory_retrieve_reads_wiki_packets_as_supporting_context(self) -> None:
         wiki_dir = self.home / "wiki"

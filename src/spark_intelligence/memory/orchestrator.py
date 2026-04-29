@@ -1714,6 +1714,21 @@ def hybrid_memory_retrieve(
                 record_activity=False,
             ),
         )
+    if normalized_subject and normalized_entity_key and not normalized_predicate:
+        add_lane(
+            "entity_current_state",
+            adapter.read_current_state(
+                subject=normalized_subject,
+                predicate=None,
+                predicate_prefix="entity.",
+                entity_key=normalized_entity_key,
+                query=normalized_query,
+                session_id=session_id,
+                turn_id=f"{turn_id}:entity-current-state",
+                source_surface=f"{source_surface}:entity_current_state",
+                record_activity=False,
+            ),
+        )
     if normalized_subject and normalized_predicate and normalized_as_of:
         add_lane(
             "historical_state",
@@ -5868,9 +5883,13 @@ def _build_graph_sidecar_shadow_lane(
             graphiti_db_path = None
             graphiti_llm = {}
         graph_sidecar = sidecars["graphiti_temporal_graph"]
+        exportable_records = _prioritize_graph_sidecar_export_records(
+            [record for record in local_records if _graph_sidecar_exportable_record(record)],
+            entity_key=entity_key,
+        )
         episodes = [
             to_episode(_sidecar_record_namespace(record), source_class=_hybrid_memory_dict_source_class(record))
-            for record in local_records
+            for record in exportable_records
         ]
         upsert_traces = []
         for episode in episodes[:limit]:
@@ -5902,6 +5921,7 @@ def _build_graph_sidecar_shadow_lane(
                     "call_timeout_seconds": graphiti_call_timeout_seconds,
                     "llm_provider": _graphiti_llm_trace(graphiti_llm),
                     "episode_export_count": len(episodes),
+                    "raw_local_record_count": len(local_records),
                     "upsert_preview_count": len(upsert_traces),
                     "sidecar_hit_count": 0,
                     "retrieval_trace": {
@@ -5951,6 +5971,7 @@ def _build_graph_sidecar_shadow_lane(
                 "call_timeout_seconds": graphiti_call_timeout_seconds,
                 "llm_provider": _graphiti_llm_trace(graphiti_llm),
                 "episode_export_count": len(episodes),
+                "raw_local_record_count": len(local_records),
                 "upsert_preview_count": len(upsert_traces),
                 "sidecar_hit_count": len(sidecar_hits),
                 "retrieval_trace": retrieval_trace,
@@ -6024,6 +6045,53 @@ def _graphiti_llm_trace(settings: dict[str, Any]) -> dict[str, Any]:
         "model": settings.get("model"),
         "small_model": settings.get("small_model") or settings.get("model"),
     }
+
+
+def _graph_sidecar_exportable_record(record: dict[str, Any]) -> bool:
+    predicate = _optional_string(record.get("predicate"))
+    value = _optional_string(record.get("value")) or _optional_string(record.get("normalized_value"))
+    memory_role = _optional_string(record.get("memory_role"))
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    if predicate == "raw_turn" or not predicate or not value:
+        return False
+    if memory_role in {"current_state", "structured_evidence", "state_deletion", "event"}:
+        return True
+    return bool(metadata.get("entity_key") or metadata.get("entity_keys"))
+
+
+def _prioritize_graph_sidecar_export_records(
+    records: list[dict[str, Any]],
+    *,
+    entity_key: str | None,
+) -> list[dict[str, Any]]:
+    normalized_entity_key = str(entity_key or "").strip()
+    if not normalized_entity_key:
+        return records
+    matched: list[dict[str, Any]] = []
+    other: list[dict[str, Any]] = []
+    for record in records:
+        if normalized_entity_key in _graph_sidecar_record_entity_keys(record):
+            matched.append(record)
+        else:
+            other.append(record)
+    return matched + other
+
+
+def _graph_sidecar_record_entity_keys(record: dict[str, Any]) -> set[str]:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    values: list[Any] = [
+        record.get("entity_key"),
+        metadata.get("entity_key"),
+        record.get("entity_keys"),
+        metadata.get("entity_keys"),
+    ]
+    keys: set[str] = set()
+    for value in values:
+        if isinstance(value, list):
+            keys.update(str(item).strip() for item in value if str(item or "").strip())
+        elif str(value or "").strip():
+            keys.add(str(value).strip())
+    return keys
 
 
 def _graph_sidecar_hit_record(hit: Any) -> dict[str, Any]:
@@ -6219,6 +6287,8 @@ def _hybrid_memory_dict_source_class(record: dict[str, Any]) -> str:
 def _hybrid_memory_source_class(*, lane: str, kernel: MemoryKernelReadResult, record: dict[str, Any]) -> str:
     if lane == "current_state":
         return "current_state"
+    if lane == "entity_current_state":
+        return "entity_current_state"
     if lane == "historical_state":
         return "historical_state"
     if lane == "events":
