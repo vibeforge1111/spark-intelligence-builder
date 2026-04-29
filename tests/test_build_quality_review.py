@@ -223,6 +223,7 @@ class BuildQualityReviewTests(SparkTestCase):
         self.assertEqual(result.facts["target_repo"], "spark-memory-quality-dashboard")
         self.assertEqual(result.facts["url"], "http://127.0.0.1:5174")
         self.assertIn("npm run export:spark", result.reply_text)
+        self.assertIn("route/source trace map", result.reply_text)
         self.assertIn("domain-chip benchmark scorecards", result.reply_text)
         self.assertIn("Builder memory lanes", result.reply_text)
 

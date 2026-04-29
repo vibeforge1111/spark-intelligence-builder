@@ -119,6 +119,7 @@ def build_memory_quality_dashboard_operator_reply(
         "export_command": "npm run export:spark",
         "shown_evidence": [
             "live Builder recall events",
+            "route/source trace map and source-explanation links",
             "Builder memory lanes and quality gates",
             "quarantine, delivery, and pending task ledgers",
             "domain-chip-memory health history",
