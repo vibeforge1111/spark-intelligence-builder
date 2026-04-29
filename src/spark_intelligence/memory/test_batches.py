@@ -23,6 +23,7 @@ MEMORY_TEST_BATCHES: tuple[MemoryTestBatch, ...] = (
         description="Fast Builder memory contracts for salience, current/entity state, session summaries, capsules, and regression packaging.",
         pytest_targets=(
             "tests/test_session_summaries.py",
+            "tests/test_pending_tasks.py",
             "tests/test_memory_orchestrator.py",
             "tests/test_context_capsule.py",
             "tests/test_telegram_episodic_memory.py",
@@ -33,6 +34,7 @@ MEMORY_TEST_BATCHES: tuple[MemoryTestBatch, ...] = (
             "salience",
             "entity_state",
             "episodic_summary",
+            "pending_task_recovery",
             "source_attribution",
             "acceptance_packaging",
         ),
@@ -98,6 +100,7 @@ MEMORY_TEST_BATCHES: tuple[MemoryTestBatch, ...] = (
         description="Local Builder memory suite for contract, Telegram, architecture, diagnostics, and validation wrappers.",
         pytest_targets=(
             "tests/test_session_summaries.py",
+            "tests/test_pending_tasks.py",
             "tests/test_memory_orchestrator.py",
             "tests/test_context_capsule.py",
             "tests/test_telegram_generic_memory.py",
@@ -121,6 +124,7 @@ MEMORY_TEST_BATCHES: tuple[MemoryTestBatch, ...] = (
             "architecture_promotion",
             "diagnostics",
             "quality_gates",
+            "pending_task_recovery",
         ),
         use_when="Run before pushing a larger memory milestone.",
     ),

@@ -1102,6 +1102,26 @@ def recent_resume_richness_guard_records(
     return [_row_to_dict(row) for row in rows]
 
 
+def recent_pending_task_records(
+    state_db: StateDB,
+    *,
+    limit: int = 50,
+    open_only: bool = True,
+) -> list[dict[str, Any]]:
+    query = """
+        SELECT *
+        FROM pending_task_records
+    """
+    params: list[Any] = []
+    if open_only:
+        query += " WHERE status IN ('open', 'pending', 'blocked', 'timed_out', 'interrupted') AND closed_at IS NULL"
+    query += " ORDER BY updated_at DESC, pending_task_id DESC LIMIT ?"
+    params.append(limit)
+    with state_db.connect() as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+    return [_row_to_dict(row) for row in rows]
+
+
 def recent_personality_trait_profiles(
     state_db: StateDB,
     *,
@@ -3202,6 +3222,7 @@ def _build_session_integrity_panel(state_db: StateDB) -> dict[str, Any]:
     active_registry = [row for row in reset_registry if int(row.get("active") or 0) == 1]
     cleared_registry = [row for row in reset_registry if int(row.get("active") or 0) == 0]
     guard_rows = recent_resume_richness_guard_records(state_db, limit=50)
+    pending_tasks = recent_pending_task_records(state_db, limit=50, open_only=True)
     reset_events = latest_events_by_type(state_db, event_type="session_reset_performed", limit=20)
     return {
         "counts": {
@@ -3209,10 +3230,12 @@ def _build_session_integrity_panel(state_db: StateDB) -> dict[str, Any]:
             "active_reset_sensitive_keys": len(active_registry),
             "cleared_reset_sensitive_keys": len(cleared_registry),
             "resume_richness_guard_interventions": len(guard_rows),
+            "open_pending_tasks": len(pending_tasks),
             "recent_reset_events": len(reset_events),
         },
         "recent_reset_sensitive_keys": active_registry[:10],
         "recent_guard_interventions": guard_rows[:10],
+        "recent_pending_tasks": pending_tasks[:10],
         "recent_reset_events": reset_events[:10],
     }
 

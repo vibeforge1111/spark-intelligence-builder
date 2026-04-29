@@ -54,7 +54,7 @@ def test_memory_test_batch_command_builds_pytest_invocation() -> None:
 
 
 def test_memory_test_batch_runner_print_only_does_not_execute(capsys) -> None:
-    with patch("spark_intelligence.memory.test_batch_runner.subprocess.run") as run:
+    with patch("spark_intelligence.memory.test_batch_runner.pytest.main") as run:
         exit_code = run_memory_test_batch(
             ["--batch", "fast-contract", "--print-only", "--repo-root", str(REPO_ROOT), "--", "--maxfail=1"]
         )

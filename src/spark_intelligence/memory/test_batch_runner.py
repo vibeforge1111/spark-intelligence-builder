@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
-import subprocess
+import os
 import sys
 from pathlib import Path
 from typing import Sequence
+
+import pytest
 
 from spark_intelligence.memory.test_batches import (
     get_memory_test_batch,
@@ -46,8 +48,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(" ".join(_quote_arg(part) for part in command))
         return 0
 
-    completed = subprocess.run(command, cwd=str(repo_root), check=False)
-    return int(completed.returncode)
+    pytest_args = list(command[3:])
+    original_cwd = Path.cwd()
+    try:
+        os.chdir(repo_root)
+        return int(pytest.main(pytest_args))
+    finally:
+        os.chdir(original_cwd)
 
 
 def _quote_arg(value: str) -> str:
