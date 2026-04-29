@@ -4419,6 +4419,13 @@ def _optional_string(value: Any) -> str | None:
     return text or None
 
 
+def _coerce_float(value: Any, *, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _human_id_from_subject(subject: str) -> str | None:
     text = _optional_string(subject)
     if not text:
@@ -5832,6 +5839,14 @@ def _build_graph_sidecar_shadow_lane(
             config_manager.get_path("spark.memory.sidecars.graphiti.group_id", default="spark-memory")
             or "spark-memory"
         )
+        graphiti_auto_build_indices = bool(
+            config_manager.get_path("spark.memory.sidecars.graphiti.auto_build_indices", default=True)
+        )
+        graphiti_call_timeout_seconds = _coerce_float(
+            config_manager.get_path("spark.memory.sidecars.graphiti.call_timeout_seconds", default=6.0),
+            default=6.0,
+        )
+        graphiti_llm = _graphiti_sidecar_llm_settings(config_manager)
         try:
             sidecars = build_sidecars(
                 enable_graphiti=enabled,
@@ -5839,17 +5854,67 @@ def _build_graph_sidecar_shadow_lane(
                 graphiti_backend=graphiti_backend,
                 graphiti_db_path=graphiti_db_path,
                 graphiti_group_id=graphiti_group_id,
+                graphiti_auto_build_indices=graphiti_auto_build_indices,
+                graphiti_call_timeout_seconds=graphiti_call_timeout_seconds,
+                graphiti_llm_api_key_env=graphiti_llm.get("api_key_env"),
+                graphiti_llm_api_key=graphiti_llm.get("api_key"),
+                graphiti_llm_base_url=graphiti_llm.get("base_url"),
+                graphiti_llm_model=graphiti_llm.get("model"),
+                graphiti_llm_small_model=graphiti_llm.get("small_model"),
             )
         except TypeError:
             sidecars = build_sidecars(enable_graphiti=enabled, enable_mem0_shadow=False)
             graphiti_backend = None
             graphiti_db_path = None
+            graphiti_llm = {}
         graph_sidecar = sidecars["graphiti_temporal_graph"]
         episodes = [
             to_episode(_sidecar_record_namespace(record), source_class=_hybrid_memory_dict_source_class(record))
             for record in local_records
         ]
-        upsert_traces = [graph_sidecar.upsert_episode(episode).trace for episode in episodes[:limit]]
+        upsert_traces = []
+        for episode in episodes[:limit]:
+            upsert_trace = graph_sidecar.upsert_episode(episode).trace
+            upsert_traces.append(upsert_trace)
+            if upsert_trace.get("error") or upsert_trace.get("backend_status"):
+                break
+        upsert_error_trace = next(
+            (
+                trace
+                for trace in upsert_traces
+                if isinstance(trace, dict) and (trace.get("error") or trace.get("backend_status"))
+            ),
+            None,
+        )
+        if enabled and upsert_error_trace is not None and bool(upsert_error_trace.get("backend_configured")):
+            health = graph_sidecar.health()
+            lane.update(
+                {
+                    "status": "error",
+                    "abstained": True,
+                    "record_count": 0,
+                    "reason": "graph_sidecar_shadow_upsert_error",
+                    "mode": getattr(graph_sidecar, "mode", "disabled"),
+                    "enabled": enabled,
+                    "backend": graphiti_backend or "not_configured",
+                    "backend_configured": bool(upsert_error_trace.get("backend_configured")),
+                    "auto_build_indices": graphiti_auto_build_indices,
+                    "call_timeout_seconds": graphiti_call_timeout_seconds,
+                    "llm_provider": _graphiti_llm_trace(graphiti_llm),
+                    "episode_export_count": len(episodes),
+                    "upsert_preview_count": len(upsert_traces),
+                    "sidecar_hit_count": 0,
+                    "retrieval_trace": {
+                        "status": "skipped",
+                        "reason": "upsert_error",
+                        "error": upsert_error_trace.get("error") or upsert_error_trace.get("backend_status"),
+                    },
+                    "health": asdict(health) if is_dataclass(health) else health,
+                    "upsert_trace_samples": upsert_traces[:2],
+                    "hit_records": [],
+                }
+            )
+            return lane
         request = request_cls(
             query=query,
             subject=subject,
@@ -5882,6 +5947,9 @@ def _build_graph_sidecar_shadow_lane(
                 "enabled": enabled,
                 "backend": graphiti_backend or "not_configured",
                 "backend_configured": backend_configured,
+                "auto_build_indices": graphiti_auto_build_indices,
+                "call_timeout_seconds": graphiti_call_timeout_seconds,
+                "llm_provider": _graphiti_llm_trace(graphiti_llm),
                 "episode_export_count": len(episodes),
                 "upsert_preview_count": len(upsert_traces),
                 "sidecar_hit_count": len(sidecar_hits),
@@ -5908,6 +5976,54 @@ def _graphiti_sidecar_db_path(config_manager: ConfigManager) -> str | None:
         return None
     home = str(config_manager.paths.home)
     return configured.replace("{home}", home).replace("$SPARK_HOME", home)
+
+
+def _graphiti_sidecar_llm_settings(config_manager: ConfigManager) -> dict[str, Any]:
+    provider_id = _optional_string(
+        config_manager.get_path("spark.memory.sidecars.graphiti.llm.provider", default=None)
+    ) or _optional_string(config_manager.get_path("providers.default_provider", default=None))
+    provider_record = {}
+    if provider_id:
+        raw_record = config_manager.get_path(f"providers.records.{provider_id}", default={})
+        if isinstance(raw_record, dict):
+            provider_record = raw_record
+
+    explicit_api_key_env = _optional_string(
+        config_manager.get_path("spark.memory.sidecars.graphiti.llm.api_key_env", default=None)
+    )
+    api_key_env = explicit_api_key_env or _optional_string(provider_record.get("api_key_env"))
+    env_map = config_manager.read_env_map()
+    api_key = env_map.get(api_key_env) if api_key_env else None
+    if not api_key and api_key_env:
+        api_key = os.environ.get(api_key_env)
+
+    return {
+        "provider_id": provider_id,
+        "api_key_env": api_key_env,
+        "api_key": api_key if api_key else None,
+        "base_url": _optional_string(
+            config_manager.get_path("spark.memory.sidecars.graphiti.llm.base_url", default=None)
+        )
+        or _optional_string(provider_record.get("base_url")),
+        "model": _optional_string(
+            config_manager.get_path("spark.memory.sidecars.graphiti.llm.model", default=None)
+        )
+        or _optional_string(provider_record.get("default_model")),
+        "small_model": _optional_string(
+            config_manager.get_path("spark.memory.sidecars.graphiti.llm.small_model", default=None)
+        ),
+    }
+
+
+def _graphiti_llm_trace(settings: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "provider_id": settings.get("provider_id"),
+        "api_key_env": settings.get("api_key_env"),
+        "api_key_configured": bool(settings.get("api_key")),
+        "base_url_configured": bool(settings.get("base_url")),
+        "model": settings.get("model"),
+        "small_model": settings.get("small_model") or settings.get("model"),
+    }
 
 
 def _graph_sidecar_hit_record(hit: Any) -> dict[str, Any]:

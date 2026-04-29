@@ -625,11 +625,28 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.config_manager.set_path("spark.memory.sidecars.graphiti.enabled", True)
         self.config_manager.set_path("spark.memory.sidecars.graphiti.backend", "kuzu")
         self.config_manager.set_path("spark.memory.sidecars.graphiti.db_path", "{home}/graphiti.kuzu")
+        self.config_manager.set_path("providers.default_provider", "custom")
+        self.config_manager.set_path(
+            "providers.records.custom",
+            {
+                "provider_kind": "zai",
+                "api_key_env": "ZAI_API_KEY",
+                "base_url": "https://api.z.ai/api/coding/paas/v4/",
+                "default_model": "glm-5.1",
+            },
+        )
+        self.config_manager.upsert_env_secret("ZAI_API_KEY", "test-secret")
         fake_client = _HybridRetrievalMemoryClient()
 
         def fake_build_sidecars(**kwargs):
             self.assertEqual(kwargs.get("graphiti_backend"), "kuzu")
             self.assertTrue(str(kwargs.get("graphiti_db_path")).endswith("graphiti.kuzu"))
+            self.assertEqual(kwargs.get("graphiti_llm_api_key_env"), "ZAI_API_KEY")
+            self.assertEqual(kwargs.get("graphiti_llm_api_key"), "test-secret")
+            self.assertEqual(kwargs.get("graphiti_llm_base_url"), "https://api.z.ai/api/coding/paas/v4/")
+            self.assertEqual(kwargs.get("graphiti_llm_model"), "glm-5.1")
+            self.assertTrue(kwargs.get("graphiti_auto_build_indices"))
+            self.assertEqual(kwargs.get("graphiti_call_timeout_seconds"), 6.0)
             return {"graphiti_temporal_graph": FakeGraphSidecar()}
 
         with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
@@ -655,11 +672,72 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(graph_lane["status"], "ok")
         self.assertEqual(graph_lane["reason"], "graph_sidecar_shadow_live_hits")
         self.assertEqual(graph_lane["backend"], "kuzu")
+        self.assertEqual(graph_lane["llm_provider"]["model"], "glm-5.1")
+        self.assertTrue(graph_lane["llm_provider"]["api_key_configured"])
+        self.assertTrue(graph_lane["auto_build_indices"])
+        self.assertEqual(graph_lane["call_timeout_seconds"], 6.0)
+        self.assertNotIn("test-secret", str(graph_lane))
         self.assertEqual(graph_lane["sidecar_hit_count"], 1)
         graph_candidates = [candidate for candidate in result.candidates if candidate.lane == "typed_temporal_graph"]
         self.assertEqual(len(graph_candidates), 1)
         self.assertEqual(graph_candidates[0].source_class, "graphiti_temporal_graph")
         self.assertEqual(graph_candidates[0].record["metadata"]["authority"], "supporting_not_authoritative")
+
+    def test_hybrid_memory_retrieve_skips_graphiti_retrieve_after_upsert_error(self) -> None:
+        from domain_chip_memory import MemorySidecarHealthResult, MemorySidecarUpsertResult
+
+        class FakeGraphSidecar:
+            mode = "shadow"
+
+            def upsert_episode(self, episode):
+                return MemorySidecarUpsertResult(
+                    sidecar_name="graphiti_temporal_graph",
+                    status="error",
+                    trace={"backend_configured": True, "error": "TimeoutError"},
+                )
+
+            def retrieve(self, request):
+                raise AssertionError("retrieve should not run after a shadow upsert error")
+
+            def health(self):
+                return MemorySidecarHealthResult(
+                    sidecar_name="graphiti_temporal_graph",
+                    status="ok",
+                    enabled=True,
+                    mode="shadow",
+                    details={"authority": "not_authoritative", "backend": "kuzu"},
+                )
+
+        self.config_manager.set_path("spark.memory.sidecars.graphiti.enabled", True)
+        fake_client = _HybridRetrievalMemoryClient()
+
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ), patch(
+            "domain_chip_memory.build_default_memory_sidecars",
+            return_value={"graphiti_temporal_graph": FakeGraphSidecar()},
+        ):
+            result = hybrid_memory_retrieve(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                query="What is blocking the GTM launch?",
+                subject="human:test",
+                predicate="entity.blocker",
+                entity_key="named-object:gtm-launch",
+                limit=5,
+                actor_id="test",
+            )
+
+        graph_lane = next(
+            lane
+            for lane in result.read_result.retrieval_trace["hybrid_memory_retrieve"]["lane_summaries"]
+            if lane["lane"] == "typed_temporal_graph"
+        )
+        self.assertEqual(graph_lane["status"], "error")
+        self.assertEqual(graph_lane["reason"], "graph_sidecar_shadow_upsert_error")
+        self.assertEqual(graph_lane["retrieval_trace"]["status"], "skipped")
+        self.assertFalse(any(candidate.lane == "typed_temporal_graph" for candidate in result.candidates))
 
     def test_hybrid_memory_retrieve_reads_wiki_packets_as_supporting_context(self) -> None:
         wiki_dir = self.home / "wiki"
