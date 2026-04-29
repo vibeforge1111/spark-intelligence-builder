@@ -120,6 +120,7 @@ def build_memory_quality_dashboard_operator_reply(
         "shown_evidence": [
             "live Builder recall events",
             "route/source trace map and source-explanation links",
+            "context packet budget and memory read feed",
             "Builder memory lanes and quality gates",
             "quarantine, delivery, and pending task ledgers",
             "domain-chip-memory health history",
