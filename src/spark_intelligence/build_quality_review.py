@@ -121,6 +121,7 @@ def build_memory_quality_dashboard_operator_reply(
             "live Builder recall events",
             "route/source trace map and source-explanation links",
             "context packet budget and memory read feed",
+            "Graphiti/typed-temporal graph shadow lane contract, artifacts, and live lane traffic state",
             "salience, policy-gate, lane-decision, and promotion-reason feed",
             "Builder memory lanes and quality gates",
             "quarantine, delivery, and pending task ledgers",
