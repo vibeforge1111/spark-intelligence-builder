@@ -24,6 +24,7 @@ MEMORY_TEST_BATCHES: tuple[MemoryTestBatch, ...] = (
         pytest_targets=(
             "tests/test_session_summaries.py",
             "tests/test_pending_tasks.py",
+            "tests/test_procedural_lessons.py",
             "tests/test_memory_orchestrator.py",
             "tests/test_context_capsule.py",
             "tests/test_telegram_episodic_memory.py",
@@ -35,6 +36,7 @@ MEMORY_TEST_BATCHES: tuple[MemoryTestBatch, ...] = (
             "entity_state",
             "episodic_summary",
             "pending_task_recovery",
+            "procedural_lessons",
             "source_attribution",
             "acceptance_packaging",
         ),
@@ -101,6 +103,7 @@ MEMORY_TEST_BATCHES: tuple[MemoryTestBatch, ...] = (
         pytest_targets=(
             "tests/test_session_summaries.py",
             "tests/test_pending_tasks.py",
+            "tests/test_procedural_lessons.py",
             "tests/test_memory_orchestrator.py",
             "tests/test_context_capsule.py",
             "tests/test_telegram_generic_memory.py",
@@ -125,6 +128,7 @@ MEMORY_TEST_BATCHES: tuple[MemoryTestBatch, ...] = (
             "diagnostics",
             "quality_gates",
             "pending_task_recovery",
+            "procedural_lessons",
         ),
         use_when="Run before pushing a larger memory milestone.",
     ),

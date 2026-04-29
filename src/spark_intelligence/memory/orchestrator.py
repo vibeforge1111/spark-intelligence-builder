@@ -5503,7 +5503,7 @@ def _hybrid_memory_context_section(candidate: HybridMemoryCandidate) -> str:
     predicate = str(record.get("predicate") or "").strip()
     memory_role = str(record.get("memory_role") or metadata.get("memory_role") or "").strip()
     source_surface = str(metadata.get("source_surface") or "").strip()
-    if predicate.startswith("entity.") or metadata.get("entity_key"):
+    if predicate.startswith("entity.") or memory_role == "entity_state":
         return "entity_state"
     if predicate.startswith("diagnostics.") or source_surface == "diagnostics":
         return "diagnostics"

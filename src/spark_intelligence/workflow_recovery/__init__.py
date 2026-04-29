@@ -7,13 +7,35 @@ from spark_intelligence.workflow_recovery.pending_tasks import (
     record_pending_task_timeout,
     upsert_pending_task,
 )
+from spark_intelligence.workflow_recovery.procedural_lessons import (
+    ProceduralLessonRecord,
+    build_procedural_lesson_context,
+    get_procedural_lesson,
+    latest_procedural_lessons,
+    record_bad_self_review_lesson,
+    record_target_resolution_lesson,
+    record_timeout_recovery_lesson,
+    record_wrong_build_target_lesson,
+    retire_procedural_lesson,
+    upsert_procedural_lesson,
+)
 
 __all__ = [
     "PendingTaskRecord",
+    "ProceduralLessonRecord",
     "build_pending_task_resume_context",
+    "build_procedural_lesson_context",
     "close_pending_task",
     "get_pending_task",
+    "get_procedural_lesson",
     "latest_pending_tasks",
+    "latest_procedural_lessons",
+    "record_bad_self_review_lesson",
     "record_pending_task_timeout",
+    "record_target_resolution_lesson",
+    "record_timeout_recovery_lesson",
+    "record_wrong_build_target_lesson",
+    "retire_procedural_lesson",
     "upsert_pending_task",
+    "upsert_procedural_lesson",
 ]

@@ -1122,6 +1122,33 @@ def recent_pending_task_records(
     return [_row_to_dict(row) for row in rows]
 
 
+def recent_procedural_lesson_records(
+    state_db: StateDB,
+    *,
+    limit: int = 50,
+    lesson_kind: str | None = None,
+    active_only: bool = True,
+) -> list[dict[str, Any]]:
+    query = """
+        SELECT *
+        FROM procedural_lesson_records
+    """
+    params: list[Any] = []
+    clauses: list[str] = []
+    if lesson_kind:
+        clauses.append("lesson_kind = ?")
+        params.append(lesson_kind)
+    if active_only:
+        clauses.append("status IN ('active', 'candidate', 'confirmed') AND retired_at IS NULL")
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+    query += " ORDER BY updated_at DESC, lesson_id DESC LIMIT ?"
+    params.append(limit)
+    with state_db.connect() as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+    return [_row_to_dict(row) for row in rows]
+
+
 def recent_personality_trait_profiles(
     state_db: StateDB,
     *,
@@ -1377,6 +1404,10 @@ def build_watchtower_snapshot(
             "session_integrity": _safe_watchtower_panel(
                 "session_integrity",
                 lambda: _build_session_integrity_panel(state_db),
+            ),
+            "procedural_memory": _safe_watchtower_panel(
+                "procedural_memory",
+                lambda: _build_procedural_memory_panel(state_db),
             ),
             "observer_incidents": _safe_watchtower_panel(
                 "observer_incidents",
@@ -2956,6 +2987,29 @@ def _build_memory_lane_hygiene_panel(state_db: StateDB) -> dict[str, Any]:
         },
         "recent_promotions": lane_records[:10],
         "recent_integrity_incidents": resume_integrity_incidents[:10],
+    }
+
+
+def _build_procedural_memory_panel(state_db: StateDB) -> dict[str, Any]:
+    lessons = recent_procedural_lesson_records(state_db, limit=100, active_only=True)
+    kind_counts: dict[str, int] = {}
+    component_counts: dict[str, int] = {}
+    for lesson in lessons:
+        kind = str(lesson.get("lesson_kind") or "unknown")
+        component = str(lesson.get("applies_to_component") or "unknown")
+        kind_counts[kind] = kind_counts.get(kind, 0) + 1
+        component_counts[component] = component_counts.get(component, 0) + 1
+    return {
+        "counts": {
+            "active_procedural_lessons": len(lessons),
+            "target_resolution_lessons": kind_counts.get("target_resolution", 0),
+            "wrong_build_target_lessons": kind_counts.get("wrong_build_target", 0),
+            "bad_self_review_lessons": kind_counts.get("bad_self_review", 0),
+            "timeout_recovery_lessons": kind_counts.get("timeout_recovery", 0),
+        },
+        "kind_counts": kind_counts,
+        "component_counts": component_counts,
+        "recent_lessons": lessons[:10],
     }
 
 

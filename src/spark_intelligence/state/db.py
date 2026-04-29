@@ -680,6 +680,29 @@ SCHEMA_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS procedural_lesson_records (
+        lesson_id TEXT PRIMARY KEY,
+        lesson_key TEXT NOT NULL UNIQUE,
+        lesson_kind TEXT NOT NULL,
+        status TEXT NOT NULL,
+        trigger_pattern TEXT NOT NULL,
+        corrective_action TEXT NOT NULL,
+        failure_summary TEXT,
+        target_repo TEXT,
+        target_component TEXT,
+        applies_to_component TEXT,
+        source_event_id TEXT,
+        source_task_key TEXT,
+        confidence REAL NOT NULL DEFAULT 0,
+        occurrence_count INTEGER NOT NULL DEFAULT 1,
+        evidence_json TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        last_seen_at TEXT NOT NULL,
+        retired_at TEXT
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS job_records (
         job_id TEXT PRIMARY KEY,
         job_kind TEXT NOT NULL,
@@ -787,6 +810,9 @@ SCHEMA_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_resume_richness_guard_state_key ON resume_richness_guard_records(state_key, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_pending_task_records_status ON pending_task_records(status, updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_pending_task_records_human ON pending_task_records(human_id, status, updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_procedural_lesson_records_status ON procedural_lesson_records(status, updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_procedural_lesson_records_kind ON procedural_lesson_records(lesson_kind, status, updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_procedural_lesson_records_component ON procedural_lesson_records(applies_to_component, status, updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_observer_packet_records_active ON observer_packet_records(active, last_seen_at)",
     "CREATE INDEX IF NOT EXISTS idx_observer_packet_records_kind ON observer_packet_records(packet_kind, last_seen_at)",
     "CREATE INDEX IF NOT EXISTS idx_observer_handoff_records_created_at ON observer_handoff_records(created_at, handoff_id)",
