@@ -35,6 +35,10 @@ from spark_intelligence.browser.service import (
 )
 from spark_intelligence.capability_router import build_capability_router_prompt_context
 from spark_intelligence.character_runtime import ensure_spark_character_path
+from spark_intelligence.build_quality_review import (
+    build_build_quality_review_reply,
+    looks_like_build_quality_review_query,
+)
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.context import build_spark_context_capsule
 from spark_intelligence.harness_registry import build_harness_prompt_context
@@ -7123,6 +7127,69 @@ def build_researcher_reply(
             config_path=None,
             attachment_context=attachment_context,
             routing_decision="memory_quality_evaluation_plan",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+
+    if not personality_context_extra and looks_like_build_quality_review_query(user_message):
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        review = build_build_quality_review_reply(
+            config_manager=config_manager,
+            state_db=state_db,
+            user_message=user_message,
+        )
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="build_quality_review_direct",
+            routing_decision="build_quality_review_direct",
+        )
+        evidence_summary = (
+            "status=build_quality_review "
+            f"target_repo={review.facts.get('target_repo') or 'unknown'} "
+            f"evidence_complete={'yes' if review.facts.get('evidence_complete') else 'no'}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered a build-quality review from grounded local evidence.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="build_quality_review_direct",
+            facts=_bridge_event_facts(
+                routing_decision="build_quality_review_direct",
+                bridge_mode="build_quality_review_direct",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "query_text": str(user_message or "").strip(),
+                    **review.facts,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=review.reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="build_quality_review_direct",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="build_quality_review_direct",
             active_chip_key=None,
             active_chip_task_type=None,
             active_chip_evaluate_used=False,
