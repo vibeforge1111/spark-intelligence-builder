@@ -718,6 +718,15 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(assessment.reason, "not_memoryworthy")
         self.assertIsNone(classify_telegram_generic_memory_candidate("what do you know about Spark systems"))
 
+    def test_assess_telegram_generic_memory_candidate_rejects_low_information_fragments(self) -> None:
+        for text in ("The second", "second", "option two"):
+            with self.subTest(text=text):
+                assessment = assess_telegram_generic_memory_candidate(text)
+
+                self.assertEqual(assessment.outcome, "drop")
+                self.assertEqual(assessment.reason, "not_memoryworthy")
+                self.assertIsNone(classify_telegram_generic_memory_candidate(text))
+
     def test_build_researcher_reply_records_policy_gate_for_rejected_generic_memory_candidate(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -815,6 +824,10 @@ class TelegramGenericMemoryTests(SparkTestCase):
 
         self.assertEqual(assessment.outcome, "raw_episode")
         self.assertEqual(assessment.memory_role, "raw_episode")
+        self.assertIsNotNone(assessment.salience_decision)
+        assert assessment.salience_decision is not None
+        self.assertLess(assessment.salience_decision.salience_score, 0.35)
+        self.assertEqual(assessment.salience_decision.promotion_disposition, "capture_raw_episode")
 
     def test_build_researcher_reply_records_uncaptured_memory_candidate_assessment(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)

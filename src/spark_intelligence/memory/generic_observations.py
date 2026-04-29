@@ -16,6 +16,10 @@ _SMALL_TALK_PATTERN = re.compile(
     r"^(?:hi|hello|hey|thanks|thank you|ok|okay|cool|lol|noted|got it)[.!]?$",
     re.IGNORECASE,
 )
+_LOW_INFORMATION_FRAGMENT_PATTERN = re.compile(
+    r"^(?:the\s+)?(?:first|second|third|fourth|fifth|one|two|three|option\s+[a-z0-9]+)[.!]?$",
+    re.IGNORECASE,
+)
 # Messages that look like requests, instructions, or questions to the agent
 # should not be filed as raw episodes. They expect a real reply.
 _ASK_LIKE_PREFIX_PATTERN = re.compile(
@@ -1397,11 +1401,16 @@ def _is_memoryworthy_text(text: str) -> bool:
         return False
     if len(text) < 8 or len(text) > 220:
         return False
+    tokens = re.findall(r"[a-z0-9]+(?:[-'][a-z0-9]+)?", text.casefold())
+    if len(tokens) <= 2 and not (_BELIEF_PREFIX_PATTERN.search(text) or _STRUCTURED_EVIDENCE_PATTERN.search(text)):
+        return False
     if "http://" in text or "https://" in text:
         return False
     if _HYPOTHETICAL_PREFIX_PATTERN.search(text):
         return False
     if _SMALL_TALK_PATTERN.fullmatch(text):
+        return False
+    if _LOW_INFORMATION_FRAGMENT_PATTERN.fullmatch(text):
         return False
     if _ASK_LIKE_PREFIX_PATTERN.match(text.lstrip()):
         return False

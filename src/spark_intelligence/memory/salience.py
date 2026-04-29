@@ -243,8 +243,8 @@ def evaluate_generic_memory_salience(
     if normalized_outcome == "raw_episode":
         return MemorySalienceDecision(
             action="write",
-            salience_score=0.38,
-            confidence=0.58,
+            salience_score=0.18,
+            confidence=0.48,
             promotion_stage="raw_episode",
             keepability="episodic_trace",
             promotion_disposition="capture_raw_episode",
