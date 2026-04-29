@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.spawner_payload_drift import detect_spawner_payload_drift
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.system_registry import build_system_registry
 from spark_intelligence.target_confirmation import evaluate_target_repo_confirmation
@@ -106,6 +107,7 @@ def build_mission_control_snapshot(config_manager: ConfigManager, state_db: Stat
     swarm = swarm_status(config_manager, state_db)
     watchtower = build_watchtower_snapshot(state_db)
     system_registry = build_system_registry(config_manager, state_db).to_payload()
+    spawner_payload_drift = detect_spawner_payload_drift(config_manager, state_db).to_payload()
     telegram_summary = build_telegram_runtime_summary(config_manager, state_db)
     telegram_health = read_telegram_runtime_health(state_db)
     discord_summary = build_discord_runtime_summary(config_manager, state_db)
@@ -125,6 +127,7 @@ def build_mission_control_snapshot(config_manager: ConfigManager, state_db: Stat
         discord_summary=discord_summary,
         whatsapp_summary=whatsapp_summary,
         job_records=job_records,
+        spawner_payload_drift=spawner_payload_drift,
     )
     active_channels = [
         channel
@@ -140,6 +143,7 @@ def build_mission_control_snapshot(config_manager: ConfigManager, state_db: Stat
         telegram_summary=telegram_summary,
         telegram_health=telegram_health,
         active_loops=active_loops,
+        spawner_payload_drift=spawner_payload_drift,
     )
     top_level_state = _derive_top_level_state(
         gateway=gateway,
@@ -237,6 +241,7 @@ def build_mission_control_snapshot(config_manager: ConfigManager, state_db: Stat
                 for record in job_records[:8]
             ],
         },
+        "spawner_payload_drift": spawner_payload_drift,
     }
     summary = {
         "top_level_state": top_level_state,
@@ -497,6 +502,7 @@ def _derive_degraded_surfaces(
     discord_summary: Any,
     whatsapp_summary: Any,
     job_records: list[Any],
+    spawner_payload_drift: dict[str, Any],
 ) -> list[str]:
     degraded: list[str] = []
     for record in system_registry.get("records") or []:
@@ -528,6 +534,8 @@ def _derive_degraded_surfaces(
         degraded.append("Discord ingress")
     if whatsapp_summary.configured and not whatsapp_summary.ingress_ready():
         degraded.append("WhatsApp ingress")
+    if int(spawner_payload_drift.get("drift_count") or 0) > 0:
+        degraded.append("Spawner payload drift")
     return _dedupe_preserve_order(degraded)
 
 
@@ -540,6 +548,7 @@ def _derive_recommended_actions(
     telegram_summary: Any,
     telegram_health: Any,
     active_loops: list[str],
+    spawner_payload_drift: dict[str, Any],
 ) -> list[str]:
     actions: list[str] = []
     actions.extend(str(item) for item in (gateway.repair_hints or [])[:2] if str(item))
@@ -563,6 +572,8 @@ def _derive_recommended_actions(
     )
     if active_loops and ((not gateway.oauth_maintenance_ok) or scheduler_state == "stalled"):
         actions.append("Run `spark-intelligence jobs tick` to execute due maintenance work.")
+    if int(spawner_payload_drift.get("drift_count") or 0) > 0:
+        actions.append("Confirm the target repo and refresh stale Spawner payload context before dispatching build work.")
     deduped = _dedupe_preserve_order(actions)
     return deduped[:5]
 
