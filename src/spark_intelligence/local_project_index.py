@@ -82,7 +82,7 @@ def build_local_project_index(config_manager: ConfigManager, *, probe_git: bool 
 def _candidate_project_roots(config_manager: ConfigManager) -> list[tuple[Path, str, dict[str, Any]]]:
     candidates: list[tuple[Path, str, dict[str, Any]]] = []
     seen: set[str] = set()
-    seen_slugs: set[str] = set()
+    slug_indexes: dict[str, int] = {}
 
     def add(path_value: Any, source: str, config_record: dict[str, Any] | None = None) -> None:
         record = config_record or {}
@@ -97,10 +97,17 @@ def _candidate_project_roots(config_manager: ConfigManager) -> list[tuple[Path, 
         if key in seen:
             return
         slug = _slug(str(record.get("key") or resolved.name or "project"))
-        if slug in seen_slugs:
+        existing_index = slug_indexes.get(slug)
+        if existing_index is not None:
+            existing_path, _existing_source, _existing_record = candidates[existing_index]
+            if resolved.exists() and not existing_path.exists():
+                candidates[existing_index] = (resolved, source, record)
+                seen.add(key)
+            return
+        if slug in slug_indexes:
             return
         seen.add(key)
-        seen_slugs.add(slug)
+        slug_indexes[slug] = len(candidates)
         candidates.append((resolved, source, record))
 
     configured_records = config_manager.get_path("spark.local_projects.records", default={}) or {}
@@ -131,6 +138,9 @@ def _candidate_project_roots(config_manager: ConfigManager) -> list[tuple[Path, 
     if include_known:
         current_repo = Path(__file__).resolve().parents[2]
         add(current_repo, "builder_runtime")
+        for spark_modules in _spark_module_roots(config_manager):
+            for repo_name in _KNOWN_SPARK_REPOS:
+                add(spark_modules / repo_name / "source", "installed_spark_module", {"key": repo_name})
         parent = current_repo.parent
         for repo_name in _KNOWN_SPARK_REPOS:
             add(parent / repo_name, "known_spark_repo")
@@ -139,6 +149,34 @@ def _candidate_project_roots(config_manager: ConfigManager) -> list[tuple[Path, 
             for repo_name in _KNOWN_SPARK_REPOS:
                 add(desktop / repo_name, "known_desktop_repo")
     return candidates
+
+
+def _spark_module_roots(config_manager: ConfigManager) -> list[Path]:
+    roots: list[Path] = []
+    configured = config_manager.get_path("spark.local_projects.module_roots", default=[]) or []
+    for item in configured:
+        path = ConfigManager.normalize_runtime_path(item)
+        if path is not None:
+            roots.append(path)
+    roots.append(config_manager.paths.home / ".spark" / "modules")
+    roots.append(Path.home() / ".spark" / "modules")
+    for parent in [config_manager.paths.home, *config_manager.paths.home.parents]:
+        if parent.name == ".spark":
+            roots.append(parent / "modules")
+            break
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        try:
+            resolved = root.expanduser().resolve()
+        except Exception:
+            resolved = root.expanduser()
+        key = str(resolved).casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(resolved)
+    return deduped
 
 
 def _build_project_record(

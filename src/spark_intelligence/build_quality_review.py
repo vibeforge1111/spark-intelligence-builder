@@ -43,10 +43,13 @@ def looks_like_build_quality_review_query(message: str) -> bool:
     lowered = str(message or "").strip().casefold()
     if not lowered:
         return False
-    if any(signal in lowered for signal in _FALSE_POSITIVE_SIGNALS):
+    buildish = "build" in lowered or "route" in lowered or "page" in lowered or "app" in lowered
+    if any(signal in lowered for signal in _FALSE_POSITIVE_SIGNALS) and not buildish:
         return False
     if any(signal in lowered for signal in _QUALITY_QUERY_SIGNALS):
-        return "build" in lowered or "route" in lowered or "page" in lowered or "app" in lowered
+        return buildish
+    if "quality" in lowered and buildish and any(verb in lowered for verb in ("review", "rate", "assess", "judge")):
+        return True
     return False
 
 

@@ -39,3 +39,16 @@ class LocalProjectIndexTests(SparkTestCase):
         self.assertIn("mission control", record["aliases"])
         self.assertEqual(record["owner_system"], "spark_spawner")
 
+    def test_build_local_project_index_discovers_installed_spark_modules(self) -> None:
+        installed_spawner = self.home / ".spark" / "modules" / "spawner-ui" / "source"
+        installed_spawner.mkdir(parents=True)
+        (installed_spawner / "package.json").write_text("{}", encoding="utf-8")
+        self.config_manager.set_path("spark.local_projects.include_attachment_repos", False)
+        self.config_manager.set_path("spark.local_projects.include_known_spark_repos", True)
+
+        payload = build_local_project_index(self.config_manager, probe_git=False).to_payload()
+        records = {record["key"]: record for record in payload["records"]}
+
+        self.assertIn("spawner-ui", records)
+        self.assertEqual(records["spawner-ui"]["path"], str(installed_spawner.resolve()))
+        self.assertEqual(records["spawner-ui"]["source"], "installed_spark_module")

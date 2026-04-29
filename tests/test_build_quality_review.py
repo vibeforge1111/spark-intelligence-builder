@@ -41,9 +41,15 @@ class BuildQualityReviewTests(SparkTestCase):
             text=True,
         )
         (route_dir / "+page.svelte").write_text("<h1>Memory Quality Dashboard</h1>\n", encoding="utf-8")
+        self.memory_chip_root = self.home / "domain-chip-memory"
+        self.memory_chip_root.mkdir(parents=True)
+        (self.memory_chip_root / "pyproject.toml").write_text(
+            "[project]\nname='domain-chip-memory'\n",
+            encoding="utf-8",
+        )
         self.config_manager.set_path("spark.local_projects.include_known_spark_repos", False)
         self.config_manager.set_path("spark.local_projects.include_attachment_repos", False)
-        self.config_manager.set_path("spark.local_projects.roots", [str(self.repo_root)])
+        self.config_manager.set_path("spark.local_projects.roots", [str(self.repo_root), str(self.memory_chip_root)])
         self.config_manager.set_path("spark.swarm.enabled", False)
 
     def test_build_quality_review_requires_tests_and_demo_before_rating(self) -> None:
@@ -123,6 +129,9 @@ class BuildQualityReviewTests(SparkTestCase):
 
     def test_query_detection_avoids_memory_quality_plan(self) -> None:
         self.assertTrue(looks_like_build_quality_review_query("How good is this build?"))
+        self.assertTrue(
+            looks_like_build_quality_review_query("Review the quality of the /memory-quality build in spawner-ui.")
+        )
         self.assertFalse(
             looks_like_build_quality_review_query("Give me a concrete evaluation plan for persistent memory quality.")
         )

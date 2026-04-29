@@ -205,7 +205,7 @@ def _rank_repo_candidates(records: list[Any], *, query: str) -> list[TargetRepoC
         candidate = _candidate_from_record(record, query_tokens=query_tokens)
         if candidate.score > 0:
             ranked.append(candidate)
-    ranked.sort(key=lambda item: (-item.score, item.repo_key))
+    ranked.sort(key=lambda item: (not _has_explicit_repo_mention(query, item), -item.score, item.repo_key))
     return ranked
 
 
