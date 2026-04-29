@@ -61,6 +61,10 @@ from spark_intelligence.personality.loader import (
     detect_personality_query,
     load_personality_profile,
 )
+from spark_intelligence.workflow_recovery import (
+    record_bad_self_review_lesson,
+    record_pending_task_timeout,
+)
 
 from tests.test_support import SparkTestCase
 
@@ -673,6 +677,53 @@ class MemoryOrchestratorTests(SparkTestCase):
         assert packet is not None
         self.assertEqual(packet.sections[0]["section"], "entity_state")
         self.assertEqual(packet.sections[0]["items"][0]["entity_key"], "named-object:tiny-desk-plant")
+
+    def test_hybrid_memory_context_packet_includes_pending_tasks_and_procedural_lessons(self) -> None:
+        record_pending_task_timeout(
+            self.state_db,
+            task_key="memory:graphiti-adapter",
+            original_request="Wire Graphiti adapter behind a disabled feature flag.",
+            human_id="human:test",
+            target_repo="vibeforge1111/spark-intelligence-builder",
+            target_component="memory_sidecars",
+            timeout_point="after adapter contract inspection",
+            last_evidence="Sidecar contract exists but runtime is still disabled.",
+            next_retry_step="Continue with disabled adapter tests.",
+        )
+        record_bad_self_review_lesson(
+            self.state_db,
+            reviewed_subject="memory integration checkpoint",
+            missing_evidence=["target repo", "diff", "tests"],
+            source_task_key="memory:graphiti-adapter",
+        )
+        fake_client = _HybridRetrievalMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ):
+            result = hybrid_memory_retrieve(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                query="continue the memory integration after the timeout",
+                subject="human:test",
+                predicate="profile.current_focus",
+                limit=6,
+                actor_id="test",
+            )
+
+        packet = result.context_packet
+        self.assertIsNotNone(packet)
+        assert packet is not None
+        sections = {section["section"]: section for section in packet.sections}
+        self.assertIn("pending_tasks", sections)
+        self.assertIn("procedural_lessons", sections)
+        self.assertIn("Continue with disabled adapter tests.", sections["pending_tasks"]["items"][0]["text"])
+        self.assertIn("Inspect target repo, diff, route/demo state, and tests", sections["procedural_lessons"]["items"][0]["text"])
+        trace = result.read_result.retrieval_trace["hybrid_memory_retrieve"]
+        self.assertIn("pending_tasks", {lane["lane"] for lane in trace["lane_summaries"]})
+        self.assertIn("procedural_lessons", {lane["lane"] for lane in trace["lane_summaries"]})
+        self.assertEqual(packet.source_mix["pending_task"], 1)
+        self.assertEqual(packet.source_mix["procedural_lesson"], 1)
 
     def test_hybrid_memory_retrieve_adds_recent_conversation_lane_with_query_overlap(self) -> None:
         record_event(

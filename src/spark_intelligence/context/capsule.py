@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,6 +12,7 @@ from spark_intelligence.jobs.service import list_job_records
 from spark_intelligence.memory import inspect_human_memory_in_memory
 from spark_intelligence.security.prompt_boundaries import sanitize_prompt_boundary_text
 from spark_intelligence.state.db import StateDB
+from spark_intelligence.workflow_recovery import latest_pending_tasks, latest_procedural_lessons
 
 
 _STATE_PREDICATE_LABELS: tuple[tuple[str, str], ...] = (
@@ -49,12 +51,16 @@ class ContextCapsule:
         priorities = {
             "current_state": (1, "authority"),
             "diagnostics": (2, "authority"),
-            "recent_conversation": (3, "supporting"),
-            "workflow_state": (4, "advisory"),
+            "pending_tasks": (3, "workflow_recovery"),
+            "procedural_lessons": (4, "procedural_advisory"),
+            "recent_conversation": (5, "supporting"),
+            "workflow_state": (6, "advisory"),
         }
         notes = {
             "current_state": "Saved focus, plan, blocker, status, and preferences. Use first when active current facts exist.",
             "diagnostics": "Latest scan counts and clean/failure status. Health evidence only; does not close user goals.",
+            "pending_tasks": "Interrupted or unfinished work. Use to resume without asking what happened.",
+            "procedural_lessons": "Learned operating corrections from previous mistakes, target drift, timeouts, and self-review gaps.",
             "recent_conversation": "Recent same-session turns. Useful for continuity, but lower priority than current-state facts.",
             "workflow_state": "Jobs, routes, and operational residue. Advisory unless the user asks about those systems.",
         }
@@ -83,6 +89,8 @@ class ContextCapsule:
             "If diagnostics status is clean_latest_scan_no_failures_or_findings, treat the latest scan as clean without asking to load the note.",
             "Do not infer that an active focus, plan, or blocker is resolved only because diagnostics or maintenance checks are clean.",
             "If current_state lists an active focus or plan and there is no explicit closure evidence, say the system evidence is green but the focus/plan remains open until the user closes it.",
+            "If pending_tasks are present and the user asks to continue, resume, retry, or asks what was next, use pending_tasks before asking what happened.",
+            "If procedural_lessons are present, treat them as operating guidance about how to avoid repeating earlier mistakes, not as user facts.",
             "If the user asks whether context survived across turns, verify by naming the current focus, current plan, latest diagnostics status, and maintenance summary from this capsule; do not replace that with an older handoff checklist or new mission proposal.",
             "If the user asks what is verified, still open, or only they should close, answer against active current_state first; older missions, apps, and workflow residue are out of scope unless explicitly named.",
             f"generated_at={self.generated_at}",
@@ -122,6 +130,14 @@ def build_spark_context_capsule(
             session_id=session_id,
             channel_kind=channel_kind,
             request_id=request_id,
+        ),
+        "pending_tasks": _build_pending_task_lines(
+            state_db=state_db,
+            human_id=human_id,
+        ),
+        "procedural_lessons": _build_procedural_lesson_lines(
+            state_db=state_db,
+            user_message=user_message,
         ),
         "workflow_state": _build_workflow_state_lines(
             config_manager=config_manager,
@@ -241,6 +257,71 @@ def _build_recent_conversation_lines(
 
     recent_turns = transcript[-(turn_limit * 2) :]
     return [f"- {role}: {_compact(text, 260)}" for role, text in recent_turns]
+
+
+def _build_pending_task_lines(*, state_db: StateDB, human_id: str, limit: int = 3) -> list[str]:
+    if not human_id:
+        return []
+    try:
+        tasks = latest_pending_tasks(state_db, human_id=human_id, open_only=True, limit=limit)
+        if not tasks and not human_id.startswith("human:"):
+            tasks = latest_pending_tasks(state_db, human_id=f"human:{human_id}", open_only=True, limit=limit)
+    except Exception:
+        return []
+    lines: list[str] = []
+    for task in tasks:
+        parts = [
+            f"key={task.task_key}",
+            f"status={task.status}",
+            f"request={_compact(task.original_request, 180)}",
+        ]
+        if task.target_repo or task.target_component:
+            target = " / ".join(part for part in (task.target_repo, task.target_component) if part)
+            parts.append(f"target={_compact(target, 160)}")
+        if task.timeout_point:
+            parts.append(f"timeout_point={_compact(task.timeout_point, 140)}")
+        if task.last_evidence:
+            parts.append(f"last_evidence={_compact(task.last_evidence, 180)}")
+        if task.next_retry_step:
+            parts.append(f"next_retry={_compact(task.next_retry_step, 180)}")
+        lines.append("- " + " | ".join(parts))
+    return lines
+
+
+def _build_procedural_lesson_lines(*, state_db: StateDB, user_message: str, limit: int = 4) -> list[str]:
+    try:
+        lessons = latest_procedural_lessons(state_db, active_only=True, limit=limit)
+    except Exception:
+        return []
+    if not lessons:
+        return []
+    query_tokens = _capsule_tokens(user_message)
+    scored: list[tuple[int, str]] = []
+    for lesson in lessons:
+        text = " ".join(
+            str(value or "")
+            for value in (
+                lesson.lesson_kind,
+                lesson.trigger_pattern,
+                lesson.corrective_action,
+                lesson.failure_summary,
+                lesson.applies_to_component,
+                lesson.target_repo,
+                lesson.target_component,
+            )
+        )
+        overlap = len(query_tokens & _capsule_tokens(text)) if query_tokens else 0
+        line = (
+            f"- kind={lesson.lesson_kind} | trigger={_compact(lesson.trigger_pattern, 160)} "
+            f"| do={_compact(lesson.corrective_action, 200)}"
+        )
+        if lesson.applies_to_component:
+            line += f" | applies_to={lesson.applies_to_component}"
+        if lesson.confidence:
+            line += f" | confidence={lesson.confidence:.2f}"
+        scored.append((overlap, line))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [line for _, line in scored[:limit]]
 
 
 def _build_workflow_state_lines(*, config_manager: ConfigManager, state_db: StateDB) -> list[str]:
@@ -414,6 +495,15 @@ def _compact(text: str, max_chars: int) -> str:
     if len(normalized) <= max_chars:
         return normalized
     return normalized[: max_chars - 1].rstrip() + "..."
+
+
+def _capsule_tokens(text: str) -> set[str]:
+    stopwords = {"a", "an", "and", "are", "for", "from", "i", "is", "it", "my", "of", "on", "the", "to", "what"}
+    return {
+        token
+        for token in re.findall(r"[a-z0-9][a-z0-9_-]*", str(text or "").casefold())
+        if token and token not in stopwords
+    }
 
 
 def _record_timestamp(record: dict[str, Any]) -> str:

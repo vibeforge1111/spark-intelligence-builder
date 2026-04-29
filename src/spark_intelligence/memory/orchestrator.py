@@ -33,6 +33,7 @@ from spark_intelligence.memory_contracts import (
 )
 from spark_intelligence.observability.store import record_event, record_policy_gate_block
 from spark_intelligence.state.db import StateDB
+from spark_intelligence.workflow_recovery import latest_pending_tasks, latest_procedural_lessons
 
 
 from spark_intelligence.memory.retention_policy import (
@@ -1764,27 +1765,46 @@ def hybrid_memory_retrieve(
         limit=normalized_limit,
     )
     lane_summaries.append(recent_lane)
-    for index, record in enumerate(recent_records):
-        source_class = "recent_conversation"
-        score, score_reasons = _score_hybrid_memory_record(
-            lane="recent_conversation",
-            source_class=source_class,
-            record=record,
-            query=normalized_query,
-            predicate=normalized_predicate,
-            entity_key=normalized_entity_key,
-        )
-        ranked_entries.append(
-            {
-                "lane": "recent_conversation",
-                "source_class": source_class,
-                "score": score,
-                "score_reasons": score_reasons,
-                "record": record,
-                "record_key": _hybrid_memory_record_key(record),
-                "rank_tiebreak": index,
-            }
-        )
+    _extend_hybrid_ranked_entries(
+        ranked_entries,
+        lane="recent_conversation",
+        source_class="recent_conversation",
+        records=recent_records,
+        query=normalized_query,
+        predicate=normalized_predicate,
+        entity_key=normalized_entity_key,
+    )
+    pending_lane, pending_records = _build_pending_task_lane(
+        state_db=state_db,
+        query=normalized_query,
+        subject=normalized_subject,
+        limit=normalized_limit,
+    )
+    lane_summaries.append(pending_lane)
+    _extend_hybrid_ranked_entries(
+        ranked_entries,
+        lane="pending_tasks",
+        source_class="pending_task",
+        records=pending_records,
+        query=normalized_query,
+        predicate=normalized_predicate,
+        entity_key=normalized_entity_key,
+    )
+    procedural_lane, procedural_records = _build_procedural_lesson_lane(
+        state_db=state_db,
+        query=normalized_query,
+        limit=normalized_limit,
+    )
+    lane_summaries.append(procedural_lane)
+    _extend_hybrid_ranked_entries(
+        ranked_entries,
+        lane="procedural_lessons",
+        source_class="procedural_lesson",
+        records=procedural_records,
+        query=normalized_query,
+        predicate=normalized_predicate,
+        entity_key=normalized_entity_key,
+    )
     lane_summaries.append(
         _build_graph_sidecar_shadow_lane(
             config_manager=config_manager,
@@ -5135,13 +5155,15 @@ def _build_hybrid_memory_context_packet(
         "active_current_state": 0,
         "entity_state": 1,
         "historical_state": 2,
-        "recent_conversation": 3,
-        "diagnostics": 4,
-        "relevant_events": 5,
-        "relevant_evidence": 6,
-        "compiled_project_knowledge": 7,
-        "graph_sidecar_hits": 8,
-        "supporting_context": 9,
+        "pending_tasks": 3,
+        "procedural_lessons": 4,
+        "recent_conversation": 5,
+        "diagnostics": 6,
+        "relevant_events": 7,
+        "relevant_evidence": 8,
+        "compiled_project_knowledge": 9,
+        "graph_sidecar_hits": 10,
+        "supporting_context": 11,
     }
     sections = sorted(
         (section for section in sections_by_name.values() if section["items"]),
@@ -5402,6 +5424,170 @@ def _build_recent_conversation_lane(
     )
 
 
+def _build_pending_task_lane(
+    *,
+    state_db: StateDB,
+    query: str,
+    subject: str | None,
+    limit: int,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    human_id = subject if str(subject or "").startswith("human:") else None
+    tasks = latest_pending_tasks(state_db, human_id=human_id, open_only=True, limit=max(1, limit))
+    if not tasks and human_id:
+        tasks = latest_pending_tasks(state_db, open_only=True, limit=max(1, limit))
+    records = [_pending_task_to_hybrid_record(task.to_dict()) for task in tasks]
+    return (
+        {
+            "lane": "pending_tasks",
+            "read_method": "pending_task_ledger",
+            "source_class": "pending_task",
+            "status": "supported" if records else "abstained",
+            "abstained": not records,
+            "record_count": len(records),
+            "reason": "open_pending_tasks" if records else "no_open_pending_tasks",
+            "query_overlap_required": _workflow_recovery_query_hint(query),
+        },
+        records,
+    )
+
+
+def _build_procedural_lesson_lane(
+    *,
+    state_db: StateDB,
+    query: str,
+    limit: int,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    lessons = latest_procedural_lessons(state_db, active_only=True, limit=max(1, limit))
+    records = [_procedural_lesson_to_hybrid_record(lesson.to_dict()) for lesson in lessons]
+    return (
+        {
+            "lane": "procedural_lessons",
+            "read_method": "procedural_lesson_ledger",
+            "source_class": "procedural_lesson",
+            "status": "supported" if records else "abstained",
+            "abstained": not records,
+            "record_count": len(records),
+            "reason": "active_procedural_lessons" if records else "no_active_procedural_lessons",
+            "query_overlap_required": _workflow_recovery_query_hint(query),
+        },
+        records,
+    )
+
+
+def _extend_hybrid_ranked_entries(
+    ranked_entries: list[dict[str, Any]],
+    *,
+    lane: str,
+    source_class: str,
+    records: list[dict[str, Any]],
+    query: str,
+    predicate: str | None,
+    entity_key: str | None,
+) -> None:
+    for index, record in enumerate(records):
+        score, score_reasons = _score_hybrid_memory_record(
+            lane=lane,
+            source_class=source_class,
+            record=record,
+            query=query,
+            predicate=predicate,
+            entity_key=entity_key,
+        )
+        ranked_entries.append(
+            {
+                "lane": lane,
+                "source_class": source_class,
+                "score": score,
+                "score_reasons": score_reasons,
+                "record": record,
+                "record_key": _hybrid_memory_record_key(record),
+                "rank_tiebreak": index,
+            }
+        )
+
+
+def _pending_task_to_hybrid_record(task: dict[str, Any]) -> dict[str, Any]:
+    task_key = str(task.get("task_key") or "")
+    original_request = str(task.get("original_request") or "")
+    next_retry = str(task.get("next_retry_step") or "")
+    timeout_point = str(task.get("timeout_point") or "")
+    last_evidence = str(task.get("last_evidence") or "")
+    target = " ".join(str(task.get(key) or "") for key in ("target_repo", "target_component")).strip()
+    text_parts = [
+        f"Pending task {task_key}: {original_request}",
+        f"status={task.get('status') or 'unknown'}",
+        f"target={target}" if target else "",
+        f"interrupted_at={timeout_point}" if timeout_point else "",
+        f"last_evidence={last_evidence}" if last_evidence else "",
+        f"next_retry={next_retry}" if next_retry else "",
+    ]
+    text = " ".join(part for part in text_parts if part)
+    return {
+        "observation_id": str(task.get("pending_task_id") or task_key),
+        "subject": task.get("human_id"),
+        "predicate": "workflow.pending_task",
+        "value": original_request,
+        "summary": text,
+        "text": text,
+        "timestamp": task.get("updated_at"),
+        "memory_role": "pending_task",
+        "metadata": {
+            "memory_role": "pending_task",
+            "source_surface": "pending_task_ledger",
+            "source_ref": task_key,
+            "task_key": task_key,
+            "status": task.get("status"),
+            "target_repo": task.get("target_repo"),
+            "target_component": task.get("target_component"),
+            "mission_id": task.get("mission_id"),
+            "timeout_point": timeout_point,
+            "last_evidence": last_evidence,
+            "next_retry_step": next_retry,
+        },
+        "provenance": [{"source": "pending_task_ledger", "task_key": task_key}],
+    }
+
+
+def _procedural_lesson_to_hybrid_record(lesson: dict[str, Any]) -> dict[str, Any]:
+    lesson_key = str(lesson.get("lesson_key") or "")
+    text_parts = [
+        f"Procedural lesson {lesson.get('lesson_kind') or 'unknown'}:",
+        f"trigger={lesson.get('trigger_pattern') or ''}",
+        f"corrective_action={lesson.get('corrective_action') or ''}",
+        f"failure={lesson.get('failure_summary') or ''}",
+        f"applies_to={lesson.get('applies_to_component') or ''}",
+    ]
+    text = " ".join(part for part in text_parts if part and not part.endswith("="))
+    return {
+        "observation_id": str(lesson.get("lesson_id") or lesson_key),
+        "subject": lesson.get("target_repo"),
+        "predicate": f"procedural.{lesson.get('lesson_kind') or 'lesson'}",
+        "value": lesson.get("corrective_action"),
+        "summary": text,
+        "text": text,
+        "timestamp": lesson.get("updated_at"),
+        "memory_role": "procedural_lesson",
+        "metadata": {
+            "memory_role": "procedural_lesson",
+            "source_surface": "procedural_lesson_ledger",
+            "source_ref": lesson_key,
+            "lesson_key": lesson_key,
+            "lesson_kind": lesson.get("lesson_kind"),
+            "applies_to_component": lesson.get("applies_to_component"),
+            "target_repo": lesson.get("target_repo"),
+            "target_component": lesson.get("target_component"),
+            "confidence": lesson.get("confidence"),
+            "occurrence_count": lesson.get("occurrence_count"),
+        },
+        "provenance": [{"source": "procedural_lesson_ledger", "lesson_key": lesson_key}],
+    }
+
+
+def _workflow_recovery_query_hint(query: str) -> bool:
+    tokens = _hybrid_memory_query_tokens(query)
+    return bool(tokens & {"resume", "continue", "timeout", "timed", "interrupted", "stuck", "next", "retry"})
+
+
 def _json_object(raw: Any) -> dict[str, Any]:
     if isinstance(raw, dict):
         return dict(raw)
@@ -5521,6 +5707,10 @@ def _hybrid_memory_context_section(candidate: HybridMemoryCandidate) -> str:
         return "compiled_project_knowledge"
     if candidate.lane == "typed_temporal_graph":
         return "graph_sidecar_hits"
+    if candidate.lane == "pending_tasks":
+        return "pending_tasks"
+    if candidate.lane == "procedural_lessons":
+        return "procedural_lessons"
     return "supporting_context"
 
 
@@ -5529,6 +5719,10 @@ def _hybrid_memory_context_authority(candidate: HybridMemoryCandidate) -> str:
         return "authority"
     if candidate.source_class in {"obsidian_llm_wiki_packets", "graphiti_temporal_graph"}:
         return "supporting_not_authoritative"
+    if candidate.source_class == "pending_task":
+        return "workflow_recovery"
+    if candidate.source_class == "procedural_lesson":
+        return "procedural_advisory"
     if _memory_kernel_record_is_stale(candidate.record):
         return "advisory_stale"
     return "supporting"
@@ -5545,6 +5739,8 @@ def _hybrid_memory_context_section_budget(section_name: str, max_chars: int) -> 
         "relevant_evidence": 0.22,
         "compiled_project_knowledge": 0.18,
         "graph_sidecar_hits": 0.16,
+        "pending_tasks": 0.22,
+        "procedural_lessons": 0.20,
         "supporting_context": 0.12,
     }
     return max(240, int(max_chars * fractions.get(section_name, 0.12)))
@@ -5566,6 +5762,7 @@ def _hybrid_memory_context_item(candidate: HybridMemoryCandidate, *, max_chars: 
         "text": clipped,
         "source_path": metadata.get("source_path"),
         "entity_key": metadata.get("entity_key"),
+        "source_ref": metadata.get("source_ref"),
         "reason_selected": candidate.reason_selected,
         "char_count": len(clipped),
     }
@@ -5919,6 +6116,8 @@ def _score_hybrid_memory_record(
         "recent_conversation": 50.0,
         "typed_temporal_graph": 46.0,
         "wiki_packets": 44.0,
+        "pending_tasks": 86.0,
+        "procedural_lessons": 64.0,
     }
     score = lane_authority.get(lane, 40.0)
     reasons = [f"authority:{lane}"]
@@ -5946,6 +6145,12 @@ def _score_hybrid_memory_record(
     if source_class == "current_state":
         score += 4.0
         reasons.append("current_state_source")
+    if source_class == "pending_task":
+        score += 8.0
+        reasons.append("workflow_recovery_source")
+    if source_class == "procedural_lesson":
+        score += 3.0
+        reasons.append("procedural_memory_source")
     return score, reasons
 
 

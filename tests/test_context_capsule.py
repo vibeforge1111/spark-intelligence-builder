@@ -7,6 +7,7 @@ from spark_intelligence.auth.runtime import RuntimeProviderResolution
 from spark_intelligence.context import build_spark_context_capsule
 from spark_intelligence.observability.store import latest_events_by_type, record_event
 from spark_intelligence.researcher_bridge.advisory import ResearcherProviderSelection, build_researcher_reply
+from spark_intelligence.workflow_recovery import record_bad_self_review_lesson, record_pending_task_timeout
 
 from tests.test_support import SparkTestCase
 
@@ -126,11 +127,60 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertIn("status: clean_latest_scan_no_failures_or_findings", rendered)
         self.assertIn("connector_health: ok: 2", rendered)
         ledger = capsule.source_ledger()
-        self.assertEqual([item["source"] for item in ledger], ["current_state", "diagnostics", "recent_conversation", "workflow_state"])
+        self.assertEqual(
+            [item["source"] for item in ledger],
+            ["current_state", "diagnostics", "pending_tasks", "procedural_lessons", "recent_conversation", "workflow_state"],
+        )
         self.assertEqual(ledger[0]["role"], "authority")
         self.assertEqual(ledger[1]["role"], "authority")
-        self.assertEqual(ledger[3]["role"], "advisory")
+        self.assertEqual(ledger[5]["role"], "advisory")
         self.assertIn("does not close user goals", ledger[1]["note"])
+
+    def test_context_capsule_includes_pending_tasks_and_procedural_lessons_for_resume(self) -> None:
+        record_pending_task_timeout(
+            self.state_db,
+            task_key="memory:graphiti-adapter",
+            original_request="Wire Graphiti adapter behind a disabled feature flag.",
+            human_id="human-1",
+            target_repo="vibeforge1111/spark-intelligence-builder",
+            target_component="memory_sidecars",
+            timeout_point="after adapter contract inspection",
+            last_evidence="Sidecar contract exists but runtime is still disabled.",
+            next_retry_step="Continue with disabled adapter tests.",
+        )
+        record_bad_self_review_lesson(
+            self.state_db,
+            reviewed_subject="memory integration checkpoint",
+            missing_evidence=["target repo", "diff", "tests"],
+            source_task_key="memory:graphiti-adapter",
+        )
+
+        with patch(
+            "spark_intelligence.context.capsule.inspect_human_memory_in_memory",
+            return_value=self._memory_inspection(),
+        ):
+            capsule = build_spark_context_capsule(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human-1",
+                session_id="session-1",
+                channel_kind="telegram",
+                request_id="req-now",
+                user_message="Can we continue after the timeout?",
+            )
+
+        rendered = capsule.render()
+        self.assertIn("[pending_tasks]", rendered)
+        self.assertIn("key=memory:graphiti-adapter", rendered)
+        self.assertIn("next_retry=Continue with disabled adapter tests.", rendered)
+        self.assertIn("[procedural_lessons]", rendered)
+        self.assertIn("kind=bad_self_review", rendered)
+        self.assertIn("Inspect target repo, diff, route/demo state, and tests", rendered)
+        ledger = capsule.source_ledger()
+        self.assertEqual(ledger[2]["source"], "pending_tasks")
+        self.assertEqual(ledger[2]["role"], "workflow_recovery")
+        self.assertEqual(ledger[3]["source"], "procedural_lessons")
+        self.assertEqual(ledger[3]["role"], "procedural_advisory")
 
     def test_context_capsule_contract_covers_telegram_arbitration_regressions(self) -> None:
         prompts = [
