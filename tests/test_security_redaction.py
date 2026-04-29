@@ -5,11 +5,13 @@ from spark_intelligence.security.prompt_boundaries import sanitize_prompt_bounda
 
 
 def test_redact_text_masks_common_credential_shapes() -> None:
+    telegram_fixture = "123456789" + ":" + "AAGabcdefghijklmnopqrstuvwxyz123"
+    api_key_fixture = "sk-proj-" + "abcdefghijklmnopqrstuvwxyz123456"
     text = "\n".join(
         [
-            "TELEGRAM_BOT_TOKEN=123456789:AAGabcdefghijklmnopqrstuvwxyz123",
+            f"TELEGRAM_BOT_TOKEN={telegram_fixture}",
             "Authorization: Bearer abcdefghijklmnopqrstuvwxyz1234567890",
-            '"api_key": "sk-proj-abcdefghijklmnopqrstuvwxyz123456"',
+            f'"api_key": "{api_key_fixture}"',
             "db=postgres://user:pass@example.com/db",
             "call me at 555-123-4567",
         ]

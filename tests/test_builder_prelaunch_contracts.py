@@ -127,7 +127,8 @@ class BuilderPrelaunchContractTests(SparkTestCase):
 
     def test_secret_policy_detects_common_secret_families(self) -> None:
         self.assertTrue(looks_secret_like("eyJ" + "hbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl"))
-        self.assertTrue(looks_secret_like("TELEGRAM_BOT_TOKEN=1234567890:abcdefghijklmnopqrstuvwxyzABCDE"))
+        telegram_fixture = "TELEGRAM_BOT_TOKEN=" + "1234567890" + ":" + "abcdefghijklmnopqrstuvwxyzABCDE"
+        self.assertTrue(looks_secret_like(telegram_fixture))
         self.assertTrue(looks_secret_like("api_key: " + "sk-proj-" + "abcdefghijklmnopqrstuvwxyz123456"))
         self.assertTrue(looks_secret_like("Authorization: Basic dXNlcjpzdXBlci1zZWNyZXQtcGFzc3dvcmQtMTIz"))
         encoded_jwt = "ZXlKaGJHY2lPaUpJVXpJMU5pSjku" + "ZXlKemRXSWlPaUl4TWpNME5UWTNPRGt3SW4wLnNpZw=="
@@ -331,8 +332,9 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertEqual(guarded["text"], "Plain reply. No funny dashes here.")
 
     def test_outbound_redacts_sensitive_text_before_delivery_chunks(self) -> None:
+        api_key_fixture = "sk-proj-" + "abcdefghijklmnopqrstuvwxyz123456"
         guarded = prepare_outbound_text(
-            text="Use API key sk-proj-abcdefghijklmnopqrstuvwxyz123456 for setup.",
+            text=f"Use API key {api_key_fixture} for setup.",
             bridge_mode=None,
             max_reply_chars=4000,
             redact_secret_like_replies=False,

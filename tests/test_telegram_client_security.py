@@ -30,6 +30,7 @@ def test_telegram_urlopen_errors_redact_bot_token(monkeypatch: pytest.MonkeyPatc
 
 def test_telegram_send_message_redacts_payload_before_transport() -> None:
     captured: dict[str, object] = {}
+    api_key_fixture = "sk-proj-" + "abcdefghijklmnopqrstuvwxyz123456"
 
     def fake_transport(method: str, payload: dict[str, object] | None) -> dict[str, object]:
         captured["method"] = method
@@ -38,7 +39,7 @@ def test_telegram_send_message_redacts_payload_before_transport() -> None:
 
     client = TelegramBotApiClient(token="123456:secret-token", transport=fake_transport)
 
-    client.send_message(chat_id="123", text="token sk-proj-abcdefghijklmnopqrstuvwxyz123456")
+    client.send_message(chat_id="123", text=f"token {api_key_fixture}")
 
     assert captured["method"] == "sendMessage"
     payload = captured["payload"]
@@ -49,9 +50,10 @@ def test_telegram_send_message_redacts_payload_before_transport() -> None:
 
 def test_telegram_api_error_description_is_redacted() -> None:
     client = TelegramBotApiClient(token="123456:secret-token")
+    api_key_fixture = "sk-proj-" + "abcdefghijklmnopqrstuvwxyz123456"
 
     with pytest.raises(RuntimeError) as exc_info:
-        client._decode_response("sendMessage", '{"ok": false, "description": "bad sk-proj-abcdefghijklmnopqrstuvwxyz123456"}')
+        client._decode_response("sendMessage", f'{{"ok": false, "description": "bad {api_key_fixture}"}}')
 
     message = str(exc_info.value)
     assert "sk-proj-" not in message
