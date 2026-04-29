@@ -3223,6 +3223,60 @@ class TelegramGenericMemoryTests(SparkTestCase):
             }.issubset(predicates)
         )
 
+    def test_entity_history_followup_uses_last_current_entity_attribute(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        def ask(request_id: str, message: str):
+            return build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id=request_id,
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-entity-history-followup",
+                channel_kind="telegram",
+                user_message=message,
+            )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for generic entity memory"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for generic entity memory"),
+        ):
+            ask("req-followup-direction-old", "For the GTM launch, the onboarding direction is async walkthroughs.")
+            ask("req-followup-direction-new", "Actually, the GTM launch onboarding direction is founder-led calls.")
+            current_query = ask("req-followup-direction-current", "What is the GTM launch onboarding direction?")
+            history_followup = ask("req-followup-direction-history", "What was it before?")
+            source_query = ask("req-followup-direction-source", "Why did you answer that?")
+
+        self.assertEqual(current_query.mode, "memory_open_recall")
+        self.assertEqual(current_query.reply_text, "The GTM launch decision is founder-led calls.")
+        self.assertEqual(history_followup.mode, "memory_entity_state_history")
+        self.assertEqual(history_followup.routing_decision, "memory_entity_state_history_query")
+        self.assertEqual(
+            history_followup.reply_text,
+            "Before the GTM launch decision was founder-led calls, it was async walkthroughs.",
+        )
+        tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=20)
+        history_event = next(
+            event
+            for event in tool_events
+            if event["request_id"] == "req-followup-direction-history"
+        )
+        history_facts = history_event["facts_json"] or {}
+        self.assertTrue(history_facts.get("followup_resolved"))
+        self.assertEqual(history_facts.get("followup_resolved_from_request_id"), "req-followup-direction-current")
+        self.assertEqual(history_facts.get("attribute"), "decision")
+        self.assertEqual(history_facts.get("topic"), "GTM launch")
+        self.assertEqual(history_facts.get("read_method"), "get_historical_state")
+        self.assertEqual(source_query.mode, "context_source_debug")
+        self.assertIn("entity-state history route", source_query.reply_text)
+        self.assertIn("topic: GTM launch", source_query.reply_text)
+
     def test_build_researcher_reply_summarizes_entity_state_across_attributes(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)

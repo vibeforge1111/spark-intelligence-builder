@@ -389,6 +389,9 @@ class BeliefRecallQuery:
     topic: str
 
 
+_ENTITY_FOLLOWUP_PRONOUN_TOPICS: set[str] = {"it", "that", "this", "them", "they"}
+
+
 _ENTITY_STATE_SUMMARY_ATTRIBUTES: tuple[tuple[str, str, str], ...] = (
     ("status", "entity.status", "Status"),
     ("owner", "entity.owner", "Owner"),
@@ -833,12 +836,89 @@ def _detect_entity_state_history_query(user_message: str) -> EntityStateHistoryQ
             continue
         topic = next((group for group in match.groups() if group), "")
         cleaned_topic = _clean_entity_history_topic(topic)
-        if not cleaned_topic or cleaned_topic in {"me", "my profile"}:
+        if not cleaned_topic or cleaned_topic in {"me", "my profile"} or cleaned_topic.casefold() in _ENTITY_FOLLOWUP_PRONOUN_TOPICS:
             return None
         return EntityStateHistoryQuery(
             topic=cleaned_topic,
             attribute=attribute,
             predicate=predicate,
+        )
+    return None
+
+
+def _detect_entity_state_followup_history_query(
+    *,
+    user_message: str,
+    state_db: StateDB,
+    channel_kind: str,
+    session_id: str,
+    human_id: str,
+    agent_id: str,
+    request_id: str,
+) -> tuple[EntityStateHistoryQuery, dict[str, Any]] | None:
+    normalized = " ".join(str(user_message or "").strip().split())
+    if not normalized:
+        return None
+    if not re.match(
+        r"^(?:what\s+was\s+(?:it|that|this|the\s+previous\s+value)\s+(?:before|previously)|what\s+was\s+it)[\?\.\!]*$",
+        normalized,
+        flags=re.IGNORECASE,
+    ):
+        return None
+    try:
+        with state_db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT request_id, facts_json, created_at
+                FROM builder_events
+                WHERE component = 'researcher_bridge'
+                  AND event_type = 'tool_result_received'
+                  AND channel_id = ?
+                  AND session_id = ?
+                  AND human_id = ?
+                  AND agent_id = ?
+                ORDER BY created_at DESC, event_id DESC
+                LIMIT 20
+                """,
+                (channel_kind, session_id, human_id, agent_id),
+            ).fetchall()
+    except Exception:
+        return None
+    for row in rows:
+        previous_request_id = str(row["request_id"] or "").strip()
+        if previous_request_id and previous_request_id == request_id:
+            continue
+        try:
+            facts = json.loads(row["facts_json"] or "{}")
+        except Exception:
+            continue
+        if not isinstance(facts, dict):
+            continue
+        routing_decision = str(facts.get("routing_decision") or "").strip()
+        bridge_mode = str(facts.get("bridge_mode") or "").strip()
+        if routing_decision == "memory_entity_state_history_query" or bridge_mode == "memory_entity_state_history":
+            topic = str(facts.get("topic") or "").strip()
+            attribute = str(facts.get("attribute") or "").strip()
+        elif routing_decision == "memory_open_recall_query" or bridge_mode == "memory_open_recall":
+            topic = str(facts.get("topic") or "").strip()
+            attribute = _open_memory_recall_entity_attribute(str(facts.get("query_kind") or "").strip()) or ""
+        else:
+            continue
+        topic = _clean_entity_history_topic(topic)
+        if not topic or topic.casefold() in _ENTITY_FOLLOWUP_PRONOUN_TOPICS:
+            continue
+        if not attribute:
+            continue
+        return (
+            EntityStateHistoryQuery(
+                topic=topic,
+                attribute=attribute,
+                predicate=f"entity.{attribute}",
+            ),
+            {
+                "followup_resolved_from_request_id": previous_request_id or None,
+                "followup_resolved_from_route": routing_decision or bridge_mode or None,
+            },
         )
     return None
 
@@ -7078,6 +7158,7 @@ def build_researcher_reply(
     detected_memory_event = None
     detected_memory_event_query = None
     detected_entity_state_history_query = None
+    detected_entity_state_history_followup: dict[str, Any] | None = None
     detected_entity_state_summary_query = None
     detected_open_memory_recall_query = None
     detected_belief_recall_query = None
@@ -7905,6 +7986,23 @@ def build_researcher_reply(
                 and detected_entity_state_summary_query is None
             ):
                 detected_entity_state_history_query = _detect_entity_state_history_query(user_message)
+            if (
+                detected_profile_fact_query is None
+                and detected_memory_event_query is None
+                and detected_entity_state_history_query is None
+                and detected_entity_state_summary_query is None
+            ):
+                followup_history_query = _detect_entity_state_followup_history_query(
+                    user_message=user_message,
+                    state_db=state_db,
+                    channel_kind=channel_kind,
+                    session_id=session_id,
+                    human_id=human_id,
+                    agent_id=agent_id,
+                    request_id=request_id,
+                )
+                if followup_history_query is not None:
+                    detected_entity_state_history_query, detected_entity_state_history_followup = followup_history_query
             if (
                 detected_profile_fact_query is None
                 and detected_memory_event_query is None
@@ -9776,6 +9874,18 @@ def build_researcher_reply(
             f"previous_value_found={'yes' if previous_value_found else 'no'} "
             f"read_method={history_read_method}"
         )
+        event_extra = {
+            "predicate": target_predicate,
+            "attribute": detected_entity_state_history_query.attribute,
+            "topic": detected_entity_state_history_query.topic,
+            "event_record_count": len(history_records),
+            "previous_value_found": previous_value_found,
+            "read_method": history_read_method,
+            "graph_shadow_trace": graph_shadow_trace,
+        }
+        if detected_entity_state_history_followup:
+            event_extra["followup_resolved"] = True
+            event_extra.update(detected_entity_state_history_followup)
         record_event(
             state_db,
             event_type="tool_result_received",
@@ -9799,15 +9909,7 @@ def build_researcher_reply(
                 active_chip_evaluate_used=False,
                 keepability=output_keepability,
                 promotion_disposition=promotion_disposition,
-                extra={
-                    "predicate": target_predicate,
-                    "attribute": detected_entity_state_history_query.attribute,
-                    "topic": detected_entity_state_history_query.topic,
-                    "event_record_count": len(history_records),
-                    "previous_value_found": previous_value_found,
-                    "read_method": history_read_method,
-                    "graph_shadow_trace": graph_shadow_trace,
-                },
+                extra=event_extra,
             ),
         )
         return ResearcherBridgeResult(
