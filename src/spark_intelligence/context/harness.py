@@ -218,6 +218,18 @@ _ORDINALS = {
     "tenth": 10,
 }
 _NUMBER_WORDS = {"one": "1", "two": "2", "three": "3", "four": "4"}
+_OPTION_NUMBER_WORDS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+}
 
 
 def build_conversation_frame(
@@ -472,18 +484,6 @@ def _resolve_reference(
     focus_stack: list[ConversationFocus],
     artifacts: list[ConversationArtifact],
 ) -> ReferenceResolution:
-    access_focus = any(focus.kind == "access_level" for focus in focus_stack)
-    if access_focus:
-        access_value = _extract_access_value(current_message)
-        has_change_shape = re.search(r"\b(?:change|set|switch|make|do|go\s+to|go\s+with|actually|instead)\b", current_message, re.I)
-        if access_value and (has_change_shape or re.fullmatch(r"\s*(?:level\s*)?(?:[1-4]|one|two|three|four)\s*[.!?]?\s*", current_message, re.I)):
-            return ReferenceResolution(
-                kind="access_level",
-                value=access_value,
-                confidence=0.9,
-                reason="recent access focus plus short level reference",
-            )
-
     option_match = _OPTION_REFERENCE_RE.search(current_message)
     if option_match:
         index = int(option_match.group(1)) if option_match.group(1) else _ORDINALS.get(option_match.group(2).lower(), 0)
@@ -497,7 +497,47 @@ def _resolve_reference(
                 reason=f"resolved option {index} against most recent list artifact",
             )
 
+    bare_option_index = _extract_bare_option_reference_index(current_message)
+    if bare_option_index:
+        latest_list = next((artifact for artifact in reversed(artifacts) if artifact.kind == "list"), None)
+        latest_access = next((artifact for artifact in reversed(artifacts) if artifact.kind == "access_level"), None)
+        list_is_current_focus = latest_list and (
+            latest_access is None or latest_list.source_index is None or latest_access.source_index is None or latest_list.source_index >= latest_access.source_index
+        )
+        if list_is_current_focus and 1 <= bare_option_index <= len(latest_list.items):
+            return ReferenceResolution(
+                kind="list_item",
+                value=latest_list.items[bare_option_index - 1],
+                confidence=0.78,
+                source_artifact_key=latest_list.key,
+                reason=f"resolved short option {bare_option_index} against newer list artifact",
+            )
+
+    access_focus = any(focus.kind == "access_level" for focus in focus_stack)
+    if access_focus:
+        access_value = _extract_access_value(current_message)
+        has_change_shape = re.search(r"\b(?:change|set|switch|make|do|go\s+to|go\s+with|actually|instead)\b", current_message, re.I)
+        if access_value and (has_change_shape or re.fullmatch(r"\s*(?:level\s*)?(?:[1-4]|one|two|three|four)\s*[.!?]?\s*", current_message, re.I)):
+            return ReferenceResolution(
+                kind="access_level",
+                value=access_value,
+                confidence=0.9,
+                reason="recent access focus plus short level reference",
+            )
+
     return ReferenceResolution(kind="none", reason="no reliable local reference")
+
+
+def _extract_bare_option_reference_index(text: str) -> int | None:
+    match = re.search(
+        r"^(?:let'?s\s+|please\s+|actually\s+|no[, ]*|instead\s+)*(?:do|pick|choose|select|use|go\s+with)\s+(?:the\s+)?(?:option\s+|idea\s+|direction\s+|item\s+)?([1-9]|10|one|two|three|four|five|six|seven|eight|nine|ten)\b",
+        text,
+        re.I,
+    )
+    if not match:
+        return None
+    value = match.group(1).lower()
+    return _OPTION_NUMBER_WORDS.get(value) or int(value)
 
 
 def _compact_older_turns(

@@ -69,6 +69,62 @@ def test_conversation_frame_resolves_numbered_list_reference_against_latest_arti
     assert frame.reference_resolution.source_artifact_key == "list:a1"
 
 
+def test_list_reference_beats_older_access_focus() -> None:
+    frame = build_conversation_frame(
+        current_message="Let's do the second one",
+        turns=[
+            ConversationTurn(role="user", text="Change my access level to three please", turn_id="u1"),
+            ConversationTurn(role="assistant", text="Done - I changed this chat to Level 3 - Research + Build.", turn_id="a1"),
+            ConversationTurn(role="user", text="Change it to 4", turn_id="u2"),
+            ConversationTurn(role="assistant", text="Done - I changed this chat to Level 4 - Full Access.", turn_id="a2"),
+            ConversationTurn(role="user", text="Give me three build ideas for a memory dashboard", turn_id="u3"),
+            ConversationTurn(
+                role="assistant",
+                text="\n".join(
+                    [
+                        "Three concrete directions:",
+                        "1. Recall Audit Board",
+                        "2. Memory Timeline Explorer",
+                        "3. Live Stress-Test Panel",
+                    ]
+                ),
+                turn_id="a3",
+            ),
+        ],
+    )
+
+    assert frame.reference_resolution.resolved is True
+    assert frame.reference_resolution.kind == "list_item"
+    assert frame.reference_resolution.value == "Memory Timeline Explorer"
+
+
+def test_short_action_option_reference_uses_newer_list_context() -> None:
+    frame = build_conversation_frame(
+        current_message="Let's do two",
+        turns=[
+            ConversationTurn(role="user", text="Change my access level to three please", turn_id="u1"),
+            ConversationTurn(role="assistant", text="Done - I changed this chat to Level 3 - Research + Build.", turn_id="a1"),
+            ConversationTurn(role="user", text="Give me three build ideas for a memory dashboard", turn_id="u2"),
+            ConversationTurn(
+                role="assistant",
+                text="\n".join(
+                    [
+                        "Three concrete directions:",
+                        "1. Recall Audit Board",
+                        "2. Memory Timeline Explorer",
+                        "3. Live Stress-Test Panel",
+                    ]
+                ),
+                turn_id="a2",
+            ),
+        ],
+    )
+
+    assert frame.reference_resolution.resolved is True
+    assert frame.reference_resolution.kind == "list_item"
+    assert frame.reference_resolution.value == "Memory Timeline Explorer"
+
+
 def test_conversation_frame_preserves_hot_turns_and_compacts_older_context() -> None:
     turns = [
         ConversationTurn(role="user", text=f"older planning turn {index}", turn_id=f"u{index}")
