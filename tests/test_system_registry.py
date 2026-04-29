@@ -31,6 +31,9 @@ class SystemRegistryTests(SparkTestCase):
         self.assertEqual(records[("system", "spark_swarm")]["kind"], "system")
         self.assertEqual(records[("system", "spark_browser")]["status"], "ready")
         self.assertEqual(records[("system", "spark_voice")]["status"], "available")
+        self.assertEqual(records[("system", "spark_spawner")]["status"], "configured")
+        self.assertEqual(records[("system", "spark_local_work")]["status"], "available")
+        self.assertIn("repo_inspection", records[("system", "spark_local_work")]["capabilities"])
         self.assertEqual(records[("chip", "startup-yc")]["kind"], "chip")
         self.assertTrue(records[("chip", "startup-yc")]["pinned"])
         self.assertEqual(records[("chip", "spark-browser")]["status"], "active")
@@ -44,6 +47,10 @@ class SystemRegistryTests(SparkTestCase):
         )
         self.assertIn(
             "governed browser search and page inspection",
+            payload["summary"]["current_capabilities"],
+        )
+        self.assertIn(
+            "operator-governed local repo/file inspection through Codex or Spawner workflows",
             payload["summary"]["current_capabilities"],
         )
         self.assertGreaterEqual(int(payload["summary"]["onboarding_contract_count"]), 1)
@@ -123,6 +130,9 @@ class SystemRegistryTests(SparkTestCase):
         self.assertIn("Active chips:", reply)
         self.assertIn("startup-yc", reply)
         self.assertIn("spark-browser", reply)
+        self.assertIn("Spark Spawner:", reply)
+        self.assertIn("Spark Local Work:", reply)
+        self.assertIn("Local repo/file inspection is available", reply)
 
     def test_system_registry_query_detection_covers_capability_and_surroundings_questions(self) -> None:
         self.assertTrue(looks_like_system_registry_query("What can you do right now?"))

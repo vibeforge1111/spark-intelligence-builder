@@ -16,12 +16,14 @@ from spark_intelligence.state.db import StateDB
 
 
 _SYSTEM_ROLE_HINTS: dict[str, str] = {
-    "spark_intelligence_builder": "Runtime owner for delivery, operator controls, attachment state, persona state, and final user-visible replies.",
+    "spark_intelligence_builder": "Runtime owner for delivery, operator controls, attachment state, persona state, routing, and final user-visible replies.",
     "spark_researcher": "Primary intelligence core behind provider-backed advisory and normal reasoning.",
     "spark_swarm": "Deep-work escalation and collective coordination surface for parallel or multi-node work.",
     "spark_browser": "Governed browser/search surface for page inspection, source capture, and browse workflows.",
     "spark_voice": "Speech I/O surface for transcription and synthesis around the Builder-owned personality.",
     "spark_memory": "Persistent local memory and observability state used across sessions and runtime surfaces.",
+    "spark_spawner": "Mission, schedule, Kanban, and workflow execution surface for operator-governed work.",
+    "spark_local_work": "Operator-governed local project/file work through Codex and Spawner workflows.",
 }
 
 _SYSTEM_CAPABILITY_HINTS: dict[str, list[str]] = {
@@ -31,6 +33,8 @@ _SYSTEM_CAPABILITY_HINTS: dict[str, list[str]] = {
     "spark_browser": ["web_search", "page_inspection", "source_capture"],
     "spark_voice": ["speech_to_text", "text_to_speech"],
     "spark_memory": ["runtime_memory", "observability", "state_lookup"],
+    "spark_spawner": ["mission_control", "kanban_board", "schedules", "workflow_execution"],
+    "spark_local_work": ["local_file_inspection", "repo_inspection", "codex_supervised_work", "tests_and_commits"],
 }
 
 _KNOWN_CHIP_ROLE_HINTS: dict[str, str] = {
@@ -148,7 +152,7 @@ def looks_like_system_registry_query(message: str) -> bool:
     return any(signal in lowered_message for signal in direct_signals)
 
 
-def build_system_registry(config_manager: ConfigManager, state_db: StateDB) -> SystemRegistrySnapshot:
+def build_system_registry(config_manager: ConfigManager, state_db: StateDB, *, probe_browser: bool = True) -> SystemRegistrySnapshot:
     from spark_intelligence.auth.runtime import build_auth_status_report
     from spark_intelligence.gateway.runtime import gateway_status
     from spark_intelligence.researcher_bridge import researcher_bridge_status
@@ -160,7 +164,7 @@ def build_system_registry(config_manager: ConfigManager, state_db: StateDB) -> S
     researcher = researcher_bridge_status(config_manager=config_manager, state_db=state_db)
     swarm = swarm_status(config_manager, state_db)
     auth_report = build_auth_status_report(config_manager=config_manager, state_db=state_db)
-    browser = _collect_browser_registry_payload(config_manager)
+    browser = _collect_browser_registry_payload(config_manager) if probe_browser else None
     config = config_manager.load()
     active_chip_keys = set(str(item) for item in (attachment_context.get("active_chip_keys") or []) if str(item))
     pinned_chip_keys = set(str(item) for item in (attachment_context.get("pinned_chip_keys") or []) if str(item))
@@ -186,6 +190,8 @@ def build_system_registry(config_manager: ConfigManager, state_db: StateDB) -> S
                 attachment_context=attachment_context,
             ),
             _build_memory_record(),
+            _build_spawner_record(config_manager=config_manager),
+            _build_local_work_record(config_manager=config_manager),
         ]
     )
     records.extend(_build_adapter_records(channel_records=channel_records))
@@ -327,6 +333,8 @@ def build_system_registry_direct_reply(
         "spark_browser",
         "spark_voice",
         "spark_memory",
+        "spark_spawner",
+        "spark_local_work",
     ):
         record = records.get(system_key)
         if not isinstance(record, dict):
@@ -544,6 +552,53 @@ def _build_memory_record() -> SystemRegistryRecord:
     )
 
 
+def _build_spawner_record(*, config_manager: ConfigManager) -> SystemRegistryRecord:
+    api_url = str(config_manager.get_path("spark.spawner.api_url", default="http://127.0.0.1:5173") or "").strip()
+    return SystemRegistryRecord(
+        record_id="system:spark_spawner",
+        kind="system",
+        key="spark_spawner",
+        label="Spark Spawner",
+        role=_SYSTEM_ROLE_HINTS["spark_spawner"],
+        status="configured" if api_url else "available",
+        attached=True,
+        active=bool(api_url),
+        pinned=False,
+        available=True,
+        degraded=False,
+        requires_restart=False,
+        capabilities=_SYSTEM_CAPABILITY_HINTS["spark_spawner"],
+        limitations=[
+            "Health is verified by diagnostics/status probes; this registry row records the configured workflow surface.",
+        ],
+        metadata={"api_url": api_url or None},
+    )
+
+
+def _build_local_work_record(*, config_manager: ConfigManager) -> SystemRegistryRecord:
+    workspace_home = str(config_manager.get_path("workspace.home", default=config_manager.paths.home) or "").strip()
+    return SystemRegistryRecord(
+        record_id="system:spark_local_work",
+        kind="system",
+        key="spark_local_work",
+        label="Spark Local Work",
+        role=_SYSTEM_ROLE_HINTS["spark_local_work"],
+        status="available",
+        attached=True,
+        active=True,
+        pinned=False,
+        available=True,
+        degraded=False,
+        requires_restart=False,
+        capabilities=_SYSTEM_CAPABILITY_HINTS["spark_local_work"],
+        limitations=[
+            "Use operator-governed Codex/Spawner workflows for local repo/file inspection; do not imply raw Telegram filesystem access.",
+            "Confirm the target repo/component before file-writing or build-quality claims.",
+        ],
+        metadata={"workspace_home": workspace_home or None},
+    )
+
+
 def _build_adapter_records(*, channel_records: dict[str, Any]) -> list[SystemRegistryRecord]:
     records: list[SystemRegistryRecord] = []
     for channel_id in sorted(channel_records):
@@ -730,6 +785,10 @@ def _derive_current_capabilities(records: list[SystemRegistryRecord]) -> list[st
         capabilities.append("governed browser search and page inspection")
     if "spark_voice" in active_systems:
         capabilities.append("voice transcription and speech replies")
+    if "spark_spawner" in active_systems:
+        capabilities.append("Spawner mission, schedule, Kanban, and workflow control")
+    if "spark_local_work" in active_systems:
+        capabilities.append("operator-governed local repo/file inspection through Codex or Spawner workflows")
     if adapters:
         capabilities.append(f"messaging on {', '.join(adapters)}")
     if providers:
@@ -799,6 +858,10 @@ def _format_system_registry_direct_reply_line(record: dict[str, Any]) -> str:
         detail = "Speech I/O is attached." if status in {"ready", "available"} else limitations[:1]
     elif key == "spark_memory":
         detail = "Persistent memory and observability are active."
+    elif key == "spark_spawner":
+        detail = "Mission, schedule, Kanban, and workflow control are configured."
+    elif key == "spark_local_work":
+        detail = "Local repo/file inspection is available through operator-governed Codex or Spawner workflows."
     else:
         detail = limitations[:1]
     suffix = ""

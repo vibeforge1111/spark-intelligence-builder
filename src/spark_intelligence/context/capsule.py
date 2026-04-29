@@ -12,6 +12,7 @@ from spark_intelligence.jobs.service import list_job_records
 from spark_intelligence.memory import inspect_human_memory_in_memory
 from spark_intelligence.security.prompt_boundaries import sanitize_prompt_boundary_text
 from spark_intelligence.state.db import StateDB
+from spark_intelligence.system_registry import build_system_registry
 from spark_intelligence.workflow_recovery import latest_pending_tasks, latest_procedural_lessons
 
 
@@ -50,14 +51,16 @@ class ContextCapsule:
     def source_ledger(self) -> list[dict[str, Any]]:
         priorities = {
             "current_state": (1, "authority"),
-            "diagnostics": (2, "authority"),
-            "pending_tasks": (3, "workflow_recovery"),
-            "procedural_lessons": (4, "procedural_advisory"),
-            "recent_conversation": (5, "supporting"),
-            "workflow_state": (6, "advisory"),
+            "runtime_capabilities": (2, "capability_authority"),
+            "diagnostics": (3, "authority"),
+            "pending_tasks": (4, "workflow_recovery"),
+            "procedural_lessons": (5, "procedural_advisory"),
+            "recent_conversation": (6, "supporting"),
+            "workflow_state": (7, "advisory"),
         }
         notes = {
             "current_state": "Saved focus, plan, blocker, status, and preferences. Use first when active current facts exist.",
+            "runtime_capabilities": "Verified local runtime capability state. Use when answering what Spark can inspect, route, or execute.",
             "diagnostics": "Latest scan counts and clean/failure status. Health evidence only; does not close user goals.",
             "pending_tasks": "Interrupted or unfinished work. Use to resume without asking what happened.",
             "procedural_lessons": "Learned operating corrections from previous mistakes, target drift, timeouts, and self-review gaps.",
@@ -89,6 +92,7 @@ class ContextCapsule:
             "If diagnostics status is clean_latest_scan_no_failures_or_findings, treat the latest scan as clean without asking to load the note.",
             "Do not infer that an active focus, plan, or blocker is resolved only because diagnostics or maintenance checks are clean.",
             "If current_state lists an active focus or plan and there is no explicit closure evidence, say the system evidence is green but the focus/plan remains open until the user closes it.",
+            "If runtime_capabilities list local repo/file/Codex/Spawner capability, do not underclaim by saying Spark cannot inspect local projects; name the operator-governed route and any limitations instead.",
             "If pending_tasks are present and the user asks to continue, resume, retry, or asks what was next, use pending_tasks before asking what happened.",
             "If procedural_lessons are present, treat them as operating guidance about how to avoid repeating earlier mistakes, not as user facts.",
             "If the user asks whether context survived across turns, verify by naming the current focus, current plan, latest diagnostics status, and maintenance summary from this capsule; do not replace that with an older handoff checklist or new mission proposal.",
@@ -130,6 +134,10 @@ def build_spark_context_capsule(
             session_id=session_id,
             channel_kind=channel_kind,
             request_id=request_id,
+        ),
+        "runtime_capabilities": _build_runtime_capability_lines(
+            config_manager=config_manager,
+            state_db=state_db,
         ),
         "pending_tasks": _build_pending_task_lines(
             state_db=state_db,
@@ -257,6 +265,39 @@ def _build_recent_conversation_lines(
 
     recent_turns = transcript[-(turn_limit * 2) :]
     return [f"- {role}: {_compact(text, 260)}" for role, text in recent_turns]
+
+
+def _build_runtime_capability_lines(*, config_manager: ConfigManager, state_db: StateDB) -> list[str]:
+    try:
+        payload = build_system_registry(config_manager, state_db, probe_browser=False).to_payload()
+    except Exception:
+        return []
+    lines: list[str] = []
+    workspace_id = str(payload.get("workspace_id") or "").strip()
+    if workspace_id:
+        lines.append(f"- workspace_id: {workspace_id}")
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    capabilities = [str(item).strip() for item in (summary.get("current_capabilities") or []) if str(item).strip()]
+    for capability in capabilities[:8]:
+        lines.append(f"- capability: {_compact(capability, 180)}")
+    records = [
+        record
+        for record in (payload.get("records") or [])
+        if isinstance(record, dict)
+        and str(record.get("kind") or "") == "system"
+        and str(record.get("key") or "") in {"spark_local_work", "spark_spawner", "spark_intelligence_builder", "spark_memory"}
+    ]
+    records.sort(key=lambda record: str(record.get("key") or ""))
+    for record in records:
+        capabilities_text = ",".join(str(item) for item in (record.get("capabilities") or [])[:5] if str(item))
+        line = f"- system: {record.get('label') or record.get('key')} status={record.get('status') or 'unknown'}"
+        if capabilities_text:
+            line += f" caps={capabilities_text}"
+        limitations = [str(item).strip() for item in (record.get("limitations") or []) if str(item).strip()]
+        if limitations:
+            line += f" limitation={_compact(limitations[0], 180)}"
+        lines.append(line)
+    return lines
 
 
 def _build_pending_task_lines(*, state_db: StateDB, human_id: str, limit: int = 3) -> list[str]:

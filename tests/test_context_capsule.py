@@ -126,15 +126,27 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertIn("finding_signatures: 0", rendered)
         self.assertIn("status: clean_latest_scan_no_failures_or_findings", rendered)
         self.assertIn("connector_health: ok: 2", rendered)
+        self.assertIn("[runtime_capabilities]", rendered)
+        self.assertIn("operator-governed local repo/file inspection through Codex or Spawner workflows", rendered)
+        self.assertIn("Spark Local Work", rendered)
         ledger = capsule.source_ledger()
         self.assertEqual(
             [item["source"] for item in ledger],
-            ["current_state", "diagnostics", "pending_tasks", "procedural_lessons", "recent_conversation", "workflow_state"],
+            [
+                "current_state",
+                "runtime_capabilities",
+                "diagnostics",
+                "pending_tasks",
+                "procedural_lessons",
+                "recent_conversation",
+                "workflow_state",
+            ],
         )
         self.assertEqual(ledger[0]["role"], "authority")
-        self.assertEqual(ledger[1]["role"], "authority")
-        self.assertEqual(ledger[5]["role"], "advisory")
-        self.assertIn("does not close user goals", ledger[1]["note"])
+        self.assertEqual(ledger[1]["role"], "capability_authority")
+        self.assertEqual(ledger[2]["role"], "authority")
+        self.assertEqual(ledger[6]["role"], "advisory")
+        self.assertIn("does not close user goals", ledger[2]["note"])
 
     def test_context_capsule_includes_pending_tasks_and_procedural_lessons_for_resume(self) -> None:
         record_pending_task_timeout(
@@ -177,10 +189,10 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertIn("kind=bad_self_review", rendered)
         self.assertIn("Inspect target repo, diff, route/demo state, and tests", rendered)
         ledger = capsule.source_ledger()
-        self.assertEqual(ledger[2]["source"], "pending_tasks")
-        self.assertEqual(ledger[2]["role"], "workflow_recovery")
-        self.assertEqual(ledger[3]["source"], "procedural_lessons")
-        self.assertEqual(ledger[3]["role"], "procedural_advisory")
+        self.assertEqual(ledger[3]["source"], "pending_tasks")
+        self.assertEqual(ledger[3]["role"], "workflow_recovery")
+        self.assertEqual(ledger[4]["source"], "procedural_lessons")
+        self.assertEqual(ledger[4]["role"], "procedural_advisory")
 
     def test_context_capsule_contract_covers_telegram_arbitration_regressions(self) -> None:
         prompts = [
