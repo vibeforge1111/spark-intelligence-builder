@@ -13,6 +13,7 @@ _KNOWN_SPARK_REPOS: dict[str, tuple[str, ...]] = {
     "spark-intelligence-builder": ("builder_runtime", "memory_kernel", "telegram_runtime"),
     "domain-chip-memory": ("memory_chip", "memory_eval_harness", "sidecar_contracts"),
     "spawner-ui": ("spawner_ui", "mission_control", "kanban", "operator_dashboard"),
+    "spark-memory-quality-dashboard": ("memory_quality_dashboard", "operator_dashboard", "memory_eval_surface"),
     "spark-telegram-bot": ("telegram_gateway", "bot_runtime"),
     "spark-cli": ("installer_cli", "local_operator_cli"),
 }
@@ -275,6 +276,8 @@ def _capabilities_for(*, path: Path, components: list[str], config_record: dict[
         capabilities.extend(["memory_runtime", "telegram_runtime", "context_capsule"])
     if "memory_chip" in component_set:
         capabilities.extend(["memory_evaluation", "sidecar_contracts"])
+    if "memory_quality_dashboard" in component_set:
+        capabilities.extend(["memory_quality_monitoring", "operator_ui"])
     return _dedupe(capabilities)
 
 
@@ -291,6 +294,8 @@ def _owner_system_for(key: str) -> str:
         return "telegram_gateway"
     if key == "domain-chip-memory":
         return "spark_memory"
+    if key == "spark-memory-quality-dashboard":
+        return "spark_memory_quality"
     return "spark_local_work"
 
 

@@ -52,3 +52,22 @@ class LocalProjectIndexTests(SparkTestCase):
         self.assertIn("spawner-ui", records)
         self.assertEqual(records["spawner-ui"]["path"], str(installed_spawner.resolve()))
         self.assertEqual(records["spawner-ui"]["source"], "installed_spark_module")
+
+    def test_build_local_project_index_discovers_memory_quality_dashboard_as_separate_repo(self) -> None:
+        dashboard_root = self.home / "spark-memory-quality-dashboard"
+        dashboard_root.mkdir(parents=True)
+        (dashboard_root / "package.json").write_text('{"scripts":{"test":"vitest"}}', encoding="utf-8")
+        (dashboard_root / "src").mkdir()
+        (dashboard_root / "tests").mkdir()
+        self.config_manager.set_path("spark.local_projects.include_attachment_repos", False)
+        self.config_manager.set_path("spark.local_projects.include_known_spark_repos", True)
+
+        payload = build_local_project_index(self.config_manager, probe_git=False).to_payload()
+        records = {record["key"]: record for record in payload["records"]}
+
+        self.assertIn("spark-memory-quality-dashboard", records)
+        record = records["spark-memory-quality-dashboard"]
+        self.assertIn(record["source"], {"known_spark_repo", "known_desktop_repo"})
+        self.assertIn("memory_quality_dashboard", record["components"])
+        self.assertIn("memory_quality_monitoring", record["capabilities"])
+        self.assertEqual(record["owner_system"], "spark_memory_quality")

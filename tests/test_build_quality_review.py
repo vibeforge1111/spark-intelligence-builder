@@ -106,6 +106,59 @@ class BuildQualityReviewTests(SparkTestCase):
         self.assertEqual(result.facts["demo"]["status"], "passed")
         self.assertIn("complete enough to rate", result.reply_text)
 
+    def test_build_quality_review_targets_standalone_memory_quality_dashboard(self) -> None:
+        dashboard_root = self.home / "spark-memory-quality-dashboard"
+        dashboard_root.mkdir(parents=True)
+        (dashboard_root / "package.json").write_text('{"scripts":{"test":"vitest"}}', encoding="utf-8")
+        (dashboard_root / "src").mkdir()
+        (dashboard_root / "tests").mkdir()
+        subprocess.run(["git", "init"], cwd=dashboard_root, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "add", "."], cwd=dashboard_root, check=True, capture_output=True, text=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.email=spark-tests@example.com",
+                "-c",
+                "user.name=Spark Tests",
+                "commit",
+                "-m",
+                "Initial dashboard fixture",
+            ],
+            cwd=dashboard_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.config_manager.set_path(
+            "spark.local_projects.roots",
+            [str(self.repo_root), str(self.memory_chip_root), str(dashboard_root)],
+        )
+        set_runtime_state_value(
+            state_db=self.state_db,
+            state_key="build_quality:last_tests:spark-memory-quality-dashboard",
+            value=json.dumps(
+                {
+                    "status": "passed",
+                    "command": "npm test",
+                    "summary": "14 passed",
+                },
+                sort_keys=True,
+            ),
+            component="test",
+        )
+
+        result = build_build_quality_review_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="Review the quality of the memory quality dashboard build in spark-memory-quality-dashboard.",
+        )
+
+        self.assertEqual(result.facts["target_repo"], "spark-memory-quality-dashboard")
+        self.assertTrue(result.facts["evidence_complete"])
+        self.assertEqual(result.facts["tests"]["status"], "passed")
+        self.assertIn("complete enough to rate", result.reply_text)
+
     def test_researcher_reply_routes_build_quality_review_without_provider(self) -> None:
         with patch(
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
