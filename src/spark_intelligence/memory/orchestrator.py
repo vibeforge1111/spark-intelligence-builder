@@ -1805,18 +1805,27 @@ def hybrid_memory_retrieve(
         predicate=normalized_predicate,
         entity_key=normalized_entity_key,
     )
-    lane_summaries.append(
-        _build_graph_sidecar_shadow_lane(
-            config_manager=config_manager,
-            sdk_module=adapter.sdk_module,
-            query=normalized_query,
-            subject=normalized_subject,
-            predicate=normalized_predicate,
-            entity_key=normalized_entity_key,
-            as_of=normalized_as_of,
-            limit=normalized_limit,
-            local_records=[entry["record"] for entry in ranked_entries],
-        )
+    graph_sidecar_lane = _build_graph_sidecar_shadow_lane(
+        config_manager=config_manager,
+        sdk_module=adapter.sdk_module,
+        query=normalized_query,
+        subject=normalized_subject,
+        predicate=normalized_predicate,
+        entity_key=normalized_entity_key,
+        as_of=normalized_as_of,
+        limit=normalized_limit,
+        local_records=[entry["record"] for entry in ranked_entries],
+    )
+    graph_sidecar_records = graph_sidecar_lane.pop("hit_records", [])
+    lane_summaries.append(graph_sidecar_lane)
+    _extend_hybrid_ranked_entries(
+        ranked_entries,
+        lane="typed_temporal_graph",
+        source_class="graphiti_temporal_graph",
+        records=graph_sidecar_records,
+        query=normalized_query,
+        predicate=normalized_predicate,
+        entity_key=normalized_entity_key,
     )
     wiki_lane, wiki_records = _build_wiki_packet_lane(
         config_manager=config_manager,
@@ -5815,7 +5824,26 @@ def _build_graph_sidecar_shadow_lane(
         return lane
 
     try:
-        sidecars = build_sidecars(enable_graphiti=enabled, enable_mem0_shadow=False)
+        graphiti_backend = _optional_string(
+            config_manager.get_path("spark.memory.sidecars.graphiti.backend", default=None)
+        )
+        graphiti_db_path = _graphiti_sidecar_db_path(config_manager)
+        graphiti_group_id = str(
+            config_manager.get_path("spark.memory.sidecars.graphiti.group_id", default="spark-memory")
+            or "spark-memory"
+        )
+        try:
+            sidecars = build_sidecars(
+                enable_graphiti=enabled,
+                enable_mem0_shadow=False,
+                graphiti_backend=graphiti_backend,
+                graphiti_db_path=graphiti_db_path,
+                graphiti_group_id=graphiti_group_id,
+            )
+        except TypeError:
+            sidecars = build_sidecars(enable_graphiti=enabled, enable_mem0_shadow=False)
+            graphiti_backend = None
+            graphiti_db_path = None
         graph_sidecar = sidecars["graphiti_temporal_graph"]
         episodes = [
             to_episode(_sidecar_record_namespace(record), source_class=_hybrid_memory_dict_source_class(record))
@@ -5832,24 +5860,35 @@ def _build_graph_sidecar_shadow_lane(
         )
         retrieval = graph_sidecar.retrieve(request)
         health = graph_sidecar.health()
+        sidecar_hits = list(getattr(retrieval, "hits", []) or [])
+        hit_records = [_graph_sidecar_hit_record(hit) for hit in sidecar_hits]
+        retrieval_trace = getattr(retrieval, "trace", {}) or {}
+        backend_configured = bool(retrieval_trace.get("backend_configured"))
+        if not enabled:
+            reason = "graph_sidecar_shadow_disabled"
+        elif backend_configured and sidecar_hits:
+            reason = "graph_sidecar_shadow_live_hits"
+        elif backend_configured:
+            reason = "graph_sidecar_shadow_live_no_hits"
+        else:
+            reason = "graph_sidecar_shadow_prepared_backend_not_configured"
         lane.update(
             {
-                "status": getattr(retrieval, "trace", {}).get("status") or getattr(health, "status", None) or "prepared",
+                "status": retrieval_trace.get("status") or getattr(health, "status", None) or "prepared",
                 "abstained": True,
-                "record_count": len(getattr(retrieval, "hits", []) or []),
-                "reason": (
-                    "graph_sidecar_shadow_disabled"
-                    if not enabled
-                    else "graph_sidecar_shadow_prepared_backend_not_configured"
-                ),
+                "record_count": len(sidecar_hits),
+                "reason": reason,
                 "mode": getattr(graph_sidecar, "mode", "disabled"),
                 "enabled": enabled,
+                "backend": graphiti_backend or "not_configured",
+                "backend_configured": backend_configured,
                 "episode_export_count": len(episodes),
                 "upsert_preview_count": len(upsert_traces),
-                "sidecar_hit_count": len(getattr(retrieval, "hits", []) or []),
-                "retrieval_trace": getattr(retrieval, "trace", {}),
+                "sidecar_hit_count": len(sidecar_hits),
+                "retrieval_trace": retrieval_trace,
                 "health": asdict(health) if is_dataclass(health) else health,
                 "upsert_trace_samples": upsert_traces[:2],
+                "hit_records": hit_records,
             }
         )
     except Exception as exc:
@@ -5861,6 +5900,57 @@ def _build_graph_sidecar_shadow_lane(
             }
         )
     return lane
+
+
+def _graphiti_sidecar_db_path(config_manager: ConfigManager) -> str | None:
+    configured = _optional_string(config_manager.get_path("spark.memory.sidecars.graphiti.db_path", default=None))
+    if not configured:
+        return None
+    home = str(config_manager.paths.home)
+    return configured.replace("{home}", home).replace("$SPARK_HOME", home)
+
+
+def _graph_sidecar_hit_record(hit: Any) -> dict[str, Any]:
+    if is_dataclass(hit):
+        payload = asdict(hit)
+    elif isinstance(hit, dict):
+        payload = dict(hit)
+    else:
+        payload = {
+            "source_record_id": getattr(hit, "source_record_id", None),
+            "source_class": getattr(hit, "source_class", "graphiti_temporal_graph"),
+            "text": getattr(hit, "text", ""),
+            "score": getattr(hit, "score", 0.0),
+            "provenance": getattr(hit, "provenance", {}),
+            "validity": getattr(hit, "validity", {}),
+            "confidence": getattr(hit, "confidence", None),
+            "entity_keys": getattr(hit, "entity_keys", []),
+            "metadata": getattr(hit, "metadata", {}),
+        }
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    provenance = payload.get("provenance") if isinstance(payload.get("provenance"), dict) else {}
+    validity = payload.get("validity") if isinstance(payload.get("validity"), dict) else {}
+    entity_keys = payload.get("entity_keys") if isinstance(payload.get("entity_keys"), list) else []
+    return {
+        "source_record_id": str(payload.get("source_record_id") or provenance.get("uuid") or ""),
+        "source_class": str(payload.get("source_class") or "graphiti_temporal_graph"),
+        "memory_role": "graph_sidecar_hit",
+        "predicate": metadata.get("scope"),
+        "value": str(payload.get("text") or ""),
+        "text": str(payload.get("text") or ""),
+        "score": payload.get("score"),
+        "confidence": payload.get("confidence"),
+        "entity_key": entity_keys[0] if entity_keys else None,
+        "metadata": {
+            **metadata,
+            "source_class": str(payload.get("source_class") or "graphiti_temporal_graph"),
+            "memory_role": "graph_sidecar_hit",
+            "source_surface": "graphiti_temporal_graph",
+            "source_ref": provenance.get("uuid"),
+            "provenance": provenance,
+            "validity": validity,
+        },
+    }
 
 
 def _build_wiki_packet_lane(

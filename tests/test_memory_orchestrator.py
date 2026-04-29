@@ -585,6 +585,82 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(graph_lane["sidecar_hit_count"], 0)
         self.assertFalse(any(candidate.lane == "typed_temporal_graph" for candidate in result.candidates))
 
+    def test_hybrid_memory_retrieve_surfaces_live_graphiti_hits_as_supporting_candidates(self) -> None:
+        from domain_chip_memory import MemorySidecarHealthResult, MemorySidecarHit, MemorySidecarRetrievalResult
+
+        class FakeGraphSidecar:
+            mode = "shadow"
+
+            def upsert_episode(self, episode):
+                return SimpleNamespace(trace={"status": "persisted", "source_record_id": episode.source_record_id})
+
+            def retrieve(self, request):
+                return MemorySidecarRetrievalResult(
+                    sidecar_name="graphiti_temporal_graph",
+                    hits=[
+                        MemorySidecarHit(
+                            sidecar_name="graphiti_temporal_graph",
+                            source_class="graphiti_temporal_graph",
+                            source_record_id="graph-edge-1",
+                            text="The GTM launch blocker is creator approvals.",
+                            score=0.84,
+                            provenance={"source": "graphiti", "uuid": "graph-edge-1"},
+                            validity={"valid_at": "2026-04-29T10:00:00Z"},
+                            entity_keys=["named-object:gtm-launch"],
+                            metadata={"authority": "supporting_not_authoritative", "scope": "entity.blocker"},
+                        )
+                    ],
+                    trace={"status": "ok", "backend_configured": True, "hit_count": 1},
+                )
+
+            def health(self):
+                return MemorySidecarHealthResult(
+                    sidecar_name="graphiti_temporal_graph",
+                    status="ok",
+                    enabled=True,
+                    mode="shadow",
+                    details={"authority": "not_authoritative", "backend": "kuzu"},
+                )
+
+        self.config_manager.set_path("spark.memory.sidecars.graphiti.enabled", True)
+        self.config_manager.set_path("spark.memory.sidecars.graphiti.backend", "kuzu")
+        self.config_manager.set_path("spark.memory.sidecars.graphiti.db_path", "{home}/graphiti.kuzu")
+        fake_client = _HybridRetrievalMemoryClient()
+
+        def fake_build_sidecars(**kwargs):
+            self.assertEqual(kwargs.get("graphiti_backend"), "kuzu")
+            self.assertTrue(str(kwargs.get("graphiti_db_path")).endswith("graphiti.kuzu"))
+            return {"graphiti_temporal_graph": FakeGraphSidecar()}
+
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ), patch("domain_chip_memory.build_default_memory_sidecars", side_effect=fake_build_sidecars):
+            result = hybrid_memory_retrieve(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                query="What is blocking the GTM launch?",
+                subject="human:test",
+                predicate="entity.blocker",
+                entity_key="named-object:gtm-launch",
+                limit=5,
+                actor_id="test",
+            )
+
+        graph_lane = next(
+            lane
+            for lane in result.read_result.retrieval_trace["hybrid_memory_retrieve"]["lane_summaries"]
+            if lane["lane"] == "typed_temporal_graph"
+        )
+        self.assertEqual(graph_lane["status"], "ok")
+        self.assertEqual(graph_lane["reason"], "graph_sidecar_shadow_live_hits")
+        self.assertEqual(graph_lane["backend"], "kuzu")
+        self.assertEqual(graph_lane["sidecar_hit_count"], 1)
+        graph_candidates = [candidate for candidate in result.candidates if candidate.lane == "typed_temporal_graph"]
+        self.assertEqual(len(graph_candidates), 1)
+        self.assertEqual(graph_candidates[0].source_class, "graphiti_temporal_graph")
+        self.assertEqual(graph_candidates[0].record["metadata"]["authority"], "supporting_not_authoritative")
+
     def test_hybrid_memory_retrieve_reads_wiki_packets_as_supporting_context(self) -> None:
         wiki_dir = self.home / "wiki"
         wiki_dir.mkdir()
