@@ -3862,6 +3862,46 @@ def write_telegram_event_to_memory(
             default_role="event",
             reason="telegram_event_memory_writes_disabled",
         )
+    salience_decision = evaluate_memory_salience(
+        predicate=predicate,
+        value=value,
+        evidence_text=evidence_text,
+        operation="update",
+    )
+    if not salience_decision.should_write:
+        result = MemoryWriteResult(
+            status="skipped",
+            operation="event",
+            method="write_event",
+            memory_role="event",
+            accepted_count=0,
+            rejected_count=1,
+            skipped_count=0,
+            abstained=False,
+            retrieval_trace={"memory_salience": salience_decision.metadata()},
+            provenance=[],
+            reason=salience_decision.reason_code,
+        )
+        _record_memory_salience_policy_block(
+            state_db=state_db,
+            human_id=human_id,
+            predicate=predicate,
+            value=value,
+            evidence_text=evidence_text,
+            decision=salience_decision,
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=actor_id,
+        )
+        _record_memory_write_event(
+            state_db=state_db,
+            result=result,
+            human_id=human_id,
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=actor_id,
+        )
+        return result
     client = _load_sdk_client(config_manager)
     if client is None:
         result = MemoryWriteResult(
@@ -3896,6 +3936,7 @@ def write_telegram_event_to_memory(
         "memory_role": "event",
         "retention_class": "time_bound_event",
         "text": evidence_text,
+        **salience_decision.metadata(),
     }
     _record_memory_write_requested_events(
         state_db=state_db,
@@ -3904,6 +3945,7 @@ def write_telegram_event_to_memory(
         session_id=session_id,
         turn_id=turn_id,
         actor_id=actor_id,
+        salience_decision=salience_decision,
     )
     raw = _call_sdk_method(
         client,
@@ -3929,6 +3971,7 @@ def write_telegram_event_to_memory(
                 "event_name": event_name,
                 "normalized_value": value,
                 "value": value,
+                **salience_decision.metadata(),
             },
         },
     )
@@ -3951,6 +3994,7 @@ def write_telegram_event_to_memory(
             channel_kind=channel_kind,
             event_name=event_name,
             subject=subject,
+            salience_decision=salience_decision,
         )
     _record_memory_write_event(
         state_db=state_db,
@@ -4030,6 +4074,7 @@ def _consolidate_telegram_event_summary_observation(
     channel_kind: str | None,
     event_name: str,
     subject: str,
+    salience_decision: MemorySalienceDecision | None = None,
 ) -> None:
     suffix = str(predicate or "").strip().removeprefix("telegram.event.")
     if not suffix:
@@ -4063,6 +4108,7 @@ def _consolidate_telegram_event_summary_observation(
                 "normalized_value": value,
                 "value": value,
                 "consolidated_from_event": True,
+                **(salience_decision.metadata() if salience_decision is not None else {}),
             },
         },
     )
@@ -6633,8 +6679,10 @@ def _record_memory_write_requested_events(
     session_id: str | None,
     turn_id: str | None,
     actor_id: str,
+    salience_decision: MemorySalienceDecision | None = None,
 ) -> None:
     subject = _subject_for_human_id(human_id)
+    salience_facts = salience_decision.metadata() if salience_decision is not None else {}
     record_event(
         state_db,
         event_type="memory_write_requested",
@@ -6652,6 +6700,7 @@ def _record_memory_write_requested_events(
             "predicate_count": len(events),
             "predicates": [str(item.get("predicate") or "") for item in events if item.get("predicate")],
             "events": events,
+            **salience_facts,
         },
         provenance={"memory_role": "event"},
     )

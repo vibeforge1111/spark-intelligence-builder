@@ -9,6 +9,10 @@ _EXPLICIT_SAVE_RE = re.compile(
     re.I,
 )
 _CURRENT_STATE_RE = re.compile(r"\b(?:current|right now|active|priority|plan|focus|owner|blocker|status)\b", re.I)
+_TENTATIVE_DIRECTION_RE = re.compile(
+    r"\b(?:leaning toward|leaning towards|inclined toward|inclined towards|probably going with|likely going with)\b",
+    re.I,
+)
 _CORRECTION_RE = re.compile(r"\b(?:actually|correction|not\s+.+?\s+(?:i(?:'m| am)|my name is|is|owns|owned))\b", re.I)
 _SECRET_LIKE_RE = re.compile(
     r"\b(?:api[_\s-]?key|botfather|password|secret|private[_\s-]?key|access[_\s-]?token|bearer\s+[a-z0-9._-]+|sk-[a-z0-9]{8,})\b",
@@ -20,7 +24,9 @@ _HIGH_SIGNAL_PREDICATE_PARTS = {
     "blocker",
     "decision",
     "deadline",
+    "location",
     "metric",
+    "name",
     "next_action",
     "plan",
     "focus",
@@ -120,16 +126,19 @@ def evaluate_memory_salience(
         )
 
     if _EXPLICIT_SAVE_RE.search(text):
-        score += 0.35
+        score += 0.20
         reasons.append("explicit_save_signal")
     if _CURRENT_STATE_RE.search(text) or normalized_predicate.startswith(("profile.current_", "entity.")):
-        score += 0.25
+        score += 0.35
         reasons.append("current_state_signal")
     if _CORRECTION_RE.search(text):
         score += 0.25
         reasons.append("correction_or_supersession_signal")
+    if _TENTATIVE_DIRECTION_RE.search(text):
+        score += 0.15
+        reasons.append("tentative_direction_signal")
     if any(part in lowered_predicate for part in _HIGH_SIGNAL_PREDICATE_PARTS):
-        score += 0.20
+        score += 0.25
         reasons.append("high_signal_predicate")
     if lowered_predicate == "profile.preferred_name" and _CORRECTION_RE.search(text):
         score += 0.35
@@ -147,6 +156,8 @@ def evaluate_memory_salience(
         why_saved = "correction_or_supersession"
     elif "explicit_save_signal" in reasons:
         why_saved = "explicit_user_memory_request"
+    elif "tentative_direction_signal" in reasons:
+        why_saved = "tentative_project_direction"
     elif "current_state_signal" in reasons:
         why_saved = "active_current_state_fact"
     else:

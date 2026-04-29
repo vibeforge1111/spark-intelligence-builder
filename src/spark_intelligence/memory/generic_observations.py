@@ -1256,6 +1256,13 @@ def _parse_entity_priority_fact(value: str) -> EntityStateFact | None:
 
 def _parse_entity_decision_fact(value: str) -> EntityStateFact | None:
     match = re.fullmatch(
+        r"(?:we|i)(?:'re| are| am)?\s+(?:leaning\s+towards?|inclined\s+towards?|probably\s+going\s+with|likely\s+going\s+with)\s+(.+?)\s+for\s+(?:my|the)\s+(.+?)[.!]?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return _entity_fact(entity_label=match.group(2), attribute="decision", value=match.group(1))
+    match = re.fullmatch(
         r"(?:my|the)\s+(.+?)\s+decision\s+is\s+(.+?)[.!]?",
         value,
         flags=re.IGNORECASE,

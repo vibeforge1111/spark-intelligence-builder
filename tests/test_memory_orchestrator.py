@@ -36,6 +36,10 @@ from spark_intelligence.memory.episodic_events import (
     filter_telegram_memory_event_records,
     telegram_event_summary_predicate,
 )
+from spark_intelligence.memory.generic_observations import (
+    build_telegram_generic_observation_answer,
+    detect_telegram_generic_observation,
+)
 from spark_intelligence.memory.profile_facts import (
     build_profile_fact_event_history_answer,
     build_profile_fact_explanation_answer,
@@ -1219,6 +1223,46 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(call["metadata"]["location_preposition"], "on")
         self.assertEqual(call["metadata"]["revalidate_after_days"], 21)
 
+    def test_tentative_project_direction_promotes_to_entity_decision_with_salience(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        observation = detect_telegram_generic_observation(
+            "We are leaning toward founder-led onboarding for the GTM launch."
+        )
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(observation.predicate, "entity.decision")
+        self.assertEqual(observation.value, "founder-led onboarding")
+        self.assertEqual(
+            build_telegram_generic_observation_answer(observation=observation),
+            "I'll remember that the GTM launch decision is founder-led onboarding.",
+        )
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            result = write_profile_fact_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                predicate=observation.predicate,
+                value=observation.value,
+                evidence_text=observation.evidence_text,
+                fact_name=observation.fact_name,
+                session_id="session:gtm-direction",
+                turn_id="turn:gtm-direction",
+                channel_kind="telegram",
+                actor_id="telegram_generic_observation_loader",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        call = fake_client.observation_calls[0]
+        self.assertEqual(call["predicate"], "entity.decision")
+        self.assertEqual(call["metadata"]["entity_key"], "named-object:gtm-launch")
+        self.assertEqual(call["metadata"]["entity_label"], "GTM launch")
+        self.assertEqual(call["metadata"]["why_saved"], "tentative_project_direction")
+        self.assertIn("tentative_direction_signal", call["metadata"]["salience_reasons"])
+
     def test_current_state_lookup_preserves_matching_provenance_metadata(self) -> None:
         raw = memory_orchestrator._normalize_domain_lookup_result(
             result=SimpleNamespace(
@@ -2320,21 +2364,52 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(call["retention_class"], "time_bound_event")
         self.assertTrue(call["document_time"])
         self.assertTrue(call["valid_from"])
+        self.assertEqual(call["metadata"]["promotion_disposition"], "promote_structured_evidence")
+        self.assertIn("detected_structured_fact", call["metadata"]["salience_reasons"])
         summary_call = fake_client.observation_calls[0]
         self.assertEqual(summary_call["predicate"], "telegram.summary.latest_meeting")
         self.assertEqual(summary_call["value"], "meeting with Omar on May 3")
         self.assertEqual(summary_call["metadata"]["entity_key"], "telegram.summary.latest_meeting")
         self.assertEqual(summary_call["retention_class"], "active_state")
+        self.assertEqual(summary_call["metadata"]["promotion_stage"], "structured_evidence")
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(write_events)
         recorded_events = (write_events[0]["facts_json"] or {}).get("events") or []
         self.assertEqual(recorded_events[0]["predicate"], "telegram.event.meeting")
         self.assertEqual(recorded_events[0]["value"], "meeting with Omar on May 3")
         self.assertEqual(recorded_events[0]["retention_class"], "time_bound_event")
+        self.assertEqual(recorded_events[0]["promotion_disposition"], "promote_structured_evidence")
         self.assertEqual(
             build_telegram_memory_event_observation_answer(observation=detected),
             "I'll remember your meeting with Omar on May 3.",
         )
+
+    def test_telegram_event_salience_gate_blocks_secret_like_memory(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            result = write_telegram_event_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                predicate="telegram.event.meeting",
+                value="meeting about api key sk-testsecret123456 on May 3",
+                evidence_text="My meeting about api key sk-testsecret123456 is on May 3.",
+                event_name="telegram_event_meeting",
+                session_id="session:event-secret",
+                turn_id="turn:event-secret",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "skipped")
+        self.assertEqual(result.reason, "salience_secret_like_material")
+        self.assertEqual(fake_client.event_calls, [])
+        self.assertEqual(fake_client.observation_calls, [])
+        policy_records = recent_policy_gate_records(self.state_db, limit=10)
+        self.assertTrue(policy_records)
+        self.assertEqual(policy_records[0]["gate_name"], "memory.salience")
 
     def test_telegram_event_summary_current_state_overwrites_while_event_history_is_preserved(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
