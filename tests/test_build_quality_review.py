@@ -225,6 +225,7 @@ class BuildQualityReviewTests(SparkTestCase):
         self.assertIn("npm run export:spark", result.reply_text)
         self.assertIn("route/source trace map", result.reply_text)
         self.assertIn("context packet budget", result.reply_text)
+        self.assertIn("promotion-reason feed", result.reply_text)
         self.assertIn("domain-chip benchmark scorecards", result.reply_text)
         self.assertIn("Builder memory lanes", result.reply_text)
 

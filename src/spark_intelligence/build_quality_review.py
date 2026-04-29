@@ -121,6 +121,7 @@ def build_memory_quality_dashboard_operator_reply(
             "live Builder recall events",
             "route/source trace map and source-explanation links",
             "context packet budget and memory read feed",
+            "salience, policy-gate, lane-decision, and promotion-reason feed",
             "Builder memory lanes and quality gates",
             "quarantine, delivery, and pending task ledgers",
             "domain-chip-memory health history",
