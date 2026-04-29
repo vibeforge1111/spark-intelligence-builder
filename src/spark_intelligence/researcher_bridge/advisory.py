@@ -37,7 +37,9 @@ from spark_intelligence.capability_router import build_capability_router_prompt_
 from spark_intelligence.character_runtime import ensure_spark_character_path
 from spark_intelligence.build_quality_review import (
     build_build_quality_review_reply,
+    build_memory_quality_dashboard_operator_reply,
     looks_like_build_quality_review_query,
+    looks_like_memory_quality_dashboard_operator_query,
 )
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.context import build_spark_context_capsule
@@ -5511,6 +5513,14 @@ def _format_memory_route_source_reply(*, route_facts: dict[str, Any]) -> str | N
             "It inspected the target repo, route presence, git state, test evidence, and demo evidence before deciding "
             "whether a real rating was justified."
         )
+    elif routing_decision == "memory_quality_dashboard_operator" or bridge_mode == "memory_quality_dashboard_operator":
+        route_label = "memory-quality dashboard operator route"
+        source_line = "recorded dashboard repo, test, demo, and export evidence"
+        reason = (
+            "The previous answer was a deterministic operator launch read. "
+            "It used the recorded dashboard repo, demo URL, test evidence, and export command instead of inferring "
+            "dashboard state from stale workflow residue."
+        )
     if route_label is None:
         return None
     lines = [f"I answered from the {route_label} for the previous Telegram turn."]
@@ -5523,11 +5533,18 @@ def _format_memory_route_source_reply(*, route_facts: dict[str, Any]) -> str | N
             f"- source: {source_line}",
         ]
     )
-    if routing_decision == "build_quality_review_direct" or bridge_mode == "build_quality_review_direct":
+    if (
+        routing_decision == "build_quality_review_direct"
+        or bridge_mode == "build_quality_review_direct"
+        or routing_decision == "memory_quality_dashboard_operator"
+        or bridge_mode == "memory_quality_dashboard_operator"
+    ):
         for key, label in (
             ("target_repo", "target_repo"),
             ("verdict", "verdict"),
             ("evidence_complete", "evidence_complete"),
+            ("url", "url"),
+            ("export_command", "export_command"),
         ):
             value = route_facts.get(key)
             if value is not None and str(value).strip():
@@ -7153,6 +7170,69 @@ def build_researcher_reply(
             config_path=None,
             attachment_context=attachment_context,
             routing_decision="memory_quality_evaluation_plan",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+
+    if not personality_context_extra and looks_like_memory_quality_dashboard_operator_query(user_message):
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        dashboard = build_memory_quality_dashboard_operator_reply(
+            config_manager=config_manager,
+            state_db=state_db,
+            user_message=user_message,
+        )
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_quality_dashboard_operator",
+            routing_decision="memory_quality_dashboard_operator",
+        )
+        evidence_summary = (
+            "status=memory_quality_dashboard_operator "
+            f"target_repo={dashboard.facts.get('target_repo') or 'unknown'} "
+            f"url={dashboard.facts.get('url') or 'unknown'}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered a memory-quality dashboard operator launch query.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_quality_dashboard_operator",
+            facts=_bridge_event_facts(
+                routing_decision="memory_quality_dashboard_operator",
+                bridge_mode="memory_quality_dashboard_operator",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "query_text": str(user_message or "").strip(),
+                    **dashboard.facts,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=dashboard.reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_quality_dashboard_operator",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_quality_dashboard_operator",
             active_chip_key=None,
             active_chip_task_type=None,
             active_chip_evaluate_used=False,

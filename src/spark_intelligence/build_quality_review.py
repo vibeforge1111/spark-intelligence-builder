@@ -31,6 +31,28 @@ _FALSE_POSITIVE_SIGNALS = (
     "communication quality",
     "quality evaluation",
 )
+_MEMORY_QUALITY_DASHBOARD_SIGNALS = (
+    "memory quality dashboard",
+    "memory-quality dashboard",
+    "memory dashboard",
+    "recall trust monitor",
+    "spark-memory-quality-dashboard",
+)
+_DASHBOARD_OPERATOR_ACTIONS = (
+    "where",
+    "url",
+    "link",
+    "open",
+    "launch",
+    "access",
+    "show",
+    "what is it showing",
+    "what evidence",
+    "what data",
+    "refresh",
+    "export",
+    "operator",
+)
 
 
 @dataclass(frozen=True)
@@ -51,6 +73,59 @@ def looks_like_build_quality_review_query(message: str) -> bool:
     if "quality" in lowered and buildish and any(verb in lowered for verb in ("review", "rate", "assess", "judge")):
         return True
     return False
+
+
+def looks_like_memory_quality_dashboard_operator_query(message: str) -> bool:
+    lowered = str(message or "").strip().casefold()
+    if not lowered:
+        return False
+    if not any(signal in lowered for signal in _MEMORY_QUALITY_DASHBOARD_SIGNALS):
+        return False
+    if looks_like_build_quality_review_query(message):
+        return False
+    return any(action in lowered for action in _DASHBOARD_OPERATOR_ACTIONS)
+
+
+def build_memory_quality_dashboard_operator_reply(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    user_message: str,
+) -> BuildQualityEvidence:
+    target = evaluate_target_repo_confirmation(
+        config_manager,
+        task=f"open memory quality dashboard: {user_message}",
+        probe_git=False,
+    ).to_payload()
+    repo_key = str(target.get("selected_repo_key") or "spark-memory-quality-dashboard").strip()
+    repo_path = str(target.get("selected_repo_path") or "").strip()
+    if repo_key != "spark-memory-quality-dashboard":
+        repo_key = "spark-memory-quality-dashboard"
+        repo_path = _known_dashboard_repo_path(config_manager) or repo_path
+
+    repo = Path(repo_path) if repo_path else None
+    git = _collect_git_evidence(repo) if repo is not None else {"status": "missing_target_repo"}
+    tests = _collect_latest_test_evidence(state_db, repo_key=repo_key)
+    demo = _collect_demo_evidence(state_db, repo_key=repo_key, route={"status": "not_requested", "requested_routes": []})
+    facts = {
+        "status": "memory_quality_dashboard_operator",
+        "target_repo": repo_key,
+        "target_repo_path": repo_path or None,
+        "target_confirmation": target,
+        "git": git,
+        "tests": tests,
+        "demo": demo,
+        "url": demo.get("url"),
+        "export_command": "npm run export:spark",
+        "shown_evidence": [
+            "live Builder recall events",
+            "Builder memory lanes and quality gates",
+            "quarantine, delivery, and pending task ledgers",
+            "domain-chip-memory health history",
+            "domain-chip benchmark scorecards",
+        ],
+    }
+    return BuildQualityEvidence(reply_text=_format_dashboard_operator_reply(facts), facts=facts)
 
 
 def build_build_quality_review_reply(
@@ -115,6 +190,16 @@ def _collect_git_evidence(repo: Path) -> dict[str, Any]:
         "diff_stat": diff_stat.strip(),
         "staged_diff_stat": staged_diff_stat.strip(),
     }
+
+
+def _known_dashboard_repo_path(config_manager: ConfigManager) -> str | None:
+    roots = config_manager.get_path("spark.local_projects.roots", default=[]) or []
+    for root in roots:
+        path = Path(str(root)).expanduser()
+        if path.name == "spark-memory-quality-dashboard":
+            return str(path)
+    desktop_path = Path.home() / "Desktop" / "spark-memory-quality-dashboard"
+    return str(desktop_path) if desktop_path.exists() else None
 
 
 def _run_git(repo: Path, args: list[str]) -> str:
@@ -275,6 +360,31 @@ def _format_reply(facts: dict[str, Any]) -> str:
         lines.extend(["", "Next: run/record tests and demo evidence, then ask for the review again."])
     else:
         lines.extend(["", "Next: rate against product fit, correctness, polish, reliability, and regression risk."])
+    return "\n".join(lines)
+
+
+def _format_dashboard_operator_reply(facts: dict[str, Any]) -> str:
+    demo = facts.get("demo") or {}
+    tests = facts.get("tests") or {}
+    git = facts.get("git") or {}
+    url = str(facts.get("url") or demo.get("url") or "").strip()
+    shown_evidence = [str(item) for item in (facts.get("shown_evidence") or []) if str(item).strip()]
+    lines = ["Memory quality dashboard"]
+    lines.extend(
+        [
+            f"- URL: {url or 'not recorded yet'}",
+            f"- Repo: {facts.get('target_repo') or 'spark-memory-quality-dashboard'}",
+            f"- Git state: {git.get('status') or 'unknown'}",
+            f"- Tests: {_test_summary(tests)}",
+            f"- Demo: {_demo_summary(demo)}",
+            f"- Refresh data: `{facts.get('export_command') or 'npm run export:spark'}` in the dashboard repo",
+            "",
+            "Evidence shown",
+        ]
+    )
+    lines.extend(f"- {item}" for item in shown_evidence)
+    if not url:
+        lines.extend(["", "Next: start the dashboard and record demo evidence before treating the URL as live."])
     return "\n".join(lines)
 
 

@@ -6,7 +6,9 @@ from unittest.mock import patch
 
 from spark_intelligence.build_quality_review import (
     build_build_quality_review_reply,
+    build_memory_quality_dashboard_operator_reply,
     looks_like_build_quality_review_query,
+    looks_like_memory_quality_dashboard_operator_query,
 )
 from spark_intelligence.gateway.guardrails import set_runtime_state_value
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
@@ -159,6 +161,71 @@ class BuildQualityReviewTests(SparkTestCase):
         self.assertEqual(result.facts["tests"]["status"], "passed")
         self.assertIn("complete enough to rate", result.reply_text)
 
+    def test_memory_quality_dashboard_operator_reply_uses_recorded_demo_and_export_evidence(self) -> None:
+        dashboard_root = self.home / "spark-memory-quality-dashboard"
+        dashboard_root.mkdir(parents=True)
+        (dashboard_root / "package.json").write_text('{"scripts":{"test":"vitest"}}', encoding="utf-8")
+        subprocess.run(["git", "init"], cwd=dashboard_root, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "add", "."], cwd=dashboard_root, check=True, capture_output=True, text=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.email=spark-tests@example.com",
+                "-c",
+                "user.name=Spark Tests",
+                "commit",
+                "-m",
+                "Initial dashboard fixture",
+            ],
+            cwd=dashboard_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.config_manager.set_path(
+            "spark.local_projects.roots",
+            [str(self.repo_root), str(self.memory_chip_root), str(dashboard_root)],
+        )
+        set_runtime_state_value(
+            state_db=self.state_db,
+            state_key="build_quality:last_tests:spark-memory-quality-dashboard",
+            value=json.dumps(
+                {
+                    "status": "passed",
+                    "command": "npm run export:spark; npm test",
+                    "summary": "exported live ledgers and scorecards",
+                },
+                sort_keys=True,
+            ),
+            component="test",
+        )
+        set_runtime_state_value(
+            state_db=self.state_db,
+            state_key="build_quality:last_demo:spark-memory-quality-dashboard",
+            value=json.dumps(
+                {
+                    "status": "passed",
+                    "url": "http://127.0.0.1:5174",
+                    "summary": "dashboard rendered Builder Memory Feed and Benchmark Scorecards",
+                },
+                sort_keys=True,
+            ),
+            component="test",
+        )
+
+        result = build_memory_quality_dashboard_operator_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="Where is the memory quality dashboard and what evidence is it showing?",
+        )
+
+        self.assertEqual(result.facts["target_repo"], "spark-memory-quality-dashboard")
+        self.assertEqual(result.facts["url"], "http://127.0.0.1:5174")
+        self.assertIn("npm run export:spark", result.reply_text)
+        self.assertIn("domain-chip benchmark scorecards", result.reply_text)
+        self.assertIn("Builder memory lanes", result.reply_text)
+
     def test_researcher_reply_routes_build_quality_review_without_provider(self) -> None:
         with patch(
             "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
@@ -213,6 +280,50 @@ class BuildQualityReviewTests(SparkTestCase):
         self.assertIn("- target_repo: spawner-ui", result.reply_text)
         self.assertNotIn("latest Spark context capsule", result.reply_text)
 
+    def test_researcher_reply_routes_memory_quality_dashboard_operator_query(self) -> None:
+        set_runtime_state_value(
+            state_db=self.state_db,
+            state_key="build_quality:last_demo:spark-memory-quality-dashboard",
+            value=json.dumps(
+                {
+                    "status": "passed",
+                    "url": "http://127.0.0.1:5174",
+                    "summary": "dashboard rendered",
+                },
+                sort_keys=True,
+            ),
+            component="test",
+        )
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider should not run"),
+        ):
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-dashboard",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-1",
+                channel_kind="telegram",
+                user_message="Where is the memory quality dashboard?",
+            )
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-dashboard-source",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-1",
+                channel_kind="telegram",
+                user_message="Why did you answer that?",
+            )
+
+        self.assertEqual(result.mode, "context_source_debug")
+        self.assertIn("memory-quality dashboard operator route", result.reply_text)
+        self.assertIn("- routing_decision: memory_quality_dashboard_operator", result.reply_text)
+        self.assertIn("- url: http://127.0.0.1:5174", result.reply_text)
+
     def test_query_detection_avoids_memory_quality_plan(self) -> None:
         self.assertTrue(looks_like_build_quality_review_query("How good is this build?"))
         self.assertTrue(
@@ -220,4 +331,11 @@ class BuildQualityReviewTests(SparkTestCase):
         )
         self.assertFalse(
             looks_like_build_quality_review_query("Give me a concrete evaluation plan for persistent memory quality.")
+        )
+        self.assertTrue(looks_like_memory_quality_dashboard_operator_query("Where is the memory quality dashboard?"))
+        self.assertTrue(looks_like_memory_quality_dashboard_operator_query("Open spark-memory-quality-dashboard."))
+        self.assertFalse(
+            looks_like_memory_quality_dashboard_operator_query(
+                "Review the quality of the memory quality dashboard build in spark-memory-quality-dashboard."
+            )
         )
