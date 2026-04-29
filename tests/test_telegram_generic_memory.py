@@ -680,6 +680,21 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(candidate.retention_class, "active_state")
         self.assertEqual(candidate.domain_pack, "entity_state")
 
+    def test_classify_telegram_generic_memory_candidate_maps_onboarding_direction_to_entity_decision(self) -> None:
+        candidate = classify_telegram_generic_memory_candidate(
+            "For the GTM launch, the onboarding direction is async walkthroughs."
+        )
+
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        self.assertEqual(candidate.predicate, "entity.decision")
+        self.assertEqual(candidate.value, "async walkthroughs")
+        self.assertEqual(candidate.label, "GTM launch decision")
+        self.assertEqual(candidate.operation, "update")
+        self.assertEqual(candidate.memory_role, "current_state")
+        self.assertEqual(candidate.retention_class, "active_state")
+        self.assertEqual(candidate.domain_pack, "entity_state")
+
     def test_classify_telegram_generic_memory_candidate_detects_delete_operation(self) -> None:
         candidate = classify_telegram_generic_memory_candidate("Forget our owner.")
 
@@ -3086,6 +3101,17 @@ class TelegramGenericMemoryTests(SparkTestCase):
                 "What was the previous decision for the investor update?",
             )
 
+            ask("req-entity-direction-old", "For the GTM launch, the onboarding direction is async walkthroughs.")
+            ask("req-entity-direction-new", "Actually, the GTM launch onboarding direction is founder-led calls.")
+            direction_query = ask(
+                "req-entity-direction-query",
+                "What is the GTM launch onboarding direction?",
+            )
+            direction_history = ask(
+                "req-entity-direction-history",
+                "What was the GTM launch onboarding direction before?",
+            )
+
             ask("req-entity-next-action-old", "For later, the onboarding sprint next action is draft QA prompts.")
             ask("req-entity-next-action-new", "Actually, the onboarding sprint next action is test Stripe recovery.")
             next_action_query = ask(
@@ -3143,6 +3169,11 @@ class TelegramGenericMemoryTests(SparkTestCase):
             decision_history.reply_text,
             "Before the investor update decision was concise metrics first, it was founder-led notes.",
         )
+        self.assertEqual(direction_query.reply_text, "The GTM launch decision is founder-led calls.")
+        self.assertEqual(
+            direction_history.reply_text,
+            "Before the GTM launch decision was founder-led calls, it was async walkthroughs.",
+        )
         self.assertEqual(next_action_query.reply_text, "The onboarding sprint next action is test Stripe recovery.")
         self.assertEqual(
             next_action_history.reply_text,
@@ -3170,7 +3201,7 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertIn("read_method=get_current_state", preference_facts.get("evidence_summary") or "")
         self.assertIn("retrieved_roles=entity_state", preference_facts.get("evidence_summary") or "")
 
-        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=20)
+        write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=30)
         recorded_observations = [
             observation
             for event in write_events

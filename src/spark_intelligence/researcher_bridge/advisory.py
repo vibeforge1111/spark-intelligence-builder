@@ -540,6 +540,13 @@ _OPEN_MEMORY_RECALL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         ),
     ),
     (
+        "decision_recall",
+        re.compile(
+            r"^what(?:'s| is)\s+(?:the\s+)?(.+?)\s+(?:onboarding\s+direction|direction)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "next_action_recall",
         re.compile(
             r"^(?:what(?:'s| is)\s+(?:the\s+)?(?:next\s+action|next\s+step|todo)\s+for\s+)(.+?)[\?\.\!]*$",
@@ -668,6 +675,14 @@ _ENTITY_STATE_HISTORY_PATTERNS: tuple[tuple[str, str, re.Pattern[str]], ...] = (
         "entity.project",
         re.compile(
             r"^what\s+was\s+(?:the\s+)?(?:previous\s+)?project\s+for\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "decision",
+        "entity.decision",
+        re.compile(
+            r"^what\s+was\s+(?:the\s+)?(?:previous\s+)?(.+?)\s+(?:onboarding\s+direction|direction)\s+before[\?\.\!]*$",
             re.IGNORECASE,
         ),
     ),
