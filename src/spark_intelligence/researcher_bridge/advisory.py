@@ -5503,6 +5503,14 @@ def _format_memory_route_source_reply(*, route_facts: dict[str, Any]) -> str | N
                 "It selected records matching the question topic and requested attribute, while stale or wrong-attribute "
                 "records stayed out of the final answer."
             )
+    elif routing_decision == "build_quality_review_direct" or bridge_mode == "build_quality_review_direct":
+        route_label = "build-quality review route"
+        source_line = "grounded local repo evidence"
+        reason = (
+            "The previous answer was a deterministic build-quality guardrail. "
+            "It inspected the target repo, route presence, git state, test evidence, and demo evidence before deciding "
+            "whether a real rating was justified."
+        )
     if route_label is None:
         return None
     lines = [f"I answered from the {route_label} for the previous Telegram turn."]
@@ -5515,6 +5523,24 @@ def _format_memory_route_source_reply(*, route_facts: dict[str, Any]) -> str | N
             f"- source: {source_line}",
         ]
     )
+    if routing_decision == "build_quality_review_direct" or bridge_mode == "build_quality_review_direct":
+        for key, label in (
+            ("target_repo", "target_repo"),
+            ("verdict", "verdict"),
+            ("evidence_complete", "evidence_complete"),
+        ):
+            value = route_facts.get(key)
+            if value is not None and str(value).strip():
+                lines.append(f"- {label}: {value}")
+        for key, label in (("git", "git_state"), ("route", "route"), ("tests", "tests"), ("demo", "demo")):
+            value = route_facts.get(key)
+            if isinstance(value, dict):
+                status = str(value.get("status") or "").strip()
+                if status:
+                    lines.append(f"- {label}: {status}")
+        missing = route_facts.get("missing_evidence")
+        if isinstance(missing, list) and missing:
+            lines.append("- missing_evidence: " + ", ".join(str(item) for item in missing if str(item).strip()))
     for key, label in (
         ("query_kind", "query_kind"),
         ("topic", "topic"),

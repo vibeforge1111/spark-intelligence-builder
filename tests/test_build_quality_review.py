@@ -127,6 +127,39 @@ class BuildQualityReviewTests(SparkTestCase):
         self.assertIn("Target repo: spawner-ui", result.reply_text)
         self.assertIn("Tests: missing", result.reply_text)
 
+    def test_source_debug_explains_build_quality_review_route(self) -> None:
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider should not run"),
+        ):
+            build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-build-quality",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-1",
+                channel_kind="telegram",
+                user_message="Review the quality of the /memory-quality build in spawner-ui.",
+            )
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-source-debug",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-1",
+                channel_kind="telegram",
+                user_message="Why did you answer that?",
+            )
+
+        self.assertEqual(result.mode, "context_source_debug")
+        self.assertIn("build-quality review route", result.reply_text)
+        self.assertIn("- routing_decision: build_quality_review_direct", result.reply_text)
+        self.assertIn("- source: grounded local repo evidence", result.reply_text)
+        self.assertIn("- target_repo: spawner-ui", result.reply_text)
+        self.assertNotIn("latest Spark context capsule", result.reply_text)
+
     def test_query_detection_avoids_memory_quality_plan(self) -> None:
         self.assertTrue(looks_like_build_quality_review_query("How good is this build?"))
         self.assertTrue(
