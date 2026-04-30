@@ -56,7 +56,9 @@ _OCCUPATION_PATTERNS = [
 _NAME_PATTERNS = [
     re.compile(r"\bi(?:'m| am)\s+not\s+[a-z][a-z\s\-'.`]{0,40}\s+(?:by\s+the\s+way\s*,?\s*)?i(?:'m| am)\s+([a-z][a-z\s\-'.`]{0,40})", re.I),
     re.compile(r"\bi(?:'m| am)\s+not\s+[a-z][a-z\s\-'.`]{0,40}\s+(?:by\s+the\s+way\s*,?\s*)?my\s+name\s+is\s+([a-z][a-z\s\-'.`]{0,40})", re.I),
+    re.compile(r"\bmy\s+name\s+is\s+([a-z][a-z\-'.`]{0,40})\s*,?\s+not\s+[a-z][a-z\s\-'.`]{0,40}", re.I),
     re.compile(r"\bmy\s+name\s+is\s+([a-z][a-z\s\-'.`]{0,40})", re.I),
+    re.compile(r"\bcall\s+me\s+([a-z][a-z\-'.`]{0,40})\s*,?\s+not\s+[a-z][a-z\s\-'.`]{0,40}", re.I),
     re.compile(r"\bcall\s+me\s+([a-z][a-z\s\-'.`]{0,40})", re.I),
 ]
 _COUNTRY_PATTERNS = [

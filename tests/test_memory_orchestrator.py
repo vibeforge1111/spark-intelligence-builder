@@ -1099,6 +1099,39 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(lane_records[0]["promotion_disposition"], "promote_current_state")
         self.assertEqual(lane_records[0]["status"], "candidate")
 
+    def test_profile_name_correction_after_new_name_is_authoritative(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        detected = detect_profile_fact_observation("nom my name is Cem not Maya :))")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.value, "Cem")
+
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client", return_value=fake_client):
+            result = write_profile_fact_to_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                predicate=detected.predicate,
+                value=detected.value,
+                evidence_text=detected.evidence_text,
+                fact_name=detected.fact_name,
+                session_id="session:identity",
+                turn_id="turn:identity",
+                channel_kind="telegram",
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        metadata = fake_client.observation_calls[0]["metadata"]
+        self.assertEqual(metadata["promotion_stage"], "current_state_confirmed")
+        self.assertEqual(metadata["why_saved"], "identity_correction_supersession")
+        self.assertEqual(metadata["promotion_disposition"], "promote_current_state")
+        self.assertGreaterEqual(metadata["salience_score"], 0.75)
+        self.assertEqual(metadata["authority"], "identity_current_state")
+        self.assertEqual(metadata["supersession_kind"], "identity_correction")
+
     def test_profile_fact_salience_gate_blocks_secret_like_memory(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
@@ -2533,6 +2566,13 @@ class MemoryOrchestratorTests(SparkTestCase):
 
     def test_profile_name_correction_detection_overrides_wrong_prior_name(self) -> None:
         detected = detect_profile_fact_observation("I'm not Maya by the way, I'm Cem.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.preferred_name")
+        self.assertEqual(detected.value, "Cem")
+
+    def test_profile_name_correction_detection_handles_not_after_new_name(self) -> None:
+        detected = detect_profile_fact_observation("nom my name is Cem not Maya :))")
         self.assertIsNotNone(detected)
         assert detected is not None
         self.assertEqual(detected.predicate, "profile.preferred_name")

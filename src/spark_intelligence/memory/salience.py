@@ -14,6 +14,10 @@ _TENTATIVE_DIRECTION_RE = re.compile(
     re.I,
 )
 _CORRECTION_RE = re.compile(r"\b(?:actually|correction|not\s+.+?\s+(?:i(?:'m| am)|my name is|is|owns|owned))\b", re.I)
+_IDENTITY_NAME_CORRECTION_RE = re.compile(
+    r"\b(?:my\s+name\s+is|call\s+me|i(?:'m| am))\s+[a-z][a-z\-'.`]{0,40}\s*,?\s+not\s+[a-z][a-z\s\-'.`]{0,40}",
+    re.I,
+)
 _SECRET_LIKE_RE = re.compile(
     r"\b(?:api[_\s-]?key|botfather|password|secret|private[_\s-]?key|access[_\s-]?token|bearer\s+[a-z0-9._-]+|sk-[a-z0-9]{8,})\b",
     re.I,
@@ -131,7 +135,8 @@ def evaluate_memory_salience(
     if _CURRENT_STATE_RE.search(text) or normalized_predicate.startswith(("profile.current_", "entity.")):
         score += 0.35
         reasons.append("current_state_signal")
-    if _CORRECTION_RE.search(text):
+    is_identity_name_correction = lowered_predicate == "profile.preferred_name" and _IDENTITY_NAME_CORRECTION_RE.search(text)
+    if _CORRECTION_RE.search(text) or is_identity_name_correction:
         score += 0.25
         reasons.append("correction_or_supersession_signal")
     if _TENTATIVE_DIRECTION_RE.search(text):
@@ -140,7 +145,7 @@ def evaluate_memory_salience(
     if any(part in lowered_predicate for part in _HIGH_SIGNAL_PREDICATE_PARTS):
         score += 0.25
         reasons.append("high_signal_predicate")
-    if lowered_predicate == "profile.preferred_name" and _CORRECTION_RE.search(text):
+    if lowered_predicate == "profile.preferred_name" and (_CORRECTION_RE.search(text) or is_identity_name_correction):
         score += 0.35
         reasons.append("identity_correction_supersession")
 
