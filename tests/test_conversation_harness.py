@@ -143,6 +143,64 @@ def test_conversation_frame_preserves_hot_turns_and_compacts_older_context() -> 
     assert any(item["source"] == "hot_turns" for item in frame.source_ledger)
 
 
+def test_long_context_preserves_exact_artifacts_after_compaction() -> None:
+    turns = [
+        ConversationTurn(
+            role="assistant",
+            text="\n".join(
+                [
+                    "Memory dashboard options:",
+                    "1. Recall Audit Board",
+                    "2. Memory Timeline Explorer",
+                    "3. Live Stress-Test Panel",
+                ]
+            ),
+            turn_id="options",
+        )
+    ]
+    turns.extend(
+        ConversationTurn(
+            role="user" if index % 2 == 0 else "assistant",
+            text=f"long planning turn {index} about performance, recall quality, and rollout checks",
+            turn_id=f"long-{index}",
+        )
+        for index in range(90)
+    )
+
+    frame = build_conversation_frame(
+        current_message="Let's do the second one",
+        turns=turns,
+        policy=ContextBudgetPolicy(hot_min_turns=8, hot_target_tokens=80),
+    )
+
+    assert frame.reference_resolution.resolved is True
+    assert frame.reference_resolution.kind == "list_item"
+    assert frame.reference_resolution.value == "Memory Timeline Explorer"
+    assert "Older user goals" in frame.warm_summary
+
+
+def test_prompt_frame_stays_bounded_for_tight_context_budget() -> None:
+    turns = [
+        ConversationTurn(
+            role="user" if index % 2 == 0 else "assistant",
+            text=f"turn {index} " + ("context " * 40),
+            turn_id=f"t{index}",
+        )
+        for index in range(80)
+    ]
+
+    frame = build_conversation_frame(
+        current_message="summarize where we are",
+        turns=turns,
+        policy=ContextBudgetPolicy(hot_min_turns=8, hot_target_tokens=400),
+    )
+    rendered = frame.render_prompt_context(max_tokens=350)
+
+    assert estimate_tokens(rendered) <= 360
+    assert "[Spark Conversation Frame]" in rendered
+    assert "conversation frame truncated" in rendered or "[hot_turns]" in rendered or "[warm_summary]" in rendered
+
+
 def test_cold_context_retrieval_is_optional_when_domain_chip_memory_is_unavailable() -> None:
     assert retrieve_domain_chip_cold_context(sdk=None, subject="human:telegram:1", query="what do you know?") == []
 
