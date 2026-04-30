@@ -125,13 +125,22 @@ def _domain_chip_manifest(packet: CreatorIntentPacket, domain: str) -> ArtifactM
             "docs/ANTI_PATTERNS.md",
             "tests/test_chip_contract.py",
         ],
-        validation_commands=[
-            "python -m pytest tests",
-            "spark-intelligence attachments status --json",
-        ],
+        validation_commands=_domain_chip_validation_commands(domain),
         promotion_gates=["schema_gate", "memory_hygiene_gate", "rollback_gate"],
         rollback_plan=f"Revert the {repo} artifact commit and remove the chip root from local attachment roots.",
     )
+
+
+def _domain_chip_validation_commands(domain: str) -> list[str]:
+    if domain == "startup-yc":
+        return [
+            "python -m pytest tests/test_chip_hooks.py tests/test_builder_calibration.py tests/test_benchmark_suggestions.py tests/test_benchmark_track_focus.py tests/test_dop.py",
+            "spark-intelligence attachments status --json",
+        ]
+    return [
+        "python -m pytest tests",
+        "spark-intelligence attachments status --json",
+    ]
 
 
 def _benchmark_pack_manifest(packet: CreatorIntentPacket, domain: str) -> ArtifactManifest:

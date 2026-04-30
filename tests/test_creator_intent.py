@@ -175,7 +175,10 @@ def test_creator_artifact_bundle_generates_valid_startup_yc_manifests():
     assert by_id["startup-yc-tool-integration-builder-v1"].repo == "spark-intelligence-builder"
     assert by_id["startup-yc-swarm-publish-packet-v1"].repo == "spark-swarm"
     assert by_id["startup-yc-creator-report-v1"].repo == "specialization-path-startup-yc"
-    assert by_id["startup-yc-domain-chip-v1"].validation_commands[-1] == "spark-intelligence attachments status --json"
+    assert by_id["startup-yc-domain-chip-v1"].validation_commands == [
+        "python -m pytest tests/test_chip_hooks.py tests/test_builder_calibration.py tests/test_benchmark_suggestions.py tests/test_benchmark_track_focus.py tests/test_dop.py",
+        "spark-intelligence attachments status --json",
+    ]
     assert by_id["startup-yc-tool-integration-telegram-v1"].validation_commands == [
         "npx ts-node tests/spawner.test.ts",
         "npm run build",
