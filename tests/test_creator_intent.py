@@ -2,6 +2,8 @@ from spark_intelligence.creator import (
     ArtifactManifest,
     CreatorTrace,
     CreatorTraceTask,
+    build_artifact_manifests,
+    build_creator_artifact_bundle,
     build_creator_intent_packet,
     validate_artifact_manifest,
     validate_creator_intent_packet,
@@ -153,3 +155,39 @@ def test_creator_trace_validator_rejects_empty_tasks_and_bad_status():
     issues = validate_creator_trace(trace)
 
     assert {issue.path for issue in issues} == {"publish_readiness", "tasks[0].status"}
+
+
+def test_creator_artifact_bundle_generates_valid_startup_yc_manifests():
+    packet = build_creator_intent_packet(
+        "Create a Startup YC specialization path with benchmarked autoloop from Telegram, Spawner, and Spark Swarm"
+    )
+
+    bundle = build_creator_artifact_bundle(packet)
+
+    assert bundle.validation_issues == []
+    by_id = {manifest.artifact_id: manifest for manifest in bundle.artifact_manifests}
+    assert by_id["startup-yc-domain-chip-v1"].repo == "domain-chip-startup-yc"
+    assert by_id["startup-yc-benchmark-pack-v1"].repo == "startup-bench"
+    assert by_id["startup-yc-specialization-path-v1"].repo == "specialization-path-startup-yc"
+    assert by_id["startup-yc-autoloop-policy-v1"].repo == "specialization-path-startup-yc"
+    assert by_id["startup-yc-tool-integration-telegram-v1"].repo == "spark-telegram-bot"
+    assert by_id["startup-yc-tool-integration-spawner-v1"].repo == "spawner-ui"
+    assert by_id["startup-yc-tool-integration-builder-v1"].repo == "spark-intelligence-builder"
+    assert by_id["startup-yc-swarm-publish-packet-v1"].repo == "spark-swarm"
+    assert by_id["startup-yc-creator-report-v1"].repo == "specialization-path-startup-yc"
+    assert "benchmark_gate" in by_id["startup-yc-autoloop-policy-v1"].promotion_gates
+
+
+def test_creator_artifact_manifests_default_to_local_chip_and_bench():
+    packet = build_creator_intent_packet("Make Spark good at investor diligence")
+
+    manifests = build_artifact_manifests(packet)
+
+    assert [manifest.artifact_type for manifest in manifests] == [
+        "domain_chip",
+        "benchmark_pack",
+        "creator_report",
+    ]
+    assert all(validate_artifact_manifest(manifest) == [] for manifest in manifests)
+    assert manifests[0].repo == "domain-chip-spark-good-investor-diligence"
+    assert manifests[1].repo == "spark-good-investor-diligence-bench"

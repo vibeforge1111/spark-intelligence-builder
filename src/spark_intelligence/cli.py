@@ -1757,6 +1757,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override inferred risk level",
     )
     creator_plan_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    creator_manifests_parser = creator_subparsers.add_parser(
+        "manifests",
+        help="Build validated creator artifact manifests from a natural-language brief",
+    )
+    creator_manifests_parser.add_argument("--brief", required=True, help="Natural-language description of the creator work")
+    creator_manifests_parser.add_argument(
+        "--privacy-mode",
+        choices=["local_only", "github_pr", "swarm_shared"],
+        default=None,
+        help="Override inferred privacy/publish mode",
+    )
+    creator_manifests_parser.add_argument(
+        "--risk-level",
+        choices=["low", "medium", "high"],
+        default=None,
+        help="Override inferred risk level",
+    )
+    creator_manifests_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     attachments_parser = subparsers.add_parser("attachments", help="Inspect and manage chip/path attachment roots")
     attachments_subparsers = attachments_parser.add_subparsers(dest="attachments_command", required=True)
@@ -4654,6 +4672,20 @@ def handle_creator_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_creator_manifests(args: argparse.Namespace) -> int:
+    import json as _json
+    from spark_intelligence.creator import build_creator_artifact_bundle, build_creator_intent_packet
+
+    packet = build_creator_intent_packet(
+        args.brief,
+        privacy_mode=args.privacy_mode,
+        risk_level=args.risk_level,
+    )
+    bundle = build_creator_artifact_bundle(packet)
+    print(_json.dumps(bundle.to_dict(), indent=2) if args.json else bundle.to_text())
+    return 0 if not bundle.validation_issues else 1
+
+
 def handle_attachments_list(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
@@ -7476,6 +7508,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_loops_run(args)
     if args.command == "creator" and args.creator_command == "plan":
         return handle_creator_plan(args)
+    if args.command == "creator" and args.creator_command == "manifests":
+        return handle_creator_manifests(args)
     if args.command == "drafts" and args.drafts_command == "list":
         return handle_drafts_list(args)
     if args.command == "drafts" and args.drafts_command == "show":

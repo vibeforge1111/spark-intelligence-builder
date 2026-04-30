@@ -49,6 +49,9 @@ class ValidationIssue:
     message: str
     severity: str = "error"
 
+    def to_dict(self) -> dict[str, str]:
+        return asdict(self)
+
     def to_text(self) -> str:
         return f"{self.severity}: {self.path}: {self.message}"
 
