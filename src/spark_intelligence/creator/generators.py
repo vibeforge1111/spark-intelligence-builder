@@ -127,7 +127,7 @@ def _domain_chip_manifest(packet: CreatorIntentPacket, domain: str) -> ArtifactM
         ],
         validation_commands=[
             "python -m pytest tests",
-            "spark-intelligence attachments status --kind chip",
+            "spark-intelligence attachments status --json",
         ],
         promotion_gates=["schema_gate", "memory_hygiene_gate", "rollback_gate"],
         rollback_plan=f"Revert the {repo} artifact commit and remove the chip root from local attachment roots.",
@@ -245,7 +245,7 @@ def _tool_integration_manifests(packet: CreatorIntentPacket, domain: str) -> lis
                     "docs/CREATOR_COMMANDS.md",
                 ],
                 validation_commands=[
-                    "npm test -- creator",
+                    "npx ts-node tests/spawner.test.ts",
                     "npm run build",
                 ],
                 promotion_gates=["schema_gate", "risk_gate", "rollback_gate"],
@@ -306,8 +306,8 @@ def _swarm_publish_manifest(packet: CreatorIntentPacket, domain: str) -> Artifac
             f"docs/{domain.upper().replace('-', '_')}_PROMOTION.md",
         ],
         validation_commands=[
-            "npm run test:run -- collective",
-            "npm run check",
+            "npm run test:smoke",
+            "npm run typecheck",
         ],
         promotion_gates=["schema_gate", "lineage_gate", "benchmark_gate", "memory_hygiene_gate", "risk_gate", "rollback_gate"],
         rollback_plan="Revert the Swarm promotion packet commit and remove the candidate packet from collective sync payloads.",
