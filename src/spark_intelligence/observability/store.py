@@ -2093,6 +2093,112 @@ def _mirror_policy_gate_event(
     )
 
 
+def _memory_trace_message_text(facts: dict[str, Any]) -> str | None:
+    for key in (
+        "message_text",
+        "evidence_text",
+        "query_text",
+        "user_message_preview",
+        "episode_text",
+        "text",
+    ):
+        value = facts.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    for collection_key in ("observations", "events", "records"):
+        collection = facts.get(collection_key)
+        if not isinstance(collection, list):
+            continue
+        for item in collection:
+            if not isinstance(item, dict):
+                continue
+            for key in ("message_text", "evidence_text", "query_text", "episode_text", "text"):
+                value = item.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+    return None
+
+
+def _memory_trace_salience_present(facts: dict[str, Any]) -> bool:
+    if any(
+        facts.get(key) not in (None, "", [])
+        for key in ("salience_score", "why_saved", "salience_reasons", "promotion_stage", "retention_class")
+    ):
+        return True
+    for collection_key in ("observations", "events", "records"):
+        collection = facts.get(collection_key)
+        if not isinstance(collection, list):
+            continue
+        for item in collection:
+            if isinstance(item, dict) and any(
+                item.get(key) not in (None, "", [])
+                for key in ("salience_score", "why_saved", "salience_reasons", "promotion_stage", "retention_class")
+            ):
+                return True
+    return False
+
+
+def _memory_trace_flat_fields(facts: dict[str, Any]) -> dict[str, Any]:
+    fields: dict[str, Any] = {}
+    for key in (
+        "message_text",
+        "evidence_text",
+        "query_text",
+        "episode_text",
+        "salience_score",
+        "why_saved",
+        "salience_reasons",
+        "promotion_stage",
+        "retention_class",
+        "memory_role",
+    ):
+        value = facts.get(key)
+        if value not in (None, "", []):
+            fields[key] = value
+    message_text = _memory_trace_message_text(facts)
+    if message_text and "message_text" not in fields:
+        fields["message_text"] = message_text
+    return fields
+
+
+def _memory_trace_contract(
+    *,
+    facts: dict[str, Any],
+    request_id: str | None,
+    trace_ref: str | None,
+    keepability: str,
+    promotion_disposition: str,
+    artifact_lane: str | None = None,
+    promotion_target_lane: str | None = None,
+) -> dict[str, Any]:
+    message_text = _memory_trace_message_text(facts)
+    salience_present = _memory_trace_salience_present(facts)
+    memory_role = str(facts.get("memory_role") or "")
+    required = bool(
+        salience_present
+        or message_text
+        or memory_role in {"current_state", "entity_state", "structured_evidence", "belief", "raw_episode", "episodic"}
+        or promotion_disposition.startswith("promote_")
+        or promotion_disposition in {"capture_raw_episode", "blocked"}
+        or keepability in {"durable_user_memory", "supporting_memory", "episodic_trace", "not_keepable"}
+    )
+    destination = promotion_target_lane or artifact_lane or _promotion_target_lane(promotion_disposition)
+    return {
+        "version": "memory_trace_v1",
+        "trace_kind": "memory_decision" if required else "ops_trace",
+        "trace_completeness_required": required,
+        "has_request_id": bool(request_id),
+        "has_trace_ref": bool(trace_ref),
+        "has_message_text": bool(message_text),
+        "has_salience": salience_present,
+        "message_text": message_text,
+        "decision": promotion_disposition or None,
+        "destination": destination,
+        "answer_ref": facts.get("answer_ref") or facts.get("reply_ref") or facts.get("explained_request_id"),
+    }
+
+
 def _mirror_memory_lane_event(
     conn: Any,
     *,
@@ -2119,6 +2225,15 @@ def _mirror_memory_lane_event(
     artifact_lane = _artifact_lane_from_keepability(keepability)
     promotion_target_lane = _promotion_target_lane(promotion_disposition)
     status = _promotion_record_status(promotion_disposition)
+    trace_contract = _memory_trace_contract(
+        facts=facts,
+        request_id=request_id,
+        trace_ref=trace_ref,
+        keepability=keepability,
+        promotion_disposition=promotion_disposition,
+        artifact_lane=artifact_lane,
+        promotion_target_lane=promotion_target_lane,
+    )
     conn.execute(
         """
         INSERT OR REPLACE INTO memory_lane_records(
@@ -2171,11 +2286,14 @@ def _mirror_memory_lane_event(
                 {
                     "component": component,
                     "event_type": event_type,
+                    "facts": {**facts, "trace_contract": trace_contract},
+                    "provenance": provenance,
                     "artifact_lane": artifact_lane,
                     "promotion_target_lane": promotion_target_lane,
                     "keepability": keepability or None,
                     "promotion_disposition": promotion_disposition or None,
                     "status": status,
+                    "trace_contract": trace_contract,
                 }
             ),
         ),
@@ -2342,6 +2460,16 @@ def _record_follow_on_promotion_gate_block_if_needed(
                 "artifact_lane": artifact_lane,
                 "open_contradiction_count": len(open_contradictions),
                 "reason_code": reason_code,
+                **_memory_trace_flat_fields(facts),
+                "trace_contract": _memory_trace_contract(
+                    facts=facts,
+                    request_id=request_id,
+                    trace_ref=trace_ref,
+                    keepability=keepability,
+                    promotion_disposition=promotion_disposition,
+                    artifact_lane=artifact_lane,
+                    promotion_target_lane=_promotion_target_lane(promotion_disposition),
+                ),
             },
         )
 

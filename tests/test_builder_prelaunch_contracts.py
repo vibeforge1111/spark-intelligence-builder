@@ -755,6 +755,69 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIsNone(lane_records[0]["promotion_target_lane"])
         self.assertEqual(lane_records[0]["status"], "blocked")
 
+    def test_memory_lane_records_export_trace_contract_for_memory_decisions(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="memory_write_requested",
+            component="memory_orchestrator",
+            summary="memory candidate",
+            request_id="req-memory-trace-contract",
+            trace_ref="trace:req-memory-trace-contract",
+            actor_id="memory_orchestrator",
+            facts={
+                "keepability": "durable_user_memory",
+                "promotion_disposition": "promote_current_state",
+                "memory_role": "entity_state",
+                "message_text": "For later, the launch checklist owner is Maya.",
+                "salience_score": 0.91,
+                "why_saved": "explicit_current_state_update",
+                "promotion_stage": "current_state_confirmed",
+            },
+        )
+
+        lane_record = recent_memory_lane_records(self.state_db, limit=1)[0]
+        evidence = lane_record["evidence_json"]
+        facts = evidence["facts"]
+        trace_contract = facts["trace_contract"]
+
+        self.assertEqual(trace_contract["version"], "memory_trace_v1")
+        self.assertEqual(trace_contract["trace_kind"], "memory_decision")
+        self.assertTrue(trace_contract["trace_completeness_required"])
+        self.assertTrue(trace_contract["has_request_id"])
+        self.assertTrue(trace_contract["has_trace_ref"])
+        self.assertTrue(trace_contract["has_message_text"])
+        self.assertTrue(trace_contract["has_salience"])
+        self.assertEqual(trace_contract["message_text"], "For later, the launch checklist owner is Maya.")
+        self.assertEqual(facts["salience_score"], 0.91)
+        self.assertEqual(facts["why_saved"], "explicit_current_state_update")
+
+    def test_memory_lane_trace_contract_marks_ops_traces_as_not_required(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="provider fallback",
+            request_id="req-provider-fallback",
+            trace_ref="trace:req-provider-fallback",
+            actor_id="researcher_bridge",
+            facts={
+                "keepability": "ephemeral_context",
+                "promotion_disposition": "not_promotable",
+                "routing_decision": "provider_fallback_chat",
+            },
+        )
+
+        lane_record = recent_memory_lane_records(self.state_db, limit=1)[0]
+        evidence = lane_record["evidence_json"]
+        trace_contract = evidence["facts"]["trace_contract"]
+
+        self.assertEqual(trace_contract["trace_kind"], "ops_trace")
+        self.assertFalse(trace_contract["trace_completeness_required"])
+        self.assertTrue(trace_contract["has_request_id"])
+        self.assertTrue(trace_contract["has_trace_ref"])
+        self.assertFalse(trace_contract["has_message_text"])
+        self.assertFalse(trace_contract["has_salience"])
+
     def test_watchtower_memory_lane_panel_uses_typed_lane_records(self) -> None:
         record_event(
             self.state_db,
