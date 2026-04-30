@@ -174,7 +174,21 @@ python -m spark_intelligence.cli chips create \
   --json
 ```
 
-### 3.2 Attachments - chip registry
+### 3.2 Creator planning
+
+```bash
+python -m spark_intelligence.cli creator plan \
+  --brief "Create a Startup YC specialization path with benchmarked autoloop from Telegram and Spark Swarm" \
+  --json
+```
+
+This emits a `spark-creator-intent.v1` packet that downstream Telegram,
+Spawner, Canvas/Kanban, benchmark, autoloop, and Swarm creator flows can use as
+one shared planning contract. It does not create files by itself; it normalizes
+the user's intent into domain, privacy mode, risk level, desired artifacts, tool
+surfaces, success examples, and failure examples.
+
+### 3.3 Attachments - chip registry
 
 ```bash
 python -m spark_intelligence.cli attachments list --home .tmp-home-live-telegram-real
@@ -186,7 +200,7 @@ python -m spark_intelligence.cli attachments deactivate-chip <chip_key> --home .
 python -m spark_intelligence.cli attachments run-hook <chip_key> <hook_name> --home .tmp-home-live-telegram-real
 ```
 
-### 3.3 Autoloops
+### 3.4 Autoloops
 
 ```bash
 python -m spark_intelligence.cli loops run \
@@ -199,7 +213,7 @@ python -m spark_intelligence.cli loops run \
 
 Per-round status lands in `~/.spark-intelligence/loops/<chip>.status.json`.
 
-### 3.4 Gateway - simulate a Telegram turn in-process
+### 3.5 Gateway - simulate a Telegram turn in-process
 
 ```bash
 python -m spark_intelligence.cli gateway ask-telegram \
@@ -210,7 +224,7 @@ python -m spark_intelligence.cli gateway ask-telegram \
 
 Useful for testing chat routing without sending a real Telegram message.
 
-### 3.5 Observability
+### 3.6 Observability
 
 ```bash
 python -m spark_intelligence.cli doctor

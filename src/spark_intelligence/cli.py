@@ -1740,6 +1740,24 @@ def build_parser() -> argparse.ArgumentParser:
     chips_create_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     chips_create_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
+    creator_parser = subparsers.add_parser("creator", help="Plan and validate Spark creator-system work")
+    creator_subparsers = creator_parser.add_subparsers(dest="creator_command", required=True)
+    creator_plan_parser = creator_subparsers.add_parser("plan", help="Build a creator intent packet from a natural-language brief")
+    creator_plan_parser.add_argument("--brief", required=True, help="Natural-language description of the creator work")
+    creator_plan_parser.add_argument(
+        "--privacy-mode",
+        choices=["local_only", "github_pr", "swarm_shared"],
+        default=None,
+        help="Override inferred privacy/publish mode",
+    )
+    creator_plan_parser.add_argument(
+        "--risk-level",
+        choices=["low", "medium", "high"],
+        default=None,
+        help="Override inferred risk level",
+    )
+    creator_plan_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+
     attachments_parser = subparsers.add_parser("attachments", help="Inspect and manage chip/path attachment roots")
     attachments_subparsers = attachments_parser.add_subparsers(dest="attachments_command", required=True)
     attachments_status_parser = attachments_subparsers.add_parser("status", help="Scan chip and path attachments")
@@ -4623,6 +4641,19 @@ def handle_chips_create(args: argparse.Namespace) -> int:
     return 0 if result.ok else 1
 
 
+def handle_creator_plan(args: argparse.Namespace) -> int:
+    import json as _json
+    from spark_intelligence.creator import build_creator_intent_packet
+
+    packet = build_creator_intent_packet(
+        args.brief,
+        privacy_mode=args.privacy_mode,
+        risk_level=args.risk_level,
+    )
+    print(_json.dumps(packet.to_dict(), indent=2) if args.json else packet.to_text())
+    return 0
+
+
 def handle_attachments_list(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
@@ -7443,6 +7474,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_chips_create(args)
     if args.command == "loops" and args.loops_command == "run":
         return handle_loops_run(args)
+    if args.command == "creator" and args.creator_command == "plan":
+        return handle_creator_plan(args)
     if args.command == "drafts" and args.drafts_command == "list":
         return handle_drafts_list(args)
     if args.command == "drafts" and args.drafts_command == "show":
