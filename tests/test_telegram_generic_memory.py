@@ -719,13 +719,29 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertIsNone(classify_telegram_generic_memory_candidate("what do you know about Spark systems"))
 
     def test_assess_telegram_generic_memory_candidate_rejects_low_information_fragments(self) -> None:
-        for text in ("The second", "second", "option two"):
+        for text in (
+            "The second",
+            "second",
+            "second one",
+            "yes the second one",
+            "option two",
+            "option 2",
+            "number two",
+            "that one",
+            "the latter",
+        ):
             with self.subTest(text=text):
                 assessment = assess_telegram_generic_memory_candidate(text)
 
                 self.assertEqual(assessment.outcome, "drop")
                 self.assertEqual(assessment.reason, "not_memoryworthy")
                 self.assertIsNone(classify_telegram_generic_memory_candidate(text))
+
+    def test_assess_telegram_generic_memory_candidate_keeps_factual_second_step(self) -> None:
+        assessment = assess_telegram_generic_memory_candidate("The second onboarding step is Stripe recovery.")
+
+        self.assertEqual(assessment.outcome, "raw_episode")
+        self.assertEqual(assessment.reason, "meaningful_but_unpromoted")
 
     def test_build_researcher_reply_records_policy_gate_for_rejected_generic_memory_candidate(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)

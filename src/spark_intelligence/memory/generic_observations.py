@@ -17,7 +17,12 @@ _SMALL_TALK_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _LOW_INFORMATION_FRAGMENT_PATTERN = re.compile(
-    r"^(?:the\s+)?(?:first|second|third|fourth|fifth|one|two|three|option\s+[a-z0-9]+)[.!]?$",
+    r"^(?:yes\s+|yeah\s+|ok(?:ay)?\s+)?(?:the\s+)?(?:"
+    r"first|second|third|fourth|fifth|one|two|three|"
+    r"first\s+one|second\s+one|third\s+one|fourth\s+one|fifth\s+one|"
+    r"option\s+[a-z0-9]+|number\s+(?:one|two|three|four|five|[0-9]+)|"
+    r"this\s+one|that\s+one|the\s+former|the\s+latter"
+    r")[.!]?$",
     re.IGNORECASE,
 )
 # Messages that look like requests, instructions, or questions to the agent
