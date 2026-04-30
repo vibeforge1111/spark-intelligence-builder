@@ -1,4 +1,12 @@
-from spark_intelligence.creator import build_creator_intent_packet
+from spark_intelligence.creator import (
+    ArtifactManifest,
+    CreatorTrace,
+    CreatorTraceTask,
+    build_creator_intent_packet,
+    validate_artifact_manifest,
+    validate_creator_intent_packet,
+    validate_creator_trace,
+)
 
 
 def test_creator_plan_detects_full_startup_yc_swarm_flow():
@@ -16,9 +24,23 @@ def test_creator_plan_detects_full_startup_yc_swarm_flow():
     assert packet.desired_outputs["autoloop_policy"] is True
     assert packet.desired_outputs["telegram_flow"] is True
     assert packet.desired_outputs["swarm_publish_packet"] is True
+    assert packet.intent_id.startswith("creator-intent-startup-yc-")
+    assert packet.artifact_targets == [
+        "domain_chip",
+        "benchmark_pack",
+        "specialization_path",
+        "autoloop_policy",
+        "tool_integration",
+        "swarm_publish_packet",
+    ]
+    assert packet.usage_surfaces == ["telegram", "builder", "swarm"]
+    assert packet.benchmark_requirements["visible_cases"] == 20
+    assert packet.benchmark_requirements["fresh_agent_absorption"] is True
+    assert packet.network_contribution_policy == "github_pr_required"
     assert "spark_telegram_bot" in packet.tools_in_scope
     assert "spark_swarm" in packet.tools_in_scope
     assert packet.target_operator_surface == "telegram+builder+swarm"
+    assert validate_creator_intent_packet(packet) == []
 
 
 def test_creator_plan_defaults_domain_chip_to_benchmarked_local_work():
@@ -30,6 +52,9 @@ def test_creator_plan_defaults_domain_chip_to_benchmarked_local_work():
     assert packet.desired_outputs["benchmark_pack"] is True
     assert packet.desired_outputs["specialization_path"] is False
     assert packet.desired_outputs["autoloop_policy"] is False
+    assert packet.artifact_targets == ["domain_chip", "benchmark_pack"]
+    assert packet.usage_surfaces == ["builder"]
+    assert packet.network_contribution_policy == "workspace_only"
 
 
 def test_creator_plan_honors_explicit_private_mode():
@@ -53,3 +78,78 @@ def test_creator_plan_marks_recursive_publish_as_medium_risk():
     assert packet.desired_outputs["autoloop_policy"] is True
     assert packet.desired_outputs["swarm_publish_packet"] is True
 
+
+def test_creator_intent_validator_reports_contract_gaps():
+    packet = build_creator_intent_packet("Make Spark good at investor diligence").to_dict()
+    packet["artifact_targets"] = []
+    packet["privacy_mode"] = "public_internet"
+
+    issues = validate_creator_intent_packet(packet)
+
+    assert {issue.path for issue in issues} == {"privacy_mode", "artifact_targets"}
+
+
+def test_artifact_manifest_validator_accepts_prd_contract_shape():
+    manifest = ArtifactManifest(
+        artifact_id="startup-yc-specialization-path-v1",
+        artifact_type="specialization_path",
+        repo="specialization-path-startup-yc",
+        inputs=["creator-intent-startup-yc-12345678", "domain-chip-startup-yc"],
+        outputs=["docs/", "packs/", "scripts/"],
+        validation_commands=["python scripts/run_startup_yc_absorption_pilot.py --suite smoke"],
+        promotion_gates=["schema_gate", "lineage_gate", "benchmark_gate", "rollback_gate"],
+        rollback_plan="Revert the artifact commit and remove any candidate promotion packet.",
+    )
+
+    assert validate_artifact_manifest(manifest) == []
+
+
+def test_artifact_manifest_validator_requires_validation_and_rollback():
+    manifest = ArtifactManifest(
+        artifact_id="startup-yc-benchmark-pack-v1",
+        artifact_type="benchmark_pack",
+        repo="startup-bench",
+        outputs=["benchmarks/startup-yc.json"],
+        promotion_gates=["unknown_gate"],
+    )
+
+    issues = validate_artifact_manifest(manifest)
+
+    assert {issue.path for issue in issues} == {
+        "validation_commands",
+        "promotion_gates[0]",
+        "rollback_plan",
+    }
+
+
+def test_creator_trace_validator_accepts_task_evidence_and_readiness():
+    trace = CreatorTrace(
+        trace_id="creator-trace-startup-yc-001",
+        intent_id="creator-intent-startup-yc-12345678",
+        tasks=[
+            CreatorTraceTask(
+                task_id="benchmark-pack",
+                status="passed",
+                evidence=["startup-bench smoke passed"],
+                risk=["held-out suite still pending"],
+            )
+        ],
+        repo_changes=["docs/creator_system/CREATOR_SYSTEM_PRD_V1.md"],
+        benchmarks=["startup-bench smoke"],
+        publish_readiness="workspace_validated",
+    )
+
+    assert validate_creator_trace(trace) == []
+
+
+def test_creator_trace_validator_rejects_empty_tasks_and_bad_status():
+    trace = CreatorTrace(
+        trace_id="creator-trace-startup-yc-001",
+        intent_id="creator-intent-startup-yc-12345678",
+        tasks=[CreatorTraceTask(task_id="benchmark-pack", status="done")],
+        publish_readiness="network_now",
+    )
+
+    issues = validate_creator_trace(trace)
+
+    assert {issue.path for issue in issues} == {"publish_readiness", "tasks[0].status"}
