@@ -32,6 +32,25 @@ from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.state.db import StateDB
 
 
+GATEWAY_BLOCKING_DOCTOR_CHECKS = {
+    "home",
+    "config.yaml",
+    ".env",
+    "state.db",
+    ".env-permissions",
+    "config-load",
+    "state-schema",
+    "operator-authority",
+    "provider-auth",
+    "provider-runtime",
+    "oauth-maintenance",
+    "provider-execution",
+    "telegram-runtime",
+    "discord-runtime",
+    "whatsapp-runtime",
+}
+
+
 @dataclass
 class GatewayStatus:
     ready: bool
@@ -44,6 +63,9 @@ class GatewayStatus:
     provider_execution_detail: str
     oauth_maintenance_ok: bool
     oauth_maintenance_detail: str
+    doctor_blocking_ok: bool
+    doctor_blocking_failures: list[str]
+    doctor_degraded_checks: list[str]
     repair_hints: list[str]
     provider_lines: list[str]
     adapter_lines: list[str]
@@ -61,6 +83,9 @@ class GatewayStatus:
                 "provider_execution_detail": self.provider_execution_detail,
                 "oauth_maintenance_ok": self.oauth_maintenance_ok,
                 "oauth_maintenance_detail": self.oauth_maintenance_detail,
+                "doctor_blocking_ok": self.doctor_blocking_ok,
+                "doctor_blocking_failures": self.doctor_blocking_failures,
+                "doctor_degraded_checks": self.doctor_degraded_checks,
                 "repair_hints": self.repair_hints,
                 "provider_lines": self.provider_lines,
                 "adapter_lines": self.adapter_lines,
@@ -73,6 +98,11 @@ class GatewayStatus:
         lines.append(f"- providers: {', '.join(self.configured_providers) if self.configured_providers else 'none'}")
         lines.append(f"- channels: {', '.join(self.configured_channels) if self.configured_channels else 'none'}")
         lines.append(f"- doctor: {'ok' if self.doctor_ok else 'degraded'}")
+        lines.append(f"- doctor-blocking: {'ok' if self.doctor_blocking_ok else 'degraded'}")
+        if self.doctor_blocking_failures:
+            lines.append(f"- doctor-blocking-failures: {', '.join(self.doctor_blocking_failures)}")
+        if self.doctor_degraded_checks:
+            lines.append(f"- doctor-advisory-failures: {', '.join(self.doctor_degraded_checks[:8])}")
         lines.append(
             f"- provider-runtime: {'ok' if self.provider_runtime_ok else 'degraded'} {self.provider_runtime_detail}"
         )
@@ -126,7 +156,15 @@ def gateway_status(config_manager: ConfigManager, state_db: StateDB) -> GatewayS
     telegram_summary = build_telegram_runtime_summary(config_manager, state_db)
     discord_summary = build_discord_runtime_summary(config_manager, state_db)
     whatsapp_summary = build_whatsapp_runtime_summary(config_manager, state_db)
-    ready = bool(configured_providers) and bool(active_channel_records) and doctor_report.ok
+    doctor_blocking_ok, doctor_blocking_failures, doctor_degraded_checks = _gateway_doctor_readiness(doctor_report)
+    ready = (
+        bool(configured_providers)
+        and bool(active_channel_records)
+        and provider_runtime_ok
+        and provider_execution_ok
+        and oauth_maintenance_ok
+        and doctor_blocking_ok
+    )
     return GatewayStatus(
         ready=ready,
         configured_channels=channel_records,
@@ -138,6 +176,9 @@ def gateway_status(config_manager: ConfigManager, state_db: StateDB) -> GatewayS
         provider_execution_detail=provider_execution_detail,
         oauth_maintenance_ok=oauth_maintenance_ok,
         oauth_maintenance_detail=oauth_maintenance_detail,
+        doctor_blocking_ok=doctor_blocking_ok,
+        doctor_blocking_failures=doctor_blocking_failures,
+        doctor_degraded_checks=doctor_degraded_checks,
         repair_hints=_gateway_repair_hints(
             config=config,
             auth_report=auth_report,
@@ -158,6 +199,20 @@ def gateway_status(config_manager: ConfigManager, state_db: StateDB) -> GatewayS
         ],
         adapter_lines=[telegram_summary.to_line(), discord_summary.to_line(), whatsapp_summary.to_line()],
     )
+
+
+def _gateway_doctor_readiness(doctor_report: Any) -> tuple[bool, list[str], list[str]]:
+    blocking_failures: list[str] = []
+    advisory_failures: list[str] = []
+    for check in getattr(doctor_report, "checks", []):
+        if getattr(check, "ok", False):
+            continue
+        name = str(getattr(check, "name", "unknown"))
+        if name in GATEWAY_BLOCKING_DOCTOR_CHECKS:
+            blocking_failures.append(name)
+        else:
+            advisory_failures.append(name)
+    return not blocking_failures, blocking_failures, advisory_failures
 
 
 def gateway_start(

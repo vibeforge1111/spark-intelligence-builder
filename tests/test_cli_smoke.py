@@ -3261,6 +3261,51 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(status_exit, 0, status_stderr)
         self.assertIn("- repair hint: spark-intelligence operator set-channel telegram enabled", status_stdout)
 
+    def test_gateway_status_ready_when_only_advisory_doctor_checks_fail(self) -> None:
+        self.add_telegram_channel(bot_token="good-token")
+        connect_exit, _, connect_stderr = self.run_cli(
+            "auth",
+            "connect",
+            "openai",
+            "--home",
+            str(self.home),
+            "--api-key",
+            "openai-secret",
+            "--model",
+            "gpt-5.4",
+        )
+        self.assertEqual(connect_exit, 0, connect_stderr)
+
+        from spark_intelligence.doctor.checks import DoctorCheck, DoctorReport
+
+        with patch(
+            "spark_intelligence.gateway.runtime.run_doctor",
+            return_value=DoctorReport(
+                checks=[
+                    DoctorCheck("home", True, str(self.home)),
+                    DoctorCheck("provider-auth", True, "all provider auth profiles resolved"),
+                    DoctorCheck("provider-runtime", True, "openai:openai:default:direct_http"),
+                    DoctorCheck("provider-execution", True, "openai:direct_http"),
+                    DoctorCheck("telegram-runtime", True, "status=enabled auth=ok"),
+                    DoctorCheck("watchtower-freshness", False, "background freshness lag is advisory"),
+                    DoctorCheck("stop_ship_memory_contract", False, "memory quality contract is advisory for gateway ingress"),
+                ]
+            ),
+        ):
+            exit_code, stdout, stderr = self.run_cli(
+                "gateway",
+                "status",
+                "--home",
+                str(self.home),
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertIn("Gateway ready: yes", stdout)
+        self.assertIn("- doctor: degraded", stdout)
+        self.assertIn("- doctor-blocking: ok", stdout)
+        self.assertIn("watchtower-freshness", stdout)
+        self.assertIn("stop_ship_memory_contract", stdout)
+
     def test_status_json_includes_auth_report(self) -> None:
         connect_exit, _, connect_stderr = self.run_cli(
             "auth",

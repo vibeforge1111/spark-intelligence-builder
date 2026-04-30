@@ -3833,7 +3833,7 @@ def handle_status(args: argparse.Namespace) -> int:
         payload=payload,
     )
     print(status.to_json() if args.json else status.to_text())
-    return 0 if doctor_report.ok else 1
+    return 0 if gateway.doctor_blocking_ok else 1
 
 
 def _collect_status_browser_payload(config_manager: ConfigManager) -> dict[str, object] | None:
