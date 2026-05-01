@@ -4,6 +4,7 @@ import json
 
 from spark_intelligence.llm_wiki import (
     bootstrap_llm_wiki,
+    build_llm_wiki_answer,
     build_llm_wiki_inventory,
     build_llm_wiki_query,
     build_llm_wiki_status,
@@ -200,6 +201,42 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertGreater(payload["hit_count"], 0)
         self.assertLessEqual(payload["hit_count"], 2)
         self.assertTrue(payload["hits"][0]["source_path"])
+
+    def test_wiki_answer_builds_source_backed_answer_with_live_verification_boundary(self) -> None:
+        result = build_llm_wiki_answer(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            question="How should Spark use recursive self-improvement loops now?",
+            refresh=True,
+            limit=3,
+        )
+
+        self.assertEqual(result.payload["evidence_level"], "wiki_backed_supporting_context")
+        self.assertGreater(result.payload["hit_count"], 0)
+        self.assertIn("From the LLM wiki", result.payload["answer"])
+        self.assertTrue(result.payload["sources"][0]["source_path"])
+        self.assertTrue(result.payload["missing_live_verification"])
+        self.assertEqual(result.payload["authority"], "supporting_not_authoritative")
+
+    def test_wiki_answer_cli_can_emit_machine_readable_answer(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "wiki",
+            "answer",
+            "How should Spark use route tracing?",
+            "--home",
+            str(self.home),
+            "--refresh",
+            "--limit",
+            "3",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["evidence_level"], "wiki_backed_supporting_context")
+        self.assertGreater(payload["hit_count"], 0)
+        self.assertTrue(payload["sources"])
+        self.assertIn("answer", payload)
 
     def test_project_knowledge_intent_boosts_wiki_over_generic_events(self) -> None:
         query = "How should Spark use recursive self-improvement loops?"

@@ -1,3 +1,7 @@
+from spark_intelligence.llm_wiki.answer import (
+    LlmWikiAnswerResult,
+    build_llm_wiki_answer,
+)
 from spark_intelligence.llm_wiki.bootstrap import (
     LlmWikiBootstrapResult,
     bootstrap_llm_wiki,
@@ -20,12 +24,14 @@ from spark_intelligence.llm_wiki.status import (
 )
 
 __all__ = [
+    "LlmWikiAnswerResult",
     "LlmWikiBootstrapResult",
     "LlmWikiInventoryResult",
     "LlmWikiQueryResult",
     "LlmWikiSystemCompileResult",
     "LlmWikiStatusResult",
     "bootstrap_llm_wiki",
+    "build_llm_wiki_answer",
     "build_llm_wiki_inventory",
     "build_llm_wiki_query",
     "build_llm_wiki_status",
