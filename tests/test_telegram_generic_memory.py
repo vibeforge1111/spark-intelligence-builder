@@ -1801,6 +1801,63 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertIn("current blocker", result.reply_text.lower())
         self.assertIn("stripe verification fails", result.reply_text.lower())
 
+    def test_structured_evidence_promotion_policy_traces_blocked_and_promoted_decisions(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-policy-seed-1",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-policy-seed-1",
+            channel_kind="telegram",
+            user_message="Users keep dropping during onboarding because Stripe verification fails.",
+        )
+
+        blocked_events = latest_events_by_type(self.state_db, event_type="memory_promotion_evaluated", limit=10)
+        blocked_facts = next(
+            (
+                event["facts_json"] or {}
+                for event in blocked_events
+                if event["session_id"] == "session-evidence-policy-seed-1"
+            ),
+            {},
+        )
+        self.assertEqual(blocked_facts.get("promotion_policy"), "structured_evidence_current_state_v1")
+        self.assertEqual(blocked_facts.get("promotion_disposition"), "blocked")
+        self.assertEqual(blocked_facts.get("promotion_reason_code"), "needs_corroborating_evidence")
+        self.assertEqual(blocked_facts.get("target_predicate"), "profile.current_blocker")
+        self.assertEqual(blocked_facts.get("required_corroborating_evidence_count"), 1)
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-evidence-policy-seed-2",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-evidence-policy-seed-2",
+            channel_kind="telegram",
+            user_message="Users still drop during onboarding because Stripe verification fails and the retry flow is confusing.",
+        )
+
+        promoted_events = latest_events_by_type(self.state_db, event_type="memory_promotion_evaluated", limit=10)
+        promoted_facts = next(
+            (
+                event["facts_json"] or {}
+                for event in promoted_events
+                if event["session_id"] == "session-evidence-policy-seed-2"
+                and (event["facts_json"] or {}).get("promotion_disposition") == "promote_current_state"
+            ),
+            {},
+        )
+        self.assertEqual(promoted_facts.get("promotion_disposition"), "promote_current_state")
+        self.assertEqual(promoted_facts.get("promotion_reason_code"), "corroborated_structured_evidence")
+        self.assertEqual(promoted_facts.get("target_predicate"), "profile.current_blocker")
+        self.assertGreaterEqual(promoted_facts.get("corroborating_evidence_count") or 0, 1)
+        self.assertIn("source_observation_ids", promoted_facts)
+
     def test_build_researcher_reply_promotes_repeated_evidence_into_current_dependency(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)

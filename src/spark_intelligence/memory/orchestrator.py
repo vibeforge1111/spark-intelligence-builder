@@ -560,6 +560,42 @@ class StructuredEvidenceCurrentStateRule:
     direct_promotion_without_corroboration: bool = False
 
 
+@dataclass(frozen=True)
+class StructuredEvidencePromotionDecision:
+    should_promote: bool
+    reason_code: str
+    reasons: tuple[str, ...]
+    target_fact_name: str | None
+    target_predicate: str | None
+    target_value: str | None
+    corroborating_evidence_count: int
+    direct_promotion_without_corroboration: bool
+    required_corroborating_evidence_count: int
+
+    def facts(self) -> dict[str, Any]:
+        disposition = "promote_current_state" if self.should_promote else "blocked"
+        stage = "current_state_confirmed" if self.should_promote else "structured_evidence"
+        lifecycle_action = "promoted_by_policy" if self.should_promote else "blocked_by_policy"
+        return {
+            "memory_role": "current_state",
+            "promotion_policy": "structured_evidence_current_state_v1",
+            "promotion_stage": stage,
+            "promotion_disposition": disposition,
+            "lifecycle_action": lifecycle_action,
+            "reason": self.reason_code,
+            "promotion_reason_code": self.reason_code,
+            "promotion_reasons": list(self.reasons),
+            "target_fact_name": self.target_fact_name,
+            "target_predicate": self.target_predicate,
+            "target_value": self.target_value,
+            "destination": self.target_predicate,
+            "corroborating_evidence_count": self.corroborating_evidence_count,
+            "required_corroborating_evidence_count": self.required_corroborating_evidence_count,
+            "direct_promotion_without_corroboration": self.direct_promotion_without_corroboration,
+            "source_event_count": self.corroborating_evidence_count,
+        }
+
+
 _STRUCTURED_EVIDENCE_CURRENT_STATE_RULES: tuple[StructuredEvidenceCurrentStateRule, ...] = (
     StructuredEvidenceCurrentStateRule(
         fact_name="current_plan",
@@ -748,20 +784,126 @@ def _derive_current_state_observation_from_evidence(text: str) -> Any | None:
     return detect_telegram_generic_observation("Our blocker is {value}.".format(value=blocker_value))
 
 
-def _should_promote_current_state_from_evidence(
+def _evaluate_current_state_promotion_from_evidence(
     *,
     observation: Any | None,
     corroborating_evidence_records: list[dict[str, Any]],
-) -> bool:
+) -> StructuredEvidencePromotionDecision:
     if observation is None or not str(getattr(observation, "value", "") or "").strip():
-        return False
+        return StructuredEvidencePromotionDecision(
+            should_promote=False,
+            reason_code="no_current_state_candidate",
+            reasons=("no_current_state_candidate",),
+            target_fact_name=None,
+            target_predicate=None,
+            target_value=None,
+            corroborating_evidence_count=len(corroborating_evidence_records),
+            direct_promotion_without_corroboration=False,
+            required_corroborating_evidence_count=1,
+        )
     fact_name = str(getattr(observation, "fact_name", "") or "").strip()
+    target_predicate = str(getattr(observation, "predicate", "") or "").strip() or None
+    target_value = str(getattr(observation, "value", "") or "").strip() or None
     if not fact_name:
-        return False
+        return StructuredEvidencePromotionDecision(
+            should_promote=False,
+            reason_code="missing_target_fact_name",
+            reasons=("missing_target_fact_name",),
+            target_fact_name=None,
+            target_predicate=target_predicate,
+            target_value=target_value,
+            corroborating_evidence_count=len(corroborating_evidence_records),
+            direct_promotion_without_corroboration=False,
+            required_corroborating_evidence_count=1,
+        )
     rule = _STRUCTURED_EVIDENCE_CURRENT_STATE_RULES_BY_FACT.get(fact_name)
     if rule is None:
-        return False
-    return bool(corroborating_evidence_records) or rule.direct_promotion_without_corroboration
+        return StructuredEvidencePromotionDecision(
+            should_promote=False,
+            reason_code="unsupported_current_state_fact",
+            reasons=("unsupported_current_state_fact", fact_name),
+            target_fact_name=fact_name,
+            target_predicate=target_predicate,
+            target_value=target_value,
+            corroborating_evidence_count=len(corroborating_evidence_records),
+            direct_promotion_without_corroboration=False,
+            required_corroborating_evidence_count=1,
+        )
+    corroborating_count = len(corroborating_evidence_records)
+    if corroborating_count > 0:
+        return StructuredEvidencePromotionDecision(
+            should_promote=True,
+            reason_code="corroborated_structured_evidence",
+            reasons=("corroborating_evidence_found", fact_name),
+            target_fact_name=fact_name,
+            target_predicate=target_predicate,
+            target_value=target_value,
+            corroborating_evidence_count=corroborating_count,
+            direct_promotion_without_corroboration=rule.direct_promotion_without_corroboration,
+            required_corroborating_evidence_count=1,
+        )
+    if rule.direct_promotion_without_corroboration:
+        return StructuredEvidencePromotionDecision(
+            should_promote=True,
+            reason_code="direct_high_confidence_current_state",
+            reasons=("direct_promotion_allowed", fact_name),
+            target_fact_name=fact_name,
+            target_predicate=target_predicate,
+            target_value=target_value,
+            corroborating_evidence_count=0,
+            direct_promotion_without_corroboration=True,
+            required_corroborating_evidence_count=0,
+        )
+    return StructuredEvidencePromotionDecision(
+        should_promote=False,
+        reason_code="needs_corroborating_evidence",
+        reasons=("single_evidence_item_held_as_structured_evidence", fact_name),
+        target_fact_name=fact_name,
+        target_predicate=target_predicate,
+        target_value=target_value,
+        corroborating_evidence_count=0,
+        direct_promotion_without_corroboration=False,
+        required_corroborating_evidence_count=1,
+    )
+
+
+def _record_current_state_promotion_decision(
+    *,
+    state_db: StateDB,
+    decision: StructuredEvidencePromotionDecision,
+    evidence_text: str,
+    evidence_predicate: str,
+    human_id: str,
+    session_id: str | None,
+    turn_id: str | None,
+    actor_id: str,
+    channel_kind: str | None,
+    source_observation_ids: list[str],
+) -> None:
+    record_event(
+        state_db,
+        event_type="memory_promotion_evaluated",
+        component="memory_orchestrator",
+        summary="Spark memory evaluated structured evidence for current-state promotion.",
+        request_id=turn_id,
+        session_id=session_id,
+        human_id=human_id,
+        channel_id=channel_kind,
+        actor_id=actor_id,
+        status="eligible" if decision.should_promote else "blocked",
+        reason_code=decision.reason_code,
+        facts={
+            **decision.facts(),
+            "source_predicate": evidence_predicate,
+            "source_text": evidence_text,
+            "source_observation_ids": list(source_observation_ids[:20]),
+        },
+        provenance={
+            "memory_role": "current_state",
+            "source_kind": "structured_evidence",
+            "source_ref": turn_id,
+        },
+    )
 
 
 class _DomainChipMemoryClientAdapter:
@@ -2776,6 +2918,28 @@ def write_structured_evidence_to_memory(
         actor_id=actor_id,
     )
     current_state_observation = _derive_current_state_observation_from_evidence(normalized_text)
+    promotion_decision = _evaluate_current_state_promotion_from_evidence(
+        observation=current_state_observation,
+        corroborating_evidence_records=corroborating_evidence_records,
+    )
+    if result.accepted_count > 0 and current_state_observation is not None:
+        source_observation_ids = [
+            observation_id
+            for observation_id in (_evidence_record_observation_id(record) for record in corroborating_evidence_records)
+            if observation_id
+        ]
+        _record_current_state_promotion_decision(
+            state_db=state_db,
+            decision=promotion_decision,
+            evidence_text=normalized_text,
+            evidence_predicate=predicate,
+            human_id=human_id,
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=actor_id,
+            channel_kind=channel_kind,
+            source_observation_ids=source_observation_ids,
+        )
     if result.accepted_count > 0 and corroborating_evidence_records:
         try:
             write_belief_to_memory(
@@ -2792,10 +2956,7 @@ def write_structured_evidence_to_memory(
             )
         except Exception:
             pass
-    if result.accepted_count > 0 and _should_promote_current_state_from_evidence(
-        observation=current_state_observation,
-        corroborating_evidence_records=corroborating_evidence_records,
-    ):
+    if result.accepted_count > 0 and promotion_decision.should_promote:
         if current_state_observation is not None and str(current_state_observation.value or "").strip():
             try:
                 write_profile_fact_to_memory(

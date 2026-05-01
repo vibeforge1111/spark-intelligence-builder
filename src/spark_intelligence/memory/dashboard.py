@@ -213,7 +213,7 @@ def _movement_bucket(*, event_type: str, facts: dict[str, Any], lane: dict[str, 
     lane_status = str((lane or {}).get("status") or "")
     if event_type == "policy_gate_blocked" or event_type in {"memory_write_abstained", "memory_write_failed"}:
         return "blocked"
-    if lifecycle_action == "blocked_by_salience" or lane_status == "blocked":
+    if lifecycle_action in {"blocked_by_salience", "blocked_by_policy"} or lane_status == "blocked":
         return "blocked"
     if event_type == "memory_write_requested" or lifecycle_action == "captured_by_salience" or lane_status == "captured":
         return "captured"
@@ -269,8 +269,13 @@ def _compact_trace_facts(facts: dict[str, Any]) -> dict[str, Any]:
         "transition_kind",
         "destination",
         "transition_count",
+        "promotion_policy",
+        "promotion_reason_code",
+        "corroborating_evidence_count",
+        "required_corroborating_evidence_count",
         "source_event_count",
         "source_session_count",
+        "source_observation_ids",
         "reason",
     )
     return {key: facts.get(key) for key in keys if key in facts}
