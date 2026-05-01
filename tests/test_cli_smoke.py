@@ -962,6 +962,76 @@ class CliSmokeTests(SparkTestCase):
         self.assertIn("stale_current_conflict", benchmark_payload["cases"][0]["benchmark_tags"])
         self.assertIn("eval material only", benchmark_payload["benchmark_rule"])
 
+        def replay_feedback_case(**kwargs):
+            trace_ref = "trace:feedback-benchmark-replay"
+            record_event(
+                self.state_db,
+                event_type="memory_read_succeeded",
+                component="memory_orchestrator",
+                summary="Spark memory read completed.",
+                request_id=trace_ref,
+                human_id=f"human:telegram:{kwargs['user_id']}",
+                status="recorded",
+                facts={
+                    "method": "hybrid_memory_retrieve",
+                    "memory_role": "hybrid",
+                    "record_count": 1,
+                    "answer_explanation": {
+                        "selected_count": 1,
+                        "context_packet_source_mix": {"current_state": 1},
+                        "context_packet_sections": ["active_current_state"],
+                        "context_packet_promotion_gates": {
+                            "status": "pass",
+                            "gates": {"stale_current_conflict": {"status": "pass"}},
+                        },
+                    },
+                    "retrieval_trace": {
+                        "hybrid_memory_retrieve": {
+                            "query": kwargs["message"],
+                            "selected_count": 1,
+                            "candidate_count": 1,
+                        }
+                    },
+                },
+                provenance={"memory_role": "hybrid"},
+            )
+            return json.dumps(
+                {
+                    "result": {
+                        "decision": "allowed",
+                        "detail": {
+                            "response_text": "The latest source-aware project summary is the active focus.",
+                            "bridge_mode": "memory_profile_fact",
+                            "routing_decision": "memory_profile_fact_query",
+                            "trace_ref": trace_ref,
+                        },
+                    }
+                }
+            )
+
+        with patch("spark_intelligence.gateway.runtime.gateway_ask_telegram", side_effect=replay_feedback_case):
+            exit_code, stdout, stderr = self.run_cli(
+                "memory",
+                "run-feedback-benchmarks",
+                "--home",
+                str(self.home),
+                "--human-id",
+                "human:feedback:review",
+                "--agent-id",
+                "agent:feedback:review",
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        run_payload = json.loads(stdout)
+        self.assertEqual(run_payload["view"], "memory_feedback_benchmark_run")
+        self.assertEqual(run_payload["summary"]["case_count"], 1)
+        self.assertEqual(run_payload["summary"]["executed_case_count"], 1)
+        self.assertEqual(run_payload["summary"]["automated_pass_count"], 1)
+        self.assertEqual(run_payload["summary"]["needs_operator_judgment_count"], 1)
+        self.assertEqual(run_payload["cases"][0]["replay_source_packet"]["source_class"], "current_state")
+        self.assertEqual(run_payload["cases"][0]["judgment_status"], "operator_review_required")
+
     def test_memory_audit_promotions_reports_policy_risks_and_resolutions(self) -> None:
         base = {
             "memory_role": "current_state",

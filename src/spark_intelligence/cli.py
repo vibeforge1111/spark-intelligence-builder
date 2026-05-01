@@ -116,6 +116,7 @@ from spark_intelligence.memory import (
     inspect_memory_sdk_runtime,
     lookup_current_state_in_memory,
     record_memory_feedback,
+    run_memory_feedback_benchmark_regression,
     run_memory_sdk_smoke_test,
     run_memory_sdk_maintenance,
     run_telegram_memory_architecture_soak,
@@ -2331,6 +2332,20 @@ def build_parser() -> argparse.ArgumentParser:
     memory_feedback_benchmark_parser.add_argument("--agent-id", help="Filter benchmark cases to one Builder agent id")
     memory_feedback_benchmark_parser.add_argument("--limit", type=int, default=50, help="Maximum feedback rows to scan")
     memory_feedback_benchmark_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_feedback_run_parser = memory_subparsers.add_parser(
+        "run-feedback-benchmarks",
+        help="Replay feedback-derived memory benchmark cases through Telegram and score correction checks",
+    )
+    memory_feedback_run_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_feedback_run_parser.add_argument("--human-id", help="Filter benchmark cases to one Builder human id")
+    memory_feedback_run_parser.add_argument("--agent-id", help="Filter benchmark cases to one Builder agent id")
+    memory_feedback_run_parser.add_argument("--user-id", help="Telegram user id to replay through; inferred from human-id when possible")
+    memory_feedback_run_parser.add_argument("--username", help="Telegram username to simulate")
+    memory_feedback_run_parser.add_argument("--chat-id", help="Telegram chat id override")
+    memory_feedback_run_parser.add_argument("--limit", type=int, default=20, help="Maximum feedback cases to replay")
+    memory_feedback_run_parser.add_argument("--output-dir", help="Feedback benchmark run artifact output directory")
+    memory_feedback_run_parser.add_argument("--write", help="Optional output path for the run summary JSON payload")
+    memory_feedback_run_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_promotion_audit_parser = memory_subparsers.add_parser(
         "audit-promotions",
         help="Audit structured-evidence promotion policy decisions",
@@ -6400,6 +6415,27 @@ def handle_memory_feedback_benchmarks(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_memory_run_feedback_benchmarks(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = run_memory_feedback_benchmark_regression(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=args.human_id,
+        agent_id=args.agent_id,
+        user_id=args.user_id,
+        username=args.username,
+        chat_id=args.chat_id,
+        limit=args.limit,
+        output_dir=args.output_dir,
+        write_path=args.write,
+    )
+    print(result.to_json() if args.json else result.to_text())
+    return 0
+
+
 def handle_memory_audit_promotions(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -8358,6 +8394,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_memory_review_feedback(args)
     if args.command == "memory" and args.memory_command == "feedback-benchmarks":
         return handle_memory_feedback_benchmarks(args)
+    if args.command == "memory" and args.memory_command == "run-feedback-benchmarks":
+        return handle_memory_run_feedback_benchmarks(args)
     if args.command == "memory" and args.memory_command == "audit-promotions":
         return handle_memory_audit_promotions(args)
     if args.command == "memory" and args.memory_command == "search-sessions":

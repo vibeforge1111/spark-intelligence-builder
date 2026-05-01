@@ -97,6 +97,10 @@ from spark_intelligence.memory.feedback import (
     build_memory_feedback_summary,
     record_memory_feedback,
 )
+from spark_intelligence.memory.feedback_regression import (
+    MemoryFeedbackBenchmarkRunResult,
+    run_memory_feedback_benchmark_regression,
+)
 from spark_intelligence.memory.promotion_audit import build_promotion_audit_payload
 from spark_intelligence.memory.session_search import build_session_search_payload
 from spark_intelligence.memory.source_packet import build_memory_answer_source_packet
@@ -111,6 +115,7 @@ __all__ = [
     "MemoryHistoricalStateLookupResult",
     "MemoryKernelReadResult",
     "MemoryMaintenanceRunResult",
+    "MemoryFeedbackBenchmarkRunResult",
     "MemoryReadResult",
     "MemoryRetrievalQueryResult",
     "MemorySdkSmokeResult",
@@ -165,6 +170,7 @@ __all__ = [
     "retrieve_memory_events_in_memory",
     "run_memory_sdk_smoke_test",
     "run_memory_sdk_maintenance",
+    "run_memory_feedback_benchmark_regression",
     "write_belief_to_memory",
     "run_telegram_memory_architecture_soak",
     "run_telegram_memory_acceptance",
