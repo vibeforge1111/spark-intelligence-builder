@@ -83,20 +83,18 @@ class SelfAwarenessCapsule:
             f"- workspace: {self.workspace_id}",
             "",
         ]
-        _extend_claim_lines(lines, "Observed now", self.observed_now)
-        _extend_claim_lines(lines, "Recently verified", self.recently_verified)
-        _extend_claim_lines(lines, "Available but unverified", self.available_unverified)
-        _extend_claim_lines(lines, "Degraded or missing", self.degraded_or_missing)
-        _extend_claim_lines(lines, "Where Spark is strong", self.inferred_strengths)
-        _extend_claim_lines(lines, "Where Spark lacks", self.lacks)
-        _extend_claim_lines(lines, "How Spark can improve", self.improvement_options)
+        _extend_claim_lines(lines, "Observed now", self.observed_now, limit=5)
+        _extend_claim_lines(lines, "Recently verified", self.recently_verified, limit=3)
+        _extend_claim_lines(lines, "Where Spark is strong", self.inferred_strengths, limit=3)
+        _extend_claim_lines(lines, "Where Spark lacks", self.lacks, limit=5)
+        _extend_claim_lines(lines, "How Spark can improve", self.improvement_options, limit=5)
         if self.recommended_probes:
             lines.append("Recommended probes")
-            lines.extend(f"- {item}" for item in self.recommended_probes)
+            lines.extend(f"- {item}" for item in self.recommended_probes[:4])
             lines.append("")
         if self.natural_language_routes:
             lines.append("Natural-language routes")
-            lines.extend(f"- {item}" for item in self.natural_language_routes)
+            lines.extend(f"- {item}" for item in self.natural_language_routes[:4])
         return "\n".join(lines).strip()
 
 
@@ -448,11 +446,18 @@ def _improvement_for_kind(kind: str, key: str) -> str:
     return f"Improve {key} by adding a current health probe and evidence-backed route contract."
 
 
-def _extend_claim_lines(lines: list[str], title: str, claims: list[SelfAwarenessClaim]) -> None:
-    if not claims:
+def _extend_claim_lines(
+    lines: list[str],
+    title: str,
+    claims: list[SelfAwarenessClaim],
+    *,
+    limit: int | None = None,
+) -> None:
+    selected_claims = claims[:limit] if limit is not None else claims
+    if not selected_claims:
         return
     lines.append(title)
-    for claim in claims:
+    for claim in selected_claims:
         suffix_parts = [claim.verification_status, claim.confidence]
         if claim.next_probe:
             suffix_parts.append(f"next: {claim.next_probe}")

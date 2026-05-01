@@ -1293,6 +1293,7 @@ def build_parser() -> argparse.ArgumentParser:
     self_status_parser.add_argument("--channel-kind", default="", help="Optional channel kind, for example telegram")
     self_status_parser.add_argument("--request-id", default="", help="Optional current request id to exclude from recent-turn context")
     self_status_parser.add_argument("--user-message", default="", help="Optional user message for goal-specific context")
+    self_status_parser.add_argument("--refresh-wiki", action="store_true", help="Refresh generated LLM wiki system pages and include wiki retrieval context")
     self_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     wiki_parser = subparsers.add_parser("wiki", help="Bootstrap and inspect Spark's local LLM wiki")
@@ -3884,8 +3885,74 @@ def handle_self_status(args: argparse.Namespace) -> int:
         request_id=str(getattr(args, "request_id", "") or "") or None,
         user_message=str(getattr(args, "user_message", "") or ""),
     )
+    if bool(getattr(args, "refresh_wiki", False)):
+        wiki_refresh = compile_system_wiki(config_manager=config_manager, state_db=state_db)
+        wiki_context = hybrid_memory_retrieve(
+            config_manager=config_manager,
+            state_db=state_db,
+            query=str(getattr(args, "user_message", "") or "Spark self-awareness, system map, lacks, and improvement options."),
+            limit=3,
+            actor_id="self_status",
+            source_surface="self_status_wiki_context",
+            record_activity=False,
+        )
+        if args.json:
+            payload = capsule.to_payload()
+            payload["wiki_refresh"] = wiki_refresh.to_payload()
+            payload["wiki_context"] = _self_status_wiki_context_payload(wiki_context)
+            print(json.dumps(payload, indent=2))
+        else:
+            lines = [
+                capsule.to_text(),
+                "",
+                "LLM wiki refresh",
+                f"- generated_files: {len(wiki_refresh.generated_files)}",
+                f"- output_dir: {wiki_refresh.output_dir}",
+            ]
+            context_sections = [
+                str(section.get("section") or "")
+                for section in wiki_context.context_packet.sections
+                if isinstance(section, dict)
+            ]
+            if context_sections:
+                lines.append(f"- retrieved_sections: {', '.join(context_sections)}")
+            print("\n".join(lines).strip())
+        return 0
     print(capsule.to_json() if args.json else capsule.to_text())
     return 0
+
+
+def _self_status_wiki_context_payload(wiki_context: object) -> dict[str, object]:
+    context_packet = getattr(wiki_context, "context_packet", None)
+    lane_summaries = getattr(wiki_context, "lane_summaries", []) or []
+    wiki_lane = next(
+        (
+            lane
+            for lane in lane_summaries
+            if isinstance(lane, dict) and str(lane.get("lane") or "") == "wiki_packets"
+        ),
+        {},
+    )
+    sections = list(getattr(context_packet, "sections", []) or []) if context_packet is not None else []
+    return {
+        "wiki_status": wiki_lane.get("status") if isinstance(wiki_lane, dict) else None,
+        "wiki_record_count": wiki_lane.get("record_count") if isinstance(wiki_lane, dict) else 0,
+        "sections": [
+            {
+                "section": section.get("section"),
+                "authority": section.get("authority"),
+                "item_count": len(section.get("items") or []),
+            }
+            for section in sections
+            if isinstance(section, dict)
+        ],
+        "source_mix": dict(getattr(context_packet, "source_mix", {}) or {}) if context_packet is not None else {},
+        "project_knowledge_first": (
+            getattr(context_packet, "trace", {}) or {}
+        ).get("project_knowledge_first")
+        if context_packet is not None
+        else False,
+    }
 
 
 def handle_wiki_bootstrap(args: argparse.Namespace) -> int:

@@ -103,6 +103,7 @@ from spark_intelligence.llm.direct_provider import (
     DirectProviderRequest,
     execute_direct_provider_prompt,
 )
+from spark_intelligence.llm_wiki import bootstrap_llm_wiki, compile_system_wiki
 from spark_intelligence.observability.store import (
     build_text_mutation_facts,
     record_environment_snapshot,
@@ -5791,6 +5792,82 @@ def _bridge_output_classification(*, mode: str, routing_decision: str | None) ->
     return ("ephemeral_context", "not_promotable")
 
 
+def _append_direct_reply_section(reply_text: str, appendix: str) -> str:
+    base = str(reply_text or "").strip()
+    extra = str(appendix or "").strip()
+    if not extra:
+        return base
+    if not base:
+        return extra
+    return f"{base}\n\n{extra}"
+
+
+def _build_self_knowledge_wiki_appendix(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    user_message: str,
+    actor_id: str,
+) -> tuple[str, str]:
+    try:
+        bootstrap_llm_wiki(config_manager=config_manager)
+        compile_result = compile_system_wiki(config_manager=config_manager, state_db=state_db)
+        wiki_context = hybrid_memory_retrieve(
+            config_manager=config_manager,
+            state_db=state_db,
+            query=str(user_message or "Spark self-awareness and system capability map").strip(),
+            limit=3,
+            actor_id=actor_id,
+            source_surface="self_knowledge_wiki_context",
+            record_activity=False,
+        )
+    except Exception as exc:
+        return (
+            "LLM wiki\n- refresh: unavailable this turn\n- reason: wiki_refresh_failed\n- next probe: run `spark-intelligence wiki compile-system --json`",
+            f"wiki_refresh=failed error={exc.__class__.__name__}",
+        )
+    context_packet = wiki_context.context_packet
+    wiki_lane = next(
+        (
+            lane
+            for lane in wiki_context.lane_summaries
+            if isinstance(lane, dict) and str(lane.get("lane") or "") == "wiki_packets"
+        ),
+        {},
+    )
+    section_names = [
+        str(section.get("section") or "")
+        for section in context_packet.sections
+        if isinstance(section, dict) and str(section.get("section") or "").strip()
+    ]
+    source_paths: list[str] = []
+    for section in context_packet.sections:
+        if not isinstance(section, dict):
+            continue
+        for item in list(section.get("items") or []):
+            if not isinstance(item, dict):
+                continue
+            source_path = str(item.get("source_path") or "").strip()
+            if source_path and source_path not in source_paths:
+                source_paths.append(source_path)
+    lines = [
+        "LLM wiki",
+        f"- refresh: generated {len(compile_result.generated_files)} live system pages",
+        f"- retrieval: {wiki_lane.get('status') or 'unknown'} ({wiki_lane.get('record_count') or 0} wiki hits)",
+        f"- context: {', '.join(section_names) if section_names else 'none'}",
+        "- authority: supporting_not_authoritative",
+    ]
+    if source_paths:
+        lines.append("- source pages:")
+        lines.extend(f"  - {path}" for path in source_paths[:3])
+    evidence = (
+        f"wiki_refresh=ok wiki_records={wiki_lane.get('record_count') or 0} "
+        f"wiki_pages={len(compile_result.generated_files)} "
+        f"project_knowledge_first={(context_packet.trace or {}).get('project_knowledge_first')}"
+    )
+    return "\n".join(lines), evidence
+
+
 def _bridge_event_facts(
     *,
     routing_decision: str | None,
@@ -8663,6 +8740,90 @@ def build_researcher_reply(
             config_path=None,
             attachment_context=attachment_context,
             routing_decision="spark_systems_self_knowledge",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+
+    if not personality_context_extra and looks_like_system_registry_query(user_message):
+        self_awareness_query = looks_like_self_awareness_query(user_message)
+        direct_mode = "self_awareness_direct" if self_awareness_query else "system_registry_direct"
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode=direct_mode,
+            routing_decision=direct_mode,
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        if self_awareness_query:
+            capsule = build_self_awareness_capsule(
+                config_manager=config_manager,
+                state_db=state_db,
+                human_id=human_id,
+                session_id=session_id,
+                channel_kind=channel_kind,
+                request_id=request_id,
+                user_message=user_message,
+            )
+            wiki_appendix, wiki_evidence = _build_self_knowledge_wiki_appendix(
+                config_manager=config_manager,
+                state_db=state_db,
+                user_message=user_message,
+                actor_id="researcher_bridge",
+            )
+            reply_text = _append_direct_reply_section(capsule.to_text(), wiki_appendix)
+            evidence_summary = f"status=self_awareness_direct source=self_awareness_capsule {wiki_evidence}".strip()
+        else:
+            registry_reply = build_system_registry_direct_reply(
+                config_manager=config_manager,
+                state_db=state_db,
+                user_message=user_message,
+            )
+            wiki_appendix, wiki_evidence = _build_self_knowledge_wiki_appendix(
+                config_manager=config_manager,
+                state_db=state_db,
+                user_message=user_message,
+                actor_id="researcher_bridge",
+            )
+            reply_text = _append_direct_reply_section(registry_reply, wiki_appendix)
+            evidence_summary = f"status=system_registry_direct source=verified_registry {wiki_evidence}".strip()
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered a self-knowledge query directly from grounded runtime state.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code=direct_mode,
+            facts=_bridge_event_facts(
+                routing_decision=direct_mode,
+                bridge_mode=direct_mode,
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={"query_text": str(user_message or "").strip()},
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode=direct_mode,
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision=direct_mode,
             active_chip_key=None,
             active_chip_task_type=None,
             active_chip_evaluate_used=False,
@@ -11890,75 +12051,6 @@ def build_researcher_reply(
             config_path=None,
             attachment_context=attachment_context,
             routing_decision="mission_control_direct",
-            active_chip_key=None,
-            active_chip_task_type=None,
-            active_chip_evaluate_used=False,
-            output_keepability=output_keepability,
-            promotion_disposition=promotion_disposition,
-        )
-    if looks_like_system_registry_query(user_message):
-        self_awareness_query = looks_like_self_awareness_query(user_message)
-        direct_mode = "self_awareness_direct" if self_awareness_query else "system_registry_direct"
-        output_keepability, promotion_disposition = _bridge_output_classification(
-            mode=direct_mode,
-            routing_decision=direct_mode,
-        )
-        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
-        if self_awareness_query:
-            reply_text = build_self_awareness_capsule(
-                config_manager=config_manager,
-                state_db=state_db,
-                human_id=human_id,
-                session_id=session_id,
-                channel_kind=channel_kind,
-                request_id=request_id,
-                user_message=user_message,
-            ).to_text()
-            evidence_summary = "status=self_awareness_direct source=self_awareness_capsule"
-        else:
-            reply_text = build_system_registry_direct_reply(
-                config_manager=config_manager,
-                state_db=state_db,
-                user_message=user_message,
-            )
-            evidence_summary = "status=system_registry_direct source=verified_registry"
-        record_event(
-            state_db,
-            event_type="tool_result_received",
-            component="researcher_bridge",
-            summary="Researcher bridge answered a self-knowledge query directly from grounded runtime state.",
-            run_id=run_id,
-            request_id=request_id,
-            trace_ref=trace_ref,
-            channel_id=channel_kind,
-            session_id=session_id,
-            human_id=human_id,
-            agent_id=agent_id,
-            actor_id="researcher_bridge",
-            reason_code=direct_mode,
-            facts=_bridge_event_facts(
-                routing_decision=direct_mode,
-                bridge_mode=direct_mode,
-                evidence_summary=evidence_summary,
-                active_chip_key=None,
-                active_chip_task_type=None,
-                active_chip_evaluate_used=False,
-                keepability=output_keepability,
-                promotion_disposition=promotion_disposition,
-                extra={"query_text": str(user_message or "").strip()},
-            ),
-        )
-        return ResearcherBridgeResult(
-            request_id=request_id,
-            reply_text=reply_text,
-            evidence_summary=evidence_summary,
-            escalation_hint=None,
-            trace_ref=trace_ref,
-            mode=direct_mode,
-            runtime_root=None,
-            config_path=None,
-            attachment_context=attachment_context,
-            routing_decision=direct_mode,
             active_chip_key=None,
             active_chip_task_type=None,
             active_chip_evaluate_used=False,

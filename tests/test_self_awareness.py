@@ -69,6 +69,25 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("improvement_options", payload)
         self.assertIn("source_ledger", payload)
 
+    def test_self_status_cli_can_refresh_wiki_and_include_wiki_context(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "status",
+            "--home",
+            str(self.home),
+            "--user-message",
+            "where do you lack and what systems can you call?",
+            "--refresh-wiki",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["wiki_refresh"]["authority"], "supporting_not_authoritative")
+        self.assertIn("system/current-system-status.md", payload["wiki_refresh"]["generated_files"])
+        self.assertEqual(payload["wiki_context"]["wiki_status"], "supported")
+        self.assertTrue(payload["wiki_context"]["project_knowledge_first"])
+
     def test_natural_self_awareness_query_uses_capsule_direct_route(self) -> None:
         result = build_researcher_reply(
             config_manager=self.config_manager,
@@ -86,3 +105,23 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("Spark self-awareness", result.reply_text)
         self.assertIn("Where Spark lacks", result.reply_text)
         self.assertIn("How Spark can improve", result.reply_text)
+        self.assertIn("LLM wiki", result.reply_text)
+        self.assertIn("supporting_not_authoritative", result.reply_text)
+        self.assertIn("wiki_refresh=ok", result.evidence_summary)
+
+    def test_self_awareness_query_beats_entity_state_summary_route(self) -> None:
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-self-awareness-summary-trap",
+            agent_id="agent-1",
+            human_id="human:telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+            user_message="What do you know about yourself and where do you lack?",
+        )
+
+        self.assertEqual(result.mode, "self_awareness_direct")
+        self.assertEqual(result.routing_decision, "self_awareness_direct")
+        self.assertIn("Spark self-awareness", result.reply_text)
+        self.assertNotIn("saved entity state", result.reply_text)
