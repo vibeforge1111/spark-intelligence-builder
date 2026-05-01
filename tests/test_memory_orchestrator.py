@@ -2214,6 +2214,16 @@ class MemoryOrchestratorTests(SparkTestCase):
         observations = (events[0]["facts_json"] or {}).get("observations") or []
         self.assertEqual(observations[0]["operation"], "delete")
         self.assertEqual(observations[0]["raw_episode_lifecycle_action"], "archived")
+        lifecycle_events = latest_events_by_type(self.state_db, event_type="memory_lifecycle_transition", limit=10)
+        self.assertTrue(lifecycle_events)
+        lifecycle_facts = lifecycle_events[0]["facts_json"] or {}
+        self.assertEqual(lifecycle_facts["transition_kind"], "archive")
+        self.assertEqual(lifecycle_facts["memory_role"], "episodic")
+        self.assertEqual(lifecycle_facts["source_predicate"], "raw_turn")
+        self.assertEqual(lifecycle_facts["source_observation_id"], "obs-episode-1")
+        self.assertEqual(lifecycle_facts["archive_reason"], "covered_by_newer_structured_evidence")
+        self.assertEqual(lifecycle_facts["destination"], "archive_tombstone")
+        self.assertIn("pricing page felt confusing", lifecycle_facts["source_text"])
 
     def test_archive_structured_evidence_from_memory_writes_delete_tombstone(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -2246,6 +2256,16 @@ class MemoryOrchestratorTests(SparkTestCase):
         observations = (events[0]["facts_json"] or {}).get("observations") or []
         self.assertEqual(observations[0]["operation"], "delete")
         self.assertEqual(observations[0]["structured_evidence_lifecycle_action"], "archived")
+        lifecycle_events = latest_events_by_type(self.state_db, event_type="memory_lifecycle_transition", limit=10)
+        self.assertTrue(lifecycle_events)
+        lifecycle_facts = lifecycle_events[0]["facts_json"] or {}
+        self.assertEqual(lifecycle_facts["transition_kind"], "archive")
+        self.assertEqual(lifecycle_facts["memory_role"], "structured_evidence")
+        self.assertEqual(lifecycle_facts["source_predicate"], "evidence.telegram.evidence")
+        self.assertEqual(lifecycle_facts["source_observation_id"], "obs-evidence-1")
+        self.assertEqual(lifecycle_facts["archive_reason"], "eclipsed_by_newer_structured_evidence")
+        self.assertEqual(lifecycle_facts["retention_class"], "episodic_archive")
+        self.assertIn("Stripe verification fails", lifecycle_facts["source_text"])
 
     def test_belief_writes_use_belief_role_and_derived_retention(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -2361,6 +2381,16 @@ class MemoryOrchestratorTests(SparkTestCase):
         observations = (events[0]["facts_json"] or {}).get("observations") or []
         self.assertEqual(observations[0]["operation"], "delete")
         self.assertEqual(observations[0]["belief_lifecycle_action"], "archived")
+        lifecycle_events = latest_events_by_type(self.state_db, event_type="memory_lifecycle_transition", limit=10)
+        self.assertTrue(lifecycle_events)
+        lifecycle_facts = lifecycle_events[0]["facts_json"] or {}
+        self.assertEqual(lifecycle_facts["transition_kind"], "archive")
+        self.assertEqual(lifecycle_facts["memory_role"], "belief")
+        self.assertEqual(lifecycle_facts["source_predicate"], "belief.telegram.beliefs_and_inferences")
+        self.assertEqual(lifecycle_facts["source_observation_id"], "obs-belief-1")
+        self.assertEqual(lifecycle_facts["archive_reason"], "invalidated_and_past_revalidation")
+        self.assertEqual(lifecycle_facts["destination"], "archive_tombstone")
+        self.assertIn("hands-on onboarding", lifecycle_facts["source_text"])
 
     def test_telegram_event_detection_write_and_answer_use_event_memory_lane(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

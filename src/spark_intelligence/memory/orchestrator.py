@@ -2925,6 +2925,24 @@ def archive_structured_evidence_from_memory(
         turn_id=turn_id,
         actor_id=actor_id,
     )
+    if result.accepted_count > 0:
+        _record_memory_lifecycle_transition(
+            state_db=state_db,
+            human_id=human_id,
+            transition_kind="archive",
+            memory_role="structured_evidence",
+            source_predicate=predicate,
+            source_text=normalized_text,
+            source_observation_id=evidence_observation_id,
+            archive_reason=archive_reason,
+            retention_class="episodic_archive",
+            lifecycle_action="archived",
+            destination="archive_tombstone",
+            session_id=session_id,
+            turn_id=turn_id,
+            channel_kind=channel_kind,
+            actor_id=actor_id,
+        )
     return result
 
 
@@ -3236,6 +3254,24 @@ def archive_belief_from_memory(
         turn_id=turn_id,
         actor_id=actor_id,
     )
+    if result.accepted_count > 0:
+        _record_memory_lifecycle_transition(
+            state_db=state_db,
+            human_id=human_id,
+            transition_kind="archive",
+            memory_role="belief",
+            source_predicate=predicate,
+            source_text=belief_text,
+            source_observation_id=belief_observation_id,
+            archive_reason=archive_reason,
+            retention_class="derived_belief",
+            lifecycle_action="archived",
+            destination="archive_tombstone",
+            session_id=session_id,
+            turn_id=turn_id,
+            channel_kind=channel_kind,
+            actor_id=actor_id,
+        )
     return result
 
 
@@ -3350,6 +3386,24 @@ def archive_raw_episode_from_memory(
         turn_id=turn_id,
         actor_id=actor_id,
     )
+    if result.accepted_count > 0:
+        _record_memory_lifecycle_transition(
+            state_db=state_db,
+            human_id=human_id,
+            transition_kind="archive",
+            memory_role="episodic",
+            source_predicate="raw_turn",
+            source_text=normalized_text,
+            source_observation_id=raw_episode_observation_id,
+            archive_reason=archive_reason,
+            retention_class="episodic_archive",
+            lifecycle_action="archived",
+            destination="archive_tombstone",
+            session_id=session_id,
+            turn_id=turn_id,
+            channel_kind=channel_kind,
+            actor_id=actor_id,
+        )
     return result
 
 
@@ -6623,6 +6677,66 @@ def _record_memory_write_requested_observations(
             **salience_facts,
         },
         provenance={"memory_role": memory_role},
+    )
+
+
+def _preview_memory_text(value: str | None, *, limit: int = 500) -> str:
+    normalized = " ".join(str(value or "").split())
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[: limit - 1].rstrip()}..."
+
+
+def _record_memory_lifecycle_transition(
+    *,
+    state_db: StateDB,
+    human_id: str,
+    transition_kind: str,
+    memory_role: str,
+    source_predicate: str,
+    source_text: str,
+    source_observation_id: str | None,
+    archive_reason: str,
+    retention_class: str,
+    lifecycle_action: str,
+    destination: str,
+    session_id: str | None,
+    turn_id: str | None,
+    channel_kind: str | None,
+    actor_id: str,
+) -> None:
+    record_event(
+        state_db,
+        event_type="memory_lifecycle_transition",
+        component="memory_orchestrator",
+        summary=f"Spark memory lifecycle transition: {memory_role} {lifecycle_action}.",
+        request_id=turn_id,
+        session_id=session_id,
+        human_id=human_id,
+        channel_id=channel_kind,
+        actor_id=actor_id,
+        status="recorded",
+        reason_code=archive_reason,
+        facts={
+            "transition_kind": transition_kind,
+            "memory_role": memory_role,
+            "source_predicate": source_predicate,
+            "source_text": _preview_memory_text(source_text),
+            "source_observation_id": source_observation_id,
+            "archive_reason": archive_reason,
+            "retention_class": retention_class,
+            "lifecycle_action": lifecycle_action,
+            "destination": destination,
+            "readable_summary": (
+                f"{memory_role.replace('_', ' ').title()} was {lifecycle_action} "
+                f"because {archive_reason.replace('_', ' ')}."
+            ),
+        },
+        provenance={
+            "memory_role": memory_role,
+            "source": "memory_orchestrator_archive",
+            "lifecycle_action": lifecycle_action,
+        },
     )
 
 
