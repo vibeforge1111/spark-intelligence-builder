@@ -101,6 +101,7 @@ from spark_intelligence.llm_wiki import (
 from spark_intelligence.memory import (
     benchmark_memory_architectures,
     build_memory_dashboard_payload,
+    build_memory_feedback_review_payload,
     build_promotion_audit_payload,
     build_session_search_payload,
     build_telegram_state_knowledge_base,
@@ -112,6 +113,7 @@ from spark_intelligence.memory import (
     inspect_human_memory_in_memory,
     inspect_memory_sdk_runtime,
     lookup_current_state_in_memory,
+    record_memory_feedback,
     run_memory_sdk_smoke_test,
     run_memory_sdk_maintenance,
     run_telegram_memory_architecture_soak,
@@ -820,6 +822,16 @@ class MemoryDashboard:
                 if not isinstance(path, dict):
                     continue
                 lines.append(f"  - {path.get('when') or 'unknown'} {path.get('line') or ''}")
+        feedback = self.payload.get("feedback_summary") if isinstance(self.payload.get("feedback_summary"), dict) else {}
+        feedback_counts = feedback.get("counts") if isinstance(feedback.get("counts"), dict) else {}
+        if feedback_counts and feedback_counts.get("total_feedback", 0):
+            lines.append(
+                "- feedback: "
+                f"total={feedback_counts.get('total_feedback', 0)} "
+                f"bad={feedback_counts.get('bad', 0)} "
+                f"wrong={feedback_counts.get('wrong', 0)} "
+                f"missing={feedback_counts.get('missing', 0)}"
+            )
         blockers = self.payload.get("recent_blockers") if isinstance(self.payload.get("recent_blockers"), list) else []
         if blockers:
             lines.append("- blockers:")
@@ -875,6 +887,46 @@ class MemoryPromotionAudit:
                     f"  - {row.get('created_at') or 'unknown'} {row.get('audit_label') or 'unknown'} "
                     f"{row.get('target_predicate') or 'memory'} "
                     f"reason={row.get('reason') or 'n/a'}"
+                )
+        return "\n".join(lines)
+
+
+@dataclass
+class MemoryFeedbackReview:
+    payload: dict[str, object]
+
+    def to_json(self) -> str:
+        return json.dumps(self.payload, indent=2)
+
+    def to_text(self) -> str:
+        counts = self.payload.get("counts") if isinstance(self.payload.get("counts"), dict) else {}
+        lines = ["Spark memory feedback review"]
+        lines.append(
+            f"- feedback: total={counts.get('total_feedback', 0)} "
+            f"targeted={counts.get('targeted_feedback', 0)} general={counts.get('general_feedback', 0)}"
+        )
+        verdicts = ("good", "bad", "ugly", "wrong", "missing", "useful", "not_useful")
+        lines.append("- verdicts: " + ", ".join(f"{key}={counts.get(key, 0)}" for key in verdicts))
+        recent = self.payload.get("recent_feedback") if isinstance(self.payload.get("recent_feedback"), list) else []
+        if recent:
+            lines.append("- recent feedback:")
+            for row in recent[:8]:
+                if not isinstance(row, dict):
+                    continue
+                target = row.get("target") if isinstance(row.get("target"), dict) else {}
+                lines.append(
+                    f"  - {row.get('created_at') or 'unknown'} {row.get('verdict') or 'feedback'}: "
+                    f"{row.get('note') or ''} target={target.get('event_id') or row.get('target_event_id') or 'general'}"
+                )
+        queue = self.payload.get("review_queue") if isinstance(self.payload.get("review_queue"), list) else []
+        if queue:
+            lines.append("- review queue:")
+            for row in queue[:8]:
+                if not isinstance(row, dict):
+                    continue
+                lines.append(
+                    f"  - {row.get('created_at') or 'unknown'} {row.get('movement_hint') or 'review'} "
+                    f"{row.get('predicate') or row.get('event_type') or 'memory'}"
                 )
         return "\n".join(lines)
 
@@ -2149,6 +2201,33 @@ def build_parser() -> argparse.ArgumentParser:
     memory_dashboard_parser.add_argument("--agent-id", help="Filter movement to one Builder agent id")
     memory_dashboard_parser.add_argument("--limit", type=int, default=50, help="Maximum recent movement rows")
     memory_dashboard_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_feedback_parser = memory_subparsers.add_parser(
+        "record-feedback",
+        help="Record operator feedback about a memory decision without promoting it to memory truth",
+    )
+    memory_feedback_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_feedback_parser.add_argument("--verdict", required=True, help="good, bad, ugly, wrong, missing, useful, or not_useful")
+    memory_feedback_parser.add_argument("--note", required=True, help="Human feedback note")
+    memory_feedback_parser.add_argument("--human-id", help="Builder human id for the feedback")
+    memory_feedback_parser.add_argument("--agent-id", help="Builder agent id for the feedback")
+    memory_feedback_parser.add_argument("--target-event-id", help="Memory event id this feedback reviews")
+    memory_feedback_parser.add_argument("--target-trace-ref", help="Trace ref this feedback reviews")
+    memory_feedback_parser.add_argument("--surface", default="cli", help="Feedback surface such as cli, telegram, or dashboard")
+    memory_feedback_parser.add_argument("--scope", default="memory_quality", help="Feedback scope")
+    memory_feedback_parser.add_argument("--expected-outcome", help="What should have happened instead")
+    memory_feedback_parser.add_argument("--request-id", help="Optional request id for this feedback event")
+    memory_feedback_parser.add_argument("--session-id", help="Optional session id for this feedback event")
+    memory_feedback_parser.add_argument("--actor-id", default="operator", help="Actor recording the feedback")
+    memory_feedback_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_feedback_review_parser = memory_subparsers.add_parser(
+        "review-feedback",
+        help="Show traceable operator feedback and memory decisions still awaiting review",
+    )
+    memory_feedback_review_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_feedback_review_parser.add_argument("--human-id", help="Filter review to one Builder human id")
+    memory_feedback_review_parser.add_argument("--agent-id", help="Filter review to one Builder agent id")
+    memory_feedback_review_parser.add_argument("--limit", type=int, default=50, help="Maximum feedback rows to scan")
+    memory_feedback_review_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_promotion_audit_parser = memory_subparsers.add_parser(
         "audit-promotions",
         help="Audit structured-evidence promotion policy decisions",
@@ -6125,6 +6204,58 @@ def handle_memory_dashboard(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_memory_record_feedback(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    try:
+        payload = record_memory_feedback(
+            state_db=state_db,
+            verdict=args.verdict,
+            note=args.note,
+            human_id=args.human_id,
+            agent_id=args.agent_id,
+            target_event_id=args.target_event_id,
+            target_trace_ref=args.target_trace_ref,
+            feedback_surface=args.surface,
+            feedback_scope=args.scope,
+            expected_outcome=args.expected_outcome,
+            request_id=args.request_id,
+            session_id=args.session_id,
+            actor_id=args.actor_id,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        target = payload.get("target") if isinstance(payload.get("target"), dict) else {}
+        print(
+            "Recorded memory feedback "
+            f"{payload.get('event_id')}: {payload.get('verdict')} "
+            f"target={target.get('event_id') or payload.get('target_event_id') or 'general'}"
+        )
+    return 0
+
+
+def handle_memory_review_feedback(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    payload = build_memory_feedback_review_payload(
+        state_db=state_db,
+        human_id=args.human_id,
+        agent_id=args.agent_id,
+        limit=args.limit,
+    )
+    review = MemoryFeedbackReview(payload=payload)
+    print(review.to_json() if args.json else review.to_text())
+    return 0
+
+
 def handle_memory_audit_promotions(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -8075,6 +8206,10 @@ def main(argv: list[str] | None = None) -> int:
         return handle_memory_inspect_capsule(args)
     if args.command == "memory" and args.memory_command == "dashboard":
         return handle_memory_dashboard(args)
+    if args.command == "memory" and args.memory_command == "record-feedback":
+        return handle_memory_record_feedback(args)
+    if args.command == "memory" and args.memory_command == "review-feedback":
+        return handle_memory_review_feedback(args)
     if args.command == "memory" and args.memory_command == "audit-promotions":
         return handle_memory_audit_promotions(args)
     if args.command == "memory" and args.memory_command == "search-sessions":

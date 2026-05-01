@@ -91,6 +91,11 @@ from spark_intelligence.memory.session_summaries import (
     write_session_summary_to_memory,
 )
 from spark_intelligence.memory.dashboard import build_memory_dashboard_payload
+from spark_intelligence.memory.feedback import (
+    build_memory_feedback_review_payload,
+    build_memory_feedback_summary,
+    record_memory_feedback,
+)
 from spark_intelligence.memory.promotion_audit import build_promotion_audit_payload
 from spark_intelligence.memory.session_search import build_session_search_payload
 
@@ -131,6 +136,8 @@ __all__ = [
     "build_session_memory_summary",
     "build_session_summary",
     "build_memory_dashboard_payload",
+    "build_memory_feedback_review_payload",
+    "build_memory_feedback_summary",
     "build_promotion_audit_payload",
     "build_session_search_payload",
     "build_telegram_state_knowledge_base",
@@ -149,6 +156,7 @@ __all__ = [
     "lookup_historical_state_in_memory",
     "read_memory_kernel",
     "read_personality_preferences_from_memory",
+    "record_memory_feedback",
     "retrieve_memory_evidence_in_memory",
     "retrieve_memory_events_in_memory",
     "run_memory_sdk_smoke_test",

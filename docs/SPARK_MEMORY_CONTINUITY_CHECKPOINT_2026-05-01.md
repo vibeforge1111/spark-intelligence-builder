@@ -31,6 +31,7 @@ Spark's version should stay Spark-native:
 - Dashboard movement paths now expose lineage such as captured -> summarized and saved -> retrieved.
 - Structured evidence promotion into current state now emits explicit policy decisions, including held-as-evidence blocks and corroborated promotions.
 - `memory audit-promotions` reviews those policy decisions for held evidence, later-resolved holds, false-positive risk, false-negative risk, and trace gaps.
+- `memory record-feedback` and `memory review-feedback` give operator judgments their own traceable event lane, so real feedback can join back to a memory decision without becoming durable memory truth.
 - Telegram `/memory` renders movement counts and movement paths concisely.
 - Existing runtime lanes include raw episodes, structured evidence, current state, events, and beliefs.
 - Existing plans already lock the right invariants: source evidence, current/prior truth, derived-belief labeling, compact hot path, per-user scope, lifecycle operations, and product/benchmark architecture parity.
@@ -65,6 +66,13 @@ Promotion policy traceability:
 - preserve the rule that uncorroborated volatile state stays as structured evidence unless the field is explicitly high-confidence
 - audit promotion decisions with `memory audit-promotions`
 
+Traceable operator feedback:
+
+- record memory feedback as `memory_feedback_recorded` Builder events with verdict, note, surface, target event id, target trace ref, and expected outcome
+- keep feedback separate from movement counts so dashboard reviews do not confuse feedback residue with captured/saved memory
+- expose a feedback summary inside `memory dashboard`
+- expose a focused feedback review packet with recent feedback and unreviewed memory decisions
+
 ## Current Next Step
 
-Connect promotion audits to benchmark packs and maintenance/rebuild checks so Spark can prove correction fidelity, stale-state drift handling, and promotion quality over long runs.
+Connect feedback and promotion audits to benchmark packs and maintenance/rebuild checks so Spark can prove correction fidelity, stale-state drift handling, and promotion quality over long runs.

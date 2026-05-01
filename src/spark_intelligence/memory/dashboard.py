@@ -4,6 +4,7 @@ import json
 from collections import Counter
 from typing import Any
 
+from spark_intelligence.memory.feedback import build_memory_feedback_summary
 from spark_intelligence.state.db import StateDB
 
 
@@ -64,6 +65,12 @@ def build_memory_dashboard_payload(
         "movement_paths": _movement_path_rows(rows),
         "source_mix": _source_mix(rows),
         "recent_blockers": [row for row in rows if row["movement"] == "blocked"][:10],
+        "feedback_summary": build_memory_feedback_summary(
+            state_db=state_db,
+            human_id=human_id,
+            agent_id=agent_id,
+            limit=25,
+        ),
     }
 
 
@@ -90,8 +97,9 @@ def _load_recent_memory_events(state_db: StateDB, *, limit: int) -> list[dict[st
                 facts_json,
                 created_at
             FROM builder_events
-            WHERE event_type LIKE 'memory_%'
-               OR event_type = 'policy_gate_blocked'
+            WHERE (event_type LIKE 'memory_%'
+               OR event_type = 'policy_gate_blocked')
+              AND event_type != 'memory_feedback_recorded'
             ORDER BY created_at DESC, event_id DESC
             LIMIT ?
             """,

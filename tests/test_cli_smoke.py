@@ -811,6 +811,92 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["agent_view"][0]["human_id"], "human:dashboard:legacy")
         self.assertIsNone(payload["agent_view"][0]["agent_id"])
 
+    def test_memory_feedback_is_traceable_without_counting_as_memory_movement(self) -> None:
+        target_event_id = record_event(
+            self.state_db,
+            event_type="memory_read_succeeded",
+            component="memory_orchestrator",
+            summary="Memory read succeeded.",
+            session_id="session-feedback-review",
+            human_id="human:feedback:review",
+            agent_id="agent:feedback:review",
+            request_id="turn-feedback-target",
+            facts={
+                "method": "hybrid_memory_retrieve",
+                "predicate": "profile.current_focus",
+                "record_count": 1,
+                "answer_explanation": {
+                    "selected_count": 1,
+                    "context_packet_source_mix": {"current_state": 1},
+                },
+            },
+            provenance={"source_kind": "telegram", "source_ref": "turn-feedback-target"},
+        )
+
+        exit_code, stdout, stderr = self.run_cli(
+            "memory",
+            "record-feedback",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:feedback:review",
+            "--agent-id",
+            "agent:feedback:review",
+            "--target-event-id",
+            target_event_id,
+            "--verdict",
+            "bad",
+            "--note",
+            "This recall used an outdated current focus.",
+            "--expected-outcome",
+            "Prefer the latest source-aware project summary.",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        feedback_payload = json.loads(stdout)
+        self.assertEqual(feedback_payload["view"], "memory_feedback_recorded")
+        self.assertEqual(feedback_payload["verdict"], "bad")
+        self.assertEqual(feedback_payload["target"]["event_id"], target_event_id)
+
+        exit_code, stdout, stderr = self.run_cli(
+            "memory",
+            "review-feedback",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:feedback:review",
+            "--agent-id",
+            "agent:feedback:review",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        review_payload = json.loads(stdout)
+        self.assertEqual(review_payload["view"], "memory_feedback_review")
+        self.assertEqual(review_payload["counts"]["bad"], 1)
+        self.assertEqual(review_payload["counts"]["targeted_feedback"], 1)
+        self.assertEqual(review_payload["recent_feedback"][0]["target"]["event_id"], target_event_id)
+        self.assertFalse(any(row["event_id"] == target_event_id for row in review_payload["review_queue"]))
+
+        exit_code, stdout, stderr = self.run_cli(
+            "memory",
+            "dashboard",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:feedback:review",
+            "--agent-id",
+            "agent:feedback:review",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        dashboard = json.loads(stdout)
+        self.assertEqual(dashboard["counts"]["retrieved"], 1)
+        self.assertEqual(dashboard["counts"]["captured"], 0)
+        self.assertEqual(dashboard["feedback_summary"]["counts"]["bad"], 1)
+
     def test_memory_audit_promotions_reports_policy_risks_and_resolutions(self) -> None:
         base = {
             "memory_role": "current_state",
