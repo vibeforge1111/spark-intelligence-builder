@@ -5,7 +5,9 @@ from spark_intelligence.creator import (
     build_artifact_manifests,
     build_creator_artifact_bundle,
     build_creator_intent_packet,
+    summarize_creator_mission_status,
     validate_artifact_manifest,
+    validate_creator_mission_status,
     validate_creator_intent_packet,
     validate_creator_trace,
 )
@@ -203,3 +205,65 @@ def test_creator_artifact_manifests_default_to_local_chip_and_bench():
     assert all(validate_artifact_manifest(manifest) == [] for manifest in manifests)
     assert manifests[0].repo == "domain-chip-spark-good-investor-diligence"
     assert manifests[1].repo == "spark-good-investor-diligence-bench"
+
+
+def test_creator_mission_status_consumer_accepts_read_only_product_packet():
+    packet = _creator_mission_status_packet()
+
+    summary = summarize_creator_mission_status(packet)
+
+    assert validate_creator_mission_status(packet) == []
+    assert summary.mission_id == "creator-mission-startup-yc"
+    assert summary.canonical_verdict == "ready_for_swarm_packet"
+    assert summary.evidence_tier == "transfer_supported"
+    assert summary.blocked is False
+    assert summary.requested_publication_mode == "swarm_shared"
+    assert summary.swarm_shared_allowed is False
+    assert summary.network_absorbable is False
+    assert summary.surface_adapters == ["builder", "canvas", "kanban", "spawner", "telegram"]
+
+
+def test_creator_mission_status_consumer_rejects_network_absorption_claims():
+    packet = _creator_mission_status_packet()
+    packet["publication"]["network_absorbable"] = True
+
+    issues = validate_creator_mission_status(packet)
+
+    assert {issue.path for issue in issues} == {"publication.network_absorbable"}
+
+
+def test_creator_mission_status_consumer_requires_all_surface_adapters():
+    packet = _creator_mission_status_packet()
+    del packet["surface_adapters"]["telegram"]
+
+    issues = validate_creator_mission_status(packet)
+
+    assert {issue.path for issue in issues} == {"surface_adapters.telegram"}
+
+
+def _creator_mission_status_packet():
+    return {
+        "schema_version": "adaptive_creator_loop.creator_mission_status.v1",
+        "mission_id": "creator-mission-startup-yc",
+        "canonical": {
+            "verdict": "ready_for_swarm_packet",
+            "evidence_tier": "transfer_supported",
+            "automation": {
+                "blocked": False,
+                "ci_exit_code": 0,
+                "recommended_next_command": "review Startup YC operator validation gates",
+            },
+        },
+        "publication": {
+            "requested_mode": "swarm_shared",
+            "swarm_shared_allowed": False,
+            "network_absorbable": False,
+        },
+        "surface_adapters": {
+            "builder": {},
+            "telegram": {},
+            "spawner": {},
+            "canvas": {},
+            "kanban": {},
+        },
+    }
