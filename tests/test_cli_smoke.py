@@ -811,6 +811,93 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["agent_view"][0]["human_id"], "human:dashboard:legacy")
         self.assertIsNone(payload["agent_view"][0]["agent_id"])
 
+    def test_memory_audit_promotions_reports_policy_risks_and_resolutions(self) -> None:
+        base = {
+            "memory_role": "current_state",
+            "promotion_policy": "structured_evidence_current_state_v1",
+            "target_predicate": "profile.current_blocker",
+            "target_value": "Stripe verification",
+            "required_corroborating_evidence_count": 1,
+            "direct_promotion_without_corroboration": False,
+        }
+        record_event(
+            self.state_db,
+            event_type="memory_promotion_evaluated",
+            component="memory_orchestrator",
+            summary="Promotion blocked pending corroboration.",
+            session_id="session-audit-promotion-1",
+            human_id="human:promotion:audit",
+            agent_id="agent:promotion:audit",
+            reason_code="needs_corroborating_evidence",
+            status="blocked",
+            facts={
+                **base,
+                "promotion_disposition": "blocked",
+                "promotion_reason_code": "needs_corroborating_evidence",
+                "corroborating_evidence_count": 0,
+            },
+            provenance={"source_kind": "structured_evidence", "source_ref": "turn-audit-1"},
+        )
+        record_event(
+            self.state_db,
+            event_type="memory_promotion_evaluated",
+            component="memory_orchestrator",
+            summary="Promotion accepted after corroboration.",
+            session_id="session-audit-promotion-2",
+            human_id="human:promotion:audit",
+            agent_id="agent:promotion:audit",
+            reason_code="corroborated_structured_evidence",
+            status="eligible",
+            facts={
+                **base,
+                "promotion_disposition": "promote_current_state",
+                "promotion_reason_code": "corroborated_structured_evidence",
+                "corroborating_evidence_count": 1,
+                "source_observation_ids": ["obs-audit-1"],
+            },
+            provenance={"source_kind": "structured_evidence", "source_ref": "turn-audit-2"},
+        )
+        record_event(
+            self.state_db,
+            event_type="memory_promotion_evaluated",
+            component="memory_orchestrator",
+            summary="Promotion has a policy/count mismatch.",
+            session_id="session-audit-promotion-risk",
+            human_id="human:promotion:audit",
+            agent_id="agent:promotion:audit",
+            reason_code="corroborated_structured_evidence",
+            status="eligible",
+            facts={
+                **base,
+                "target_predicate": "profile.current_risk",
+                "target_value": "Activation drift",
+                "promotion_disposition": "promote_current_state",
+                "promotion_reason_code": "corroborated_structured_evidence",
+                "corroborating_evidence_count": 0,
+            },
+            provenance={"source_kind": "structured_evidence", "source_ref": "turn-audit-risk"},
+        )
+
+        exit_code, stdout, stderr = self.run_cli(
+            "memory",
+            "audit-promotions",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:promotion:audit",
+            "--agent-id",
+            "agent:promotion:audit",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["view"], "memory_promotion_audit")
+        self.assertEqual(payload["counts"]["promoted"], 2)
+        self.assertEqual(payload["counts"]["blocked"], 1)
+        self.assertEqual(payload["counts"]["resolved_by_later_promotion"], 1)
+        self.assertEqual(payload["counts"]["false_positive_risk"], 1)
+
     def test_memory_search_sessions_returns_source_aware_episodic_matches(self) -> None:
         record_event(
             self.state_db,

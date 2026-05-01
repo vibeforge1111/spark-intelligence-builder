@@ -101,6 +101,7 @@ from spark_intelligence.llm_wiki import (
 from spark_intelligence.memory import (
     benchmark_memory_architectures,
     build_memory_dashboard_payload,
+    build_promotion_audit_payload,
     build_session_search_payload,
     build_telegram_state_knowledge_base,
     export_sdk_maintenance_replay,
@@ -828,6 +829,51 @@ class MemoryDashboard:
                 lines.append(
                     f"  - {row.get('created_at') or 'unknown'} "
                     f"{row.get('predicate') or row.get('event_type') or 'memory'} "
+                    f"reason={row.get('reason') or 'n/a'}"
+                )
+        return "\n".join(lines)
+
+
+@dataclass
+class MemoryPromotionAudit:
+    payload: dict[str, object]
+
+    def to_json(self) -> str:
+        return json.dumps(self.payload, indent=2)
+
+    def to_text(self) -> str:
+        scope = self.payload.get("scope") if isinstance(self.payload.get("scope"), dict) else {}
+        counts = self.payload.get("counts") if isinstance(self.payload.get("counts"), dict) else {}
+        lines = ["Spark memory promotion audit"]
+        if scope.get("human_id") or scope.get("agent_id"):
+            lines.append(
+                f"- scope: human={scope.get('human_id') or 'all'} agent={scope.get('agent_id') or 'all'}"
+            )
+        lines.append(f"- decisions: {self.payload.get('decision_count') or 0}")
+        lines.append(
+            "- counts: "
+            + ", ".join(
+                f"{key}={counts.get(key, 0)}"
+                for key in (
+                    "promoted",
+                    "blocked",
+                    "held_as_evidence",
+                    "resolved_by_later_promotion",
+                    "false_positive_risk",
+                    "false_negative_risk",
+                    "trace_gap",
+                )
+            )
+        )
+        decisions = self.payload.get("decisions") if isinstance(self.payload.get("decisions"), list) else []
+        if decisions:
+            lines.append("- recent decisions:")
+            for row in decisions[:12]:
+                if not isinstance(row, dict):
+                    continue
+                lines.append(
+                    f"  - {row.get('created_at') or 'unknown'} {row.get('audit_label') or 'unknown'} "
+                    f"{row.get('target_predicate') or 'memory'} "
                     f"reason={row.get('reason') or 'n/a'}"
                 )
         return "\n".join(lines)
@@ -2103,6 +2149,15 @@ def build_parser() -> argparse.ArgumentParser:
     memory_dashboard_parser.add_argument("--agent-id", help="Filter movement to one Builder agent id")
     memory_dashboard_parser.add_argument("--limit", type=int, default=50, help="Maximum recent movement rows")
     memory_dashboard_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_promotion_audit_parser = memory_subparsers.add_parser(
+        "audit-promotions",
+        help="Audit structured-evidence promotion policy decisions",
+    )
+    memory_promotion_audit_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_promotion_audit_parser.add_argument("--human-id", help="Filter audit to one Builder human id")
+    memory_promotion_audit_parser.add_argument("--agent-id", help="Filter audit to one Builder agent id")
+    memory_promotion_audit_parser.add_argument("--limit", type=int, default=100, help="Maximum promotion events to scan")
+    memory_promotion_audit_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_session_search_parser = memory_subparsers.add_parser(
         "search-sessions",
         help="Search source-aware episodic conversation memory by session",
@@ -6070,6 +6125,22 @@ def handle_memory_dashboard(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_memory_audit_promotions(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    payload = build_promotion_audit_payload(
+        state_db=state_db,
+        human_id=args.human_id,
+        agent_id=args.agent_id,
+        limit=args.limit,
+    )
+    audit = MemoryPromotionAudit(payload=payload)
+    print(audit.to_json() if args.json else audit.to_text())
+    return 0
+
+
 def handle_memory_search_sessions(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -8004,6 +8075,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_memory_inspect_capsule(args)
     if args.command == "memory" and args.memory_command == "dashboard":
         return handle_memory_dashboard(args)
+    if args.command == "memory" and args.memory_command == "audit-promotions":
+        return handle_memory_audit_promotions(args)
     if args.command == "memory" and args.memory_command == "search-sessions":
         return handle_memory_search_sessions(args)
     if args.command == "memory" and args.memory_command == "export-shadow-replay":
