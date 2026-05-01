@@ -35,6 +35,13 @@ Already present:
 - Session, daily, and project summaries already compact event ledgers into durable structured evidence.
 - Memory retention classes already distinguish `active_state`, `durable_profile`, `episodic_archive`, `derived_belief`, and `ops_residue`.
 
+Memory/wiki cohesion follow-up:
+
+- See `docs/SPARK_MEMORY_WIKI_COGNITION_INTEGRATION_2026-05-01.md`.
+- The older Memory KB vault and the new Builder LLM wiki should share retrieval infrastructure, but not authority.
+- Memory-derived current-state pages need different family metadata from Builder system/project wiki pages.
+- Combined answers should say whether they are using current-state memory, structured evidence, wiki project knowledge, graph sidecar hints, or recent conversation.
+
 First implemented slice in this change:
 
 - `spark-intelligence wiki bootstrap`

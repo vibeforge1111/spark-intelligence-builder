@@ -111,6 +111,19 @@ Guardrail:
 
 ## Planned Task Backlog
 
+### P0.5 Memory And Wiki Cohesion
+
+| Task | Repo | Status | Outcome | Acceptance |
+| --- | --- | --- | --- | --- |
+| MWI-001 Wiki packet family metadata | builder | planned | Classify retrieved Markdown packets by family, authority, owner, and scope | context packets distinguish Builder LLM wiki, memory KB current state, memory KB evidence, memory KB synthesis, and diagnostics |
+| MWI-002 Memory KB vault discovery | builder | planned | Show whether the older memory KB vault exists and is retrievable | `wiki status` and `self status` report Memory KB presence/freshness without treating it as live truth |
+| MWI-003 Unified memory/wiki inventory | builder | planned | List memory/wiki page families from one surface | inventory includes authority, owner system, source path count, and stale warnings |
+| MWI-004 Current-state beats wiki test | builder | planned | Prevent wiki packets from overriding mutable user facts | regression proves current-state memory outranks wiki for "what do you know about me?" |
+| MWI-005 Candidate contradiction scan | builder | planned | Compare wiki candidates against memory/current runtime evidence before promotion | conflicting candidates stay candidate or blocked |
+| MWI-006 Combined memory/wiki live cases | telegram | planned | Test natural-language questions that need both user memory and system wiki | live matrix covers user-vs-system, memory-vs-wiki, and authority-inversion prompts |
+| MWI-007 Rich wiki packet contract | domain-chip-memory | planned | Return parsed frontmatter metadata from packet reader | packet hits expose authority, owner_system, type, status, freshness, and wiki_family |
+| MWI-008 Memory cognition in self-status | builder | planned | Let Spark name its active memory architecture and lanes | self-awareness payload includes runtime architecture, provider, lane map, wiki packet status, graph sidecar status, and memory KB gaps |
+
 ### P0 Runtime Health And Live Proof
 
 | Task | Repo | Status | Outcome | Acceptance |
