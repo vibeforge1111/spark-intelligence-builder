@@ -751,6 +751,43 @@ class CliSmokeTests(SparkTestCase):
         self.assertTrue(payload["agent_view"])
         self.assertEqual(payload["recent_blockers"][0]["predicate"], "profile.secret")
 
+    def test_memory_dashboard_keeps_legacy_human_rows_when_agent_scope_is_newer(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="memory_write_requested",
+            component="memory_orchestrator",
+            summary="Legacy memory write requested.",
+            session_id="session-dashboard-legacy",
+            human_id="human:dashboard:legacy",
+            actor_id="memory_test",
+            request_id="turn-dashboard-legacy",
+            facts={
+                "memory_role": "current_state",
+                "subject": "human:dashboard:legacy",
+                "predicate": "profile.current_focus",
+                "keepability": "durable_user_memory",
+            },
+            provenance={"source_kind": "telegram", "source_ref": "turn-dashboard-legacy"},
+        )
+
+        exit_code, stdout, stderr = self.run_cli(
+            "memory",
+            "dashboard",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:dashboard:legacy",
+            "--agent-id",
+            "agent:human:dashboard:legacy",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["counts"]["captured"], 1)
+        self.assertEqual(payload["agent_view"][0]["human_id"], "human:dashboard:legacy")
+        self.assertIsNone(payload["agent_view"][0]["agent_id"])
+
     def test_memory_export_shadow_replay_writes_contract_shaped_json(self) -> None:
         with self.state_db.connect() as conn:
             conn.execute(

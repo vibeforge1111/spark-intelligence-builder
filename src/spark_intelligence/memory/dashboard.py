@@ -131,6 +131,7 @@ def _json_object(value: Any) -> dict[str, Any]:
 
 def _matches_scope(event: dict[str, Any], *, human_id: str | None, agent_id: str | None) -> bool:
     facts = _json_object(event.get("facts_json"))
+    human_matched = False
     if human_id:
         candidates = {str(human_id)}
         if not str(human_id).startswith("human:"):
@@ -139,8 +140,11 @@ def _matches_scope(event: dict[str, Any], *, human_id: str | None, agent_id: str
         fact_subject = str(facts.get("subject") or "")
         if event_human not in candidates and fact_subject not in candidates:
             return False
-    if agent_id and str(event.get("agent_id") or "") != str(agent_id):
-        return False
+        human_matched = True
+    if agent_id:
+        event_agent = str(event.get("agent_id") or "")
+        if event_agent != str(agent_id) and not (human_matched and not event_agent):
+            return False
     return True
 
 
