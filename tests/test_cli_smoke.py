@@ -634,6 +634,123 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["promotion_gates"]["gates"]["stale_current_conflict"]["status"], "pass")
         self.assertEqual(payload["context_packet"]["sections"][0]["section"], "active_current_state")
 
+    def test_memory_dashboard_reports_human_and_agent_views(self) -> None:
+        common = {
+            "component": "memory_orchestrator",
+            "session_id": "session-dashboard",
+            "human_id": "human:dashboard:test",
+            "agent_id": "agent:dashboard:test",
+            "actor_id": "memory_test",
+        }
+        record_event(
+            self.state_db,
+            event_type="memory_write_requested",
+            summary="Memory write requested.",
+            request_id="turn-dashboard-capture",
+            facts={
+                "memory_role": "current_state",
+                "subject": "human:dashboard:test",
+                "predicate": "profile.city",
+                "keepability": "durable_user_memory",
+                "promotion_disposition": "promote_current_state",
+            },
+            provenance={"source_kind": "telegram", "source_ref": "turn-dashboard-capture"},
+            **common,
+        )
+        record_event(
+            self.state_db,
+            event_type="memory_lifecycle_transition",
+            summary="Spark memory lifecycle transition: current_state promoted_by_salience.",
+            request_id="turn-dashboard-promote",
+            facts={
+                "memory_role": "current_state",
+                "source_predicate": "profile.city",
+                "lifecycle_action": "promoted_by_salience",
+                "transition_kind": "salience_promotion",
+                "promotion_disposition": "promote_current_state",
+                "destination": "promote_current_state",
+            },
+            provenance={"source_kind": "memory_orchestrator_lifecycle"},
+            **common,
+        )
+        record_event(
+            self.state_db,
+            event_type="memory_write_succeeded",
+            summary="Memory write succeeded.",
+            request_id="turn-dashboard-save",
+            facts={"memory_role": "current_state", "predicate": "profile.city", "accepted_count": 1},
+            **common,
+        )
+        record_event(
+            self.state_db,
+            event_type="memory_lifecycle_transition",
+            summary="Spark memory lifecycle transition: current_state stale_preserved.",
+            request_id="turn-dashboard-decay",
+            facts={
+                "memory_role": "current_state",
+                "source_predicate": "profile.current_focus",
+                "lifecycle_action": "stale_preserved",
+                "transition_kind": "decay",
+                "transition_count": 1,
+            },
+            **common,
+        )
+        record_event(
+            self.state_db,
+            event_type="memory_session_summary_written",
+            summary="Session summary written.",
+            request_id="turn-dashboard-summary",
+            facts={"memory_role": "episodic_summary", "predicate": "evidence.telegram.session_summary"},
+            **common,
+        )
+        record_event(
+            self.state_db,
+            event_type="memory_read_succeeded",
+            summary="Memory read succeeded.",
+            request_id="turn-dashboard-retrieve",
+            facts={"memory_role": "current_state", "predicate": "profile.city", "record_count": 1},
+            **common,
+        )
+        record_event(
+            self.state_db,
+            event_type="policy_gate_blocked",
+            summary="Spark memory salience gate blocked a durable memory write.",
+            request_id="turn-dashboard-block",
+            reason_code="salience_secret_like_material",
+            facts={
+                "memory_role": "current_state",
+                "predicate": "profile.secret",
+                "keepability": "not_keepable",
+                "promotion_disposition": "blocked",
+            },
+            **common,
+        )
+
+        exit_code, stdout, stderr = self.run_cli(
+            "memory",
+            "dashboard",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:dashboard:test",
+            "--agent-id",
+            "agent:dashboard:test",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["counts"]["captured"], 1)
+        self.assertEqual(payload["counts"]["blocked"], 1)
+        self.assertEqual(payload["counts"]["promoted"], 1)
+        self.assertEqual(payload["counts"]["saved"], 1)
+        self.assertEqual(payload["counts"]["decayed"], 1)
+        self.assertEqual(payload["counts"]["summarized"], 1)
+        self.assertEqual(payload["counts"]["retrieved"], 1)
+        self.assertTrue(payload["human_view"])
+        self.assertTrue(payload["agent_view"])
+        self.assertEqual(payload["recent_blockers"][0]["predicate"], "profile.secret")
+
     def test_memory_export_shadow_replay_writes_contract_shaped_json(self) -> None:
         with self.state_db.connect() as conn:
             conn.execute(

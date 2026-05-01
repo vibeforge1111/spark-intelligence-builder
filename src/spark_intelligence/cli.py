@@ -100,6 +100,7 @@ from spark_intelligence.llm_wiki import (
 )
 from spark_intelligence.memory import (
     benchmark_memory_architectures,
+    build_memory_dashboard_payload,
     build_telegram_state_knowledge_base,
     export_sdk_maintenance_replay,
     export_shadow_replay,
@@ -777,6 +778,49 @@ class MemoryCapsuleInspection:
                 lines.append(
                     f"  - {section.get('section') or 'unknown'} "
                     f"authority={section.get('authority') or 'unknown'} items={len(items)}"
+                )
+        return "\n".join(lines)
+
+
+@dataclass
+class MemoryDashboard:
+    payload: dict[str, object]
+
+    def to_json(self) -> str:
+        return json.dumps(self.payload, indent=2)
+
+    def to_text(self) -> str:
+        scope = self.payload.get("scope") if isinstance(self.payload.get("scope"), dict) else {}
+        counts = self.payload.get("counts") if isinstance(self.payload.get("counts"), dict) else {}
+        lines = ["Spark memory dashboard"]
+        if scope.get("human_id") or scope.get("agent_id"):
+            lines.append(
+                f"- scope: human={scope.get('human_id') or 'all'} agent={scope.get('agent_id') or 'all'}"
+            )
+        lines.append(
+            "- movement: "
+            + ", ".join(
+                f"{key}={counts.get(key, 0)}"
+                for key in ("captured", "blocked", "promoted", "saved", "decayed", "summarized", "retrieved")
+            )
+        )
+        human_rows = self.payload.get("human_view") if isinstance(self.payload.get("human_view"), list) else []
+        if human_rows:
+            lines.append("- recent movement:")
+            for row in human_rows[:12]:
+                if not isinstance(row, dict):
+                    continue
+                lines.append(f"  - {row.get('when') or 'unknown'} {row.get('line') or ''}")
+        blockers = self.payload.get("recent_blockers") if isinstance(self.payload.get("recent_blockers"), list) else []
+        if blockers:
+            lines.append("- blockers:")
+            for row in blockers[:5]:
+                if not isinstance(row, dict):
+                    continue
+                lines.append(
+                    f"  - {row.get('created_at') or 'unknown'} "
+                    f"{row.get('predicate') or row.get('event_type') or 'memory'} "
+                    f"reason={row.get('reason') or 'n/a'}"
                 )
         return "\n".join(lines)
 
@@ -2010,6 +2054,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Do not write a memory-read event for this inspection",
     )
     memory_inspect_capsule_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_dashboard_parser = memory_subparsers.add_parser(
+        "dashboard",
+        help="Show human and agent views of recent memory movement",
+    )
+    memory_dashboard_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_dashboard_parser.add_argument("--human-id", help="Filter movement to one Builder human id")
+    memory_dashboard_parser.add_argument("--agent-id", help="Filter movement to one Builder agent id")
+    memory_dashboard_parser.add_argument("--limit", type=int, default=50, help="Maximum recent movement rows")
+    memory_dashboard_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_export_parser = memory_subparsers.add_parser(
         "export-shadow-replay",
         help="Export a Spark shadow replay JSON file for domain-chip-memory validation",
@@ -5951,6 +6004,22 @@ def handle_memory_inspect_capsule(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_memory_dashboard(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    payload = build_memory_dashboard_payload(
+        state_db=state_db,
+        human_id=args.human_id,
+        agent_id=args.agent_id,
+        limit=args.limit,
+    )
+    dashboard = MemoryDashboard(payload=payload)
+    print(dashboard.to_json() if args.json else dashboard.to_text())
+    return 0
+
+
 def handle_memory_export_shadow_replay(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -7845,6 +7914,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_memory_inspect_human(args)
     if args.command == "memory" and args.memory_command == "inspect-capsule":
         return handle_memory_inspect_capsule(args)
+    if args.command == "memory" and args.memory_command == "dashboard":
+        return handle_memory_dashboard(args)
     if args.command == "memory" and args.memory_command == "export-shadow-replay":
         return handle_memory_export_shadow_replay(args)
     if args.command == "memory" and args.memory_command == "export-shadow-replay-batch":
