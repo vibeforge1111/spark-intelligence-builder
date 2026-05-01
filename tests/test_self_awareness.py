@@ -119,10 +119,10 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         payload = capsule.to_payload()
         text = capsule.to_text()
         self.assertEqual(payload["style_lens"]["persona_name"], "Spark AGI")
-        self.assertIn("How I should show up for you", text)
+        self.assertIn("How I am tuned for you", text)
         self.assertIn("warm, curious, and direct", text)
         self.assertIn("Tone: direct, warm, and fast-moving", text)
-        self.assertIn("Your recent style preferences", text)
+        self.assertIn("keeping the evidence visible", text)
         self.assertNotIn("trait", text.lower())
         self.assertLess(len(text), 2800)
 

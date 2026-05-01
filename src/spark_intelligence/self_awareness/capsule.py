@@ -565,15 +565,15 @@ def _extend_style_lens_lines(lines: list[str], style_lens: dict[str, Any]) -> No
         if str(rule).strip()
     ][:2]
 
-    lines.append("How I should show up for you")
+    lines.append("How I am tuned for you")
     if persona_summary:
-        lines.append(f"- Your saved style says: {_humanize_style_instruction(persona_summary)}.")
+        lines.append(f"- I should {_humanize_style_instruction(persona_summary)}.")
     if style_sentence:
         lines.append(f"- Tone: {style_sentence}.")
     if rules and not persona_summary:
         lines.append(f"- Style promises: {'; '.join(rules)}.")
     if style_lens.get("user_deltas_applied"):
-        lines.append("- Your recent style preferences are part of this answer, not hidden somewhere else.")
+        lines.append("- I should let that tuning shape the answer, while keeping the evidence visible.")
     lines.append("")
 
 
