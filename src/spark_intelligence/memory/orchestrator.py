@@ -5276,6 +5276,7 @@ def _build_hybrid_memory_context_packet(
     max_chars: int,
 ) -> HybridMemoryContextPacket:
     normalized_budget = max(600, int(max_chars or 3600))
+    project_knowledge_first = _hybrid_memory_query_prefers_project_knowledge(query)
     sections_by_name: dict[str, dict[str, Any]] = {}
     used_chars = 0
     dropped_count = 0
@@ -5318,13 +5319,13 @@ def _build_hybrid_memory_context_packet(
         "historical_state": 2,
         "pending_tasks": 3,
         "procedural_lessons": 4,
-        "recent_conversation": 5,
-        "diagnostics": 6,
-        "relevant_events": 7,
-        "relevant_evidence": 8,
-        "compiled_project_knowledge": 9,
-        "graph_sidecar_hits": 10,
-        "supporting_context": 11,
+        "compiled_project_knowledge": 5 if project_knowledge_first else 9,
+        "recent_conversation": 6,
+        "diagnostics": 7,
+        "relevant_events": 8,
+        "relevant_evidence": 10 if project_knowledge_first else 8,
+        "graph_sidecar_hits": 11,
+        "supporting_context": 12,
     }
     sections = sorted(
         (section for section in sections_by_name.values() if section["items"]),
@@ -5361,6 +5362,7 @@ def _build_hybrid_memory_context_packet(
             "selected_candidate_count": len(selected_candidates),
             "section_count": len(sections),
             "score_adaptive_truncation": True,
+            "project_knowledge_first": project_knowledge_first,
             "promotion_gates": promotion_gates,
         },
     )
@@ -6505,6 +6507,74 @@ def _hybrid_memory_query_tokens(query: str) -> set[str]:
     }
 
 
+def _hybrid_memory_query_prefers_project_knowledge(query: str) -> bool:
+    lowered = str(query or "").casefold()
+    if not lowered.strip():
+        return False
+    phrase_markers = (
+        "self-awareness",
+        "self awareness",
+        "self-aware",
+        "self aware",
+        "self introspection",
+        "self-introspection",
+        "introspection",
+        "where do you lack",
+        "where you lack",
+        "how can you improve",
+        "what can you improve",
+        "recursive self-improvement",
+        "self-improvement loop",
+        "self improvement loop",
+        "llm wiki",
+        "wiki",
+        "knowledge base",
+        "knowledge-base",
+        "system map",
+        "route map",
+        "tracing path",
+        "observability",
+        "tool base",
+        "capability",
+        "capabilities",
+        "chips",
+        "providers",
+        "what can spark",
+        "what can you do",
+        "how are your systems",
+    )
+    if any(marker in lowered for marker in phrase_markers):
+        return True
+    tokens = _hybrid_memory_query_tokens(lowered)
+    system_tokens = {
+        "spark",
+        "system",
+        "systems",
+        "route",
+        "routes",
+        "tool",
+        "tools",
+        "chip",
+        "chips",
+        "provider",
+        "providers",
+        "trace",
+        "traces",
+        "tracing",
+        "wiki",
+        "kb",
+        "capability",
+        "capabilities",
+        "introspection",
+        "awareness",
+        "improve",
+        "improvement",
+        "loops",
+        "recursive",
+    }
+    return len(tokens.intersection(system_tokens)) >= 2
+
+
 def _score_hybrid_memory_record(
     *,
     lane: str,
@@ -6527,6 +6597,13 @@ def _score_hybrid_memory_record(
     }
     score = lane_authority.get(lane, 40.0)
     reasons = [f"authority:{lane}"]
+    project_knowledge_first = _hybrid_memory_query_prefers_project_knowledge(query)
+    if project_knowledge_first and lane == "wiki_packets":
+        score += 38.0
+        reasons.append("project_knowledge_intent_boost")
+    elif project_knowledge_first and lane in {"events", "evidence", "recent_conversation"}:
+        score -= 16.0
+        reasons.append("project_knowledge_intent_generic_memory_penalty")
     record_predicate = str(record.get("predicate") or "").strip()
     metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
     if predicate and record_predicate == predicate:

@@ -5,6 +5,7 @@ import json
 from spark_intelligence.llm_wiki import (
     bootstrap_llm_wiki,
     build_llm_wiki_inventory,
+    build_llm_wiki_query,
     build_llm_wiki_status,
     compile_system_wiki,
 )
@@ -163,6 +164,42 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertEqual(payload["returned_page_count"], 3)
         self.assertGreaterEqual(payload["page_count"], 13)
         self.assertEqual(payload["missing_expected_files"], [])
+
+    def test_wiki_query_retrieves_relevant_supporting_packets(self) -> None:
+        result = build_llm_wiki_query(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            query="How should Spark use recursive self-improvement loops?",
+            refresh=True,
+            limit=3,
+        )
+
+        self.assertEqual(result.payload["wiki_retrieval_status"], "supported")
+        self.assertGreater(result.payload["hit_count"], 0)
+        self.assertTrue(result.payload["project_knowledge_first"])
+        hit_text = "\n".join(hit["text"] for hit in result.payload["hits"])
+        self.assertIn("Recursive Self-Improvement", hit_text)
+        self.assertEqual(result.payload["authority"], "supporting_not_authoritative")
+
+    def test_wiki_query_cli_can_emit_machine_readable_hits(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "wiki",
+            "query",
+            "Spark self-awareness contract",
+            "--home",
+            str(self.home),
+            "--refresh",
+            "--limit",
+            "2",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["wiki_retrieval_status"], "supported")
+        self.assertGreater(payload["hit_count"], 0)
+        self.assertLessEqual(payload["hit_count"], 2)
+        self.assertTrue(payload["hits"][0]["source_path"])
 
     def test_project_knowledge_intent_boosts_wiki_over_generic_events(self) -> None:
         query = "How should Spark use recursive self-improvement loops?"

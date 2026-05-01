@@ -90,7 +90,13 @@ from spark_intelligence.identity.service import (
     revoke_session,
 )
 from spark_intelligence.jobs.service import jobs_list, jobs_tick
-from spark_intelligence.llm_wiki import bootstrap_llm_wiki, build_llm_wiki_inventory, build_llm_wiki_status, compile_system_wiki
+from spark_intelligence.llm_wiki import (
+    bootstrap_llm_wiki,
+    build_llm_wiki_inventory,
+    build_llm_wiki_query,
+    build_llm_wiki_status,
+    compile_system_wiki,
+)
 from spark_intelligence.memory import (
     benchmark_memory_architectures,
     build_telegram_state_knowledge_base,
@@ -1331,6 +1337,16 @@ def build_parser() -> argparse.ArgumentParser:
     wiki_inventory_parser.add_argument("--refresh", action="store_true", help="Bootstrap and regenerate system pages before listing")
     wiki_inventory_parser.add_argument("--limit", type=int, default=40, help="Maximum page records to emit")
     wiki_inventory_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    wiki_query_parser = wiki_subparsers.add_parser(
+        "query",
+        help="Retrieve relevant supporting packets from the local LLM wiki",
+    )
+    wiki_query_parser.add_argument("query", nargs="?", default="", help="Question or topic to retrieve from the wiki")
+    wiki_query_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    wiki_query_parser.add_argument("--output-dir", help="Override wiki output directory")
+    wiki_query_parser.add_argument("--refresh", action="store_true", help="Bootstrap and regenerate system pages before querying")
+    wiki_query_parser.add_argument("--limit", type=int, default=5, help="Maximum wiki hits to emit")
+    wiki_query_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     mission_parser = subparsers.add_parser("mission", help="Inspect mission control and task-specific operator plans")
     mission_subparsers = mission_parser.add_subparsers(dest="mission_command", required=True)
@@ -4036,6 +4052,23 @@ def handle_wiki_inventory(args: argparse.Namespace) -> int:
     )
     print(result.to_json() if args.json else result.to_text())
     return 0 if result.payload.get("exists") else 1
+
+
+def handle_wiki_query(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = build_llm_wiki_query(
+        config_manager=config_manager,
+        state_db=state_db,
+        query=str(getattr(args, "query", "") or ""),
+        output_dir=getattr(args, "output_dir", None),
+        refresh=bool(getattr(args, "refresh", False)),
+        limit=int(getattr(args, "limit", 5) or 5),
+    )
+    print(result.to_json() if args.json else result.to_text())
+    return 0 if result.payload.get("hit_count", 0) else 1
 
 
 def _collect_status_browser_payload(config_manager: ConfigManager) -> dict[str, object] | None:
@@ -7630,6 +7663,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_wiki_status(args)
     if args.command == "wiki" and args.wiki_command == "inventory":
         return handle_wiki_inventory(args)
+    if args.command == "wiki" and args.wiki_command == "query":
+        return handle_wiki_query(args)
     if args.command == "mission" and args.mission_command == "status":
         return handle_mission_status(args)
     if args.command == "mission" and args.mission_command == "plan":
