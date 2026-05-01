@@ -811,6 +811,94 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["agent_view"][0]["human_id"], "human:dashboard:legacy")
         self.assertIsNone(payload["agent_view"][0]["agent_id"])
 
+    def test_memory_search_sessions_returns_source_aware_episodic_matches(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="memory_turn_captured",
+            component="telegram_runtime",
+            summary="Telegram user turn captured as an episodic memory candidate.",
+            session_id="session-search-memory-dashboard",
+            human_id="human:session:search",
+            agent_id="agent:session:search",
+            facts={
+                "memory_role": "raw_episode",
+                "predicate": "raw_turn",
+                "role": "user",
+                "text": "Let's call the memory dashboard the memory window from now on.",
+                "source_surface": "telegram",
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="memory_turn_captured",
+            component="telegram_runtime",
+            summary="Telegram assistant turn captured as an episodic memory candidate.",
+            session_id="session-search-memory-dashboard",
+            human_id="human:session:search",
+            agent_id="agent:session:search",
+            facts={
+                "memory_role": "raw_episode",
+                "predicate": "raw_turn",
+                "role": "assistant",
+                "text": "Got it. I will use memory window for that dashboard.",
+                "source_surface": "telegram",
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="memory_turn_captured",
+            component="telegram_runtime",
+            summary="Telegram user turn captured as an episodic memory candidate.",
+            session_id="session-search-unrelated",
+            human_id="human:session:search",
+            agent_id="agent:session:search",
+            facts={
+                "memory_role": "raw_episode",
+                "predicate": "raw_turn",
+                "role": "user",
+                "text": "The GTM plan needs creator approvals.",
+                "source_surface": "telegram",
+            },
+        )
+
+        exit_code, stdout, stderr = self.run_cli(
+            "memory",
+            "search-sessions",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:session:search",
+            "--agent-id",
+            "agent:session:search",
+            "--query",
+            "memory window",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["status"], "supported")
+        self.assertEqual(payload["sessions"][0]["session_id"], "session-search-memory-dashboard")
+        self.assertTrue(any("memory window" in event["snippet"] for event in payload["sessions"][0]["events"]))
+        self.assertEqual(payload["source_mix"], {"telegram": 2})
+
+        exit_code, stdout, stderr = self.run_cli(
+            "memory",
+            "dashboard",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:session:search",
+            "--agent-id",
+            "agent:session:search",
+            "--json",
+        )
+        self.assertEqual(exit_code, 0, stderr)
+        dashboard = json.loads(stdout)
+        self.assertTrue(
+            any("saved -> retrieved: 2 record(s) from telegram=2." in row["line"] for row in dashboard["movement_paths"])
+        )
+
     def test_memory_export_shadow_replay_writes_contract_shaped_json(self) -> None:
         with self.state_db.connect() as conn:
             conn.execute(

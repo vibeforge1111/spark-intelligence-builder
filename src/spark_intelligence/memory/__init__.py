@@ -91,6 +91,7 @@ from spark_intelligence.memory.session_summaries import (
     write_session_summary_to_memory,
 )
 from spark_intelligence.memory.dashboard import build_memory_dashboard_payload
+from spark_intelligence.memory.session_search import build_session_search_payload
 
 __all__ = [
     "HumanMemoryInspectionResult",
@@ -129,6 +130,7 @@ __all__ = [
     "build_session_memory_summary",
     "build_session_summary",
     "build_memory_dashboard_payload",
+    "build_session_search_payload",
     "build_telegram_state_knowledge_base",
     "compare_telegram_memory_architectures",
     "delete_profile_fact_from_memory",

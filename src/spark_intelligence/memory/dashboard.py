@@ -288,7 +288,7 @@ def _retrieval_summary(facts: dict[str, Any]) -> dict[str, Any] | None:
     answer = facts.get("answer_explanation") if isinstance(facts.get("answer_explanation"), dict) else {}
     retrieval_trace = facts.get("retrieval_trace") if isinstance(facts.get("retrieval_trace"), dict) else {}
     hybrid_trace = retrieval_trace.get("hybrid_memory_retrieve") if isinstance(retrieval_trace.get("hybrid_memory_retrieve"), dict) else {}
-    source_mix = answer.get("context_packet_source_mix")
+    source_mix = answer.get("context_packet_source_mix") or facts.get("source_mix")
     sections = answer.get("context_packet_sections")
     return {
         "method": facts.get("method"),

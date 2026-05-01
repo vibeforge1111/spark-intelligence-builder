@@ -101,6 +101,7 @@ from spark_intelligence.llm_wiki import (
 from spark_intelligence.memory import (
     benchmark_memory_architectures,
     build_memory_dashboard_payload,
+    build_session_search_payload,
     build_telegram_state_knowledge_base,
     export_sdk_maintenance_replay,
     export_shadow_replay,
@@ -829,6 +830,38 @@ class MemoryDashboard:
                     f"{row.get('predicate') or row.get('event_type') or 'memory'} "
                     f"reason={row.get('reason') or 'n/a'}"
                 )
+        return "\n".join(lines)
+
+
+@dataclass
+class MemorySessionSearch:
+    payload: dict[str, object]
+
+    def to_json(self) -> str:
+        return json.dumps(self.payload, indent=2)
+
+    def to_text(self) -> str:
+        status = self.payload.get("status") or "unknown"
+        reason = self.payload.get("reason")
+        lines = [f"Spark session search: {status}"]
+        if reason:
+            lines.append(f"- reason: {reason}")
+        lines.append(f"- query: {self.payload.get('query') or ''}")
+        lines.append(
+            f"- scanned: {self.payload.get('scanned_event_count') or 0} "
+            f"matched: {self.payload.get('matched_event_count') or 0}"
+        )
+        sessions = self.payload.get("sessions") if isinstance(self.payload.get("sessions"), list) else []
+        for session in sessions[:5]:
+            if not isinstance(session, dict):
+                continue
+            lines.append(
+                f"- {session.get('session_id') or 'session:unknown'} "
+                f"matches={session.get('matched_event_count') or 0} latest={session.get('latest_at') or 'unknown'}"
+            )
+            recap = str(session.get("recap") or "").strip()
+            if recap:
+                lines.append(f"  {recap}")
         return "\n".join(lines)
 
 
@@ -2070,6 +2103,16 @@ def build_parser() -> argparse.ArgumentParser:
     memory_dashboard_parser.add_argument("--agent-id", help="Filter movement to one Builder agent id")
     memory_dashboard_parser.add_argument("--limit", type=int, default=50, help="Maximum recent movement rows")
     memory_dashboard_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_session_search_parser = memory_subparsers.add_parser(
+        "search-sessions",
+        help="Search source-aware episodic conversation memory by session",
+    )
+    memory_session_search_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_session_search_parser.add_argument("--query", required=True, help="Search query for past conversation evidence")
+    memory_session_search_parser.add_argument("--human-id", help="Filter search to one Builder human id")
+    memory_session_search_parser.add_argument("--agent-id", help="Filter search to one Builder agent id")
+    memory_session_search_parser.add_argument("--limit", type=int, default=5, help="Maximum matching sessions")
+    memory_session_search_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_export_parser = memory_subparsers.add_parser(
         "export-shadow-replay",
         help="Export a Spark shadow replay JSON file for domain-chip-memory validation",
@@ -6027,6 +6070,44 @@ def handle_memory_dashboard(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_memory_search_sessions(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    payload = build_session_search_payload(
+        state_db=state_db,
+        query=args.query,
+        human_id=args.human_id,
+        agent_id=args.agent_id,
+        limit=args.limit,
+    )
+    record_event(
+        state_db,
+        event_type="memory_read_succeeded",
+        component="memory_session_search",
+        summary="Spark searched source-aware episodic session memory.",
+        human_id=args.human_id,
+        agent_id=args.agent_id,
+        facts={
+            "method": "session_search",
+            "memory_role": "raw_episode",
+            "query_text": str(args.query or "").strip(),
+            "record_count": payload.get("matched_event_count") or 0,
+            "selected_count": len(payload.get("sessions") or []),
+            "source_session_ids": [
+                session.get("session_id")
+                for session in payload.get("sessions", [])
+                if isinstance(session, dict) and session.get("session_id")
+            ],
+            "source_mix": payload.get("source_mix") or {},
+        },
+    )
+    search = MemorySessionSearch(payload=payload)
+    print(search.to_json() if args.json else search.to_text())
+    return 0 if payload.get("status") in {"supported", "not_found", "abstained"} else 1
+
+
 def handle_memory_export_shadow_replay(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -7923,6 +8004,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_memory_inspect_capsule(args)
     if args.command == "memory" and args.memory_command == "dashboard":
         return handle_memory_dashboard(args)
+    if args.command == "memory" and args.memory_command == "search-sessions":
+        return handle_memory_search_sessions(args)
     if args.command == "memory" and args.memory_command == "export-shadow-replay":
         return handle_memory_export_shadow_replay(args)
     if args.command == "memory" and args.memory_command == "export-shadow-replay-batch":
