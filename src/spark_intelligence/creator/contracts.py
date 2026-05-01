@@ -119,7 +119,7 @@ class CreatorMissionStatusSummary:
     evidence_tier: str
     blocked: bool
     recommended_next_command: str
-    requested_publication_mode: str
+    publish_mode: str
     swarm_shared_allowed: bool
     network_absorbable: bool
     surface_adapters: list[str]
@@ -237,10 +237,10 @@ def validate_creator_mission_status(payload: Mapping[str, Any] | Any) -> list[Va
     if publication is not None:
         _require_allowed(
             publication,
-            "publication.requested_mode",
+            "publication.publish_mode",
             MISSION_STATUS_PUBLICATION_MODES,
             issues,
-            source_key="requested_mode",
+            source_key="publish_mode",
         )
         _require_bool(
             publication,
@@ -285,7 +285,7 @@ def summarize_creator_mission_status(payload: Mapping[str, Any] | Any) -> Creato
         evidence_tier=str(canonical["evidence_tier"]),
         blocked=bool(automation["blocked"]),
         recommended_next_command=str(automation["recommended_next_command"]),
-        requested_publication_mode=str(publication["requested_mode"]),
+        publish_mode=str(publication["publish_mode"]),
         swarm_shared_allowed=bool(publication["swarm_shared_allowed"]),
         network_absorbable=bool(publication["network_absorbable"]),
         surface_adapters=sorted(adapters),
