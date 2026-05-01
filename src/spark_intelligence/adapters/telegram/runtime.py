@@ -1625,6 +1625,64 @@ def _record_telegram_conversation_memory_candidate(
     )
 
 
+def _record_telegram_conversation_memory_pair(
+    *,
+    state_db: StateDB,
+    inbound_text: str | None,
+    outbound_text: str | None,
+    outbound_delivered: bool,
+    update_id: int,
+    telegram_user_id: str,
+    chat_id: str,
+    session_id: str | None,
+    human_id: str | None,
+    agent_id: str | None,
+    request_id: str | None,
+    trace_ref: str | None,
+    message_kind: str | None,
+    bridge_mode: str | None,
+    routing_decision: str | None,
+    origin_surface: str,
+) -> None:
+    _record_telegram_conversation_memory_candidate(
+        state_db=state_db,
+        role="user",
+        text=inbound_text,
+        update_id=update_id,
+        telegram_user_id=telegram_user_id,
+        chat_id=chat_id,
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        request_id=request_id,
+        trace_ref=trace_ref,
+        message_kind=message_kind,
+        bridge_mode=bridge_mode,
+        routing_decision=routing_decision,
+        source_event="telegram_inbound",
+        origin_surface=origin_surface,
+    )
+    if outbound_delivered:
+        _record_telegram_conversation_memory_candidate(
+            state_db=state_db,
+            role="assistant",
+            text=outbound_text,
+            update_id=update_id,
+            telegram_user_id=telegram_user_id,
+            chat_id=chat_id,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            message_kind=message_kind,
+            bridge_mode=bridge_mode,
+            routing_decision=routing_decision,
+            source_event="telegram_outbound",
+            origin_surface=origin_surface,
+        )
+
+
 def poll_telegram_updates_once(
     *,
     config_manager: ConfigManager,
@@ -1799,6 +1857,24 @@ def poll_telegram_updates_once(
                 sent_count += 1
             else:
                 failed_send_count += 1
+            _record_telegram_conversation_memory_pair(
+                state_db=state_db,
+                inbound_text=effective_text,
+                outbound_text=outbound_text,
+                outbound_delivered=bool(send_result["ok"]),
+                update_id=normalized.update_id,
+                telegram_user_id=normalized.telegram_user_id,
+                chat_id=normalized.chat_id,
+                session_id=resolution.session_id,
+                human_id=resolution.human_id,
+                agent_id=resolution.agent_id,
+                request_id=run.request_id,
+                trace_ref=None,
+                message_kind=normalized.message_kind,
+                bridge_mode="runtime_command",
+                routing_decision=str(command_result.get("command") or "runtime_command"),
+                origin_surface="telegram_poll",
+            )
             close_run(
                 state_db,
                 run_id=run.run_id,
@@ -1861,6 +1937,24 @@ def poll_telegram_updates_once(
                 sent_count += 1
             else:
                 failed_send_count += 1
+            _record_telegram_conversation_memory_pair(
+                state_db=state_db,
+                inbound_text=effective_text,
+                outbound_text=outbound_text,
+                outbound_delivered=bool(send_result["ok"]),
+                update_id=normalized.update_id,
+                telegram_user_id=normalized.telegram_user_id,
+                chat_id=normalized.chat_id,
+                session_id=resolution.session_id,
+                human_id=resolution.human_id,
+                agent_id=resolution.agent_id,
+                request_id=run.request_id,
+                trace_ref=None,
+                message_kind=normalized.message_kind,
+                bridge_mode="agent_onboarding",
+                routing_decision="agent_onboarding",
+                origin_surface="telegram_poll",
+            )
             close_run(
                 state_db,
                 run_id=run.run_id,
@@ -2309,6 +2403,24 @@ def poll_telegram_updates_once(
             sent_count += 1
         else:
             failed_send_count += 1
+        _record_telegram_conversation_memory_pair(
+            state_db=state_db,
+            inbound_text=effective_text,
+            outbound_text=outbound_text,
+            outbound_delivered=bool(send_result["ok"]),
+            update_id=normalized.update_id,
+            telegram_user_id=normalized.telegram_user_id,
+            chat_id=normalized.chat_id,
+            session_id=resolution.session_id,
+            human_id=resolution.human_id,
+            agent_id=resolution.agent_id,
+            request_id=run.request_id,
+            trace_ref=bridge_result.trace_ref,
+            message_kind=normalized.message_kind,
+            bridge_mode=delivery_bridge_mode,
+            routing_decision=delivery_routing_decision,
+            origin_surface="telegram_poll",
+        )
         close_run(
             state_db,
             run_id=run.run_id,

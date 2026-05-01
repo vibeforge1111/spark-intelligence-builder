@@ -125,7 +125,7 @@ class OperatorPairingFlowTests(SparkTestCase):
                 SELECT human_id, agent_id, request_id, trace_ref, facts_json, provenance_json
                 FROM builder_events
                 WHERE event_type = 'memory_turn_captured'
-                ORDER BY event_id ASC
+                ORDER BY created_at ASC, rowid ASC
                 """
             ).fetchall()
 
@@ -139,6 +139,76 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertTrue(all(item["promotion_disposition"] == "captured_for_session_summary" for item in facts))
         self.assertIn("memory should feel continuous", " ".join(item["text"] for item in facts))
         self.assertTrue(all(json.loads(row["provenance_json"] or "{}")["source_kind"] == "telegram_conversation" for row in rows))
+
+    def test_poll_telegram_turn_captures_source_aware_episodic_candidates(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"], bot_token="test-token")
+
+        class FakePollingClient:
+            def __init__(self) -> None:
+                self.sent_messages: list[dict[str, object]] = []
+
+            def get_updates(self, *, offset: int | None = None, timeout_seconds: int = 5) -> list[dict[str, object]]:
+                return [
+                    make_telegram_update(
+                        update_id=121,
+                        user_id="111",
+                        username="alice",
+                        text="Remember the poll path too.",
+                    )
+                ]
+
+            def send_message(self, *, chat_id: str, text: str) -> dict[str, object]:
+                self.sent_messages.append({"chat_id": chat_id, "text": text})
+                return {"ok": True}
+
+        client = FakePollingClient()
+        bridge_result = ResearcherBridgeResult(
+            request_id="telegram:121",
+            reply_text="Got it - poll turns should feel continuous too.",
+            evidence_summary="direct test",
+            escalation_hint=None,
+            trace_ref="trace:telegram:121",
+            mode="direct",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=None,
+            routing_decision="direct_provider",
+        )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            return_value=bridge_result,
+        ):
+            result = poll_telegram_updates_once(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                client=client,
+                timeout_seconds=0,
+            )
+
+        self.assertEqual(result.processed_count, 1)
+        self.assertEqual(len(client.sent_messages), 1)
+        with self.state_db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT request_id, trace_ref, facts_json, provenance_json
+                FROM builder_events
+                WHERE event_type = 'memory_turn_captured'
+                ORDER BY created_at ASC, rowid ASC
+                """
+            ).fetchall()
+
+        self.assertEqual(len(rows), 2)
+        facts = [json.loads(row["facts_json"] or "{}") for row in rows]
+        provenance = [json.loads(row["provenance_json"] or "{}") for row in rows]
+        self.assertEqual([item["role"] for item in facts], ["user", "assistant"])
+        self.assertEqual([item["source_event"] for item in facts], ["telegram_inbound", "telegram_outbound"])
+        self.assertTrue(all(item["origin_surface"] == "telegram_poll" for item in facts))
+        self.assertIn("Remember the poll path too.", facts[0]["text"])
+        self.assertIn("poll turns should feel continuous", facts[1]["text"])
+        self.assertTrue(all(row["request_id"] for row in rows))
+        self.assertTrue(all(row["trace_ref"] == "trace:telegram:121" for row in rows))
+        self.assertTrue(all(item["source_kind"] == "telegram_conversation" for item in provenance))
 
     def test_pending_pairing_creates_reviewable_request(self) -> None:
         self.add_telegram_channel()
