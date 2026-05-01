@@ -178,6 +178,14 @@ class SessionSummaryTests(SparkTestCase):
         self.assertEqual(summary_facts["domain_pack"], "session_summary")
         self.assertEqual(summary_facts["event_count"], 1)
         self.assertTrue(summary_facts["source_event_ids"])
+        lifecycle_events = latest_events_by_type(self.state_db, event_type="memory_lifecycle_transition", limit=10)
+        self.assertTrue(lifecycle_events)
+        lifecycle_facts = lifecycle_events[0]["facts_json"] or {}
+        self.assertEqual(lifecycle_facts["transition_kind"], "compaction")
+        self.assertEqual(lifecycle_facts["memory_role"], "episodic_summary")
+        self.assertEqual(lifecycle_facts["lifecycle_action"], "compacted")
+        self.assertEqual(lifecycle_facts["destination"], "evidence.telegram.session_summary")
+        self.assertEqual(lifecycle_facts["transition_count"], 1)
 
     def test_write_session_summary_skips_empty_sessions(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -364,3 +372,9 @@ class SessionSummaryTests(SparkTestCase):
         self.assertTrue(project_events)
         self.assertEqual((daily_events[0]["facts_json"] or {}).get("domain_pack"), "daily_summary")
         self.assertEqual((project_events[0]["facts_json"] or {}).get("domain_pack"), "project_summary")
+        lifecycle_events = latest_events_by_type(self.state_db, event_type="memory_lifecycle_transition", limit=10)
+        lifecycle_facts = [event["facts_json"] or {} for event in lifecycle_events]
+        destinations = {facts.get("destination") for facts in lifecycle_facts}
+        self.assertIn("evidence.telegram.daily_summary", destinations)
+        self.assertIn("evidence.telegram.project_summary", destinations)
+        self.assertTrue(all(facts.get("transition_kind") == "compaction" for facts in lifecycle_facts[:2]))

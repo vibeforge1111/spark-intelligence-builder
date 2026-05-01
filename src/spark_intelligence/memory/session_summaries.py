@@ -281,6 +281,22 @@ def write_session_summary_to_memory(
         },
         provenance={"memory_role": "structured_evidence", "source_kind": "session_event_ledger"},
     )
+    if result.accepted_count > 0:
+        _record_summary_compaction_transition(
+            state_db=state_db,
+            scope="session",
+            scope_key=session_id,
+            human_id=human_id,
+            session_id=session_id,
+            actor_id=actor_id,
+            channel_kind=channel_kind,
+            source_event_count=summary.event_count,
+            source_session_count=1,
+            source_event_ids=summary.source_event_ids,
+            destination_predicate="evidence.telegram.session_summary",
+            source_text=f"Compacted {summary.event_count} session event(s) into a durable session summary.",
+            accepted_count=result.accepted_count,
+        )
     return result
 
 
@@ -666,7 +682,81 @@ def _write_rollup_summary_to_memory(
         },
         provenance={"memory_role": "structured_evidence", "source_kind": "session_event_ledger"},
     )
+    if result.accepted_count > 0:
+        _record_summary_compaction_transition(
+            state_db=state_db,
+            scope=summary.scope,
+            scope_key=summary.scope_key,
+            human_id=human_id,
+            session_id=None,
+            actor_id=actor_id,
+            channel_kind=channel_kind,
+            source_event_count=summary.event_count,
+            source_session_count=summary.session_count,
+            source_event_ids=summary.source_event_ids,
+            destination_predicate=f"evidence.telegram.{domain_pack}",
+            source_text=(
+                f"Compacted {summary.event_count} event(s) across {summary.session_count} session(s) "
+                f"into a durable {summary.scope} summary."
+            ),
+            accepted_count=result.accepted_count,
+        )
     return result
+
+
+def _record_summary_compaction_transition(
+    *,
+    state_db: StateDB,
+    scope: str,
+    scope_key: str,
+    human_id: str,
+    session_id: str | None,
+    actor_id: str,
+    channel_kind: str | None,
+    source_event_count: int,
+    source_session_count: int,
+    source_event_ids: tuple[str, ...],
+    destination_predicate: str,
+    source_text: str,
+    accepted_count: int,
+) -> None:
+    record_event(
+        state_db,
+        event_type="memory_lifecycle_transition",
+        component="memory_orchestrator",
+        summary=f"Spark memory lifecycle transition: episodic {scope} summary compaction.",
+        request_id=f"{scope}:{scope_key}:summary",
+        session_id=session_id,
+        human_id=human_id,
+        channel_id=channel_kind,
+        actor_id=actor_id,
+        status="recorded",
+        reason_code=f"{scope}_summary_compaction",
+        facts={
+            "transition_kind": "compaction",
+            "memory_role": "episodic_summary",
+            "source_predicate": f"builder_events.{scope}",
+            "source_text": source_text,
+            "source_observation_id": None,
+            "reason": f"{scope}_summary_compaction",
+            "archive_reason": f"{scope}_summary_compaction",
+            "retention_class": "episodic_archive",
+            "lifecycle_action": "compacted",
+            "destination": destination_predicate,
+            "transition_count": source_event_count,
+            "source_event_count": source_event_count,
+            "source_session_count": source_session_count,
+            "source_event_ids": list(source_event_ids[:20]),
+            "accepted_count": accepted_count,
+            "scope": scope,
+            "scope_key": scope_key,
+            "readable_summary": (
+                f"{source_event_count} event(s) were compacted into {destination_predicate} "
+                f"for {scope} {scope_key}."
+            ),
+        },
+        provenance={"memory_role": "episodic_summary", "source_kind": "session_event_ledger"},
+    )
 
 
 def _clean_value(value: Any) -> str:
