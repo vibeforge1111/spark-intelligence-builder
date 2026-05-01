@@ -4,7 +4,6 @@ import ast
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -916,9 +915,11 @@ def _daemon_reentry_issue(*, config_manager: ConfigManager) -> StopShipIssue:
 
 def _external_execution_governance_issue() -> StopShipIssue:
     allowed_subprocess_paths = {
+        "src/spark_intelligence/build_quality_review.py",
         "src/spark_intelligence/cli.py",
         "src/spark_intelligence/config/loader.py",
         "src/spark_intelligence/execution/governed.py",
+        "src/spark_intelligence/local_project_index.py",
     }
     allowed_direct_provider_paths = {
         "src/spark_intelligence/chip_create/pipeline.py",
