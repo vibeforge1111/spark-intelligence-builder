@@ -8765,13 +8765,8 @@ def build_researcher_reply(
                 request_id=request_id,
                 user_message=user_message,
             )
-            wiki_appendix, wiki_evidence = _build_self_knowledge_wiki_appendix(
-                config_manager=config_manager,
-                state_db=state_db,
-                user_message=user_message,
-                actor_id="researcher_bridge",
-            )
-            reply_text = _append_direct_reply_section(capsule.to_text(), wiki_appendix)
+            wiki_evidence = "wiki_refresh=skipped reason=conversational_self_awareness"
+            reply_text = capsule.to_text()
             evidence_summary = f"status=self_awareness_direct source=self_awareness_capsule {wiki_evidence}".strip()
         else:
             registry_reply = build_system_registry_direct_reply(

@@ -79,22 +79,22 @@ class SelfAwarenessCapsule:
     def to_text(self) -> str:
         lines = [
             "Spark self-awareness",
-            f"- generated_at: {self.generated_at}",
-            f"- workspace: {self.workspace_id}",
+            "",
+            "Short version: I can see some live Spark systems, but I should still prove a route worked before I sound certain.",
+            "",
+            f"Workspace: {self.workspace_id}",
+            f"Checked: {self.generated_at}",
             "",
         ]
-        _extend_claim_lines(lines, "Observed now", self.observed_now, limit=5)
-        _extend_claim_lines(lines, "Recently verified", self.recently_verified, limit=3)
-        _extend_claim_lines(lines, "Where Spark is strong", self.inferred_strengths, limit=3)
-        _extend_claim_lines(lines, "Where Spark lacks", self.lacks, limit=5)
-        _extend_claim_lines(lines, "How Spark can improve", self.improvement_options, limit=5)
-        if self.recommended_probes:
-            lines.append("Recommended probes")
-            lines.extend(f"- {item}" for item in self.recommended_probes[:4])
-            lines.append("")
-        if self.natural_language_routes:
-            lines.append("Natural-language routes")
-            lines.extend(f"- {item}" for item in self.natural_language_routes[:4])
+        _extend_claim_lines(lines, "What looks live", self.observed_now, limit=4, compact=True)
+        _extend_claim_lines(lines, "What I recently proved", self.recently_verified, limit=2, compact=True)
+        _extend_claim_lines(lines, "Where I am useful", self.inferred_strengths, limit=2, compact=True)
+        _extend_claim_lines(lines, "Where I still lack", self.lacks, limit=3, compact=True)
+        _extend_claim_lines(lines, "What I should improve next", self.improvement_options, limit=3, compact=True)
+        routes = [route for route in self.natural_language_routes[:2] if route]
+        if routes:
+            lines.append("Good next probes")
+            lines.extend(f"- {_compact_route_text(item)}" for item in routes)
         return "\n".join(lines).strip()
 
 
@@ -452,17 +452,70 @@ def _extend_claim_lines(
     claims: list[SelfAwarenessClaim],
     *,
     limit: int | None = None,
+    compact: bool = False,
 ) -> None:
     selected_claims = claims[:limit] if limit is not None else claims
     if not selected_claims:
         return
     lines.append(title)
     for claim in selected_claims:
+        if compact:
+            lines.append(f"- {_compact_claim_text(claim)}")
+            continue
         suffix_parts = [claim.verification_status, claim.confidence]
         if claim.next_probe:
             suffix_parts.append(f"next: {claim.next_probe}")
         lines.append(f"- {claim.claim} ({'; '.join(suffix_parts)})")
     lines.append("")
+
+
+def _compact_claim_text(claim: SelfAwarenessClaim) -> str:
+    text = claim.claim.strip()
+    text = text.replace("Spark Intelligence Builder", "Builder")
+    text = text.replace("Spark Local Work", "Local Work")
+    text = text.replace("Telegram adapter", "Telegram")
+    marker = " is visible in the Builder registry with status="
+    if marker in text:
+        name, rest = text.split(marker, 1)
+        status = rest.split(".", 1)[0].strip()
+        return f"{name}: {status}"
+    marker = " is not fully healthy or available: status="
+    if marker in text:
+        name, rest = text.split(marker, 1)
+        status = rest.split(".", 1)[0].strip()
+        limit = ""
+        if "Main limit:" in rest:
+            limit = rest.split("Main limit:", 1)[1].strip().rstrip(".")
+        return f"{name}: {status}{f' - {limit}' if limit else ''}"
+    if text.startswith("Recent tool_result_received:"):
+        short = text.replace("Recent tool_result_received:", "Route worked recently:")
+        return short.replace(" status=recorded.", "").strip()
+    if text.startswith("Spark can describe current capabilities"):
+        return "I can map Spark capabilities from the registry, but I need route checks for proof."
+    if text.startswith("Spark can use turn context sources"):
+        return "I can use current state, diagnostics, runtime capabilities, and workflow context for continuity."
+    if text.startswith("Spark is strongest when"):
+        return "I am best when I separate live evidence, memory, and inference."
+    if text.startswith("Registry visibility does not prove"):
+        return "Seeing a system in the registry is not proof it worked this turn."
+    if text.startswith("Spark cannot inspect secrets"):
+        return "I cannot inspect secrets or private infra unless a safe diagnostic exposes redacted status."
+    if text.startswith("Natural-language invocability"):
+        return "Natural-language control only counts when the phrase maps to an authorized, traceable route."
+    if text.startswith("Repair configuration"):
+        return text.replace("Repair configuration, auth, attachment, or runtime readiness for ", "Repair readiness for ")
+    if text.startswith("Add per-capability"):
+        return "Track last_success_at, last_failure_reason, latency, and eval coverage per capability."
+    if text.startswith("Add redacted health"):
+        return "Expose redacted health summaries for secret-bound systems."
+    return text
+
+
+def _compact_route_text(route: str) -> str:
+    route = route.strip()
+    if route.startswith("Ask: "):
+        route = route[len("Ask: ") :]
+    return route
 
 
 def _claims_payload(claims: list[SelfAwarenessClaim]) -> list[dict[str, Any]]:

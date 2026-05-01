@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 
 from spark_intelligence.observability.store import record_event
+from spark_intelligence.adapters.telegram.runtime import simulate_telegram_update
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
 from spark_intelligence.self_awareness import build_self_awareness_capsule
 
-from tests.test_support import SparkTestCase, create_fake_hook_chip
+from tests.test_support import SparkTestCase, create_fake_hook_chip, make_telegram_update
 
 
 class SelfAwarenessCapsuleTests(SparkTestCase):
@@ -103,11 +104,11 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(result.mode, "self_awareness_direct")
         self.assertEqual(result.routing_decision, "self_awareness_direct")
         self.assertIn("Spark self-awareness", result.reply_text)
-        self.assertIn("Where Spark lacks", result.reply_text)
-        self.assertIn("How Spark can improve", result.reply_text)
-        self.assertIn("LLM wiki", result.reply_text)
-        self.assertIn("supporting_not_authoritative", result.reply_text)
-        self.assertIn("wiki_refresh=ok", result.evidence_summary)
+        self.assertIn("Where I still lack", result.reply_text)
+        self.assertIn("What I should improve next", result.reply_text)
+        self.assertNotIn("LLM wiki", result.reply_text)
+        self.assertLess(len(result.reply_text), 2600)
+        self.assertIn("wiki_refresh=skipped", result.evidence_summary)
 
     def test_self_awareness_query_beats_entity_state_summary_route(self) -> None:
         result = build_researcher_reply(
@@ -125,3 +126,26 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(result.routing_decision, "self_awareness_direct")
         self.assertIn("Spark self-awareness", result.reply_text)
         self.assertNotIn("saved entity state", result.reply_text)
+
+    def test_normal_telegram_message_uses_self_awareness_with_wiki_context(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=1001,
+                user_id="111",
+                username="alice",
+                text="What systems can you call, where do you lack, and how can you improve?",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.decision, "allowed")
+        self.assertEqual(result.detail["bridge_mode"], "self_awareness_direct")
+        self.assertEqual(result.detail["routing_decision"], "self_awareness_direct")
+        self.assertIn("Spark self-awareness", result.detail["response_text"])
+        self.assertIn("Where I still lack", result.detail["response_text"])
+        self.assertNotIn("LLM wiki", result.detail["response_text"])
+        self.assertLess(len(result.detail["response_text"]), 2600)
