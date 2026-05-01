@@ -88,6 +88,58 @@ class OperatorPairingFlowTests(SparkTestCase):
         summary = pairing_summary(state_db=self.state_db, channel_id="telegram")
         self.assertEqual(summary.counts["approved"], 0)
 
+    def test_simulated_telegram_turn_captures_source_aware_episodic_candidates(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        bridge_result = ResearcherBridgeResult(
+            request_id="sim:120",
+            reply_text="Yes - I will keep the memory trace grounded.",
+            evidence_summary="direct test",
+            escalation_hint=None,
+            trace_ref="trace:sim:120",
+            mode="direct",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=None,
+            routing_decision="direct_provider",
+        )
+
+        with patch(
+            "spark_intelligence.adapters.telegram.runtime.build_researcher_reply",
+            return_value=bridge_result,
+        ):
+            result = simulate_telegram_update(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                update_payload=make_telegram_update(
+                    update_id=120,
+                    user_id="111",
+                    username="alice",
+                    text="Remember the thread: memory should feel continuous.",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        with self.state_db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT human_id, agent_id, request_id, trace_ref, facts_json, provenance_json
+                FROM builder_events
+                WHERE event_type = 'memory_turn_captured'
+                ORDER BY event_id ASC
+                """
+            ).fetchall()
+
+        self.assertEqual(len(rows), 2)
+        facts = [json.loads(row["facts_json"] or "{}") for row in rows]
+        self.assertEqual({item["role"] for item in facts}, {"user", "assistant"})
+        self.assertTrue(all(row["human_id"] == "human:telegram:111" for row in rows))
+        self.assertTrue(all(row["agent_id"] == "agent:human:telegram:111" for row in rows))
+        self.assertTrue(all(item["predicate"] == "raw_turn" for item in facts))
+        self.assertTrue(all(item["memory_role"] == "raw_episode" for item in facts))
+        self.assertTrue(all(item["promotion_disposition"] == "captured_for_session_summary" for item in facts))
+        self.assertIn("memory should feel continuous", " ".join(item["text"] for item in facts))
+        self.assertTrue(all(json.loads(row["provenance_json"] or "{}")["source_kind"] == "telegram_conversation" for row in rows))
+
     def test_pending_pairing_creates_reviewable_request(self) -> None:
         self.add_telegram_channel()
 

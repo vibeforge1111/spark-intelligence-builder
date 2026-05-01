@@ -1487,6 +1487,42 @@ def simulate_telegram_update(
         "guardrail_actions": _outbound_actions,
     }
     if resolution.allowed:
+        _record_telegram_conversation_memory_candidate(
+            state_db=state_db,
+            role="user",
+            text=effective_text,
+            update_id=normalized.update_id,
+            telegram_user_id=normalized.telegram_user_id,
+            chat_id=normalized.chat_id,
+            session_id=resolution.session_id,
+            human_id=resolution.human_id,
+            agent_id=resolution.agent_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            message_kind=normalized.message_kind,
+            bridge_mode=bridge_mode,
+            routing_decision=routing_decision,
+            source_event="telegram_inbound",
+            origin_surface=origin_surface,
+        )
+        _record_telegram_conversation_memory_candidate(
+            state_db=state_db,
+            role="assistant",
+            text=sanitized_outbound_text,
+            update_id=normalized.update_id,
+            telegram_user_id=normalized.telegram_user_id,
+            chat_id=normalized.chat_id,
+            session_id=resolution.session_id,
+            human_id=resolution.human_id,
+            agent_id=resolution.agent_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            message_kind="text",
+            bridge_mode=bridge_mode,
+            routing_decision=routing_decision,
+            source_event="telegram_outbound",
+            origin_surface=origin_surface,
+        )
         append_gateway_trace(
             config_manager,
             {
@@ -1518,6 +1554,75 @@ def simulate_telegram_update(
             },
         )
     return TelegramSimulationResult(ok=resolution.allowed, decision=resolution.decision, detail=detail)
+
+
+def _record_telegram_conversation_memory_candidate(
+    *,
+    state_db: StateDB,
+    role: str,
+    text: str | None,
+    update_id: int,
+    telegram_user_id: str,
+    chat_id: str,
+    session_id: str | None,
+    human_id: str | None,
+    agent_id: str | None,
+    request_id: str | None,
+    trace_ref: str | None,
+    message_kind: str | None,
+    bridge_mode: str | None,
+    routing_decision: str | None,
+    source_event: str,
+    origin_surface: str,
+) -> None:
+    turn_text = str(text or "").strip()
+    if not turn_text or not human_id:
+        return
+    record_event(
+        state_db,
+        event_type="memory_turn_captured",
+        component="telegram_runtime",
+        summary=f"Telegram {role} turn captured as an episodic memory candidate.",
+        request_id=request_id,
+        trace_ref=trace_ref,
+        channel_id="telegram",
+        session_id=session_id,
+        human_id=human_id,
+        agent_id=agent_id,
+        actor_id="telegram_runtime",
+        reason_code="telegram_conversation_turn",
+        truth_kind="memory",
+        facts={
+            "operation": "capture",
+            "method": "conversation_turn_capture",
+            "memory_role": "raw_episode",
+            "retention_class": "ephemeral_context",
+            "subject": human_id,
+            "predicate": "raw_turn",
+            "role": role,
+            "conversation_role": role,
+            "text": turn_text,
+            "message_kind": message_kind,
+            "update_id": update_id,
+            "telegram_user_id": telegram_user_id,
+            "chat_id": chat_id,
+            "channel_kind": "telegram",
+            "source_surface": "telegram",
+            "source_event": source_event,
+            "origin_surface": origin_surface,
+            "bridge_mode": bridge_mode,
+            "routing_decision": routing_decision,
+            "keepability": "ephemeral_context",
+            "promotion_disposition": "captured_for_session_summary",
+            "reason": "captured_for_session_summary",
+        },
+        provenance={
+            "source_kind": "telegram_conversation",
+            "source_ref": request_id,
+            "source_event": source_event,
+            "memory_role": "raw_episode",
+        },
+    )
 
 
 def poll_telegram_updates_once(
