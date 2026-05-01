@@ -79,7 +79,7 @@ from spark_intelligence.memory.generic_observations import (
     detect_telegram_generic_deletion,
     detect_telegram_generic_observation,
 )
-from spark_intelligence.memory.session_summaries import build_daily_summary, build_project_summary
+from spark_intelligence.memory.session_summaries import build_daily_summary, build_project_summary, build_session_summary
 from spark_intelligence.memory.profile_facts import (
     active_state_records_past_revalidation,
     build_profile_fact_explanation_answer,
@@ -399,6 +399,12 @@ class EpisodicDailyRecallQuery:
 @dataclass(frozen=True)
 class EpisodicProjectRecallQuery:
     project_key: str
+    query_kind: str
+
+
+@dataclass(frozen=True)
+class EpisodicSessionRecallQuery:
+    session_id: str
     query_kind: str
 
 
@@ -880,6 +886,48 @@ def _detect_episodic_project_recall_query(user_message: str) -> EpisodicProjectR
     return None
 
 
+def _detect_episodic_session_recall_query(user_message: str, *, session_id: str | None) -> EpisodicSessionRecallQuery | None:
+    normalized = " ".join(str(user_message or "").strip().split())
+    normalized_session_id = str(session_id or "").strip()
+    if not normalized or not normalized_session_id:
+        return None
+    lowered = normalized.casefold().strip(" ?!.")
+    patterns: tuple[tuple[str, re.Pattern[str]], ...] = (
+        (
+            "build_recall",
+            re.compile(
+                r"^(?:what\s+did\s+we\s+(?:build|work\s+on|do)|what\s+have\s+we\s+built)\s+(?:in|during)\s+this\s+(?:chat|conversation|session)$",
+                re.IGNORECASE,
+            ),
+        ),
+        (
+            "change_recall",
+            re.compile(
+                r"^(?:what\s+changed|what\s+has\s+changed|what\s+was\s+improved)\s+(?:in|during)\s+this\s+(?:chat|conversation|session)$",
+                re.IGNORECASE,
+            ),
+        ),
+        (
+            "open_recall",
+            re.compile(
+                r"^(?:what(?:'s| is)\s+still\s+open|what\s+did\s+we\s+leave\s+open|what\s+is\s+left)\s+(?:in|during)\s+this\s+(?:chat|conversation|session)$",
+                re.IGNORECASE,
+            ),
+        ),
+        (
+            "memory_recall",
+            re.compile(
+                r"^(?:what\s+else\s+do\s+you\s+remember|what\s+happened|summarize\s+what\s+happened)\s+(?:in|during)\s+this\s+(?:chat|conversation|session)$",
+                re.IGNORECASE,
+            ),
+        ),
+    )
+    for query_kind, pattern in patterns:
+        if pattern.match(lowered):
+            return EpisodicSessionRecallQuery(session_id=normalized_session_id, query_kind=query_kind)
+    return None
+
+
 def _episodic_recall_sections(
     *,
     query_kind: str,
@@ -920,6 +968,80 @@ def _episodic_recall_sections(
         ("Still open", open_questions),
         ("Next actions", next_actions),
     ]
+
+
+def _build_episodic_session_recall_reply(
+    *,
+    state_db: StateDB,
+    human_id: str,
+    query: EpisodicSessionRecallQuery,
+) -> tuple[str, dict[str, Any]]:
+    summary = build_session_summary(state_db=state_db, session_id=query.session_id, limit=500)
+    facts: dict[str, Any] = {
+        "session_id": query.session_id,
+        "query_kind": query.query_kind,
+        "scope": "session",
+        "summary_source": "session_event_ledger_rollup",
+        "event_count": summary.event_count,
+        "session_count": 1 if summary.event_count > 0 else 0,
+        "source_session_ids": [query.session_id] if summary.event_count > 0 else [],
+        "source_event_ids": list(summary.source_event_ids[:20]),
+    }
+    if summary.event_count <= 0:
+        return (
+            "I do not have a saved memory trace for this conversation yet.",
+            {
+                **facts,
+                "answered": False,
+                "section_count": 0,
+            },
+        )
+
+    sections = _episodic_recall_sections(
+        query_kind=query.query_kind,
+        what_changed=summary.what_changed,
+        decisions=summary.decisions,
+        open_questions=summary.open_questions,
+        repos_touched=summary.repos_touched,
+        artifacts_created=summary.artifacts_created,
+        promises_made=summary.promises_made,
+        next_actions=summary.next_actions,
+    )
+    rendered_sections: list[tuple[str, tuple[str, ...]]] = [
+        (title, tuple(value for value in values if str(value).strip())[:6])
+        for title, values in sections
+        if any(str(value).strip() for value in values)
+    ]
+    if not rendered_sections:
+        return (
+            f"I found {summary.event_count} event(s) in this conversation, but no durable episodic summary details yet.",
+            {
+                **facts,
+                "answered": False,
+                "section_count": 0,
+            },
+        )
+
+    lines = ["From this conversation's episodic memory:"]
+    for title, values in rendered_sections:
+        lines.append("")
+        lines.append(title)
+        lines.extend(f"- {value}" for value in values)
+    lines.extend(
+        [
+            "",
+            f"Source: session event ledger rollup for {query.session_id}.",
+        ]
+    )
+    return (
+        "\n".join(lines),
+        {
+            **facts,
+            "answered": True,
+            "section_count": len(rendered_sections),
+            "sections": [title for title, _ in rendered_sections],
+        },
+    )
 
 
 def _build_episodic_daily_recall_reply(
@@ -5916,6 +6038,14 @@ def _format_memory_route_source_reply(*, route_facts: dict[str, Any]) -> str | N
             "It summarized today's event ledger into human-readable sections, so the answer came from the work narrative "
             "rather than isolated slot facts, diagnostics, or workflow residue."
         )
+    elif routing_decision == "memory_episodic_session_recall" or bridge_mode == "memory_episodic_session_recall":
+        route_label = "session episodic memory route"
+        source_line = "session event ledger rollup"
+        reason = (
+            "The previous answer was a source-aware session recall. "
+            "It summarized the current conversation's event ledger into human-readable sections, so the answer came from "
+            "this chat's narrative rather than isolated slot facts or stale workflow residue."
+        )
     elif routing_decision == "memory_episodic_project_recall" or bridge_mode == "memory_episodic_project_recall":
         route_label = "project episodic memory route"
         source_line = "project event ledger rollup"
@@ -5972,6 +6102,7 @@ def _format_memory_route_source_reply(*, route_facts: dict[str, Any]) -> str | N
         ("section_count", "section_count"),
         ("read_method", "read_method"),
         ("summary_source", "summary_source"),
+        ("session_id", "session_id"),
         ("project_key", "project_key"),
     ):
         value = route_facts.get(key)
@@ -7921,6 +8052,78 @@ def build_researcher_reply(
             output_keepability=output_keepability,
             promotion_disposition=promotion_disposition,
             )
+
+    if not personality_context_extra:
+        detected_episodic_session_recall_query = _detect_episodic_session_recall_query(
+            user_message,
+            session_id=session_id,
+        )
+    if not personality_context_extra and detected_episodic_session_recall_query is not None:
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text, episodic_facts = _build_episodic_session_recall_reply(
+            state_db=state_db,
+            human_id=human_id,
+            query=detected_episodic_session_recall_query,
+        )
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_episodic_session_recall",
+            routing_decision="memory_episodic_session_recall",
+        )
+        evidence_summary = (
+            "status=memory_episodic_session_recall "
+            f"scope=session "
+            f"session_id={episodic_facts.get('session_id') or 'unknown'} "
+            f"query_kind={episodic_facts.get('query_kind') or 'unknown'} "
+            f"event_count={episodic_facts.get('event_count') or 0} "
+            f"section_count={episodic_facts.get('section_count') or 0} "
+            f"source={episodic_facts.get('summary_source') or 'unknown'}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered a source-aware session episodic memory recall query.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_episodic_session_recall",
+            facts=_bridge_event_facts(
+                routing_decision="memory_episodic_session_recall",
+                bridge_mode="memory_episodic_session_recall",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "query_text": str(user_message or "").strip(),
+                    **episodic_facts,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_episodic_session_recall",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_episodic_session_recall",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
 
     if not personality_context_extra:
         detected_episodic_project_recall_query = _detect_episodic_project_recall_query(user_message)

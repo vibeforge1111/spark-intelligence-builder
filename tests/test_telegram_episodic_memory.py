@@ -193,6 +193,122 @@ class TelegramEpisodicMemoryTests(SparkTestCase):
         self.assertEqual(result.mode, "memory_telegram_event_latest")
         self.assertEqual(result.routing_decision, "memory_telegram_event_latest_query")
 
+    def test_build_researcher_reply_answers_session_episodic_recall_from_current_session_ledger(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        record_event(
+            self.state_db,
+            event_type="memory_write_requested",
+            component="memory_orchestrator",
+            summary="Spark saved memory dashboard session work.",
+            session_id="session-episodic-current",
+            human_id="human-1",
+            facts={
+                "repo": "spark-memory-quality-dashboard",
+                "artifact_path": "src/components/MemoryFlowMapPanel.tsx",
+                "observations": [
+                    {
+                        "predicate": "entity.decision",
+                        "value": "memory dashboard decision is show salience lifecycle movement",
+                    },
+                    {
+                        "predicate": "entity.next_action",
+                        "value": "add session scoped episodic recall",
+                    },
+                ],
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="memory_write_requested",
+            component="memory_orchestrator",
+            summary="Spark saved unrelated prior session work.",
+            session_id="session-episodic-other",
+            human_id="human-1",
+            facts={
+                "observations": [
+                    {
+                        "predicate": "entity.next_action",
+                        "value": "ship unrelated billing cleanup",
+                    }
+                ],
+            },
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for session episodic recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for session episodic recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-session-episodic",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-episodic-current",
+                channel_kind="telegram",
+                user_message="What did we work on in this conversation?",
+            )
+
+        self.assertEqual(result.mode, "memory_episodic_session_recall")
+        self.assertEqual(result.routing_decision, "memory_episodic_session_recall")
+        self.assertIn("From this conversation's episodic memory:", result.reply_text)
+        self.assertIn("memory dashboard decision is show salience lifecycle movement", result.reply_text)
+        self.assertIn("Source: session event ledger rollup", result.reply_text)
+        self.assertIn("status=memory_episodic_session_recall", result.evidence_summary)
+        self.assertNotIn("billing cleanup", result.reply_text)
+
+    def test_session_episodic_recall_source_explanation_names_route(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        record_event(
+            self.state_db,
+            event_type="memory_write_requested",
+            component="memory_orchestrator",
+            summary="Spark saved current chat work.",
+            session_id="session-episodic-source-explanation",
+            human_id="human-1",
+            facts={
+                "observations": [
+                    {
+                        "predicate": "entity.next_action",
+                        "value": "make session memory source-aware",
+                    }
+                ],
+            },
+        )
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-session-source-first",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-episodic-source-explanation",
+            channel_kind="telegram",
+            user_message="What happened in this chat?",
+        )
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-session-source-why",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-episodic-source-explanation",
+            channel_kind="telegram",
+            user_message="Why did you answer that?",
+        )
+
+        self.assertIn("session episodic memory route", result.reply_text)
+        self.assertIn("session event ledger rollup", result.reply_text)
+        self.assertIn("memory_episodic_session_recall", result.reply_text)
+
     def test_build_researcher_reply_answers_daily_episodic_recall_from_event_ledger(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
