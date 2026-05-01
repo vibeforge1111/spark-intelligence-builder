@@ -811,6 +811,13 @@ class MemoryDashboard:
                 if not isinstance(row, dict):
                     continue
                 lines.append(f"  - {row.get('when') or 'unknown'} {row.get('line') or ''}")
+        movement_paths = self.payload.get("movement_paths") if isinstance(self.payload.get("movement_paths"), list) else []
+        if movement_paths:
+            lines.append("- movement paths:")
+            for path in movement_paths[:8]:
+                if not isinstance(path, dict):
+                    continue
+                lines.append(f"  - {path.get('when') or 'unknown'} {path.get('line') or ''}")
         blockers = self.payload.get("recent_blockers") if isinstance(self.payload.get("recent_blockers"), list) else []
         if blockers:
             lines.append("- blockers:")

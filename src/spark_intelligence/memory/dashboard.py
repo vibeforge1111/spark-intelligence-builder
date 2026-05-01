@@ -61,6 +61,7 @@ def build_memory_dashboard_payload(
         "total_movement": total_movement,
         "human_view": _human_view_rows(rows),
         "agent_view": rows,
+        "movement_paths": _movement_path_rows(rows),
         "source_mix": _source_mix(rows),
         "recent_blockers": [row for row in rows if row["movement"] == "blocked"][:10],
     }
@@ -188,6 +189,15 @@ def _movement_row(event: dict[str, Any], lane: dict[str, Any] | None) -> dict[st
             "destination": facts.get("destination"),
             "transition_count": facts.get("transition_count"),
         },
+        "lineage": {
+            "source_event_ids": _string_list(facts.get("source_event_ids")),
+            "source_session_ids": _string_list(facts.get("source_session_ids")),
+            "source_event_count": facts.get("source_event_count") or facts.get("transition_count"),
+            "source_session_count": facts.get("source_session_count"),
+            "source_predicate": facts.get("source_predicate"),
+            "destination": facts.get("destination"),
+        },
+        "retrieval": _retrieval_summary(facts),
         "trace": {
             "facts": _compact_trace_facts(facts),
             "provenance": provenance,
@@ -211,7 +221,7 @@ def _movement_bucket(*, event_type: str, facts: dict[str, Any], lane: dict[str, 
         return "promoted"
     if event_type == "memory_write_succeeded":
         return "saved"
-    if event_type in SUMMARY_EVENT_TYPES:
+    if event_type in SUMMARY_EVENT_TYPES or transition_kind == "compaction" or lifecycle_action == "compacted":
         return "summarized"
     if transition_kind == "decay" or lifecycle_action in {"stale_preserved", "decayed"}:
         return "decayed"
@@ -259,9 +269,34 @@ def _compact_trace_facts(facts: dict[str, Any]) -> dict[str, Any]:
         "transition_kind",
         "destination",
         "transition_count",
+        "source_event_count",
+        "source_session_count",
         "reason",
     )
     return {key: facts.get(key) for key in keys if key in facts}
+
+
+def _string_list(value: Any, *, limit: int = 20) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value[:limit] if str(item or "").strip()]
+
+
+def _retrieval_summary(facts: dict[str, Any]) -> dict[str, Any] | None:
+    if str(facts.get("method") or "") != "hybrid_memory_retrieve" and "record_count" not in facts:
+        return None
+    answer = facts.get("answer_explanation") if isinstance(facts.get("answer_explanation"), dict) else {}
+    retrieval_trace = facts.get("retrieval_trace") if isinstance(facts.get("retrieval_trace"), dict) else {}
+    hybrid_trace = retrieval_trace.get("hybrid_memory_retrieve") if isinstance(retrieval_trace.get("hybrid_memory_retrieve"), dict) else {}
+    source_mix = answer.get("context_packet_source_mix")
+    sections = answer.get("context_packet_sections")
+    return {
+        "method": facts.get("method"),
+        "record_count": facts.get("record_count"),
+        "selected_count": answer.get("selected_count") or hybrid_trace.get("selected_count"),
+        "source_mix": source_mix if isinstance(source_mix, dict) else {},
+        "sections": sections if isinstance(sections, list) else [],
+    }
 
 
 def _human_view_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -275,6 +310,98 @@ def _human_view_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         }
         for row in rows
     ]
+
+
+def _movement_path_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    paths = []
+    for row in rows:
+        path = _movement_path_for_row(row)
+        if path:
+            paths.append(path)
+    return paths[:25]
+
+
+def _movement_path_for_row(row: dict[str, Any]) -> dict[str, Any] | None:
+    movement = str(row.get("movement") or "")
+    lineage = row.get("lineage") if isinstance(row.get("lineage"), dict) else {}
+    retrieval = row.get("retrieval") if isinstance(row.get("retrieval"), dict) else None
+    source_count = lineage.get("source_event_count") or len(lineage.get("source_event_ids") or [])
+    destination = lineage.get("destination") or (row.get("lifecycle") or {}).get("destination")
+    if movement == "summarized":
+        return {
+            "from": "captured",
+            "to": "summarized",
+            "event_id": row.get("event_id"),
+            "when": row.get("created_at"),
+            "source_event_count": _int_or_zero(source_count),
+            "source_event_ids": lineage.get("source_event_ids") or [],
+            "destination": destination,
+            "line": _path_line("captured", "summarized", source_count=source_count, destination=destination),
+        }
+    if movement == "decayed":
+        return {
+            "from": "saved",
+            "to": "decayed",
+            "event_id": row.get("event_id"),
+            "when": row.get("created_at"),
+            "source_event_count": _int_or_zero(source_count),
+            "source_event_ids": lineage.get("source_event_ids") or [],
+            "destination": destination,
+            "line": _path_line("saved", "decayed", source_count=source_count, destination=destination),
+        }
+    if movement == "retrieved" and retrieval:
+        source_mix = retrieval.get("source_mix") if isinstance(retrieval.get("source_mix"), dict) else {}
+        source_label = ", ".join(f"{key}={value}" for key, value in sorted(source_mix.items())) or "memory"
+        return {
+            "from": "saved",
+            "to": "retrieved",
+            "event_id": row.get("event_id"),
+            "when": row.get("created_at"),
+            "record_count": retrieval.get("record_count"),
+            "selected_count": retrieval.get("selected_count"),
+            "source_mix": source_mix,
+            "line": f"saved -> retrieved: {retrieval.get('record_count') or 0} record(s) from {source_label}.",
+        }
+    if movement == "promoted":
+        return {
+            "from": "captured",
+            "to": "promoted",
+            "event_id": row.get("event_id"),
+            "when": row.get("created_at"),
+            "destination": destination,
+            "line": _path_line("captured", "promoted", source_count=source_count, destination=destination),
+        }
+    if movement == "blocked":
+        return {
+            "from": "captured",
+            "to": "blocked",
+            "event_id": row.get("event_id"),
+            "when": row.get("created_at"),
+            "destination": destination,
+            "line": f"captured -> blocked: {row.get('predicate') or 'memory'} reason={row.get('reason') or 'unknown'}.",
+        }
+    return None
+
+
+def _path_line(
+    origin: str,
+    destination_state: str,
+    *,
+    source_count: Any,
+    destination: Any,
+) -> str:
+    count = _int_or_zero(source_count)
+    target = str(destination or destination_state)
+    if count:
+        return f"{origin} -> {destination_state}: {count} source event(s) -> {target}."
+    return f"{origin} -> {destination_state}: destination={target}."
+
+
+def _int_or_zero(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _human_line(row: dict[str, Any]) -> str:

@@ -700,7 +700,13 @@ class CliSmokeTests(SparkTestCase):
             event_type="memory_session_summary_written",
             summary="Session summary written.",
             request_id="turn-dashboard-summary",
-            facts={"memory_role": "episodic_summary", "predicate": "evidence.telegram.session_summary"},
+            facts={
+                "memory_role": "episodic_summary",
+                "predicate": "evidence.telegram.session_summary",
+                "source_event_count": 2,
+                "source_event_ids": ["turn-event-1", "turn-event-2"],
+                "destination": "evidence.telegram.session_summary",
+            },
             **common,
         )
         record_event(
@@ -708,7 +714,17 @@ class CliSmokeTests(SparkTestCase):
             event_type="memory_read_succeeded",
             summary="Memory read succeeded.",
             request_id="turn-dashboard-retrieve",
-            facts={"memory_role": "current_state", "predicate": "profile.city", "record_count": 1},
+            facts={
+                "method": "hybrid_memory_retrieve",
+                "memory_role": "hybrid",
+                "predicate": "profile.city",
+                "record_count": 1,
+                "answer_explanation": {
+                    "selected_count": 1,
+                    "context_packet_source_mix": {"current_state": 1},
+                    "context_packet_sections": ["active_current_state"],
+                },
+            },
             **common,
         )
         record_event(
@@ -749,6 +765,13 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["counts"]["retrieved"], 1)
         self.assertTrue(payload["human_view"])
         self.assertTrue(payload["agent_view"])
+        movement_lines = [row["line"] for row in payload["movement_paths"]]
+        self.assertTrue(any("captured -> summarized: 2 source event(s)" in line for line in movement_lines))
+        self.assertTrue(any("saved -> retrieved: 1 record(s) from current_state=1" in line for line in movement_lines))
+        summary_row = next(row for row in payload["agent_view"] if row["event_type"] == "memory_session_summary_written")
+        self.assertEqual(summary_row["lineage"]["source_event_ids"], ["turn-event-1", "turn-event-2"])
+        retrieval_row = next(row for row in payload["agent_view"] if row["event_type"] == "memory_read_succeeded")
+        self.assertEqual(retrieval_row["retrieval"]["source_mix"], {"current_state": 1})
         self.assertEqual(payload["recent_blockers"][0]["predicate"], "profile.secret")
 
     def test_memory_dashboard_keeps_legacy_human_rows_when_agent_scope_is_newer(self) -> None:
