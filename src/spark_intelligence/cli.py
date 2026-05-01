@@ -150,7 +150,7 @@ from spark_intelligence.ops import (
 )
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
 from spark_intelligence.researcher_bridge import researcher_bridge_status
-from spark_intelligence.self_awareness import build_self_awareness_capsule
+from spark_intelligence.self_awareness import build_self_awareness_capsule, build_self_improvement_plan
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_doctor, swarm_status, sync_swarm_collective
 from spark_intelligence.harness_registry import (
@@ -1303,6 +1303,20 @@ def build_parser() -> argparse.ArgumentParser:
     self_status_parser.add_argument("--user-message", default="", help="Optional user message for goal-specific context")
     self_status_parser.add_argument("--refresh-wiki", action="store_true", help="Refresh generated LLM wiki system pages and include wiki retrieval context")
     self_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_improve_parser = self_subparsers.add_parser(
+        "improve",
+        help="Plan probe-first improvements for Spark weak spots and capability gaps",
+    )
+    self_improve_parser.add_argument("goal", nargs="?", default="", help="Goal or weak spot to improve")
+    self_improve_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_improve_parser.add_argument("--human-id", default="", help="Optional human id for context-aware improvement planning")
+    self_improve_parser.add_argument("--session-id", default="", help="Optional session id for recent-turn context")
+    self_improve_parser.add_argument("--channel-kind", default="", help="Optional channel kind, for example telegram")
+    self_improve_parser.add_argument("--request-id", default="", help="Optional current request id to exclude from recent-turn context")
+    self_improve_parser.add_argument("--user-message", default="", help="Optional current user message for goal-specific planning")
+    self_improve_parser.add_argument("--refresh-wiki", action="store_true", help="Refresh generated LLM wiki system pages and include wiki retrieval context")
+    self_improve_parser.add_argument("--limit", type=int, default=5, help="Maximum wiki hits to use")
+    self_improve_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     wiki_parser = subparsers.add_parser("wiki", help="Bootstrap and inspect Spark's local LLM wiki")
     wiki_subparsers = wiki_parser.add_subparsers(dest="wiki_command", required=True)
@@ -3979,6 +3993,27 @@ def handle_self_status(args: argparse.Namespace) -> int:
         return 0
     print(capsule.to_json() if args.json else capsule.to_text())
     return 0
+
+
+def handle_self_improve(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = build_self_improvement_plan(
+        config_manager=config_manager,
+        state_db=state_db,
+        goal=str(getattr(args, "goal", "") or ""),
+        human_id=str(getattr(args, "human_id", "") or ""),
+        session_id=str(getattr(args, "session_id", "") or ""),
+        channel_kind=str(getattr(args, "channel_kind", "") or ""),
+        request_id=str(getattr(args, "request_id", "") or "") or None,
+        user_message=str(getattr(args, "user_message", "") or ""),
+        refresh_wiki=bool(getattr(args, "refresh_wiki", False)),
+        limit=int(getattr(args, "limit", 5) or 5),
+    )
+    print(result.to_json() if args.json else result.to_text())
+    return 0 if result.payload.get("priority_actions") else 1
 
 
 def _self_status_wiki_context_payload(wiki_context: object) -> dict[str, object]:
@@ -7695,6 +7730,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_status(args)
     if args.command == "self" and args.self_command == "status":
         return handle_self_status(args)
+    if args.command == "self" and args.self_command == "improve":
+        return handle_self_improve(args)
     if args.command == "wiki" and args.wiki_command == "bootstrap":
         return handle_wiki_bootstrap(args)
     if args.command == "wiki" and args.wiki_command == "compile-system":

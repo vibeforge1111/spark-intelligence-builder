@@ -5,7 +5,7 @@ import json
 from spark_intelligence.observability.store import record_event
 from spark_intelligence.adapters.telegram.runtime import simulate_telegram_update
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
-from spark_intelligence.self_awareness import build_self_awareness_capsule
+from spark_intelligence.self_awareness import build_self_awareness_capsule, build_self_improvement_plan
 
 from tests.test_support import SparkTestCase, create_fake_hook_chip, make_telegram_update
 
@@ -88,6 +88,46 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("system/current-system-status.md", payload["wiki_refresh"]["generated_files"])
         self.assertEqual(payload["wiki_context"]["wiki_status"], "supported")
         self.assertTrue(payload["wiki_context"]["project_knowledge_first"])
+
+    def test_self_improvement_plan_combines_live_lacks_with_wiki_support(self) -> None:
+        result = build_self_improvement_plan(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            goal="Improve natural-language invocability and capability confidence",
+            human_id="human:telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+            refresh_wiki=True,
+            limit=3,
+        )
+
+        payload = result.payload
+        self.assertEqual(payload["mode"], "plan_only_probe_first")
+        self.assertEqual(payload["evidence_level"], "live_self_snapshot_with_wiki_support")
+        self.assertTrue(payload["priority_actions"])
+        self.assertTrue(payload["wiki_sources"])
+        self.assertIn("probe", payload["guardrail"].lower())
+        action_text = json.dumps(payload["priority_actions"])
+        self.assertIn("evidence_to_collect", action_text)
+        self.assertIn("Natural-language invocability", action_text)
+
+    def test_self_improve_cli_emits_machine_readable_plan(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "improve",
+            "Improve weak spots in self-awareness",
+            "--home",
+            str(self.home),
+            "--refresh-wiki",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["authority"], "current_snapshot_plus_supporting_wiki_not_execution")
+        self.assertTrue(payload["priority_actions"])
+        self.assertTrue(payload["natural_language_invocations"])
+        self.assertEqual(payload["mode"], "plan_only_probe_first")
 
     def test_self_awareness_capsule_uses_personality_style_lens_without_raw_trait_dump(self) -> None:
         capsule = build_self_awareness_capsule(
