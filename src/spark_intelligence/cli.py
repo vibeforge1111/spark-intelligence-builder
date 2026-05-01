@@ -90,6 +90,7 @@ from spark_intelligence.identity.service import (
     revoke_session,
 )
 from spark_intelligence.jobs.service import jobs_list, jobs_tick
+from spark_intelligence.llm_wiki import bootstrap_llm_wiki, compile_system_wiki
 from spark_intelligence.memory import (
     benchmark_memory_architectures,
     build_telegram_state_knowledge_base,
@@ -141,6 +142,7 @@ from spark_intelligence.ops import (
 )
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
 from spark_intelligence.researcher_bridge import researcher_bridge_status
+from spark_intelligence.self_awareness import build_self_awareness_capsule
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_doctor, swarm_status, sync_swarm_collective
 from spark_intelligence.harness_registry import (
@@ -1278,6 +1280,38 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser = subparsers.add_parser("status", help="Show unified runtime, bridge, and attachment state")
     status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+
+    self_parser = subparsers.add_parser("self", help="Inspect grounded Spark self-awareness and capability confidence")
+    self_subparsers = self_parser.add_subparsers(dest="self_command", required=True)
+    self_status_parser = self_subparsers.add_parser(
+        "status",
+        help="Show observed, verified, unverified, lacking, and improvable capability state",
+    )
+    self_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_status_parser.add_argument("--human-id", default="", help="Optional human id for context-aware self report")
+    self_status_parser.add_argument("--session-id", default="", help="Optional session id for recent-turn context")
+    self_status_parser.add_argument("--channel-kind", default="", help="Optional channel kind, for example telegram")
+    self_status_parser.add_argument("--request-id", default="", help="Optional current request id to exclude from recent-turn context")
+    self_status_parser.add_argument("--user-message", default="", help="Optional user message for goal-specific context")
+    self_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+
+    wiki_parser = subparsers.add_parser("wiki", help="Bootstrap and inspect Spark's local LLM wiki")
+    wiki_subparsers = wiki_parser.add_subparsers(dest="wiki_command", required=True)
+    wiki_bootstrap_parser = wiki_subparsers.add_parser(
+        "bootstrap",
+        help="Seed the local wiki pages that the hybrid memory wiki-packet lane can retrieve",
+    )
+    wiki_bootstrap_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    wiki_bootstrap_parser.add_argument("--output-dir", help="Override wiki output directory")
+    wiki_bootstrap_parser.add_argument("--force", action="store_true", help="Overwrite existing bootstrap pages")
+    wiki_bootstrap_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    wiki_compile_system_parser = wiki_subparsers.add_parser(
+        "compile-system",
+        help="Generate live system, capability, route, and gap pages into the local LLM wiki",
+    )
+    wiki_compile_system_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    wiki_compile_system_parser.add_argument("--output-dir", help="Override wiki output directory")
+    wiki_compile_system_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     mission_parser = subparsers.add_parser("mission", help="Inspect mission control and task-specific operator plans")
     mission_subparsers = mission_parser.add_subparsers(dest="mission_command", required=True)
@@ -3834,6 +3868,50 @@ def handle_status(args: argparse.Namespace) -> int:
     )
     print(status.to_json() if args.json else status.to_text())
     return 0 if gateway.doctor_blocking_ok else 1
+
+
+def handle_self_status(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    capsule = build_self_awareness_capsule(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=str(getattr(args, "human_id", "") or ""),
+        session_id=str(getattr(args, "session_id", "") or ""),
+        channel_kind=str(getattr(args, "channel_kind", "") or ""),
+        request_id=str(getattr(args, "request_id", "") or "") or None,
+        user_message=str(getattr(args, "user_message", "") or ""),
+    )
+    print(capsule.to_json() if args.json else capsule.to_text())
+    return 0
+
+
+def handle_wiki_bootstrap(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    result = bootstrap_llm_wiki(
+        config_manager=config_manager,
+        output_dir=getattr(args, "output_dir", None),
+        overwrite=bool(getattr(args, "force", False)),
+    )
+    print(result.to_json() if args.json else result.to_text())
+    return 0
+
+
+def handle_wiki_compile_system(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = compile_system_wiki(
+        config_manager=config_manager,
+        state_db=state_db,
+        output_dir=getattr(args, "output_dir", None),
+    )
+    print(result.to_json() if args.json else result.to_text())
+    return 0
 
 
 def _collect_status_browser_payload(config_manager: ConfigManager) -> dict[str, object] | None:
@@ -7418,6 +7496,12 @@ def main(argv: list[str] | None = None) -> int:
         return handle_diagnostics_scan(args)
     if args.command == "status":
         return handle_status(args)
+    if args.command == "self" and args.self_command == "status":
+        return handle_self_status(args)
+    if args.command == "wiki" and args.wiki_command == "bootstrap":
+        return handle_wiki_bootstrap(args)
+    if args.command == "wiki" and args.wiki_command == "compile-system":
+        return handle_wiki_compile_system(args)
     if args.command == "mission" and args.mission_command == "status":
         return handle_mission_status(args)
     if args.command == "mission" and args.mission_command == "plan":

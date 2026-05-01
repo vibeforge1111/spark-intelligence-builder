@@ -134,6 +134,33 @@ class SystemRegistryTests(SparkTestCase):
         self.assertIn("Spark Local Work:", reply)
         self.assertIn("Local repo/file inspection is available", reply)
 
+    def test_self_awareness_report_separates_observed_unverified_inferred_and_unknown(self) -> None:
+        create_fake_hook_chip(self.home, chip_key="startup-yc")
+        create_fake_hook_chip(self.home, chip_key="spark-browser")
+        self.config_manager.set_path("spark.chips.roots", [str(self.home)])
+        self.config_manager.set_path("spark.chips.active_keys", ["startup-yc", "spark-browser"])
+        self.config_manager.set_path("spark.chips.pinned_keys", ["startup-yc"])
+
+        reply = build_system_registry_direct_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="Do you have powers to self-introspect about your surroundings and where you lack?",
+        )
+
+        self.assertIn("Self-awareness report", reply)
+        self.assertIn("Observed now", reply)
+        self.assertIn("Source: live Builder system registry snapshot", reply)
+        self.assertIn("Active chips:", reply)
+        self.assertIn("startup-yc", reply)
+        self.assertIn("spark-browser", reply)
+        self.assertIn("Available but unverified", reply)
+        self.assertIn("Registry presence is not the same as a successful invocation", reply)
+        self.assertIn("Inferred", reply)
+        self.assertIn("Unknown", reply)
+        self.assertIn("I cannot see secrets", reply)
+        self.assertIn("Best next checks", reply)
+        self.assertIn("Top improvements for this goal", reply)
+
     def test_build_system_registry_surfaces_local_repo_index(self) -> None:
         repo_root = self.home / "spawner-ui"
         repo_root.mkdir(parents=True)
@@ -155,4 +182,6 @@ class SystemRegistryTests(SparkTestCase):
         self.assertTrue(looks_like_system_registry_query("What can you do right now?"))
         self.assertTrue(looks_like_system_registry_query("What are you connected to?"))
         self.assertTrue(looks_like_system_registry_query("What tools and adapters do you have?"))
+        self.assertTrue(looks_like_system_registry_query("Can you self-introspect?"))
+        self.assertTrue(looks_like_system_registry_query("Where do you lack knowledge?"))
         self.assertFalse(looks_like_system_registry_query("Help me write a landing page"))

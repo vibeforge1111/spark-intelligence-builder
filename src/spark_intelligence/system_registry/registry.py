@@ -149,10 +149,52 @@ def looks_like_system_registry_query(message: str) -> bool:
         "what is connected",
         "around you right now",
         "know about yourself",
+        "self introspect",
+        "self-introspect",
+        "self introspection",
+        "self-introspection",
         "self-awareness",
+        "self awareness",
+        "introspection",
+        "self-aware",
+        "self aware",
         "surroundings",
+        "your surroundings",
+        "where do you lack",
+        "where you lack",
+        "where are you weak",
+        "what can you improve",
     )
     return any(signal in lowered_message for signal in direct_signals)
+
+
+def _looks_like_self_awareness_report_query(message: str) -> bool:
+    lowered_message = str(message or "").strip().lower()
+    if not lowered_message:
+        return False
+    signals = (
+        "know about yourself",
+        "self introspect",
+        "self-introspect",
+        "self introspection",
+        "self-introspection",
+        "self-awareness",
+        "self awareness",
+        "introspection",
+        "self-aware",
+        "self aware",
+        "surroundings",
+        "your surroundings",
+        "where do you lack",
+        "where you lack",
+        "where are you weak",
+        "what can you improve",
+    )
+    return any(signal in lowered_message for signal in signals)
+
+
+def looks_like_self_awareness_query(message: str) -> bool:
+    return _looks_like_self_awareness_report_query(message)
 
 
 def build_system_registry(
@@ -301,6 +343,9 @@ def build_system_registry_direct_reply(
     if not looks_like_system_registry_query(user_message):
         return ""
     payload = build_system_registry(config_manager, state_db).to_payload()
+    if _looks_like_self_awareness_report_query(user_message):
+        return _build_self_awareness_report_reply(payload)
+
     records = {
         str(record.get("key") or ""): record
         for record in (payload.get("records") or [])
@@ -373,6 +418,117 @@ def build_system_registry_direct_reply(
     if local_repos:
         lines.append(f"Known local repos: {', '.join(local_repos[:8])}.")
     return "\n".join(lines)
+
+
+def _build_self_awareness_report_reply(payload: dict[str, Any]) -> str:
+    records = [record for record in (payload.get("records") or []) if isinstance(record, dict)]
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    system_records = [record for record in records if str(record.get("kind") or "") == "system"]
+    provider_records = [record for record in records if str(record.get("kind") or "") == "provider"]
+    chip_records = [record for record in records if str(record.get("kind") or "") == "chip"]
+    path_records = [record for record in records if str(record.get("kind") or "") == "path"]
+    repo_records = [record for record in records if str(record.get("kind") or "") == "repo"]
+
+    ready_systems = [
+        str(record.get("label") or record.get("key") or "").strip()
+        for record in system_records
+        if str(record.get("status") or "") in {"ready", "configured", "available"}
+    ]
+    degraded_systems = [
+        record
+        for record in system_records
+        if bool(record.get("degraded")) or str(record.get("status") or "") not in {"ready", "configured", "available"}
+    ]
+    active_chips = [
+        str(record.get("key") or "").strip()
+        for record in chip_records
+        if bool(record.get("active")) and str(record.get("key") or "").strip()
+    ]
+    pinned_chips = [
+        str(record.get("key") or "").strip()
+        for record in chip_records
+        if bool(record.get("pinned")) and str(record.get("key") or "").strip()
+    ]
+    active_paths = [
+        str(record.get("key") or "").strip()
+        for record in path_records
+        if bool(record.get("active")) and str(record.get("key") or "").strip()
+    ]
+    available_providers = [
+        str(record.get("label") or record.get("key") or "").strip()
+        for record in provider_records
+        if bool(record.get("available")) and str(record.get("label") or record.get("key") or "").strip()
+    ]
+    known_repos = [
+        str(record.get("key") or "").strip()
+        for record in repo_records
+        if bool(record.get("available")) and str(record.get("key") or "").strip()
+    ]
+    dirty_repos = [
+        str(record.get("key") or "").strip()
+        for record in repo_records
+        if str(record.get("status") or "") == "dirty" and str(record.get("key") or "").strip()
+    ]
+
+    lines = [
+        "Self-awareness report",
+        "",
+        "Observed now",
+        f"- Source: live Builder system registry snapshot generated at {payload.get('generated_at') or 'unknown time'}.",
+        f"- Workspace: {payload.get('workspace_id') or 'default'}.",
+        f"- Systems I can see: {_join_or_none(ready_systems[:8])}.",
+        f"- Active chips: {_join_or_none(active_chips[:10])}.",
+        f"- Pinned chips: {_join_or_none(pinned_chips[:10])}.",
+        f"- Active paths: {_join_or_none(active_paths[:5])}.",
+        f"- Provider backends with available auth: {_join_or_none(available_providers[:6])}.",
+        f"- Known local repos: {_join_or_none(known_repos[:8])}.",
+        "",
+        "Available but unverified",
+        "- Registry presence is not the same as a successful invocation. A chip, provider, browser session, or Spawner route should be health-checked before I claim it worked.",
+        "- Spawner workflow control, browser/page inspection, local repo work, and provider execution are operator-governed capabilities. I should name the route and limits instead of pretending raw Telegram has direct filesystem or secret access.",
+        "",
+        "Inferred",
+        "- I am strongest when I can combine Builder state, memory context, diagnostics, attached chip contracts, and local repo index evidence.",
+        "- I should tailor improvement advice to the current user goal instead of listing every module as a status panel.",
+        "",
+        "Unknown",
+    ]
+    if degraded_systems:
+        lines.append("- Degraded or missing systems need a fresh diagnostic probe before I treat them as working:")
+        for record in degraded_systems[:5]:
+            limitations = [str(item).strip() for item in (record.get("limitations") or []) if str(item).strip()]
+            suffix = f" - {limitations[0]}" if limitations else ""
+            lines.append(f"  - {record.get('label') or record.get('key')}: {record.get('status') or 'unknown'}{suffix}")
+    else:
+        lines.append("- No degraded core systems are visible in this registry snapshot, but that does not prove every action path has been invoked this turn.")
+    if dirty_repos:
+        lines.append(f"- Dirty repos need git inspection before build-quality claims: {', '.join(dirty_repos[:6])}.")
+    lines.extend(
+        [
+            "- I cannot see secrets, hidden prompts, provider latency, deployment health, or private infrastructure unless a safe diagnostic surface exposes them.",
+            "",
+            "Best next checks",
+            "- Run diagnostics for service health, then compare registry state against actual tool/chip invocations.",
+            "- Ask me for source-labeled answers when testing introspection: observed now, available but unverified, inferred, historical, unknown.",
+            "- Add failure modes and last-success timestamps to each chip/provider record so I can say not just what exists, but what recently worked.",
+            "",
+            "Top improvements for this goal",
+            "- Add a first-class /self or /introspect command backed by this registry and the context capsule.",
+            "- Store last health check, last successful invocation, and common failure modes per chip/tool/provider.",
+            "- Teach self-knowledge answers to separate runtime facts, memory facts, project docs, and guesses every time.",
+            "- Add eval prompts for provenance pressure, stale status traps, secret-boundary traps, and user-specific improvement advice.",
+            "- Keep deeper self-observer reasoning as an invokable chip, while Builder stays the grounded truth surface.",
+        ]
+    )
+    capability_lines = [str(item) for item in (summary.get("current_capabilities") or []) if str(item)]
+    if capability_lines:
+        lines.extend(["", "Capability summary"])
+        lines.extend(f"- {item}" for item in capability_lines[:8])
+    return "\n".join(lines)
+
+
+def _join_or_none(values: list[str]) -> str:
+    return ", ".join(value for value in values if value) or "none visible"
 
 
 def _build_builder_record(*, gateway: Any) -> SystemRegistryRecord:

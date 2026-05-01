@@ -126,11 +126,13 @@ from spark_intelligence.personality.loader import (
     build_telegram_persona_reply_contract,
 )
 from spark_intelligence.security.prompt_boundaries import sanitize_prompt_boundary_text
+from spark_intelligence.self_awareness import build_self_awareness_capsule
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD, upsert_runtime_state
 from spark_intelligence.system_registry import (
     build_system_registry_direct_reply,
     build_system_registry_prompt_context,
+    looks_like_self_awareness_query,
     looks_like_system_registry_query,
 )
 from spark_intelligence.user_instructions import list_active_instructions
@@ -11895,22 +11897,36 @@ def build_researcher_reply(
             promotion_disposition=promotion_disposition,
         )
     if looks_like_system_registry_query(user_message):
+        self_awareness_query = looks_like_self_awareness_query(user_message)
+        direct_mode = "self_awareness_direct" if self_awareness_query else "system_registry_direct"
         output_keepability, promotion_disposition = _bridge_output_classification(
-            mode="system_registry_direct",
-            routing_decision="system_registry_direct",
+            mode=direct_mode,
+            routing_decision=direct_mode,
         )
         trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
-        reply_text = build_system_registry_direct_reply(
-            config_manager=config_manager,
-            state_db=state_db,
-            user_message=user_message,
-        )
-        evidence_summary = "status=system_registry_direct source=verified_registry"
+        if self_awareness_query:
+            reply_text = build_self_awareness_capsule(
+                config_manager=config_manager,
+                state_db=state_db,
+                human_id=human_id,
+                session_id=session_id,
+                channel_kind=channel_kind,
+                request_id=request_id,
+                user_message=user_message,
+            ).to_text()
+            evidence_summary = "status=self_awareness_direct source=self_awareness_capsule"
+        else:
+            reply_text = build_system_registry_direct_reply(
+                config_manager=config_manager,
+                state_db=state_db,
+                user_message=user_message,
+            )
+            evidence_summary = "status=system_registry_direct source=verified_registry"
         record_event(
             state_db,
             event_type="tool_result_received",
             component="researcher_bridge",
-            summary="Researcher bridge answered a self-knowledge query directly from the verified system registry.",
+            summary="Researcher bridge answered a self-knowledge query directly from grounded runtime state.",
             run_id=run_id,
             request_id=request_id,
             trace_ref=trace_ref,
@@ -11919,10 +11935,10 @@ def build_researcher_reply(
             human_id=human_id,
             agent_id=agent_id,
             actor_id="researcher_bridge",
-            reason_code="system_registry_direct",
+            reason_code=direct_mode,
             facts=_bridge_event_facts(
-                routing_decision="system_registry_direct",
-                bridge_mode="system_registry_direct",
+                routing_decision=direct_mode,
+                bridge_mode=direct_mode,
                 evidence_summary=evidence_summary,
                 active_chip_key=None,
                 active_chip_task_type=None,
@@ -11938,11 +11954,11 @@ def build_researcher_reply(
             evidence_summary=evidence_summary,
             escalation_hint=None,
             trace_ref=trace_ref,
-            mode="system_registry_direct",
+            mode=direct_mode,
             runtime_root=None,
             config_path=None,
             attachment_context=attachment_context,
-            routing_decision="system_registry_direct",
+            routing_decision=direct_mode,
             active_chip_key=None,
             active_chip_task_type=None,
             active_chip_evaluate_used=False,
