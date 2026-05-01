@@ -1472,6 +1472,15 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(facts["status"], "succeeded")
         self.assertEqual(facts["maintenance"]["active_state_stale_preserved_count"], 1)
         self.assertEqual(facts["trace"]["active_state_maintenance"]["superseded"], 1)
+        lifecycle_events = latest_events_by_type(self.state_db, event_type="memory_lifecycle_transition", limit=10)
+        lifecycle_facts = [event["facts_json"] or {} for event in lifecycle_events]
+        self.assertEqual(len(lifecycle_facts), 3)
+        actions = {facts.get("lifecycle_action") for facts in lifecycle_facts}
+        self.assertIn("deleted", actions)
+        self.assertIn("stale_preserved", actions)
+        self.assertIn("superseded", actions)
+        self.assertTrue(all(facts.get("transition_count") == 1 for facts in lifecycle_facts))
+        self.assertTrue(all(facts.get("retention_class") == "maintenance_summary" for facts in lifecycle_facts))
 
     def test_structured_evidence_writes_use_evidence_role_and_archive_retention(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -2349,6 +2358,15 @@ class MemoryOrchestratorTests(SparkTestCase):
         observations = (events[0]["facts_json"] or {}).get("observations") or []
         self.assertEqual(observations[0]["supersedes"], "obs-belief-1")
         self.assertEqual(observations[0]["conflicts_with"], ["obs-belief-1"])
+        lifecycle_events = latest_events_by_type(self.state_db, event_type="memory_lifecycle_transition", limit=10)
+        self.assertTrue(lifecycle_events)
+        lifecycle_facts = lifecycle_events[0]["facts_json"] or {}
+        self.assertEqual(lifecycle_facts["transition_kind"], "supersession")
+        self.assertEqual(lifecycle_facts["memory_role"], "belief")
+        self.assertEqual(lifecycle_facts["source_observation_id"], "obs-belief-1")
+        self.assertEqual(lifecycle_facts["old_value"], "I think self-serve onboarding will work.")
+        self.assertEqual(lifecycle_facts["new_value"], "I think enterprise teams need hands-on onboarding.")
+        self.assertEqual(lifecycle_facts["destination"], "historical_belief_state")
 
     def test_archive_belief_from_memory_writes_delete_tombstone(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

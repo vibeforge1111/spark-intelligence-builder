@@ -1199,6 +1199,7 @@ def run_memory_sdk_maintenance(
         trace=dict(trace),
     )
     _record_memory_maintenance_event(state_db=state_db, result=result, actor_id=actor_id)
+    _record_memory_maintenance_lifecycle_transitions(state_db=state_db, result=result, actor_id=actor_id)
     return result
 
 
@@ -2934,7 +2935,7 @@ def archive_structured_evidence_from_memory(
             source_predicate=predicate,
             source_text=normalized_text,
             source_observation_id=evidence_observation_id,
-            archive_reason=archive_reason,
+            reason=archive_reason,
             retention_class="episodic_archive",
             lifecycle_action="archived",
             destination="archive_tombstone",
@@ -3147,6 +3148,31 @@ def write_belief_to_memory(
         turn_id=turn_id,
         actor_id=actor_id,
     )
+    if result.accepted_count > 0 and supersedes:
+        _record_memory_lifecycle_transition(
+            state_db=state_db,
+            human_id=human_id,
+            transition_kind="supersession",
+            memory_role="belief",
+            source_predicate=predicate,
+            source_text=prior_belief_text or normalized_text,
+            source_observation_id=supersedes,
+            reason="newer_belief_supersedes_prior_belief",
+            retention_class="derived_belief",
+            lifecycle_action="superseded",
+            destination="historical_belief_state",
+            session_id=session_id,
+            turn_id=turn_id,
+            channel_kind=channel_kind,
+            actor_id=actor_id,
+            old_value=prior_belief_text or None,
+            new_value=normalized_text,
+            extra_facts={
+                "new_source_predicate": predicate,
+                "new_belief_text": _preview_memory_text(normalized_text),
+                "conflicts_with": list(conflicts_with),
+            },
+        )
     return result
 
 
@@ -3263,7 +3289,7 @@ def archive_belief_from_memory(
             source_predicate=predicate,
             source_text=belief_text,
             source_observation_id=belief_observation_id,
-            archive_reason=archive_reason,
+            reason=archive_reason,
             retention_class="derived_belief",
             lifecycle_action="archived",
             destination="archive_tombstone",
@@ -3395,7 +3421,7 @@ def archive_raw_episode_from_memory(
             source_predicate="raw_turn",
             source_text=normalized_text,
             source_observation_id=raw_episode_observation_id,
-            archive_reason=archive_reason,
+            reason=archive_reason,
             retention_class="episodic_archive",
             lifecycle_action="archived",
             destination="archive_tombstone",
@@ -6642,6 +6668,76 @@ def _record_memory_maintenance_event(
     )
 
 
+def _record_memory_maintenance_lifecycle_transitions(
+    *,
+    state_db: StateDB,
+    result: MemoryMaintenanceRunResult,
+    actor_id: str,
+) -> None:
+    if result.status != "succeeded":
+        return
+    maintenance = result.maintenance if isinstance(result.maintenance, dict) else {}
+    transition_specs = [
+        (
+            "active_deletion_count",
+            "delete",
+            "deleted",
+            "maintenance_delete_tombstone",
+            "active deletion",
+        ),
+        (
+            "active_state_stale_preserved_count",
+            "decay",
+            "stale_preserved",
+            "active_state_stale_preserved",
+            "stale current-state preserved",
+        ),
+        (
+            "active_state_superseded_count",
+            "supersession",
+            "superseded",
+            "active_state_superseded",
+            "current-state supersession",
+        ),
+        (
+            "active_state_archived_count",
+            "archive",
+            "archived",
+            "maintenance_archive",
+            "current-state archived",
+        ),
+    ]
+    for field, transition_kind, lifecycle_action, destination, readable_name in transition_specs:
+        count = _int_or_zero(maintenance.get(field))
+        if count <= 0:
+            continue
+        _record_memory_lifecycle_transition(
+            state_db=state_db,
+            human_id=None,
+            transition_kind=transition_kind,
+            memory_role="current_state",
+            source_predicate=f"memory.maintenance.{field}",
+            source_text=f"SDK maintenance reported {count} {readable_name} transition(s).",
+            source_observation_id=None,
+            reason=f"sdk_maintenance_{field}",
+            retention_class="maintenance_summary",
+            lifecycle_action=lifecycle_action,
+            destination=destination,
+            session_id=None,
+            turn_id=None,
+            channel_kind=None,
+            actor_id=actor_id,
+            transition_count=count,
+            extra_facts={
+                "sdk_module": result.sdk_module,
+                "maintenance_field": field,
+                "manual_observations_before": maintenance.get("manual_observations_before"),
+                "manual_observations_after": maintenance.get("manual_observations_after"),
+                "trace": result.trace,
+            },
+        )
+
+
 def _record_memory_write_requested_observations(
     *,
     state_db: StateDB,
@@ -6687,16 +6783,23 @@ def _preview_memory_text(value: str | None, *, limit: int = 500) -> str:
     return f"{normalized[: limit - 1].rstrip()}..."
 
 
+def _int_or_zero(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _record_memory_lifecycle_transition(
     *,
     state_db: StateDB,
-    human_id: str,
+    human_id: str | None,
     transition_kind: str,
     memory_role: str,
     source_predicate: str,
     source_text: str,
     source_observation_id: str | None,
-    archive_reason: str,
+    reason: str,
     retention_class: str,
     lifecycle_action: str,
     destination: str,
@@ -6704,7 +6807,36 @@ def _record_memory_lifecycle_transition(
     turn_id: str | None,
     channel_kind: str | None,
     actor_id: str,
+    old_value: str | None = None,
+    new_value: str | None = None,
+    transition_count: int | None = None,
+    extra_facts: dict[str, Any] | None = None,
 ) -> None:
+    normalized_reason = str(reason or "unknown").strip() or "unknown"
+    facts = {
+        "transition_kind": transition_kind,
+        "memory_role": memory_role,
+        "source_predicate": source_predicate,
+        "source_text": _preview_memory_text(source_text),
+        "source_observation_id": source_observation_id,
+        "reason": normalized_reason,
+        "archive_reason": normalized_reason,
+        "retention_class": retention_class,
+        "lifecycle_action": lifecycle_action,
+        "destination": destination,
+        "readable_summary": (
+            f"{memory_role.replace('_', ' ').title()} was {lifecycle_action} "
+            f"because {normalized_reason.replace('_', ' ')}."
+        ),
+    }
+    if old_value is not None:
+        facts["old_value"] = _preview_memory_text(old_value)
+    if new_value is not None:
+        facts["new_value"] = _preview_memory_text(new_value)
+    if transition_count is not None:
+        facts["transition_count"] = transition_count
+    if extra_facts:
+        facts.update(extra_facts)
     record_event(
         state_db,
         event_type="memory_lifecycle_transition",
@@ -6716,25 +6848,11 @@ def _record_memory_lifecycle_transition(
         channel_id=channel_kind,
         actor_id=actor_id,
         status="recorded",
-        reason_code=archive_reason,
-        facts={
-            "transition_kind": transition_kind,
-            "memory_role": memory_role,
-            "source_predicate": source_predicate,
-            "source_text": _preview_memory_text(source_text),
-            "source_observation_id": source_observation_id,
-            "archive_reason": archive_reason,
-            "retention_class": retention_class,
-            "lifecycle_action": lifecycle_action,
-            "destination": destination,
-            "readable_summary": (
-                f"{memory_role.replace('_', ' ').title()} was {lifecycle_action} "
-                f"because {archive_reason.replace('_', ' ')}."
-            ),
-        },
+        reason_code=normalized_reason,
+        facts=facts,
         provenance={
             "memory_role": memory_role,
-            "source": "memory_orchestrator_archive",
+            "source": "memory_orchestrator_lifecycle",
             "lifecycle_action": lifecycle_action,
         },
     )
