@@ -9,6 +9,7 @@ from spark_intelligence.llm_wiki import (
     build_llm_wiki_query,
     build_llm_wiki_status,
     compile_system_wiki,
+    promote_llm_wiki_improvement,
 )
 from spark_intelligence.memory import orchestrator as memory_orchestrator
 from spark_intelligence.memory.orchestrator import hybrid_memory_retrieve
@@ -242,6 +243,67 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertTrue(payload["sources"])
         self.assertEqual(payload["live_context_status"], "included")
         self.assertIn("answer", payload)
+
+    def test_wiki_promote_improvement_writes_bounded_obsidian_note(self) -> None:
+        result = promote_llm_wiki_improvement(
+            config_manager=self.config_manager,
+            title="Track verified route confidence",
+            summary="Spark should only claim a route is strong after recent success evidence is attached.",
+            evidence_refs=["pytest tests/test_self_awareness.py"],
+            source_refs=["operator_session:self-awareness-build"],
+            next_probe="Run the route and persist last_success_at before claiming it is live.",
+        )
+
+        self.assertEqual(result.output_dir, self.home / "wiki")
+        self.assertTrue(result.relative_path.startswith("improvements/"))
+        note = (self.home / "wiki" / result.relative_path).read_text(encoding="utf-8")
+        self.assertIn("type: llm_wiki_improvement", note)
+        self.assertIn("promotion_status: candidate", note)
+        self.assertIn("authority: supporting_not_authoritative", note)
+        self.assertIn("pytest tests/test_self_awareness.py", note)
+        self.assertIn("not live runtime truth", note)
+
+        query = build_llm_wiki_query(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            query="verified route confidence recent success evidence",
+            limit=3,
+        )
+
+        self.assertGreater(query.payload["hit_count"], 0)
+        hit_text = "\n".join(hit["text"] for hit in query.payload["hits"])
+        self.assertIn("route is strong after recent success evidence", hit_text)
+
+    def test_wiki_promote_improvement_requires_source_or_evidence(self) -> None:
+        with self.assertRaises(ValueError):
+            promote_llm_wiki_improvement(
+                config_manager=self.config_manager,
+                title="Residue should not promote",
+                summary="This should be blocked without a source.",
+            )
+
+    def test_wiki_promote_improvement_cli_emits_machine_readable_result(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "wiki",
+            "promote-improvement",
+            "Capability evidence notes",
+            "--home",
+            str(self.home),
+            "--summary",
+            "Capability notes should separate registration from recent invocation success.",
+            "--evidence-ref",
+            "pytest tests/test_llm_wiki_bootstrap.py",
+            "--source",
+            "operator_session:self-awareness-build",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["promotion_status"], "candidate")
+        self.assertEqual(payload["authority"], "supporting_not_authoritative")
+        self.assertTrue(payload["relative_path"].startswith("improvements/"))
+        self.assertTrue((self.home / "wiki" / payload["relative_path"]).exists())
 
     def test_project_knowledge_intent_boosts_wiki_over_generic_events(self) -> None:
         query = "How should Spark use recursive self-improvement loops?"

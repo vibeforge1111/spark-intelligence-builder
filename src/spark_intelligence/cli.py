@@ -97,6 +97,7 @@ from spark_intelligence.llm_wiki import (
     build_llm_wiki_query,
     build_llm_wiki_status,
     compile_system_wiki,
+    promote_llm_wiki_improvement,
 )
 from spark_intelligence.memory import (
     benchmark_memory_architectures,
@@ -1378,6 +1379,36 @@ def build_parser() -> argparse.ArgumentParser:
     wiki_answer_parser.add_argument("--user-message", default="", help="Optional current user message for live self-awareness context")
     wiki_answer_parser.add_argument("--no-live-self", action="store_true", help="Do not attach live self-awareness context")
     wiki_answer_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    wiki_promote_parser = wiki_subparsers.add_parser(
+        "promote-improvement",
+        help="Write a source-bounded candidate or verified improvement note into the local LLM wiki",
+    )
+    wiki_promote_parser.add_argument("title", nargs="?", default="", help="Short title for the improvement note")
+    wiki_promote_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    wiki_promote_parser.add_argument("--output-dir", help="Override wiki output directory")
+    wiki_promote_parser.add_argument("--summary", default="", help="Reusable learning to store in the wiki")
+    wiki_promote_parser.add_argument(
+        "--status",
+        choices=("candidate", "verified"),
+        default="candidate",
+        help="Promotion status. Verified still remains supporting, not authoritative.",
+    )
+    wiki_promote_parser.add_argument(
+        "--evidence-ref",
+        action="append",
+        default=[],
+        help="Trace, test, command, PR, or run evidence ref. Repeat for multiple refs.",
+    )
+    wiki_promote_parser.add_argument(
+        "--source",
+        action="append",
+        default=[],
+        help="Human, repo, document, or conversation source boundary. Repeat for multiple refs.",
+    )
+    wiki_promote_parser.add_argument("--next-probe", default="", help="Probe required before using this as current truth")
+    wiki_promote_parser.add_argument("--invalidation-trigger", default="", help="Condition that should downgrade or replace this note")
+    wiki_promote_parser.add_argument("--force", action="store_true", help="Overwrite the generated note path if it already exists")
+    wiki_promote_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     mission_parser = subparsers.add_parser("mission", help="Inspect mission control and task-specific operator plans")
     mission_subparsers = mission_parser.add_subparsers(dest="mission_command", required=True)
@@ -4144,6 +4175,29 @@ def handle_wiki_answer(args: argparse.Namespace) -> int:
     )
     print(result.to_json() if args.json else result.to_text())
     return 0 if result.payload.get("hit_count", 0) else 1
+
+
+def handle_wiki_promote_improvement(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    try:
+        result = promote_llm_wiki_improvement(
+            config_manager=config_manager,
+            title=str(getattr(args, "title", "") or ""),
+            summary=str(getattr(args, "summary", "") or ""),
+            output_dir=getattr(args, "output_dir", None),
+            promotion_status=str(getattr(args, "status", "") or "candidate"),
+            evidence_refs=list(getattr(args, "evidence_ref", []) or []),
+            source_refs=list(getattr(args, "source", []) or []),
+            next_probe=str(getattr(args, "next_probe", "") or ""),
+            invalidation_trigger=str(getattr(args, "invalidation_trigger", "") or ""),
+            overwrite=bool(getattr(args, "force", False)),
+        )
+    except (OSError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print(result.to_json() if args.json else result.to_text())
+    return 0
 
 
 def _collect_status_browser_payload(config_manager: ConfigManager) -> dict[str, object] | None:
@@ -7744,6 +7798,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_wiki_query(args)
     if args.command == "wiki" and args.wiki_command == "answer":
         return handle_wiki_answer(args)
+    if args.command == "wiki" and args.wiki_command == "promote-improvement":
+        return handle_wiki_promote_improvement(args)
     if args.command == "mission" and args.mission_command == "status":
         return handle_mission_status(args)
     if args.command == "mission" and args.mission_command == "plan":
