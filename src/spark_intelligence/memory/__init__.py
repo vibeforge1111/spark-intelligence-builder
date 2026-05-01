@@ -92,6 +92,7 @@ from spark_intelligence.memory.session_summaries import (
 )
 from spark_intelligence.memory.dashboard import build_memory_dashboard_payload
 from spark_intelligence.memory.feedback import (
+    build_memory_feedback_benchmark_payload,
     build_memory_feedback_review_payload,
     build_memory_feedback_summary,
     record_memory_feedback,
@@ -137,6 +138,7 @@ __all__ = [
     "build_session_memory_summary",
     "build_session_summary",
     "build_memory_dashboard_payload",
+    "build_memory_feedback_benchmark_payload",
     "build_memory_feedback_review_payload",
     "build_memory_feedback_summary",
     "build_memory_answer_source_packet",

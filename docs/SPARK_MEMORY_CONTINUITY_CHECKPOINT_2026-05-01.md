@@ -32,6 +32,7 @@ Spark's version should stay Spark-native:
 - Structured evidence promotion into current state now emits explicit policy decisions, including held-as-evidence blocks and corroborated promotions.
 - `memory audit-promotions` reviews those policy decisions for held evidence, later-resolved holds, false-positive risk, false-negative risk, and trace gaps.
 - `memory record-feedback` and `memory review-feedback` give operator judgments their own traceable event lane, so real feedback can join back to a memory decision without becoming durable memory truth.
+- `memory feedback-benchmarks` turns real memory feedback into correction, coverage-gap, source-quality, and positive-control benchmark cases without promoting feedback into memory truth.
 - `memory explain-source` returns a compact answer-source packet for a query, including selected source class, authority, confidence, source mix, stale-current gates, selected evidence, ignored evidence, and promotion trace.
 - Telegram `/memory` renders movement counts and movement paths concisely.
 - Existing runtime lanes include raw episodes, structured evidence, current state, events, and beliefs.
@@ -44,6 +45,7 @@ Spark's version should stay Spark-native:
 - Source-aware recall now has a Builder packet surface, but Telegram and dashboard still need first-class answer-source views.
 - Promotion needs broader conversion from scattered heuristics into reusable policy objects.
 - Promotion trace audits now have a first CLI surface, but still need deeper item-level review packs and benchmark integration.
+- Feedback now has a benchmark-case Builder packet, but the dashboard and regression runner still need to consume it as correction-fidelity evidence.
 - Retention, decay, revalidation, archival, and rebuild need one inspectable maintenance loop.
 - False-positive promotion, false-negative promotion, and stale-state drift need trace-audit packs.
 - Runtime promotion of typed conversational lanes needs real-LLM answer evaluation, not only heuristic shadow passes.
@@ -74,6 +76,7 @@ Traceable operator feedback:
 - keep feedback separate from movement counts so dashboard reviews do not confuse feedback residue with captured/saved memory
 - expose a feedback summary inside `memory dashboard`
 - expose a focused feedback review packet with recent feedback and unreviewed memory decisions
+- convert feedback into benchmarkable cases with expected outcomes, source packets, target event lineage, and authority boundaries
 
 Source-aware answer packets:
 
@@ -84,4 +87,4 @@ Source-aware answer packets:
 
 ## Current Next Step
 
-Wire source-aware answer packets into Telegram and the dashboard, then connect feedback and promotion audits to benchmark packs and maintenance/rebuild checks so Spark can prove correction fidelity, stale-state drift handling, and promotion quality over long runs.
+Wire feedback benchmark cases into the dashboard and regression runner, then connect promotion audits to maintenance/rebuild checks so Spark can prove correction fidelity, stale-state drift handling, and promotion quality over long runs.

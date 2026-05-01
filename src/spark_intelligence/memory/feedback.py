@@ -178,6 +178,51 @@ def build_memory_feedback_summary(
     }
 
 
+def build_memory_feedback_benchmark_payload(
+    *,
+    state_db: StateDB,
+    human_id: str | None = None,
+    agent_id: str | None = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    normalized_limit = max(1, min(int(limit or 50), 200))
+    feedback_rows = _load_feedback_events(
+        state_db,
+        human_id=human_id,
+        agent_id=agent_id,
+        limit=normalized_limit,
+    )
+    target_event_ids = {
+        str(row["facts"].get("target_event_id"))
+        for row in feedback_rows
+        if str(row["facts"].get("target_event_id") or "").strip()
+    }
+    target_events = _load_events_by_ids(state_db, sorted(target_event_ids))
+    cases = [
+        _feedback_benchmark_case(row, target_events.get(str(row["facts"].get("target_event_id") or "")))
+        for row in feedback_rows
+    ]
+    kind_counts = Counter(str(case.get("benchmark_kind") or "unknown") for case in cases)
+    actionable_kinds = {"correction_required", "coverage_gap", "source_quality_regression"}
+    return {
+        "view": "memory_feedback_benchmark_pack",
+        "scope": {"human_id": human_id, "agent_id": agent_id, "limit": normalized_limit},
+        "counts": {
+            "total_cases": len(cases),
+            "targeted_cases": sum(1 for case in cases if case.get("target_event_id")),
+            "actionable_cases": sum(1 for case in cases if case.get("benchmark_kind") in actionable_kinds),
+            "positive_control_cases": int(kind_counts.get("positive_control", 0)),
+            "source_packet_cases": sum(1 for case in cases if (case.get("source_packet") or {}).get("source_class") != "none"),
+            **{f"{kind}_cases": int(count) for kind, count in sorted(kind_counts.items())},
+        },
+        "cases": cases,
+        "benchmark_rule": (
+            "Feedback cases are eval material only. They must prove correction fidelity before changing "
+            "promotion or recall policy, and they do not become durable memory truth by themselves."
+        ),
+    }
+
+
 def _load_feedback_events(
     state_db: StateDB,
     *,
@@ -265,6 +310,129 @@ def _load_events_by_ids(state_db: StateDB, event_ids: list[str]) -> dict[str, di
         ).fetchall()
     events = [_event_row(row) for row in rows]
     return {str(row.get("event_id")): row for row in events}
+
+
+def _feedback_benchmark_case(row: dict[str, Any], target_event: dict[str, Any] | None) -> dict[str, Any]:
+    preview = _feedback_preview(row, target_event)
+    verdict = str(preview.get("verdict") or "unknown")
+    facts = row.get("facts") if isinstance(row.get("facts"), dict) else {}
+    target_facts = target_event.get("facts") if target_event and isinstance(target_event.get("facts"), dict) else {}
+    target_preview = _feedback_target_preview(target_event) if target_event else None
+    query = _target_query(target_facts) or str(target_event.get("summary") if target_event else "").strip() or None
+    benchmark_kind = _feedback_benchmark_kind(verdict=verdict, note=str(preview.get("note") or ""), target_event=target_event)
+    return {
+        "case_id": f"feedback:{row.get('event_id')}",
+        "feedback_event_id": row.get("event_id"),
+        "created_at": row.get("created_at"),
+        "human_id": row.get("human_id"),
+        "agent_id": row.get("agent_id"),
+        "verdict": verdict,
+        "benchmark_kind": benchmark_kind,
+        "benchmark_tags": _feedback_benchmark_tags(verdict=verdict, note=str(preview.get("note") or ""), target_event=target_event),
+        "note": preview.get("note"),
+        "expected_outcome": facts.get("expected_outcome") or _default_expected_outcome(benchmark_kind),
+        "target_event_id": preview.get("target_event_id"),
+        "target_trace_ref": preview.get("target_trace_ref"),
+        "target": target_preview,
+        "evaluation_prompt": query,
+        "source_packet": _target_source_packet(target_facts),
+        "required_judgment": _required_judgment(benchmark_kind),
+        "authority_boundary": "operator_feedback_is_eval_evidence_not_memory_truth",
+    }
+
+
+def _feedback_benchmark_kind(*, verdict: str, note: str, target_event: dict[str, Any] | None) -> str:
+    normalized = normalize_feedback_verdict(verdict)
+    lowered = note.lower()
+    target_type = str((target_event or {}).get("event_type") or "")
+    if normalized in {"good", "useful"}:
+        return "positive_control"
+    if normalized == "missing":
+        return "coverage_gap"
+    if target_type == "memory_read_succeeded" and any(token in lowered for token in ("stale", "outdated", "old", "wrong source")):
+        return "source_quality_regression"
+    return "correction_required"
+
+
+def _feedback_benchmark_tags(*, verdict: str, note: str, target_event: dict[str, Any] | None) -> list[str]:
+    lowered = note.lower()
+    tags = ["operator_feedback", f"verdict:{normalize_feedback_verdict(verdict)}"]
+    target_type = str((target_event or {}).get("event_type") or "")
+    if target_type:
+        tags.append(f"target:{target_type}")
+    if "stale" in lowered or "outdated" in lowered or "old" in lowered:
+        tags.append("stale_current_conflict")
+    if "missing" in lowered or normalize_feedback_verdict(verdict) == "missing":
+        tags.append("false_negative_recall")
+    if "wrong" in lowered or normalize_feedback_verdict(verdict) == "wrong":
+        tags.append("false_positive_recall")
+    if target_type == "memory_read_succeeded":
+        tags.append("source_aware_recall")
+    return tags
+
+
+def _default_expected_outcome(benchmark_kind: str) -> str:
+    if benchmark_kind == "coverage_gap":
+        return "A future memory answer should retrieve the missing relevant evidence or ask a precise clarification."
+    if benchmark_kind == "source_quality_regression":
+        return "A future memory answer should prefer fresher authoritative state or explicitly flag stale/conflicting evidence."
+    if benchmark_kind == "positive_control":
+        return "A future memory answer should preserve the behavior that the operator marked useful."
+    return "A future memory answer should avoid the reviewed mistake and expose the source boundary."
+
+
+def _required_judgment(benchmark_kind: str) -> str:
+    if benchmark_kind == "positive_control":
+        return "preserve_useful_behavior"
+    if benchmark_kind == "coverage_gap":
+        return "retrieve_or_acknowledge_missing_context"
+    if benchmark_kind == "source_quality_regression":
+        return "prefer_authoritative_fresh_source_or_abstain"
+    return "correct_the_answer_without_promoting_feedback_as_truth"
+
+
+def _target_query(facts: dict[str, Any]) -> str | None:
+    retrieval_trace = facts.get("retrieval_trace") if isinstance(facts.get("retrieval_trace"), dict) else {}
+    hybrid = retrieval_trace.get("hybrid_memory_retrieve") if isinstance(retrieval_trace.get("hybrid_memory_retrieve"), dict) else {}
+    for key in ("query", "query_text", "current_message"):
+        value = str(hybrid.get(key) or facts.get(key) or "").strip()
+        if value:
+            return value
+    return None
+
+
+def _target_source_packet(facts: dict[str, Any]) -> dict[str, Any]:
+    answer = facts.get("answer_explanation") if isinstance(facts.get("answer_explanation"), dict) else {}
+    retrieval_trace = facts.get("retrieval_trace") if isinstance(facts.get("retrieval_trace"), dict) else {}
+    hybrid = retrieval_trace.get("hybrid_memory_retrieve") if isinstance(retrieval_trace.get("hybrid_memory_retrieve"), dict) else {}
+    source_mix = answer.get("context_packet_source_mix") if isinstance(answer.get("context_packet_source_mix"), dict) else {}
+    dominant_source = _dominant_source(source_mix)
+    promotion_gates = (
+        answer.get("context_packet_promotion_gates")
+        if isinstance(answer.get("context_packet_promotion_gates"), dict)
+        else {}
+    )
+    return {
+        "source_class": dominant_source or "none",
+        "source_mix": source_mix,
+        "selected_count": answer.get("selected_count") or hybrid.get("selected_count"),
+        "candidate_count": hybrid.get("candidate_count"),
+        "stale_current_status": _gate_status(promotion_gates, "stale_current_conflict"),
+        "source_mix_status": _gate_status(promotion_gates, "source_mix_stability"),
+        "context_sections": answer.get("context_packet_sections") if isinstance(answer.get("context_packet_sections"), list) else [],
+    }
+
+
+def _dominant_source(source_mix: dict[str, Any]) -> str | None:
+    if not source_mix:
+        return None
+    return max(source_mix, key=lambda key: int(source_mix.get(key) or 0))
+
+
+def _gate_status(promotion_gates: dict[str, Any], gate_name: str) -> str:
+    gates = promotion_gates.get("gates") if isinstance(promotion_gates.get("gates"), dict) else {}
+    gate = gates.get(gate_name) if isinstance(gates.get(gate_name), dict) else {}
+    return str(gate.get("status") or promotion_gates.get("status") or "unknown")
 
 
 def _event_row(row: Any) -> dict[str, Any]:

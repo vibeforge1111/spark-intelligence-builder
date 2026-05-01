@@ -939,6 +939,29 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(dashboard["counts"]["captured"], 0)
         self.assertEqual(dashboard["feedback_summary"]["counts"]["bad"], 1)
 
+        exit_code, stdout, stderr = self.run_cli(
+            "memory",
+            "feedback-benchmarks",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:feedback:review",
+            "--agent-id",
+            "agent:feedback:review",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        benchmark_payload = json.loads(stdout)
+        self.assertEqual(benchmark_payload["view"], "memory_feedback_benchmark_pack")
+        self.assertEqual(benchmark_payload["counts"]["total_cases"], 1)
+        self.assertEqual(benchmark_payload["counts"]["actionable_cases"], 1)
+        self.assertEqual(benchmark_payload["counts"]["source_packet_cases"], 1)
+        self.assertEqual(benchmark_payload["cases"][0]["benchmark_kind"], "source_quality_regression")
+        self.assertEqual(benchmark_payload["cases"][0]["source_packet"]["source_class"], "current_state")
+        self.assertIn("stale_current_conflict", benchmark_payload["cases"][0]["benchmark_tags"])
+        self.assertIn("eval material only", benchmark_payload["benchmark_rule"])
+
     def test_memory_audit_promotions_reports_policy_risks_and_resolutions(self) -> None:
         base = {
             "memory_role": "current_state",

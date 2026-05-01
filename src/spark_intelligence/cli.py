@@ -102,6 +102,7 @@ from spark_intelligence.memory import (
     benchmark_memory_architectures,
     build_memory_answer_source_packet,
     build_memory_dashboard_payload,
+    build_memory_feedback_benchmark_payload,
     build_memory_feedback_review_payload,
     build_promotion_audit_payload,
     build_session_search_payload,
@@ -969,6 +970,40 @@ class MemoryFeedbackReview:
                     f"  - {row.get('created_at') or 'unknown'} {row.get('movement_hint') or 'review'} "
                     f"{row.get('predicate') or row.get('event_type') or 'memory'}"
                 )
+        return "\n".join(lines)
+
+
+@dataclass
+class MemoryFeedbackBenchmarkPack:
+    payload: dict[str, object]
+
+    def to_json(self) -> str:
+        return json.dumps(self.payload, indent=2)
+
+    def to_text(self) -> str:
+        counts = self.payload.get("counts") if isinstance(self.payload.get("counts"), dict) else {}
+        lines = ["Spark memory feedback benchmark pack"]
+        lines.append(
+            f"- cases: total={counts.get('total_cases', 0)} "
+            f"actionable={counts.get('actionable_cases', 0)} "
+            f"targeted={counts.get('targeted_cases', 0)} "
+            f"source_packets={counts.get('source_packet_cases', 0)}"
+        )
+        cases = self.payload.get("cases") if isinstance(self.payload.get("cases"), list) else []
+        if cases:
+            lines.append("- benchmark cases:")
+            for row in cases[:10]:
+                if not isinstance(row, dict):
+                    continue
+                source_packet = row.get("source_packet") if isinstance(row.get("source_packet"), dict) else {}
+                lines.append(
+                    f"  - {row.get('benchmark_kind') or 'case'} {row.get('verdict') or 'feedback'} "
+                    f"target={row.get('target_event_id') or 'general'} "
+                    f"source={source_packet.get('source_class') or 'none'}"
+                )
+        rule = self.payload.get("benchmark_rule")
+        if rule:
+            lines.append(f"- rule: {rule}")
         return "\n".join(lines)
 
 
@@ -2287,6 +2322,15 @@ def build_parser() -> argparse.ArgumentParser:
     memory_feedback_review_parser.add_argument("--agent-id", help="Filter review to one Builder agent id")
     memory_feedback_review_parser.add_argument("--limit", type=int, default=50, help="Maximum feedback rows to scan")
     memory_feedback_review_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_feedback_benchmark_parser = memory_subparsers.add_parser(
+        "feedback-benchmarks",
+        help="Convert memory feedback into benchmarkable correction cases without promoting it to memory truth",
+    )
+    memory_feedback_benchmark_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_feedback_benchmark_parser.add_argument("--human-id", help="Filter benchmark cases to one Builder human id")
+    memory_feedback_benchmark_parser.add_argument("--agent-id", help="Filter benchmark cases to one Builder agent id")
+    memory_feedback_benchmark_parser.add_argument("--limit", type=int, default=50, help="Maximum feedback rows to scan")
+    memory_feedback_benchmark_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_promotion_audit_parser = memory_subparsers.add_parser(
         "audit-promotions",
         help="Audit structured-evidence promotion policy decisions",
@@ -6340,6 +6384,22 @@ def handle_memory_review_feedback(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_memory_feedback_benchmarks(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    payload = build_memory_feedback_benchmark_payload(
+        state_db=state_db,
+        human_id=args.human_id,
+        agent_id=args.agent_id,
+        limit=args.limit,
+    )
+    benchmark_pack = MemoryFeedbackBenchmarkPack(payload=payload)
+    print(benchmark_pack.to_json() if args.json else benchmark_pack.to_text())
+    return 0
+
+
 def handle_memory_audit_promotions(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -8296,6 +8356,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_memory_record_feedback(args)
     if args.command == "memory" and args.memory_command == "review-feedback":
         return handle_memory_review_feedback(args)
+    if args.command == "memory" and args.memory_command == "feedback-benchmarks":
+        return handle_memory_feedback_benchmarks(args)
     if args.command == "memory" and args.memory_command == "audit-promotions":
         return handle_memory_audit_promotions(args)
     if args.command == "memory" and args.memory_command == "search-sessions":
