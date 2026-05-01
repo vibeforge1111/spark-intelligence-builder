@@ -90,6 +90,43 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("lacks", payload)
         self.assertIn("improvement_options", payload)
         self.assertIn("source_ledger", payload)
+        self.assertIn("memory_cognition", payload)
+        self.assertNotIn("self_status_memory", payload["memory_cognition"])
+
+    def test_self_awareness_adds_memory_cognition_after_wiki_source_families_are_visible(self) -> None:
+        kb_dir = self.home / "artifacts" / "spark-memory-kb" / "wiki" / "current-state"
+        kb_dir.mkdir(parents=True)
+        (kb_dir / "runtime.md").write_text(
+            "---\n"
+            "title: Runtime Memory KB\n"
+            "authority: supporting_not_authoritative\n"
+            "owner_system: domain-chip-memory\n"
+            "wiki_family: memory_kb_current_state\n"
+            "scope_kind: governed_memory\n"
+            "source_of_truth: SparkMemorySDK\n"
+            "freshness: snapshot_generated\n"
+            "---\n"
+            "# Runtime Memory KB\n\nCurrent-state memory snapshots are downstream of governed memory.",
+            encoding="utf-8",
+        )
+
+        capsule = build_self_awareness_capsule(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+            user_message="how does your memory cognition work?",
+        )
+        payload = capsule.to_payload()
+
+        cognition = payload["memory_cognition"]
+        self.assertTrue(cognition["wiki_packets"]["source_families_visible"])
+        self.assertTrue(cognition["wiki_packets"]["memory_kb"]["present"])
+        self.assertEqual(cognition["wiki_packets"]["memory_kb"]["authority"], "supporting_not_authoritative")
+        self.assertEqual(cognition["self_status_memory"]["current_state_for_mutable_user_facts"], "authoritative")
+        self.assertIn("current_state_memory_outranks_wiki", cognition["authority_boundary"])
+        self.assertIn("Memory cognition", capsule.to_text())
 
     def test_self_status_cli_can_refresh_wiki_and_include_wiki_context(self) -> None:
         exit_code, stdout, stderr = self.run_cli(

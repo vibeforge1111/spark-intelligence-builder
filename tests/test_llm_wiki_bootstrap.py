@@ -112,6 +112,43 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertGreater(result.payload["wiki_record_count"], 0)
         self.assertTrue(result.payload["project_knowledge_first"])
         self.assertIn("system/current-system-status.md", result.payload["refreshed_files"])
+        self.assertEqual(result.payload["wiki_packet_metadata"]["authority"], "supporting_not_authoritative")
+        self.assertTrue(result.payload["wiki_packet_metadata"]["source_families_visible"])
+
+    def test_wiki_status_discovers_memory_kb_families_from_packet_metadata(self) -> None:
+        kb_root = self.home / "artifacts" / "spark-memory-kb" / "wiki"
+        for family_dir, family in (
+            ("current-state", "memory_kb_current_state"),
+            ("evidence", "memory_kb_evidence"),
+            ("events", "memory_kb_event"),
+            ("syntheses", "memory_kb_synthesis"),
+        ):
+            target_dir = kb_root / family_dir
+            target_dir.mkdir(parents=True, exist_ok=True)
+            (target_dir / f"{family}.md").write_text(
+                "---\n"
+                f"title: {family}\n"
+                "authority: supporting_not_authoritative\n"
+                "owner_system: domain-chip-memory\n"
+                f"wiki_family: {family}\n"
+                "scope_kind: governed_memory\n"
+                "source_of_truth: SparkMemorySDK\n"
+                "freshness: snapshot_generated\n"
+                "---\n"
+                f"# {family}\n\nMemory KB packet for {family}.",
+                encoding="utf-8",
+            )
+
+        result = build_llm_wiki_status(config_manager=self.config_manager, state_db=self.state_db)
+
+        discovery = result.payload["memory_kb_discovery"]
+        self.assertTrue(discovery["present"])
+        self.assertEqual(discovery["authority"], "supporting_not_authoritative")
+        self.assertEqual(discovery["source_of_truth"], "SparkMemorySDK")
+        self.assertEqual(discovery["family_counts"]["memory_kb_current_state"], 1)
+        self.assertEqual(discovery["family_counts"]["memory_kb_evidence"], 1)
+        self.assertEqual(discovery["family_counts"]["memory_kb_event"], 1)
+        self.assertEqual(discovery["family_counts"]["memory_kb_synthesis"], 1)
 
     def test_wiki_status_cli_can_refresh_and_emit_machine_readable_result(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
@@ -182,6 +219,12 @@ class LlmWikiBootstrapTests(SparkTestCase):
         hit_text = "\n".join(hit["text"] for hit in result.payload["hits"])
         self.assertIn("Recursive Self-Improvement", hit_text)
         self.assertEqual(result.payload["authority"], "supporting_not_authoritative")
+        hit = result.payload["hits"][0]
+        self.assertIn("wiki_family", hit)
+        self.assertIn("owner_system", hit)
+        self.assertIn("scope_kind", hit)
+        self.assertIn("source_of_truth", hit)
+        self.assertEqual(hit["authority"], "supporting_not_authoritative")
 
     def test_wiki_query_cli_can_emit_machine_readable_hits(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
@@ -217,6 +260,8 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertIn("From the LLM wiki", result.payload["answer"])
         self.assertIn("Live self snapshot", result.payload["answer"])
         self.assertTrue(result.payload["sources"][0]["source_path"])
+        self.assertIn("wiki_family", result.payload["sources"][0])
+        self.assertIn("owner_system", result.payload["sources"][0])
         self.assertTrue(result.payload["missing_live_verification"])
         self.assertEqual(result.payload["live_context_status"], "included")
         self.assertTrue(result.payload["live_self_awareness"]["observed_now"])

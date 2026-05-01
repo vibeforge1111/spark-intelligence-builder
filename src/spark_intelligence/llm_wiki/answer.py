@@ -11,6 +11,17 @@ from spark_intelligence.llm_wiki.query import build_llm_wiki_query
 from spark_intelligence.self_awareness import build_self_awareness_capsule
 from spark_intelligence.state.db import StateDB
 
+WIKI_SOURCE_METADATA_FIELDS: tuple[str, ...] = (
+    "wiki_family",
+    "owner_system",
+    "scope_kind",
+    "source_of_truth",
+    "freshness",
+    "status",
+    "generated_at",
+    "last_verified_at",
+)
+
 
 @dataclass(frozen=True)
 class LlmWikiAnswerResult:
@@ -188,6 +199,7 @@ def _build_live_self_context(
     return {
         "generated_at": capsule.get("generated_at"),
         "workspace_id": capsule.get("workspace_id"),
+        "memory_cognition": capsule.get("memory_cognition") or {},
         "observed_now": _claim_summaries(capsule.get("observed_now"), limit=4),
         "recently_verified": _claim_summaries(capsule.get("recently_verified"), limit=3),
         "degraded_or_missing": _claim_summaries(capsule.get("degraded_or_missing"), limit=4),
@@ -311,13 +323,18 @@ def _first_useful_sentence(text: str) -> str:
 
 
 def _source_payload(hit: dict[str, Any]) -> dict[str, Any]:
-    return {
+    payload = {
         "title": str(hit.get("title") or "").strip(),
         "source_path": str(hit.get("source_path") or "").strip(),
         "authority": str(hit.get("authority") or "supporting_not_authoritative").strip(),
         "score": hit.get("score"),
         "selected": bool(hit.get("selected")),
     }
+    for field in WIKI_SOURCE_METADATA_FIELDS:
+        value = hit.get(field)
+        if value is not None and str(value).strip():
+            payload[field] = str(value).strip()
+    return payload
 
 
 def _missing_live_verification(question: str) -> list[str]:

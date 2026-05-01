@@ -7,6 +7,7 @@ from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.context.capsule import build_spark_context_capsule
+from spark_intelligence.memory import inspect_memory_sdk_runtime, inspect_wiki_packet_metadata
 from spark_intelligence.observability.store import latest_events_by_type
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.system_registry import build_system_registry
@@ -87,6 +88,7 @@ class SelfAwarenessCapsule:
     natural_language_routes: list[str] = field(default_factory=list)
     source_ledger: list[dict[str, Any]] = field(default_factory=list)
     style_lens: dict[str, Any] = field(default_factory=dict)
+    memory_cognition: dict[str, Any] = field(default_factory=dict)
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -104,6 +106,7 @@ class SelfAwarenessCapsule:
             "natural_language_routes": self.natural_language_routes,
             "source_ledger": self.source_ledger,
             "style_lens": self.style_lens,
+            "memory_cognition": self.memory_cognition,
         }
 
     def to_json(self) -> str:
@@ -128,6 +131,7 @@ class SelfAwarenessCapsule:
             "",
         ]
         _extend_style_lens_lines(lines, self.style_lens)
+        _extend_memory_cognition_lines(lines, self.memory_cognition)
         _extend_claim_lines(lines, "What looks live", self.observed_now, limit=4, compact=True)
         _extend_claim_lines(lines, "What I recently proved", self.recently_verified, limit=2, compact=True)
         _extend_capability_evidence_lines(lines, self.capability_evidence, limit=3)
@@ -175,6 +179,7 @@ def build_self_awareness_capsule(
     lacks = _build_lack_claims(records=records, degraded_claims=degraded_or_missing)
     improvement_options = _build_improvement_claims(lacks=lacks, degraded_claims=degraded_or_missing)
     recommended_probes = _recommended_probes(degraded_claims=degraded_or_missing)
+    memory_cognition = _build_memory_cognition(config_manager)
     natural_language_routes = [
         "Ask: 'Spark, what do you know about your current systems?' to get the grounded registry view.",
         "Ask: 'Spark, test the browser route now' to turn browser availability into last-success evidence.",
@@ -205,6 +210,13 @@ def build_self_awareness_capsule(
             "claim_boundary": "Recent route/tool outcomes only. A previous success can go stale and absence is not proof of absence.",
             "capability_count": len(capability_evidence),
         },
+        {
+            "source": "memory_cognition",
+            "source_kind": "memory_runtime_and_wiki_metadata",
+            "present": bool(memory_cognition),
+            "claim_boundary": "Memory KB wiki pages are supporting context; current-state memory remains authoritative for mutable user facts.",
+            "source_families_visible": bool((memory_cognition.get("wiki_packets") or {}).get("source_families_visible")),
+        },
     ]
     return SelfAwarenessCapsule(
         generated_at=generated_at,
@@ -221,6 +233,7 @@ def build_self_awareness_capsule(
         natural_language_routes=natural_language_routes,
         source_ledger=source_ledger,
         style_lens=style_lens,
+        memory_cognition=memory_cognition,
     )
 
 
@@ -615,6 +628,54 @@ def _build_improvement_claims(
     return claims[:10]
 
 
+def _build_memory_cognition(config_manager: ConfigManager) -> dict[str, Any]:
+    try:
+        runtime = inspect_memory_sdk_runtime(config_manager=config_manager)
+    except Exception as exc:
+        runtime = {"ready": False, "reason": f"runtime_inspection_failed:{exc.__class__.__name__}"}
+    try:
+        wiki_metadata = inspect_wiki_packet_metadata(config_manager=config_manager)
+    except Exception as exc:
+        wiki_metadata = {
+            "status": "error",
+            "reason": f"wiki_metadata_inspection_failed:{exc.__class__.__name__}",
+            "source_families_visible": False,
+            "memory_kb": {"present": False, "packet_count": 0, "family_counts": {}},
+        }
+
+    wiki_packets = {
+        "status": wiki_metadata.get("status"),
+        "packet_count": int(wiki_metadata.get("packet_count") or 0),
+        "wiki_family_counts": dict(wiki_metadata.get("wiki_family_counts") or {}),
+        "owner_system_counts": dict(wiki_metadata.get("owner_system_counts") or {}),
+        "source_of_truth_counts": dict(wiki_metadata.get("source_of_truth_counts") or {}),
+        "authority_counts": dict(wiki_metadata.get("authority_counts") or {}),
+        "source_families_visible": bool(wiki_metadata.get("source_families_visible")),
+        "memory_kb": dict(wiki_metadata.get("memory_kb") or {}),
+    }
+    payload: dict[str, Any] = {
+        "runtime": {
+            "ready": bool(runtime.get("ready")),
+            "client_kind": runtime.get("client_kind"),
+            "runtime_memory_architecture": runtime.get("runtime_memory_architecture"),
+            "runtime_memory_provider": runtime.get("runtime_memory_provider"),
+            "reason": runtime.get("reason"),
+        },
+        "wiki_packets": wiki_packets,
+        "authority_boundary": "current_state_memory_outranks_wiki_for_mutable_user_facts",
+    }
+    if wiki_packets["source_families_visible"]:
+        payload["self_status_memory"] = {
+            "can_name_source_families": True,
+            "can_detect_memory_kb": bool((wiki_packets.get("memory_kb") or {}).get("present")),
+            "wiki_authority": "supporting_not_authoritative",
+            "current_state_for_mutable_user_facts": "authoritative",
+            "graphiti_status": "advisory_until_evals_pass",
+            "residue_promotion": "blocked",
+        }
+    return payload
+
+
 def _recommended_probes(*, degraded_claims: list[SelfAwarenessClaim]) -> list[str]:
     probes = [
         "Run `spark-intelligence self status --json` before self-knowledge answers that need provenance.",
@@ -696,6 +757,29 @@ def _extend_capability_evidence_lines(
             extras.append(evidence.last_failure_reason)
         suffix = f" ({'; '.join(extras)})" if extras else ""
         lines.append(f"- {evidence.capability_key}: {status} at {timestamp}{suffix}")
+    lines.append("")
+
+
+def _extend_memory_cognition_lines(lines: list[str], memory_cognition: dict[str, Any]) -> None:
+    if not memory_cognition:
+        return
+    runtime = memory_cognition.get("runtime") if isinstance(memory_cognition.get("runtime"), dict) else {}
+    wiki_packets = (
+        memory_cognition.get("wiki_packets") if isinstance(memory_cognition.get("wiki_packets"), dict) else {}
+    )
+    memory_kb = wiki_packets.get("memory_kb") if isinstance(wiki_packets.get("memory_kb"), dict) else {}
+    lines.append("Memory cognition")
+    runtime_label = str(runtime.get("runtime_memory_architecture") or runtime.get("client_kind") or "unknown").strip()
+    lines.append(f"- Runtime: {'ready' if runtime.get('ready') else 'not ready'} ({runtime_label})")
+    lines.append(
+        f"- Wiki packets: {wiki_packets.get('status') or 'unknown'}; "
+        f"families={'visible' if wiki_packets.get('source_families_visible') else 'not visible'}"
+    )
+    if memory_kb.get("present"):
+        families = memory_kb.get("family_counts") if isinstance(memory_kb.get("family_counts"), dict) else {}
+        family_text = ", ".join(f"{key}={value}" for key, value in sorted(families.items())[:4])
+        lines.append(f"- Memory KB: present ({family_text or memory_kb.get('packet_count', 0)})")
+    lines.append("- Boundary: current-state memory wins over wiki for mutable user facts.")
     lines.append("")
 
 

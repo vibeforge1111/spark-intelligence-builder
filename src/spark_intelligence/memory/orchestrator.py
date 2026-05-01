@@ -7,6 +7,7 @@ import re
 import sys
 import time
 from contextlib import contextmanager
+from collections import Counter
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -60,6 +61,19 @@ PINNED_RUNTIME_MEMORY_ARCHITECTURE = "summary_synthesis_memory"
 PINNED_RUNTIME_MEMORY_PROVIDER = "heuristic_v1"
 _ARCHITECTURE_PIN_ENV_VAR = "SPARK_MEMORY_RUNTIME_ARCHITECTURE"
 _PROVIDER_PIN_ENV_VAR = "SPARK_MEMORY_RUNTIME_PROVIDER"
+WIKI_PACKET_METADATA_FIELDS: tuple[str, ...] = (
+    "wiki_family",
+    "owner_system",
+    "authority",
+    "scope_kind",
+    "source_of_truth",
+    "freshness",
+    "status",
+    "generated_at",
+    "last_verified_at",
+    "source_path",
+)
+MEMORY_KB_WIKI_FAMILY_PREFIX = "memory_kb_"
 
 
 def _apply_runtime_architecture_pin() -> None:
@@ -1284,6 +1298,135 @@ def inspect_memory_sdk_runtime(
         return payload
     payload["reason"] = "sdk_factory_missing"
     return payload
+
+
+def inspect_wiki_packet_metadata(
+    *,
+    config_manager: ConfigManager,
+    sdk_module: str | None = None,
+    page_limit: int = 80,
+) -> dict[str, Any]:
+    module_name = str(
+        sdk_module or config_manager.get_path("spark.memory.sdk_module", default=DEFAULT_SDK_MODULE) or DEFAULT_SDK_MODULE
+    )
+    paths = _wiki_packet_paths(config_manager)
+    payload: dict[str, Any] = {
+        "status": "not_configured",
+        "reason": "wiki_packet_paths_not_configured",
+        "configured_module": module_name,
+        "source_class": "obsidian_llm_wiki_packets",
+        "authority": "supporting_not_authoritative",
+        "paths": [str(path) for path in paths],
+        "normalized_metadata_fields": list(WIKI_PACKET_METADATA_FIELDS),
+        "packet_count": 0,
+        "wiki_family_counts": {},
+        "owner_system_counts": {},
+        "authority_counts": {},
+        "scope_kind_counts": {},
+        "source_of_truth_counts": {},
+        "freshness_counts": {},
+        "source_families_visible": False,
+        "memory_kb": {
+            "present": False,
+            "packet_count": 0,
+            "family_counts": {},
+            "authority_boundary": "current_state_memory_outranks_wiki_for_mutable_user_facts",
+        },
+        "pages": [],
+        "non_override_rules": [
+            "Wiki packets cannot override current_state for mutable user facts.",
+            "Memory KB pages are downstream of governed memory snapshots, not independent truth.",
+            "User memory stays separate from global Spark doctrine.",
+        ],
+    }
+    if not paths:
+        return payload
+    try:
+        module = _import_memory_sdk_module(module_name)
+    except Exception as exc:
+        payload.update({"status": "unavailable", "reason": "wiki_packet_reader_unavailable", "error": exc.__class__.__name__})
+        return payload
+
+    try:
+        discover_packets = getattr(module, "discover_markdown_knowledge_packets", None)
+        if callable(discover_packets):
+            inventory = discover_packets(paths=paths, page_limit=page_limit) or {}
+            pages = [page for page in inventory.get("pages") or [] if isinstance(page, dict)]
+            family_counts = _counter_from_mapping(inventory.get("family_counts"))
+            owner_counts = _counter_from_mapping(inventory.get("owner_system_counts"))
+            authority_counts = _counter_from_mapping(inventory.get("authority_counts"))
+            source_counts = _counter_from_mapping(inventory.get("source_of_truth_counts"))
+            freshness_counts = _counter_from_mapping(inventory.get("freshness_counts"))
+            scope_counts = Counter(str(page.get("scope_kind") or "unknown") for page in pages)
+            packet_count = int(inventory.get("packet_count") or len(pages))
+        else:
+            read_packets = getattr(module, "read_markdown_knowledge_packets")
+            packets = list(read_packets(paths=paths) or [])
+            pages = [_wiki_packet_metadata_page(packet) for packet in packets[:page_limit]]
+            packet_count = len(packets)
+            family_counts = Counter(str(_wiki_packet_metadata_value(packet, "wiki_family") or "unknown") for packet in packets)
+            owner_counts = Counter(str(_wiki_packet_metadata_value(packet, "owner_system") or "unknown") for packet in packets)
+            authority_counts = Counter(str(_wiki_packet_metadata_value(packet, "authority") or "unknown") for packet in packets)
+            scope_counts = Counter(str(_wiki_packet_metadata_value(packet, "scope_kind") or "unknown") for packet in packets)
+            source_counts = Counter(str(_wiki_packet_metadata_value(packet, "source_of_truth") or "unknown") for packet in packets)
+            freshness_counts = Counter(str(_wiki_packet_metadata_value(packet, "freshness") or "unknown") for packet in packets)
+    except Exception as exc:
+        payload.update({"status": "error", "reason": "wiki_packet_metadata_inspection_failed", "error": exc.__class__.__name__})
+        return payload
+
+    memory_kb_family_counts = {
+        family: count for family, count in sorted(family_counts.items()) if family.startswith(MEMORY_KB_WIKI_FAMILY_PREFIX)
+    }
+    memory_kb_packet_count = sum(memory_kb_family_counts.values())
+    payload.update(
+        {
+            "status": "supported" if packet_count else "not_found",
+            "reason": None if packet_count else "no_wiki_packets_found",
+            "packet_count": packet_count,
+            "wiki_family_counts": dict(sorted(family_counts.items())),
+            "owner_system_counts": dict(sorted(owner_counts.items())),
+            "authority_counts": dict(sorted(authority_counts.items())),
+            "scope_kind_counts": dict(sorted(scope_counts.items())),
+            "source_of_truth_counts": dict(sorted(source_counts.items())),
+            "freshness_counts": dict(sorted(freshness_counts.items())),
+            "source_families_visible": bool(family_counts),
+            "memory_kb": {
+                "present": bool(memory_kb_family_counts),
+                "packet_count": memory_kb_packet_count,
+                "family_counts": memory_kb_family_counts,
+                "owner_system": "domain-chip-memory" if memory_kb_packet_count else None,
+                "source_of_truth": "SparkMemorySDK" if memory_kb_packet_count else None,
+                "authority": "supporting_not_authoritative",
+                "scope_kind": "governed_memory" if memory_kb_packet_count else None,
+                "authority_boundary": "current_state_memory_outranks_wiki_for_mutable_user_facts",
+            },
+            "pages": pages[:page_limit],
+        }
+    )
+    return payload
+
+
+def _counter_from_mapping(raw: Any) -> Counter[str]:
+    if not isinstance(raw, dict):
+        return Counter()
+    return Counter({str(key): int(value or 0) for key, value in raw.items()})
+
+
+def _wiki_packet_metadata_value(packet: Any, key: str) -> Any:
+    metadata = getattr(packet, "metadata", {}) or {}
+    if isinstance(metadata, dict):
+        return metadata.get(key)
+    return None
+
+
+def _wiki_packet_metadata_page(packet: Any) -> dict[str, Any]:
+    metadata = getattr(packet, "metadata", {}) or {}
+    metadata = metadata if isinstance(metadata, dict) else {}
+    return {
+        "packet_id": str(getattr(packet, "packet_id", "") or ""),
+        "title": str(getattr(packet, "title", "") or ""),
+        **{field: metadata.get(field) for field in WIKI_PACKET_METADATA_FIELDS},
+    }
 
 
 class MemoryKernelAdapter:
@@ -5914,7 +6057,7 @@ def _hybrid_memory_context_item(candidate: HybridMemoryCandidate, *, max_chars: 
     metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
     text = _hybrid_memory_record_text(record) or str(record.get("value") or record.get("summary") or "").strip()
     clipped = _clip_text(text, max_chars=max_chars)
-    return {
+    item = {
         "candidate_key": _hybrid_memory_candidate_key(candidate),
         "lane": candidate.lane,
         "source_class": candidate.source_class,
@@ -5929,6 +6072,12 @@ def _hybrid_memory_context_item(candidate: HybridMemoryCandidate, *, max_chars: 
         "reason_selected": candidate.reason_selected,
         "char_count": len(clipped),
     }
+    if candidate.source_class == "obsidian_llm_wiki_packets":
+        for field in WIKI_PACKET_METADATA_FIELDS:
+            value = metadata.get(field)
+            if value is not None and str(value).strip():
+                item[field] = str(value).strip()
+    return item
 
 
 def _hybrid_memory_candidate_key(candidate: HybridMemoryCandidate) -> str:
@@ -6340,7 +6489,12 @@ def _wiki_packet_paths(config_manager: ConfigManager) -> list[Path]:
         paths.extend(Path(chunk.strip()).expanduser() for chunk in chunks if chunk.strip())
 
     home = Path(config_manager.paths.home)
-    for candidate in (home / "wiki", home / "knowledge", home / "diagnostics"):
+    for candidate in (
+        home / "wiki",
+        home / "knowledge",
+        home / "diagnostics",
+        home / "artifacts" / "spark-memory-kb" / "wiki",
+    ):
         if candidate.exists():
             paths.append(candidate)
 
@@ -6358,9 +6512,22 @@ def _wiki_packet_paths(config_manager: ConfigManager) -> list[Path]:
 def _wiki_packet_hit_to_record(hit: Any) -> dict[str, Any]:
     provenance = getattr(hit, "provenance", {}) or {}
     metadata = getattr(hit, "metadata", {}) or {}
+    metadata = dict(metadata) if isinstance(metadata, dict) else {}
     title = str(getattr(hit, "title", "") or "").strip()
     text = str(getattr(hit, "text", "") or "").strip()
     packet_id = str(getattr(hit, "packet_id", "") or "").strip()
+    source_path = str(metadata.get("source_path") or provenance.get("source_path") or "").strip()
+    authority = str(metadata.get("authority") or "supporting_not_authoritative").strip()
+    normalized_metadata = {
+        **metadata,
+        "packet_id": packet_id,
+        "source_path": source_path,
+        "source_surface": "obsidian_llm_wiki_packets",
+        "authority": authority,
+    }
+    for field in WIKI_PACKET_METADATA_FIELDS:
+        if field in normalized_metadata and normalized_metadata[field] is not None:
+            normalized_metadata[field] = str(normalized_metadata[field]).strip()
     return {
         "subject": "spark:project_knowledge",
         "predicate": "knowledge.packet",
@@ -6369,13 +6536,7 @@ def _wiki_packet_hit_to_record(hit: Any) -> dict[str, Any]:
         "summary": title,
         "memory_role": "structured_evidence",
         "source_class": "obsidian_llm_wiki_packets",
-        "metadata": {
-            **dict(metadata),
-            "packet_id": packet_id,
-            "source_path": provenance.get("source_path"),
-            "source_surface": "obsidian_llm_wiki_packets",
-            "authority": "supporting_not_authoritative",
-        },
+        "metadata": normalized_metadata,
         "provenance": [dict(provenance)],
     }
 

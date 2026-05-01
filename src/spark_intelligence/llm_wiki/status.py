@@ -9,7 +9,7 @@ from typing import Any
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.llm_wiki.bootstrap import bootstrap_llm_wiki
 from spark_intelligence.llm_wiki.compile_system import compile_system_wiki
-from spark_intelligence.memory import hybrid_memory_retrieve
+from spark_intelligence.memory import hybrid_memory_retrieve, inspect_wiki_packet_metadata
 from spark_intelligence.state.db import StateDB
 
 
@@ -52,6 +52,8 @@ class LlmWikiStatusResult:
             f"- missing_system_pages: {len(self.payload.get('missing_system_compile_files') or [])}",
             f"- retrieval: {self.payload.get('wiki_retrieval_status') or 'unknown'} ({self.payload.get('wiki_record_count', 0)} hit(s))",
             f"- project_knowledge_first: {'yes' if self.payload.get('project_knowledge_first') else 'no'}",
+            f"- memory_kb: {'yes' if (self.payload.get('memory_kb_discovery') or {}).get('present') else 'no'} "
+            f"({(self.payload.get('memory_kb_discovery') or {}).get('packet_count', 0)} packet(s))",
         ]
         if self.payload.get("refreshed"):
             lines.append(f"- refreshed: yes ({self.payload.get('refreshed_file_count', 0)} generated file(s))")
@@ -84,6 +86,8 @@ def build_llm_wiki_status(
         config_manager=config_manager,
         state_db=state_db,
     )
+    wiki_packet_metadata = inspect_wiki_packet_metadata(config_manager=config_manager)
+    memory_kb_discovery = dict(wiki_packet_metadata.get("memory_kb") or {})
     healthy = exists and not missing_bootstrap and not missing_system and wiki_status == "supported" and wiki_records > 0
     warnings: list[str] = []
     if not exists:
@@ -112,6 +116,8 @@ def build_llm_wiki_status(
         "wiki_record_count": wiki_records,
         "project_knowledge_first": project_knowledge_first,
         "source_mix": source_mix,
+        "wiki_packet_metadata": wiki_packet_metadata,
+        "memory_kb_discovery": memory_kb_discovery,
         "refreshed": refresh,
         "refreshed_files": list(refreshed_files),
         "refreshed_file_count": len(refreshed_files),

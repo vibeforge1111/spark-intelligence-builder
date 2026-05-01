@@ -11,6 +11,17 @@ from spark_intelligence.llm_wiki.compile_system import compile_system_wiki
 from spark_intelligence.memory import hybrid_memory_retrieve
 from spark_intelligence.state.db import StateDB
 
+WIKI_PACKET_METADATA_FIELDS: tuple[str, ...] = (
+    "wiki_family",
+    "owner_system",
+    "scope_kind",
+    "source_of_truth",
+    "freshness",
+    "status",
+    "generated_at",
+    "last_verified_at",
+)
+
 
 @dataclass(frozen=True)
 class LlmWikiQueryResult:
@@ -163,7 +174,7 @@ def _candidate_hit_payload(candidate: Any) -> dict[str, Any]:
     record = candidate.record if isinstance(candidate.record, dict) else {}
     metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
     provenance = record.get("provenance") if isinstance(record.get("provenance"), list) else []
-    return {
+    payload = {
         "title": str(record.get("value") or record.get("summary") or "").strip(),
         "text": str(record.get("text") or "").strip(),
         "source_path": str(metadata.get("source_path") or "").strip(),
@@ -175,3 +186,13 @@ def _candidate_hit_payload(candidate: Any) -> dict[str, Any]:
         "reason_discarded": candidate.reason_discarded,
         "provenance": provenance,
     }
+    for field in WIKI_PACKET_METADATA_FIELDS:
+        value = metadata.get(field)
+        if value is not None and str(value).strip():
+            payload[field] = str(value).strip()
+    payload["metadata"] = {
+        field: str(metadata.get(field) or "").strip()
+        for field in ("source_path", "packet_id", "authority", *WIKI_PACKET_METADATA_FIELDS)
+        if str(metadata.get(field) or "").strip()
+    }
+    return payload

@@ -819,6 +819,17 @@ class MemoryOrchestratorTests(SparkTestCase):
         wiki_dir = self.home / "wiki"
         wiki_dir.mkdir()
         (wiki_dir / "memory-stack.md").write_text(
+            "---\n"
+            "title: Spark Memory Stack\n"
+            "authority: supporting_not_authoritative\n"
+            "owner_system: domain-chip-memory\n"
+            "wiki_family: memory_kb_current_state\n"
+            "scope_kind: governed_memory\n"
+            "source_of_truth: SparkMemorySDK\n"
+            "freshness: snapshot_generated\n"
+            "generated_at: 2026-05-01T10:00:00+00:00\n"
+            "last_verified_at: 2026-05-01T10:30:00+00:00\n"
+            "---\n"
             "# Spark Memory Stack\n\nGraphiti is a temporal graph sidecar for architecture decisions.",
             encoding="utf-8",
         )
@@ -845,12 +856,66 @@ class MemoryOrchestratorTests(SparkTestCase):
         wiki_candidates = [candidate for candidate in result.candidates if candidate.lane == "wiki_packets"]
         self.assertEqual(len(wiki_candidates), 1)
         self.assertEqual(wiki_candidates[0].source_class, "obsidian_llm_wiki_packets")
-        self.assertEqual(wiki_candidates[0].record["metadata"]["authority"], "supporting_not_authoritative")
+        metadata = wiki_candidates[0].record["metadata"]
+        self.assertEqual(metadata["authority"], "supporting_not_authoritative")
+        self.assertEqual(metadata["wiki_family"], "memory_kb_current_state")
+        self.assertEqual(metadata["owner_system"], "domain-chip-memory")
+        self.assertEqual(metadata["scope_kind"], "governed_memory")
+        self.assertEqual(metadata["source_of_truth"], "SparkMemorySDK")
+        self.assertEqual(metadata["freshness"], "snapshot_generated")
+        self.assertEqual(metadata["generated_at"], "2026-05-01T10:00:00+00:00")
+        self.assertEqual(metadata["last_verified_at"], "2026-05-01T10:30:00+00:00")
         packet = trace["context_packet"]
         sections = {section["section"]: section for section in packet["sections"]}
         self.assertIn("compiled_project_knowledge", sections)
         self.assertEqual(sections["compiled_project_knowledge"]["authority"], "supporting_not_authoritative")
+        wiki_item = sections["compiled_project_knowledge"]["items"][0]
+        self.assertEqual(wiki_item["wiki_family"], "memory_kb_current_state")
+        self.assertEqual(wiki_item["owner_system"], "domain-chip-memory")
+        self.assertEqual(wiki_item["source_of_truth"], "SparkMemorySDK")
         self.assertEqual(packet["source_mix"]["obsidian_llm_wiki_packets"], 1)
+
+    def test_hybrid_memory_retrieve_keeps_current_state_above_wiki_for_mutable_user_facts(self) -> None:
+        wiki_dir = self.home / "artifacts" / "spark-memory-kb" / "wiki" / "current-state"
+        wiki_dir.mkdir(parents=True)
+        (wiki_dir / "focus.md").write_text(
+            "---\n"
+            "title: Old Focus Snapshot\n"
+            "authority: supporting_not_authoritative\n"
+            "owner_system: domain-chip-memory\n"
+            "wiki_family: memory_kb_current_state\n"
+            "scope_kind: governed_memory\n"
+            "source_of_truth: SparkMemorySDK\n"
+            "freshness: snapshot_generated\n"
+            "---\n"
+            "# Old Focus Snapshot\n\nCurrent focus is archived wiki cleanup.",
+            encoding="utf-8",
+        )
+        fake_client = _HybridRetrievalMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ):
+            result = hybrid_memory_retrieve(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                query="What is my current focus?",
+                subject="human:test",
+                predicate="profile.current_focus",
+                limit=4,
+                actor_id="test",
+            )
+
+        packet = result.context_packet
+        self.assertIsNotNone(packet)
+        assert packet is not None
+        self.assertEqual(packet.sections[0]["section"], "active_current_state")
+        self.assertEqual(packet.sections[0]["items"][0]["value"], "persistent memory quality evaluation")
+        self.assertIn("compiled_project_knowledge", {section["section"] for section in packet.sections})
+        wiki_candidates = [candidate for candidate in result.candidates if candidate.lane == "wiki_packets"]
+        self.assertTrue(wiki_candidates)
+        self.assertEqual(wiki_candidates[0].record["metadata"]["authority"], "supporting_not_authoritative")
+        self.assertLess(wiki_candidates[0].score, result.candidates[0].score)
 
     def test_hybrid_memory_context_packet_keeps_current_state_inside_tight_budget(self) -> None:
         self.config_manager.set_path("spark.memory.hybrid_context.max_chars", 700)
