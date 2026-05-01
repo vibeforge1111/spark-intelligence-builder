@@ -3136,6 +3136,10 @@ class TelegramGenericMemoryTests(SparkTestCase):
                 "req-entity-direction-query",
                 "What is the GTM launch onboarding direction?",
             )
+            direction_broad_query = ask(
+                "req-entity-direction-broad-query",
+                "What onboarding direction were we leaning toward?",
+            )
             direction_history = ask(
                 "req-entity-direction-history",
                 "What was the GTM launch onboarding direction before?",
@@ -3199,6 +3203,7 @@ class TelegramGenericMemoryTests(SparkTestCase):
             "Before the investor update decision was concise metrics first, it was founder-led notes.",
         )
         self.assertEqual(direction_query.reply_text, "The GTM launch decision is founder-led calls.")
+        self.assertEqual(direction_broad_query.reply_text, "The GTM launch decision is founder-led calls.")
         self.assertEqual(
             direction_history.reply_text,
             "Before the GTM launch decision was founder-led calls, it was async walkthroughs.",

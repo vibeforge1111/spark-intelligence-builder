@@ -569,6 +569,13 @@ _OPEN_MEMORY_RECALL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         ),
     ),
     (
+        "decision_recall",
+        re.compile(
+            r"^what\s+((?:onboarding\s+)?direction)\s+(?:were\s+we|are\s+we|were\s+i|am\s+i)\s+(?:leaning\s+towards?|going\s+with)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "next_action_recall",
         re.compile(
             r"^(?:what(?:'s| is)\s+(?:the\s+)?(?:next\s+action|next\s+step|todo)\s+for\s+)(.+?)[\?\.\!]*$",
@@ -1463,7 +1470,14 @@ def _record_matches_open_memory_topic(*, record: dict[str, Any], topic: str) -> 
     metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
     if predicate.startswith("entity."):
         entity_label = str(metadata.get("entity_label") or "").strip()
-        return bool(entity_label) and _entity_label_matches_open_memory_topic(entity_label=entity_label, topic=topic)
+        if entity_label and _entity_label_matches_open_memory_topic(entity_label=entity_label, topic=topic):
+            return True
+        attribute = str(metadata.get("entity_attribute") or predicate.split(".", 1)[-1]).strip()
+        return _entity_value_matches_open_memory_topic(
+            attribute=attribute,
+            value=_memory_record_text(record),
+            topic=topic,
+        )
     haystack = _memory_record_text(record).casefold()
     if not haystack:
         return False
@@ -1545,10 +1559,15 @@ def _entity_state_answer_from_record(*, query: OpenMemoryRecallQuery, record: di
     value = str(record.get("value") or metadata.get("value") or "").strip()
     if not label or not value:
         return None
-    if not _entity_label_matches_open_memory_topic(entity_label=label, topic=query.topic):
-        return None
-    attribute = str(metadata.get("entity_attribute") or predicate.split(".", 1)[-1]).strip()
     expected_attribute = _open_memory_recall_entity_attribute(query.query_kind)
+    if not _entity_label_matches_open_memory_topic(entity_label=label, topic=query.topic):
+        if not _entity_value_matches_open_memory_topic(
+            attribute=expected_attribute,
+            value=f"{value} {_memory_record_text(record)}",
+            topic=query.topic,
+        ):
+            return None
+    attribute = str(metadata.get("entity_attribute") or predicate.split(".", 1)[-1]).strip()
     if expected_attribute and attribute != expected_attribute:
         return None
     if attribute == "name":
@@ -1696,6 +1715,24 @@ def _entity_label_matches_open_memory_topic(*, entity_label: str, topic: str) ->
     if len(topic_tokens) == 1:
         return topic_tokens[0] in label_tokens
     return all(token in label_tokens for token in topic_tokens)
+
+
+def _entity_value_matches_open_memory_topic(*, attribute: str | None, value: str, topic: str) -> bool:
+    if attribute != "decision":
+        return False
+    topic_tokens = {
+        token
+        for token in re.findall(r"[a-z0-9][a-z0-9_-]*", str(topic or "").casefold())
+        if token and token not in {"a", "an", "is", "my", "of", "the", "what"}
+    }
+    if not {"onboarding", "direction"}.issubset(topic_tokens):
+        return False
+    value_tokens = {
+        token
+        for token in re.findall(r"[a-z0-9][a-z0-9_-]*", str(value or "").casefold())
+        if token
+    }
+    return "onboarding" in value_tokens
 
 
 def _filter_entity_state_history_records(
