@@ -100,6 +100,7 @@ from spark_intelligence.llm_wiki import (
 )
 from spark_intelligence.memory import (
     benchmark_memory_architectures,
+    build_memory_answer_source_packet,
     build_memory_dashboard_payload,
     build_memory_feedback_review_payload,
     build_promotion_audit_payload,
@@ -782,6 +783,46 @@ class MemoryCapsuleInspection:
                 lines.append(
                     f"  - {section.get('section') or 'unknown'} "
                     f"authority={section.get('authority') or 'unknown'} items={len(items)}"
+                )
+        return "\n".join(lines)
+
+
+@dataclass
+class MemorySourceExplanation:
+    payload: dict[str, object]
+
+    def to_json(self) -> str:
+        return json.dumps(self.payload, indent=2)
+
+    def to_text(self) -> str:
+        lines = ["Spark memory source explanation"]
+        lines.append(f"- query: {self.payload.get('query') or ''}")
+        lines.append(
+            f"- source: {self.payload.get('source_class') or 'none'} "
+            f"authority={self.payload.get('source_authority') or 'unknown'} "
+            f"confidence={self.payload.get('confidence') or 'unknown'}"
+        )
+        lines.append(f"- why: {self.payload.get('why_source_won') or 'No source explanation available.'}")
+        source_mix = self.payload.get("source_mix") if isinstance(self.payload.get("source_mix"), dict) else {}
+        if source_mix:
+            lines.append(
+                "- source mix: "
+                + ", ".join(f"{source}={count}" for source, count in sorted(source_mix.items()))
+            )
+        lines.append(
+            f"- gates: stale_current={self.payload.get('stale_current_status') or 'unknown'} "
+            f"source_mix={self.payload.get('source_mix_status') or 'unknown'}"
+        )
+        selected = self.payload.get("selected_sources") if isinstance(self.payload.get("selected_sources"), list) else []
+        if selected:
+            lines.append("- selected sources:")
+            for source in selected[:5]:
+                if not isinstance(source, dict):
+                    continue
+                lines.append(
+                    f"  - {source.get('source_class') or 'memory'} "
+                    f"score={source.get('score')} "
+                    f"predicate={source.get('predicate') or 'n/a'}"
                 )
         return "\n".join(lines)
 
@@ -2192,6 +2233,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Do not write a memory-read event for this inspection",
     )
     memory_inspect_capsule_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_explain_source_parser = memory_subparsers.add_parser(
+        "explain-source",
+        help="Explain which memory source class would support an answer for a query",
+    )
+    memory_explain_source_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_explain_source_parser.add_argument("--sdk-module", help="Override the SDK module for this explanation")
+    memory_explain_source_parser.add_argument("--query", required=True, help="Question or user turn to explain")
+    memory_explain_source_parser.add_argument("--subject", help="Structured memory subject to scope retrieval")
+    memory_explain_source_parser.add_argument("--predicate", help="Structured memory predicate to scope retrieval")
+    memory_explain_source_parser.add_argument("--entity-key", help="Optional entity key to scope retrieval")
+    memory_explain_source_parser.add_argument("--as-of", help="Optional timestamp for historical-state retrieval")
+    memory_explain_source_parser.add_argument("--limit", type=int, default=5, help="Maximum ranked memory candidates")
+    memory_explain_source_parser.add_argument(
+        "--no-record-activity",
+        action="store_true",
+        help="Do not write a memory-read event for this explanation",
+    )
+    memory_explain_source_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_dashboard_parser = memory_subparsers.add_parser(
         "dashboard",
         help="Show human and agent views of recent memory movement",
@@ -6188,6 +6247,31 @@ def handle_memory_inspect_capsule(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_memory_explain_source(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = hybrid_memory_retrieve(
+        config_manager=config_manager,
+        state_db=state_db,
+        query=args.query,
+        subject=args.subject,
+        predicate=args.predicate,
+        entity_key=args.entity_key,
+        as_of=args.as_of,
+        limit=args.limit,
+        sdk_module=args.sdk_module,
+        actor_id="memory_cli",
+        source_surface="memory_cli_explain_source",
+        record_activity=not getattr(args, "no_record_activity", False),
+    )
+    payload = build_memory_answer_source_packet(result)
+    explanation = MemorySourceExplanation(payload=payload)
+    print(explanation.to_json() if args.json else explanation.to_text())
+    return 0
+
+
 def handle_memory_dashboard(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -8204,6 +8288,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_memory_inspect_human(args)
     if args.command == "memory" and args.memory_command == "inspect-capsule":
         return handle_memory_inspect_capsule(args)
+    if args.command == "memory" and args.memory_command == "explain-source":
+        return handle_memory_explain_source(args)
     if args.command == "memory" and args.memory_command == "dashboard":
         return handle_memory_dashboard(args)
     if args.command == "memory" and args.memory_command == "record-feedback":

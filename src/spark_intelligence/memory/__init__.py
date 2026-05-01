@@ -98,6 +98,7 @@ from spark_intelligence.memory.feedback import (
 )
 from spark_intelligence.memory.promotion_audit import build_promotion_audit_payload
 from spark_intelligence.memory.session_search import build_session_search_payload
+from spark_intelligence.memory.source_packet import build_memory_answer_source_packet
 
 __all__ = [
     "HumanMemoryInspectionResult",
@@ -138,6 +139,7 @@ __all__ = [
     "build_memory_dashboard_payload",
     "build_memory_feedback_review_payload",
     "build_memory_feedback_summary",
+    "build_memory_answer_source_packet",
     "build_promotion_audit_payload",
     "build_session_search_payload",
     "build_telegram_state_knowledge_base",

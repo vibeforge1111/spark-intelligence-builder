@@ -634,6 +634,48 @@ class CliSmokeTests(SparkTestCase):
         self.assertEqual(payload["promotion_gates"]["gates"]["stale_current_conflict"]["status"], "pass")
         self.assertEqual(payload["context_packet"]["sections"][0]["section"], "active_current_state")
 
+    def test_memory_explain_source_reports_answer_source_packet(self) -> None:
+        smoke_exit, _, smoke_stderr = self.run_cli(
+            "memory",
+            "direct-smoke",
+            "--home",
+            str(self.home),
+            "--subject",
+            "human:source:test",
+            "--predicate",
+            "profile.current_focus",
+            "--value",
+            "source-aware recall coverage",
+            "--no-cleanup",
+            "--json",
+        )
+        self.assertEqual(smoke_exit, 0, smoke_stderr)
+
+        exit_code, stdout, stderr = self.run_cli(
+            "memory",
+            "explain-source",
+            "--home",
+            str(self.home),
+            "--query",
+            "What is my current focus?",
+            "--subject",
+            "human:source:test",
+            "--predicate",
+            "profile.current_focus",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["view"], "memory_answer_source_packet")
+        self.assertEqual(payload["source_class"], "current_state")
+        self.assertEqual(payload["source_authority"], "authoritative")
+        self.assertEqual(payload["confidence"], "high")
+        self.assertEqual(payload["source_mix"]["current_state"], 1)
+        self.assertEqual(payload["stale_current_status"], "pass")
+        self.assertTrue(payload["selected_sources"])
+        self.assertEqual(payload["selected_sources"][0]["predicate"], "profile.current_focus")
+
     def test_memory_dashboard_reports_human_and_agent_views(self) -> None:
         common = {
             "component": "memory_orchestrator",

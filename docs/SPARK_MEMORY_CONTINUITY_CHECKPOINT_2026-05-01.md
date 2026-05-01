@@ -32,6 +32,7 @@ Spark's version should stay Spark-native:
 - Structured evidence promotion into current state now emits explicit policy decisions, including held-as-evidence blocks and corroborated promotions.
 - `memory audit-promotions` reviews those policy decisions for held evidence, later-resolved holds, false-positive risk, false-negative risk, and trace gaps.
 - `memory record-feedback` and `memory review-feedback` give operator judgments their own traceable event lane, so real feedback can join back to a memory decision without becoming durable memory truth.
+- `memory explain-source` returns a compact answer-source packet for a query, including selected source class, authority, confidence, source mix, stale-current gates, selected evidence, ignored evidence, and promotion trace.
 - Telegram `/memory` renders movement counts and movement paths concisely.
 - Existing runtime lanes include raw episodes, structured evidence, current state, events, and beliefs.
 - Existing plans already lock the right invariants: source evidence, current/prior truth, derived-belief labeling, compact hot path, per-user scope, lifecycle operations, and product/benchmark architecture parity.
@@ -40,6 +41,7 @@ Spark's version should stay Spark-native:
 
 - Generic candidate capture still needs to replace too much route-shaped predicate logic.
 - Explicit session search needs to become a first-class cold episodic recall surface.
+- Source-aware recall now has a Builder packet surface, but Telegram and dashboard still need first-class answer-source views.
 - Promotion needs broader conversion from scattered heuristics into reusable policy objects.
 - Promotion trace audits now have a first CLI surface, but still need deeper item-level review packs and benchmark integration.
 - Retention, decay, revalidation, archival, and rebuild need one inspectable maintenance loop.
@@ -73,6 +75,13 @@ Traceable operator feedback:
 - expose a feedback summary inside `memory dashboard`
 - expose a focused feedback review packet with recent feedback and unreviewed memory decisions
 
+Source-aware answer packets:
+
+- explain which source class would support an answer for a query
+- label source authority as authoritative, episodic/supporting, advisory, or none
+- expose why a source won, source mix counts, stale-current/source-mix gates, and selected/ignored evidence previews
+- keep the packet as evidence metadata only; it does not become durable truth by itself
+
 ## Current Next Step
 
-Connect feedback and promotion audits to benchmark packs and maintenance/rebuild checks so Spark can prove correction fidelity, stale-state drift handling, and promotion quality over long runs.
+Wire source-aware answer packets into Telegram and the dashboard, then connect feedback and promotion audits to benchmark packs and maintenance/rebuild checks so Spark can prove correction fidelity, stale-state drift handling, and promotion quality over long runs.
