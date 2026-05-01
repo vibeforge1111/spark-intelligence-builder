@@ -359,6 +359,46 @@ class _MaintenanceMemoryClient(_FakeMemoryClient):
             active_state_stale_preserved_count=1,
             active_state_superseded_count=1,
             active_state_archived_count=0,
+            audit_samples={
+                "deleted": [
+                    {
+                        "predicate": "profile.current_owner",
+                        "value": "delete profile.current_owner for human:test",
+                        "action": "deleted",
+                        "reason": "current_snapshot",
+                        "deletion_observation_id": "obs-delete-owner",
+                    }
+                ],
+                "stale_preserved": [
+                    {
+                        "predicate": "profile.current_plan",
+                        "value": "verify scheduled memory cleanup",
+                        "action": "stale_preserved",
+                        "reason": "past_revalidate_at",
+                        "revalidate_at": "2025-02-01T09:00:00Z",
+                        "revalidation_lag_days": 60,
+                    }
+                ],
+                "superseded": [
+                    {
+                        "predicate": "profile.current_focus",
+                        "value": "context capsule verification",
+                        "action": "superseded",
+                        "reason": "newer_active_state",
+                        "replacement_value": "persistent memory quality evaluation",
+                        "replacement_observation_id": "obs-new-focus",
+                    }
+                ],
+                "archived": [],
+                "still_current": [
+                    {
+                        "predicate": "profile.current_focus",
+                        "value": "persistent memory quality evaluation",
+                        "action": "still_current",
+                        "reason": "current_snapshot",
+                    }
+                ],
+            },
             trace={
                 "operation": "reconsolidate_manual_memory",
                 "active_state_maintenance": {
@@ -1507,6 +1547,14 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertIn("superseded", actions)
         self.assertTrue(all(facts.get("transition_count") == 1 for facts in lifecycle_facts))
         self.assertTrue(all(facts.get("retention_class") == "maintenance_summary" for facts in lifecycle_facts))
+        by_action = {facts.get("lifecycle_action"): facts for facts in lifecycle_facts}
+        stale_facts = by_action["stale_preserved"]
+        self.assertEqual(stale_facts["audit_sample_bucket"], "stale_preserved")
+        self.assertEqual(stale_facts["audit_sample_count"], 1)
+        self.assertEqual(stale_facts["audit_samples"][0]["revalidation_lag_days"], 60)
+        superseded_facts = by_action["superseded"]
+        self.assertEqual(superseded_facts["audit_sample_bucket"], "superseded")
+        self.assertEqual(superseded_facts["audit_samples"][0]["replacement_value"], "persistent memory quality evaluation")
 
     def test_structured_evidence_writes_use_evidence_role_and_archive_retention(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

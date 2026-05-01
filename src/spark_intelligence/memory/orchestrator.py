@@ -5060,6 +5060,7 @@ def _normalize_memory_maintenance_payload(raw: Any) -> dict[str, Any]:
         "active_state_stale_preserved_count",
         "active_state_superseded_count",
         "active_state_archived_count",
+        "audit_samples",
         "trace",
     ):
         if hasattr(raw, field):
@@ -6686,6 +6687,7 @@ def _record_memory_maintenance_lifecycle_transitions(
             "deleted",
             "maintenance_delete_tombstone",
             "active deletion",
+            "deleted",
         ),
         (
             "active_state_stale_preserved_count",
@@ -6693,6 +6695,7 @@ def _record_memory_maintenance_lifecycle_transitions(
             "stale_preserved",
             "active_state_stale_preserved",
             "stale current-state preserved",
+            "stale_preserved",
         ),
         (
             "active_state_superseded_count",
@@ -6700,6 +6703,7 @@ def _record_memory_maintenance_lifecycle_transitions(
             "superseded",
             "active_state_superseded",
             "current-state supersession",
+            "superseded",
         ),
         (
             "active_state_archived_count",
@@ -6707,12 +6711,15 @@ def _record_memory_maintenance_lifecycle_transitions(
             "archived",
             "maintenance_archive",
             "current-state archived",
+            "archived",
         ),
     ]
-    for field, transition_kind, lifecycle_action, destination, readable_name in transition_specs:
+    audit_samples = maintenance.get("audit_samples") if isinstance(maintenance.get("audit_samples"), dict) else {}
+    for field, transition_kind, lifecycle_action, destination, readable_name, sample_bucket in transition_specs:
         count = _int_or_zero(maintenance.get(field))
         if count <= 0:
             continue
+        samples = audit_samples.get(sample_bucket) if isinstance(audit_samples.get(sample_bucket), list) else []
         _record_memory_lifecycle_transition(
             state_db=state_db,
             human_id=None,
@@ -6735,6 +6742,9 @@ def _record_memory_maintenance_lifecycle_transitions(
                 "maintenance_field": field,
                 "manual_observations_before": maintenance.get("manual_observations_before"),
                 "manual_observations_after": maintenance.get("manual_observations_after"),
+                "audit_sample_bucket": sample_bucket,
+                "audit_sample_count": len(samples),
+                "audit_samples": samples[:5],
                 "trace": result.trace,
             },
         )
