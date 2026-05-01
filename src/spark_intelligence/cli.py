@@ -1357,6 +1357,12 @@ def build_parser() -> argparse.ArgumentParser:
     wiki_answer_parser.add_argument("--output-dir", help="Override wiki output directory")
     wiki_answer_parser.add_argument("--refresh", action="store_true", help="Bootstrap and regenerate system pages before answering")
     wiki_answer_parser.add_argument("--limit", type=int, default=5, help="Maximum wiki hits to use")
+    wiki_answer_parser.add_argument("--human-id", default="", help="Optional human id for live self-awareness context")
+    wiki_answer_parser.add_argument("--session-id", default="", help="Optional session id for live self-awareness context")
+    wiki_answer_parser.add_argument("--channel-kind", default="", help="Optional channel kind, for example telegram")
+    wiki_answer_parser.add_argument("--request-id", default="", help="Optional current request id to exclude from recent-turn context")
+    wiki_answer_parser.add_argument("--user-message", default="", help="Optional current user message for live self-awareness context")
+    wiki_answer_parser.add_argument("--no-live-self", action="store_true", help="Do not attach live self-awareness context")
     wiki_answer_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     mission_parser = subparsers.add_parser("mission", help="Inspect mission control and task-specific operator plans")
@@ -4094,6 +4100,12 @@ def handle_wiki_answer(args: argparse.Namespace) -> int:
         output_dir=getattr(args, "output_dir", None),
         refresh=bool(getattr(args, "refresh", False)),
         limit=int(getattr(args, "limit", 5) or 5),
+        include_live_self=False if bool(getattr(args, "no_live_self", False)) else None,
+        human_id=str(getattr(args, "human_id", "") or ""),
+        session_id=str(getattr(args, "session_id", "") or ""),
+        channel_kind=str(getattr(args, "channel_kind", "") or ""),
+        request_id=str(getattr(args, "request_id", "") or "") or None,
+        user_message=str(getattr(args, "user_message", "") or ""),
     )
     print(result.to_json() if args.json else result.to_text())
     return 0 if result.payload.get("hit_count", 0) else 1

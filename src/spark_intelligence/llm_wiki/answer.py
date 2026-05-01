@@ -8,6 +8,7 @@ from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.llm_wiki.query import build_llm_wiki_query
+from spark_intelligence.self_awareness import build_self_awareness_capsule
 from spark_intelligence.state.db import StateDB
 
 
@@ -54,6 +55,12 @@ def build_llm_wiki_answer(
     output_dir: str | Path | None = None,
     refresh: bool = False,
     limit: int = 5,
+    include_live_self: bool | None = None,
+    human_id: str = "",
+    session_id: str = "",
+    channel_kind: str = "",
+    request_id: str | None = None,
+    user_message: str = "",
 ) -> LlmWikiAnswerResult:
     query_result = build_llm_wiki_query(
         config_manager=config_manager,
@@ -69,8 +76,28 @@ def build_llm_wiki_answer(
     sources = [_source_payload(hit) for hit in hits]
     missing_live_verification = _missing_live_verification(normalized_question)
     warnings = [str(item) for item in query_payload.get("warnings") or [] if str(item).strip()]
-    evidence_level = "wiki_backed_supporting_context" if hits else "wiki_not_found"
-    answer = _compose_answer(question=normalized_question, hits=hits, missing_live_verification=missing_live_verification)
+    should_attach_live_self = _should_include_live_self(normalized_question) if include_live_self is None else include_live_self
+    live_self_awareness = (
+        _build_live_self_context(
+            config_manager=config_manager,
+            state_db=state_db,
+            question=normalized_question,
+            human_id=human_id,
+            session_id=session_id,
+            channel_kind=channel_kind,
+            request_id=request_id,
+            user_message=user_message,
+        )
+        if should_attach_live_self
+        else {}
+    )
+    evidence_level = _evidence_level(hits=hits, live_self_awareness=live_self_awareness)
+    answer = _compose_answer(
+        question=normalized_question,
+        hits=hits,
+        missing_live_verification=missing_live_verification,
+        live_self_awareness=live_self_awareness,
+    )
     payload = {
         "output_dir": query_payload.get("output_dir") or str(query_result.output_dir),
         "question": normalized_question,
@@ -84,18 +111,28 @@ def build_llm_wiki_answer(
         "source_mix": dict(query_payload.get("source_mix") or {}),
         "context_sections": list(query_payload.get("context_sections") or []),
         "query_payload": query_payload,
+        "live_context_status": "included" if live_self_awareness else ("not_requested" if not should_attach_live_self else "unavailable"),
+        "live_self_awareness": live_self_awareness,
         "authority": "supporting_not_authoritative",
         "warnings": warnings,
     }
     return LlmWikiAnswerResult(output_dir=query_result.output_dir, payload=payload)
 
 
-def _compose_answer(*, question: str, hits: list[dict[str, Any]], missing_live_verification: list[str]) -> str:
+def _compose_answer(
+    *,
+    question: str,
+    hits: list[dict[str, Any]],
+    missing_live_verification: list[str],
+    live_self_awareness: dict[str, Any],
+) -> str:
     if not hits:
-        return (
+        answer = (
             "I could not find a matching LLM wiki packet for that question. "
             "I should either query with a narrower phrase, inspect live runtime state, or create a source-backed wiki page after verification."
         )
+        live_sentence = _live_self_sentence(live_self_awareness)
+        return f"{answer} {live_sentence}".strip() if live_sentence else answer
     lead = (
         "From the LLM wiki, the best-supported answer is: "
         "use the retrieved pages as operating context, not as current runtime truth."
@@ -108,11 +145,156 @@ def _compose_answer(*, question: str, hits: list[dict[str, Any]], missing_live_v
             snippets.append(f"{title}: {snippet}")
     if snippets:
         lead = f"{lead} " + " ".join(snippets)
+    live_sentence = _live_self_sentence(live_self_awareness)
+    if live_sentence:
+        lead = f"{lead} {live_sentence}"
     if missing_live_verification:
         lead = (
             f"{lead} For anything mutable in this answer, Spark should run the named live probe or status route before claiming it is true now."
         )
     return lead
+
+
+def _evidence_level(*, hits: list[dict[str, Any]], live_self_awareness: dict[str, Any]) -> str:
+    if hits and live_self_awareness:
+        return "wiki_backed_with_live_self_snapshot"
+    if hits:
+        return "wiki_backed_supporting_context"
+    if live_self_awareness:
+        return "live_self_snapshot_without_wiki_hit"
+    return "wiki_not_found"
+
+
+def _build_live_self_context(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    question: str,
+    human_id: str,
+    session_id: str,
+    channel_kind: str,
+    request_id: str | None,
+    user_message: str,
+) -> dict[str, Any]:
+    capsule = build_self_awareness_capsule(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=human_id,
+        session_id=session_id,
+        channel_kind=channel_kind,
+        request_id=request_id,
+        user_message=user_message or question,
+    ).to_payload()
+    return {
+        "generated_at": capsule.get("generated_at"),
+        "workspace_id": capsule.get("workspace_id"),
+        "observed_now": _claim_summaries(capsule.get("observed_now"), limit=4),
+        "recently_verified": _claim_summaries(capsule.get("recently_verified"), limit=3),
+        "degraded_or_missing": _claim_summaries(capsule.get("degraded_or_missing"), limit=4),
+        "lacks": _claim_summaries(capsule.get("lacks"), limit=4),
+        "improvement_options": _claim_summaries(capsule.get("improvement_options"), limit=4),
+        "recommended_probes": [str(item) for item in capsule.get("recommended_probes") or [] if str(item).strip()][:4],
+        "source_ledger": [
+            item for item in capsule.get("source_ledger") or [] if isinstance(item, dict)
+        ][:4],
+        "authority": "current_snapshot_not_proof_of_invocation",
+    }
+
+
+def _claim_summaries(value: object, *, limit: int) -> list[dict[str, str]]:
+    claims: list[dict[str, str]] = []
+    for item in (value if isinstance(value, list) else []):
+        if not isinstance(item, dict):
+            continue
+        claim = str(item.get("claim") or "").strip()
+        if not claim:
+            continue
+        claims.append(
+            {
+                "claim": claim,
+                "source": str(item.get("source") or "").strip(),
+                "confidence": str(item.get("confidence") or "").strip(),
+                "verification_status": str(item.get("verification_status") or "").strip(),
+                "next_probe": str(item.get("next_probe") or "").strip(),
+            }
+        )
+    return claims[:limit]
+
+
+def _live_self_sentence(live_self_awareness: dict[str, Any]) -> str:
+    if not live_self_awareness:
+        return ""
+    observed = _claims_text(live_self_awareness.get("observed_now"), limit=2)
+    lacks = _claims_text(live_self_awareness.get("lacks"), limit=2)
+    improvements = _claims_text(live_self_awareness.get("improvement_options"), limit=1)
+    parts = []
+    if observed:
+        parts.append(f"Live self snapshot sees: {'; '.join(observed)}.")
+    if lacks:
+        parts.append(f"It still lacks: {'; '.join(lacks)}.")
+    if improvements:
+        parts.append(f"Best next improvement: {improvements[0]}.")
+    if not parts:
+        parts.append("Live self snapshot is attached, but it did not expose compact claim text.")
+    return " ".join(parts)
+
+
+def _claims_text(value: object, *, limit: int) -> list[str]:
+    texts: list[str] = []
+    for item in (value if isinstance(value, list) else []):
+        if isinstance(item, dict):
+            text = str(item.get("claim") or "").strip()
+        else:
+            text = str(item).strip()
+        if text:
+            texts.append(text)
+    return texts[:limit]
+
+
+def _should_include_live_self(question: str) -> bool:
+    lowered = question.casefold()
+    live_markers = (
+        "current",
+        "now",
+        "today",
+        "active",
+        "healthy",
+        "working",
+        "live",
+        "available",
+        "self-aware",
+        "self awareness",
+        "introspect",
+        "introspection",
+        "what can",
+        "can you",
+        "capability",
+        "capabilities",
+        "lack",
+        "lacks",
+        "missing",
+        "gap",
+        "gaps",
+        "improve",
+        "improvement",
+        "system",
+        "systems",
+        "tool",
+        "tools",
+        "chip",
+        "chips",
+        "route",
+        "routes",
+        "provider",
+        "gateway",
+        "telegram",
+        "bot",
+        "memory",
+        "wiki",
+        "knowledge base",
+        "kb",
+    )
+    return any(marker in lowered for marker in live_markers)
 
 
 def _first_useful_sentence(text: str) -> str:
