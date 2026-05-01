@@ -90,7 +90,7 @@ from spark_intelligence.identity.service import (
     revoke_session,
 )
 from spark_intelligence.jobs.service import jobs_list, jobs_tick
-from spark_intelligence.llm_wiki import bootstrap_llm_wiki, compile_system_wiki
+from spark_intelligence.llm_wiki import bootstrap_llm_wiki, build_llm_wiki_inventory, build_llm_wiki_status, compile_system_wiki
 from spark_intelligence.memory import (
     benchmark_memory_architectures,
     build_telegram_state_knowledge_base,
@@ -110,6 +110,7 @@ from spark_intelligence.memory import (
 )
 from spark_intelligence.personality import (
     build_personality_import_payload,
+    load_personality_profile,
     migrate_legacy_human_personality_to_agent_persona,
     normalize_personality_import,
     resolve_builder_persona_agent_id,
@@ -1313,6 +1314,23 @@ def build_parser() -> argparse.ArgumentParser:
     wiki_compile_system_parser.add_argument("--home", help="Override Spark Intelligence home directory")
     wiki_compile_system_parser.add_argument("--output-dir", help="Override wiki output directory")
     wiki_compile_system_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    wiki_status_parser = wiki_subparsers.add_parser(
+        "status",
+        help="Check whether the local LLM wiki exists, is fresh enough, and is retrievable",
+    )
+    wiki_status_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    wiki_status_parser.add_argument("--output-dir", help="Override wiki output directory")
+    wiki_status_parser.add_argument("--refresh", action="store_true", help="Bootstrap and regenerate system pages before checking")
+    wiki_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    wiki_inventory_parser = wiki_subparsers.add_parser(
+        "inventory",
+        help="List the local LLM wiki vault pages and their source metadata",
+    )
+    wiki_inventory_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    wiki_inventory_parser.add_argument("--output-dir", help="Override wiki output directory")
+    wiki_inventory_parser.add_argument("--refresh", action="store_true", help="Bootstrap and regenerate system pages before listing")
+    wiki_inventory_parser.add_argument("--limit", type=int, default=40, help="Maximum page records to emit")
+    wiki_inventory_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     mission_parser = subparsers.add_parser("mission", help="Inspect mission control and task-specific operator plans")
     mission_subparsers = mission_parser.add_subparsers(dest="mission_command", required=True)
@@ -3876,14 +3894,22 @@ def handle_self_status(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
+    human_id = str(getattr(args, "human_id", "") or "")
+    personality_profile = load_personality_profile(
+        human_id=human_id,
+        agent_id=resolve_builder_persona_agent_id(human_id=human_id),
+        state_db=state_db,
+        config_manager=config_manager,
+    )
     capsule = build_self_awareness_capsule(
         config_manager=config_manager,
         state_db=state_db,
-        human_id=str(getattr(args, "human_id", "") or ""),
+        human_id=human_id,
         session_id=str(getattr(args, "session_id", "") or ""),
         channel_kind=str(getattr(args, "channel_kind", "") or ""),
         request_id=str(getattr(args, "request_id", "") or "") or None,
         user_message=str(getattr(args, "user_message", "") or ""),
+        personality_profile=personality_profile,
     )
     if bool(getattr(args, "refresh_wiki", False)):
         wiki_refresh = compile_system_wiki(config_manager=config_manager, state_db=state_db)
@@ -3979,6 +4005,37 @@ def handle_wiki_compile_system(args: argparse.Namespace) -> int:
     )
     print(result.to_json() if args.json else result.to_text())
     return 0
+
+
+def handle_wiki_status(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = build_llm_wiki_status(
+        config_manager=config_manager,
+        state_db=state_db,
+        output_dir=getattr(args, "output_dir", None),
+        refresh=bool(getattr(args, "refresh", False)),
+    )
+    print(result.to_json() if args.json else result.to_text())
+    return 0 if result.payload.get("healthy") else 1
+
+
+def handle_wiki_inventory(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = build_llm_wiki_inventory(
+        config_manager=config_manager,
+        state_db=state_db,
+        output_dir=getattr(args, "output_dir", None),
+        refresh=bool(getattr(args, "refresh", False)),
+        limit=int(getattr(args, "limit", 40) or 40),
+    )
+    print(result.to_json() if args.json else result.to_text())
+    return 0 if result.payload.get("exists") else 1
 
 
 def _collect_status_browser_payload(config_manager: ConfigManager) -> dict[str, object] | None:
@@ -7569,6 +7626,10 @@ def main(argv: list[str] | None = None) -> int:
         return handle_wiki_bootstrap(args)
     if args.command == "wiki" and args.wiki_command == "compile-system":
         return handle_wiki_compile_system(args)
+    if args.command == "wiki" and args.wiki_command == "status":
+        return handle_wiki_status(args)
+    if args.command == "wiki" and args.wiki_command == "inventory":
+        return handle_wiki_inventory(args)
     if args.command == "mission" and args.mission_command == "status":
         return handle_mission_status(args)
     if args.command == "mission" and args.mission_command == "plan":

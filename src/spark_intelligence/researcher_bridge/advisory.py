@@ -8764,6 +8764,7 @@ def build_researcher_reply(
                 channel_kind=channel_kind,
                 request_id=request_id,
                 user_message=user_message,
+                personality_profile=personality_profile,
             )
             wiki_evidence = "wiki_refresh=skipped reason=conversational_self_awareness"
             reply_text = capsule.to_text()

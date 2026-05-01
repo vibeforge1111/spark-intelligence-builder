@@ -56,6 +56,7 @@ class SelfAwarenessCapsule:
     recommended_probes: list[str] = field(default_factory=list)
     natural_language_routes: list[str] = field(default_factory=list)
     source_ledger: list[dict[str, Any]] = field(default_factory=list)
+    style_lens: dict[str, Any] = field(default_factory=dict)
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -71,21 +72,31 @@ class SelfAwarenessCapsule:
             "recommended_probes": self.recommended_probes,
             "natural_language_routes": self.natural_language_routes,
             "source_ledger": self.source_ledger,
+            "style_lens": self.style_lens,
         }
 
     def to_json(self) -> str:
         return json.dumps(self.to_payload(), indent=2)
 
     def to_text(self) -> str:
+        short_version = (
+            "Short version: I can see the live Spark stack. I should stay grounded and prove a route worked before I sound certain."
+        )
+        if self.style_lens:
+            short_version = (
+                "Short version: I can see the live Spark stack. I should keep the answer grounded, "
+                "but it should sound like your Spark instead of a pasted status report."
+            )
         lines = [
             "Spark self-awareness",
             "",
-            "Short version: I can see some live Spark systems, but I should still prove a route worked before I sound certain.",
+            short_version,
             "",
             f"Workspace: {self.workspace_id}",
             f"Checked: {self.generated_at}",
             "",
         ]
+        _extend_style_lens_lines(lines, self.style_lens)
         _extend_claim_lines(lines, "What looks live", self.observed_now, limit=4, compact=True)
         _extend_claim_lines(lines, "What I recently proved", self.recently_verified, limit=2, compact=True)
         _extend_claim_lines(lines, "Where I am useful", self.inferred_strengths, limit=2, compact=True)
@@ -107,6 +118,7 @@ def build_self_awareness_capsule(
     channel_kind: str = "",
     request_id: str | None = None,
     user_message: str = "",
+    personality_profile: dict[str, Any] | None = None,
 ) -> SelfAwarenessCapsule:
     registry_payload = build_system_registry(config_manager, state_db, probe_browser=False, probe_git=False).to_payload()
     context_capsule = build_spark_context_capsule(
@@ -136,6 +148,7 @@ def build_self_awareness_capsule(
         "Ask: 'Spark, check which chips are active and what they can improve for this goal' to map capability fit.",
         "Ask: 'Spark, improve the weak spots you just found' to run the safest next probes before changing behavior.",
     ]
+    style_lens = _build_style_lens(personality_profile)
 
     source_ledger = [
         {
@@ -172,6 +185,7 @@ def build_self_awareness_capsule(
         recommended_probes=recommended_probes,
         natural_language_routes=natural_language_routes,
         source_ledger=source_ledger,
+        style_lens=style_lens,
     )
 
 
@@ -516,6 +530,151 @@ def _compact_route_text(route: str) -> str:
     if route.startswith("Ask: "):
         route = route[len("Ask: ") :]
     return route
+
+
+def _build_style_lens(profile: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(profile, dict) or not profile:
+        return {}
+    traits = profile.get("traits")
+    if not isinstance(traits, dict):
+        traits = {}
+    rules = [
+        str(rule).strip()
+        for rule in (profile.get("agent_behavioral_rules") or [])
+        if str(rule).strip()
+    ][:3]
+    lens = {
+        "persona_name": _clean_style_text(profile.get("agent_persona_name") or profile.get("personality_name")),
+        "persona_summary": _clean_style_text(profile.get("agent_persona_summary")),
+        "style_sentence": _style_sentence_from_traits(traits),
+        "agent_persona_applied": bool(profile.get("agent_persona_applied")),
+        "user_deltas_applied": bool(profile.get("user_deltas_applied")),
+        "behavioral_rules": rules,
+    }
+    return {key: value for key, value in lens.items() if value not in ("", [], None)}
+
+
+def _extend_style_lens_lines(lines: list[str], style_lens: dict[str, Any]) -> None:
+    if not style_lens:
+        return
+    style_sentence = str(style_lens.get("style_sentence") or "").strip()
+    persona_summary = str(style_lens.get("persona_summary") or "").strip()
+    rules = [
+        str(rule).strip()
+        for rule in (style_lens.get("behavioral_rules") or [])
+        if str(rule).strip()
+    ][:2]
+
+    lines.append("How I should show up for you")
+    if persona_summary:
+        lines.append(f"- Your saved style says: {_humanize_style_instruction(persona_summary)}.")
+    if style_sentence:
+        lines.append(f"- Tone: {style_sentence}.")
+    if rules and not persona_summary:
+        lines.append(f"- Style promises: {'; '.join(rules)}.")
+    if style_lens.get("user_deltas_applied"):
+        lines.append("- Your recent style preferences are part of this answer, not hidden somewhere else.")
+    lines.append("")
+
+
+def _style_sentence_from_traits(traits: dict[str, Any]) -> str:
+    if not traits:
+        return ""
+    fragments: list[str] = []
+    warmth = _float_trait(traits.get("warmth"))
+    directness = _float_trait(traits.get("directness"))
+    playfulness = _float_trait(traits.get("playfulness"))
+    pacing = _float_trait(traits.get("pacing"))
+    assertiveness = _float_trait(traits.get("assertiveness"))
+
+    if directness >= 0.68:
+        fragments.append("direct")
+    elif directness <= 0.32:
+        fragments.append("gentle")
+    if warmth >= 0.65:
+        fragments.append("warm")
+    elif warmth <= 0.28:
+        fragments.append("reserved")
+    if pacing >= 0.68:
+        fragments.append("fast-moving")
+    elif pacing <= 0.32:
+        fragments.append("unhurried")
+    if playfulness >= 0.68:
+        fragments.append("a little playful")
+    elif playfulness <= 0.25:
+        fragments.append("serious")
+    if assertiveness >= 0.72:
+        fragments.append("decisive")
+    elif assertiveness <= 0.28:
+        fragments.append("measured")
+
+    fragments = _dedupe_preserving_order(fragments)
+    if not fragments:
+        return "balanced, grounded, and evidence-first"
+    if len(fragments) == 1:
+        return f"{fragments[0]}, grounded, and evidence-first"
+    return f"{_human_join(fragments)}, while staying evidence-first"
+
+
+def _float_trait(value: Any) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.5
+    return max(0.0, min(1.0, number))
+
+
+def _clean_style_text(value: Any) -> str:
+    text = " ".join(str(value or "").split())
+    return text[:220].rstrip()
+
+
+def _humanize_style_instruction(value: str) -> str:
+    parts = [part.strip(" .") for part in value.replace("\n", ";").split(";") if part.strip(" .")]
+    cleaned: list[str] = []
+    for part in parts[:3]:
+        lower_part = part.lower()
+        if lower_part.startswith("do not say "):
+            part = f"avoid saying {part[11:]}"
+        elif lower_part.startswith("don't say "):
+            part = f"avoid saying {part[10:]}"
+        elif lower_part.startswith("dont say "):
+            part = f"avoid saying {part[9:]}"
+        elif lower_part.startswith("do not claim "):
+            part = f"avoid claiming {part[13:]}"
+        elif lower_part.startswith("don't claim "):
+            part = f"avoid claiming {part[12:]}"
+        elif lower_part.startswith("dont claim "):
+            part = f"avoid claiming {part[11:]}"
+        elif lower_part.startswith("do not "):
+            part = f"avoid {part[7:]}"
+        elif lower_part.startswith("don't "):
+            part = f"avoid {part[6:]}"
+        elif lower_part.startswith("dont "):
+            part = f"avoid {part[5:]}"
+        cleaned.append(part[:1].lower() + part[1:])
+    if not cleaned:
+        return value
+    return _human_join(cleaned)
+
+
+def _dedupe_preserving_order(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    output: list[str] = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        output.append(item)
+    return output
+
+
+def _human_join(items: list[str]) -> str:
+    if len(items) <= 1:
+        return "".join(items)
+    if len(items) == 2:
+        return f"{items[0]} and {items[1]}"
+    return f"{', '.join(items[:-1])}, and {items[-1]}"
 
 
 def _claims_payload(claims: list[SelfAwarenessClaim]) -> list[dict[str, Any]]:

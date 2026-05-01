@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import json
 
-from spark_intelligence.llm_wiki import bootstrap_llm_wiki, compile_system_wiki
+from spark_intelligence.llm_wiki import (
+    bootstrap_llm_wiki,
+    build_llm_wiki_inventory,
+    build_llm_wiki_status,
+    compile_system_wiki,
+)
 from spark_intelligence.memory import orchestrator as memory_orchestrator
 from spark_intelligence.memory.orchestrator import hybrid_memory_retrieve
 
@@ -84,6 +89,80 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertEqual(payload["output_dir"], str(self.home / "wiki"))
         self.assertIn("system_registry", payload["source_refs"])
         self.assertIn("system/current-system-status.md", payload["generated_files"])
+
+    def test_wiki_status_reports_missing_vault_without_refresh(self) -> None:
+        result = build_llm_wiki_status(config_manager=self.config_manager, state_db=self.state_db)
+
+        self.assertFalse(result.payload["healthy"])
+        self.assertFalse(result.payload["exists"])
+        self.assertIn("index.md", result.payload["missing_bootstrap_files"])
+        self.assertIn("wiki_root_missing", result.payload["warnings"])
+
+    def test_wiki_status_refreshes_and_verifies_retrievable_project_knowledge(self) -> None:
+        result = build_llm_wiki_status(config_manager=self.config_manager, state_db=self.state_db, refresh=True)
+
+        self.assertTrue(result.payload["healthy"])
+        self.assertTrue(result.payload["exists"])
+        self.assertEqual(result.payload["missing_bootstrap_files"], [])
+        self.assertEqual(result.payload["missing_system_compile_files"], [])
+        self.assertEqual(result.payload["wiki_retrieval_status"], "supported")
+        self.assertGreater(result.payload["wiki_record_count"], 0)
+        self.assertTrue(result.payload["project_knowledge_first"])
+        self.assertIn("system/current-system-status.md", result.payload["refreshed_files"])
+
+    def test_wiki_status_cli_can_refresh_and_emit_machine_readable_result(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "wiki",
+            "status",
+            "--home",
+            str(self.home),
+            "--refresh",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertTrue(payload["healthy"])
+        self.assertEqual(payload["wiki_retrieval_status"], "supported")
+        self.assertGreater(payload["wiki_record_count"], 0)
+        self.assertTrue(payload["project_knowledge_first"])
+
+    def test_wiki_inventory_refreshes_and_lists_pages_with_metadata(self) -> None:
+        result = build_llm_wiki_inventory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            refresh=True,
+        )
+
+        self.assertTrue(result.payload["exists"])
+        self.assertEqual(result.payload["missing_expected_files"], [])
+        self.assertGreaterEqual(result.payload["page_count"], 13)
+        page_paths = {page["path"] for page in result.payload["pages"]}
+        self.assertIn("index.md", page_paths)
+        self.assertIn("system/current-system-status.md", page_paths)
+        index_page = next(page for page in result.payload["pages"] if page["path"] == "index.md")
+        self.assertEqual(index_page["title"], "Spark LLM Wiki")
+        self.assertEqual(index_page["authority"], "supporting_not_authoritative")
+        self.assertIn("system", result.payload["section_counts"])
+
+    def test_wiki_inventory_cli_can_emit_limited_machine_readable_result(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "wiki",
+            "inventory",
+            "--home",
+            str(self.home),
+            "--refresh",
+            "--limit",
+            "3",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertTrue(payload["exists"])
+        self.assertEqual(payload["returned_page_count"], 3)
+        self.assertGreaterEqual(payload["page_count"], 13)
+        self.assertEqual(payload["missing_expected_files"], [])
 
     def test_project_knowledge_intent_boosts_wiki_over_generic_events(self) -> None:
         query = "How should Spark use recursive self-improvement loops?"

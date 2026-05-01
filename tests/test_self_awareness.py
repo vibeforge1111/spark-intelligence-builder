@@ -89,6 +89,43 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(payload["wiki_context"]["wiki_status"], "supported")
         self.assertTrue(payload["wiki_context"]["project_knowledge_first"])
 
+    def test_self_awareness_capsule_uses_personality_style_lens_without_raw_trait_dump(self) -> None:
+        capsule = build_self_awareness_capsule(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human:telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+            user_message="what do you know about yourself?",
+            personality_profile={
+                "agent_persona_name": "Spark AGI",
+                "agent_persona_summary": "warm, curious, and direct without turning into a status page",
+                "traits": {
+                    "warmth": 0.82,
+                    "directness": 0.78,
+                    "playfulness": 0.62,
+                    "pacing": 0.74,
+                    "assertiveness": 0.7,
+                },
+                "agent_behavioral_rules": [
+                    "keep evidence visible",
+                    "sound conversational",
+                ],
+                "agent_persona_applied": True,
+                "user_deltas_applied": True,
+            },
+        )
+
+        payload = capsule.to_payload()
+        text = capsule.to_text()
+        self.assertEqual(payload["style_lens"]["persona_name"], "Spark AGI")
+        self.assertIn("How I should show up for you", text)
+        self.assertIn("warm, curious, and direct", text)
+        self.assertIn("Tone: direct, warm, and fast-moving", text)
+        self.assertIn("Your recent style preferences", text)
+        self.assertNotIn("trait", text.lower())
+        self.assertLess(len(text), 2800)
+
     def test_natural_self_awareness_query_uses_capsule_direct_route(self) -> None:
         result = build_researcher_reply(
             config_manager=self.config_manager,
