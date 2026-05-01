@@ -1099,6 +1099,19 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(lane_records[0]["promotion_disposition"], "promote_current_state")
         self.assertEqual(lane_records[0]["status"], "candidate")
 
+        lifecycle_events = latest_events_by_type(self.state_db, event_type="memory_lifecycle_transition", limit=10)
+        lifecycle_facts = [
+            event["facts_json"]
+            for event in lifecycle_events
+            if (event["facts_json"] or {}).get("transition_kind") == "salience_promotion"
+        ]
+        self.assertTrue(lifecycle_facts)
+        self.assertEqual(lifecycle_facts[0]["lifecycle_action"], "promoted_by_salience")
+        self.assertEqual(lifecycle_facts[0]["source_predicate"], "profile.preferred_name")
+        self.assertEqual(lifecycle_facts[0]["destination"], "promote_current_state")
+        self.assertEqual(lifecycle_facts[0]["why_saved"], "identity_correction_supersession")
+        self.assertGreaterEqual(lifecycle_facts[0]["salience_score"], 0.75)
+
     def test_profile_name_correction_after_new_name_is_authoritative(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
@@ -1159,6 +1172,19 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertTrue(policy_records)
         self.assertEqual(policy_records[0]["gate_name"], "memory.salience")
         self.assertEqual(policy_records[0]["reason_code"], "salience_secret_like_material")
+
+        lifecycle_events = latest_events_by_type(self.state_db, event_type="memory_lifecycle_transition", limit=10)
+        lifecycle_facts = [
+            event["facts_json"]
+            for event in lifecycle_events
+            if (event["facts_json"] or {}).get("transition_kind") == "salience_block"
+        ]
+        self.assertTrue(lifecycle_facts)
+        self.assertEqual(lifecycle_facts[0]["lifecycle_action"], "blocked_by_salience")
+        self.assertEqual(lifecycle_facts[0]["destination"], "policy_gate_trace_only")
+        self.assertEqual(lifecycle_facts[0]["source_predicate"], "profile.current_plan")
+        self.assertEqual(lifecycle_facts[0]["reason"], "secret_like_material_blocked")
+        self.assertEqual(lifecycle_facts[0]["salience_score"], 0.0)
 
     def test_named_object_profile_fact_writes_generic_entity_state_projection(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

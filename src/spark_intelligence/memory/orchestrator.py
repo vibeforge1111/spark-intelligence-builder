@@ -3656,6 +3656,7 @@ def _write_profile_fact_memory_operation(
             decision=salience_decision,
             session_id=session_id,
             turn_id=turn_id,
+            channel_kind=channel_kind,
             actor_id=actor_id,
         )
         _record_memory_write_event(
@@ -3971,6 +3972,7 @@ def write_telegram_event_to_memory(
             decision=salience_decision,
             session_id=session_id,
             turn_id=turn_id,
+            channel_kind=channel_kind,
             actor_id=actor_id,
         )
         _record_memory_write_event(
@@ -6774,6 +6776,17 @@ def _record_memory_write_requested_observations(
         },
         provenance={"memory_role": memory_role},
     )
+    _record_memory_salience_lifecycle_transition_from_candidate(
+        state_db=state_db,
+        human_id=human_id,
+        candidates=observations,
+        salience_decision=salience_decision,
+        operation=operation,
+        fallback_memory_role=memory_role,
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+    )
 
 
 def _preview_memory_text(value: str | None, *, limit: int = 500) -> str:
@@ -6858,6 +6871,118 @@ def _record_memory_lifecycle_transition(
     )
 
 
+def _salience_lifecycle_action(decision: MemorySalienceDecision) -> str:
+    if not decision.should_write:
+        return "blocked_by_salience"
+    if decision.promotion_disposition == "capture_raw_episode":
+        return "captured_by_salience"
+    return "promoted_by_salience"
+
+
+def _salience_lifecycle_destination(decision: MemorySalienceDecision) -> str:
+    if not decision.should_write:
+        return "policy_gate_trace_only"
+    if decision.promotion_disposition:
+        return decision.promotion_disposition
+    if decision.promotion_stage:
+        return decision.promotion_stage
+    return "memory_lane"
+
+
+def _record_memory_salience_lifecycle_transition(
+    *,
+    state_db: StateDB,
+    human_id: str | None,
+    predicate: str,
+    value: str | None,
+    evidence_text: str,
+    decision: MemorySalienceDecision,
+    memory_role: str,
+    retention_class: str,
+    operation: str,
+    session_id: str | None,
+    turn_id: str | None,
+    channel_kind: str | None,
+    actor_id: str,
+) -> None:
+    lifecycle_action = _salience_lifecycle_action(decision)
+    reason = decision.why_saved or decision.reason_code or lifecycle_action
+    readable_action = lifecycle_action.replace("_", " ")
+    readable_reason = reason.replace("_", " ")
+    _record_memory_lifecycle_transition(
+        state_db=state_db,
+        human_id=human_id,
+        transition_kind="salience_block" if not decision.should_write else "salience_promotion",
+        memory_role=memory_role,
+        source_predicate=predicate,
+        source_text=evidence_text or str(value or ""),
+        source_observation_id=None,
+        reason=reason,
+        retention_class=retention_class,
+        lifecycle_action=lifecycle_action,
+        destination=_salience_lifecycle_destination(decision),
+        session_id=session_id,
+        turn_id=turn_id,
+        channel_kind=channel_kind,
+        actor_id=actor_id,
+        old_value=None,
+        new_value=value,
+        transition_count=1,
+        extra_facts={
+            "operation": operation,
+            "keepability": decision.keepability,
+            "promotion_disposition": decision.promotion_disposition,
+            "promotion_stage": decision.promotion_stage,
+            "salience_score": decision.salience_score,
+            "confidence": decision.confidence,
+            "why_saved": decision.why_saved,
+            "salience_reasons": list(decision.reasons),
+            "readable_summary": (
+                f"Memory candidate was {readable_action} "
+                f"because {readable_reason}."
+            ),
+        },
+    )
+
+
+def _record_memory_salience_lifecycle_transition_from_candidate(
+    *,
+    state_db: StateDB,
+    human_id: str | None,
+    candidates: list[dict[str, Any]],
+    salience_decision: MemorySalienceDecision | None,
+    operation: str,
+    fallback_memory_role: str,
+    session_id: str | None,
+    turn_id: str | None,
+    actor_id: str,
+) -> None:
+    if salience_decision is None or not candidates:
+        return
+    candidate = candidates[0]
+    metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
+    _record_memory_salience_lifecycle_transition(
+        state_db=state_db,
+        human_id=human_id,
+        predicate=str(candidate.get("predicate") or "unknown"),
+        value=None if candidate.get("value") is None else str(candidate.get("value")),
+        evidence_text=str(
+            candidate.get("text")
+            or metadata.get("evidence_text")
+            or candidate.get("value")
+            or ""
+        ),
+        decision=salience_decision,
+        memory_role=str(candidate.get("memory_role") or metadata.get("memory_role") or fallback_memory_role),
+        retention_class=str(candidate.get("retention_class") or metadata.get("retention_class") or "unknown"),
+        operation=operation,
+        session_id=session_id,
+        turn_id=turn_id,
+        channel_kind=None if metadata.get("channel_kind") is None else str(metadata.get("channel_kind")),
+        actor_id=actor_id,
+    )
+
+
 def _record_memory_salience_policy_block(
     *,
     state_db: StateDB,
@@ -6868,6 +6993,7 @@ def _record_memory_salience_policy_block(
     decision: MemorySalienceDecision,
     session_id: str | None,
     turn_id: str | None,
+    channel_kind: str | None,
     actor_id: str,
 ) -> None:
     record_policy_gate_block(
@@ -6900,6 +7026,21 @@ def _record_memory_salience_policy_block(
             "why_saved": decision.why_saved,
             "salience_reasons": list(decision.reasons),
         },
+    )
+    _record_memory_salience_lifecycle_transition(
+        state_db=state_db,
+        human_id=human_id,
+        predicate=predicate,
+        value=value,
+        evidence_text=evidence_text,
+        decision=decision,
+        memory_role="current_state",
+        retention_class=decision.keepability or "not_keepable",
+        operation="blocked",
+        session_id=session_id,
+        turn_id=turn_id,
+        channel_kind=channel_kind,
+        actor_id=actor_id,
     )
 
 
@@ -6935,6 +7076,17 @@ def _record_memory_write_requested_events(
             **salience_facts,
         },
         provenance={"memory_role": "event"},
+    )
+    _record_memory_salience_lifecycle_transition_from_candidate(
+        state_db=state_db,
+        human_id=human_id,
+        candidates=events,
+        salience_decision=salience_decision,
+        operation="event",
+        fallback_memory_role="event",
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
     )
 
 
