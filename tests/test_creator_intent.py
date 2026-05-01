@@ -217,7 +217,7 @@ def test_creator_mission_status_consumer_accepts_read_only_product_packet():
     assert summary.canonical_verdict == "ready_for_swarm_packet"
     assert summary.evidence_tier == "transfer_supported"
     assert summary.blocked is False
-    assert summary.requested_publication_mode == "swarm_shared"
+    assert summary.publish_mode == "swarm_shared"
     assert summary.swarm_shared_allowed is False
     assert summary.network_absorbable is False
     assert summary.surface_adapters == ["builder", "canvas", "kanban", "spawner", "telegram"]
@@ -255,7 +255,7 @@ def _creator_mission_status_packet():
             },
         },
         "publication": {
-            "requested_mode": "swarm_shared",
+            "publish_mode": "swarm_shared",
             "swarm_shared_allowed": False,
             "network_absorbable": False,
         },
