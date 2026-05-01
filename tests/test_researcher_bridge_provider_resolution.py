@@ -1639,6 +1639,21 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         )
         record_event(
             self.state_db,
+            event_type="memory_turn_captured",
+            component="telegram_runtime",
+            summary="Telegram user turn captured as an episodic memory candidate.",
+            channel_id="telegram",
+            session_id="sess-1",
+            request_id="req-1b",
+            facts={
+                "predicate": "raw_turn",
+                "role": "user",
+                "text": "Keep the memory dashboard grounded in movement, not vibes.",
+                "source_surface": "telegram",
+            },
+        )
+        record_event(
+            self.state_db,
             event_type="intent_committed",
             component="telegram_runtime",
             summary="Current user message committed.",
@@ -1658,14 +1673,16 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("[Recent conversation]", context)
         self.assertIn("user: I want this to feel less scripted.", context)
         self.assertIn("assistant: The main issue is continuity, not just tone.", context)
-        self.assertIn("latest_visible_turn.role=assistant", context)
-        self.assertIn("latest_visible_turn.text=The main issue is continuity, not just tone.", context)
-        self.assertIn("previous_visible_turn.role=user", context)
-        self.assertIn("previous_visible_turn.text=I want this to feel less scripted.", context)
+        self.assertIn("user: Keep the memory dashboard grounded in movement, not vibes.", context)
+        self.assertIn("latest_visible_turn.role=user", context)
+        self.assertIn("latest_visible_turn.text=Keep the memory dashboard grounded in movement, not vibes.", context)
+        self.assertIn("previous_visible_turn.role=assistant", context)
+        self.assertIn("previous_visible_turn.text=The main issue is continuity, not just tone.", context)
         self.assertIn("turn_before_previous_visible_turn.role=user", context)
-        self.assertIn("turn_before_previous_visible_turn.text=Keep the thread continuity hot.", context)
-        self.assertIn("latest_user_message=I want this to feel less scripted.", context)
-        self.assertIn("previous_user_message=Keep the thread continuity hot.", context)
+        self.assertIn("turn_before_previous_visible_turn.text=I want this to feel less scripted.", context)
+        self.assertIn("latest_user_message=Keep the memory dashboard grounded in movement, not vibes.", context)
+        self.assertIn("previous_user_message=I want this to feel less scripted.", context)
+        self.assertIn("user_message_before_previous=Keep the thread continuity hot.", context)
         self.assertNotIn("Now answer like you remember what I said.", context)
 
     def test_build_researcher_reply_includes_recent_telegram_turns_in_provider_prompt(self) -> None:

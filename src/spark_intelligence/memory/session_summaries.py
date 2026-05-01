@@ -516,6 +516,26 @@ def _summary_fields_from_event_rows(
         event_type = str(event.get("event_type") or "").strip()
         reason_code = str(event.get("reason_code") or "").strip()
         _collect_references(facts, repos_touched=repos_touched, artifacts_created=artifacts_created)
+        skip_fact_level_predicate = False
+        if event_type == "memory_turn_captured" and str(facts.get("predicate") or "").strip() == "raw_turn":
+            role = str(facts.get("role") or facts.get("conversation_role") or "turn").strip().lower()
+            text = _clean_value(
+                facts.get("text")
+                or facts.get("message_text")
+                or facts.get("delivered_text")
+                or facts.get("value")
+            )
+            if text:
+                if role == "user":
+                    label = "User said"
+                elif role == "assistant":
+                    label = "Spark replied"
+                else:
+                    label = "Conversation turn"
+                _append_unique(what_changed, f"{label}: {text}")
+                if role == "user" and _looks_open(text):
+                    _append_unique(open_questions, text)
+                skip_fact_level_predicate = True
         for observation in _iter_observations(facts):
             predicate = str(observation.get("predicate") or facts.get("predicate") or "").strip()
             value = _clean_value(observation.get("value") or observation.get("text") or facts.get("value"))
@@ -528,14 +548,15 @@ def _summary_fields_from_event_rows(
                 next_actions=next_actions,
             )
 
-        _collect_fact_fields(
-            predicate=str(facts.get("predicate") or "").strip(),
-            value=_clean_value(facts.get("value")),
-            what_changed=what_changed,
-            decisions=decisions,
-            promises_made=promises_made,
-            next_actions=next_actions,
-        )
+        if not skip_fact_level_predicate:
+            _collect_fact_fields(
+                predicate=str(facts.get("predicate") or "").strip(),
+                value=_clean_value(facts.get("value")),
+                what_changed=what_changed,
+                decisions=decisions,
+                promises_made=promises_made,
+                next_actions=next_actions,
+            )
 
         if _looks_open(summary) or _looks_open(reason_code) or _looks_open(str(facts.get("evidence_summary") or "")):
             _append_unique(open_questions, _compact_line(summary or reason_code or str(facts.get("evidence_summary") or "")))

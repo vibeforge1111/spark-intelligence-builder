@@ -236,6 +236,7 @@ def _build_recent_conversation_lines(
                   AND (
                         event_type = 'intent_committed'
                      OR (event_type = 'delivery_succeeded' AND reason_code = 'telegram_bridge_outbound')
+                     OR event_type = 'memory_turn_captured'
                   )
                 ORDER BY created_at DESC, rowid DESC
                 LIMIT ?
@@ -246,6 +247,17 @@ def _build_recent_conversation_lines(
         return []
 
     transcript: list[tuple[str, str]] = []
+    seen_turns: set[tuple[str, str]] = set()
+    def append_turn(role: str, text: str) -> None:
+        compact_text = str(text or "").strip()
+        if not compact_text:
+            return
+        key = (role, compact_text)
+        if key in seen_turns:
+            return
+        seen_turns.add(key)
+        transcript.append((role, compact_text))
+
     for row in reversed(rows):
         if request_id and str(row["request_id"] or "") == request_id:
             continue
@@ -256,12 +268,15 @@ def _build_recent_conversation_lines(
         event_type = str(row["event_type"] or "")
         if event_type == "intent_committed":
             text = str(facts.get("message_text") or "").strip()
-            if text:
-                transcript.append(("user", text))
+            append_turn("user", text)
         elif event_type == "delivery_succeeded":
             text = str(facts.get("delivered_text") or "").strip()
-            if text:
-                transcript.append(("assistant", text))
+            append_turn("assistant", text)
+        elif event_type == "memory_turn_captured":
+            role = str(facts.get("role") or facts.get("conversation_role") or "user").strip().lower()
+            if role not in {"user", "assistant", "system"}:
+                role = "user"
+            append_turn(role, str(facts.get("text") or ""))
 
     recent_turns = transcript[-(turn_limit * 2) :]
     return [f"- {role}: {_compact(text, 260)}" for role, text in recent_turns]

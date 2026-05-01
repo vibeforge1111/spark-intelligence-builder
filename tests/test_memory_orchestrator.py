@@ -1010,6 +1010,56 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(recent_gate["evidence"]["recent_selected_count"], 1)
         self.assertEqual(recent_gate["evidence"]["recent_noise_count"], 0)
 
+    def test_hybrid_memory_retrieve_reads_captured_telegram_turns_as_recent_conversation(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="memory_turn_captured",
+            component="telegram_runtime",
+            summary="Telegram user turn captured as an episodic memory candidate.",
+            session_id="session:captured-recent",
+            human_id="test",
+            facts={
+                "memory_role": "raw_episode",
+                "predicate": "raw_turn",
+                "role": "user",
+                "text": "The continuity phrase is velvet orbit.",
+                "source_surface": "telegram",
+                "source_event": "telegram_inbound",
+                "promotion_disposition": "captured_for_session_summary",
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="memory_session_summary_written",
+            component="memory_orchestrator",
+            summary="Summary mentioning velvet orbit should stay out of recent conversation.",
+            session_id="session:captured-recent",
+            human_id="test",
+            facts={"predicate": "evidence.telegram.session_summary", "text": "velvet orbit"},
+        )
+        fake_client = _HybridRetrievalMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ):
+            result = hybrid_memory_retrieve(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                query="What phrase did I use about velvet orbit?",
+                subject="human:test",
+                predicate="profile.current_focus",
+                limit=4,
+                actor_id="test",
+            )
+
+        recent_candidates = [candidate for candidate in result.candidates if candidate.lane == "recent_conversation"]
+        self.assertEqual(len(recent_candidates), 1)
+        metadata = recent_candidates[0].record["metadata"]
+        self.assertEqual(recent_candidates[0].record["text"], "The continuity phrase is velvet orbit.")
+        self.assertEqual(metadata["source_surface"], "telegram")
+        self.assertEqual(metadata["source_event"], "telegram_inbound")
+        self.assertEqual(metadata["source_predicate"], "raw_turn")
+
     def test_memory_kernel_dispatches_hybrid_memory_retrieve(self) -> None:
         fake_client = _HybridRetrievalMemoryClient()
         with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(

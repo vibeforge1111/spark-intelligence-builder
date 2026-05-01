@@ -5766,6 +5766,10 @@ def _json_object(raw: Any) -> dict[str, Any]:
 def _is_recent_conversation_row(*, row: Any, facts: dict[str, Any]) -> bool:
     event_type = str(row["event_type"] or "").casefold()
     component = str(row["component"] or "").casefold()
+    if event_type == "memory_turn_captured":
+        return str(facts.get("predicate") or "").casefold() == "raw_turn" and bool(
+            _optional_string(facts.get("text"))
+        )
     if event_type.startswith("memory_"):
         return False
     if any(marker in event_type for marker in ("diagnostic", "maintenance", "config", "policy", "doctor")):
@@ -5829,7 +5833,9 @@ def _recent_conversation_record(*, row: Any, facts: dict[str, Any], text: str) -
         "session_id": _optional_string(row["session_id"]),
         "timestamp": _optional_string(row["created_at"]),
         "metadata": {
-            "source_surface": "recent_conversation",
+            "source_surface": _optional_string(facts.get("source_surface")) or "recent_conversation",
+            "source_event": _optional_string(facts.get("source_event")),
+            "source_predicate": _optional_string(facts.get("predicate")),
             "event_type": row["event_type"],
             "component": row["component"],
             "role": role,

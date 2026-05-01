@@ -112,6 +112,49 @@ class SessionSummaryTests(SparkTestCase):
         self.assertEqual(len(summary.source_event_ids), 3)
         self.assertNotIn("do not include this", summary.to_text())
 
+    def test_build_session_memory_summary_renders_captured_turns_as_conversation_evidence(self) -> None:
+        session_id = "session:captured-turn-summary"
+        record_event(
+            self.state_db,
+            event_type="memory_turn_captured",
+            component="telegram_runtime",
+            summary="Telegram user turn captured as an episodic memory candidate.",
+            session_id=session_id,
+            human_id="human:test",
+            agent_id="agent:test",
+            facts={
+                "memory_role": "raw_episode",
+                "predicate": "raw_turn",
+                "role": "user",
+                "text": "Can you remember that I call the dashboard the memory window?",
+                "source_surface": "telegram",
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="memory_turn_captured",
+            component="telegram_runtime",
+            summary="Telegram assistant turn captured as an episodic memory candidate.",
+            session_id=session_id,
+            human_id="human:test",
+            agent_id="agent:test",
+            facts={
+                "memory_role": "raw_episode",
+                "predicate": "raw_turn",
+                "role": "assistant",
+                "text": "Yes, I will keep memory window as your phrasing for the dashboard.",
+                "source_surface": "telegram",
+            },
+        )
+
+        summary = build_session_memory_summary(state_db=self.state_db, session_id=session_id)
+
+        self.assertEqual(summary.event_count, 2)
+        self.assertTrue(any(item.startswith("User said: Can you remember") for item in summary.what_changed))
+        self.assertTrue(any(item.startswith("Spark replied: Yes, I will keep") for item in summary.what_changed))
+        self.assertTrue(any("memory window" in item for item in summary.open_questions))
+        self.assertNotIn("raw_turn:", summary.to_text())
+
     def test_write_session_summary_to_memory_persists_structured_evidence(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
         self.config_manager.set_path("spark.memory.shadow_mode", False)
@@ -377,4 +420,9 @@ class SessionSummaryTests(SparkTestCase):
         destinations = {facts.get("destination") for facts in lifecycle_facts}
         self.assertIn("evidence.telegram.daily_summary", destinations)
         self.assertIn("evidence.telegram.project_summary", destinations)
-        self.assertTrue(all(facts.get("transition_kind") == "compaction" for facts in lifecycle_facts[:2]))
+        summary_lifecycle_facts = [
+            facts
+            for facts in lifecycle_facts
+            if facts.get("destination") in {"evidence.telegram.daily_summary", "evidence.telegram.project_summary"}
+        ]
+        self.assertTrue(all(facts.get("transition_kind") == "compaction" for facts in summary_lifecycle_facts))

@@ -98,6 +98,21 @@ class ContextCapsuleTests(SparkTestCase):
             reason_code="telegram_bridge_outbound",
             facts={"delivered_text": "The memory maintenance job is scheduled."},
         )
+        record_event(
+            self.state_db,
+            event_type="memory_turn_captured",
+            component="telegram_runtime",
+            summary="Telegram user turn captured as an episodic memory candidate.",
+            channel_id="telegram",
+            session_id="session-1",
+            request_id="req-old-3",
+            facts={
+                "predicate": "raw_turn",
+                "role": "user",
+                "text": "Call the dashboard the memory window.",
+                "source_surface": "telegram",
+            },
+        )
 
         with patch(
             "spark_intelligence.context.capsule.inspect_human_memory_in_memory",
@@ -119,6 +134,7 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertNotIn("current_focus: diagnostics scan verification", rendered)
         self.assertIn("current_plan: verify scheduled memory cleanup", rendered)
         self.assertIn("assistant: The memory maintenance job is scheduled.", rendered)
+        self.assertIn("user: Call the dashboard the memory window.", rendered)
         self.assertIn("memory:sdk-maintenance", rendered)
         self.assertIn("spark-diagnostic-2026-04-27T12-55-14+00-00.md", rendered)
         self.assertIn("scanned_lines: 1062", rendered)
