@@ -291,3 +291,120 @@ class TelegramEpisodicMemoryTests(SparkTestCase):
         self.assertIn("daily episodic memory route", result.reply_text)
         self.assertIn("daily event ledger rollup", result.reply_text)
         self.assertIn("memory_episodic_daily_recall", result.reply_text)
+
+    def test_build_researcher_reply_answers_project_episodic_recall_from_event_ledger(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        record_event(
+            self.state_db,
+            event_type="memory_write_requested",
+            component="memory_orchestrator",
+            summary="Spark saved memory dashboard work.",
+            session_id="session-project-episodic-source",
+            human_id="human-1",
+            facts={
+                "project_key": "memory dashboard",
+                "repo": "spark-memory-quality-dashboard",
+                "observations": [
+                    {
+                        "predicate": "entity.decision",
+                        "value": "memory dashboard decision is human and agent views",
+                    },
+                    {
+                        "predicate": "entity.next_action",
+                        "value": "show accepted durable memories with salience",
+                    },
+                ],
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="memory_write_requested",
+            component="memory_orchestrator",
+            summary="Spark saved unrelated GTM work.",
+            session_id="session-project-episodic-other",
+            human_id="human-1",
+            facts={
+                "project_key": "gtm launch",
+                "observations": [
+                    {
+                        "predicate": "entity.next_action",
+                        "value": "get creator approvals",
+                    }
+                ],
+            },
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for project episodic recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for project episodic recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-project-episodic",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-project-episodic-query",
+                channel_kind="telegram",
+                user_message="What changed in memory dashboard today?",
+            )
+
+        self.assertEqual(result.mode, "memory_episodic_project_recall")
+        self.assertEqual(result.routing_decision, "memory_episodic_project_recall")
+        self.assertIn("From the memory dashboard project memory:", result.reply_text)
+        self.assertIn("memory dashboard decision is human and agent views", result.reply_text)
+        self.assertIn("Source: project event ledger rollup", result.reply_text)
+        self.assertNotIn("creator approvals", result.reply_text)
+
+    def test_project_episodic_recall_source_explanation_names_route(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        record_event(
+            self.state_db,
+            event_type="memory_write_requested",
+            component="memory_orchestrator",
+            summary="Spark saved startup ops work.",
+            session_id="session-project-source-explanation-source",
+            human_id="human-1",
+            facts={
+                "project_key": "startup ops",
+                "observations": [
+                    {
+                        "predicate": "entity.next_action",
+                        "value": "instrument revenue dashboard",
+                    }
+                ],
+            },
+        )
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-project-source-first",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-project-source-explanation",
+            channel_kind="telegram",
+            user_message="What happened with startup ops today?",
+        )
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-project-source-why",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-project-source-explanation",
+            channel_kind="telegram",
+            user_message="Why did you answer that?",
+        )
+
+        self.assertIn("project episodic memory route", result.reply_text)
+        self.assertIn("project event ledger rollup", result.reply_text)
+        self.assertIn("memory_episodic_project_recall", result.reply_text)

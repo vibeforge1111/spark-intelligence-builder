@@ -79,7 +79,7 @@ from spark_intelligence.memory.generic_observations import (
     detect_telegram_generic_deletion,
     detect_telegram_generic_observation,
 )
-from spark_intelligence.memory.session_summaries import build_daily_summary
+from spark_intelligence.memory.session_summaries import build_daily_summary, build_project_summary
 from spark_intelligence.memory.profile_facts import (
     active_state_records_past_revalidation,
     build_profile_fact_explanation_answer,
@@ -393,6 +393,12 @@ class BeliefRecallQuery:
 @dataclass(frozen=True)
 class EpisodicDailyRecallQuery:
     day: str
+    query_kind: str
+
+
+@dataclass(frozen=True)
+class EpisodicProjectRecallQuery:
+    project_key: str
     query_kind: str
 
 
@@ -829,6 +835,93 @@ def _detect_episodic_daily_recall_query(user_message: str) -> EpisodicDailyRecal
     return None
 
 
+def _detect_episodic_project_recall_query(user_message: str) -> EpisodicProjectRecallQuery | None:
+    normalized = " ".join(str(user_message or "").strip().split())
+    if not normalized:
+        return None
+    lowered = normalized.casefold().strip(" ?!.")
+    patterns: tuple[tuple[str, re.Pattern[str]], ...] = (
+        (
+            "build_recall",
+            re.compile(
+                r"^(?:what\s+did\s+we\s+(?:build|work\s+on)|what\s+have\s+we\s+built)\s+(?:for|in|on|with)\s+(.+?)(?:\s+today)?$",
+                re.IGNORECASE,
+            ),
+        ),
+        (
+            "change_recall",
+            re.compile(
+                r"^(?:what\s+changed|what\s+has\s+changed|what\s+was\s+improved)\s+(?:for|in|on|with)\s+(.+?)(?:\s+today)?$",
+                re.IGNORECASE,
+            ),
+        ),
+        (
+            "open_recall",
+            re.compile(
+                r"^(?:what(?:'s| is)\s+still\s+open|what\s+did\s+we\s+leave\s+open|what\s+is\s+left)\s+(?:for|in|on|with)\s+(.+?)(?:\s+today)?$",
+                re.IGNORECASE,
+            ),
+        ),
+        (
+            "memory_recall",
+            re.compile(
+                r"^(?:what\s+else\s+do\s+you\s+remember|what\s+happened)\s+(?:about|for|in|on|with)\s+(.+?)(?:\s+today)?$",
+                re.IGNORECASE,
+            ),
+        ),
+    )
+    for query_kind, pattern in patterns:
+        match = pattern.match(lowered)
+        if not match:
+            continue
+        project_key = _clean_entity_history_topic(str(match.group(1) or ""))
+        if project_key and project_key not in {"me", "my profile", "today"}:
+            return EpisodicProjectRecallQuery(project_key=project_key, query_kind=query_kind)
+    return None
+
+
+def _episodic_recall_sections(
+    *,
+    query_kind: str,
+    what_changed: tuple[str, ...],
+    decisions: tuple[str, ...],
+    open_questions: tuple[str, ...],
+    repos_touched: tuple[str, ...],
+    artifacts_created: tuple[str, ...],
+    promises_made: tuple[str, ...],
+    next_actions: tuple[str, ...],
+) -> list[tuple[str, tuple[str, ...]]]:
+    if query_kind == "build_recall":
+        return [
+            ("What changed", what_changed),
+            ("Repos touched", repos_touched),
+            ("Artifacts created", artifacts_created),
+            ("Next actions", next_actions),
+        ]
+    if query_kind == "change_recall":
+        return [
+            ("What changed", what_changed),
+            ("Decisions", decisions),
+            ("Artifacts created", artifacts_created),
+        ]
+    if query_kind == "open_recall":
+        return [
+            ("Still open", open_questions),
+            ("Next actions", next_actions),
+        ]
+    if query_kind == "promise_recall":
+        return [
+            ("Promises made", promises_made),
+            ("Next actions", next_actions),
+        ]
+    return [
+        ("What changed", what_changed),
+        ("Decisions", decisions),
+        ("Still open", open_questions),
+        ("Next actions", next_actions),
+    ]
+
+
 def _build_episodic_daily_recall_reply(
     *,
     state_db: StateDB,
@@ -856,37 +949,16 @@ def _build_episodic_daily_recall_reply(
             },
         )
 
-    sections: list[tuple[str, tuple[str, ...]]] = []
-    if query.query_kind == "build_recall":
-        sections = [
-            ("What changed", summary.what_changed),
-            ("Repos touched", summary.repos_touched),
-            ("Artifacts created", summary.artifacts_created),
-            ("Next actions", summary.next_actions),
-        ]
-    elif query.query_kind == "change_recall":
-        sections = [
-            ("What changed", summary.what_changed),
-            ("Decisions", summary.decisions),
-            ("Artifacts created", summary.artifacts_created),
-        ]
-    elif query.query_kind == "open_recall":
-        sections = [
-            ("Still open", summary.open_questions),
-            ("Next actions", summary.next_actions),
-        ]
-    elif query.query_kind == "promise_recall":
-        sections = [
-            ("Promises made", summary.promises_made),
-            ("Next actions", summary.next_actions),
-        ]
-    else:
-        sections = [
-            ("What changed", summary.what_changed),
-            ("Decisions", summary.decisions),
-            ("Still open", summary.open_questions),
-            ("Next actions", summary.next_actions),
-        ]
+    sections = _episodic_recall_sections(
+        query_kind=query.query_kind,
+        what_changed=summary.what_changed,
+        decisions=summary.decisions,
+        open_questions=summary.open_questions,
+        repos_touched=summary.repos_touched,
+        artifacts_created=summary.artifacts_created,
+        promises_made=summary.promises_made,
+        next_actions=summary.next_actions,
+    )
 
     rendered_sections: list[tuple[str, tuple[str, ...]]] = [
         (title, tuple(value for value in values if str(value).strip())[:6])
@@ -912,6 +984,80 @@ def _build_episodic_daily_recall_reply(
         [
             "",
             f"Source: daily event ledger rollup for {query.day}.",
+        ]
+    )
+    return (
+        "\n".join(lines),
+        {
+            **facts,
+            "answered": True,
+            "section_count": len(rendered_sections),
+            "sections": [title for title, _ in rendered_sections],
+        },
+    )
+
+
+def _build_episodic_project_recall_reply(
+    *,
+    state_db: StateDB,
+    human_id: str,
+    query: EpisodicProjectRecallQuery,
+) -> tuple[str, dict[str, Any]]:
+    summary = build_project_summary(state_db=state_db, project_key=query.project_key, human_id=human_id, limit=500)
+    facts: dict[str, Any] = {
+        "project_key": query.project_key,
+        "query_kind": query.query_kind,
+        "scope": "project",
+        "summary_source": "project_event_ledger_rollup",
+        "event_count": summary.event_count,
+        "session_count": summary.session_count,
+        "source_session_ids": list(summary.source_session_ids[:10]),
+        "source_event_ids": list(summary.source_event_ids[:20]),
+    }
+    if summary.event_count <= 0:
+        return (
+            f"I do not have a saved project memory trace for {query.project_key} yet.",
+            {
+                **facts,
+                "answered": False,
+                "section_count": 0,
+            },
+        )
+
+    sections = _episodic_recall_sections(
+        query_kind=query.query_kind,
+        what_changed=summary.what_changed,
+        decisions=summary.decisions,
+        open_questions=summary.open_questions,
+        repos_touched=summary.repos_touched,
+        artifacts_created=summary.artifacts_created,
+        promises_made=summary.promises_made,
+        next_actions=summary.next_actions,
+    )
+    rendered_sections: list[tuple[str, tuple[str, ...]]] = [
+        (title, tuple(value for value in values if str(value).strip())[:6])
+        for title, values in sections
+        if any(str(value).strip() for value in values)
+    ]
+    if not rendered_sections:
+        return (
+            f"I found {summary.event_count} event(s) for {query.project_key}, but no durable episodic summary details yet.",
+            {
+                **facts,
+                "answered": False,
+                "section_count": 0,
+            },
+        )
+
+    lines = [f"From the {query.project_key} project memory:"]
+    for title, values in rendered_sections:
+        lines.append("")
+        lines.append(title)
+        lines.extend(f"- {value}" for value in values)
+    lines.extend(
+        [
+            "",
+            f"Source: project event ledger rollup for {query.project_key}.",
         ]
     )
     return (
@@ -5770,6 +5916,14 @@ def _format_memory_route_source_reply(*, route_facts: dict[str, Any]) -> str | N
             "It summarized today's event ledger into human-readable sections, so the answer came from the work narrative "
             "rather than isolated slot facts, diagnostics, or workflow residue."
         )
+    elif routing_decision == "memory_episodic_project_recall" or bridge_mode == "memory_episodic_project_recall":
+        route_label = "project episodic memory route"
+        source_line = "project event ledger rollup"
+        reason = (
+            "The previous answer was a source-aware project episodic recall. "
+            "It filtered the event ledger by project/topic and summarized the work narrative, so the answer came from "
+            "project memory rather than only current slots, diagnostics, or workflow residue."
+        )
     if route_label is None:
         return None
     lines = [f"I answered from the {route_label} for the previous Telegram turn."]
@@ -5818,6 +5972,7 @@ def _format_memory_route_source_reply(*, route_facts: dict[str, Any]) -> str | N
         ("section_count", "section_count"),
         ("read_method", "read_method"),
         ("summary_source", "summary_source"),
+        ("project_key", "project_key"),
     ):
         value = route_facts.get(key)
         if value is not None and str(value).strip():
@@ -7321,6 +7476,7 @@ def build_researcher_reply(
     detected_open_memory_recall_query = None
     detected_belief_recall_query = None
     detected_episodic_daily_recall_query = None
+    detected_episodic_project_recall_query = None
     detected_generic_memory_candidate = None
     assessed_generic_memory_candidate = None
     detected_generic_memory_deletion = None
@@ -7765,6 +7921,76 @@ def build_researcher_reply(
             output_keepability=output_keepability,
             promotion_disposition=promotion_disposition,
             )
+
+    if not personality_context_extra:
+        detected_episodic_project_recall_query = _detect_episodic_project_recall_query(user_message)
+    if not personality_context_extra and detected_episodic_project_recall_query is not None:
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text, episodic_facts = _build_episodic_project_recall_reply(
+            state_db=state_db,
+            human_id=human_id,
+            query=detected_episodic_project_recall_query,
+        )
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_episodic_project_recall",
+            routing_decision="memory_episodic_project_recall",
+        )
+        evidence_summary = (
+            "status=memory_episodic_project_recall "
+            f"scope=project "
+            f"project_key={episodic_facts.get('project_key') or 'unknown'} "
+            f"query_kind={episodic_facts.get('query_kind') or 'unknown'} "
+            f"event_count={episodic_facts.get('event_count') or 0} "
+            f"session_count={episodic_facts.get('session_count') or 0} "
+            f"section_count={episodic_facts.get('section_count') or 0} "
+            f"source={episodic_facts.get('summary_source') or 'unknown'}"
+        )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered a source-aware project episodic memory recall query.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_episodic_project_recall",
+            facts=_bridge_event_facts(
+                routing_decision="memory_episodic_project_recall",
+                bridge_mode="memory_episodic_project_recall",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "query_text": str(user_message or "").strip(),
+                    **episodic_facts,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_episodic_project_recall",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_episodic_project_recall",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
 
     if not personality_context_extra:
         detected_episodic_daily_recall_query = _detect_episodic_daily_recall_query(user_message)
