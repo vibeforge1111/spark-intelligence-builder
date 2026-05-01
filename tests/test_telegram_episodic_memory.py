@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from spark_intelligence.memory import write_telegram_event_to_memory
-from spark_intelligence.observability.store import latest_events_by_type
+from spark_intelligence.observability.store import latest_events_by_type, record_event
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
 
 from tests.test_support import SparkTestCase
@@ -192,3 +192,102 @@ class TelegramEpisodicMemoryTests(SparkTestCase):
         self.assertEqual(result.reply_text, "Your latest saved flight is flight to London on May 6.")
         self.assertEqual(result.mode, "memory_telegram_event_latest")
         self.assertEqual(result.routing_decision, "memory_telegram_event_latest_query")
+
+    def test_build_researcher_reply_answers_daily_episodic_recall_from_event_ledger(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        record_event(
+            self.state_db,
+            event_type="memory_write_requested",
+            component="memory_orchestrator",
+            summary="Spark saved GTM launch work.",
+            session_id="session-daily-episodic-source",
+            human_id="human-1",
+            facts={
+                "repo": "spark-memory-quality-dashboard",
+                "artifact_path": "docs/TODAY_MEMORY_IMPROVEMENT_LEDGER_2026-05-01.md",
+                "observations": [
+                    {
+                        "predicate": "entity.decision",
+                        "value": "GTM launch decision is founder-led onboarding",
+                    },
+                    {
+                        "predicate": "entity.next_action",
+                        "value": "wire source-aware episodic recall",
+                    },
+                ],
+            },
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for daily episodic recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for daily episodic recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-daily-episodic",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-daily-episodic-query",
+                channel_kind="telegram",
+                user_message="What changed today?",
+            )
+
+        self.assertEqual(result.mode, "memory_episodic_daily_recall")
+        self.assertEqual(result.routing_decision, "memory_episodic_daily_recall")
+        self.assertIn("From today's episodic memory:", result.reply_text)
+        self.assertIn("GTM launch decision is founder-led onboarding", result.reply_text)
+        self.assertIn("Source: daily event ledger rollup", result.reply_text)
+        self.assertIn("status=memory_episodic_daily_recall", result.evidence_summary)
+
+    def test_daily_episodic_recall_source_explanation_names_route(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        record_event(
+            self.state_db,
+            event_type="memory_write_requested",
+            component="memory_orchestrator",
+            summary="Spark saved a memory dashboard next action.",
+            session_id="session-daily-source-explanation-source",
+            human_id="human-1",
+            facts={
+                "observations": [
+                    {
+                        "predicate": "entity.next_action",
+                        "value": "add accepted-memory visibility",
+                    }
+                ],
+            },
+        )
+
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-daily-source-first",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-daily-source-explanation",
+            channel_kind="telegram",
+            user_message="What else do you remember today?",
+        )
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-daily-source-why",
+            agent_id="agent-1",
+            human_id="human-1",
+            session_id="session-daily-source-explanation",
+            channel_kind="telegram",
+            user_message="Why did you answer that?",
+        )
+
+        self.assertIn("daily episodic memory route", result.reply_text)
+        self.assertIn("daily event ledger rollup", result.reply_text)
+        self.assertIn("memory_episodic_daily_recall", result.reply_text)
