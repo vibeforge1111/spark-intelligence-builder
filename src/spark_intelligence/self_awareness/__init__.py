@@ -1,4 +1,5 @@
 from spark_intelligence.self_awareness.capsule import (
+    CapabilityEvidence,
     SelfAwarenessCapsule,
     SelfAwarenessClaim,
     build_self_awareness_capsule,
@@ -8,6 +9,7 @@ from spark_intelligence.self_awareness.improvement_plan import SelfImprovementPl
 __all__ = [
     "SelfAwarenessCapsule",
     "SelfAwarenessClaim",
+    "CapabilityEvidence",
     "SelfImprovementPlanResult",
     "build_self_awareness_capsule",
     "build_self_improvement_plan",

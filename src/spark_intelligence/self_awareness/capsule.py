@@ -43,6 +43,35 @@ class SelfAwarenessClaim:
 
 
 @dataclass(frozen=True)
+class CapabilityEvidence:
+    capability_key: str
+    source: str
+    last_success_at: str | None = None
+    last_failure_at: str | None = None
+    last_failure_reason: str | None = None
+    route_latency_ms: int | None = None
+    eval_coverage_status: str = "unknown"
+    evidence_count: int = 0
+
+    def to_payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "capability_key": self.capability_key,
+            "source": self.source,
+            "eval_coverage_status": self.eval_coverage_status,
+            "evidence_count": self.evidence_count,
+        }
+        if self.last_success_at:
+            payload["last_success_at"] = self.last_success_at
+        if self.last_failure_at:
+            payload["last_failure_at"] = self.last_failure_at
+        if self.last_failure_reason:
+            payload["last_failure_reason"] = self.last_failure_reason
+        if self.route_latency_ms is not None:
+            payload["route_latency_ms"] = self.route_latency_ms
+        return payload
+
+
+@dataclass(frozen=True)
 class SelfAwarenessCapsule:
     generated_at: str
     workspace_id: str
@@ -53,6 +82,7 @@ class SelfAwarenessCapsule:
     inferred_strengths: list[SelfAwarenessClaim] = field(default_factory=list)
     lacks: list[SelfAwarenessClaim] = field(default_factory=list)
     improvement_options: list[SelfAwarenessClaim] = field(default_factory=list)
+    capability_evidence: list[CapabilityEvidence] = field(default_factory=list)
     recommended_probes: list[str] = field(default_factory=list)
     natural_language_routes: list[str] = field(default_factory=list)
     source_ledger: list[dict[str, Any]] = field(default_factory=list)
@@ -69,6 +99,7 @@ class SelfAwarenessCapsule:
             "inferred_strengths": _claims_payload(self.inferred_strengths),
             "lacks": _claims_payload(self.lacks),
             "improvement_options": _claims_payload(self.improvement_options),
+            "capability_evidence": _capability_evidence_payload(self.capability_evidence),
             "recommended_probes": self.recommended_probes,
             "natural_language_routes": self.natural_language_routes,
             "source_ledger": self.source_ledger,
@@ -99,6 +130,7 @@ class SelfAwarenessCapsule:
         _extend_style_lens_lines(lines, self.style_lens)
         _extend_claim_lines(lines, "What looks live", self.observed_now, limit=4, compact=True)
         _extend_claim_lines(lines, "What I recently proved", self.recently_verified, limit=2, compact=True)
+        _extend_capability_evidence_lines(lines, self.capability_evidence, limit=3)
         _extend_claim_lines(lines, "Where I am useful", self.inferred_strengths, limit=2, compact=True)
         _extend_claim_lines(lines, "Where I still lack", self.lacks, limit=3, compact=True)
         _extend_claim_lines(lines, "What I should improve next", self.improvement_options, limit=3, compact=True)
@@ -135,7 +167,8 @@ def build_self_awareness_capsule(
     workspace_id = str(registry_payload.get("workspace_id") or "default")
 
     observed_now = _build_observed_claims(records)
-    recently_verified = _build_recent_invocation_claims(state_db)
+    capability_evidence = _build_capability_evidence(state_db)
+    recently_verified = _build_recent_invocation_claims(state_db, capability_evidence=capability_evidence)
     available_unverified = _build_available_unverified_claims(records)
     degraded_or_missing = _build_degraded_claims(records)
     inferred_strengths = _build_strength_claims(registry_payload=registry_payload, context_capsule=context_capsule)
@@ -168,8 +201,9 @@ def build_self_awareness_capsule(
         {
             "source": "observability_events",
             "source_kind": "recent_invocation_log",
-            "present": bool(recently_verified),
-            "claim_boundary": "Recent route/tool outcomes only. A previous success can go stale.",
+            "present": bool(capability_evidence),
+            "claim_boundary": "Recent route/tool outcomes only. A previous success can go stale and absence is not proof of absence.",
+            "capability_count": len(capability_evidence),
         },
     ]
     return SelfAwarenessCapsule(
@@ -182,6 +216,7 @@ def build_self_awareness_capsule(
         inferred_strengths=inferred_strengths,
         lacks=lacks,
         improvement_options=improvement_options,
+        capability_evidence=capability_evidence,
         recommended_probes=recommended_probes,
         natural_language_routes=natural_language_routes,
         source_ledger=source_ledger,
@@ -213,7 +248,44 @@ def _build_observed_claims(records: list[dict[str, Any]]) -> list[SelfAwarenessC
     return claims[:12]
 
 
-def _build_recent_invocation_claims(state_db: StateDB) -> list[SelfAwarenessClaim]:
+def _build_recent_invocation_claims(
+    state_db: StateDB,
+    *,
+    capability_evidence: list[CapabilityEvidence] | None = None,
+) -> list[SelfAwarenessClaim]:
+    if capability_evidence is not None:
+        claims: list[SelfAwarenessClaim] = []
+        for evidence in capability_evidence[:8]:
+            if evidence.last_success_at:
+                claims.append(
+                    SelfAwarenessClaim(
+                        claim=(
+                            f"Capability {evidence.capability_key} last succeeded at {evidence.last_success_at}"
+                            f"{f' with latency={evidence.route_latency_ms}ms' if evidence.route_latency_ms is not None else ''}."
+                        ),
+                        source=evidence.source,
+                        source_kind="capability_evidence",
+                        confidence="medium",
+                        verification_status="recent_success",
+                        freshness=evidence.last_success_at,
+                        capability_key=evidence.capability_key,
+                        next_probe="Repeat the capability route if the user needs current proof.",
+                    )
+                )
+            elif evidence.last_failure_at:
+                claims.append(
+                    SelfAwarenessClaim(
+                        claim=f"Capability {evidence.capability_key} last failed at {evidence.last_failure_at}: {evidence.last_failure_reason or 'unknown failure'}.",
+                        source=evidence.source,
+                        source_kind="capability_evidence",
+                        confidence="high",
+                        verification_status="recent_failure",
+                        freshness=evidence.last_failure_at,
+                        capability_key=evidence.capability_key,
+                        next_probe="Repair or rerun the capability route before claiming it is healthy.",
+                    )
+                )
+        return claims[:8]
     claims: list[SelfAwarenessClaim] = []
     for event_type in ("tool_result_received", "dispatch_failed"):
         try:
@@ -244,6 +316,125 @@ def _build_recent_invocation_claims(state_db: StateDB) -> list[SelfAwarenessClai
                 )
             )
     return claims[:8]
+
+
+def _build_capability_evidence(state_db: StateDB) -> list[CapabilityEvidence]:
+    rows: dict[str, dict[str, Any]] = {}
+    events: list[dict[str, Any]] = []
+    for event_type in ("tool_result_received", "dispatch_failed"):
+        try:
+            events.extend(latest_events_by_type(state_db, event_type=event_type, limit=80))
+        except Exception:
+            continue
+    events.sort(key=lambda event: str(event.get("created_at") or ""), reverse=True)
+    for event in events:
+        capability_key = _capability_key_for_event(event)
+        if not capability_key:
+            continue
+        row = rows.setdefault(
+            capability_key,
+            {
+                "capability_key": capability_key,
+                "source": "",
+                "last_success_at": None,
+                "last_failure_at": None,
+                "last_failure_reason": None,
+                "route_latency_ms": None,
+                "eval_coverage_status": "unknown",
+                "evidence_count": 0,
+            },
+        )
+        row["evidence_count"] = int(row.get("evidence_count") or 0) + 1
+        facts = event.get("facts_json") if isinstance(event.get("facts_json"), dict) else {}
+        created_at = str(event.get("created_at") or "").strip() or None
+        event_id = str(event.get("event_id") or "").strip()
+        if not row.get("source") and event_id:
+            row["source"] = f"event:{event_id}"
+        latency = _latency_ms(facts)
+        if latency is not None and row.get("route_latency_ms") is None:
+            row["route_latency_ms"] = latency
+        if _event_has_eval_coverage(event):
+            row["eval_coverage_status"] = "observed"
+        if str(event.get("event_type") or "") == "tool_result_received" and row.get("last_success_at") is None:
+            row["last_success_at"] = created_at
+        if str(event.get("event_type") or "") == "dispatch_failed" and row.get("last_failure_at") is None:
+            row["last_failure_at"] = created_at
+            row["last_failure_reason"] = _failure_reason(event)
+    return [
+        CapabilityEvidence(
+            capability_key=str(row["capability_key"]),
+            source=str(row.get("source") or "observability_events"),
+            last_success_at=row.get("last_success_at"),
+            last_failure_at=row.get("last_failure_at"),
+            last_failure_reason=row.get("last_failure_reason"),
+            route_latency_ms=row.get("route_latency_ms"),
+            eval_coverage_status=str(row.get("eval_coverage_status") or "unknown"),
+            evidence_count=int(row.get("evidence_count") or 0),
+        )
+        for row in sorted(
+            rows.values(),
+            key=lambda item: str(item.get("last_success_at") or item.get("last_failure_at") or ""),
+            reverse=True,
+        )
+    ][:12]
+
+
+def _capability_key_for_event(event: dict[str, Any]) -> str:
+    facts = event.get("facts_json") if isinstance(event.get("facts_json"), dict) else {}
+    provenance = event.get("provenance_json") if isinstance(event.get("provenance_json"), dict) else {}
+    candidates = (
+        facts.get("capability_key"),
+        facts.get("active_chip_key"),
+        facts.get("chip_key"),
+        facts.get("routing_decision"),
+        facts.get("bridge_mode"),
+        event.get("reason_code"),
+        provenance.get("source_ref"),
+        event.get("component"),
+    )
+    for candidate in candidates:
+        key = str(candidate or "").strip()
+        if key:
+            return key.replace(" ", "_")
+    return ""
+
+
+def _latency_ms(facts: dict[str, Any]) -> int | None:
+    for key in ("route_latency_ms", "latency_ms", "duration_ms", "elapsed_ms"):
+        value = facts.get(key)
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            continue
+        if number >= 0:
+            return number
+    return None
+
+
+def _event_has_eval_coverage(event: dict[str, Any]) -> bool:
+    facts = event.get("facts_json") if isinstance(event.get("facts_json"), dict) else {}
+    haystack = " ".join(
+        str(value)
+        for value in (
+            facts.get("eval_coverage_status"),
+            facts.get("eval_suite"),
+            facts.get("test_name"),
+            facts.get("coverage"),
+            event.get("summary"),
+        )
+        if value is not None
+    ).casefold()
+    return any(token in haystack for token in ("eval", "test", "coverage", "regression"))
+
+
+def _failure_reason(event: dict[str, Any]) -> str:
+    facts = event.get("facts_json") if isinstance(event.get("facts_json"), dict) else {}
+    for key in ("failure_reason", "error_code", "error", "message"):
+        value = str(facts.get(key) or "").strip()
+        if value:
+            return value[:240]
+    return str(event.get("summary") or event.get("status") or "dispatch_failed").strip()[:240]
+
 
 
 def _build_available_unverified_claims(records: list[dict[str, Any]]) -> list[SelfAwarenessClaim]:
@@ -483,6 +674,31 @@ def _extend_claim_lines(
     lines.append("")
 
 
+def _extend_capability_evidence_lines(
+    lines: list[str],
+    evidence_rows: list[CapabilityEvidence],
+    *,
+    limit: int,
+) -> None:
+    selected_rows = evidence_rows[:limit]
+    if not selected_rows:
+        return
+    lines.append("Capability evidence")
+    for evidence in selected_rows:
+        status = "last success" if evidence.last_success_at else "last failure" if evidence.last_failure_at else "seen"
+        timestamp = evidence.last_success_at or evidence.last_failure_at or "unknown time"
+        extras: list[str] = []
+        if evidence.route_latency_ms is not None:
+            extras.append(f"{evidence.route_latency_ms}ms")
+        if evidence.eval_coverage_status != "unknown":
+            extras.append(f"eval={evidence.eval_coverage_status}")
+        if evidence.last_failure_reason and not evidence.last_success_at:
+            extras.append(evidence.last_failure_reason)
+        suffix = f" ({'; '.join(extras)})" if extras else ""
+        lines.append(f"- {evidence.capability_key}: {status} at {timestamp}{suffix}")
+    lines.append("")
+
+
 def _compact_claim_text(claim: SelfAwarenessClaim) -> str:
     text = claim.claim.strip()
     text = text.replace("Spark Intelligence Builder", "Builder")
@@ -679,6 +895,10 @@ def _human_join(items: list[str]) -> str:
 
 def _claims_payload(claims: list[SelfAwarenessClaim]) -> list[dict[str, Any]]:
     return [claim.to_payload() for claim in claims]
+
+
+def _capability_evidence_payload(evidence_rows: list[CapabilityEvidence]) -> list[dict[str, Any]]:
+    return [evidence.to_payload() for evidence in evidence_rows]
 
 
 def _now_iso() -> str:

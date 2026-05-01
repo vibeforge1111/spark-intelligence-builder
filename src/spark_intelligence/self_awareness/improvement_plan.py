@@ -100,6 +100,7 @@ def build_self_improvement_plan(
             "workspace_id": capsule.get("workspace_id"),
             "observed_now": _claim_rows(capsule.get("observed_now"), 4),
             "recently_verified": _claim_rows(capsule.get("recently_verified"), 3),
+            "capability_evidence": _capability_evidence_rows(capsule.get("capability_evidence"), 5),
             "lacks": _claim_rows(capsule.get("lacks"), 5),
             "improvement_options": _claim_rows(capsule.get("improvement_options"), 5),
             "source_ledger": [item for item in capsule.get("source_ledger") or [] if isinstance(item, dict)][:4],
@@ -247,6 +248,28 @@ def _claim_rows(value: object, limit: int) -> list[dict[str, str]]:
                 "verification_status": str(item.get("verification_status") or "").strip(),
                 "next_probe": str(item.get("next_probe") or "").strip(),
                 "improvement_action": str(item.get("improvement_action") or "").strip(),
+            }
+        )
+    return rows[:limit]
+
+
+def _capability_evidence_rows(value: object, limit: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in (value if isinstance(value, list) else []):
+        if not isinstance(item, dict):
+            continue
+        capability_key = str(item.get("capability_key") or "").strip()
+        if not capability_key:
+            continue
+        rows.append(
+            {
+                "capability_key": capability_key,
+                "last_success_at": item.get("last_success_at"),
+                "last_failure_at": item.get("last_failure_at"),
+                "last_failure_reason": item.get("last_failure_reason"),
+                "route_latency_ms": item.get("route_latency_ms"),
+                "eval_coverage_status": str(item.get("eval_coverage_status") or "unknown"),
+                "evidence_count": int(item.get("evidence_count") or 0),
             }
         )
     return rows[:limit]

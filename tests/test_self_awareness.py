@@ -25,8 +25,22 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
                 "routing_decision": "researcher_advisory",
                 "bridge_mode": "external_typed",
                 "active_chip_key": "startup-yc",
+                "route_latency_ms": 432,
+                "eval_suite": "self-awareness-route-regression",
             },
             provenance={"source_kind": "chip_hook", "source_ref": "startup-yc"},
+        )
+        record_event(
+            self.state_db,
+            event_type="dispatch_failed",
+            component="researcher_bridge",
+            summary="Browser route timed out",
+            status="failed",
+            facts={
+                "routing_decision": "browser_search",
+                "failure_reason": "timeout",
+            },
+            provenance={"source_kind": "route", "source_ref": "browser_search"},
         )
 
         capsule = build_self_awareness_capsule(
@@ -44,12 +58,18 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertTrue(payload["available_unverified"])
         self.assertTrue(payload["lacks"])
         self.assertTrue(payload["improvement_options"])
+        self.assertTrue(payload["capability_evidence"])
         self.assertTrue(payload["natural_language_routes"])
         lack_text = json.dumps(payload["lacks"])
         self.assertIn("Registry visibility does not prove", lack_text)
         self.assertIn("Natural-language invocability", lack_text)
         recent_text = json.dumps(payload["recently_verified"])
         self.assertIn("startup-yc", recent_text)
+        evidence_text = json.dumps(payload["capability_evidence"])
+        self.assertIn("last_success_at", evidence_text)
+        self.assertIn("last_failure_at", evidence_text)
+        self.assertIn("route_latency_ms", evidence_text)
+        self.assertIn("eval_coverage_status", evidence_text)
 
     def test_self_status_cli_emits_machine_readable_capsule(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
@@ -66,6 +86,7 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         payload = json.loads(stdout)
         self.assertEqual(payload["workspace_id"], "default")
         self.assertIn("observed_now", payload)
+        self.assertIn("capability_evidence", payload)
         self.assertIn("lacks", payload)
         self.assertIn("improvement_options", payload)
         self.assertIn("source_ledger", payload)
