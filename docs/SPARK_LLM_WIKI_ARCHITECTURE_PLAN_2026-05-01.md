@@ -59,12 +59,22 @@ The LLM wiki should be a layered knowledge system:
    - Personalized to the local user and machine.
    - Tracks projects, repo maps, stable preferences, active goals, recurring workflows, and local constraints.
    - Must not promote one-off conversation residue into stable identity.
+   - Keeps user-specific knowledge separate from global Spark system doctrine unless the user explicitly promotes it.
 
 4. Domain wiki
    - Capability cards for each domain chip, provider, path, tool, and major route.
    - Includes last verified success/failure, natural-language intents, safe probe commands, known limits, and improvement path.
 
-5. Evidence ledger
+5. Builder/project wiki
+   - Tracks active repos, shipped project context, Spawner missions, build/test outcomes, and project-specific lessons.
+   - Helps Spark answer "what are we building, what changed, what passed, and what should be improved next?"
+   - Must distinguish durable project knowledge from temporary planning chatter.
+
+6. Self-improvement wiki
+   - Tracks weak spots, candidate learnings, verified learnings, failed mutations, eval coverage, and rollback conditions.
+   - Gives Spark a growing memory of how to improve without silently changing itself.
+
+7. Evidence ledger
    - Sources, traces, snapshots, exact commands, eval results, provenance links, timestamps, confidence, freshness, invalidation triggers, and next probes.
 
 ## Authority Model

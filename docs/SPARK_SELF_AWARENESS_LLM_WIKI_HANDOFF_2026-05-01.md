@@ -394,6 +394,14 @@ Do not delete or overwrite unrelated/user changes without inspecting them.
 
 ## What Remains To Improve
 
+The planned hardening backlog is now tracked here:
+
+```text
+C:\Users\USER\Desktop\spark-intelligence-builder\docs\SPARK_SELF_AWARENESS_HARDENING_TASKS_2026-05-01.md
+```
+
+That backlog splits the next work into user awareness, Spark/system awareness, environment awareness, builder/project awareness, wiki growth, route explainability, self-improvement governance, and live Telegram testing.
+
 ### A. Conversational Synthesis Over Wiki Query Results
 
 Current query output is evidence-forward and operational. It lists relevant packets and source paths.
