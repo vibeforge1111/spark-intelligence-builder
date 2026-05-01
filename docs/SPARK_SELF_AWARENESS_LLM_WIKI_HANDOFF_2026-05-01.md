@@ -604,6 +604,7 @@ Before shipping:
    - We used the existing `wiki_packets` lane and local `$SPARK_HOME/wiki`.
    - We did not yet unify all older KB compiler outputs, `wiki/current-state`, `wiki/evidence`, `wiki/syntheses`, and new LLM wiki pages into one navigation model.
    - Follow-up now mapped in `docs/SPARK_MEMORY_WIKI_COGNITION_INTEGRATION_2026-05-01.md`.
+   - Cross-terminal feedback packet now lives at `docs/SPARK_MEMORY_SYSTEM_FEEDBACK_PACKET_2026-05-01.md`.
 
 2. User consent and privacy policy for personalized wiki pages.
    - A `user/user-environment-profile-template.md` exists.
