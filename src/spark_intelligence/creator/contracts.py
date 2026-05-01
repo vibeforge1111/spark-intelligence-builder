@@ -7,6 +7,7 @@ from typing import Any, Mapping
 CREATOR_INTENT_SCHEMA_VERSION = "spark-creator-intent.v1"
 ARTIFACT_MANIFEST_SCHEMA_VERSION = "spark-artifact-manifest.v1"
 CREATOR_TRACE_SCHEMA_VERSION = "spark-creator-trace.v1"
+CREATOR_MISSION_STATUS_SCHEMA_VERSION = "adaptive_creator_loop.creator_mission_status.v1"
 
 PRIVACY_MODES = {"local_only", "github_pr", "swarm_shared"}
 RISK_LEVELS = {"low", "medium", "high"}
@@ -41,6 +42,15 @@ PUBLISH_READINESS = {
     "canonical",
 }
 NETWORK_CONTRIBUTION_POLICIES = {"workspace_only", "github_pr_required", "manual_review_required"}
+MISSION_STATUS_SURFACES = {"builder", "telegram", "spawner", "canvas", "kanban"}
+MISSION_STATUS_VERDICTS = {
+    "prototype",
+    "ready_for_baseline",
+    "ready_for_swarm_packet",
+    "blocked",
+}
+MISSION_STATUS_EVIDENCE_TIERS = {"local_only", "candidate_review", "transfer_supported"}
+MISSION_STATUS_PUBLICATION_MODES = {"local_only", "github_pr", "swarm_shared"}
 
 
 @dataclass(frozen=True)
@@ -100,6 +110,22 @@ class CreatorTrace:
             for task in self.tasks
         ]
         return payload
+
+
+@dataclass(frozen=True)
+class CreatorMissionStatusSummary:
+    mission_id: str
+    canonical_verdict: str
+    evidence_tier: str
+    blocked: bool
+    recommended_next_command: str
+    requested_publication_mode: str
+    swarm_shared_allowed: bool
+    network_absorbable: bool
+    surface_adapters: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 def validate_creator_intent_packet(payload: Mapping[str, Any] | Any) -> list[ValidationIssue]:
@@ -178,6 +204,94 @@ def validate_creator_trace(payload: Mapping[str, Any] | CreatorTrace) -> list[Va
     return issues
 
 
+def validate_creator_mission_status(payload: Mapping[str, Any] | Any) -> list[ValidationIssue]:
+    data = _payload_to_mapping(payload)
+    if data is None:
+        return [ValidationIssue("$", "expected object-like creator mission status packet")]
+
+    issues: list[ValidationIssue] = []
+    _require_exact(data, "schema_version", CREATOR_MISSION_STATUS_SCHEMA_VERSION, issues)
+    _require_non_empty_string(data, "mission_id", issues)
+
+    canonical = _require_mapping(data, "canonical", issues)
+    if canonical is not None:
+        _require_allowed(canonical, "canonical.verdict", MISSION_STATUS_VERDICTS, issues, source_key="verdict")
+        _require_allowed(
+            canonical,
+            "canonical.evidence_tier",
+            MISSION_STATUS_EVIDENCE_TIERS,
+            issues,
+            source_key="evidence_tier",
+        )
+        automation = _require_mapping(canonical, "canonical.automation", issues, source_key="automation")
+        if automation is not None:
+            _require_bool(automation, "canonical.automation.blocked", issues, source_key="blocked")
+            _require_non_empty_string(
+                automation,
+                "canonical.automation.recommended_next_command",
+                issues,
+                source_key="recommended_next_command",
+            )
+
+    publication = _require_mapping(data, "publication", issues)
+    if publication is not None:
+        _require_allowed(
+            publication,
+            "publication.requested_mode",
+            MISSION_STATUS_PUBLICATION_MODES,
+            issues,
+            source_key="requested_mode",
+        )
+        _require_bool(
+            publication,
+            "publication.swarm_shared_allowed",
+            issues,
+            source_key="swarm_shared_allowed",
+        )
+        _require_bool(publication, "publication.network_absorbable", issues, source_key="network_absorbable")
+        if publication.get("network_absorbable") is True:
+            issues.append(
+                ValidationIssue(
+                    "publication.network_absorbable",
+                    "Builder must not accept network absorption from read-only mission packets",
+                )
+            )
+
+    adapters = _require_mapping(data, "surface_adapters", issues)
+    if adapters is not None:
+        missing = sorted(MISSION_STATUS_SURFACES - set(adapters))
+        for surface in missing:
+            issues.append(ValidationIssue(f"surface_adapters.{surface}", "expected read-only adapter"))
+
+    return issues
+
+
+def summarize_creator_mission_status(payload: Mapping[str, Any] | Any) -> CreatorMissionStatusSummary:
+    issues = validate_creator_mission_status(payload)
+    if issues:
+        messages = "; ".join(issue.to_text() for issue in issues)
+        raise ValueError(f"invalid creator mission status packet: {messages}")
+
+    data = _payload_to_mapping(payload)
+    if data is None:
+        raise ValueError("invalid creator mission status packet")
+    canonical = data["canonical"]
+    automation = canonical["automation"]
+    publication = data["publication"]
+    adapters = data["surface_adapters"]
+    return CreatorMissionStatusSummary(
+        mission_id=str(data["mission_id"]),
+        canonical_verdict=str(canonical["verdict"]),
+        evidence_tier=str(canonical["evidence_tier"]),
+        blocked=bool(automation["blocked"]),
+        recommended_next_command=str(automation["recommended_next_command"]),
+        requested_publication_mode=str(publication["requested_mode"]),
+        swarm_shared_allowed=bool(publication["swarm_shared_allowed"]),
+        network_absorbable=bool(publication["network_absorbable"]),
+        surface_adapters=sorted(adapters),
+    )
+
+
 def _payload_to_mapping(payload: Mapping[str, Any] | Any) -> Mapping[str, Any] | None:
     if isinstance(payload, Mapping):
         return payload
@@ -226,6 +340,34 @@ def _require_allowed(
     if not isinstance(value, str) or value not in allowed:
         allowed_list = ", ".join(sorted(allowed))
         issues.append(ValidationIssue(path, f"expected one of: {allowed_list}"))
+
+
+def _require_mapping(
+    data: Mapping[str, Any],
+    path: str,
+    issues: list[ValidationIssue],
+    *,
+    source_key: str | None = None,
+) -> Mapping[str, Any] | None:
+    key = source_key or path
+    value = data.get(key)
+    if not isinstance(value, Mapping):
+        issues.append(ValidationIssue(path, "expected object"))
+        return None
+    return value
+
+
+def _require_bool(
+    data: Mapping[str, Any],
+    path: str,
+    issues: list[ValidationIssue],
+    *,
+    source_key: str | None = None,
+) -> None:
+    key = source_key or path
+    value = data.get(key)
+    if not isinstance(value, bool):
+        issues.append(ValidationIssue(path, "expected boolean"))
 
 
 def _require_string_list(
