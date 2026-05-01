@@ -32,6 +32,7 @@ class MemoryFeedbackBenchmarkRunResult:
             lines.append(f"- automated_pass: {summary.get('automated_pass_count', 0)}")
             lines.append(f"- automated_fail: {summary.get('automated_fail_count', 0)}")
             lines.append(f"- needs_operator_judgment: {summary.get('needs_operator_judgment_count', 0)}")
+            lines.append(f"- automated_correction_score: {_format_score(summary.get('automated_correction_score'))}")
         failures = self.payload.get("automated_failures") if isinstance(self.payload, dict) else None
         if isinstance(failures, list) and failures:
             lines.append("- failure_cases: " + ", ".join(str(item.get("case_id") or "unknown") for item in failures[:8]))
@@ -99,14 +100,24 @@ def run_memory_feedback_benchmark_regression(
     automated_failures = [case for case in case_results if case.get("automated_status") == "fail"]
     needs_operator_judgment = [case for case in case_results if case.get("judgment_status") == "operator_review_required"]
     skipped = [case for case in case_results if case.get("execution_status") == "skipped"]
+    executed_count = sum(1 for case in case_results if case.get("execution_status") == "executed")
+    automated_pass_count = sum(1 for case in case_results if case.get("automated_status") == "pass")
+    automated_fail_count = len(automated_failures)
+    needs_operator_judgment_count = len(needs_operator_judgment)
+    automated_correction_score = _ratio(automated_pass_count, executed_count)
+    automated_failure_rate = _ratio(automated_fail_count, executed_count)
+    operator_judgment_rate = _ratio(needs_operator_judgment_count, executed_count)
     summary = {
         "status": "ok" if not automated_failures else "review_required",
         "case_count": len(case_results),
-        "executed_case_count": sum(1 for case in case_results if case.get("execution_status") == "executed"),
+        "executed_case_count": executed_count,
         "skipped_case_count": len(skipped),
-        "automated_pass_count": sum(1 for case in case_results if case.get("automated_status") == "pass"),
-        "automated_fail_count": len(automated_failures),
-        "needs_operator_judgment_count": len(needs_operator_judgment),
+        "automated_pass_count": automated_pass_count,
+        "automated_fail_count": automated_fail_count,
+        "needs_operator_judgment_count": needs_operator_judgment_count,
+        "automated_correction_score": automated_correction_score,
+        "automated_failure_rate": automated_failure_rate,
+        "operator_judgment_rate": operator_judgment_rate,
         "selected_user_id": selected_user_id,
         "selected_chat_id": selected_chat_id,
         "human_id": human_id or (f"human:telegram:{selected_user_id}" if selected_user_id else None),
@@ -148,6 +159,9 @@ def run_memory_feedback_benchmark_regression(
             "automated_pass_count": summary["automated_pass_count"],
             "automated_fail_count": summary["automated_fail_count"],
             "needs_operator_judgment_count": summary["needs_operator_judgment_count"],
+            "automated_correction_score": automated_correction_score,
+            "automated_failure_rate": automated_failure_rate,
+            "operator_judgment_rate": operator_judgment_rate,
             "artifact_paths": payload["artifact_paths"],
             "feedback_case_ids": [case.get("case_id") for case in case_results],
         },
@@ -233,6 +247,12 @@ def _run_feedback_case(
         "replay_read_event_id": replay_read_event.get("event_id") if replay_read_event else None,
         "gateway_payload": gateway_payload,
     }
+
+
+def _ratio(numerator: int, denominator: int) -> float | None:
+    if denominator <= 0:
+        return None
+    return round(float(numerator) / float(denominator), 4)
 
 
 def _automated_mismatches(
@@ -401,6 +421,7 @@ def _build_feedback_run_markdown(payload: dict[str, Any]) -> str:
         f"- Automated pass: `{summary.get('automated_pass_count', 0)}`",
         f"- Automated fail: `{summary.get('automated_fail_count', 0)}`",
         f"- Needs operator judgment: `{summary.get('needs_operator_judgment_count', 0)}`",
+        f"- Automated correction score: `{_format_score(summary.get('automated_correction_score'))}`",
         "",
         "Feedback remains eval evidence only. Passing this run does not promote feedback notes into durable memory truth.",
         "",
@@ -423,3 +444,9 @@ def _build_feedback_run_markdown(payload: dict[str, Any]) -> str:
         if isinstance(mismatches, list) and mismatches:
             lines.append("- Mismatches: " + ", ".join(str(item) for item in mismatches))
     return "\n".join(lines) + "\n"
+
+
+def _format_score(value: Any) -> str:
+    if isinstance(value, (int, float)):
+        return f"{float(value):.4f}"
+    return "n/a"
