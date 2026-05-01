@@ -359,6 +359,7 @@ class _MaintenanceMemoryClient(_FakeMemoryClient):
             active_state_stale_preserved_count=1,
             active_state_superseded_count=1,
             active_state_archived_count=0,
+            active_state_resurrected_count=1,
             audit_samples={
                 "deleted": [
                     {
@@ -390,6 +391,17 @@ class _MaintenanceMemoryClient(_FakeMemoryClient):
                     }
                 ],
                 "archived": [],
+                "resurrected": [
+                    {
+                        "predicate": "profile.current_plan",
+                        "value": "delete profile.current_plan for human:test",
+                        "action": "resurrected",
+                        "reason": "deleted_state_resurrected_by_newer_current_state",
+                        "replacement_value": "evaluate open-ended persistent memory recall",
+                        "replacement_observation_id": "obs-new-plan",
+                        "decay_score_delta": -0.3333,
+                    }
+                ],
                 "still_current": [
                     {
                         "predicate": "profile.current_focus",
@@ -406,6 +418,7 @@ class _MaintenanceMemoryClient(_FakeMemoryClient):
                     "stale_preserved": 1,
                     "superseded": 1,
                     "archived": 0,
+                    "resurrected": 1,
                 },
             },
         )
@@ -1531,6 +1544,7 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(fake_client.maintenance_calls, [{"now": "2025-04-02T09:00:00Z"}])
         self.assertEqual(result.maintenance["active_state_stale_preserved_count"], 1)
         self.assertEqual(result.maintenance["active_state_superseded_count"], 1)
+        self.assertEqual(result.maintenance["active_state_resurrected_count"], 1)
         self.assertEqual(result.trace["operation"], "reconsolidate_manual_memory")
         events = latest_events_by_type(self.state_db, event_type="memory_maintenance_run", limit=10)
         self.assertTrue(events)
@@ -1540,11 +1554,12 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(facts["trace"]["active_state_maintenance"]["superseded"], 1)
         lifecycle_events = latest_events_by_type(self.state_db, event_type="memory_lifecycle_transition", limit=10)
         lifecycle_facts = [event["facts_json"] or {} for event in lifecycle_events]
-        self.assertEqual(len(lifecycle_facts), 3)
+        self.assertEqual(len(lifecycle_facts), 4)
         actions = {facts.get("lifecycle_action") for facts in lifecycle_facts}
         self.assertIn("deleted", actions)
         self.assertIn("stale_preserved", actions)
         self.assertIn("superseded", actions)
+        self.assertIn("resurrected", actions)
         self.assertTrue(all(facts.get("transition_count") == 1 for facts in lifecycle_facts))
         self.assertTrue(all(facts.get("retention_class") == "maintenance_summary" for facts in lifecycle_facts))
         by_action = {facts.get("lifecycle_action"): facts for facts in lifecycle_facts}
@@ -1555,6 +1570,13 @@ class MemoryOrchestratorTests(SparkTestCase):
         superseded_facts = by_action["superseded"]
         self.assertEqual(superseded_facts["audit_sample_bucket"], "superseded")
         self.assertEqual(superseded_facts["audit_samples"][0]["replacement_value"], "persistent memory quality evaluation")
+        resurrected_facts = by_action["resurrected"]
+        self.assertEqual(resurrected_facts["audit_sample_bucket"], "resurrected")
+        self.assertEqual(resurrected_facts["transition_kind"], "resurrection")
+        self.assertEqual(
+            resurrected_facts["audit_samples"][0]["replacement_value"],
+            "evaluate open-ended persistent memory recall",
+        )
 
     def test_structured_evidence_writes_use_evidence_role_and_archive_retention(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

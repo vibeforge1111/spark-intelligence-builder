@@ -5060,6 +5060,7 @@ def _normalize_memory_maintenance_payload(raw: Any) -> dict[str, Any]:
         "active_state_stale_preserved_count",
         "active_state_superseded_count",
         "active_state_archived_count",
+        "active_state_resurrected_count",
         "audit_samples",
         "trace",
     ):
@@ -6712,6 +6713,14 @@ def _record_memory_maintenance_lifecycle_transitions(
             "maintenance_archive",
             "current-state archived",
             "archived",
+        ),
+        (
+            "active_state_resurrected_count",
+            "resurrection",
+            "resurrected",
+            "active_state_resurrected",
+            "current-state resurrected",
+            "resurrected",
         ),
     ]
     audit_samples = maintenance.get("audit_samples") if isinstance(maintenance.get("audit_samples"), dict) else {}
