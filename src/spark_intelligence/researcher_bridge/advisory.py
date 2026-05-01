@@ -5969,7 +5969,15 @@ def _format_memory_route_source_reply(*, route_facts: dict[str, Any]) -> str | N
     route_label: str | None = None
     source_line: str | None = None
     reason: str | None = None
-    if routing_decision == "memory_entity_state_summary_query" or bridge_mode == "memory_entity_state_summary":
+    if routing_decision == "memory_current_focus_plan_query" or bridge_mode == "memory_current_focus_plan":
+        route_label = "current focus and plan route"
+        source_line = "current_state focus and plan records"
+        reason = (
+            "The previous answer was a current-state focus/plan read. "
+            "It used authoritative current-state slots for the active focus and plan, so clean diagnostics or old "
+            "workflow residue did not close or override the user-level state."
+        )
+    elif routing_decision == "memory_entity_state_summary_query" or bridge_mode == "memory_entity_state_summary":
         route_label = "entity-state summary route"
         source_line = "entity_state current summary records"
         reason = (
@@ -6104,6 +6112,12 @@ def _format_memory_route_source_reply(*, route_facts: dict[str, Any]) -> str | N
         ("summary_source", "summary_source"),
         ("session_id", "session_id"),
         ("project_key", "project_key"),
+        ("current_focus", "current_focus"),
+        ("current_plan", "current_plan"),
+        ("focus_source_class", "focus_source_class"),
+        ("focus_read_method", "focus_read_method"),
+        ("plan_source_class", "plan_source_class"),
+        ("plan_read_method", "plan_read_method"),
     ):
         value = route_facts.get(key)
         if value is not None and str(value).strip():

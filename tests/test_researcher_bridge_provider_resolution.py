@@ -292,6 +292,99 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual(debug_event["facts_json"]["explained_focus_source_class"], "current_state")
         self.assertEqual(debug_event["facts_json"]["context_packet_promotion_gates"]["status"], "pass")
 
+    def test_context_source_debug_query_explains_previous_current_focus_plan_route(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="context_capsule_compiled",
+            component="researcher_bridge",
+            summary="Compiled older Spark context capsule.",
+            request_id="req-older-capsule",
+            channel_id="telegram",
+            session_id="session:telegram:dm:111",
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            actor_id="researcher_bridge",
+            reason_code="context_capsule_compiled",
+            facts={
+                "source_counts": {"diagnostics": 8},
+                "source_ledger": [
+                    {
+                        "source": "diagnostics",
+                        "priority": 2,
+                        "role": "authority",
+                        "count": 8,
+                        "present": True,
+                    }
+                ],
+            },
+        )
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered current focus and plan.",
+            request_id="req-current-focus-plan",
+            channel_id="telegram",
+            session_id="session:telegram:dm:111",
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            actor_id="researcher_bridge",
+            reason_code="memory_current_focus_plan_query",
+            facts={
+                "routing_decision": "memory_current_focus_plan_query",
+                "bridge_mode": "memory_current_focus_plan",
+                "current_focus": "persistent memory quality evaluation",
+                "current_plan": "evaluate open-ended persistent memory recall",
+                "focus_source_class": "current_state",
+                "focus_read_method": "get_current_state",
+                "plan_source_class": "current_state",
+                "plan_read_method": "get_current_state",
+                "evidence_summary": (
+                    "status=memory_current_focus_plan focus_found=yes plan_found=yes "
+                    "focus_source_class=current_state plan_source_class=current_state"
+                ),
+            },
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider should not run for source debug"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-source-debug",
+                agent_id="agent:human:telegram:111",
+                human_id="human:telegram:111",
+                session_id="session:telegram:dm:111",
+                channel_kind="telegram",
+                user_message="Why did you answer that?",
+            )
+
+        self.assertEqual(result.routing_decision, "context_source_debug")
+        self.assertIn("current focus and plan route", result.reply_text)
+        self.assertIn("routing_decision: memory_current_focus_plan_query", result.reply_text)
+        self.assertIn("source: current_state focus and plan records", result.reply_text)
+        self.assertIn("current_focus: persistent memory quality evaluation", result.reply_text)
+        self.assertIn("current_plan: evaluate open-ended persistent memory recall", result.reply_text)
+        self.assertIn("focus_source_class: current_state", result.reply_text)
+        self.assertIn("plan_source_class: current_state", result.reply_text)
+        self.assertIn("current-state focus/plan read", result.reply_text)
+        self.assertNotIn("latest Spark context capsule", result.reply_text)
+        self.assertNotIn("diagnostics: authority, 8 items", result.reply_text)
+
+        events = latest_events_by_type(
+            self.state_db,
+            event_type="tool_result_received",
+            limit=5,
+        )
+        debug_event = next(event for event in events if event["reason_code"] == "context_source_debug")
+        self.assertEqual(debug_event["facts_json"]["explained_request_id"], "req-current-focus-plan")
+        self.assertEqual(
+            debug_event["facts_json"]["explained_routing_decision"],
+            "memory_current_focus_plan_query",
+        )
+
     def test_context_source_debug_query_explains_previous_entity_history_route(self) -> None:
         record_event(
             self.state_db,
