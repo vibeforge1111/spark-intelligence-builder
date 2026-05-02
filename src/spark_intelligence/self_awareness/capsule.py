@@ -95,6 +95,7 @@ class SelfAwarenessCapsule:
     lacks: list[SelfAwarenessClaim] = field(default_factory=list)
     improvement_options: list[SelfAwarenessClaim] = field(default_factory=list)
     capability_evidence: list[CapabilityEvidence] = field(default_factory=list)
+    weak_spot_priorities: list[dict[str, Any]] = field(default_factory=list)
     recommended_probes: list[str] = field(default_factory=list)
     natural_language_routes: list[str] = field(default_factory=list)
     source_ledger: list[dict[str, Any]] = field(default_factory=list)
@@ -116,6 +117,7 @@ class SelfAwarenessCapsule:
             "lacks": _claims_payload(self.lacks),
             "improvement_options": _claims_payload(self.improvement_options),
             "capability_evidence": _capability_evidence_payload(self.capability_evidence),
+            "weak_spot_priorities": self.weak_spot_priorities,
             "recommended_probes": self.recommended_probes,
             "natural_language_routes": self.natural_language_routes,
             "source_ledger": self.source_ledger,
@@ -154,6 +156,7 @@ class SelfAwarenessCapsule:
         _extend_claim_lines(lines, "What looks live", self.observed_now, limit=4, compact=True)
         _extend_claim_lines(lines, "What I recently proved", self.recently_verified, limit=2, compact=True)
         _extend_capability_evidence_lines(lines, self.capability_evidence, limit=3)
+        _extend_weak_spot_priority_lines(lines, self.weak_spot_priorities, limit=1)
         _extend_claim_lines(lines, "Where I am useful", self.inferred_strengths, limit=2, compact=True)
         _extend_claim_lines(lines, "Where I still lack", self.lacks, limit=3, compact=True)
         _extend_claim_lines(lines, "What I should improve next", self.improvement_options, limit=3, compact=True)
@@ -197,6 +200,11 @@ def build_self_awareness_capsule(
     inferred_strengths = _build_strength_claims(registry_payload=registry_payload, context_capsule=context_capsule)
     lacks = _build_lack_claims(records=records, degraded_claims=degraded_or_missing)
     improvement_options = _build_improvement_claims(lacks=lacks, degraded_claims=degraded_or_missing)
+    weak_spot_priorities = _build_weak_spot_priorities(
+        lacks=lacks,
+        capability_evidence=capability_evidence,
+        user_message=user_message,
+    )
     capability_probe_registry = _build_capability_probe_registry(records)
     recommended_probes = _recommended_probes(
         degraded_claims=degraded_or_missing,
@@ -246,6 +254,13 @@ def build_self_awareness_capsule(
             "capability_count": len(capability_evidence),
         },
         {
+            "source": "weak_spot_priorities",
+            "source_kind": "self_improvement_prioritizer",
+            "present": bool(weak_spot_priorities),
+            "claim_boundary": "Priority scores rank where to collect evidence next; they do not authorize autonomous mutation.",
+            "priority_count": len(weak_spot_priorities),
+        },
+        {
             "source": "memory_cognition",
             "source_kind": "memory_runtime_and_wiki_metadata",
             "present": bool(memory_cognition),
@@ -285,6 +300,7 @@ def build_self_awareness_capsule(
         lacks=lacks,
         improvement_options=improvement_options,
         capability_evidence=capability_evidence,
+        weak_spot_priorities=weak_spot_priorities,
         recommended_probes=recommended_probes,
         natural_language_routes=natural_language_routes,
         source_ledger=source_ledger,
@@ -581,6 +597,144 @@ def _parse_iso(value: Any) -> datetime | None:
 
 def _tokens(value: str) -> set[str]:
     return {token for token in re.findall(r"[a-z0-9]{3,}", str(value or "").casefold())}
+
+
+def _build_weak_spot_priorities(
+    *,
+    lacks: list[SelfAwarenessClaim],
+    capability_evidence: list[CapabilityEvidence],
+    user_message: str,
+) -> list[dict[str, Any]]:
+    user_tokens = _tokens(user_message)
+    rows: list[dict[str, Any]] = []
+    for claim in lacks:
+        text = " ".join([claim.claim, claim.improvement_action, claim.next_probe])
+        components = {
+            "failure_evidence": _lack_failure_score(claim),
+            "recency": 2,
+            "novelty": _novelty_score(text),
+            "user_relevance": _text_relevance_score(user_tokens, text),
+            "eval_gap": 2 if "eval" in text.casefold() or "coverage" in text.casefold() else 1,
+        }
+        rows.append(
+            {
+                "priority_key": f"lack:{_priority_slug(claim.source or claim.claim)}",
+                "kind": "lack",
+                "weak_spot": claim.claim,
+                "improvement_action": claim.improvement_action,
+                "next_probe": claim.next_probe,
+                "source": claim.source,
+                "surprise_score": sum(components.values()),
+                "score_components": components,
+                "priority_reasons": _priority_reasons(components),
+                "execution_boundary": "collect_evidence_before_change",
+            }
+        )
+    for evidence in capability_evidence:
+        components = {
+            "failure_evidence": _capability_failure_score(evidence),
+            "recency": _capability_recency_score(evidence),
+            "novelty": 3 if evidence.eval_coverage_status == "missing" else 1 if evidence.eval_coverage_status == "observed" else 0,
+            "user_relevance": 3 if evidence.goal_relevance == "direct" else 0,
+            "eval_gap": 2 if evidence.eval_coverage_status == "missing" else 1 if evidence.eval_coverage_status == "observed" else 0,
+        }
+        if sum(components.values()) <= 1:
+            continue
+        rows.append(
+            {
+                "priority_key": f"capability:{_priority_slug(evidence.capability_key)}",
+                "kind": "capability",
+                "weak_spot": _capability_weak_spot(evidence),
+                "improvement_action": _capability_improvement_action(evidence),
+                "next_probe": _capability_next_probe(evidence),
+                "source": evidence.source,
+                "surprise_score": sum(components.values()),
+                "score_components": components,
+                "priority_reasons": _priority_reasons(components),
+                "execution_boundary": "probe_before_confident_claim",
+            }
+        )
+    rows.sort(key=lambda row: (-int(row.get("surprise_score") or 0), str(row.get("priority_key") or "")))
+    return rows[:8]
+
+
+def _lack_failure_score(claim: SelfAwarenessClaim) -> int:
+    status = claim.verification_status.casefold()
+    text = f"{claim.claim} {claim.improvement_action}".casefold()
+    if "missing" in status or "degraded" in status:
+        return 5
+    if "failure" in text or "unavailable" in text:
+        return 4
+    if "known_boundary" in status:
+        return 3
+    return 2
+
+
+def _capability_failure_score(evidence: CapabilityEvidence) -> int:
+    if evidence.confidence_level == "recent_failure":
+        return 6
+    if evidence.confidence_level == "observed_without_success":
+        return 4
+    if evidence.confidence_level == "stale_success":
+        return 2
+    return 0
+
+
+def _capability_recency_score(evidence: CapabilityEvidence) -> int:
+    if evidence.freshness_status == "fresh":
+        return 4
+    if evidence.freshness_status == "aging":
+        return 2
+    if evidence.freshness_status == "stale":
+        return 1
+    return 0
+
+
+def _novelty_score(text: str) -> int:
+    lowered = text.casefold()
+    if any(token in lowered for token in ("natural-language", "natural language", "eval", "coverage", "provider", "secret")):
+        return 3
+    return 1
+
+
+def _text_relevance_score(user_tokens: set[str], text: str) -> int:
+    if not user_tokens:
+        return 0
+    overlap = user_tokens & _tokens(text)
+    if len(overlap) >= 2:
+        return 3
+    if overlap:
+        return 1
+    return 0
+
+
+def _priority_reasons(components: dict[str, int]) -> list[str]:
+    return [key for key, value in components.items() if int(value or 0) > 0]
+
+
+def _priority_slug(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", str(value or "").casefold()).strip("-")
+    return (slug or "unknown")[:80]
+
+
+def _capability_weak_spot(evidence: CapabilityEvidence) -> str:
+    if evidence.confidence_level == "recent_failure":
+        return f"Capability {evidence.capability_key} has a recent failure: {evidence.last_failure_reason or 'unknown reason'}."
+    if evidence.confidence_level == "observed_without_success":
+        return f"Capability {evidence.capability_key} has observations but no successful invocation evidence."
+    if evidence.eval_coverage_status == "missing":
+        return f"Capability {evidence.capability_key} lacks repeatable eval coverage."
+    return f"Capability {evidence.capability_key} needs fresher confidence evidence."
+
+
+def _capability_improvement_action(evidence: CapabilityEvidence) -> str:
+    if evidence.eval_coverage_status == "missing":
+        return f"Add or run eval coverage for {evidence.capability_key} before raising confidence."
+    return f"Run a fresh probe for {evidence.capability_key} and update capability confidence from the result."
+
+
+def _capability_next_probe(evidence: CapabilityEvidence) -> str:
+    return f"Run the safest status/eval probe for {evidence.capability_key} and record success, failure, latency, and eval source."
 
 
 
@@ -1259,6 +1413,27 @@ def _extend_capability_evidence_lines(
             extras.append(evidence.last_failure_reason)
         suffix = f" ({'; '.join(extras)})" if extras else ""
         lines.append(f"- {evidence.capability_key}: {status} at {timestamp}{suffix}")
+    lines.append("")
+
+
+def _extend_weak_spot_priority_lines(
+    lines: list[str],
+    priorities: list[dict[str, Any]],
+    *,
+    limit: int,
+) -> None:
+    selected = [item for item in priorities[:limit] if isinstance(item, dict)]
+    if not selected:
+        return
+    lines.append("Weak spot priorities")
+    for item in selected:
+        weak_spot = str(item.get("weak_spot") or item.get("priority_key") or "unknown").strip()
+        if len(weak_spot) > 140:
+            weak_spot = f"{weak_spot[:137].rstrip()}..."
+        score = int(item.get("surprise_score") or 0)
+        reasons = ", ".join(str(reason) for reason in (item.get("priority_reasons") or [])[:2] if str(reason).strip())
+        suffix = f" reasons={reasons}" if reasons else ""
+        lines.append(f"- score={score}: {weak_spot}{suffix}")
     lines.append("")
 
 

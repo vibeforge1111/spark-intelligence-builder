@@ -114,6 +114,51 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("eval=covered", capsule.to_text())
         self.assertIn("goal=direct", capsule.to_text())
 
+    def test_self_awareness_prioritizes_high_surprise_user_relevant_weak_spots(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Startup YC route succeeded with eval coverage",
+            status="succeeded",
+            facts={
+                "active_chip_key": "startup-yc",
+                "route_latency_ms": 321,
+                "eval_suite": "capability-freshness-regression",
+            },
+            provenance={"source_kind": "chip_hook", "source_ref": "startup-yc"},
+        )
+        record_event(
+            self.state_db,
+            event_type="dispatch_failed",
+            component="researcher_bridge",
+            summary="Browser search route timed out",
+            status="failed",
+            facts={
+                "routing_decision": "browser_search",
+                "failure_reason": "timeout",
+            },
+            provenance={"source_kind": "route", "source_ref": "browser_search"},
+        )
+
+        capsule = build_self_awareness_capsule(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human:test-surprise-priority",
+            session_id="session:test-surprise-priority",
+            channel_kind="telegram",
+            user_message="please improve the browser route weak spot",
+        )
+        payload = capsule.to_payload()
+
+        top = payload["weak_spot_priorities"][0]
+        self.assertEqual(top["priority_key"], "capability:browser-search")
+        self.assertGreater(top["surprise_score"], 10)
+        self.assertEqual(top["score_components"]["failure_evidence"], 6)
+        self.assertEqual(top["score_components"]["user_relevance"], 3)
+        self.assertIn("failure_evidence", top["priority_reasons"])
+        self.assertIn("Weak spot priorities", capsule.to_text())
+
     def test_self_status_cli_emits_machine_readable_capsule(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
             "self",
@@ -334,6 +379,8 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("probe", payload["guardrail"].lower())
         action_text = json.dumps(payload["priority_actions"])
         self.assertIn("evidence_to_collect", action_text)
+        self.assertIn("surprise_score", action_text)
+        self.assertTrue(payload["live_self_awareness"]["weak_spot_priorities"])
         self.assertIn("Natural-language invocability", action_text)
 
     def test_self_improve_cli_emits_machine_readable_plan(self) -> None:

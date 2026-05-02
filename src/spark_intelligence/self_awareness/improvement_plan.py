@@ -32,7 +32,9 @@ class SelfImprovementPlanResult:
             lines.extend(["", "Priority actions"])
             for index, action in enumerate(actions[:5], start=1):
                 title = str(action.get("title") or f"Action {index}").strip()
-                lines.append(f"{index}. {title}")
+                score = action.get("surprise_score")
+                score_text = f" score={score}" if score is not None else ""
+                lines.append(f"{index}. {title}{score_text}")
                 for key in ("weak_spot", "next_probe", "improvement_action", "evidence_to_collect"):
                     value = str(action.get(key) or "").strip()
                     if value:
@@ -101,6 +103,7 @@ def build_self_improvement_plan(
             "observed_now": _claim_rows(capsule.get("observed_now"), 4),
             "recently_verified": _claim_rows(capsule.get("recently_verified"), 3),
             "capability_evidence": _capability_evidence_rows(capsule.get("capability_evidence"), 5),
+            "weak_spot_priorities": _priority_rows(capsule.get("weak_spot_priorities"), 5),
             "lacks": _claim_rows(capsule.get("lacks"), 5),
             "improvement_options": _claim_rows(capsule.get("improvement_options"), 5),
             "source_ledger": [item for item in capsule.get("source_ledger") or [] if isinstance(item, dict)][:4],
@@ -132,10 +135,13 @@ def _wiki_query_for_goal(goal: str) -> str:
 def _priority_actions(*, capsule: dict[str, Any], goal: str) -> list[dict[str, Any]]:
     lacks = _claim_rows(capsule.get("lacks"), 8)
     improvements = _claim_rows(capsule.get("improvement_options"), 8)
+    priorities = _priority_rows(capsule.get("weak_spot_priorities"), 10)
     rows: list[dict[str, Any]] = []
     for index, lack in enumerate(lacks):
         improvement = _best_improvement_for_lack(lack, improvements, fallback_index=index)
+        priority = _best_priority_for_lack(lack, priorities)
         score = _goal_score(goal, lack.get("claim", ""), improvement.get("claim", ""))
+        surprise_score = int(priority.get("surprise_score") or 0)
         rows.append(
             {
                 "title": _action_title(lack.get("claim", ""), improvement.get("claim", "")),
@@ -143,6 +149,9 @@ def _priority_actions(*, capsule: dict[str, Any], goal: str) -> list[dict[str, A
                 "improvement_action": improvement.get("claim", "") or lack.get("improvement_action", ""),
                 "next_probe": lack.get("next_probe", "") or improvement.get("next_probe", ""),
                 "evidence_to_collect": _evidence_to_collect(lack.get("claim", "")),
+                "surprise_score": surprise_score,
+                "score_components": dict(priority.get("score_components") or {}),
+                "priority_reasons": list(priority.get("priority_reasons") or []),
                 "source": lack.get("source", ""),
                 "confidence": lack.get("confidence", ""),
                 "verification_status": lack.get("verification_status", ""),
@@ -150,7 +159,27 @@ def _priority_actions(*, capsule: dict[str, Any], goal: str) -> list[dict[str, A
                 "execution_state": "needs_probe_before_change",
             }
         )
-    rows.sort(key=lambda item: (-int(item.get("score") or 0), str(item.get("title") or "")))
+    for priority in priorities:
+        if priority.get("kind") != "capability":
+            continue
+        rows.append(
+            {
+                "title": _action_title(str(priority.get("weak_spot") or ""), str(priority.get("improvement_action") or "")),
+                "weak_spot": str(priority.get("weak_spot") or ""),
+                "improvement_action": str(priority.get("improvement_action") or ""),
+                "next_probe": str(priority.get("next_probe") or ""),
+                "evidence_to_collect": "Recent failure, eval coverage source, latency, and route trace for the named capability.",
+                "surprise_score": int(priority.get("surprise_score") or 0),
+                "score_components": dict(priority.get("score_components") or {}),
+                "priority_reasons": list(priority.get("priority_reasons") or []),
+                "source": str(priority.get("source") or ""),
+                "confidence": "",
+                "verification_status": "prioritized_capability_gap",
+                "score": _goal_score(goal, str(priority.get("weak_spot") or ""), str(priority.get("improvement_action") or "")),
+                "execution_state": "needs_probe_before_change",
+            }
+        )
+    rows.sort(key=lambda item: (-int(item.get("surprise_score") or 0), -int(item.get("score") or 0), str(item.get("title") or "")))
     return rows[:5]
 
 
@@ -166,6 +195,19 @@ def _best_improvement_for_lack(
             return improvement
     if fallback_index < len(improvements):
         return improvements[fallback_index]
+    return {}
+
+
+def _best_priority_for_lack(lack: dict[str, str], priorities: list[dict[str, Any]]) -> dict[str, Any]:
+    weak_spot = lack.get("claim", "")
+    source = lack.get("source", "")
+    for priority in priorities:
+        if priority.get("kind") != "lack":
+            continue
+        if source and priority.get("source") == source:
+            return priority
+        if weak_spot and priority.get("weak_spot") == weak_spot:
+            return priority
     return {}
 
 
@@ -270,6 +312,27 @@ def _capability_evidence_rows(value: object, limit: int) -> list[dict[str, Any]]
                 "route_latency_ms": item.get("route_latency_ms"),
                 "eval_coverage_status": str(item.get("eval_coverage_status") or "unknown"),
                 "evidence_count": int(item.get("evidence_count") or 0),
+            }
+        )
+    return rows[:limit]
+
+
+def _priority_rows(value: object, limit: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in (value if isinstance(value, list) else []):
+        if not isinstance(item, dict):
+            continue
+        rows.append(
+            {
+                "priority_key": str(item.get("priority_key") or "").strip(),
+                "kind": str(item.get("kind") or "").strip(),
+                "weak_spot": str(item.get("weak_spot") or "").strip(),
+                "improvement_action": str(item.get("improvement_action") or "").strip(),
+                "next_probe": str(item.get("next_probe") or "").strip(),
+                "source": str(item.get("source") or "").strip(),
+                "surprise_score": int(item.get("surprise_score") or 0),
+                "score_components": dict(item.get("score_components") or {}),
+                "priority_reasons": [str(reason) for reason in item.get("priority_reasons") or [] if str(reason).strip()],
             }
         )
     return rows[:limit]
