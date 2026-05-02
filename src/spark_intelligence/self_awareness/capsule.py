@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -89,6 +90,7 @@ class SelfAwarenessCapsule:
     source_ledger: list[dict[str, Any]] = field(default_factory=list)
     style_lens: dict[str, Any] = field(default_factory=dict)
     memory_cognition: dict[str, Any] = field(default_factory=dict)
+    user_awareness: dict[str, Any] = field(default_factory=dict)
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -107,6 +109,7 @@ class SelfAwarenessCapsule:
             "source_ledger": self.source_ledger,
             "style_lens": self.style_lens,
             "memory_cognition": self.memory_cognition,
+            "user_awareness": self.user_awareness,
         }
 
     def to_json(self) -> str:
@@ -132,6 +135,7 @@ class SelfAwarenessCapsule:
         ]
         _extend_style_lens_lines(lines, self.style_lens)
         _extend_memory_cognition_lines(lines, self.memory_cognition)
+        _extend_user_awareness_lines(lines, self.user_awareness)
         _extend_claim_lines(lines, "What looks live", self.observed_now, limit=4, compact=True)
         _extend_claim_lines(lines, "What I recently proved", self.recently_verified, limit=2, compact=True)
         _extend_capability_evidence_lines(lines, self.capability_evidence, limit=3)
@@ -180,6 +184,14 @@ def build_self_awareness_capsule(
     improvement_options = _build_improvement_claims(lacks=lacks, degraded_claims=degraded_or_missing)
     recommended_probes = _recommended_probes(degraded_claims=degraded_or_missing)
     memory_cognition = _build_memory_cognition(config_manager)
+    user_awareness = _build_user_awareness(
+        config_manager=config_manager,
+        context_capsule=context_capsule,
+        human_id=human_id,
+        session_id=session_id,
+        channel_kind=channel_kind,
+        personality_profile=personality_profile,
+    )
     natural_language_routes = [
         "Ask: 'Spark, what do you know about your current systems?' to get the grounded registry view.",
         "Ask: 'Spark, test the browser route now' to turn browser availability into last-success evidence.",
@@ -217,6 +229,13 @@ def build_self_awareness_capsule(
             "claim_boundary": "Memory KB wiki pages are supporting context; current-state memory remains authoritative for mutable user facts.",
             "source_families_visible": bool((memory_cognition.get("wiki_packets") or {}).get("source_families_visible")),
         },
+        {
+            "source": "user_awareness",
+            "source_kind": "scoped_user_context_summary",
+            "present": bool(user_awareness.get("present")),
+            "claim_boundary": "User awareness is scoped to the active human/session; user context is not global Spark doctrine.",
+            "label_counts": dict(user_awareness.get("label_counts") or {}),
+        },
     ]
     return SelfAwarenessCapsule(
         generated_at=generated_at,
@@ -234,6 +253,7 @@ def build_self_awareness_capsule(
         source_ledger=source_ledger,
         style_lens=style_lens,
         memory_cognition=memory_cognition,
+        user_awareness=user_awareness,
     )
 
 
@@ -692,6 +712,209 @@ def _build_memory_cognition(config_manager: ConfigManager) -> dict[str, Any]:
     return payload
 
 
+def _build_user_awareness(
+    *,
+    config_manager: ConfigManager,
+    context_capsule: Any,
+    human_id: str,
+    session_id: str,
+    channel_kind: str,
+    personality_profile: dict[str, Any] | None,
+) -> dict[str, Any]:
+    normalized_human_id = str(human_id or "").strip()
+    current_state_lines = _context_lines(context_capsule, "current_state")
+    pending_task_lines = _context_lines(context_capsule, "pending_tasks")
+    recent_conversation_lines = _context_lines(context_capsule, "recent_conversation")
+    current_state_items = [_parse_context_line(line) for line in current_state_lines]
+    current_state_items = [item for item in current_state_items if item]
+    stable_context = [
+        _user_context_entry(
+            kind=f"user_{item['label']}",
+            label="stable",
+            value=item["value"],
+            source="context_capsule.current_state",
+            source_kind="governed_current_state_memory",
+        )
+        for item in current_state_items
+        if item["label"] in {"preferred_name", "startup", "founder_of", "occupation", "city", "country", "timezone"}
+    ]
+    current_goal = _first_entry_for_labels(
+        current_state_items,
+        labels=("current_focus", "current_plan", "current_milestone"),
+        kind="current_goal",
+        label="recent",
+    )
+    recent_decisions = [
+        _user_context_entry(
+            kind=item["label"],
+            label="recent",
+            value=item["value"],
+            source="context_capsule.current_state",
+            source_kind="governed_current_state_memory",
+        )
+        for item in current_state_items
+        if item["label"] in {"current_decision", "current_constraint", "current_blocker", "current_status"}
+    ][:6]
+    stable_preferences: list[dict[str, Any]] = []
+    if isinstance(personality_profile, dict) and personality_profile.get("user_deltas_applied"):
+        stable_preferences.append(
+            _user_context_entry(
+                kind="style_preference_overlay",
+                label="stable",
+                value="active",
+                source="personality_profile.user_deltas_applied",
+                source_kind="personality_preference_overlay",
+            )
+        )
+    stable_preferences.extend(stable_context[:6])
+    if not current_goal and recent_conversation_lines:
+        current_goal = _user_context_entry(
+            kind="current_goal",
+            label="inferred",
+            value="recent conversation is available, but no governed current focus/plan was found",
+            source="context_capsule.recent_conversation",
+            source_kind="recent_turn_context",
+        )
+
+    user_wiki = _user_wiki_context(config_manager=config_manager, human_id=normalized_human_id)
+    label_counts = _label_counts(
+        [
+            *(stable_preferences or []),
+            *([current_goal] if current_goal else []),
+            *recent_decisions,
+            *(
+                [
+                    {
+                        "label": "candidate",
+                    }
+                ]
+                if user_wiki.get("candidate_note_count")
+                else []
+            ),
+        ]
+    )
+    payload: dict[str, Any] = {
+        "present": bool(normalized_human_id or stable_preferences or current_goal or recent_decisions or user_wiki.get("candidate_note_count")),
+        "human_id": normalized_human_id or None,
+        "session_id": str(session_id or "").strip() or None,
+        "channel_kind": str(channel_kind or "").strip() or None,
+        "scope_kind": "user_specific" if normalized_human_id else "unknown_user",
+        "current_goal": current_goal
+        or _user_context_entry(
+            kind="current_goal",
+            label="unknown",
+            value="no governed current focus or plan found",
+            source="context_capsule.current_state",
+            source_kind="governed_current_state_memory",
+        ),
+        "stable_preferences": stable_preferences[:8],
+        "recent_decisions": recent_decisions[:6],
+        "pending_task_count": len(pending_task_lines),
+        "recent_conversation_turn_count": len(recent_conversation_lines),
+        "user_wiki_context": user_wiki,
+        "label_counts": label_counts,
+        "source_labels": {
+            "stable": "durable governed memory or explicit personality preference overlay",
+            "recent": "current-state memory or open task context",
+            "inferred": "derived from recent context and must be confirmed",
+            "unknown": "not visible in this capsule",
+            "candidate": "consent-bounded wiki note that cannot override current-state memory",
+        },
+        "boundaries": [
+            "user_memory_stays_separate_from_global_spark_doctrine",
+            "governed_current_state_memory_outranks_user_wiki_notes_for_mutable_facts",
+            "recent_conversation_is_continuity_context_not_promotion_evidence",
+            "candidate_user_wiki_notes_require_consent_and_revalidation_before_reuse",
+        ],
+    }
+    return payload
+
+
+def _context_lines(context_capsule: Any, section: str) -> list[str]:
+    sections = getattr(context_capsule, "sections", {}) if context_capsule is not None else {}
+    lines = sections.get(section) if isinstance(sections, dict) else []
+    return [str(line).strip() for line in (lines or []) if str(line).strip()]
+
+
+def _parse_context_line(line: str) -> dict[str, str]:
+    text = str(line or "").strip()
+    if text.startswith("- "):
+        text = text[2:].strip()
+    if ":" not in text:
+        return {}
+    label, value = text.split(":", 1)
+    value = value.strip()
+    if " (as_of=" in value:
+        value = value.split(" (as_of=", 1)[0].strip()
+    return {"label": label.strip(), "value": value}
+
+
+def _first_entry_for_labels(
+    items: list[dict[str, str]],
+    *,
+    labels: tuple[str, ...],
+    kind: str,
+    label: str,
+) -> dict[str, Any] | None:
+    for item_label in labels:
+        for item in items:
+            if item.get("label") != item_label:
+                continue
+            return _user_context_entry(
+                kind=kind,
+                label=label,
+                value=item.get("value") or "",
+                source="context_capsule.current_state",
+                source_kind="governed_current_state_memory",
+            )
+    return None
+
+
+def _user_context_entry(*, kind: str, label: str, value: str, source: str, source_kind: str) -> dict[str, Any]:
+    return {
+        "kind": kind,
+        "label": label,
+        "value": str(value or "").strip()[:260],
+        "source": source,
+        "source_kind": source_kind,
+    }
+
+
+def _user_wiki_context(*, config_manager: ConfigManager, human_id: str) -> dict[str, Any]:
+    if not human_id:
+        return {
+            "status": "unknown_user",
+            "candidate_note_count": 0,
+            "authority": "supporting_not_authoritative",
+            "scope_kind": "user_specific",
+        }
+    wiki_root = config_manager.paths.home / "wiki"
+    note_dir = wiki_root / "users" / _human_slug(human_id) / "candidate-notes"
+    note_paths = sorted(note_dir.glob("*.md")) if note_dir.exists() else []
+    return {
+        "status": "present" if note_paths else "empty",
+        "candidate_note_count": len(note_paths),
+        "relative_dir": note_dir.relative_to(wiki_root).as_posix() if note_dir.exists() else f"users/{_human_slug(human_id)}/candidate-notes",
+        "authority": "supporting_not_authoritative",
+        "scope_kind": "user_specific",
+        "can_override_current_state_memory": False,
+    }
+
+
+def _human_slug(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
+    slug = re.sub(r"-{2,}", "-", slug)
+    return (slug or "human")[:72].strip("-") or "human"
+
+
+def _label_counts(items: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        label = str(item.get("label") or "unknown").strip() or "unknown"
+        counts[label] = counts.get(label, 0) + 1
+    return dict(sorted(counts.items()))
+
+
 def _recommended_probes(*, degraded_claims: list[SelfAwarenessClaim]) -> list[str]:
     probes = [
         "Run `spark-intelligence self status --json` before self-knowledge answers that need provenance.",
@@ -806,6 +1029,27 @@ def _extend_memory_cognition_lines(lines: list[str], memory_cognition: dict[str,
     lines.append("- Wiki authority: supporting_not_authoritative; it helps me orient, but it is not mutable user truth.")
     lines.append("- Boundary: current-state memory wins over wiki for mutable user facts; user memory stays separate from Spark doctrine.")
     lines.append("- Graph sidecar: advisory until evals pass; conversational residue is not promotion evidence.")
+    lines.append("")
+
+
+def _extend_user_awareness_lines(lines: list[str], user_awareness: dict[str, Any]) -> None:
+    if not user_awareness:
+        return
+    label_counts = user_awareness.get("label_counts") if isinstance(user_awareness.get("label_counts"), dict) else {}
+    user_wiki = user_awareness.get("user_wiki_context") if isinstance(user_awareness.get("user_wiki_context"), dict) else {}
+    current_goal = user_awareness.get("current_goal") if isinstance(user_awareness.get("current_goal"), dict) else {}
+    goal_label = str(current_goal.get("label") or "unknown")
+    lines.append("User awareness")
+    lines.append(f"- Scope: {user_awareness.get('scope_kind') or 'unknown_user'}")
+    lines.append(f"- Current goal: {goal_label}")
+    lines.append(
+        "- Context labels: "
+        + ", ".join(f"{key}={value}" for key, value in sorted(label_counts.items()))
+        if label_counts
+        else "- Context labels: none visible"
+    )
+    lines.append(f"- User wiki candidates: {int(user_wiki.get('candidate_note_count') or 0)}")
+    lines.append("- Boundary: user context helps personalize, but it is not global Spark doctrine.")
     lines.append("")
 
 

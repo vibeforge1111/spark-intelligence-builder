@@ -4,7 +4,7 @@ import json
 
 from spark_intelligence.observability.store import record_event
 from spark_intelligence.adapters.telegram.runtime import simulate_telegram_update
-from spark_intelligence.llm_wiki import promote_llm_wiki_improvement
+from spark_intelligence.llm_wiki import promote_llm_wiki_improvement, promote_llm_wiki_user_note
 from spark_intelligence.memory import run_memory_sdk_smoke_test
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
 from spark_intelligence.self_awareness import build_self_awareness_capsule, build_self_improvement_plan
@@ -93,7 +93,63 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("improvement_options", payload)
         self.assertIn("source_ledger", payload)
         self.assertIn("memory_cognition", payload)
+        self.assertIn("user_awareness", payload)
         self.assertNotIn("self_status_memory", payload["memory_cognition"])
+
+    def test_self_awareness_user_awareness_labels_current_context_without_promoting_doctrine(self) -> None:
+        run_memory_sdk_smoke_test(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            sdk_module="domain_chip_memory",
+            subject="human:test-user-awareness",
+            predicate="profile.current_focus",
+            value="hardening Spark self-awareness",
+            cleanup=False,
+        )
+        run_memory_sdk_smoke_test(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            sdk_module="domain_chip_memory",
+            subject="human:test-user-awareness",
+            predicate="profile.current_decision",
+            value="keep user context separate from Spark doctrine",
+            cleanup=False,
+        )
+        promote_llm_wiki_user_note(
+            config_manager=self.config_manager,
+            human_id="human:test-user-awareness",
+            title="User hardening cadence",
+            summary="The user wants self-awareness hardening work committed in small checkpoints.",
+            consent_ref="consent:test:self-awareness",
+            evidence_refs=["pytest tests/test_self_awareness.py::user_awareness"],
+        )
+
+        capsule = build_self_awareness_capsule(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human:test-user-awareness",
+            session_id="session:test-user-awareness",
+            channel_kind="telegram",
+            user_message="what do you know about me and this project?",
+            personality_profile={"user_deltas_applied": True},
+        )
+        payload = capsule.to_payload()
+
+        user_awareness = payload["user_awareness"]
+        self.assertEqual(user_awareness["scope_kind"], "user_specific")
+        self.assertEqual(user_awareness["current_goal"]["label"], "recent")
+        self.assertEqual(user_awareness["current_goal"]["value"], "hardening Spark self-awareness")
+        self.assertEqual(user_awareness["stable_preferences"][0]["label"], "stable")
+        self.assertEqual(user_awareness["recent_decisions"][0]["label"], "recent")
+        self.assertEqual(user_awareness["user_wiki_context"]["candidate_note_count"], 1)
+        self.assertFalse(user_awareness["user_wiki_context"]["can_override_current_state_memory"])
+        self.assertIn("candidate", user_awareness["label_counts"])
+        self.assertIn(
+            "user_memory_stays_separate_from_global_spark_doctrine",
+            user_awareness["boundaries"],
+        )
+        self.assertIn("User awareness", capsule.to_text())
+        self.assertIn("User wiki candidates: 1", capsule.to_text())
 
     def test_self_awareness_adds_memory_cognition_after_wiki_source_families_are_visible(self) -> None:
         kb_dir = self.home / "artifacts" / "spark-memory-kb" / "wiki" / "current-state"
