@@ -17,14 +17,20 @@ from spark_intelligence.state.db import StateDB
 
 BOOTSTRAP_WIKI_FILES: tuple[str, ...] = (
     "index.md",
+    "system/index.md",
     "system/spark-self-awareness-contract.md",
     "system/spark-system-map.md",
     "system/natural-language-route-map.md",
     "system/tracing-and-observability-map.md",
     "system/recursive-self-improvement-loops.md",
+    "routes/index.md",
     "memory/llm-wiki-memory-policy.md",
+    "tools/index.md",
     "tools/tool-and-chip-inventory-contract.md",
+    "user/index.md",
     "user/user-environment-profile-template.md",
+    "projects/index.md",
+    "improvements/index.md",
 )
 
 SYSTEM_COMPILE_WIKI_FILES: tuple[str, ...] = (

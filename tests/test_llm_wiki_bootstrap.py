@@ -27,6 +27,12 @@ class LlmWikiBootstrapTests(SparkTestCase):
 
         self.assertEqual(result.output_dir, self.home / "wiki")
         self.assertIn("index.md", result.created_files)
+        self.assertIn("system/index.md", result.created_files)
+        self.assertIn("routes/index.md", result.created_files)
+        self.assertIn("tools/index.md", result.created_files)
+        self.assertIn("user/index.md", result.created_files)
+        self.assertIn("projects/index.md", result.created_files)
+        self.assertIn("improvements/index.md", result.created_files)
         self.assertIn("system/spark-self-awareness-contract.md", result.created_files)
         self.assertIn("memory/llm-wiki-memory-policy.md", result.created_files)
 
@@ -36,6 +42,12 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertIn("authority: supporting_not_authoritative", self_awareness)
         self.assertIn("observed_now", self_awareness)
         self.assertIn("Live `self status`", self_awareness)
+        user_index = (self.home / "wiki" / "user" / "index.md").read_text(encoding="utf-8")
+        self.assertIn("wiki/users/<human>/", user_index)
+        self.assertIn("User notes do not become global Spark doctrine", user_index)
+        improvements_index = (self.home / "wiki" / "improvements" / "index.md").read_text(encoding="utf-8")
+        self.assertIn("wiki scan-candidates", improvements_index)
+        self.assertIn("supporting and revalidatable", improvements_index)
 
     def test_bootstrap_preserves_existing_pages_unless_forced(self) -> None:
         result = bootstrap_llm_wiki(config_manager=self.config_manager)
@@ -225,6 +237,8 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertEqual(payload["wiki_retrieval_status"], "supported")
         self.assertGreater(payload["wiki_record_count"], 0)
         self.assertTrue(payload["project_knowledge_first"])
+        self.assertIn("projects/index.md", payload["expected_bootstrap_files"])
+        self.assertIn("improvements/index.md", payload["expected_bootstrap_files"])
 
     def test_wiki_inventory_refreshes_and_lists_pages_with_metadata(self) -> None:
         result = build_llm_wiki_inventory(
@@ -238,6 +252,12 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertGreaterEqual(result.payload["page_count"], 13)
         page_paths = {page["path"] for page in result.payload["pages"]}
         self.assertIn("index.md", page_paths)
+        self.assertIn("system/index.md", page_paths)
+        self.assertIn("routes/index.md", page_paths)
+        self.assertIn("tools/index.md", page_paths)
+        self.assertIn("user/index.md", page_paths)
+        self.assertIn("projects/index.md", page_paths)
+        self.assertIn("improvements/index.md", page_paths)
         self.assertIn("system/current-system-status.md", page_paths)
         index_page = next(page for page in result.payload["pages"] if page["path"] == "index.md")
         self.assertEqual(index_page["title"], "Spark LLM Wiki")

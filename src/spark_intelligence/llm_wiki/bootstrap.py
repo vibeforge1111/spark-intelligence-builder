@@ -106,17 +106,44 @@ def _bootstrap_pages(*, generated_at: str) -> tuple[_WikiPage, ...]:
 - It should help Spark know its systems, routes, tools, lacks, and improvement options without turning stale notes into truth.
 
 ## Core Pages
+- [[system/index]]
 - [[system/spark-self-awareness-contract]]
 - [[system/spark-system-map]]
 - [[system/natural-language-route-map]]
 - [[system/tracing-and-observability-map]]
 - [[system/recursive-self-improvement-loops]]
+- [[routes/index]]
 - [[memory/llm-wiki-memory-policy]]
+- [[tools/index]]
 - [[tools/tool-and-chip-inventory-contract]]
+- [[user/index]]
 - [[user/user-environment-profile-template]]
+- [[projects/index]]
+- [[improvements/index]]
 
 ## Grounding Rule
 For current health, live registry/state/traces outrank this wiki. For stable contracts and operating doctrine, this wiki can provide reusable context.
+""",
+        ),
+        _WikiPage(
+            relative_path="system/index.md",
+            title="System Index",
+            summary="Navigation page for Spark system-awareness contracts and generated status snapshots.",
+            tags=("spark-wiki", "index", "system"),
+            body="""
+## Stable System Pages
+- [[spark-self-awareness-contract]]
+- [[spark-system-map]]
+- [[natural-language-route-map]]
+- [[tracing-and-observability-map]]
+- [[recursive-self-improvement-loops]]
+
+## Generated System Pages
+- [[current-system-status]]
+- [[../diagnostics/self-awareness-gaps]]
+
+## Boundary
+Use this index for navigation. Newer live traces, registry state, health checks, and current-state memory outrank any linked page.
 """,
         ),
         _WikiPage(
@@ -239,6 +266,28 @@ The loop should produce a traceable improvement packet, not just a confident ans
 """,
         ),
         _WikiPage(
+            relative_path="routes/index.md",
+            title="Routes Index",
+            summary="Navigation page for natural-language route maps, live route snapshots, and route trace expectations.",
+            tags=("spark-wiki", "index", "routes"),
+            body="""
+## Route Pages
+- [[../system/natural-language-route-map]]
+- [[live-route-index]]
+- [[../system/tracing-and-observability-map]]
+
+## Review Questions
+- What user intent was detected?
+- Which route fired?
+- Which source packets and probes supported the route?
+- What stale evidence was ignored?
+- What missing probe would improve confidence?
+
+## Boundary
+Route documentation supports explanation. Actual route decisions come from current intent, registry state, route traces, and tool results.
+""",
+        ),
+        _WikiPage(
             relative_path="memory/llm-wiki-memory-policy.md",
             title="LLM Wiki Memory Policy",
             summary="Retention and compaction policy for wiki pages, memory facts, and conversational residue.",
@@ -260,6 +309,26 @@ The loop should produce a traceable improvement packet, not just a confident ans
 
 ## Promotion Rules
 Only promote a wiki update when it is reusable, source-backed, bounded to a domain, and useful for future reasoning.
+""",
+        ),
+        _WikiPage(
+            relative_path="tools/index.md",
+            title="Tools Index",
+            summary="Navigation page for Spark tool, chip, provider, and capability inventory contracts.",
+            tags=("spark-wiki", "index", "tools", "chips"),
+            body="""
+## Tool Pages
+- [[tool-and-chip-inventory-contract]]
+- [[capability-index]]
+
+## Capability Questions
+- Is the tool configured?
+- Is it available in the current environment?
+- Did it succeed recently?
+- What safe probe should run before claiming confidence?
+
+## Boundary
+Installed or registered tools are not the same as recently verified tools. Recent successful invocation evidence should be named separately.
 """,
         ),
         _WikiPage(
@@ -291,6 +360,26 @@ Installed, pinned, or registered means available. It does not mean recently work
 """,
         ),
         _WikiPage(
+            relative_path="user/index.md",
+            title="User Index",
+            summary="Navigation page for user-specific context lanes, consent rules, and environment profile templates.",
+            tags=("spark-wiki", "index", "user", "consent"),
+            body="""
+## User Context Pages
+- [[user-environment-profile-template]]
+- [[../memory/llm-wiki-memory-policy]]
+
+## User Lane Rules
+- User/environment context belongs under `wiki/users/<human>/...`.
+- User notes require explicit consent or configured policy metadata.
+- User notes do not become global Spark doctrine.
+- Governed current-state memory outranks wiki notes for mutable user facts.
+
+## Boundary
+This index describes the lane. It does not grant consent, promote conversational residue, or override governed user memory.
+""",
+        ),
+        _WikiPage(
             relative_path="user/user-environment-profile-template.md",
             title="User Environment Profile Template",
             summary="Template for personalized wiki knowledge that helps Spark adapt without over-promoting noise.",
@@ -317,6 +406,44 @@ Installed, pinned, or registered means available. It does not mean recently work
 
 ## Promotion Boundary
 Do not promote one-off phrasing, frustration, transient debugging residue, or stale operational state as stable user truth.
+""",
+        ),
+        _WikiPage(
+            relative_path="projects/index.md",
+            title="Projects Index",
+            summary="Navigation page for project-specific wiki context and source-backed working maps.",
+            tags=("spark-wiki", "index", "projects"),
+            body="""
+## Project Context
+- active repos and missions.
+- source-backed decisions and constraints.
+- environment-specific setup notes.
+- project-specific capability gaps and probes.
+
+## Storage Rule
+Project notes should name their repo, source refs, freshness, and invalidation trigger. They should not override live git, filesystem, CI, or current tool output.
+
+## Boundary
+Use this page as a placeholder index until project pages are generated or promoted with source metadata.
+""",
+        ),
+        _WikiPage(
+            relative_path="improvements/index.md",
+            title="Improvements Index",
+            summary="Navigation page for candidate and verified Spark improvement notes.",
+            tags=("spark-wiki", "index", "improvements"),
+            body="""
+## Improvement Lanes
+- `wiki/improvements/*.md`: global Spark improvement notes.
+- `wiki/users/<human>/candidate-notes/*.md`: user-specific candidate context.
+
+## Review Commands
+- `spark-intelligence wiki candidates --status all --json`
+- `spark-intelligence wiki scan-candidates --json`
+- `spark-intelligence wiki status --json`
+
+## Promotion Boundary
+Improvement notes are supporting and revalidatable. They need evidence refs, source refs, stale checks, contradiction scans, and live probes before they influence runtime confidence.
 """,
         ),
     )
