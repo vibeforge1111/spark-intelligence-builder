@@ -117,6 +117,62 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertIn("system/current-system-status.md", result.payload["refreshed_files"])
         self.assertEqual(result.payload["wiki_packet_metadata"]["authority"], "supporting_not_authoritative")
         self.assertTrue(result.payload["wiki_packet_metadata"]["source_families_visible"])
+        self.assertEqual(result.payload["freshness_health"]["stale_page_count"], 0)
+        self.assertIn("live_compile_snapshot", result.payload["freshness_health"]["thresholds_days"])
+
+    def test_wiki_status_warns_about_stale_pages_and_old_candidates(self) -> None:
+        bootstrap_llm_wiki(config_manager=self.config_manager)
+        stale_system_page = self.home / "wiki" / "system" / "current-system-status.md"
+        stale_system_page.parent.mkdir(parents=True, exist_ok=True)
+        stale_system_page.write_text(
+            "---\n"
+            'title: "Old system status"\n'
+            'date_created: "2000-01-01"\n'
+            'date_modified: "2000-01-01"\n'
+            "type: llm_wiki_system_compile\n"
+            "status: generated\n"
+            "authority: supporting_not_authoritative\n"
+            "freshness: live_compile_snapshot\n"
+            "---\n"
+            "# Old system status\n\n"
+            "## Invalidation Trigger\n"
+            "- A newer live compile snapshot exists.\n",
+            encoding="utf-8",
+        )
+        stale_candidate = self.home / "wiki" / "improvements" / "2000-01-01-old-candidate.md"
+        stale_candidate.parent.mkdir(parents=True, exist_ok=True)
+        stale_candidate.write_text(
+            "---\n"
+            'title: "Old candidate"\n'
+            'date_created: "2000-01-01"\n'
+            'date_modified: "2000-01-01"\n'
+            "type: llm_wiki_improvement\n"
+            "status: candidate\n"
+            "promotion_status: candidate\n"
+            "authority: supporting_not_authoritative\n"
+            "freshness: revalidatable_improvement_note\n"
+            'evidence_refs: ["pytest:old"]\n'
+            "---\n"
+            "# Old candidate\n\n"
+            "## Invalidation Trigger\n"
+            "- Re-run before reuse.\n",
+            encoding="utf-8",
+        )
+
+        result = build_llm_wiki_status(config_manager=self.config_manager, state_db=self.state_db)
+
+        freshness = result.payload["freshness_health"]
+        self.assertGreaterEqual(freshness["stale_page_count"], 2)
+        self.assertEqual(freshness["stale_candidate_count"], 1)
+        stale_paths = {page["path"] for page in freshness["stale_pages"]}
+        self.assertIn("system/current-system-status.md", stale_paths)
+        self.assertIn("improvements/2000-01-01-old-candidate.md", stale_paths)
+        self.assertIn("wiki_stale_pages_detected", result.payload["warnings"])
+        self.assertIn("wiki_old_candidates_need_review", result.payload["warnings"])
+        self.assertEqual(
+            freshness["live_status_boundary"],
+            "stale wiki pages warn; live traces, tests, and current-state memory still outrank wiki",
+        )
 
     def test_wiki_status_discovers_memory_kb_families_from_packet_metadata(self) -> None:
         kb_root = self.home / "artifacts" / "spark-memory-kb" / "wiki"

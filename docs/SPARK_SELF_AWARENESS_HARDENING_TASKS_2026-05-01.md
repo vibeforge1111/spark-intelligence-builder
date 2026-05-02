@@ -151,7 +151,7 @@ Guardrail:
 | --- | --- | --- | --- | --- |
 | SAH-201 Candidate wiki inbox | builder | shipped | Candidate improvement notes can be listed by status, source, evidence, age, and review boundary | `wiki candidates --json` shows candidate notes by age/status/source and repeats non-override rules |
 | SAH-202 Wiki contradiction scan | builder | shipped | Detects candidate or verified notes that conflict with live status boundaries, source lineage, residue rules, or user-memory scoping | `wiki scan-candidates --json` emits keep/rewrite/drop recommendations |
-| SAH-203 Wiki stale page health | builder | planned | Each page class has freshness thresholds and invalidation triggers | `wiki status` warns about stale generated pages and old candidates |
+| SAH-203 Wiki stale page health | builder | shipped | Each page class has freshness thresholds and invalidation triggers | `wiki status` reports `freshness_health`, warns about stale generated pages and old candidates, and preserves the live-state outranks wiki boundary |
 | SAH-204 Obsidian index polish | builder | planned | Wiki has index pages for system, routes, tools, user, projects, and improvements | inventory shows linked pages and missing expected indexes |
 | SAH-205 User-specific wiki consent lane | builder | shipped | User/environment notes are stored separately from Spark system doctrine | `wiki promote-user-note` requires human id, consent ref, and evidence/source, writes under `wiki/users/...`, and stays out of the global candidate inbox |
 
@@ -194,6 +194,8 @@ Shipped in Builder:
 - This slice added a candidate wiki inbox so Builder can list source-bounded improvement notes without treating them as runtime truth.
 - This slice added a wiki contradiction scan so candidate and verified improvement notes get keep/rewrite/drop guidance before further promotion.
 - This slice added Telegram `/self`, `/wiki`, `/wiki candidates`, `/wiki scan-candidates`, natural candidate inbox/scan routes, and a live self-awareness/wiki probe pack.
+- This slice added a consent-bounded user wiki lane with `wiki promote-user-note`, keeping user/environment context separate from global Spark doctrine.
+- This slice added wiki stale-page health so status can warn about old generated snapshots and old candidates without treating wiki as live truth.
 
 Next phase:
 
