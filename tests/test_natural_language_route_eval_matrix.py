@@ -141,6 +141,11 @@ class NaturalLanguageRouteEvalMatrixTests(SparkTestCase):
             "simulation_cli",
         )
         self.assertIn("PrintPromptsOnly", payload["latest_evidence"]["next_action"])
+        text = result.to_text()
+        self.assertIn("latest_missing: slash self", text)
+        self.assertIn("eligible_runtime_traces: 0", text)
+        self.assertIn("prompt_runbook:", text)
+        self.assertIn("next_action: Run with -PrintPromptsOnly", text)
 
     def test_self_live_telegram_cadence_cli_emits_machine_readable_contract(self) -> None:
         exit_code, stdout, stderr = self.run_cli(

@@ -679,6 +679,8 @@ C:\Users\USER\.spark-intelligence\artifacts\live-telegram-regression\prompt-pack
 
 Use that file for the live bot prompt sequence; it includes the 12 prompts, the wait-for-reply instruction, the anti-simulation evidence boundary, and the verifier command to run afterward.
 
+The non-JSON `self live-telegram-cadence` output now also names the runbook path, latest missing case, eligible live trace count, and next action for operator-friendly handoff.
+
 ## Continuation Prompt
 
 Use this prompt in the next coding session:

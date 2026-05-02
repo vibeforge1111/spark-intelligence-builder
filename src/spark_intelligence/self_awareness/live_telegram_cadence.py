@@ -18,6 +18,8 @@ class LiveTelegramRegressionCadenceResult:
 
     def to_text(self) -> str:
         summary = self.payload.get("summary") if isinstance(self.payload.get("summary"), dict) else {}
+        latest = self.payload.get("latest_evidence") if isinstance(self.payload.get("latest_evidence"), dict) else {}
+        runbook = self.payload.get("operator_runbook") if isinstance(self.payload.get("operator_runbook"), dict) else {}
         lines = [
             "Spark live Telegram regression cadence",
             f"- status: {self.payload.get('status') or 'unknown'}",
@@ -27,6 +29,16 @@ class LiveTelegramRegressionCadenceResult:
             f"- report_path: {self.payload.get('report_path') or 'not_written'}",
             "- authority: observability_non_authoritative",
         ]
+        runbook_path = str(runbook.get("path") or "").strip()
+        if runbook_path:
+            lines.append(f"- prompt_runbook: {runbook_path}")
+        if latest:
+            if str(latest.get("missing") or "").strip():
+                lines.append(f"- latest_missing: {latest.get('missing')}")
+            lines.append(f"- eligible_runtime_traces: {latest.get('scanned_runtime_traces', 0)}")
+            next_action = str(latest.get("next_action") or "").strip()
+            if next_action:
+                lines.append(f"- next_action: {next_action}")
         commands = self.payload.get("commands") if isinstance(self.payload.get("commands"), dict) else {}
         prompt_command = str(commands.get("print_prompts") or "").strip()
         verifier_command = str(commands.get("verify_live_traces") or "").strip()
