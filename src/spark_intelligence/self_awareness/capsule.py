@@ -779,7 +779,9 @@ def _extend_memory_cognition_lines(lines: list[str], memory_cognition: dict[str,
         families = memory_kb.get("family_counts") if isinstance(memory_kb.get("family_counts"), dict) else {}
         family_text = ", ".join(f"{key}={value}" for key, value in sorted(families.items())[:4])
         lines.append(f"- Memory KB: present ({family_text or memory_kb.get('packet_count', 0)})")
-    lines.append("- Boundary: current-state memory wins over wiki for mutable user facts.")
+    lines.append("- Wiki authority: supporting_not_authoritative; it helps me orient, but it is not mutable user truth.")
+    lines.append("- Boundary: current-state memory wins over wiki for mutable user facts; user memory stays separate from Spark doctrine.")
+    lines.append("- Graph sidecar: advisory until evals pass; conversational residue is not promotion evidence.")
     lines.append("")
 
 

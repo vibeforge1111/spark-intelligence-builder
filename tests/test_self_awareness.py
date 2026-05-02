@@ -239,11 +239,58 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(result.mode, "self_awareness_direct")
         self.assertEqual(result.routing_decision, "self_awareness_direct")
         self.assertIn("Spark self-awareness", result.reply_text)
+        self.assertIn("Memory cognition", result.reply_text)
+        self.assertIn("supporting_not_authoritative", result.reply_text)
+        self.assertIn("current-state memory wins over wiki", result.reply_text)
         self.assertIn("Where I still lack", result.reply_text)
         self.assertIn("What I should improve next", result.reply_text)
         self.assertNotIn("LLM wiki", result.reply_text)
-        self.assertLess(len(result.reply_text), 2600)
+        self.assertLess(len(result.reply_text), 3000)
         self.assertIn("wiki_refresh=skipped", result.evidence_summary)
+        self.assertEqual(result.output_keepability, "ephemeral_context")
+        self.assertEqual(result.promotion_disposition, "not_promotable")
+
+    def test_natural_self_awareness_query_exposes_memory_kb_families_without_promoting_wiki(self) -> None:
+        kb_dir = self.home / "artifacts" / "spark-memory-kb" / "wiki" / "current-state"
+        kb_dir.mkdir(parents=True)
+        (kb_dir / "focus.md").write_text(
+            "---\n"
+            "title: Current Focus Snapshot\n"
+            "authority: supporting_not_authoritative\n"
+            "owner_system: domain-chip-memory\n"
+            "wiki_family: memory_kb_current_state\n"
+            "scope_kind: governed_memory\n"
+            "source_of_truth: SparkMemorySDK\n"
+            "freshness: snapshot_generated\n"
+            "---\n"
+            "# Current Focus Snapshot\n\nA downstream memory KB snapshot for source-family discovery.",
+            encoding="utf-8",
+        )
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-self-awareness-memory-kb",
+            agent_id="agent-1",
+            human_id="human:telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+            user_message=(
+                "What systems can you call, what do you know about your memory system, "
+                "what outranks wiki, and where do you lack?"
+            ),
+        )
+
+        self.assertEqual(result.mode, "self_awareness_direct")
+        self.assertIn("Memory KB: present", result.reply_text)
+        self.assertIn("memory_kb_current_state", result.reply_text)
+        self.assertIn("supporting_not_authoritative", result.reply_text)
+        self.assertIn("current-state memory wins over wiki", result.reply_text)
+        self.assertIn("Graph sidecar: advisory until evals pass", result.reply_text)
+        self.assertIn("user memory stays separate from Spark doctrine", result.reply_text)
+        self.assertNotIn("LLM wiki", result.reply_text)
+        self.assertEqual(result.output_keepability, "ephemeral_context")
+        self.assertEqual(result.promotion_disposition, "not_promotable")
 
     def test_self_awareness_query_beats_entity_state_summary_route(self) -> None:
         result = build_researcher_reply(
@@ -281,6 +328,8 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(result.detail["bridge_mode"], "self_awareness_direct")
         self.assertEqual(result.detail["routing_decision"], "self_awareness_direct")
         self.assertIn("Spark self-awareness", result.detail["response_text"])
+        self.assertIn("Memory cognition", result.detail["response_text"])
+        self.assertIn("current-state memory wins over wiki", result.detail["response_text"])
         self.assertIn("Where I still lack", result.detail["response_text"])
         self.assertNotIn("LLM wiki", result.detail["response_text"])
-        self.assertLess(len(result.detail["response_text"]), 2600)
+        self.assertLess(len(result.detail["response_text"]), 3000)
