@@ -102,6 +102,7 @@ from spark_intelligence.llm_wiki import (
 from spark_intelligence.memory import (
     benchmark_memory_architectures,
     build_telegram_state_knowledge_base,
+    export_memory_dashboard_movement_in_memory,
     export_sdk_maintenance_replay,
     export_shadow_replay,
     export_shadow_replay_batch,
@@ -6046,6 +6047,11 @@ def handle_memory_inspect_capsule(args: argparse.Namespace) -> int:
         "selected_count": len([candidate for candidate in result.candidates if candidate.selected]),
         "source_mix": context_packet.get("source_mix", {}) if isinstance(context_packet, dict) else {},
         "promotion_gates": promotion_gates if isinstance(promotion_gates, dict) else {},
+        "memory_movement": export_memory_dashboard_movement_in_memory(
+            config_manager=config_manager,
+            sdk_module=args.sdk_module,
+            limit=6,
+        ),
     }
     inspection = MemoryCapsuleInspection(payload=payload)
     print(inspection.to_json() if args.json else inspection.to_text())
