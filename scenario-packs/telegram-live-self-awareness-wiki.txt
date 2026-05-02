@@ -3,7 +3,8 @@
 #
 # This pack is intentionally for manual live long-polling checks.
 # It exercises slash-command and natural-language routes without making
-# candidate wiki notes authoritative.
+# candidate wiki notes authoritative. The full machine-readable matrix is
+# ops/natural-language-live-commands.json.
 
 /self
 /wiki
@@ -13,3 +14,7 @@ What systems can you call, where do you lack, and how can you improve?
 What do you know about your memory system and what outranks wiki?
 What candidate wiki learnings need verification?
 Scan your wiki candidates for contradictions.
+Review the quality of the /memory-quality build in spawner-ui.
+For later, Omar owns the launch checklist.
+Who owns the launch checklist?
+Why did you answer that way?

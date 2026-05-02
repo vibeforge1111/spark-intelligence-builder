@@ -16,7 +16,11 @@ $Prompts = @(
     "What systems can you call, where do you lack, and how can you improve?",
     "What do you know about your memory system and what outranks wiki?",
     "What candidate wiki learnings need verification?",
-    "Scan your wiki candidates for contradictions."
+    "Scan your wiki candidates for contradictions.",
+    "Review the quality of the /memory-quality build in spawner-ui.",
+    "For later, Omar owns the launch checklist.",
+    "Who owns the launch checklist?",
+    "Why did you answer that way."
 )
 
 if ($PrintPromptsOnly) {
@@ -75,6 +79,30 @@ $ExpectedTraces = @(
         BridgeMode = "llm_wiki_candidate_scan"
         RoutingDecision = "llm_wiki_candidate_scan"
         ResponseContains = @("LLM wiki candidate scan", "scan findings guide review")
+    },
+    @{
+        Name = "natural build quality review"
+        BridgeMode = "build_quality_review_direct"
+        RoutingDecision = "build_quality_review_direct"
+        ResponseContains = @("Target repo: spawner-ui", "Tests:")
+    },
+    @{
+        Name = "natural governed memory write"
+        BridgeMode = "memory_generic_observation_update"
+        RoutingDecision = "memory_generic_observation"
+        ResponseContains = @("I'll remember", "owned by Omar")
+    },
+    @{
+        Name = "natural governed memory recall"
+        BridgeMode = "memory_open_recall"
+        RoutingDecision = "memory_open_recall_query"
+        ResponseContains = @("Omar")
+    },
+    @{
+        Name = "natural route explanation"
+        BridgeMode = "context_source_debug"
+        RoutingDecision = "context_source_debug"
+        ResponseContains = @("Route:", "source:")
     }
 )
 
