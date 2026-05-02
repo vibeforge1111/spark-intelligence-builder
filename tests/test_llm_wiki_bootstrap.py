@@ -6,6 +6,7 @@ from spark_intelligence.llm_wiki import (
     bootstrap_llm_wiki,
     build_llm_wiki_answer,
     build_llm_wiki_candidate_inbox,
+    build_llm_wiki_candidate_scan,
     build_llm_wiki_inventory,
     build_llm_wiki_query,
     build_llm_wiki_status,
@@ -412,6 +413,74 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertEqual(payload["returned_count"], 1)
         self.assertEqual(payload["notes"][0]["promotion_status"], "candidate")
         self.assertFalse(payload["notes"][0]["can_override_runtime_truth"])
+
+    def test_wiki_candidate_scan_keeps_clean_candidates_and_flags_promotion_hazards(self) -> None:
+        promote_llm_wiki_improvement(
+            config_manager=self.config_manager,
+            title="Clean route confidence candidate",
+            summary="Spark should show route confidence only after fresh trace evidence.",
+            evidence_refs=["pytest tests/test_self_awareness.py::route_confidence"],
+            source_refs=["operator_session:self-awareness-hardening"],
+        )
+        promote_llm_wiki_improvement(
+            config_manager=self.config_manager,
+            title="Verified note needs evidence",
+            summary="This verified note should be rewritten because it has only a source ref.",
+            promotion_status="verified",
+            source_refs=["docs:self-awareness-plan"],
+        )
+        promote_llm_wiki_improvement(
+            config_manager=self.config_manager,
+            title="User prefers short replies",
+            summary="User prefers short replies forever.",
+            evidence_refs=["pytest tests/test_memory_orchestrator.py::current_state"],
+            source_refs=["operator_session:self-awareness-hardening"],
+        )
+
+        result = build_llm_wiki_candidate_scan(config_manager=self.config_manager)
+
+        self.assertEqual(result.payload["authority"], "supporting_not_authoritative")
+        self.assertEqual(result.payload["scanned_count"], 3)
+        findings = {finding["title"]: finding for finding in result.payload["findings"]}
+        self.assertEqual(findings["Clean route confidence candidate"]["recommendation"], "keep")
+        self.assertEqual(findings["Clean route confidence candidate"]["issues"], [])
+        self.assertEqual(findings["Verified note needs evidence"]["recommendation"], "rewrite")
+        self.assertIn(
+            "verified_without_explicit_evidence",
+            [issue["code"] for issue in findings["Verified note needs evidence"]["issues"]],
+        )
+        self.assertEqual(findings["User prefers short replies"]["recommendation"], "rewrite")
+        self.assertIn(
+            "mutable_user_fact_requires_user_memory_lane",
+            [issue["code"] for issue in findings["User prefers short replies"]["issues"]],
+        )
+        self.assertEqual(
+            result.payload["live_evidence_boundary"]["mutable_user_facts"],
+            "current_state_memory_outranks_wiki",
+        )
+
+    def test_wiki_candidate_scan_cli_emits_keep_rewrite_drop_recommendations(self) -> None:
+        promote_llm_wiki_improvement(
+            config_manager=self.config_manager,
+            title="Conversation residue source",
+            summary="A raw conversation source without evidence should stay rewrite-only.",
+            source_refs=["conversation:raw-turn-123"],
+        )
+
+        exit_code, stdout, stderr = self.run_cli(
+            "wiki",
+            "scan-candidates",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["scanned_count"], 1)
+        self.assertEqual(payload["findings"][0]["recommendation"], "rewrite")
+        self.assertIn("conversation_residue_without_evidence", payload["issue_counts"])
+        self.assertIn("wiki_is_supporting_not_authoritative", payload["non_override_rules"])
 
     def test_project_knowledge_intent_boosts_wiki_over_generic_events(self) -> None:
         query = "How should Spark use recursive self-improvement loops?"

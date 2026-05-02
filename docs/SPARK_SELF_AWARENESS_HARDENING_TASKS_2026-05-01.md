@@ -119,7 +119,7 @@ Guardrail:
 | MWI-002 Memory KB vault discovery | builder | shipped | Show whether the older memory KB vault exists and is retrievable | `wiki status` and `self status` report Memory KB presence/freshness without treating it as live truth |
 | MWI-003 Unified memory/wiki inventory | builder | planned | List memory/wiki page families from one surface | inventory includes authority, owner system, source path count, and stale warnings |
 | MWI-004 Current-state beats wiki test | builder | shipped | Prevent wiki packets from overriding mutable user facts | regression proves current-state memory outranks wiki for "what do you know about me?" |
-| MWI-005 Candidate contradiction scan | builder | planned | Compare wiki candidates against memory/current runtime evidence before promotion | conflicting candidates stay candidate or blocked |
+| MWI-005 Candidate contradiction scan | builder | shipped | Compare wiki candidates against authority, lineage, residue, live-health, and mutable-user-fact hazards before promotion | scan emits keep/rewrite/drop recommendations and blocks authority inversions |
 | MWI-006 Combined memory/wiki live cases | telegram | planned | Test natural-language questions that need both user memory and system wiki | live matrix covers user-vs-system, memory-vs-wiki, and authority-inversion prompts |
 | MWI-007 Rich wiki packet contract | domain-chip-memory | shipped | Return parsed frontmatter metadata from packet reader | packet hits expose authority, owner_system, type, status, freshness, and wiki_family |
 | MWI-008 Memory cognition in self-status | builder | shipped | Let Spark name its active memory architecture and lanes | self-awareness payload includes runtime architecture, provider, lane map, wiki packet status, graph sidecar status, and memory KB gaps |
@@ -150,7 +150,7 @@ Guardrail:
 | Task | Repo | Status | Outcome | Acceptance |
 | --- | --- | --- | --- | --- |
 | SAH-201 Candidate wiki inbox | builder | shipped | Candidate improvement notes can be listed by status, source, evidence, age, and review boundary | `wiki candidates --json` shows candidate notes by age/status/source and repeats non-override rules |
-| SAH-202 Wiki contradiction scan | builder | planned | Detects candidate or verified notes that conflict with live status or newer sources | scan emits keep/rewrite/drop recommendations |
+| SAH-202 Wiki contradiction scan | builder | shipped | Detects candidate or verified notes that conflict with live status boundaries, source lineage, residue rules, or user-memory scoping | `wiki scan-candidates --json` emits keep/rewrite/drop recommendations |
 | SAH-203 Wiki stale page health | builder | planned | Each page class has freshness thresholds and invalidation triggers | `wiki status` warns about stale generated pages and old candidates |
 | SAH-204 Obsidian index polish | builder | planned | Wiki has index pages for system, routes, tools, user, projects, and improvements | inventory shows linked pages and missing expected indexes |
 | SAH-205 User-specific wiki consent lane | builder | planned | User/environment notes are stored separately from Spark system doctrine | user notes require explicit promotion intent or configured policy |
@@ -192,12 +192,12 @@ Shipped in Builder:
 - `48e7d90` surfaced memory dashboard movement status as `observability_non_authoritative`.
 - `651d630` added eval traps for KB absence, user-memory/doctrine separation, and non-promotable self-awareness output.
 - This slice added a candidate wiki inbox so Builder can list source-bounded improvement notes without treating them as runtime truth.
+- This slice added a wiki contradiction scan so candidate and verified improvement notes get keep/rewrite/drop guidance before further promotion.
 
 Next phase:
 
-1. Build SAH-202 contradiction scan before any candidate note can be treated as verified.
-2. Run SAH-004/SAH-005 live Telegram smoke for `/self`, `/wiki`, natural memory-self-awareness, and wiki promotion.
-3. Keep SAH-205 separate: user/environment wiki lanes must not merge into global Spark doctrine without explicit consent and source metadata.
+1. Run SAH-004/SAH-005 live Telegram smoke for `/self`, `/wiki`, natural memory-self-awareness, wiki candidate inbox, contradiction scan, and wiki promotion.
+2. Keep SAH-205 separate: user/environment wiki lanes must not merge into global Spark doctrine without explicit consent and source metadata.
 
 ## Live Test Suites To Add
 
@@ -243,10 +243,11 @@ Next phase:
 
 Recommended next implementation order:
 
-1. Add Builder wiki contradiction scan commands before verified promotion:
-   - `wiki scan-candidates`
-   - keep/rewrite/drop recommendations
-2. Add the Telegram live-test cases in `ops/natural-language-live-commands.json`.
+1. Add the Telegram live-test cases in `ops/natural-language-live-commands.json`.
+   - `/self`
+   - `/wiki`
+   - natural candidate inbox and contradiction scan prompts
+   - wiki promotion with source/evidence refs
 3. Add user/project awareness sections to `SelfAwarenessCapsule`.
 4. Add `wiki compile-system` pages for environment, projects, and improvement candidates.
 5. Add route explanation fields to Telegram wiki/self-awareness bridge calls.

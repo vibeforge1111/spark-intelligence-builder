@@ -94,6 +94,7 @@ from spark_intelligence.llm_wiki import (
     bootstrap_llm_wiki,
     build_llm_wiki_answer,
     build_llm_wiki_candidate_inbox,
+    build_llm_wiki_candidate_scan,
     build_llm_wiki_inventory,
     build_llm_wiki_query,
     build_llm_wiki_status,
@@ -1368,6 +1369,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     wiki_inbox_parser.add_argument("--limit", type=int, default=40, help="Maximum candidate records to emit")
     wiki_inbox_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    wiki_scan_candidates_parser = wiki_subparsers.add_parser(
+        "scan-candidates",
+        help="Scan LLM wiki improvement notes for authority, lineage, and memory-boundary hazards",
+    )
+    wiki_scan_candidates_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    wiki_scan_candidates_parser.add_argument("--output-dir", help="Override wiki output directory")
+    wiki_scan_candidates_parser.add_argument(
+        "--status",
+        choices=("candidate", "verified", "all"),
+        default="all",
+        help="Which improvement notes to scan",
+    )
+    wiki_scan_candidates_parser.add_argument("--limit", type=int, default=80, help="Maximum note records to scan")
+    wiki_scan_candidates_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     wiki_query_parser = wiki_subparsers.add_parser(
         "query",
         help="Retrieve relevant supporting packets from the local LLM wiki",
@@ -4160,6 +4175,19 @@ def handle_wiki_candidate_inbox(args: argparse.Namespace) -> int:
         output_dir=getattr(args, "output_dir", None),
         status=str(getattr(args, "status", "") or "candidate"),
         limit=int(getattr(args, "limit", 40) or 40),
+    )
+    print(result.to_json() if args.json else result.to_text())
+    return 0 if result.payload.get("exists") else 1
+
+
+def handle_wiki_candidate_scan(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    result = build_llm_wiki_candidate_scan(
+        config_manager=config_manager,
+        output_dir=getattr(args, "output_dir", None),
+        status=str(getattr(args, "status", "") or "all"),
+        limit=int(getattr(args, "limit", 80) or 80),
     )
     print(result.to_json() if args.json else result.to_text())
     return 0 if result.payload.get("exists") else 1
@@ -7824,6 +7852,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_wiki_inventory(args)
     if args.command == "wiki" and args.wiki_command == "candidates":
         return handle_wiki_candidate_inbox(args)
+    if args.command == "wiki" and args.wiki_command == "scan-candidates":
+        return handle_wiki_candidate_scan(args)
     if args.command == "wiki" and args.wiki_command == "query":
         return handle_wiki_query(args)
     if args.command == "wiki" and args.wiki_command == "answer":
