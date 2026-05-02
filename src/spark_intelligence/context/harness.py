@@ -617,7 +617,31 @@ def _retrieve_domain_chip_direct(*, sdk: Any, subject: str, query: str, limit: i
         from domain_chip_memory.sdk import EventRetrievalRequest, EvidenceRetrievalRequest
     except Exception:
         return []
+    try:
+        from domain_chip_memory.sdk import TaskRecoveryRequest
+    except Exception:
+        TaskRecoveryRequest = None  # type: ignore[assignment]
+
     items: list[ColdContextItem] = []
+    task_recovery = getattr(sdk, "recover_task_context", None)
+    if callable(task_recovery) and TaskRecoveryRequest is not None:
+        try:
+            recovery_result = task_recovery(
+                TaskRecoveryRequest(query=query, subject=subject, limit=max(1, min(6, int(limit or 1))))
+            )
+        except Exception as exc:
+            items.append(
+                ColdContextItem(
+                    source="domain_chip_memory",
+                    text=f"recover_task_context unavailable: {exc.__class__.__name__}",
+                    method="recover_task_context",
+                    confidence=0.0,
+                    metadata={"error": exc.__class__.__name__},
+                )
+            )
+        else:
+            items.extend(_cold_context_items_from_task_recovery(recovery_result))
+
     for method, request_type in (
         ("retrieve_evidence", EvidenceRetrievalRequest),
         ("retrieve_events", EventRetrievalRequest),
@@ -653,6 +677,56 @@ def _retrieve_domain_chip_direct(*, sdk: Any, subject: str, query: str, limit: i
                         "memory_role": getattr(item, "memory_role", None),
                         "session_id": getattr(item, "session_id", None),
                         "turn_ids": list(getattr(item, "turn_ids", []) or []),
+                    },
+                )
+            )
+    return items
+
+
+def _cold_context_items_from_task_recovery(result: Any) -> list[ColdContextItem]:
+    trace = getattr(result, "trace", {}) if result is not None else {}
+    labels = trace.get("source_labels") if isinstance(trace, dict) else []
+    label_by_id: dict[str, dict[str, Any]] = {}
+    if isinstance(labels, list):
+        for label in labels:
+            if not isinstance(label, dict):
+                continue
+            for key in ("observation_id", "event_id"):
+                value = str(label.get(key) or "").strip()
+                if value:
+                    label_by_id[value] = label
+    items: list[ColdContextItem] = []
+    buckets = (
+        ("active_goal", [getattr(result, "active_goal", None)]),
+        ("completed_steps", list(getattr(result, "completed_steps", []) or [])),
+        ("blockers", list(getattr(result, "blockers", []) or [])),
+        ("next_actions", list(getattr(result, "next_actions", []) or [])),
+        ("episodic_context", list(getattr(result, "episodic_context", []) or [])),
+    )
+    for bucket, records in buckets:
+        for record in records:
+            if record is None:
+                continue
+            text = str(getattr(record, "text", "") or "").strip()
+            if not text:
+                continue
+            observation_id = str(getattr(record, "observation_id", "") or "").strip()
+            event_id = str(getattr(record, "event_id", "") or "").strip()
+            label = label_by_id.get(observation_id) or label_by_id.get(event_id) or {}
+            items.append(
+                ColdContextItem(
+                    source="domain_chip_memory",
+                    text=text,
+                    method="recover_task_context",
+                    confidence=0.85 if bucket == "active_goal" else 0.75,
+                    metadata={
+                        "bucket": bucket,
+                        "authority": label.get("authority"),
+                        "source_family": label.get("source_family"),
+                        "predicate": getattr(record, "predicate", None),
+                        "memory_role": getattr(record, "memory_role", None),
+                        "session_id": getattr(record, "session_id", None),
+                        "turn_ids": list(getattr(record, "turn_ids", []) or []),
                     },
                 )
             )

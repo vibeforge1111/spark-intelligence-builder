@@ -253,3 +253,70 @@ def test_cold_context_retrieval_can_inject_domain_chip_evidence(monkeypatch) -> 
     assert items[0].source == "domain_chip_memory"
     assert "bounded context" in frame.warm_summary
     assert any(item["source"] == "retrieved_context" and item["count"] > 0 for item in frame.source_ledger)
+
+
+def test_cold_context_retrieval_prefers_domain_chip_task_recovery_when_available(monkeypatch) -> None:
+    sdk_module = types.ModuleType("domain_chip_memory.sdk")
+
+    class FakeRequest:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class FakeSDK:
+        def recover_task_context(self, request):
+            assert request.subject == "human:telegram:1"
+            return types.SimpleNamespace(
+                trace={
+                    "source_labels": [
+                        {
+                            "bucket": "active_goal",
+                            "authority": "authoritative_current",
+                            "source_family": "current_state",
+                            "observation_id": "obs-focus",
+                        }
+                    ]
+                },
+                active_goal=types.SimpleNamespace(
+                    text="human:telegram:1 current_focus ship source-aware memory recovery",
+                    predicate="current_focus",
+                    memory_role="current_state",
+                    session_id="s1",
+                    turn_ids=["t1"],
+                    observation_id="obs-focus",
+                    event_id=None,
+                ),
+                completed_steps=[],
+                blockers=[],
+                next_actions=[
+                    types.SimpleNamespace(
+                        text="human:telegram:1 task.next_action wire recovery into Builder",
+                        predicate="task.next_action",
+                        memory_role="structured_evidence",
+                        session_id="s1",
+                        turn_ids=["t2"],
+                        observation_id="obs-next",
+                        event_id=None,
+                    )
+                ],
+                episodic_context=[],
+            )
+
+    sdk_module.EvidenceRetrievalRequest = FakeRequest
+    sdk_module.EventRetrievalRequest = FakeRequest
+    sdk_module.TaskRecoveryRequest = FakeRequest
+    package = types.ModuleType("domain_chip_memory")
+    monkeypatch.setitem(sys.modules, "domain_chip_memory", package)
+    monkeypatch.setitem(sys.modules, "domain_chip_memory.sdk", sdk_module)
+
+    items = retrieve_domain_chip_cold_context(
+        sdk=FakeSDK(),
+        subject="human:telegram:1",
+        query="what are we doing next?",
+        limit=4,
+    )
+
+    assert items[0].method == "recover_task_context"
+    assert items[0].metadata["bucket"] == "active_goal"
+    assert items[0].metadata["authority"] == "authoritative_current"
+    assert "source-aware memory recovery" in items[0].text
+    assert any(item.metadata["bucket"] == "next_actions" for item in items)
