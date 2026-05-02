@@ -5,6 +5,7 @@ import json
 from spark_intelligence.llm_wiki import (
     bootstrap_llm_wiki,
     build_llm_wiki_answer,
+    build_llm_wiki_candidate_inbox,
     build_llm_wiki_inventory,
     build_llm_wiki_query,
     build_llm_wiki_status,
@@ -349,6 +350,68 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertEqual(payload["authority"], "supporting_not_authoritative")
         self.assertTrue(payload["relative_path"].startswith("improvements/"))
         self.assertTrue((self.home / "wiki" / payload["relative_path"]).exists())
+
+    def test_wiki_candidate_inbox_lists_source_bounded_candidates(self) -> None:
+        promote_llm_wiki_improvement(
+            config_manager=self.config_manager,
+            title="Probe route confidence before claims",
+            summary="Spark should show candidate route confidence only with fresh trace evidence.",
+            evidence_refs=["pytest tests/test_self_awareness.py::route_confidence"],
+            source_refs=["operator_session:self-awareness-hardening"],
+        )
+        promote_llm_wiki_improvement(
+            config_manager=self.config_manager,
+            title="Verified generated pages are supporting only",
+            summary="Generated wiki pages can assist answers but live traces still decide current truth.",
+            promotion_status="verified",
+            evidence_refs=["pytest tests/test_llm_wiki_bootstrap.py::wiki_answer"],
+            source_refs=["commit:a81acf2"],
+        )
+
+        result = build_llm_wiki_candidate_inbox(config_manager=self.config_manager)
+
+        self.assertEqual(result.payload["authority"], "supporting_not_authoritative")
+        self.assertEqual(result.payload["status_filter"], "candidate")
+        self.assertEqual(result.payload["candidate_count"], 1)
+        self.assertEqual(result.payload["verified_count"], 1)
+        self.assertEqual(result.payload["returned_count"], 1)
+        note = result.payload["notes"][0]
+        self.assertEqual(note["promotion_status"], "candidate")
+        self.assertEqual(note["review_state"], "candidate_needs_probe")
+        self.assertEqual(note["authority"], "supporting_not_authoritative")
+        self.assertFalse(note["can_override_runtime_truth"])
+        self.assertEqual(note["evidence_refs"], ["pytest tests/test_self_awareness.py::route_confidence"])
+        self.assertEqual(note["source_refs"], ["operator_session:self-awareness-hardening"])
+        self.assertTrue(note["lineage"]["has_source_or_evidence"])
+        self.assertIn("candidate_notes_are_not_runtime_truth", result.payload["non_override_rules"])
+        self.assertIn("conversational_residue_is_not_promotion_evidence", result.payload["non_override_rules"])
+
+    def test_wiki_candidate_inbox_cli_can_emit_all_review_notes(self) -> None:
+        promote_llm_wiki_improvement(
+            config_manager=self.config_manager,
+            title="Candidate inbox CLI note",
+            summary="Candidate review must expose source and evidence refs without promoting truth.",
+            evidence_refs=["pytest tests/test_llm_wiki_bootstrap.py::candidate_inbox"],
+            source_refs=["operator_session:self-awareness-hardening"],
+        )
+
+        exit_code, stdout, stderr = self.run_cli(
+            "wiki",
+            "candidates",
+            "--home",
+            str(self.home),
+            "--status",
+            "all",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["status_filter"], "all")
+        self.assertEqual(payload["authority"], "supporting_not_authoritative")
+        self.assertEqual(payload["returned_count"], 1)
+        self.assertEqual(payload["notes"][0]["promotion_status"], "candidate")
+        self.assertFalse(payload["notes"][0]["can_override_runtime_truth"])
 
     def test_project_knowledge_intent_boosts_wiki_over_generic_events(self) -> None:
         query = "How should Spark use recursive self-improvement loops?"
