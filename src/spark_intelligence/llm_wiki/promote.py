@@ -36,6 +36,9 @@ class LlmWikiImprovementPromotionResult:
             lines.append(f"- evidence_refs: {len(evidence_refs)}")
         if source_refs:
             lines.append(f"- source_refs: {len(source_refs)}")
+        proposal_gate = self.payload.get("proposal_gate") if isinstance(self.payload.get("proposal_gate"), dict) else {}
+        if self.payload.get("proposal_kind") == "self_improvement":
+            lines.append(f"- proposal_ready: {'yes' if proposal_gate.get('promotion_ready') else 'no'}")
         warnings = [str(item) for item in self.payload.get("warnings") or [] if str(item).strip()]
         if warnings:
             lines.append("Warnings")
@@ -57,6 +60,11 @@ def promote_llm_wiki_improvement(
     route_decision: str = "",
     source_packet_refs: list[str] | tuple[str, ...] | None = None,
     probe_refs: list[str] | tuple[str, ...] | None = None,
+    proposal: bool = False,
+    weak_spot: str = "",
+    hypothesis: str = "",
+    expected_eval: str = "",
+    rollback_condition: str = "",
     next_probe: str = "",
     invalidation_trigger: str = "",
     overwrite: bool = False,
@@ -71,12 +79,25 @@ def promote_llm_wiki_improvement(
     probes = _clean_list(probe_refs)
     lineage_request_id = _compact(request_id)
     lineage_route_decision = _compact(route_decision)
+    proposal_packet = _proposal_packet(
+        proposal=proposal,
+        weak_spot=weak_spot,
+        hypothesis=hypothesis,
+        evidence_refs=evidence,
+        probe_refs=probes,
+        next_probe=next_probe,
+        rollback_condition=rollback_condition,
+        expected_eval=expected_eval,
+    )
     if not normalized_title:
         raise ValueError("title is required for a wiki improvement note.")
     if not normalized_summary:
         raise ValueError("summary is required for a wiki improvement note.")
     if not evidence and not sources:
         raise ValueError("at least one --evidence-ref or --source is required to avoid residue promotion.")
+    if status == "verified" and proposal_packet["is_proposal"] and not proposal_packet["gate"]["promotion_ready"]:
+        missing = ", ".join(proposal_packet["gate"]["missing_fields"])
+        raise ValueError(f"verified self-improvement proposals require falsifiable fields: {missing}")
 
     generated_at = _utc_timestamp()
     relative_path = _relative_note_path(title=normalized_title, generated_at=generated_at, root=root, overwrite=overwrite)
@@ -90,6 +111,8 @@ def promote_llm_wiki_improvement(
         warnings.append("verified_status_without_explicit_evidence_ref")
     if status == "candidate":
         warnings.append("candidate_status_requires_probe_before_runtime_truth")
+    if proposal_packet["is_proposal"] and not proposal_packet["gate"]["promotion_ready"]:
+        warnings.append("proposal_missing_falsifiable_fields")
 
     content = _render_improvement_note(
         title=normalized_title,
@@ -102,6 +125,7 @@ def promote_llm_wiki_improvement(
         route_decision=lineage_route_decision,
         source_packet_refs=source_packets,
         probe_refs=probes,
+        proposal_packet=proposal_packet,
         next_probe=_compact(next_probe) or "Run the relevant live probe, test, or trace check before treating this as current truth.",
         invalidation_trigger=_compact(invalidation_trigger) or "Invalidate or downgrade if a newer live trace, test, or source contradicts this note.",
         warnings=warnings,
@@ -122,6 +146,9 @@ def promote_llm_wiki_improvement(
         "route_decision": lineage_route_decision,
         "source_packet_refs": source_packets,
         "probe_refs": probes,
+        "proposal_kind": proposal_packet["proposal_kind"],
+        "proposal": proposal_packet,
+        "proposal_gate": proposal_packet["gate"],
         "trace_lineage": {
             "request_id": lineage_request_id,
             "route_decision": lineage_route_decision,
@@ -149,6 +176,7 @@ def _render_improvement_note(
     route_decision: str,
     source_packet_refs: list[str],
     probe_refs: list[str],
+    proposal_packet: dict[str, Any],
     next_probe: str,
     invalidation_trigger: str,
     warnings: list[str],
@@ -181,12 +209,30 @@ def _render_improvement_note(
         "- probe_refs:",
         *[f"  - {item}" for item in probe_refs],
         "",
-        "## Next Probe",
-        f"- {next_probe}",
-        "",
-        "## Invalidation Trigger",
-        f"- {invalidation_trigger}",
     ]
+    if proposal_packet["is_proposal"]:
+        body.extend(
+            [
+                "## Self-Improvement Proposal",
+                f"- weak_spot: {proposal_packet['weak_spot'] or 'missing'}",
+                f"- hypothesis: {proposal_packet['hypothesis'] or 'missing'}",
+                f"- expected_eval: {proposal_packet['expected_eval'] or 'missing'}",
+                f"- rollback_condition: {proposal_packet['rollback_condition'] or 'missing'}",
+                f"- promotion_ready: {str(proposal_packet['gate']['promotion_ready']).lower()}",
+                "- missing_fields:",
+                *[f"  - {item}" for item in proposal_packet["gate"]["missing_fields"]],
+                "",
+            ]
+        )
+    body.extend(
+        [
+            "## Next Probe",
+            f"- {next_probe}",
+            "",
+            "## Invalidation Trigger",
+            f"- {invalidation_trigger}",
+        ]
+    )
     if warnings:
         body.extend(["", "## Warnings", *[f"- {item}" for item in warnings]])
     if not evidence_refs:
@@ -215,6 +261,13 @@ def _render_improvement_note(
             f'route_decision: "{_frontmatter_string(route_decision)}"',
             f"source_packet_refs: [{', '.join(_frontmatter_list(source_packet_refs))}]",
             f"probe_refs: [{', '.join(_frontmatter_list(probe_refs))}]",
+            f"proposal_kind: {proposal_packet['proposal_kind'] or 'none'}",
+            f'weak_spot: "{_frontmatter_string(proposal_packet["weak_spot"])}"',
+            f'hypothesis: "{_frontmatter_string(proposal_packet["hypothesis"])}"',
+            f'expected_eval: "{_frontmatter_string(proposal_packet["expected_eval"])}"',
+            f'rollback_condition: "{_frontmatter_string(proposal_packet["rollback_condition"])}"',
+            f"proposal_promotion_ready: {str(proposal_packet['gate']['promotion_ready']).lower()}",
+            f"proposal_missing_fields: [{', '.join(_frontmatter_list(proposal_packet['gate']['missing_fields']))}]",
             "---",
             "",
             "\n".join(line.rstrip() for line in body),
@@ -255,6 +308,46 @@ def _clean_list(value: list[str] | tuple[str, ...] | None) -> list[str]:
         seen.add(text)
         cleaned.append(text)
     return cleaned[:20]
+
+
+def _proposal_packet(
+    *,
+    proposal: bool,
+    weak_spot: str,
+    hypothesis: str,
+    evidence_refs: list[str],
+    probe_refs: list[str],
+    next_probe: str,
+    rollback_condition: str,
+    expected_eval: str,
+) -> dict[str, Any]:
+    normalized = {
+        "weak_spot": _compact(weak_spot),
+        "hypothesis": _compact(hypothesis),
+        "expected_eval": _compact(expected_eval),
+        "rollback_condition": _compact(rollback_condition),
+    }
+    is_proposal = bool(proposal or any(normalized.values()))
+    gate_checks = {
+        "weak_spot": bool(normalized["weak_spot"]),
+        "hypothesis": bool(normalized["hypothesis"]),
+        "evidence": bool(evidence_refs),
+        "probe": bool(probe_refs or _compact(next_probe)),
+        "rollback": bool(normalized["rollback_condition"]),
+        "expected_eval": bool(normalized["expected_eval"]),
+    }
+    missing_fields = [field for field, passed in gate_checks.items() if not passed]
+    return {
+        "is_proposal": is_proposal,
+        "proposal_kind": "self_improvement" if is_proposal else "none",
+        **normalized,
+        "gate": {
+            "checks": gate_checks,
+            "missing_fields": missing_fields if is_proposal else [],
+            "promotion_ready": bool(is_proposal and not missing_fields),
+            "authority_boundary": "proposal_is_not_runtime_mutation_until_probe_eval_and_rollback_pass",
+        },
+    }
 
 
 def _compact(value: str) -> str:

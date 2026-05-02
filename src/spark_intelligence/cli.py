@@ -1450,6 +1450,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Probe, test, smoke run, trace, or status-check ref. Repeat for multiple refs.",
     )
+    wiki_promote_parser.add_argument(
+        "--proposal",
+        action="store_true",
+        help="Treat this note as a self-improvement proposal with falsifiable governance fields.",
+    )
+    wiki_promote_parser.add_argument("--weak-spot", default="", help="Weak spot or failure class this proposal targets")
+    wiki_promote_parser.add_argument("--hypothesis", default="", help="Expected mechanism for why this improvement should work")
+    wiki_promote_parser.add_argument("--expected-eval", default="", help="Eval, test, or replay that should prove the proposal worked")
+    wiki_promote_parser.add_argument("--rollback-condition", default="", help="Condition that should revert or downgrade the proposal")
     wiki_promote_parser.add_argument("--next-probe", default="", help="Probe required before using this as current truth")
     wiki_promote_parser.add_argument("--invalidation-trigger", default="", help="Condition that should downgrade or replace this note")
     wiki_promote_parser.add_argument("--force", action="store_true", help="Overwrite the generated note path if it already exists")
@@ -4296,6 +4305,11 @@ def handle_wiki_promote_improvement(args: argparse.Namespace) -> int:
             route_decision=str(getattr(args, "route_decision", "") or ""),
             source_packet_refs=list(getattr(args, "source_packet_ref", []) or []),
             probe_refs=list(getattr(args, "probe_ref", []) or []),
+            proposal=bool(getattr(args, "proposal", False)),
+            weak_spot=str(getattr(args, "weak_spot", "") or ""),
+            hypothesis=str(getattr(args, "hypothesis", "") or ""),
+            expected_eval=str(getattr(args, "expected_eval", "") or ""),
+            rollback_condition=str(getattr(args, "rollback_condition", "") or ""),
             next_probe=str(getattr(args, "next_probe", "") or ""),
             invalidation_trigger=str(getattr(args, "invalidation_trigger", "") or ""),
             overwrite=bool(getattr(args, "force", False)),

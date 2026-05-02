@@ -119,6 +119,19 @@ def _note_payload(root: Path, path: Path) -> dict[str, Any]:
     probe_refs = _list_value(frontmatter.get("probe_refs"))
     request_id = str(frontmatter.get("request_id") or "").strip()
     route_decision = str(frontmatter.get("route_decision") or "").strip()
+    proposal_kind = str(frontmatter.get("proposal_kind") or "none").strip()
+    proposal = _proposal_payload(
+        proposal_kind=proposal_kind,
+        weak_spot=str(frontmatter.get("weak_spot") or "").strip(),
+        hypothesis=str(frontmatter.get("hypothesis") or "").strip(),
+        expected_eval=str(frontmatter.get("expected_eval") or "").strip(),
+        rollback_condition=str(frontmatter.get("rollback_condition") or "").strip(),
+        evidence_refs=evidence_refs,
+        probe_refs=probe_refs,
+        next_probe=_section_bullet(content, "Next Probe"),
+        recorded_missing_fields=_list_value(frontmatter.get("proposal_missing_fields")),
+        recorded_promotion_ready=frontmatter.get("proposal_promotion_ready"),
+    )
     modified_at = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).replace(microsecond=0)
     created_at = str(frontmatter.get("date_created") or "").strip()
     return {
@@ -138,6 +151,9 @@ def _note_payload(root: Path, path: Path) -> dict[str, Any]:
         "route_decision": route_decision,
         "source_packet_refs": source_packet_refs,
         "probe_refs": probe_refs,
+        "proposal_kind": proposal_kind,
+        "proposal": proposal,
+        "proposal_gate": proposal["gate"],
         "lineage": {
             "evidence_ref_count": len(evidence_refs),
             "source_ref_count": len(source_refs),
@@ -201,6 +217,52 @@ def _normalize_status(value: str) -> str:
 def _normalize_note_status(value: Any) -> str:
     status = str(value or "candidate").strip().casefold()
     return status if status in {"candidate", "verified"} else "candidate"
+
+
+def _proposal_payload(
+    *,
+    proposal_kind: str,
+    weak_spot: str,
+    hypothesis: str,
+    expected_eval: str,
+    rollback_condition: str,
+    evidence_refs: list[str],
+    probe_refs: list[str],
+    next_probe: str,
+    recorded_missing_fields: list[str],
+    recorded_promotion_ready: Any,
+) -> dict[str, Any]:
+    is_proposal = proposal_kind == "self_improvement"
+    gate_checks = {
+        "weak_spot": bool(weak_spot),
+        "hypothesis": bool(hypothesis),
+        "evidence": bool(evidence_refs),
+        "probe": bool(probe_refs or next_probe),
+        "rollback": bool(rollback_condition),
+        "expected_eval": bool(expected_eval),
+    }
+    missing_fields = recorded_missing_fields if is_proposal and recorded_missing_fields else [
+        field for field, passed in gate_checks.items() if not passed
+    ]
+    promotion_ready = (
+        bool(recorded_promotion_ready)
+        if is_proposal and recorded_promotion_ready is not None
+        else bool(is_proposal and not missing_fields)
+    )
+    return {
+        "is_proposal": is_proposal,
+        "proposal_kind": proposal_kind if is_proposal else "none",
+        "weak_spot": weak_spot,
+        "hypothesis": hypothesis,
+        "expected_eval": expected_eval,
+        "rollback_condition": rollback_condition,
+        "gate": {
+            "checks": gate_checks,
+            "missing_fields": missing_fields if is_proposal else [],
+            "promotion_ready": promotion_ready,
+            "authority_boundary": "proposal_is_not_runtime_mutation_until_probe_eval_and_rollback_pass",
+        },
+    }
 
 
 def _section_bullet(content: str, heading: str) -> str:

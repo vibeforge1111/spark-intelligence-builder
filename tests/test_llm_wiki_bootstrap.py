@@ -495,6 +495,75 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertEqual(finding["source_packet_refs"][1], "memory_packet:current-state:focus")
         self.assertEqual(finding["probe_refs"], ["pytest tests/test_natural_language_route_eval_matrix.py -q"])
 
+    def test_wiki_promote_improvement_writes_falsifiable_proposal_packet(self) -> None:
+        result = promote_llm_wiki_improvement(
+            config_manager=self.config_manager,
+            title="Improve capability confidence scoring",
+            summary="Spark should lower confidence when route success evidence is stale.",
+            evidence_refs=["pytest tests/test_self_awareness.py::capability_freshness"],
+            source_refs=["operator_session:self-awareness-hardening"],
+            probe_refs=["pytest tests/test_self_awareness.py::capability_freshness"],
+            proposal=True,
+            weak_spot="Capability confidence can overstate stale configured routes.",
+            hypothesis="Adding freshness gates should reduce false live-capability claims.",
+            expected_eval="Route confidence regression shows stale routes cannot be claimed confidently.",
+            rollback_condition="Revert if route confidence loses recent-success distinctions.",
+            next_probe="Run capability freshness and natural-language route evals.",
+        )
+
+        note = (self.home / "wiki" / result.relative_path).read_text(encoding="utf-8")
+        self.assertIn("proposal_kind: self_improvement", note)
+        self.assertIn("## Self-Improvement Proposal", note)
+        self.assertIn("weak_spot:", note)
+        self.assertIn("hypothesis:", note)
+        self.assertIn("expected_eval:", note)
+        self.assertIn("rollback_condition:", note)
+        self.assertTrue(result.payload["proposal_gate"]["promotion_ready"])
+        self.assertEqual(result.payload["proposal_gate"]["missing_fields"], [])
+
+        inbox = build_llm_wiki_candidate_inbox(config_manager=self.config_manager)
+        proposal = inbox.payload["notes"][0]["proposal"]
+        self.assertEqual(proposal["proposal_kind"], "self_improvement")
+        self.assertTrue(proposal["gate"]["promotion_ready"])
+
+        scan = build_llm_wiki_candidate_scan(config_manager=self.config_manager)
+        self.assertEqual(scan.payload["findings"][0]["issues"], [])
+
+    def test_wiki_promote_improvement_blocks_verified_proposal_without_falsifiable_check(self) -> None:
+        with self.assertRaises(ValueError):
+            promote_llm_wiki_improvement(
+                config_manager=self.config_manager,
+                title="Verified but vague proposal",
+                summary="Spark should improve itself somehow.",
+                promotion_status="verified",
+                evidence_refs=["pytest tests/test_llm_wiki_bootstrap.py"],
+                source_refs=["operator_session:self-awareness-hardening"],
+                proposal=True,
+                hypothesis="A vague self-improvement may help.",
+            )
+
+    def test_wiki_candidate_scan_flags_incomplete_candidate_proposals(self) -> None:
+        promote_llm_wiki_improvement(
+            config_manager=self.config_manager,
+            title="Incomplete proposal candidate",
+            summary="Spark should improve route confidence.",
+            evidence_refs=["pytest tests/test_llm_wiki_bootstrap.py"],
+            source_refs=["operator_session:self-awareness-hardening"],
+            proposal=True,
+            hypothesis="Better confidence scoring may help.",
+        )
+
+        result = build_llm_wiki_candidate_scan(config_manager=self.config_manager)
+
+        finding = result.payload["findings"][0]
+        issue_codes = [issue["code"] for issue in finding["issues"]]
+        self.assertEqual(finding["proposal_kind"], "self_improvement")
+        self.assertEqual(finding["recommendation"], "rewrite")
+        self.assertIn("proposal_missing_weak_spot", issue_codes)
+        self.assertIn("proposal_missing_probe", issue_codes)
+        self.assertIn("proposal_missing_rollback", issue_codes)
+        self.assertIn("proposal_missing_expected_eval", issue_codes)
+
     def test_wiki_promote_improvement_requires_source_or_evidence(self) -> None:
         with self.assertRaises(ValueError):
             promote_llm_wiki_improvement(
@@ -524,6 +593,15 @@ class LlmWikiBootstrapTests(SparkTestCase):
             "wiki_packet:improvements/example.md",
             "--probe-ref",
             "pytest tests/test_llm_wiki_bootstrap.py::cli_lineage",
+            "--proposal",
+            "--weak-spot",
+            "Route confidence lacks typed proposal metadata.",
+            "--hypothesis",
+            "Typed proposal fields make promotion review easier.",
+            "--expected-eval",
+            "CLI payload exposes proposal_gate.promotion_ready.",
+            "--rollback-condition",
+            "Remove proposal fields if old candidates stop parsing.",
             "--json",
         )
 
@@ -535,6 +613,8 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertEqual(payload["trace_lineage"]["route_decision"], "llm_wiki_candidate_inbox")
         self.assertEqual(payload["trace_lineage"]["source_packet_refs"], ["wiki_packet:improvements/example.md"])
         self.assertEqual(payload["trace_lineage"]["probe_refs"], ["pytest tests/test_llm_wiki_bootstrap.py::cli_lineage"])
+        self.assertEqual(payload["proposal_kind"], "self_improvement")
+        self.assertTrue(payload["proposal_gate"]["promotion_ready"])
         self.assertTrue(payload["relative_path"].startswith("improvements/"))
         self.assertTrue((self.home / "wiki" / payload["relative_path"]).exists())
 

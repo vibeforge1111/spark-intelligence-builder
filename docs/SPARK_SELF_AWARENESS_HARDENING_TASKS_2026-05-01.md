@@ -168,7 +168,7 @@ Guardrail:
 
 | Task | Repo | Status | Outcome | Acceptance |
 | --- | --- | --- | --- | --- |
-| SAH-401 Improvement proposal packet | builder | planned | Self-improvement plans emit hypothesis, weak spot, evidence, probe, rollback, and expected eval | no plan can be promoted without a falsifiable check |
+| SAH-401 Improvement proposal packet | builder | shipped | Self-improvement plans emit hypothesis, weak spot, evidence, probe, rollback, and expected eval | `wiki promote-improvement --proposal` writes `proposal_gate`; verified proposals fail if the falsifiable fields are missing |
 | SAH-402 Promotion gate ledger | builder | planned | Candidate improvements record whether schema, lineage, complexity, memory hygiene, and autonomy gates pass | unresolved critical gate blocks verified promotion |
 | SAH-403 Eval coverage registry | builder | planned | Every capability/improvement can show eval coverage status | self-status includes `eval=missing`, `observed`, or `covered` with source |
 | SAH-404 Surprise/weak-spot prioritizer | builder | planned | Spark ranks improvement work by recency, failures, novelty, and user relevance | strongest domains do not starve high-surprise weak spots |
@@ -206,11 +206,12 @@ Shipped in Builder:
 - This slice added `ops/natural-language-live-commands.json` plus a Builder/Telegram route eval test that locks self-awareness, wiki candidate review, build-quality review, governed memory write/read, and source-debug routing against route drift.
 - This slice added typed wiki-promotion trace lineage fields: `request_id`, `route_decision`, `source_packet_refs`, and `probe_refs`, exposed through promotion payloads, frontmatter, candidate inbox, and candidate scan output.
 - This slice added `deep_search_policy` to wiki answers so under-sourced, external, high-stakes, current, or revalidatable/static wiki-backed questions can request Researcher/browser/search and live probes before confident claims.
+- This slice added self-improvement proposal packets to `wiki promote-improvement --proposal`, including weak spot, hypothesis, evidence, probe, rollback, expected eval, and a `proposal_gate` surfaced through candidate inbox and scan.
 
 Next phase:
 
 1. Run SAH-004/SAH-005 against a real Telegram bot with `scenario-packs/telegram-live-self-awareness-wiki.txt`, `ops/natural-language-live-commands.json`, and `scripts/run_live_telegram_self_awareness_wiki_probe.ps1`.
-2. Start SAH-401: add improvement proposal packets with hypothesis, weak spot, evidence, probe, rollback, and expected eval fields before any self-improvement plan can be promoted.
+2. Start SAH-402: add a promotion gate ledger that records schema, lineage, complexity, memory hygiene, and autonomy gate status before verified promotion.
 3. Keep SAH-205 separate: user/environment wiki lanes must not merge into global Spark doctrine without explicit consent and source metadata.
 
 ## Live Test Suites To Add
