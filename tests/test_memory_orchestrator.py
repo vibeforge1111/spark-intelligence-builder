@@ -19,6 +19,7 @@ from spark_intelligence.memory import (
     lookup_current_state_in_memory,
     lookup_historical_state_in_memory,
     read_memory_kernel,
+    recover_task_context_in_memory,
     retrieve_memory_events_in_memory,
     run_memory_sdk_maintenance,
     run_memory_sdk_smoke_test,
@@ -80,6 +81,7 @@ class _FakeMemoryClient:
         self.current_state_calls: list[dict[str, object]] = []
         self.evidence_calls: list[dict[str, object]] = []
         self.retrieval_event_calls: list[dict[str, object]] = []
+        self.task_recovery_calls: list[dict[str, object]] = []
 
     def write_observation(self, **payload):
         self.observation_calls.append(payload)
@@ -152,6 +154,36 @@ class _FakeMemoryClient:
             ],
             "provenance": [{"memory_role": "event", "source": "fake_sdk"}],
             "retrieval_trace": {"trace_id": "mem-trace-events"},
+        }
+
+    def recover_task_context(self, **payload):
+        self.task_recovery_calls.append(payload)
+        return {
+            "status": "supported",
+            "memory_role": "current_state",
+            "records": [
+                {
+                    "subject": payload.get("subject"),
+                    "predicate": "current_focus",
+                    "value": "ship source-aware memory recovery",
+                    "memory_role": "current_state",
+                    "task_recovery_bucket": "active_goal",
+                    "authority": "authoritative_current",
+                    "source_family": "current_state",
+                },
+                {
+                    "subject": payload.get("subject"),
+                    "predicate": "task.next_action",
+                    "value": "wire recovery into Telegram self-awareness replies",
+                    "memory_role": "structured_evidence",
+                    "task_recovery_bucket": "next_actions",
+                    "authority": "structured_support",
+                    "source_family": "evidence",
+                },
+            ],
+            "provenance": [{"memory_role": "current_state", "source": "fake_sdk"}],
+            "retrieval_trace": {"promotes_memory": False, "selected_counts": {"active_goal": 1}},
+            "answer_explanation": {"promotes_memory": False},
         }
 
 
@@ -509,6 +541,31 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(result.ignored_stale_records[0]["value"], "context capsule verification")
         self.assertEqual(result.read_result.retrieval_trace["memory_kernel"]["ignored_stale_record_count"], 1)
         self.assertEqual(len(fake_client.evidence_calls), 1)
+
+    def test_recover_task_context_reads_source_labeled_sdk_recovery_without_promotion(self) -> None:
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ):
+            result = recover_task_context_in_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                query="what next?",
+                actor_id="test",
+                limit=3,
+            )
+
+        self.assertFalse(result.read_result.abstained)
+        self.assertEqual(result.read_result.method, "recover_task_context")
+        self.assertEqual(fake_client.task_recovery_calls[0]["subject"], "human:test")
+        self.assertEqual(result.read_result.records[0]["task_recovery_bucket"], "active_goal")
+        self.assertEqual(result.read_result.records[0]["authority"], "authoritative_current")
+        self.assertEqual(result.read_result.records[1]["task_recovery_bucket"], "next_actions")
+        self.assertIs(result.read_result.retrieval_trace["promotes_memory"], False)
+        events = latest_events_by_type(self.state_db, event_type="memory_read_succeeded", limit=5)
+        self.assertTrue(any((event["facts_json"] or {}).get("method") == "recover_task_context" for event in events))
 
     def test_hybrid_memory_retrieve_prefers_current_state_and_traces_discarded_stale_residue(self) -> None:
         fake_client = _HybridRetrievalMemoryClient()

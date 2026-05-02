@@ -343,6 +343,45 @@ class HumanMemoryInspectionResult:
 
 
 @dataclass(frozen=True)
+class MemoryTaskRecoveryResult:
+    sdk_module: str
+    human_id: str
+    subject: str
+    query: str
+    runtime: dict[str, Any]
+    read_result: MemoryReadResult
+    shadow_only_eval: bool = True
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "sdk_module": self.sdk_module,
+                "human_id": self.human_id,
+                "subject": self.subject,
+                "query": self.query,
+                "runtime": self.runtime,
+                "shadow_only_eval": self.shadow_only_eval,
+                "read_result": MemorySdkSmokeResult._read_payload(self.read_result),
+            },
+            indent=2,
+        )
+
+    def to_text(self) -> str:
+        lines = ["Spark memory task recovery"]
+        lines.append(f"- sdk_module: {self.sdk_module}")
+        lines.append(f"- human_id: {self.human_id}")
+        lines.append(f"- subject: {self.subject}")
+        lines.append(f"- ready: {'yes' if self.runtime.get('ready') else 'no'}")
+        lines.append(
+            f"- recover_task_context: status={self.read_result.status} records={len(self.read_result.records)} "
+            f"abstained={'yes' if self.read_result.abstained else 'no'}"
+        )
+        if self.read_result.reason:
+            lines.append(f"- reason: {self.read_result.reason}")
+        return "\n".join(lines)
+
+
+@dataclass(frozen=True)
 class MemoryAnswerExplanationResult:
     sdk_module: str
     subject: str
@@ -897,6 +936,19 @@ class _DomainChipMemoryClientAdapter:
         )
         result = self._sdk.retrieve_events(request)
         return _normalize_domain_retrieval_result(result=result, method="retrieve_events")
+
+    def recover_task_context(self, **payload: Any) -> dict[str, Any]:
+        request_cls = getattr(self._module, "TaskRecoveryRequest", None)
+        recover = getattr(self._sdk, "recover_task_context", None)
+        if request_cls is None or not callable(recover):
+            return {"status": "abstained", "reason": "method_missing", "memory_role": "unknown"}
+        request = request_cls(
+            query=_optional_string(payload.get("query")),
+            subject=_optional_string(payload.get("subject")),
+            limit=int(payload.get("limit") or 5),
+        )
+        result = recover(request)
+        return _normalize_domain_task_recovery_result(result=result)
 
     def explain_answer(self, **payload: Any) -> dict[str, Any]:
         subject = _optional_string(payload.get("subject"))
@@ -2144,6 +2196,90 @@ def inspect_human_memory_in_memory(
         sdk_module=module_name,
         human_id=human_id,
         subject=subject,
+        runtime=runtime,
+        read_result=read_result,
+    )
+
+
+def recover_task_context_in_memory(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str,
+    query: str,
+    sdk_module: str | None = None,
+    actor_id: str = "memory_cli",
+    limit: int = 5,
+) -> MemoryTaskRecoveryResult:
+    module_name = str(sdk_module or config_manager.get_path("spark.memory.sdk_module", default=DEFAULT_SDK_MODULE) or DEFAULT_SDK_MODULE)
+    runtime = inspect_memory_sdk_runtime(config_manager=config_manager, sdk_module=module_name)
+    client = _load_sdk_client_for_module(module_name=module_name, home_path=config_manager.paths.home)
+    subject = _subject_for_human_id(human_id)
+    session_id = f"memory-task-recovery:{actor_id}"
+    turn_id = f"{actor_id}:recover-task-context"
+    if client is None:
+        read_result = MemoryReadResult(
+            status="abstained",
+            method="recover_task_context",
+            memory_role="unknown",
+            records=[],
+            provenance=[],
+            retrieval_trace=None,
+            answer_explanation=None,
+            abstained=True,
+            reason="sdk_unavailable",
+            shadow_only=False,
+        )
+        _record_memory_read_event(
+            state_db=state_db,
+            result=read_result,
+            human_id=human_id,
+            session_id=session_id,
+            turn_id=turn_id,
+            actor_id=actor_id,
+        )
+        return MemoryTaskRecoveryResult(
+            sdk_module=module_name,
+            human_id=human_id,
+            subject=subject,
+            query=query,
+            runtime=runtime,
+            read_result=read_result,
+        )
+
+    _record_memory_read_requested_subject(
+        state_db=state_db,
+        method="recover_task_context",
+        subject=subject,
+        predicate=None,
+        query=query,
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+    )
+    raw = _call_sdk_method(
+        client,
+        "recover_task_context",
+        {
+            "query": query,
+            "subject": subject,
+            "limit": max(1, min(10, int(limit or 1))),
+        },
+    )
+    read_result = _normalize_read_result(raw=raw, method="recover_task_context", shadow_only=False)
+    _record_memory_read_event(
+        state_db=state_db,
+        result=read_result,
+        human_id=human_id,
+        session_id=session_id,
+        turn_id=turn_id,
+        actor_id=actor_id,
+    )
+    return MemoryTaskRecoveryResult(
+        sdk_module=module_name,
+        human_id=human_id,
+        subject=subject,
+        query=query,
         runtime=runtime,
         read_result=read_result,
     )
@@ -4869,6 +5005,66 @@ def _normalize_domain_retrieval_result(*, result: Any, method: str) -> dict[str,
         "provenance": records,
         "retrieval_trace": retrieval_trace,
     }
+
+
+def _normalize_domain_task_recovery_result(*, result: Any) -> dict[str, Any]:
+    retrieval_trace = dict(getattr(result, "trace", {}) or {})
+    records: list[dict[str, Any]] = []
+    for bucket, raw_records in (
+        ("active_goal", [getattr(result, "active_goal", None)]),
+        ("completed_steps", list(getattr(result, "completed_steps", []) or [])),
+        ("blockers", list(getattr(result, "blockers", []) or [])),
+        ("next_actions", list(getattr(result, "next_actions", []) or [])),
+        ("episodic_context", list(getattr(result, "episodic_context", []) or [])),
+    ):
+        for record in raw_records:
+            if record is None:
+                continue
+            payload = _domain_record_to_dict(record)
+            payload["task_recovery_bucket"] = bucket
+            payload["authority"] = _task_recovery_label_value(
+                retrieval_trace,
+                record=payload,
+                key="authority",
+            )
+            payload["source_family"] = _task_recovery_label_value(
+                retrieval_trace,
+                record=payload,
+                key="source_family",
+            )
+            records.append(payload)
+    memory_role = records[0]["memory_role"] if records else "unknown"
+    return {
+        "status": "supported" if records else str(getattr(result, "status", "") or "not_found"),
+        "memory_role": memory_role,
+        "records": records,
+        "provenance": records,
+        "retrieval_trace": retrieval_trace,
+        "answer_explanation": {
+            "authority_order": retrieval_trace.get("authority_order") if isinstance(retrieval_trace, dict) else None,
+            "selected_counts": retrieval_trace.get("selected_counts") if isinstance(retrieval_trace, dict) else None,
+            "promotes_memory": retrieval_trace.get("promotes_memory") if isinstance(retrieval_trace, dict) else False,
+        },
+    }
+
+
+def _task_recovery_label_value(trace: dict[str, Any], *, record: dict[str, Any], key: str) -> str | None:
+    labels = trace.get("source_labels")
+    if not isinstance(labels, list):
+        return None
+    observation_id = str(record.get("observation_id") or "").strip()
+    event_id = str(record.get("event_id") or "").strip()
+    bucket = str(record.get("task_recovery_bucket") or "").strip()
+    for label in labels:
+        if not isinstance(label, dict):
+            continue
+        if observation_id and str(label.get("observation_id") or "").strip() == observation_id:
+            return _optional_string(label.get(key))
+        if event_id and str(label.get("event_id") or "").strip() == event_id:
+            return _optional_string(label.get(key))
+        if bucket and str(label.get("bucket") or "").strip() == bucket and not observation_id and not event_id:
+            return _optional_string(label.get(key))
+    return None
 
 
 def _domain_record_to_dict(record: Any) -> dict[str, Any]:

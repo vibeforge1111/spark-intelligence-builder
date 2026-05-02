@@ -137,6 +137,7 @@ class ContextCapsuleTests(SparkTestCase):
                 "runtime_capabilities",
                 "diagnostics",
                 "pending_tasks",
+                "task_recovery",
                 "procedural_lessons",
                 "recent_conversation",
                 "workflow_state",
@@ -145,7 +146,7 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertEqual(ledger[0]["role"], "authority")
         self.assertEqual(ledger[1]["role"], "capability_authority")
         self.assertEqual(ledger[2]["role"], "authority")
-        self.assertEqual(ledger[6]["role"], "advisory")
+        self.assertEqual(ledger[7]["role"], "advisory")
         self.assertIn("does not close user goals", ledger[2]["note"])
 
     def test_context_capsule_includes_pending_tasks_and_procedural_lessons_for_resume(self) -> None:
@@ -191,8 +192,66 @@ class ContextCapsuleTests(SparkTestCase):
         ledger = capsule.source_ledger()
         self.assertEqual(ledger[3]["source"], "pending_tasks")
         self.assertEqual(ledger[3]["role"], "workflow_recovery")
-        self.assertEqual(ledger[4]["source"], "procedural_lessons")
-        self.assertEqual(ledger[4]["role"], "procedural_advisory")
+        self.assertEqual(ledger[4]["source"], "task_recovery")
+        self.assertEqual(ledger[4]["role"], "memory_recovery_support")
+        self.assertEqual(ledger[5]["source"], "procedural_lessons")
+        self.assertEqual(ledger[5]["role"], "procedural_advisory")
+
+    def test_context_capsule_includes_source_labeled_task_recovery_without_promoting_memory(self) -> None:
+        recovery = SimpleNamespace(
+            read_result=SimpleNamespace(
+                abstained=False,
+                records=[
+                    {
+                        "task_recovery_bucket": "active_goal",
+                        "predicate": "current_focus",
+                        "value": "ship source-aware memory recovery",
+                        "authority": "authoritative_current",
+                        "source_family": "current_state",
+                    },
+                    {
+                        "task_recovery_bucket": "next_actions",
+                        "predicate": "task.next_action",
+                        "value": "wire recovery into Telegram self-awareness replies",
+                        "authority": "structured_support",
+                        "source_family": "evidence",
+                    },
+                    {
+                        "task_recovery_bucket": "episodic_context",
+                        "predicate": "raw_turn",
+                        "value": "Earlier we were reviewing wiki metadata.",
+                        "authority": "supporting_not_authoritative",
+                        "source_family": "episodic_summary",
+                    },
+                ],
+                retrieval_trace={"promotes_memory": False},
+            )
+        )
+
+        with patch(
+            "spark_intelligence.context.capsule.inspect_human_memory_in_memory",
+            return_value=self._memory_inspection(),
+        ), patch(
+            "spark_intelligence.context.capsule.recover_task_context_in_memory",
+            return_value=recovery,
+        ):
+            capsule = build_spark_context_capsule(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human-1",
+                session_id="session-1",
+                channel_kind="telegram",
+                request_id="req-now",
+                user_message="what are we doing next?",
+            )
+
+        rendered = capsule.render()
+        self.assertIn("[task_recovery]", rendered)
+        self.assertIn("active_goal: ship source-aware memory recovery", rendered)
+        self.assertIn("next_actions: wire recovery into Telegram self-awareness replies", rendered)
+        self.assertIn("episodic_context: Earlier we were reviewing wiki metadata.", rendered)
+        self.assertIn("recovery_read_only_no_memory_promotion", rendered)
+        self.assertIn("supporting_not_authoritative", rendered)
 
     def test_context_capsule_contract_covers_telegram_arbitration_regressions(self) -> None:
         prompts = [

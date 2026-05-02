@@ -9,7 +9,7 @@ from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.jobs.service import list_job_records
-from spark_intelligence.memory import inspect_human_memory_in_memory
+from spark_intelligence.memory import inspect_human_memory_in_memory, recover_task_context_in_memory
 from spark_intelligence.security.prompt_boundaries import sanitize_prompt_boundary_text
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.system_registry import build_system_registry
@@ -54,15 +54,17 @@ class ContextCapsule:
             "runtime_capabilities": (2, "capability_authority"),
             "diagnostics": (3, "authority"),
             "pending_tasks": (4, "workflow_recovery"),
-            "procedural_lessons": (5, "procedural_advisory"),
-            "recent_conversation": (6, "supporting"),
-            "workflow_state": (7, "advisory"),
+            "task_recovery": (5, "memory_recovery_support"),
+            "procedural_lessons": (6, "procedural_advisory"),
+            "recent_conversation": (7, "supporting"),
+            "workflow_state": (8, "advisory"),
         }
         notes = {
             "current_state": "Saved focus, plan, blocker, status, and preferences. Use first when active current facts exist.",
             "runtime_capabilities": "Verified local runtime capability state. Use when answering what Spark can inspect, route, or execute.",
             "diagnostics": "Latest scan counts and clean/failure status. Health evidence only; does not close user goals.",
             "pending_tasks": "Interrupted or unfinished work. Use to resume without asking what happened.",
+            "task_recovery": "Source-labeled memory recovery for active goal, blockers, completed work, next actions, and episodic support.",
             "procedural_lessons": "Learned operating corrections from previous mistakes, target drift, timeouts, and self-review gaps.",
             "recent_conversation": "Recent same-session turns. Useful for continuity, but lower priority than current-state facts.",
             "workflow_state": "Jobs, routes, and operational residue. Advisory unless the user asks about those systems.",
@@ -94,6 +96,7 @@ class ContextCapsule:
             "If current_state lists an active focus or plan and there is no explicit closure evidence, say the system evidence is green but the focus/plan remains open until the user closes it.",
             "If runtime_capabilities list local repo/file/Codex/Spawner capability, do not underclaim by saying Spark cannot inspect local projects; name the operator-governed route and any limitations instead.",
             "If pending_tasks are present and the user asks to continue, resume, retry, or asks what was next, use pending_tasks before asking what happened.",
+            "If task_recovery is present, use active_goal and next_actions as source-labeled support; do not treat episodic_context as authoritative current truth.",
             "If procedural_lessons are present, treat them as operating guidance about how to avoid repeating earlier mistakes, not as user facts.",
             "If the user asks whether context survived across turns, verify by naming the current focus, current plan, latest diagnostics status, and maintenance summary from this capsule; do not replace that with an older handoff checklist or new mission proposal.",
             "If the user asks what is verified, still open, or only they should close, answer against active current_state first; older missions, apps, and workflow residue are out of scope unless explicitly named.",
@@ -142,6 +145,12 @@ def build_spark_context_capsule(
         "pending_tasks": _build_pending_task_lines(
             state_db=state_db,
             human_id=human_id,
+        ),
+        "task_recovery": _build_task_recovery_lines(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            user_message=user_message,
         ),
         "procedural_lessons": _build_procedural_lesson_lines(
             state_db=state_db,
@@ -302,7 +311,7 @@ def _build_runtime_capability_lines(*, config_manager: ConfigManager, state_db: 
         for record in (payload.get("records") or [])
         if isinstance(record, dict) and str(record.get("kind") or "") == "repo" and bool(record.get("available"))
     ]
-    for record in repo_records[:6]:
+    for record in repo_records[:2]:
         metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
         components = ",".join(str(item) for item in (metadata.get("components") or [])[:5] if str(item))
         line = f"- repo: {record.get('key')} status={record.get('status') or 'unknown'}"
@@ -341,6 +350,48 @@ def _build_pending_task_lines(*, state_db: StateDB, human_id: str, limit: int = 
         if task.next_retry_step:
             parts.append(f"next_retry={_compact(task.next_retry_step, 180)}")
         lines.append("- " + " | ".join(parts))
+    return lines
+
+
+def _build_task_recovery_lines(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str,
+    user_message: str,
+    limit: int = 5,
+) -> list[str]:
+    if not human_id:
+        return []
+    try:
+        result = recover_task_context_in_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            query=user_message or "current work, blockers, completed steps, and next actions",
+            actor_id="context_capsule",
+            limit=limit,
+        )
+    except Exception:
+        return []
+    read_result = result.read_result
+    if read_result.abstained or not read_result.records:
+        return []
+    lines: list[str] = []
+    for record in read_result.records[:limit]:
+        bucket = str(record.get("task_recovery_bucket") or "supporting_context").strip()
+        text = str(record.get("value") or record.get("text") or "").strip()
+        if not text:
+            continue
+        authority = str(record.get("authority") or "").strip()
+        source_family = str(record.get("source_family") or "").strip()
+        predicate = str(record.get("predicate") or "").strip()
+        suffix_parts = [part for part in (f"predicate={predicate}" if predicate else "", authority, source_family) if part]
+        suffix = f" ({'; '.join(suffix_parts)})" if suffix_parts else ""
+        lines.append(f"- {bucket}: {_compact(text, 220)}{suffix}")
+    trace = read_result.retrieval_trace or {}
+    if isinstance(trace, dict) and trace.get("promotes_memory") is False:
+        lines.append("- boundary: recovery_read_only_no_memory_promotion")
     return lines
 
 
