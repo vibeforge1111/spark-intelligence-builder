@@ -142,7 +142,7 @@ Guardrail:
 | SAH-101 User awareness capsule | builder | shipped | Self-awareness payload includes user goal, stable preferences, recent decisions, and consent-safe user context | `self status --json` includes `user_awareness` with `stable`, `recent`, `inferred`, `unknown`, and user-wiki `candidate` labels plus doctrine/memory boundaries |
 | SAH-102 Project awareness capsule | builder | shipped | Spark can name the current project/repo/mission context it is operating in | `self status --json` includes `project_awareness` with repo source refs and live git/filesystem override boundaries |
 | SAH-103 Environment awareness page | builder | shipped | Wiki compiler emits an environment page with Spark home, wiki root, repo map, local services, and safe probes | `environment/spark-environment.md` is generated from config/registry, lists safe probes, and redacts `.env` contents |
-| SAH-104 Capability freshness scoring | builder | planned | Capabilities are scored by configured, health-checked, recently invoked, and goal-relevant status | Spark stops saying "I can" without nuance below recent-success confidence |
+| SAH-104 Capability freshness scoring | builder | shipped | Capabilities are scored by configured, health-checked, recently invoked, and goal-relevant status | `capability_evidence` includes confidence, freshness, goal relevance, and `can_claim_confidently` fields |
 | SAH-105 Capability probe registry | builder | planned | Every major system/chip/provider route has a safe probe and access boundary | self-status can recommend exact safe probes |
 
 ### P1 Wiki Growth And Review
@@ -200,6 +200,7 @@ Shipped in Builder:
 - This slice added a generated environment-awareness page with local path, repo, surface, safe-probe, and secret-redaction boundaries.
 - This slice added a scoped user-awareness capsule section with stable/recent/inferred/unknown labels and user-wiki candidate boundaries.
 - This slice added a project-awareness capsule section sourced from the local project index with live git/filesystem boundaries.
+- This slice added capability freshness scoring so self-awareness can separate recent success, recent failure, stale success, and goal relevance.
 
 Next phase:
 

@@ -72,6 +72,44 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("last_failure_at", evidence_text)
         self.assertIn("route_latency_ms", evidence_text)
         self.assertIn("eval_coverage_status", evidence_text)
+        self.assertIn("confidence_level", evidence_text)
+        self.assertIn("freshness_status", evidence_text)
+        self.assertIn("goal_relevance", evidence_text)
+        self.assertIn("can_claim_confidently", evidence_text)
+
+    def test_self_awareness_capability_freshness_scores_recent_goal_relevant_success(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Startup YC route succeeded",
+            status="succeeded",
+            facts={
+                "routing_decision": "researcher_advisory",
+                "active_chip_key": "startup-yc",
+                "route_latency_ms": 321,
+                "eval_suite": "capability-freshness-regression",
+            },
+            provenance={"source_kind": "chip_hook", "source_ref": "startup-yc"},
+        )
+
+        capsule = build_self_awareness_capsule(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human:test-capability-freshness",
+            session_id="session:test-capability-freshness",
+            channel_kind="telegram",
+            user_message="can you use startup yc for this?",
+        )
+        payload = capsule.to_payload()
+
+        startup = next(row for row in payload["capability_evidence"] if row["capability_key"] == "startup-yc")
+        self.assertEqual(startup["confidence_level"], "recent_success")
+        self.assertEqual(startup["freshness_status"], "fresh")
+        self.assertEqual(startup["goal_relevance"], "direct")
+        self.assertTrue(startup["can_claim_confidently"])
+        self.assertIn("confidence=recent_success", capsule.to_text())
+        self.assertIn("goal=direct", capsule.to_text())
 
     def test_self_status_cli_emits_machine_readable_capsule(self) -> None:
         exit_code, stdout, stderr = self.run_cli(

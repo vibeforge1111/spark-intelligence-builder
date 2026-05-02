@@ -54,6 +54,10 @@ class CapabilityEvidence:
     route_latency_ms: int | None = None
     eval_coverage_status: str = "unknown"
     evidence_count: int = 0
+    confidence_level: str = "unknown"
+    freshness_status: str = "unknown"
+    goal_relevance: str = "unknown"
+    can_claim_confidently: bool = False
 
     def to_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -61,6 +65,10 @@ class CapabilityEvidence:
             "source": self.source,
             "eval_coverage_status": self.eval_coverage_status,
             "evidence_count": self.evidence_count,
+            "confidence_level": self.confidence_level,
+            "freshness_status": self.freshness_status,
+            "goal_relevance": self.goal_relevance,
+            "can_claim_confidently": self.can_claim_confidently,
         }
         if self.last_success_at:
             payload["last_success_at"] = self.last_success_at
@@ -178,7 +186,7 @@ def build_self_awareness_capsule(
     workspace_id = str(registry_payload.get("workspace_id") or "default")
 
     observed_now = _build_observed_claims(records)
-    capability_evidence = _build_capability_evidence(state_db)
+    capability_evidence = _build_capability_evidence(state_db, user_message=user_message)
     recently_verified = _build_recent_invocation_claims(state_db, capability_evidence=capability_evidence)
     available_unverified = _build_available_unverified_claims(records)
     degraded_or_missing = _build_degraded_claims(records)
@@ -366,7 +374,7 @@ def _build_recent_invocation_claims(
     return claims[:8]
 
 
-def _build_capability_evidence(state_db: StateDB) -> list[CapabilityEvidence]:
+def _build_capability_evidence(state_db: StateDB, *, user_message: str = "") -> list[CapabilityEvidence]:
     rows: dict[str, dict[str, Any]] = {}
     events: list[dict[str, Any]] = []
     for event_type in ("tool_result_received", "dispatch_failed"):
@@ -408,23 +416,33 @@ def _build_capability_evidence(state_db: StateDB) -> list[CapabilityEvidence]:
         if str(event.get("event_type") or "") == "dispatch_failed" and row.get("last_failure_at") is None:
             row["last_failure_at"] = created_at
             row["last_failure_reason"] = _failure_reason(event)
-    return [
-        CapabilityEvidence(
-            capability_key=str(row["capability_key"]),
-            source=str(row.get("source") or "observability_events"),
-            last_success_at=row.get("last_success_at"),
-            last_failure_at=row.get("last_failure_at"),
-            last_failure_reason=row.get("last_failure_reason"),
-            route_latency_ms=row.get("route_latency_ms"),
-            eval_coverage_status=str(row.get("eval_coverage_status") or "unknown"),
-            evidence_count=int(row.get("evidence_count") or 0),
+    query_tokens = _tokens(user_message)
+    evidence_rows: list[CapabilityEvidence] = []
+    for row in sorted(
+        rows.values(),
+        key=lambda item: str(item.get("last_success_at") or item.get("last_failure_at") or ""),
+        reverse=True,
+    ):
+        confidence = _capability_confidence(row)
+        freshness = _capability_freshness(row)
+        goal_relevance = _capability_goal_relevance(str(row["capability_key"]), query_tokens)
+        evidence_rows.append(
+            CapabilityEvidence(
+                capability_key=str(row["capability_key"]),
+                source=str(row.get("source") or "observability_events"),
+                last_success_at=row.get("last_success_at"),
+                last_failure_at=row.get("last_failure_at"),
+                last_failure_reason=row.get("last_failure_reason"),
+                route_latency_ms=row.get("route_latency_ms"),
+                eval_coverage_status=str(row.get("eval_coverage_status") or "unknown"),
+                evidence_count=int(row.get("evidence_count") or 0),
+                confidence_level=confidence,
+                freshness_status=freshness,
+                goal_relevance=goal_relevance,
+                can_claim_confidently=confidence == "recent_success" and freshness == "fresh",
+            )
         )
-        for row in sorted(
-            rows.values(),
-            key=lambda item: str(item.get("last_success_at") or item.get("last_failure_at") or ""),
-            reverse=True,
-        )
-    ][:12]
+    return evidence_rows[:12]
 
 
 def _capability_key_for_event(event: dict[str, Any]) -> str:
@@ -482,6 +500,57 @@ def _failure_reason(event: dict[str, Any]) -> str:
         if value:
             return value[:240]
     return str(event.get("summary") or event.get("status") or "dispatch_failed").strip()[:240]
+
+
+def _capability_confidence(row: dict[str, Any]) -> str:
+    last_success = _parse_iso(row.get("last_success_at"))
+    last_failure = _parse_iso(row.get("last_failure_at"))
+    if last_failure and (last_success is None or last_failure >= last_success):
+        return "recent_failure"
+    if last_success is None:
+        return "observed_without_success"
+    age_days = max(0, (datetime.now(UTC) - last_success).days)
+    if age_days <= 7:
+        return "recent_success"
+    return "stale_success"
+
+
+def _capability_freshness(row: dict[str, Any]) -> str:
+    latest = _parse_iso(row.get("last_success_at")) or _parse_iso(row.get("last_failure_at"))
+    if latest is None:
+        return "unknown"
+    age_days = max(0, (datetime.now(UTC) - latest).days)
+    if age_days <= 7:
+        return "fresh"
+    if age_days <= 30:
+        return "aging"
+    return "stale"
+
+
+def _capability_goal_relevance(capability_key: str, query_tokens: set[str]) -> str:
+    if not query_tokens:
+        return "unknown"
+    capability_tokens = _tokens(capability_key.replace("_", " "))
+    if capability_tokens & query_tokens:
+        return "direct"
+    return "not_detected"
+
+
+def _parse_iso(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _tokens(value: str) -> set[str]:
+    return {token for token in re.findall(r"[a-z0-9]{3,}", str(value or "").casefold())}
 
 
 
@@ -1088,6 +1157,10 @@ def _extend_capability_evidence_lines(
             extras.append(f"{evidence.route_latency_ms}ms")
         if evidence.eval_coverage_status != "unknown":
             extras.append(f"eval={evidence.eval_coverage_status}")
+        if evidence.confidence_level != "unknown":
+            extras.append(f"confidence={evidence.confidence_level}")
+        if evidence.goal_relevance not in {"unknown", "not_detected"}:
+            extras.append(f"goal={evidence.goal_relevance}")
         if evidence.last_failure_reason and not evidence.last_success_at:
             extras.append(evidence.last_failure_reason)
         suffix = f" ({'; '.join(extras)})" if extras else ""
