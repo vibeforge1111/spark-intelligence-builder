@@ -7,7 +7,7 @@ from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.context.capsule import build_spark_context_capsule
-from spark_intelligence.memory import inspect_memory_sdk_runtime, inspect_wiki_packet_metadata
+from spark_intelligence.memory import inspect_memory_movement_status, inspect_memory_sdk_runtime, inspect_wiki_packet_metadata
 from spark_intelligence.observability.store import latest_events_by_type
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.system_registry import build_system_registry
@@ -642,6 +642,15 @@ def _build_memory_cognition(config_manager: ConfigManager) -> dict[str, Any]:
             "source_families_visible": False,
             "memory_kb": {"present": False, "packet_count": 0, "family_counts": {}},
         }
+    try:
+        movement_status = inspect_memory_movement_status(config_manager=config_manager)
+    except Exception as exc:
+        movement_status = {
+            "status": "error",
+            "reason": f"movement_inspection_failed:{exc.__class__.__name__}",
+            "movement_counts": {},
+            "authority": "observability_non_authoritative",
+        }
 
     wiki_packets = {
         "status": wiki_metadata.get("status"),
@@ -662,6 +671,13 @@ def _build_memory_cognition(config_manager: ConfigManager) -> dict[str, Any]:
             "reason": runtime.get("reason"),
         },
         "wiki_packets": wiki_packets,
+        "movement": {
+            "status": movement_status.get("status"),
+            "authority": movement_status.get("authority") or "observability_non_authoritative",
+            "movement_counts": dict(movement_status.get("movement_counts") or {}),
+            "row_count": int(movement_status.get("row_count") or 0),
+            "non_override_rules": list(movement_status.get("non_override_rules") or [])[:4],
+        },
         "authority_boundary": "current_state_memory_outranks_wiki_for_mutable_user_facts",
     }
     if wiki_packets["source_families_visible"]:
@@ -768,6 +784,7 @@ def _extend_memory_cognition_lines(lines: list[str], memory_cognition: dict[str,
         memory_cognition.get("wiki_packets") if isinstance(memory_cognition.get("wiki_packets"), dict) else {}
     )
     memory_kb = wiki_packets.get("memory_kb") if isinstance(wiki_packets.get("memory_kb"), dict) else {}
+    movement = memory_cognition.get("movement") if isinstance(memory_cognition.get("movement"), dict) else {}
     lines.append("Memory cognition")
     runtime_label = str(runtime.get("runtime_memory_architecture") or runtime.get("client_kind") or "unknown").strip()
     lines.append(f"- Runtime: {'ready' if runtime.get('ready') else 'not ready'} ({runtime_label})")
@@ -779,6 +796,13 @@ def _extend_memory_cognition_lines(lines: list[str], memory_cognition: dict[str,
         families = memory_kb.get("family_counts") if isinstance(memory_kb.get("family_counts"), dict) else {}
         family_text = ", ".join(f"{key}={value}" for key, value in sorted(families.items())[:4])
         lines.append(f"- Memory KB: present ({family_text or memory_kb.get('packet_count', 0)})")
+    movement_counts = movement.get("movement_counts") if isinstance(movement.get("movement_counts"), dict) else {}
+    if movement.get("status") == "supported" and movement_counts:
+        movement_text = ", ".join(
+            f"{state}={int(movement_counts.get(state) or 0)}"
+            for state in ("captured", "blocked", "promoted", "saved", "decayed", "summarized", "retrieved")
+        )
+        lines.append(f"- Memory movement: {movement_text}")
     lines.append("- Wiki authority: supporting_not_authoritative; it helps me orient, but it is not mutable user truth.")
     lines.append("- Boundary: current-state memory wins over wiki for mutable user facts; user memory stays separate from Spark doctrine.")
     lines.append("- Graph sidecar: advisory until evals pass; conversational residue is not promotion evidence.")

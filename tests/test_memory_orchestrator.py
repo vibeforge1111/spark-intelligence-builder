@@ -16,6 +16,7 @@ from spark_intelligence.memory import (
     export_shadow_replay_batch,
     hybrid_memory_retrieve,
     inspect_human_memory_in_memory,
+    inspect_memory_movement_status,
     lookup_current_state_in_memory,
     lookup_historical_state_in_memory,
     read_memory_kernel,
@@ -3558,6 +3559,35 @@ class MemoryOrchestratorTests(SparkTestCase):
         smoke_facts = smoke_events[0]["facts_json"] or {}
         self.assertEqual(smoke_facts.get("sdk_module"), "domain_chip_memory")
         self.assertEqual(smoke_facts.get("predicate"), "system.memory.smoke")
+
+    def test_memory_movement_status_exposes_dashboard_contract_as_observability(self) -> None:
+        run_memory_sdk_smoke_test(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            sdk_module="domain_chip_memory",
+            subject="human:movement:test",
+            predicate="system.memory.movement",
+            value="ok",
+            cleanup=False,
+        )
+        lookup_current_state_in_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            subject="human:movement:test",
+            predicate="system.memory.movement",
+            sdk_module="domain_chip_memory",
+        )
+
+        status = inspect_memory_movement_status(config_manager=self.config_manager, sdk_module="domain_chip_memory")
+
+        self.assertEqual(status["status"], "supported")
+        self.assertEqual(status["authority"], "observability_non_authoritative")
+        for state in ("captured", "blocked", "promoted", "saved", "decayed", "summarized", "retrieved"):
+            self.assertIn(state, status["movement_counts"])
+        self.assertGreaterEqual(status["movement_counts"]["captured"], 1)
+        self.assertGreaterEqual(status["movement_counts"]["saved"], 1)
+        self.assertGreaterEqual(status["movement_counts"]["promoted"], 1)
+        self.assertIn("not prompt instructions", " ".join(status["non_override_rules"]))
 
     def test_lookup_current_state_in_memory_reads_back_structured_fact(self) -> None:
         run_memory_sdk_smoke_test(

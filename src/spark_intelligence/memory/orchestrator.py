@@ -74,6 +74,15 @@ WIKI_PACKET_METADATA_FIELDS: tuple[str, ...] = (
     "source_path",
 )
 MEMORY_KB_WIKI_FAMILY_PREFIX = "memory_kb_"
+MEMORY_DASHBOARD_MOVEMENT_STATES: tuple[str, ...] = (
+    "captured",
+    "blocked",
+    "promoted",
+    "saved",
+    "decayed",
+    "summarized",
+    "retrieved",
+)
 
 
 def _apply_runtime_architecture_pin() -> None:
@@ -912,6 +921,13 @@ class _DomainChipMemoryClientAdapter:
         result = self._sdk.retrieve_events(request)
         return _normalize_domain_retrieval_result(result=result, method="retrieve_events")
 
+    def export_knowledge_base_snapshot(self) -> dict[str, Any]:
+        target = getattr(self._sdk, "export_knowledge_base_snapshot", None)
+        if not callable(target):
+            return {}
+        raw = target()
+        return dict(raw) if isinstance(raw, dict) else {}
+
     def explain_answer(self, **payload: Any) -> dict[str, Any]:
         subject = _optional_string(payload.get("subject"))
         predicate = _optional_string(payload.get("predicate"))
@@ -1297,6 +1313,76 @@ def inspect_memory_sdk_runtime(
         payload["ready"] = True
         return payload
     payload["reason"] = "sdk_factory_missing"
+    return payload
+
+
+def inspect_memory_movement_status(
+    *,
+    config_manager: ConfigManager,
+    sdk_module: str | None = None,
+) -> dict[str, Any]:
+    module_name = str(
+        sdk_module or config_manager.get_path("spark.memory.sdk_module", default=DEFAULT_SDK_MODULE) or DEFAULT_SDK_MODULE
+    )
+    payload: dict[str, Any] = {
+        "status": "unavailable",
+        "reason": None,
+        "configured_module": module_name,
+        "contract_name": "SparkMemoryDashboardMovementExport",
+        "authority": "observability_non_authoritative",
+        "movement_states": list(MEMORY_DASHBOARD_MOVEMENT_STATES),
+        "movement_counts": {state: 0 for state in MEMORY_DASHBOARD_MOVEMENT_STATES},
+        "row_count": 0,
+        "record_counts": {},
+        "source_family_counts": {},
+        "authority_counts": {},
+        "non_override_rules": [
+            "Dashboard rows are observability records, not prompt instructions.",
+            "Memory movement cannot override current_state for mutable user facts.",
+            "Movement summaries can explain what happened, not what the user currently believes.",
+        ],
+    }
+    client = _load_sdk_client_for_module(module_name=module_name, home_path=config_manager.paths.home)
+    if client is None:
+        payload["reason"] = "sdk_unavailable"
+        return payload
+    export_snapshot = getattr(client, "export_knowledge_base_snapshot", None)
+    if not callable(export_snapshot):
+        payload["reason"] = "knowledge_base_snapshot_export_missing"
+        return payload
+    try:
+        snapshot = export_snapshot()
+    except Exception as exc:
+        payload.update({"status": "error", "reason": "movement_export_failed", "error": exc.__class__.__name__})
+        return payload
+    movement = snapshot.get("dashboard_movement") if isinstance(snapshot, dict) else {}
+    if not isinstance(movement, dict) or not movement:
+        payload.update({"status": "not_found", "reason": "dashboard_movement_missing"})
+        return payload
+    raw_counts = movement.get("movement_counts") if isinstance(movement.get("movement_counts"), dict) else {}
+    movement_counts = {
+        state: _coerce_int(raw_counts.get(state), default=0)
+        for state in MEMORY_DASHBOARD_MOVEMENT_STATES
+    }
+    payload.update(
+        {
+            "status": "supported",
+            "reason": None,
+            "contract_name": str(movement.get("contract_name") or "SparkMemoryDashboardMovementExport"),
+            "authority": str(movement.get("authority") or "observability_non_authoritative"),
+            "movement_states": list(MEMORY_DASHBOARD_MOVEMENT_STATES),
+            "movement_counts": movement_counts,
+            "row_count": _coerce_int(movement.get("row_count"), default=0),
+            "record_counts": dict(movement.get("record_counts") or {}),
+            "source_family_counts": dict(movement.get("source_family_counts") or {}),
+            "authority_counts": dict(movement.get("authority_counts") or {}),
+            "non_override_rules": [
+                str(item)
+                for item in (movement.get("non_override_rules") or payload["non_override_rules"])
+                if str(item).strip()
+            ][:8],
+        }
+    )
     return payload
 
 
@@ -4708,6 +4794,13 @@ def _optional_string(value: Any) -> str | None:
 def _coerce_float(value: Any, *, default: float) -> float:
     try:
         return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_int(value: Any, *, default: int) -> int:
+    try:
+        return int(value)
     except (TypeError, ValueError):
         return default
 

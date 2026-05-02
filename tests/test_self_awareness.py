@@ -4,6 +4,7 @@ import json
 
 from spark_intelligence.observability.store import record_event
 from spark_intelligence.adapters.telegram.runtime import simulate_telegram_update
+from spark_intelligence.memory import run_memory_sdk_smoke_test
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
 from spark_intelligence.self_awareness import build_self_awareness_capsule, build_self_improvement_plan
 
@@ -293,6 +294,15 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(result.promotion_disposition, "not_promotable")
 
     def test_memory_self_awareness_phrase_routes_without_systems_magic_words(self) -> None:
+        run_memory_sdk_smoke_test(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            sdk_module="domain_chip_memory",
+            subject="human:self-awareness:movement",
+            predicate="system.memory.route_detection",
+            value="ok",
+            cleanup=False,
+        )
         result = build_researcher_reply(
             config_manager=self.config_manager,
             state_db=self.state_db,
@@ -307,6 +317,8 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(result.mode, "self_awareness_direct")
         self.assertEqual(result.routing_decision, "self_awareness_direct")
         self.assertIn("Memory cognition", result.reply_text)
+        self.assertIn("Memory movement", result.reply_text)
+        self.assertIn("captured=", result.reply_text)
         self.assertIn("current-state memory wins over wiki", result.reply_text)
         self.assertIn("supporting_not_authoritative", result.reply_text)
         self.assertEqual(result.output_keepability, "ephemeral_context")
