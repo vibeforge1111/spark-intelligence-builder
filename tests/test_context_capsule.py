@@ -138,6 +138,7 @@ class ContextCapsuleTests(SparkTestCase):
                 "diagnostics",
                 "pending_tasks",
                 "task_recovery",
+                "episodic_recall",
                 "procedural_lessons",
                 "recent_conversation",
                 "workflow_state",
@@ -146,7 +147,7 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertEqual(ledger[0]["role"], "authority")
         self.assertEqual(ledger[1]["role"], "capability_authority")
         self.assertEqual(ledger[2]["role"], "authority")
-        self.assertEqual(ledger[7]["role"], "advisory")
+        self.assertEqual(ledger[8]["role"], "advisory")
         self.assertIn("does not close user goals", ledger[2]["note"])
 
     def test_context_capsule_includes_pending_tasks_and_procedural_lessons_for_resume(self) -> None:
@@ -194,8 +195,10 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertEqual(ledger[3]["role"], "workflow_recovery")
         self.assertEqual(ledger[4]["source"], "task_recovery")
         self.assertEqual(ledger[4]["role"], "memory_recovery_support")
-        self.assertEqual(ledger[5]["source"], "procedural_lessons")
-        self.assertEqual(ledger[5]["role"], "procedural_advisory")
+        self.assertEqual(ledger[5]["source"], "episodic_recall")
+        self.assertEqual(ledger[5]["role"], "source_labeled_recall")
+        self.assertEqual(ledger[6]["source"], "procedural_lessons")
+        self.assertEqual(ledger[6]["role"], "procedural_advisory")
 
     def test_context_capsule_includes_source_labeled_task_recovery_without_promoting_memory(self) -> None:
         recovery = SimpleNamespace(
@@ -251,6 +254,54 @@ class ContextCapsuleTests(SparkTestCase):
         self.assertIn("next_actions: wire recovery into Telegram self-awareness replies", rendered)
         self.assertIn("episodic_context: Earlier we were reviewing wiki metadata.", rendered)
         self.assertIn("recovery_read_only_no_memory_promotion", rendered)
+        self.assertIn("supporting_not_authoritative", rendered)
+
+    def test_context_capsule_includes_source_labeled_episodic_recall_without_promoting_memory(self) -> None:
+        episodic_recall = SimpleNamespace(
+            read_result=SimpleNamespace(
+                abstained=False,
+                records=[
+                    {
+                        "episodic_recall_bucket": "current_state",
+                        "predicate": "current_focus",
+                        "value": "ship source-aware episodic recall",
+                        "authority": "authoritative_current",
+                        "source_family": "current_state",
+                    },
+                    {
+                        "episodic_recall_bucket": "matching_turns",
+                        "predicate": "raw_turn",
+                        "text": "user: Earlier we planned episodic recall for continuity.",
+                        "authority": "supporting_not_authoritative",
+                        "source_family": "episodic_summary",
+                    },
+                ],
+                retrieval_trace={"promotes_memory": False},
+            )
+        )
+
+        with patch(
+            "spark_intelligence.context.capsule.inspect_human_memory_in_memory",
+            return_value=self._memory_inspection(),
+        ), patch(
+            "spark_intelligence.context.capsule.recall_episodic_context_in_memory",
+            return_value=episodic_recall,
+        ):
+            capsule = build_spark_context_capsule(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human-1",
+                session_id="session-1",
+                channel_kind="telegram",
+                request_id="req-now",
+                user_message="what did we do earlier?",
+            )
+
+        rendered = capsule.render()
+        self.assertIn("[episodic_recall]", rendered)
+        self.assertIn("current_state: ship source-aware episodic recall", rendered)
+        self.assertIn("matching_turns: user: Earlier we planned episodic recall for continuity.", rendered)
+        self.assertIn("episodic_recall_read_only_no_memory_promotion", rendered)
         self.assertIn("supporting_not_authoritative", rendered)
 
     def test_context_capsule_contract_covers_telegram_arbitration_regressions(self) -> None:

@@ -9,7 +9,11 @@ from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.jobs.service import list_job_records
-from spark_intelligence.memory import inspect_human_memory_in_memory, recover_task_context_in_memory
+from spark_intelligence.memory import (
+    inspect_human_memory_in_memory,
+    recall_episodic_context_in_memory,
+    recover_task_context_in_memory,
+)
 from spark_intelligence.security.prompt_boundaries import sanitize_prompt_boundary_text
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.system_registry import build_system_registry
@@ -55,9 +59,10 @@ class ContextCapsule:
             "diagnostics": (3, "authority"),
             "pending_tasks": (4, "workflow_recovery"),
             "task_recovery": (5, "memory_recovery_support"),
-            "procedural_lessons": (6, "procedural_advisory"),
-            "recent_conversation": (7, "supporting"),
-            "workflow_state": (8, "advisory"),
+            "episodic_recall": (6, "source_labeled_recall"),
+            "procedural_lessons": (7, "procedural_advisory"),
+            "recent_conversation": (8, "supporting"),
+            "workflow_state": (9, "advisory"),
         }
         notes = {
             "current_state": "Saved focus, plan, blocker, status, and preferences. Use first when active current facts exist.",
@@ -65,6 +70,7 @@ class ContextCapsule:
             "diagnostics": "Latest scan counts and clean/failure status. Health evidence only; does not close user goals.",
             "pending_tasks": "Interrupted or unfinished work. Use to resume without asking what happened.",
             "task_recovery": "Source-labeled memory recovery for active goal, blockers, completed work, next actions, and episodic support.",
+            "episodic_recall": "Source-aware day/session/project recall. Use for continuity, but never as a promotion or mutable-fact authority.",
             "procedural_lessons": "Learned operating corrections from previous mistakes, target drift, timeouts, and self-review gaps.",
             "recent_conversation": "Recent same-session turns. Useful for continuity, but lower priority than current-state facts.",
             "workflow_state": "Jobs, routes, and operational residue. Advisory unless the user asks about those systems.",
@@ -97,6 +103,7 @@ class ContextCapsule:
             "If runtime_capabilities list local repo/file/Codex/Spawner capability, do not underclaim by saying Spark cannot inspect local projects; name the operator-governed route and any limitations instead.",
             "If pending_tasks are present and the user asks to continue, resume, retry, or asks what was next, use pending_tasks before asking what happened.",
             "If task_recovery is present, use active_goal and next_actions as source-labeled support; do not treat episodic_context as authoritative current truth.",
+            "If episodic_recall is present, treat session summaries and raw turns as supporting_not_authoritative; current_state still wins for mutable user facts.",
             "If procedural_lessons are present, treat them as operating guidance about how to avoid repeating earlier mistakes, not as user facts.",
             "If the user asks whether context survived across turns, verify by naming the current focus, current plan, latest diagnostics status, and maintenance summary from this capsule; do not replace that with an older handoff checklist or new mission proposal.",
             "If the user asks what is verified, still open, or only they should close, answer against active current_state first; older missions, apps, and workflow residue are out of scope unless explicitly named.",
@@ -147,6 +154,12 @@ def build_spark_context_capsule(
             human_id=human_id,
         ),
         "task_recovery": _build_task_recovery_lines(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            user_message=user_message,
+        ),
+        "episodic_recall": _build_episodic_recall_lines(
             config_manager=config_manager,
             state_db=state_db,
             human_id=human_id,
@@ -392,6 +405,48 @@ def _build_task_recovery_lines(
     trace = read_result.retrieval_trace or {}
     if isinstance(trace, dict) and trace.get("promotes_memory") is False:
         lines.append("- boundary: recovery_read_only_no_memory_promotion")
+    return lines
+
+
+def _build_episodic_recall_lines(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    human_id: str,
+    user_message: str,
+    limit: int = 5,
+) -> list[str]:
+    if not human_id:
+        return []
+    try:
+        result = recall_episodic_context_in_memory(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id,
+            query=user_message or "recent memory continuity, session summaries, completed work, and source evidence",
+            actor_id="context_capsule",
+            limit=limit,
+        )
+    except Exception:
+        return []
+    read_result = result.read_result
+    if read_result.abstained or not read_result.records:
+        return []
+    lines: list[str] = []
+    for record in read_result.records[:limit]:
+        bucket = str(record.get("episodic_recall_bucket") or "supporting_context").strip()
+        text = str(record.get("value") or record.get("text") or "").strip()
+        if not text:
+            continue
+        authority = str(record.get("authority") or "").strip()
+        source_family = str(record.get("source_family") or "").strip()
+        predicate = str(record.get("predicate") or "").strip()
+        suffix_parts = [part for part in (f"predicate={predicate}" if predicate else "", authority, source_family) if part]
+        suffix = f" ({'; '.join(suffix_parts)})" if suffix_parts else ""
+        lines.append(f"- {bucket}: {_compact(text, 220)}{suffix}")
+    trace = read_result.retrieval_trace or {}
+    if isinstance(trace, dict) and trace.get("promotes_memory") is False:
+        lines.append("- boundary: episodic_recall_read_only_no_memory_promotion")
     return lines
 
 

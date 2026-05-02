@@ -19,6 +19,7 @@ from spark_intelligence.memory import (
     lookup_current_state_in_memory,
     lookup_historical_state_in_memory,
     read_memory_kernel,
+    recall_episodic_context_in_memory,
     recover_task_context_in_memory,
     retrieve_memory_events_in_memory,
     run_memory_sdk_maintenance,
@@ -82,6 +83,7 @@ class _FakeMemoryClient:
         self.evidence_calls: list[dict[str, object]] = []
         self.retrieval_event_calls: list[dict[str, object]] = []
         self.task_recovery_calls: list[dict[str, object]] = []
+        self.episodic_recall_calls: list[dict[str, object]] = []
 
     def write_observation(self, **payload):
         self.observation_calls.append(payload)
@@ -183,6 +185,40 @@ class _FakeMemoryClient:
             ],
             "provenance": [{"memory_role": "current_state", "source": "fake_sdk"}],
             "retrieval_trace": {"promotes_memory": False, "selected_counts": {"active_goal": 1}},
+            "answer_explanation": {"promotes_memory": False},
+        }
+
+    def recall_episodic_context(self, **payload):
+        self.episodic_recall_calls.append(payload)
+        return {
+            "status": "supported",
+            "memory_role": "current_state",
+            "records": [
+                {
+                    "subject": payload.get("subject"),
+                    "predicate": "current_focus",
+                    "value": "ship source-aware episodic recall",
+                    "memory_role": "current_state",
+                    "episodic_recall_bucket": "current_state",
+                    "authority": "authoritative_current",
+                    "source_family": "current_state",
+                },
+                {
+                    "subject": payload.get("subject"),
+                    "predicate": "raw_turn",
+                    "text": "user: We planned episodic recall for continuity.",
+                    "memory_role": "episodic",
+                    "episodic_recall_bucket": "matching_turns",
+                    "authority": "supporting_not_authoritative",
+                    "source_family": "episodic_summary",
+                },
+            ],
+            "provenance": [{"memory_role": "current_state", "source": "fake_sdk"}],
+            "retrieval_trace": {
+                "promotes_memory": False,
+                "authority_order": ["current_state_for_mutable_facts", "raw_turns_for_source_grounding_only"],
+                "selected_counts": {"current_state": 1, "matching_turns": 1},
+            },
             "answer_explanation": {"promotes_memory": False},
         }
 
@@ -566,6 +602,32 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertIs(result.read_result.retrieval_trace["promotes_memory"], False)
         events = latest_events_by_type(self.state_db, event_type="memory_read_succeeded", limit=5)
         self.assertTrue(any((event["facts_json"] or {}).get("method") == "recover_task_context" for event in events))
+
+    def test_recall_episodic_context_reads_source_labeled_sdk_recall_without_promotion(self) -> None:
+        fake_client = _FakeMemoryClient()
+        with patch("spark_intelligence.memory.orchestrator._load_sdk_client_for_module", return_value=fake_client), patch(
+            "spark_intelligence.memory.orchestrator.inspect_memory_sdk_runtime",
+            return_value={"ready": True, "client_kind": "fake"},
+        ):
+            result = recall_episodic_context_in_memory(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test",
+                query="what did we do for episodic recall?",
+                actor_id="test",
+                limit=3,
+            )
+
+        self.assertFalse(result.read_result.abstained)
+        self.assertEqual(result.read_result.method, "recall_episodic_context")
+        self.assertEqual(fake_client.episodic_recall_calls[0]["subject"], "human:test")
+        self.assertEqual(result.read_result.records[0]["episodic_recall_bucket"], "current_state")
+        self.assertEqual(result.read_result.records[0]["authority"], "authoritative_current")
+        self.assertEqual(result.read_result.records[1]["episodic_recall_bucket"], "matching_turns")
+        self.assertEqual(result.read_result.records[1]["authority"], "supporting_not_authoritative")
+        self.assertIs(result.read_result.retrieval_trace["promotes_memory"], False)
+        events = latest_events_by_type(self.state_db, event_type="memory_read_succeeded", limit=5)
+        self.assertTrue(any((event["facts_json"] or {}).get("method") == "recall_episodic_context" for event in events))
 
     def test_hybrid_memory_retrieve_prefers_current_state_and_traces_discarded_stale_residue(self) -> None:
         fake_client = _HybridRetrievalMemoryClient()
