@@ -12,6 +12,13 @@ from spark_intelligence.config.loader import ConfigManager
 
 
 VALID_INBOX_STATUSES = {"candidate", "verified", "all"}
+PROMOTION_GATE_NAMES = (
+    "schema_gate",
+    "lineage_gate",
+    "complexity_gate",
+    "memory_hygiene_gate",
+    "autonomy_gate",
+)
 NON_OVERRIDE_RULES = [
     "candidate_notes_are_not_runtime_truth",
     "wiki_is_supporting_not_authoritative",
@@ -132,6 +139,7 @@ def _note_payload(root: Path, path: Path) -> dict[str, Any]:
         recorded_missing_fields=_list_value(frontmatter.get("proposal_missing_fields")),
         recorded_promotion_ready=frontmatter.get("proposal_promotion_ready"),
     )
+    gate_ledger = _gate_ledger_payload(frontmatter=frontmatter)
     modified_at = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).replace(microsecond=0)
     created_at = str(frontmatter.get("date_created") or "").strip()
     return {
@@ -154,6 +162,7 @@ def _note_payload(root: Path, path: Path) -> dict[str, Any]:
         "proposal_kind": proposal_kind,
         "proposal": proposal,
         "proposal_gate": proposal["gate"],
+        "gate_ledger": gate_ledger,
         "lineage": {
             "evidence_ref_count": len(evidence_refs),
             "source_ref_count": len(source_refs),
@@ -263,6 +272,34 @@ def _proposal_payload(
             "authority_boundary": "proposal_is_not_runtime_mutation_until_probe_eval_and_rollback_pass",
         },
     }
+
+
+def _gate_ledger_payload(*, frontmatter: dict[str, Any]) -> dict[str, Any]:
+    gates = {
+        gate_name: {
+            "status": _normalize_gate_status(frontmatter.get(gate_name)),
+            "reason": "frontmatter_gate_status",
+        }
+        for gate_name in PROMOTION_GATE_NAMES
+    }
+    failed_gates = _list_value(frontmatter.get("failed_gates")) or [
+        name for name, gate in gates.items() if gate["status"] == "fail"
+    ]
+    warning_gates = _list_value(frontmatter.get("warning_gates")) or [
+        name for name, gate in gates.items() if gate["status"] == "warn"
+    ]
+    return {
+        "gates": gates,
+        "failed_gates": failed_gates,
+        "warning_gates": warning_gates,
+        "verified_promotion_allowed": not failed_gates,
+        "authority_boundary": "promotion_gate_ledger_is_review_evidence_not_runtime_truth",
+    }
+
+
+def _normalize_gate_status(value: Any) -> str:
+    status = str(value or "pass").strip().casefold()
+    return status if status in {"pass", "warn", "fail"} else "pass"
 
 
 def _section_bullet(content: str, heading: str) -> str:

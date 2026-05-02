@@ -564,6 +564,64 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertIn("proposal_missing_rollback", issue_codes)
         self.assertIn("proposal_missing_expected_eval", issue_codes)
 
+    def test_wiki_promote_improvement_records_promotion_gate_ledger(self) -> None:
+        result = promote_llm_wiki_improvement(
+            config_manager=self.config_manager,
+            title="Gate ledger candidate",
+            summary="Spark should record review gates before promotion.",
+            evidence_refs=["pytest tests/test_llm_wiki_bootstrap.py::gate_ledger"],
+            source_refs=["operator_session:self-awareness-hardening"],
+            complexity_gate="warn",
+            autonomy_gate="pass",
+        )
+
+        note = (self.home / "wiki" / result.relative_path).read_text(encoding="utf-8")
+        self.assertIn("## Promotion Gate Ledger", note)
+        self.assertIn("schema_gate: pass", note)
+        self.assertIn("complexity_gate: warn", note)
+        ledger = result.payload["gate_ledger"]
+        self.assertEqual(ledger["gates"]["schema_gate"]["status"], "pass")
+        self.assertEqual(ledger["gates"]["complexity_gate"]["status"], "warn")
+        self.assertEqual(ledger["warning_gates"], ["complexity_gate"])
+        self.assertEqual(ledger["failed_gates"], [])
+
+        inbox = build_llm_wiki_candidate_inbox(config_manager=self.config_manager)
+        self.assertEqual(inbox.payload["notes"][0]["gate_ledger"]["warning_gates"], ["complexity_gate"])
+
+        scan = build_llm_wiki_candidate_scan(config_manager=self.config_manager)
+        issue_codes = [issue["code"] for issue in scan.payload["findings"][0]["issues"]]
+        self.assertIn("promotion_gate_complexity_gate_warn", issue_codes)
+
+    def test_wiki_promote_improvement_blocks_verified_notes_with_failed_gates(self) -> None:
+        with self.assertRaises(ValueError):
+            promote_llm_wiki_improvement(
+                config_manager=self.config_manager,
+                title="Verified failed gate",
+                summary="This should not verify while memory hygiene fails.",
+                promotion_status="verified",
+                evidence_refs=["pytest tests/test_llm_wiki_bootstrap.py::gate_ledger"],
+                source_refs=["operator_session:self-awareness-hardening"],
+                memory_hygiene_gate="fail",
+            )
+
+    def test_wiki_candidate_scan_flags_failed_promotion_gates(self) -> None:
+        promote_llm_wiki_improvement(
+            config_manager=self.config_manager,
+            title="Candidate failed autonomy gate",
+            summary="Spark should not promote autonomous changes without review.",
+            evidence_refs=["pytest tests/test_llm_wiki_bootstrap.py::gate_ledger"],
+            source_refs=["operator_session:self-awareness-hardening"],
+            autonomy_gate="fail",
+        )
+
+        result = build_llm_wiki_candidate_scan(config_manager=self.config_manager)
+
+        finding = result.payload["findings"][0]
+        issue_codes = [issue["code"] for issue in finding["issues"]]
+        self.assertEqual(finding["recommendation"], "rewrite")
+        self.assertIn("promotion_gate_autonomy_gate_failed", issue_codes)
+        self.assertEqual(finding["gate_ledger"]["failed_gates"], ["autonomy_gate"])
+
     def test_wiki_promote_improvement_requires_source_or_evidence(self) -> None:
         with self.assertRaises(ValueError):
             promote_llm_wiki_improvement(
@@ -602,6 +660,8 @@ class LlmWikiBootstrapTests(SparkTestCase):
             "CLI payload exposes proposal_gate.promotion_ready.",
             "--rollback-condition",
             "Remove proposal fields if old candidates stop parsing.",
+            "--complexity-gate",
+            "warn",
             "--json",
         )
 
@@ -615,6 +675,7 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertEqual(payload["trace_lineage"]["probe_refs"], ["pytest tests/test_llm_wiki_bootstrap.py::cli_lineage"])
         self.assertEqual(payload["proposal_kind"], "self_improvement")
         self.assertTrue(payload["proposal_gate"]["promotion_ready"])
+        self.assertEqual(payload["gate_ledger"]["warning_gates"], ["complexity_gate"])
         self.assertTrue(payload["relative_path"].startswith("improvements/"))
         self.assertTrue((self.home / "wiki" / payload["relative_path"]).exists())
 

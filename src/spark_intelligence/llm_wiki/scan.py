@@ -108,6 +108,7 @@ def _scan_note(note: dict[str, Any]) -> dict[str, Any]:
     proposal = note.get("proposal") if isinstance(note.get("proposal"), dict) else {}
     proposal_gate = note.get("proposal_gate") if isinstance(note.get("proposal_gate"), dict) else {}
     proposal_kind = str(note.get("proposal_kind") or "none").strip()
+    gate_ledger = note.get("gate_ledger") if isinstance(note.get("gate_ledger"), dict) else {}
 
     if authority != "supporting_not_authoritative":
         issues.append(_issue("authority_boundary_violation", "critical", "Wiki improvement notes must remain supporting_not_authoritative."))
@@ -135,6 +136,22 @@ def _scan_note(note: dict[str, Any]) -> dict[str, Any]:
                     "Self-improvement proposals need weak spot, hypothesis, evidence, probe, rollback, and expected eval before promotion.",
                 )
             )
+    for gate_name in gate_ledger.get("failed_gates") or []:
+        issues.append(
+            _issue(
+                f"promotion_gate_{gate_name}_failed",
+                "critical",
+                "Verified promotion is blocked while schema, lineage, complexity, memory hygiene, or autonomy gates fail.",
+            )
+        )
+    for gate_name in gate_ledger.get("warning_gates") or []:
+        issues.append(
+            _issue(
+                f"promotion_gate_{gate_name}_warn",
+                "warning",
+                "Promotion gate needs review before broad reuse.",
+            )
+        )
 
     recommendation = _recommendation(issues)
     return {
@@ -153,6 +170,7 @@ def _scan_note(note: dict[str, Any]) -> dict[str, Any]:
         "proposal_kind": proposal_kind,
         "proposal": proposal,
         "proposal_gate": proposal_gate,
+        "gate_ledger": gate_ledger,
         "trace_lineage": {
             "request_id": request_id,
             "route_decision": route_decision,

@@ -1459,6 +1459,13 @@ def build_parser() -> argparse.ArgumentParser:
     wiki_promote_parser.add_argument("--hypothesis", default="", help="Expected mechanism for why this improvement should work")
     wiki_promote_parser.add_argument("--expected-eval", default="", help="Eval, test, or replay that should prove the proposal worked")
     wiki_promote_parser.add_argument("--rollback-condition", default="", help="Condition that should revert or downgrade the proposal")
+    for gate_name in ("schema", "lineage", "complexity", "memory-hygiene", "autonomy"):
+        wiki_promote_parser.add_argument(
+            f"--{gate_name}-gate",
+            choices=("pass", "warn", "fail"),
+            default="",
+            help=f"Promotion ledger status for the {gate_name} gate.",
+        )
     wiki_promote_parser.add_argument("--next-probe", default="", help="Probe required before using this as current truth")
     wiki_promote_parser.add_argument("--invalidation-trigger", default="", help="Condition that should downgrade or replace this note")
     wiki_promote_parser.add_argument("--force", action="store_true", help="Overwrite the generated note path if it already exists")
@@ -4310,6 +4317,11 @@ def handle_wiki_promote_improvement(args: argparse.Namespace) -> int:
             hypothesis=str(getattr(args, "hypothesis", "") or ""),
             expected_eval=str(getattr(args, "expected_eval", "") or ""),
             rollback_condition=str(getattr(args, "rollback_condition", "") or ""),
+            schema_gate=str(getattr(args, "schema_gate", "") or ""),
+            lineage_gate=str(getattr(args, "lineage_gate", "") or ""),
+            complexity_gate=str(getattr(args, "complexity_gate", "") or ""),
+            memory_hygiene_gate=str(getattr(args, "memory_hygiene_gate", "") or ""),
+            autonomy_gate=str(getattr(args, "autonomy_gate", "") or ""),
             next_probe=str(getattr(args, "next_probe", "") or ""),
             invalidation_trigger=str(getattr(args, "invalidation_trigger", "") or ""),
             overwrite=bool(getattr(args, "force", False)),
