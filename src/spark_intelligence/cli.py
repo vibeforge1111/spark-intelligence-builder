@@ -155,7 +155,11 @@ from spark_intelligence.ops import (
 )
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
 from spark_intelligence.researcher_bridge import researcher_bridge_status
-from spark_intelligence.self_awareness import build_self_awareness_capsule, build_self_improvement_plan
+from spark_intelligence.self_awareness import (
+    build_capability_drift_heartbeat,
+    build_self_awareness_capsule,
+    build_self_improvement_plan,
+)
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_doctor, swarm_status, sync_swarm_collective
 from spark_intelligence.harness_registry import (
@@ -1308,6 +1312,21 @@ def build_parser() -> argparse.ArgumentParser:
     self_status_parser.add_argument("--user-message", default="", help="Optional user message for goal-specific context")
     self_status_parser.add_argument("--refresh-wiki", action="store_true", help="Refresh generated LLM wiki system pages and include wiki retrieval context")
     self_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_heartbeat_parser = self_subparsers.add_parser(
+        "heartbeat",
+        help="Write a typed capability drift report with stale/missing last-success probes",
+    )
+    self_heartbeat_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_heartbeat_parser.add_argument("--human-id", default="", help="Optional human id for context-aware drift report")
+    self_heartbeat_parser.add_argument("--session-id", default="", help="Optional session id for recent-turn context")
+    self_heartbeat_parser.add_argument("--channel-kind", default="", help="Optional channel kind, for example telegram")
+    self_heartbeat_parser.add_argument("--user-message", default="", help="Optional user goal for probe relevance")
+    self_heartbeat_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Check capability drift without writing the artifacts/capability-drift-heartbeat report",
+    )
+    self_heartbeat_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_improve_parser = self_subparsers.add_parser(
         "improve",
         help="Plan probe-first improvements for Spark weak spots and capability gaps",
@@ -4142,6 +4161,24 @@ def handle_self_status(args: argparse.Namespace) -> int:
             print("\n".join(lines).strip())
         return 0
     print(capsule.to_json() if args.json else capsule.to_text())
+    return 0
+
+
+def handle_self_heartbeat(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = build_capability_drift_heartbeat(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=str(getattr(args, "human_id", "") or ""),
+        session_id=str(getattr(args, "session_id", "") or ""),
+        channel_kind=str(getattr(args, "channel_kind", "") or ""),
+        user_message=str(getattr(args, "user_message", "") or ""),
+        write_report=not bool(getattr(args, "no_write_report", False)),
+    )
+    print(result.to_json() if args.json else result.to_text())
     return 0
 
 
@@ -7986,6 +8023,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_status(args)
     if args.command == "self" and args.self_command == "status":
         return handle_self_status(args)
+    if args.command == "self" and args.self_command == "heartbeat":
+        return handle_self_heartbeat(args)
     if args.command == "self" and args.self_command == "improve":
         return handle_self_improve(args)
     if args.command == "wiki" and args.wiki_command == "bootstrap":

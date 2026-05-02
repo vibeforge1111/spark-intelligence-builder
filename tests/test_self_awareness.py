@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from spark_intelligence.observability.store import record_event
 from spark_intelligence.adapters.telegram.runtime import simulate_telegram_update
 from spark_intelligence.llm_wiki import promote_llm_wiki_improvement, promote_llm_wiki_user_note
 from spark_intelligence.memory import run_memory_sdk_smoke_test
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
-from spark_intelligence.self_awareness import build_self_awareness_capsule, build_self_improvement_plan
+from spark_intelligence.self_awareness import (
+    build_capability_drift_heartbeat,
+    build_self_awareness_capsule,
+    build_self_improvement_plan,
+)
 
 from tests.test_support import SparkTestCase, create_fake_hook_chip, make_telegram_update
 
@@ -304,6 +310,88 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(startup_probe["claim_boundary"], "configured_or_available_is_not_recent_success")
         self.assertFalse(startup_probe["records_current_success"])
         self.assertIn("startup-yc:", "\n".join(payload["recommended_probes"]))
+
+    def test_capability_drift_heartbeat_names_stale_and_failed_routes_with_safe_probes(self) -> None:
+        chip_root = create_fake_hook_chip(self.home, chip_key="startup-yc")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+        self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
+        stale_event_id = record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Startup YC route succeeded in an old probe",
+            status="succeeded",
+            facts={
+                "active_chip_key": "startup-yc",
+                "route_latency_ms": 321,
+                "eval_suite": "capability-drift-regression",
+            },
+            provenance={"source_kind": "chip_hook", "source_ref": "startup-yc"},
+        )
+        old_timestamp = (datetime.now(UTC) - timedelta(days=45)).replace(microsecond=0).isoformat()
+        with self.state_db.connect() as conn:
+            conn.execute("UPDATE builder_events SET created_at = ? WHERE event_id = ?", (old_timestamp, stale_event_id))
+            conn.commit()
+        record_event(
+            self.state_db,
+            event_type="dispatch_failed",
+            component="researcher_bridge",
+            summary="Browser search route timed out",
+            status="failed",
+            facts={
+                "routing_decision": "browser_search",
+                "failure_reason": "timeout",
+            },
+            provenance={"source_kind": "route", "source_ref": "browser_search"},
+        )
+
+        result = build_capability_drift_heartbeat(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="probe startup yc and browser drift",
+        )
+        payload = result.payload
+
+        self.assertEqual(payload["kind"], "capability_drift_heartbeat")
+        self.assertEqual(payload["authority"], "observability_non_authoritative")
+        self.assertEqual(payload["memory_policy"], "typed_report_not_chat_memory")
+        self.assertEqual(payload["status"], "warn")
+        self.assertTrue(payload["report_written"])
+        self.assertTrue((self.home / "artifacts" / "capability-drift-heartbeat" / "latest.json").exists())
+        self.assertTrue(Path(payload["report_path"]).exists())
+        self.assertEqual(payload["summary"]["stale_success_count"], 1)
+        self.assertEqual(payload["summary"]["recent_failure_count"], 1)
+        drift_by_key = {row["capability_key"]: row for row in payload["capabilities_needing_probe"]}
+        self.assertEqual(drift_by_key["startup-yc"]["drift_kind"], "stale_success")
+        self.assertGreaterEqual(drift_by_key["startup-yc"]["last_success_age_days"], 45)
+        self.assertIn("spark-intelligence chips why", drift_by_key["startup-yc"]["safe_probe"])
+        self.assertEqual(drift_by_key["browser_search"]["drift_kind"], "recent_failure")
+        self.assertIn("capability_last_success_stale", payload["warnings"])
+        self.assertIn("capability_recent_failure_needs_probe", payload["warnings"])
+        self.assertEqual(
+            payload["truth_boundary"],
+            "capability_drift_reports_do_not_promote_runtime_success_or_failure",
+        )
+
+    def test_self_heartbeat_cli_emits_machine_readable_drift_report(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "heartbeat",
+            "--home",
+            str(self.home),
+            "--user-message",
+            "what capabilities need probes?",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["kind"], "capability_drift_heartbeat")
+        self.assertEqual(payload["authority"], "observability_non_authoritative")
+        self.assertTrue(payload["report_written"])
+        self.assertTrue(Path(payload["report_path"]).exists())
+        self.assertIn("probe_plan", payload)
+        self.assertEqual(payload["memory_policy"], "typed_report_not_chat_memory")
 
     def test_self_awareness_adds_memory_cognition_after_wiki_source_families_are_visible(self) -> None:
         kb_dir = self.home / "artifacts" / "spark-memory-kb" / "wiki" / "current-state"
