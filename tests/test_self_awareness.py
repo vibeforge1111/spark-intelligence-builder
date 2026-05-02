@@ -292,6 +292,26 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(result.output_keepability, "ephemeral_context")
         self.assertEqual(result.promotion_disposition, "not_promotable")
 
+    def test_memory_self_awareness_phrase_routes_without_systems_magic_words(self) -> None:
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-self-awareness-memory-phrase",
+            agent_id="agent-1",
+            human_id="human:telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+            user_message="What do you know about your memory system and what outranks wiki?",
+        )
+
+        self.assertEqual(result.mode, "self_awareness_direct")
+        self.assertEqual(result.routing_decision, "self_awareness_direct")
+        self.assertIn("Memory cognition", result.reply_text)
+        self.assertIn("current-state memory wins over wiki", result.reply_text)
+        self.assertIn("supporting_not_authoritative", result.reply_text)
+        self.assertEqual(result.output_keepability, "ephemeral_context")
+        self.assertEqual(result.promotion_disposition, "not_promotable")
+
     def test_self_awareness_query_beats_entity_state_summary_route(self) -> None:
         result = build_researcher_reply(
             config_manager=self.config_manager,

@@ -164,6 +164,12 @@ def looks_like_system_registry_query(message: str) -> bool:
         "where you lack",
         "where are you weak",
         "what can you improve",
+        "your memory system",
+        "your memory awareness",
+        "memory cognition",
+        "what outranks wiki",
+        "outranks wiki",
+        "what beats wiki",
     )
     return any(signal in lowered_message for signal in direct_signals)
 
@@ -189,6 +195,12 @@ def _looks_like_self_awareness_report_query(message: str) -> bool:
         "where you lack",
         "where are you weak",
         "what can you improve",
+        "your memory system",
+        "your memory awareness",
+        "memory cognition",
+        "what outranks wiki",
+        "outranks wiki",
+        "what beats wiki",
     )
     return any(signal in lowered_message for signal in signals)
 
