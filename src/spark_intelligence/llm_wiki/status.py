@@ -73,6 +73,7 @@ class LlmWikiStatusResult:
             f"- stale_pages: {(self.payload.get('freshness_health') or {}).get('stale_page_count', 0)}",
             f"- memory_kb: {'yes' if (self.payload.get('memory_kb_discovery') or {}).get('present') else 'no'} "
             f"({(self.payload.get('memory_kb_discovery') or {}).get('packet_count', 0)} packet(s))",
+            f"- authority: {self.payload.get('authority') or 'supporting_not_authoritative'}",
         ]
         if self.payload.get("refreshed"):
             lines.append(f"- refreshed: yes ({self.payload.get('refreshed_file_count', 0)} generated file(s))")

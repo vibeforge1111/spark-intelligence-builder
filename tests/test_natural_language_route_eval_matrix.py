@@ -8,6 +8,7 @@ from unittest.mock import patch
 from spark_intelligence.adapters.telegram.runtime import simulate_telegram_update
 from spark_intelligence.llm_wiki import promote_llm_wiki_improvement
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
+from spark_intelligence.self_awareness import build_live_telegram_regression_cadence
 
 from tests.test_support import SparkTestCase, make_telegram_update
 
@@ -56,6 +57,50 @@ class NaturalLanguageRouteEvalMatrixTests(SparkTestCase):
             "explicit user memory writes may update governed memory while bridge replies remain not_promotable",
             guardrails,
         )
+        self.assertEqual(
+            matrix["release_cadence"]["evidence_boundary"],
+            "Only real Telegram runtime traces with simulation=false count as live evidence.",
+        )
+        suites = {str(case.get("suite") or "") for case in matrix["cases"]}
+        self.assertIn("self_awareness", suites)
+        self.assertIn("llm_wiki", suites)
+        self.assertIn("telegram_commands", suites)
+
+    def test_live_telegram_cadence_report_declares_release_gate_and_artifacts(self) -> None:
+        result = build_live_telegram_regression_cadence(config_manager=self.config_manager)
+        payload = result.payload
+
+        self.assertEqual(payload["kind"], "live_telegram_regression_cadence")
+        self.assertEqual(payload["status"], "needs_live_evidence")
+        self.assertEqual(payload["authority"], "observability_non_authoritative")
+        self.assertEqual(payload["memory_policy"], "typed_report_not_chat_memory")
+        self.assertTrue(payload["report_written"])
+        self.assertTrue((self.home / "artifacts" / "live-telegram-regression" / "cadence-latest.json").exists())
+        self.assertEqual(payload["summary"]["case_count"], len(_load_matrix()["cases"]))
+        suite_ids = {row["suite"] for row in payload["suites"]}
+        self.assertIn("self_awareness", suite_ids)
+        self.assertIn("llm_wiki", suite_ids)
+        self.assertIn("simulation=false", payload["artifact_contract"]["trace_requirements"])
+        self.assertIn("live_telegram_evidence_missing", payload["warnings"])
+        self.assertIn("-PrintPromptsOnly", payload["commands"]["print_prompts"])
+        self.assertIn("-Json", payload["commands"]["verify_live_traces"])
+        self.assertIn("-OutputDir", payload["commands"]["verify_live_traces"])
+
+    def test_self_live_telegram_cadence_cli_emits_machine_readable_contract(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "live-telegram-cadence",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["kind"], "live_telegram_regression_cadence")
+        self.assertEqual(payload["status"], "needs_live_evidence")
+        self.assertTrue(payload["report_written"])
+        self.assertIn("self_awareness_releases_need_live_telegram_evidence", payload["promotion_gate"])
 
     def _run_case(self, case: dict[str, object], *, index: int) -> dict[str, str]:
         surface = str(case["surface"])

@@ -1,6 +1,7 @@
 param(
     [string]$SparkHome = ".tmp-home-live-telegram-real",
     [int]$Limit = 80,
+    [string]$OutputDir = "",
     [switch]$PrintPromptsOnly,
     [switch]$Json
 )
@@ -151,6 +152,23 @@ function Test-ExpectedTrace {
     return $true
 }
 
+function Write-RegressionArtifact {
+    param(
+        [Parameter(Mandatory = $true)]$Payload
+    )
+
+    if ([string]::IsNullOrWhiteSpace($OutputDir)) {
+        return
+    }
+
+    $artifactDir = New-Item -ItemType Directory -Path $OutputDir -Force
+    $timestamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
+    $Payload.recorded_at = (Get-Date).ToUniversalTime().ToString("o")
+    $jsonPayload = $Payload | ConvertTo-Json -Depth 8
+    Set-Content -Path (Join-Path $artifactDir.FullName "latest.json") -Value $jsonPayload -Encoding UTF8
+    Set-Content -Path (Join-Path $artifactDir.FullName ("live-telegram-self-awareness-wiki-{0}.json" -f $timestamp)) -Value $jsonPayload -Encoding UTF8
+}
+
 $raw = & python -m spark_intelligence.cli gateway traces `
     --home $SparkHome `
     --channel-id telegram `
@@ -199,6 +217,7 @@ foreach ($expected in $ExpectedTraces) {
             Write-Host ("Missing expected trace: {0}" -f $expected.Name)
             Write-Host "Tip: run with -PrintPromptsOnly, send the prompts to the live bot, then rerun this verifier."
         }
+        Write-RegressionArtifact -Payload $summary
         throw "live Telegram self-awareness/wiki probe failed"
     }
 
@@ -221,6 +240,8 @@ $result = [ordered]@{
     expected = $ExpectedTraces.Count
     traces = $matched
 }
+
+Write-RegressionArtifact -Payload $result
 
 if ($Json) {
     $result | ConvertTo-Json -Depth 6
