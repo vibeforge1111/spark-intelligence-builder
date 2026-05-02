@@ -7,6 +7,7 @@ from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.context.capsule import build_spark_context_capsule
+from spark_intelligence.memory.orchestrator import export_memory_dashboard_movement_in_memory
 from spark_intelligence.observability.store import latest_events_by_type
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.system_registry import build_system_registry
@@ -87,6 +88,7 @@ class SelfAwarenessCapsule:
     natural_language_routes: list[str] = field(default_factory=list)
     source_ledger: list[dict[str, Any]] = field(default_factory=list)
     style_lens: dict[str, Any] = field(default_factory=dict)
+    memory_movement: dict[str, Any] = field(default_factory=dict)
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -104,6 +106,7 @@ class SelfAwarenessCapsule:
             "natural_language_routes": self.natural_language_routes,
             "source_ledger": self.source_ledger,
             "style_lens": self.style_lens,
+            "memory_movement": self.memory_movement,
         }
 
     def to_json(self) -> str:
@@ -131,6 +134,7 @@ class SelfAwarenessCapsule:
         _extend_claim_lines(lines, "What looks live", self.observed_now, limit=4, compact=True)
         _extend_claim_lines(lines, "What I recently proved", self.recently_verified, limit=2, compact=True)
         _extend_capability_evidence_lines(lines, self.capability_evidence, limit=3)
+        _extend_memory_movement_lines(lines, self.memory_movement)
         _extend_claim_lines(lines, "Where I am useful", self.inferred_strengths, limit=2, compact=True)
         _extend_claim_lines(lines, "Where I still lack", self.lacks, limit=3, compact=True)
         _extend_claim_lines(lines, "What I should improve next", self.improvement_options, limit=3, compact=True)
@@ -182,6 +186,7 @@ def build_self_awareness_capsule(
         "Ask: 'Spark, improve the weak spots you just found' to run the safest next probes before changing behavior.",
     ]
     style_lens = _build_style_lens(personality_profile)
+    memory_movement = export_memory_dashboard_movement_in_memory(config_manager=config_manager, limit=6)
 
     source_ledger = [
         {
@@ -205,6 +210,15 @@ def build_self_awareness_capsule(
             "claim_boundary": "Recent route/tool outcomes only. A previous success can go stale and absence is not proof of absence.",
             "capability_count": len(capability_evidence),
         },
+        {
+            "source": "memory_dashboard_movement",
+            "source_kind": "memory_lifecycle_observability",
+            "present": memory_movement.get("status") == "supported",
+            "claim_boundary": "Trace evidence only. Movement rows are not prompt instructions and do not override current-state memory.",
+            "authority": memory_movement.get("authority") or "observability_non_authoritative",
+            "row_count": int(memory_movement.get("row_count") or 0),
+            "movement_counts": dict(memory_movement.get("movement_counts") or {}),
+        },
     ]
     return SelfAwarenessCapsule(
         generated_at=generated_at,
@@ -221,6 +235,7 @@ def build_self_awareness_capsule(
         natural_language_routes=natural_language_routes,
         source_ledger=source_ledger,
         style_lens=style_lens,
+        memory_movement=memory_movement,
     )
 
 
@@ -697,6 +712,41 @@ def _extend_capability_evidence_lines(
         suffix = f" ({'; '.join(extras)})" if extras else ""
         lines.append(f"- {evidence.capability_key}: {status} at {timestamp}{suffix}")
     lines.append("")
+
+
+def _extend_memory_movement_lines(lines: list[str], movement: dict[str, Any]) -> None:
+    if not isinstance(movement, dict) or movement.get("status") != "supported":
+        return
+    counts = movement.get("movement_counts") if isinstance(movement.get("movement_counts"), dict) else {}
+    ordered_states = [
+        "captured",
+        "blocked",
+        "promoted",
+        "saved",
+        "decayed",
+        "summarized",
+        "retrieved",
+        "selected",
+        "dropped",
+    ]
+    parts = [
+        f"{state}={_positive_count(counts.get(state))}"
+        for state in ordered_states
+        if _positive_count(counts.get(state)) > 0
+    ]
+    if not parts:
+        return
+    lines.append("Memory movement")
+    lines.append(f"- Trace rows: {', '.join(parts[:8])}.")
+    lines.append("- These rows are observability evidence, not instructions or authority over current-state memory.")
+    lines.append("")
+
+
+def _positive_count(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _compact_claim_text(claim: SelfAwarenessClaim) -> str:

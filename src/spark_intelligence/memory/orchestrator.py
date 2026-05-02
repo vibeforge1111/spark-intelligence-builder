@@ -1004,6 +1004,15 @@ class _DomainChipMemoryClientAdapter:
         result = recall(request)
         return _normalize_domain_episodic_recall_result(result=result)
 
+    def export_knowledge_base_snapshot(self, **payload: Any) -> dict[str, Any]:
+        export_snapshot = getattr(self._sdk, "export_knowledge_base_snapshot", None)
+        if not callable(export_snapshot):
+            return {"status": "abstained", "reason": "method_missing"}
+        result = export_snapshot()
+        if isinstance(result, dict):
+            return result
+        return {"status": "accepted", "result": result}
+
     def explain_answer(self, **payload: Any) -> dict[str, Any]:
         subject = _optional_string(payload.get("subject"))
         predicate = _optional_string(payload.get("predicate"))
@@ -1307,6 +1316,59 @@ def run_memory_sdk_maintenance(
     _record_memory_maintenance_event(state_db=state_db, result=result, actor_id=actor_id)
     _record_memory_maintenance_lifecycle_transitions(state_db=state_db, result=result, actor_id=actor_id)
     return result
+
+
+def export_memory_dashboard_movement_in_memory(
+    *,
+    config_manager: ConfigManager,
+    sdk_module: str | None = None,
+    limit: int = 8,
+) -> dict[str, Any]:
+    module_name = str(
+        sdk_module
+        or config_manager.get_path("spark.memory.sdk_module", default=DEFAULT_SDK_MODULE)
+        or DEFAULT_SDK_MODULE
+    )
+    runtime = inspect_memory_sdk_runtime(config_manager=config_manager, sdk_module=module_name)
+    client = _load_sdk_client_for_module(module_name=module_name, home_path=config_manager.paths.home)
+    if client is None:
+        return {
+            "status": "abstained",
+            "reason": "sdk_unavailable",
+            "sdk_module": module_name,
+            "runtime": runtime,
+            "authority": "observability_non_authoritative",
+            "movement_counts": {},
+            "rows": [],
+        }
+    snapshot = _call_sdk_method(client, "export_knowledge_base_snapshot", {})
+    movement = snapshot.get("dashboard_movement") if isinstance(snapshot, dict) else None
+    if not isinstance(movement, dict):
+        return {
+            "status": "abstained",
+            "reason": "dashboard_movement_missing",
+            "sdk_module": module_name,
+            "runtime": runtime,
+            "authority": "observability_non_authoritative",
+            "movement_counts": {},
+            "rows": [],
+        }
+    rows = [row for row in list(movement.get("rows") or []) if isinstance(row, dict)]
+    bounded_limit = max(0, min(int(limit or 0), 25))
+    return {
+        "status": "supported",
+        "sdk_module": module_name,
+        "runtime": runtime,
+        "contract_name": str(movement.get("contract_name") or "SparkMemoryDashboardMovementExport"),
+        "authority": str(movement.get("authority") or "observability_non_authoritative"),
+        "row_count": int(movement.get("row_count") or len(rows)),
+        "movement_counts": dict(movement.get("movement_counts") or {}),
+        "source_family_counts": dict(movement.get("source_family_counts") or {}),
+        "authority_counts": dict(movement.get("authority_counts") or {}),
+        "record_counts": dict(movement.get("record_counts") or {}),
+        "rows": rows[-bounded_limit:] if bounded_limit else [],
+        "non_override_rules": list(movement.get("non_override_rules") or []),
+    }
 
 
 @contextmanager
