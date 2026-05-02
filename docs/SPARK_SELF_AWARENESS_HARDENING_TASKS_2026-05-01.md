@@ -215,6 +215,7 @@ Shipped in Builder:
 - This slice added `self live-telegram-cadence`, a release-gate contract for live Telegram self-awareness/wiki regression. It ties the prompt pack, route matrix, verifier script, artifact directory, and real-trace evidence boundary together without treating simulated tests as live proof.
 - This slice added `self handoff-check`, a handoff freshness gate that checks major self-awareness/wiki changes moved this hardening task list, the LLM wiki architecture plan, and the self-awareness handoff together.
 - This slice hardened the live Telegram verifier artifact so failed runs explain trace eligibility. The 2026-05-02 run against `C:\Users\USER\.spark-intelligence` scanned 80 traces, found 0 eligible `simulation=false` Telegram runtime traces, ignored 80 simulation/non-runtime traces, and stopped at the first missing live case: `slash self`.
+- This slice added an operator prompt runbook artifact for the live Telegram regression cadence. `self live-telegram-cadence --json` now writes `C:\Users\USER\.spark-intelligence\artifacts\live-telegram-regression\prompt-pack-latest.txt` with numbered prompts, live-evidence guardrails, and the verifier command.
 
 Next phase:
 

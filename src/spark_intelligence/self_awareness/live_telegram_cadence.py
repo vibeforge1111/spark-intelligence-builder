@@ -59,9 +59,18 @@ def build_live_telegram_regression_cadence(
     suites = _suite_rows(cases)
     prompt_pack = _prompt_pack(scenario)
     evidence_dir = config_manager.paths.home / "artifacts" / "live-telegram-regression"
+    prompt_runbook_path = evidence_dir / "prompt-pack-latest.txt"
     latest_evidence = _latest_evidence(evidence_dir)
     latest_evidence_status = _latest_evidence_status(latest_evidence)
     status = "blocked" if missing_files else "evidence_present" if latest_evidence_status == "passed" else "needs_live_evidence"
+    commands = {
+        "print_prompts": _powershell_command(verifier=verifier, spark_home=config_manager.paths.home, flags=["-PrintPromptsOnly"]),
+        "verify_live_traces": _powershell_command(
+            verifier=verifier,
+            spark_home=config_manager.paths.home,
+            flags=["-OutputDir", str(evidence_dir), "-Json"],
+        ),
+    }
     payload = {
         "kind": "live_telegram_regression_cadence",
         "checked_at": _utc_timestamp(),
@@ -86,14 +95,18 @@ def build_live_telegram_regression_cadence(
             "prompt_count": len(prompt_pack),
             "prompts": prompt_pack,
         },
-        "commands": {
-            "print_prompts": _powershell_command(verifier=verifier, spark_home=config_manager.paths.home, flags=["-PrintPromptsOnly"]),
-            "verify_live_traces": _powershell_command(
-                verifier=verifier,
-                spark_home=config_manager.paths.home,
-                flags=["-OutputDir", str(evidence_dir), "-Json"],
-            ),
+        "operator_runbook": {
+            "path": str(prompt_runbook_path),
+            "written": bool(write_report and not missing_files),
+            "purpose": "Manual live-bot prompt pack for collecting real Telegram runtime traces.",
+            "completion_checklist": [
+                "Send every prompt to the real Spark Telegram bot in order.",
+                "Wait for each bot reply before sending the next prompt.",
+                "Rerun verify_live_traces after the final reply.",
+                "Do not treat simulation, soak, or CLI traces as live release evidence.",
+            ],
         },
+        "commands": commands,
         "artifact_contract": {
             "output_dir": str(evidence_dir),
             "latest_report": str(evidence_dir / "latest.json"),
@@ -127,6 +140,8 @@ def build_live_telegram_regression_cadence(
         payload["report_path"] = str(report_path)
         payload["report_written"] = True
         _write_report(config_manager=config_manager, report_path=report_path, payload=payload)
+        if not missing_files:
+            _write_prompt_runbook(path=prompt_runbook_path, prompts=prompt_pack, commands=commands)
     else:
         payload["report_path"] = ""
         payload["report_written"] = False
@@ -271,6 +286,32 @@ def _write_report(*, config_manager: ConfigManager, report_path: Path, payload: 
     report_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     latest_path = config_manager.paths.home / "artifacts" / "live-telegram-regression" / "cadence-latest.json"
     latest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _write_prompt_runbook(*, path: Path, prompts: list[str], commands: dict[str, str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "Spark live Telegram self-awareness/wiki prompt pack",
+        "",
+        "Send these prompts to the real Spark Telegram bot, in order.",
+        "Wait for each bot reply before sending the next prompt.",
+        "Simulation, soak, and CLI traces do not count as live release evidence.",
+        "",
+        "Prompts:",
+    ]
+    lines.extend(f"{index}. {prompt}" for index, prompt in enumerate(prompts, start=1))
+    lines.extend(
+        [
+            "",
+            "After sending all prompts, run verify_live_traces:",
+            commands.get("verify_live_traces", ""),
+            "",
+            "Reference command for printing prompts:",
+            commands.get("print_prompts", ""),
+            "",
+        ]
+    )
+    path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def _repo_root() -> Path:

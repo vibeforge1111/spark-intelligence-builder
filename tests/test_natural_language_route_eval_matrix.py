@@ -76,6 +76,15 @@ class NaturalLanguageRouteEvalMatrixTests(SparkTestCase):
         self.assertEqual(payload["memory_policy"], "typed_report_not_chat_memory")
         self.assertTrue(payload["report_written"])
         self.assertTrue((self.home / "artifacts" / "live-telegram-regression" / "cadence-latest.json").exists())
+        runbook_path = self.home / "artifacts" / "live-telegram-regression" / "prompt-pack-latest.txt"
+        self.assertEqual(payload["operator_runbook"]["path"], str(runbook_path))
+        self.assertTrue(payload["operator_runbook"]["written"])
+        self.assertTrue(runbook_path.exists())
+        runbook_text = runbook_path.read_text(encoding="utf-8")
+        self.assertIn("1. /self", runbook_text)
+        self.assertIn("12. Why did you answer that way?", runbook_text)
+        self.assertIn("Simulation, soak, and CLI traces do not count", runbook_text)
+        self.assertIn("verify_live_traces", runbook_text)
         self.assertEqual(payload["summary"]["case_count"], len(_load_matrix()["cases"]))
         suite_ids = {row["suite"] for row in payload["suites"]}
         self.assertIn("self_awareness", suite_ids)
