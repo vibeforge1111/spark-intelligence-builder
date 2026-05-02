@@ -49,6 +49,15 @@ First implemented slice in this change:
 - System/self-awareness/routing/tracing/recursive-improvement/tool/user-environment pages
 - Tests proving the bootstrapped wiki is retrievable through `hybrid_memory_retrieve.wiki_packets`
 
+Hardening additions shipped on 2026-05-02:
+
+- `wiki heartbeat --json` checks stale wiki pages, broken local Markdown/Obsidian links, and candidate backlog as an observability report.
+- `self heartbeat --json` checks capability drift, stale last-success evidence, recent failures, and configured capabilities missing recent proof.
+- `self live-telegram-cadence --json` binds live Telegram prompt packs, route matrix cases, verifier commands, and artifact paths into a release evidence contract.
+- `self handoff-check --json` blocks major self-awareness/wiki source changes when this architecture plan, the handoff doc, or the hardening task list are stale.
+
+These maintenance reports are typed diagnostics, not memory layers. They can request probes, docs updates, or live evidence, but cannot promote mutable truth by themselves.
+
 ## Core Design
 
 The LLM wiki should be a layered knowledge system:
@@ -231,8 +240,11 @@ Examples:
    - Risky or inferred updates are queued for review instead of promoted silently.
 
 5. Scheduled maintenance
-   - Periodically refresh wiki health, stale pages, broken links, missing cards, and unverified capability claims.
-   - Use a heartbeat/cron style job only after the compiler is stable.
+   - `wiki heartbeat` refreshes wiki health, stale pages, broken links, and candidate backlog as a typed report.
+   - `self heartbeat` reports stale/missing capability evidence and recommends safe probes.
+   - `self live-telegram-cadence` records the live Telegram release evidence contract.
+   - `self handoff-check` keeps continuation docs from drifting after major self-awareness/wiki changes.
+   - Cron or recurring automation can call these commands later; the commands themselves remain observability-only.
 
 6. Deep search trigger policy
    - Ask a researcher/browser route when:
@@ -280,9 +292,10 @@ Phase 4: Wiki growth loop
 
 Phase 5: Scheduling and maintenance
 
-- Add recurring wiki health checks.
-- Refresh stale current system pages.
-- Produce "what Spark should learn next" from gaps, failures, and user goals.
+- Add recurring wiki health checks. Status: command surface shipped as `wiki heartbeat`.
+- Refresh stale current system pages. Status: reported by `wiki heartbeat`; actual refresh remains explicit.
+- Produce "what Spark should learn next" from gaps, failures, and user goals. Status: partially covered by `self heartbeat`, weak-spot priorities, and `self improve`.
+- Keep handoff and continuation docs fresh after major self-awareness/wiki changes. Status: command surface shipped as `self handoff-check`.
 
 ## Regression Guardrails
 
@@ -294,6 +307,8 @@ Stop ship if:
 - a route claims verified status from registry visibility alone
 - natural-language routing becomes command-only
 - compaction removes commands, source refs, failure modes, or eval criteria from system pages
+- self-awareness/wiki code changes without updating the handoff, architecture plan, and hardening task list when continuation instructions changed
+- live Telegram release claims are made without `self live-telegram-cadence` evidence from real `simulation=false` Telegram runtime traces
 
 ## Product Standard
 

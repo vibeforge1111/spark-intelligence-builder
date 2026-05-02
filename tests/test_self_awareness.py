@@ -11,6 +11,7 @@ from spark_intelligence.memory import run_memory_sdk_smoke_test
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
 from spark_intelligence.self_awareness import (
     build_capability_drift_heartbeat,
+    build_handoff_freshness_check,
     build_self_awareness_capsule,
     build_self_improvement_plan,
 )
@@ -392,6 +393,58 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertTrue(Path(payload["report_path"]).exists())
         self.assertIn("probe_plan", payload)
         self.assertEqual(payload["memory_policy"], "typed_report_not_chat_memory")
+
+    def test_handoff_freshness_blocks_self_awareness_changes_without_doc_updates(self) -> None:
+        result = build_handoff_freshness_check(
+            config_manager=self.config_manager,
+            changed_paths=["src/spark_intelligence/self_awareness/capsule.py"],
+            write_report=False,
+        )
+        payload = result.payload
+
+        self.assertEqual(payload["kind"], "self_awareness_handoff_freshness_check")
+        self.assertEqual(payload["status"], "blocked")
+        self.assertTrue(payload["doc_update_required"])
+        self.assertFalse(payload["doc_update_present"])
+        self.assertIn("handoff_docs_not_updated_with_self_awareness_change", payload["warnings"])
+
+    def test_handoff_freshness_passes_when_required_docs_move_with_source_change(self) -> None:
+        result = build_handoff_freshness_check(
+            config_manager=self.config_manager,
+            changed_paths=[
+                "src/spark_intelligence/self_awareness/capsule.py",
+                "docs/SPARK_SELF_AWARENESS_HARDENING_TASKS_2026-05-01.md",
+                "docs/SPARK_SELF_AWARENESS_LLM_WIKI_HANDOFF_2026-05-01.md",
+                "docs/SPARK_LLM_WIKI_ARCHITECTURE_PLAN_2026-05-01.md",
+            ],
+        )
+        payload = result.payload
+
+        self.assertEqual(payload["status"], "pass")
+        self.assertTrue(payload["report_written"])
+        self.assertTrue((self.home / "artifacts" / "handoff-freshness" / "latest.json").exists())
+        self.assertTrue(payload["doc_update_present"])
+        self.assertEqual(payload["memory_policy"], "typed_report_not_chat_memory")
+        self.assertIn("self handoff-check", payload["continuation_prompt"])
+        for row in payload["doc_status"]:
+            self.assertEqual(row["missing_tokens"], [])
+
+    def test_self_handoff_check_cli_emits_machine_readable_report(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "handoff-check",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+
+        self.assertIn(exit_code, {0, 1}, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["kind"], "self_awareness_handoff_freshness_check")
+        self.assertIn(payload["status"], {"pass", "blocked"})
+        self.assertTrue(payload["report_written"])
+        self.assertIn("continuation_prompt", payload)
+        self.assertEqual(payload["authority"], "observability_non_authoritative")
 
     def test_self_awareness_adds_memory_cognition_after_wiki_source_families_are_visible(self) -> None:
         kb_dir = self.home / "artifacts" / "spark-memory-kb" / "wiki" / "current-state"

@@ -157,6 +157,7 @@ from spark_intelligence.researcher_bridge import discover_researcher_runtime_roo
 from spark_intelligence.researcher_bridge import researcher_bridge_status
 from spark_intelligence.self_awareness import (
     build_capability_drift_heartbeat,
+    build_handoff_freshness_check,
     build_live_telegram_regression_cadence,
     build_self_awareness_capsule,
     build_self_improvement_plan,
@@ -1339,6 +1340,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print the cadence contract without writing artifacts/live-telegram-regression",
     )
     self_live_cadence_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_handoff_check_parser = self_subparsers.add_parser(
+        "handoff-check",
+        help="Check whether self-awareness/wiki changes updated handoff and architecture docs",
+    )
+    self_handoff_check_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_handoff_check_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Check handoff freshness without writing artifacts/handoff-freshness",
+    )
+    self_handoff_check_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_improve_parser = self_subparsers.add_parser(
         "improve",
         help="Plan probe-first improvements for Spark weak spots and capability gaps",
@@ -4198,6 +4210,17 @@ def handle_self_live_telegram_cadence(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
     result = build_live_telegram_regression_cadence(
+        config_manager=config_manager,
+        write_report=not bool(getattr(args, "no_write_report", False)),
+    )
+    print(result.to_json() if args.json else result.to_text())
+    return 1 if result.payload.get("status") == "blocked" else 0
+
+
+def handle_self_handoff_check(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    result = build_handoff_freshness_check(
         config_manager=config_manager,
         write_report=not bool(getattr(args, "no_write_report", False)),
     )
@@ -8050,6 +8073,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_self_heartbeat(args)
     if args.command == "self" and args.self_command == "live-telegram-cadence":
         return handle_self_live_telegram_cadence(args)
+    if args.command == "self" and args.self_command == "handoff-check":
+        return handle_self_handoff_check(args)
     if args.command == "self" and args.self_command == "improve":
         return handle_self_improve(args)
     if args.command == "wiki" and args.wiki_command == "bootstrap":

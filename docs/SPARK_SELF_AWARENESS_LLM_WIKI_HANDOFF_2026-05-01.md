@@ -23,6 +23,17 @@ Spark self-awareness must remain evidence-layered:
 
 The LLM wiki is supporting knowledge, not authority over current truth.
 
+## 2026-05-02 Hardening Addendum
+
+The self-awareness/wiki work now includes typed maintenance surfaces that keep Spark's confidence grounded without turning reports into memory truth:
+
+- `wiki heartbeat --json` writes an LLM wiki health report for stale pages, broken local links, and candidate backlog.
+- `self heartbeat --json` writes a capability drift report for stale successes, recent failures, observed-without-success routes, and configured capabilities missing last-success evidence.
+- `self live-telegram-cadence --json` names the live Telegram prompt pack, route matrix, verifier command, artifact directory, and real-trace evidence boundary.
+- `self handoff-check --json` checks whether major self-awareness/wiki source changes moved this handoff, the architecture plan, and the hardening task list together.
+
+All four reports are `observability_non_authoritative` and use the same boundary: reports can recommend probes or documentation updates, but they do not promote runtime truth, durable memory, or verified release claims by themselves.
+
 ## What Was Built
 
 ### 1. Builder Self-Awareness Capsule
@@ -577,17 +588,14 @@ Each eval should check:
 
 ### J. Live Telegram End-to-End Smoke
 
-The current validation mostly covers unit/focused tests and Builder CLI live smokes.
+The current validation covers unit/focused tests, Builder CLI smoke checks, a live route matrix, and a typed live Telegram cadence contract.
 
 Still needed:
 - run actual Telegram bot locally
-- send `/self`
-- send `/wiki`
-- send `/wiki pages`
-- send `/wiki query recursive self-improvement loops`
-- send natural equivalents
-- inspect node outbound audit
-- verify no Telegram chunking/formatting issues
+- run `python -m spark_intelligence.cli self live-telegram-cadence --json`
+- use the printed `-PrintPromptsOnly` command to send the prompt pack to the real bot
+- run the printed verifier command so `artifacts/live-telegram-regression/latest.json` captures real Telegram runtime traces
+- inspect node outbound audit and Telegram formatting when the verifier flags a mismatch
 
 ### K. Commit/PR Hygiene
 
@@ -596,7 +604,8 @@ Before shipping:
 - separate unrelated changes
 - run focused and broader tests
 - commit Builder and Telegram changes separately or in a coordinated branch pair
-- include this handoff doc in Builder docs
+- run `python -m spark_intelligence.cli self handoff-check --json`
+- include this handoff doc, the architecture plan, and the hardening task list when self-awareness/wiki behavior changes
 
 ## Things Potentially Overlooked
 
@@ -636,26 +645,15 @@ Before shipping:
 
 ## Recommended Next Slice
 
-Build a unified wiki-backed answer path:
+Run the live Telegram self-awareness/wiki regression on a real bot home, then use the resulting evidence to decide whether Telegram formatting, route traces, or wiki answer synthesis needs the next repair.
 
-1. Add `wiki answer` or `knowledge answer`.
-2. Retrieve packets via `build_llm_wiki_query`.
-3. Optionally read live status/capsule when question is self/system-related.
-4. Synthesize a short natural answer.
-5. Include source paths and missing live verification.
-6. Wire Telegram natural language to that answer path.
-7. Add evals for non-canned, source-backed answers.
-
-Suggested command:
+Suggested commands:
 
 ```bash
-python -m spark_intelligence.cli wiki query "route tracing" --refresh --json
-```
-
-Potential future command:
-
-```bash
-python -m spark_intelligence.cli wiki answer "How should Spark use route tracing?" --refresh --json
+python -m spark_intelligence.cli self handoff-check --json
+python -m spark_intelligence.cli self live-telegram-cadence --json
+powershell -ExecutionPolicy Bypass -File scripts/run_live_telegram_self_awareness_wiki_probe.ps1 -SparkHome C:\Users\USER\.spark-intelligence -PrintPromptsOnly
+powershell -ExecutionPolicy Bypass -File scripts/run_live_telegram_self_awareness_wiki_probe.ps1 -SparkHome C:\Users\USER\.spark-intelligence -OutputDir C:\Users\USER\.spark-intelligence\artifacts\live-telegram-regression -Json
 ```
 
 ## Continuation Prompt
@@ -671,19 +669,24 @@ Read this handoff first:
 C:\Users\USER\Desktop\spark-intelligence-builder\docs\SPARK_SELF_AWARENESS_LLM_WIKI_HANDOFF_2026-05-01.md
 
 Current goal:
-Move from operational wiki query output to a polished wiki-backed conversational answer path. Spark should retrieve relevant wiki packets, synthesize a natural answer, cite compact source paths, and clearly separate wiki-backed knowledge from live runtime truth.
+Run and harden the live Telegram self-awareness/wiki regression cadence. Spark should prove `/self`, `/wiki`, wiki candidate review, memory cognition boundaries, governed user memory, build-quality routing, and route explanations through real Telegram runtime traces before claiming a self-awareness release is live-green.
 
 Important existing Builder surfaces:
 - python -m spark_intelligence.cli self status --refresh-wiki --json
+- python -m spark_intelligence.cli self heartbeat --json
+- python -m spark_intelligence.cli self live-telegram-cadence --json
+- python -m spark_intelligence.cli self handoff-check --json
 - python -m spark_intelligence.cli wiki status --refresh --json
+- python -m spark_intelligence.cli wiki heartbeat --json
 - python -m spark_intelligence.cli wiki inventory --refresh --json
 - python -m spark_intelligence.cli wiki query "<topic>" --refresh --json
+- python -m spark_intelligence.cli wiki answer "<question>" --refresh --json
 
 Important existing Telegram surfaces:
 - /self
 - /wiki
-- /wiki pages
-- /wiki search <topic>
+- /wiki candidates
+- /wiki scan-candidates
 - natural status/inventory/query phrases in src/conversationIntent.ts
 
 Guardrails:
@@ -696,12 +699,12 @@ Guardrails:
 
 Recommended next implementation:
 1. Inspect current diffs and tests in both repos.
-2. Add Builder `wiki answer` or equivalent synthesis surface over `build_llm_wiki_query`.
-3. For self/system questions, optionally include self-awareness capsule/status evidence.
-4. Return structured JSON with answer, sources, evidence level, missing live verification, and warnings.
-5. Add Telegram formatter and natural-language route.
-6. Add tests proving it is source-backed, non-canned, and does not steal build/status/inventory intents.
-7. Run focused Builder and Telegram tests plus npm build.
+2. Run `self handoff-check --json` before code changes.
+3. Run `self live-telegram-cadence --json` and follow its printed prompt/verifier commands against the real Spark Telegram bot.
+4. If the live verifier fails, repair the exact route, formatting, or trace mismatch and rerun focused Builder/Telegram tests.
+5. If the live verifier passes, save the artifact path in the handoff/hardening docs and only then claim live Telegram evidence.
+6. Keep wiki/supporting reports separate from live runtime truth and governed current-state memory.
+7. Run focused Builder and Telegram tests plus npm build when Telegram repo changes.
 ```
 
 ## Quick Verification Commands
@@ -711,7 +714,12 @@ Builder:
 ```bash
 cd C:\Users\USER\Desktop\spark-intelligence-builder
 python -m pytest tests/test_llm_wiki_bootstrap.py tests/test_self_awareness.py
+python -m pytest tests/test_natural_language_route_eval_matrix.py
+python -m spark_intelligence.cli self handoff-check --json
+python -m spark_intelligence.cli self heartbeat --json
+python -m spark_intelligence.cli self live-telegram-cadence --json
 python -m spark_intelligence.cli wiki status --refresh --json
+python -m spark_intelligence.cli wiki heartbeat --json
 python -m spark_intelligence.cli wiki inventory --refresh --limit 5 --json
 python -m spark_intelligence.cli wiki query "recursive self-improvement loops" --refresh --limit 3 --json
 ```

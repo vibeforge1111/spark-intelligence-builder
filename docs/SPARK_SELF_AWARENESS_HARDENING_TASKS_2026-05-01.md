@@ -180,7 +180,7 @@ Guardrail:
 | SAH-501 Wiki health heartbeat | builder | shipped | Regular job checks wiki health, stale pages, broken links, and candidate backlog | `wiki heartbeat --json` writes an observability report under `artifacts/wiki-heartbeat`, not chat memory |
 | SAH-502 Capability drift heartbeat | builder | shipped | Regular job detects routes whose last-success evidence is stale, failed, or missing | `self heartbeat --json` writes an observability report with safe probes, not runtime truth |
 | SAH-503 Live Telegram regression cadence | telegram | shipped | Natural-language live matrix has self-awareness/wiki suites, release cadence, and session-log artifact contract | `self live-telegram-cadence --json` names prompts, verifier, artifacts, and live evidence gate |
-| SAH-504 Handoff auto-update task | builder | planned | Major self-awareness changes update the handoff and wiki architecture docs | continuation prompt stays accurate |
+| SAH-504 Handoff auto-update task | builder | shipped | Major self-awareness changes update the handoff and wiki architecture docs | `self handoff-check --json` checks source/doc drift and emits the continuation prompt |
 
 ## 2026-05-02 Phase Progress
 
@@ -213,11 +213,12 @@ Shipped in Builder:
 - This slice added `wiki heartbeat`, a typed LLM wiki health report for stale pages, broken local links, and candidate backlog. It writes observability artifacts under `artifacts/wiki-heartbeat` and stays outside chat memory/runtime truth.
 - This slice added `self heartbeat`, a typed capability drift report for stale successes, recent failures, observed-without-success routes, and configured capabilities missing last-success evidence. It writes observability artifacts under `artifacts/capability-drift-heartbeat` and recommends safe probes.
 - This slice added `self live-telegram-cadence`, a release-gate contract for live Telegram self-awareness/wiki regression. It ties the prompt pack, route matrix, verifier script, artifact directory, and real-trace evidence boundary together without treating simulated tests as live proof.
+- This slice added `self handoff-check`, a handoff freshness gate that checks major self-awareness/wiki changes moved this hardening task list, the LLM wiki architecture plan, and the self-awareness handoff together.
 
 Next phase:
 
 1. Run SAH-004/SAH-005 against a real Telegram bot with `scenario-packs/telegram-live-self-awareness-wiki.txt`, `ops/natural-language-live-commands.json`, and `scripts/run_live_telegram_self_awareness_wiki_probe.ps1`.
-2. Start SAH-504: add handoff auto-update checks so major self-awareness changes keep continuation docs and wiki architecture docs current.
+2. Use `self live-telegram-cadence --json` plus the printed verifier command to collect real Telegram regression evidence.
 3. Keep SAH-205 separate: user/environment wiki lanes must not merge into global Spark doctrine without explicit consent and source metadata.
 
 ## Live Test Suites To Add

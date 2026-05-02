@@ -8,6 +8,10 @@ from spark_intelligence.self_awareness.heartbeat import (
     CapabilityDriftHeartbeatResult,
     build_capability_drift_heartbeat,
 )
+from spark_intelligence.self_awareness.handoff_check import (
+    HandoffFreshnessCheckResult,
+    build_handoff_freshness_check,
+)
 from spark_intelligence.self_awareness.improvement_plan import SelfImprovementPlanResult, build_self_improvement_plan
 from spark_intelligence.self_awareness.live_telegram_cadence import (
     LiveTelegramRegressionCadenceResult,
@@ -19,9 +23,11 @@ __all__ = [
     "SelfAwarenessClaim",
     "CapabilityEvidence",
     "CapabilityDriftHeartbeatResult",
+    "HandoffFreshnessCheckResult",
     "LiveTelegramRegressionCadenceResult",
     "SelfImprovementPlanResult",
     "build_capability_drift_heartbeat",
+    "build_handoff_freshness_check",
     "build_live_telegram_regression_cadence",
     "build_self_awareness_capsule",
     "build_self_improvement_plan",
