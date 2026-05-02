@@ -6339,6 +6339,103 @@ def _format_memory_route_source_reply(*, route_facts: dict[str, Any]) -> str | N
     return "\n".join(lines)
 
 
+def _format_generic_route_source_reply(*, route_facts: dict[str, Any]) -> str | None:
+    routing_decision = str(route_facts.get("routing_decision") or "").strip()
+    bridge_mode = str(route_facts.get("bridge_mode") or "").strip()
+    if not routing_decision and not bridge_mode:
+        return None
+    evidence_summary = str(route_facts.get("evidence_summary") or "").strip()
+    sources = _route_source_hints(route_facts=route_facts, evidence_summary=evidence_summary)
+    stale_evidence = _route_stale_evidence_notes(route_facts=route_facts)
+    missing_probes = _route_missing_probe_notes(route_facts=route_facts)
+    lines = [
+        "Route explanation",
+        "",
+        "Selected route:",
+        f"- routing_decision: {routing_decision or 'unknown'}",
+        f"- bridge_mode: {bridge_mode or 'unknown'}",
+    ]
+    if evidence_summary:
+        lines.append(f"- evidence_summary: {evidence_summary}")
+    lines.extend(["", "Sources used:"])
+    lines.extend(f"- {item}" for item in sources)
+    lines.extend(["", "Stale evidence ignored:"])
+    lines.extend(f"- {item}" for item in stale_evidence)
+    lines.extend(["", "Missing probes:"])
+    lines.extend(f"- {item}" for item in missing_probes)
+    lines.extend(
+        [
+            "",
+            "Boundary:",
+            "- This explains the previous routed answer. It is trace context, not durable memory or global doctrine.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _route_source_hints(*, route_facts: dict[str, Any], evidence_summary: str) -> list[str]:
+    hints: list[str] = []
+    for key, label in (
+        ("source", "source"),
+        ("summary_source", "summary_source"),
+        ("read_method", "read_method"),
+        ("focus_source_class", "focus_source_class"),
+        ("plan_source_class", "plan_source_class"),
+        ("active_chip_key", "active_chip_key"),
+        ("provider_id", "provider_id"),
+        ("provider_model", "provider_model"),
+    ):
+        value = str(route_facts.get(key) or "").strip()
+        if value:
+            hints.append(f"{label}={value}")
+    for match in re.finditer(r"\b(source|wiki_refresh|provider|provider_fallback|status)=([^\s]+)", evidence_summary):
+        hints.append(f"{match.group(1)}={match.group(2)}")
+    source_ledger = route_facts.get("source_ledger")
+    if isinstance(source_ledger, list):
+        for item in source_ledger[:6]:
+            if not isinstance(item, dict):
+                continue
+            source = str(item.get("source") or "").strip()
+            role = str(item.get("role") or "").strip()
+            count = item.get("count")
+            if source:
+                hints.append(f"{source}{f' ({role})' if role else ''}{f' count={count}' if count is not None else ''}")
+    return list(dict.fromkeys(hints)) or ["route event facts and evidence_summary"]
+
+
+def _route_stale_evidence_notes(*, route_facts: dict[str, Any]) -> list[str]:
+    notes: list[str] = []
+    for key, label in (
+        ("ignored_stale_record_count", "ignored stale records"),
+        ("stale_record_count", "stale records"),
+        ("stale_candidate_count", "stale candidates"),
+    ):
+        try:
+            count = int(route_facts.get(key) or 0)
+        except (TypeError, ValueError):
+            count = 0
+        if count:
+            notes.append(f"{label}: {count}")
+    ignored = route_facts.get("ignored_stale_sources")
+    if isinstance(ignored, list) and ignored:
+        notes.append("ignored sources: " + ", ".join(str(item) for item in ignored[:6] if str(item).strip()))
+    return notes or ["none recorded for this route"]
+
+
+def _route_missing_probe_notes(*, route_facts: dict[str, Any]) -> list[str]:
+    missing = route_facts.get("missing_probes")
+    if isinstance(missing, list) and missing:
+        return [str(item).strip() for item in missing[:8] if str(item).strip()] or ["none recorded"]
+    routing_decision = str(route_facts.get("routing_decision") or "").strip()
+    if routing_decision in {"self_awareness_direct", "system_registry_direct"}:
+        return ["run the exact safe probe from self status before claiming a capability worked now"]
+    if routing_decision.startswith("llm_wiki"):
+        return ["refresh wiki status and run candidate scan before treating wiki notes as current truth"]
+    if routing_decision in {"provider_fallback_chat", "researcher_advisory"}:
+        return ["record provider/model success, latency, and fallback path for this request"]
+    return ["no route-specific probe list was recorded"]
+
+
 def _build_context_source_debug_reply(
     *,
     state_db: StateDB,
@@ -6437,6 +6534,8 @@ def _build_context_source_debug_reply(
         )
     if previous_route_facts is not None:
         route_reply = _format_memory_route_source_reply(route_facts=previous_route_facts)
+        if route_reply is None:
+            route_reply = _format_generic_route_source_reply(route_facts=previous_route_facts)
         if route_reply:
             return (
                 route_reply,
@@ -6450,6 +6549,12 @@ def _build_context_source_debug_reply(
                     "explained_query_kind": previous_route_facts.get("query_kind"),
                     "explained_record_count": previous_route_facts.get("record_count"),
                     "explained_read_method": previous_route_facts.get("read_method"),
+                    "explained_sources": _route_source_hints(
+                        route_facts=previous_route_facts,
+                        evidence_summary=str(previous_route_facts.get("evidence_summary") or ""),
+                    ),
+                    "explained_stale_evidence": _route_stale_evidence_notes(route_facts=previous_route_facts),
+                    "explained_missing_probes": _route_missing_probe_notes(route_facts=previous_route_facts),
                     "source_ledger": [],
                     "source_counts": {},
                 },

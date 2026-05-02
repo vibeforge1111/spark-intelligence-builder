@@ -159,7 +159,7 @@ Guardrail:
 
 | Task | Repo | Status | Outcome | Acceptance |
 | --- | --- | --- | --- | --- |
-| SAH-301 Route explanation surface | builder + telegram | planned | Spark can answer "why did you answer that way?" from route traces | response includes selected route, sources used, stale evidence ignored, and missing probes |
+| SAH-301 Route explanation surface | builder + telegram | shipped | Spark can answer "why did you answer that way?" from route traces | response includes selected route, sources used, stale evidence ignored, and missing probes |
 | SAH-302 Natural-language route eval matrix | telegram | planned | Larger tests cover self/wiki/query/promotion/build/memory collisions | tests prove Spark does not steal build prompts or promote memory accidentally |
 | SAH-303 Trace fields for wiki promotion | builder + telegram | planned | Wiki promotion notes include request id, route decision, source packet refs, and probe result refs when available | candidate note has enough lineage to audit |
 | SAH-304 Deep search trigger policy | builder | planned | Spark knows when local wiki is insufficient and should use Researcher/browser/search | high-stakes or stale questions route to live research/probe first |
@@ -202,6 +202,7 @@ Shipped in Builder:
 - This slice added a project-awareness capsule section sourced from the local project index with live git/filesystem boundaries.
 - This slice added capability freshness scoring so self-awareness can separate recent success, recent failure, stale success, and goal relevance.
 - This slice added a capability probe registry so self-status can recommend exact read-only probes without treating configured routes as current success.
+- This slice added a generic route explanation surface so follow-up questions like "why did you answer that way?" can name the selected route, route sources, stale evidence ignored, and missing probes without promoting debug traces to memory.
 
 Next phase:
 
@@ -259,7 +260,7 @@ Recommended next implementation order:
    - wiki promotion with source/evidence refs
 3. Add user/project awareness sections to `SelfAwarenessCapsule`.
 4. Add `wiki compile-system` pages for environment, projects, and improvement candidates.
-5. Add route explanation fields to Telegram wiki/self-awareness bridge calls.
+5. Extend route explanation coverage from self-awareness traces into the broader Telegram wiki/build/promotion bridge paths.
 6. Run live Telegram smoke for `/self`, `/wiki`, natural self-awareness, and wiki promotion.
 
 ## Stop-Ship Gates

@@ -414,6 +414,43 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(result.output_keepability, "ephemeral_context")
         self.assertEqual(result.promotion_disposition, "not_promotable")
 
+    def test_route_explanation_for_self_awareness_names_route_sources_stale_and_missing_probes(self) -> None:
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-self-awareness-to-explain",
+            agent_id="agent-1",
+            human_id="human:telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+            user_message="Where do you lack and how can you improve those parts?",
+        )
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-self-awareness-explanation",
+            agent_id="agent-1",
+            human_id="human:telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+            user_message="Why did you answer that way?",
+        )
+
+        self.assertEqual(result.mode, "context_source_debug")
+        self.assertEqual(result.routing_decision, "context_source_debug")
+        self.assertIn("Route explanation", result.reply_text)
+        self.assertIn("routing_decision: self_awareness_direct", result.reply_text)
+        self.assertIn("Sources used", result.reply_text)
+        self.assertIn("source=self_awareness_capsule", result.reply_text)
+        self.assertIn("Stale evidence ignored", result.reply_text)
+        self.assertIn("none recorded for this route", result.reply_text)
+        self.assertIn("Missing probes", result.reply_text)
+        self.assertIn("run the exact safe probe", result.reply_text)
+        self.assertIn("explained_request_id=req-self-awareness-to-explain", result.evidence_summary)
+        self.assertEqual(result.output_keepability, "operator_debug_only")
+        self.assertEqual(result.promotion_disposition, "not_promotable")
+
     def test_natural_self_awareness_query_exposes_memory_kb_families_without_promoting_wiki(self) -> None:
         kb_dir = self.home / "artifacts" / "spark-memory-kb" / "wiki" / "current-state"
         kb_dir.mkdir(parents=True)
