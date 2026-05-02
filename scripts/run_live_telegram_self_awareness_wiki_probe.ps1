@@ -2,6 +2,7 @@ param(
     [string]$SparkHome = ".tmp-home-live-telegram-real",
     [int]$Limit = 80,
     [string]$OutputDir = "",
+    [string]$SinceUtc = "",
     [switch]$PrintPromptsOnly,
     [switch]$Json
 )
@@ -152,6 +153,41 @@ function Test-ExpectedTrace {
     return $true
 }
 
+function Get-SinceUtcValue {
+    if ([string]::IsNullOrWhiteSpace($SinceUtc)) {
+        return $null
+    }
+
+    try {
+        return ([DateTimeOffset]::Parse($SinceUtc)).UtcDateTime
+    } catch {
+        throw "SinceUtc must be an ISO-8601 timestamp, got '$SinceUtc'"
+    }
+}
+
+function Test-TraceMeetsSince {
+    param(
+        [Parameter(Mandatory = $true)]$Trace,
+        $SinceValue
+    )
+
+    if ($null -eq $SinceValue) {
+        return $true
+    }
+
+    $recordedAt = Get-TraceField $Trace "recorded_at"
+    if ([string]::IsNullOrWhiteSpace($recordedAt)) {
+        return $false
+    }
+
+    try {
+        $recordedAtUtc = ([DateTimeOffset]::Parse($recordedAt)).UtcDateTime
+    } catch {
+        return $false
+    }
+    return $recordedAtUtc -ge $SinceValue
+}
+
 function Get-TraceDescriptor {
     param(
         $Trace
@@ -175,19 +211,21 @@ function Get-TraceDescriptor {
 function Get-TraceEligibilitySummary {
     param(
         [Parameter(Mandatory = $true)]$Rows,
+        [Parameter(Mandatory = $true)]$EvaluatedRows,
         [Parameter(Mandatory = $true)]$RuntimeRows
     )
 
     $allRows = @($Rows)
+    $candidateRows = @($EvaluatedRows)
     $eligibleRows = @($RuntimeRows)
-    $simulationRows = @($allRows | Where-Object { $_.simulation -eq $true })
+    $simulationRows = @($candidateRows | Where-Object { $_.simulation -eq $true })
     $nonRuntimeSurfaceRows = @(
-        $allRows | Where-Object {
+        $candidateRows | Where-Object {
             (Get-TraceField $_ "origin_surface") -ne "telegram_runtime"
         }
     )
     $nonTelegramRequestRows = @(
-        $allRows | Where-Object {
+        $candidateRows | Where-Object {
             -not (Get-TraceField $_ "request_id").StartsWith("telegram:")
         }
     )
@@ -202,7 +240,9 @@ function Get-TraceEligibilitySummary {
 
     return [ordered]@{
         scanned_traces = $allRows.Count
+        evaluated_traces = $candidateRows.Count
         eligible_runtime_traces = $eligibleRows.Count
+        ignored_before_since_traces = $allRows.Count - $candidateRows.Count
         ignored_simulation_traces = $simulationRows.Count
         ignored_non_runtime_surface_traces = $nonRuntimeSurfaceRows.Count
         ignored_non_telegram_request_traces = $nonTelegramRequestRows.Count
@@ -241,14 +281,20 @@ if ($LASTEXITCODE -ne 0) {
 $jsonText = $raw -join [Environment]::NewLine
 $parsedRows = $jsonText | ConvertFrom-Json
 $rows = @($parsedRows | ForEach-Object { $_ })
-$runtimeRows = @(
+$sinceValue = Get-SinceUtcValue
+$evaluatedRows = @(
     $rows | Where-Object {
+        Test-TraceMeetsSince $_ $sinceValue
+    }
+)
+$runtimeRows = @(
+    $evaluatedRows | Where-Object {
         $_.simulation -eq $false -and
         (Get-TraceField $_ "origin_surface") -eq "telegram_runtime" -and
         (Get-TraceField $_ "request_id").StartsWith("telegram:")
     }
 )
-$traceEligibility = Get-TraceEligibilitySummary -Rows $rows -RuntimeRows $runtimeRows
+$traceEligibility = Get-TraceEligibilitySummary -Rows $rows -EvaluatedRows $evaluatedRows -RuntimeRows $runtimeRows
 
 $matched = New-Object System.Collections.Generic.List[object]
 $searchStart = 0
@@ -265,7 +311,9 @@ foreach ($expected in $ExpectedTraces) {
         $summary = [ordered]@{
             ok = $false
             spark_home = $SparkHome
+            since_utc = $SinceUtc
             scanned_traces = $rows.Count
+            evaluated_traces = $evaluatedRows.Count
             scanned_runtime_traces = $runtimeRows.Count
             matched = $matched.Count
             expected = $ExpectedTraces.Count
@@ -278,7 +326,7 @@ foreach ($expected in $ExpectedTraces) {
         } else {
             Write-Host ("FAIL matched {0}/{1} real Telegram runtime traces." -f $matched.Count, $ExpectedTraces.Count)
             Write-Host ("Missing expected trace: {0}" -f $expected.Name)
-            Write-Host ("Scanned {0} trace(s), {1} eligible live runtime trace(s), ignored {2} simulation trace(s)." -f $rows.Count, $runtimeRows.Count, $traceEligibility.ignored_simulation_traces)
+            Write-Host ("Scanned {0} trace(s), evaluated {1} since cutoff, {2} eligible live runtime trace(s), ignored {3} simulation trace(s)." -f $rows.Count, $evaluatedRows.Count, $runtimeRows.Count, $traceEligibility.ignored_simulation_traces)
             Write-Host "Tip: run with -PrintPromptsOnly, send the prompts to the live bot, then rerun this verifier."
         }
         Write-RegressionArtifact -Payload $summary
@@ -299,7 +347,9 @@ foreach ($expected in $ExpectedTraces) {
 $result = [ordered]@{
     ok = $true
     spark_home = $SparkHome
+    since_utc = $SinceUtc
     scanned_traces = $rows.Count
+    evaluated_traces = $evaluatedRows.Count
     scanned_runtime_traces = $runtimeRows.Count
     matched = $matched.Count
     expected = $ExpectedTraces.Count

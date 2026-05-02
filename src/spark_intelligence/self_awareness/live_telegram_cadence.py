@@ -66,6 +66,7 @@ def build_live_telegram_regression_cadence(
         else repo_root / "scripts" / "run_live_telegram_self_awareness_wiki_probe.ps1"
     )
     missing_files = [str(path) for path in (matrix, scenario, verifier) if not path.exists()]
+    checked_at = _utc_timestamp()
     matrix_payload = _load_json(matrix) if matrix.exists() else {}
     cases = [case for case in matrix_payload.get("cases") or [] if isinstance(case, dict)]
     suites = _suite_rows(cases)
@@ -76,16 +77,17 @@ def build_live_telegram_regression_cadence(
     latest_evidence_status = _latest_evidence_status(latest_evidence)
     status = "blocked" if missing_files else "evidence_present" if latest_evidence_status == "passed" else "needs_live_evidence"
     commands = {
+        "since_utc": checked_at,
         "print_prompts": _powershell_command(verifier=verifier, spark_home=config_manager.paths.home, flags=["-PrintPromptsOnly"]),
         "verify_live_traces": _powershell_command(
             verifier=verifier,
             spark_home=config_manager.paths.home,
-            flags=["-OutputDir", str(evidence_dir), "-Json"],
+            flags=["-OutputDir", str(evidence_dir), "-SinceUtc", checked_at, "-Json"],
         ),
     }
     payload = {
         "kind": "live_telegram_regression_cadence",
-        "checked_at": _utc_timestamp(),
+        "checked_at": checked_at,
         "status": status,
         "healthy": status == "evidence_present",
         "summary": {
@@ -110,6 +112,7 @@ def build_live_telegram_regression_cadence(
         "operator_runbook": {
             "path": str(prompt_runbook_path),
             "written": bool(write_report and not missing_files),
+            "since_utc": checked_at,
             "purpose": "Manual live-bot prompt pack for collecting real Telegram runtime traces.",
             "completion_checklist": [
                 "Send every prompt to the real Spark Telegram bot in order.",
@@ -125,7 +128,9 @@ def build_live_telegram_regression_cadence(
             "required_fields": [
                 "ok",
                 "spark_home",
+                "since_utc",
                 "scanned_traces",
+                "evaluated_traces",
                 "scanned_runtime_traces",
                 "matched",
                 "expected",
@@ -136,6 +141,7 @@ def build_live_telegram_regression_cadence(
                 "simulation=false",
                 "origin_surface=telegram_runtime",
                 "request_id starts with telegram:",
+                "recorded_at >= cadence checked_at when verifier is run from cadence command",
                 "bridge_mode and routing_decision match matrix expectations",
             ],
         },
@@ -231,7 +237,9 @@ def _latest_evidence(evidence_dir: Path) -> dict[str, Any]:
         "path": str(latest),
         "readable": True,
         "ok": bool(payload.get("ok")),
+        "since_utc": str(payload.get("since_utc") or ""),
         "scanned_traces": int(payload.get("scanned_traces") or 0),
+        "evaluated_traces": int(payload.get("evaluated_traces") or 0),
         "scanned_runtime_traces": int(payload.get("scanned_runtime_traces") or 0),
         "matched": int(payload.get("matched") or 0),
         "expected": int(payload.get("expected") or 0),
@@ -308,6 +316,8 @@ def _write_prompt_runbook(*, path: Path, prompts: list[str], commands: dict[str,
         "Send these prompts to the real Spark Telegram bot, in order.",
         "Wait for each bot reply before sending the next prompt.",
         "Simulation, soak, and CLI traces do not count as live release evidence.",
+        "Only bot replies recorded after this runbook timestamp count for this run.",
+        f"SinceUtc: {commands.get('since_utc', '')}",
         "",
         "Prompts:",
     ]

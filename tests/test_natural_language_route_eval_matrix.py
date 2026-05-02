@@ -84,17 +84,24 @@ class NaturalLanguageRouteEvalMatrixTests(SparkTestCase):
         self.assertIn("1. /self", runbook_text)
         self.assertIn("12. Why did you answer that way?", runbook_text)
         self.assertIn("Simulation, soak, and CLI traces do not count", runbook_text)
+        self.assertIn("SinceUtc:", runbook_text)
         self.assertIn("verify_live_traces", runbook_text)
+        self.assertEqual(payload["operator_runbook"]["since_utc"], payload["checked_at"])
         self.assertEqual(payload["summary"]["case_count"], len(_load_matrix()["cases"]))
         suite_ids = {row["suite"] for row in payload["suites"]}
         self.assertIn("self_awareness", suite_ids)
         self.assertIn("llm_wiki", suite_ids)
         self.assertIn("simulation=false", payload["artifact_contract"]["trace_requirements"])
         self.assertIn("trace_eligibility", payload["artifact_contract"]["required_fields"])
+        self.assertIn("since_utc", payload["artifact_contract"]["required_fields"])
+        self.assertIn("evaluated_traces", payload["artifact_contract"]["required_fields"])
+        self.assertIn("recorded_at >= cadence checked_at", " ".join(payload["artifact_contract"]["trace_requirements"]))
         self.assertIn("live_telegram_evidence_missing", payload["warnings"])
         self.assertIn("-PrintPromptsOnly", payload["commands"]["print_prompts"])
         self.assertIn("-Json", payload["commands"]["verify_live_traces"])
         self.assertIn("-OutputDir", payload["commands"]["verify_live_traces"])
+        self.assertIn("-SinceUtc", payload["commands"]["verify_live_traces"])
+        self.assertIn(payload["checked_at"], payload["commands"]["verify_live_traces"])
 
     def test_live_telegram_cadence_surfaces_failed_trace_eligibility(self) -> None:
         evidence_dir = self.home / "artifacts" / "live-telegram-regression"
@@ -103,6 +110,7 @@ class NaturalLanguageRouteEvalMatrixTests(SparkTestCase):
             "ok": False,
             "spark_home": str(self.home),
             "scanned_traces": 5,
+            "evaluated_traces": 3,
             "scanned_runtime_traces": 0,
             "matched": 0,
             "expected": 12,
@@ -134,6 +142,7 @@ class NaturalLanguageRouteEvalMatrixTests(SparkTestCase):
         self.assertIn("live_telegram_evidence_failed_or_incomplete", payload["warnings"])
         self.assertEqual(payload["latest_evidence"]["missing"], "slash self")
         self.assertEqual(payload["latest_evidence"]["scanned_traces"], 5)
+        self.assertEqual(payload["latest_evidence"]["evaluated_traces"], 3)
         self.assertEqual(payload["latest_evidence"]["scanned_runtime_traces"], 0)
         self.assertEqual(payload["latest_evidence"]["trace_eligibility"]["ignored_simulation_traces"], 5)
         self.assertEqual(

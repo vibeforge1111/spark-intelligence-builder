@@ -681,6 +681,8 @@ Use that file for the live bot prompt sequence; it includes the 12 prompts, the 
 
 The non-JSON `self live-telegram-cadence` output now also names the runbook path, latest missing case, eligible live trace count, and next action for operator-friendly handoff.
 
+The generated verifier command includes `-SinceUtc <cadence checked_at>`. This is intentional: live evidence for a fresh run must come from Telegram traces recorded after the runbook/cadence was generated, not from older live traces.
+
 ## Continuation Prompt
 
 Use this prompt in the next coding session:
