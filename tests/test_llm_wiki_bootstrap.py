@@ -12,6 +12,7 @@ from spark_intelligence.llm_wiki import (
     build_llm_wiki_status,
     compile_system_wiki,
     promote_llm_wiki_improvement,
+    promote_llm_wiki_user_note,
 )
 from spark_intelligence.memory import orchestrator as memory_orchestrator
 from spark_intelligence.memory.orchestrator import hybrid_memory_retrieve
@@ -350,6 +351,94 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertEqual(payload["promotion_status"], "candidate")
         self.assertEqual(payload["authority"], "supporting_not_authoritative")
         self.assertTrue(payload["relative_path"].startswith("improvements/"))
+        self.assertTrue((self.home / "wiki" / payload["relative_path"]).exists())
+
+    def test_wiki_user_note_requires_explicit_consent_ref(self) -> None:
+        with self.assertRaises(ValueError):
+            promote_llm_wiki_user_note(
+                config_manager=self.config_manager,
+                human_id="human:test-user",
+                title="User likes terse replies",
+                summary="The user prefers concise operational replies.",
+                evidence_refs=["telegram_trace:turn-123"],
+            )
+
+    def test_wiki_user_note_writes_separate_user_lane(self) -> None:
+        result = promote_llm_wiki_user_note(
+            config_manager=self.config_manager,
+            human_id="human:test-user",
+            title="User likes terse replies",
+            summary="The user prefers concise operational replies for builder status checks.",
+            consent_ref="consent:telegram:turn-123",
+            evidence_refs=["telegram_trace:turn-123"],
+            source_refs=["operator_session:self-awareness-hardening"],
+        )
+
+        self.assertEqual(result.output_dir, self.home / "wiki")
+        self.assertTrue(result.relative_path.startswith("users/human-test-user/candidate-notes/"))
+        note = (self.home / "wiki" / result.relative_path).read_text(encoding="utf-8")
+        self.assertIn("type: llm_wiki_user_note", note)
+        self.assertIn("authority: supporting_not_authoritative", note)
+        self.assertIn("owner_system: spark-intelligence-builder", note)
+        self.assertIn("wiki_family: user_context_candidate", note)
+        self.assertIn("scope_kind: user_specific", note)
+        self.assertIn("source_of_truth: governed_user_memory_or_explicit_consent", note)
+        self.assertIn('human_id: "human:test-user"', note)
+        self.assertIn('consent_ref: "consent:telegram:turn-123"', note)
+        self.assertIn("not global Spark doctrine", note)
+        self.assertIn("does not override governed current-state memory", note)
+        self.assertFalse(result.payload["can_override_global_doctrine"])
+        self.assertFalse(result.payload["can_override_current_state_memory"])
+
+    def test_wiki_user_note_stays_out_of_global_candidate_inbox(self) -> None:
+        promote_llm_wiki_user_note(
+            config_manager=self.config_manager,
+            human_id="human:test-user",
+            title="User project preference candidate",
+            summary="The user wants project-specific progress grouped by hardening phase.",
+            consent_ref="consent:telegram:turn-456",
+            evidence_refs=["telegram_trace:turn-456"],
+        )
+        promote_llm_wiki_improvement(
+            config_manager=self.config_manager,
+            title="Global route confidence candidate",
+            summary="Spark should verify route confidence with fresh trace evidence.",
+            evidence_refs=["pytest tests/test_self_awareness.py::route_confidence"],
+        )
+
+        result = build_llm_wiki_candidate_inbox(config_manager=self.config_manager, status="all")
+
+        self.assertEqual(result.payload["total_improvement_count"], 1)
+        self.assertEqual(result.payload["returned_count"], 1)
+        self.assertTrue(result.payload["notes"][0]["path"].startswith("improvements/"))
+        self.assertNotIn("users/", result.payload["notes"][0]["path"])
+
+    def test_wiki_promote_user_note_cli_emits_machine_readable_result(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "wiki",
+            "promote-user-note",
+            "User builder pacing",
+            "--home",
+            str(self.home),
+            "--human-id",
+            "human:test-user",
+            "--summary",
+            "The user wants Builder hardening updates to name the current phase.",
+            "--consent-ref",
+            "consent:telegram:turn-789",
+            "--evidence-ref",
+            "telegram_trace:turn-789",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["promotion_status"], "candidate")
+        self.assertEqual(payload["authority"], "supporting_not_authoritative")
+        self.assertEqual(payload["scope_kind"], "user_specific")
+        self.assertEqual(payload["human_id"], "human:test-user")
+        self.assertEqual(payload["consent_ref"], "consent:telegram:turn-789")
+        self.assertTrue(payload["relative_path"].startswith("users/human-test-user/candidate-notes/"))
         self.assertTrue((self.home / "wiki" / payload["relative_path"]).exists())
 
     def test_wiki_candidate_inbox_lists_source_bounded_candidates(self) -> None:

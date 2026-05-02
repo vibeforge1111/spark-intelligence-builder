@@ -34,6 +34,10 @@ from spark_intelligence.llm_wiki.status import (
     LlmWikiStatusResult,
     build_llm_wiki_status,
 )
+from spark_intelligence.llm_wiki.user_notes import (
+    LlmWikiUserNotePromotionResult,
+    promote_llm_wiki_user_note,
+)
 
 __all__ = [
     "LlmWikiAnswerResult",
@@ -45,6 +49,7 @@ __all__ = [
     "LlmWikiQueryResult",
     "LlmWikiSystemCompileResult",
     "LlmWikiStatusResult",
+    "LlmWikiUserNotePromotionResult",
     "bootstrap_llm_wiki",
     "build_llm_wiki_answer",
     "build_llm_wiki_candidate_inbox",
@@ -54,4 +59,5 @@ __all__ = [
     "build_llm_wiki_status",
     "compile_system_wiki",
     "promote_llm_wiki_improvement",
+    "promote_llm_wiki_user_note",
 ]

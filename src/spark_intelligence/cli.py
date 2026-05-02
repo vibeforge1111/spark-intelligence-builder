@@ -100,6 +100,7 @@ from spark_intelligence.llm_wiki import (
     build_llm_wiki_status,
     compile_system_wiki,
     promote_llm_wiki_improvement,
+    promote_llm_wiki_user_note,
 )
 from spark_intelligence.memory import (
     benchmark_memory_architectures,
@@ -1439,6 +1440,38 @@ def build_parser() -> argparse.ArgumentParser:
     wiki_promote_parser.add_argument("--invalidation-trigger", default="", help="Condition that should downgrade or replace this note")
     wiki_promote_parser.add_argument("--force", action="store_true", help="Overwrite the generated note path if it already exists")
     wiki_promote_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    wiki_user_note_parser = wiki_subparsers.add_parser(
+        "promote-user-note",
+        help="Write a consent-bounded user-specific context note into the local LLM wiki",
+    )
+    wiki_user_note_parser.add_argument("title", nargs="?", default="", help="Short title for the user-context note")
+    wiki_user_note_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    wiki_user_note_parser.add_argument("--output-dir", help="Override wiki output directory")
+    wiki_user_note_parser.add_argument("--human-id", required=True, help="Scoped Spark human id for this user-context note")
+    wiki_user_note_parser.add_argument("--summary", default="", help="User-specific context to store in the wiki")
+    wiki_user_note_parser.add_argument("--consent-ref", required=True, help="Explicit consent or configured-policy reference")
+    wiki_user_note_parser.add_argument(
+        "--status",
+        choices=("candidate", "verified"),
+        default="candidate",
+        help="Promotion status. Verified still remains user-scoped and supporting only.",
+    )
+    wiki_user_note_parser.add_argument(
+        "--evidence-ref",
+        action="append",
+        default=[],
+        help="Trace, test, user correction, or run evidence ref. Repeat for multiple refs.",
+    )
+    wiki_user_note_parser.add_argument(
+        "--source",
+        action="append",
+        default=[],
+        help="Human, document, or conversation source boundary. Repeat for multiple refs.",
+    )
+    wiki_user_note_parser.add_argument("--next-probe", default="", help="Probe required before reusing this user context")
+    wiki_user_note_parser.add_argument("--invalidation-trigger", default="", help="Condition that should downgrade or replace this note")
+    wiki_user_note_parser.add_argument("--force", action="store_true", help="Overwrite the generated note path if it already exists")
+    wiki_user_note_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     mission_parser = subparsers.add_parser("mission", help="Inspect mission control and task-specific operator plans")
     mission_subparsers = mission_parser.add_subparsers(dest="mission_command", required=True)
@@ -4241,6 +4274,31 @@ def handle_wiki_promote_improvement(args: argparse.Namespace) -> int:
             config_manager=config_manager,
             title=str(getattr(args, "title", "") or ""),
             summary=str(getattr(args, "summary", "") or ""),
+            output_dir=getattr(args, "output_dir", None),
+            promotion_status=str(getattr(args, "status", "") or "candidate"),
+            evidence_refs=list(getattr(args, "evidence_ref", []) or []),
+            source_refs=list(getattr(args, "source", []) or []),
+            next_probe=str(getattr(args, "next_probe", "") or ""),
+            invalidation_trigger=str(getattr(args, "invalidation_trigger", "") or ""),
+            overwrite=bool(getattr(args, "force", False)),
+        )
+    except (OSError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print(result.to_json() if args.json else result.to_text())
+    return 0
+
+
+def handle_wiki_promote_user_note(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    try:
+        result = promote_llm_wiki_user_note(
+            config_manager=config_manager,
+            human_id=str(getattr(args, "human_id", "") or ""),
+            title=str(getattr(args, "title", "") or ""),
+            summary=str(getattr(args, "summary", "") or ""),
+            consent_ref=str(getattr(args, "consent_ref", "") or ""),
             output_dir=getattr(args, "output_dir", None),
             promotion_status=str(getattr(args, "status", "") or "candidate"),
             evidence_refs=list(getattr(args, "evidence_ref", []) or []),
@@ -7860,6 +7918,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_wiki_answer(args)
     if args.command == "wiki" and args.wiki_command == "promote-improvement":
         return handle_wiki_promote_improvement(args)
+    if args.command == "wiki" and args.wiki_command == "promote-user-note":
+        return handle_wiki_promote_user_note(args)
     if args.command == "mission" and args.mission_command == "status":
         return handle_mission_status(args)
     if args.command == "mission" and args.mission_command == "plan":

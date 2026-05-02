@@ -153,7 +153,7 @@ Guardrail:
 | SAH-202 Wiki contradiction scan | builder | shipped | Detects candidate or verified notes that conflict with live status boundaries, source lineage, residue rules, or user-memory scoping | `wiki scan-candidates --json` emits keep/rewrite/drop recommendations |
 | SAH-203 Wiki stale page health | builder | planned | Each page class has freshness thresholds and invalidation triggers | `wiki status` warns about stale generated pages and old candidates |
 | SAH-204 Obsidian index polish | builder | planned | Wiki has index pages for system, routes, tools, user, projects, and improvements | inventory shows linked pages and missing expected indexes |
-| SAH-205 User-specific wiki consent lane | builder | planned | User/environment notes are stored separately from Spark system doctrine | user notes require explicit promotion intent or configured policy |
+| SAH-205 User-specific wiki consent lane | builder | shipped | User/environment notes are stored separately from Spark system doctrine | `wiki promote-user-note` requires human id, consent ref, and evidence/source, writes under `wiki/users/...`, and stays out of the global candidate inbox |
 
 ### P2 Route Intelligence And Explanation
 
