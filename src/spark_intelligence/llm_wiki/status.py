@@ -35,6 +35,7 @@ BOOTSTRAP_WIKI_FILES: tuple[str, ...] = (
 
 SYSTEM_COMPILE_WIKI_FILES: tuple[str, ...] = (
     "system/current-system-status.md",
+    "environment/spark-environment.md",
     "tools/capability-index.md",
     "routes/live-route-index.md",
     "diagnostics/self-awareness-gaps.md",

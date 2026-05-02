@@ -86,12 +86,19 @@ class LlmWikiBootstrapTests(SparkTestCase):
 
         self.assertEqual(result.output_dir, self.home / "wiki")
         self.assertIn("system/current-system-status.md", result.generated_files)
+        self.assertIn("environment/spark-environment.md", result.generated_files)
         self.assertIn("tools/capability-index.md", result.generated_files)
         self.assertIn("routes/live-route-index.md", result.generated_files)
         self.assertIn("diagnostics/self-awareness-gaps.md", result.generated_files)
         status_page = (self.home / "wiki" / "system" / "current-system-status.md").read_text(encoding="utf-8")
         self.assertIn("source_class: spark_llm_wiki_system_compile", status_page)
         self.assertIn("## Memory Runtime", status_page)
+        environment_page = (self.home / "wiki" / "environment" / "spark-environment.md").read_text(encoding="utf-8")
+        self.assertIn("## Local Paths", environment_page)
+        self.assertIn("secret_values: `redacted`", environment_page)
+        self.assertIn("env_file_contents: `not_read_by_environment_page`", environment_page)
+        self.assertIn("## Safe Probes", environment_page)
+        self.assertNotIn("Spark Intelligence secrets", environment_page)
 
     def test_compile_system_cli_emits_machine_readable_result(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
@@ -107,6 +114,7 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertEqual(payload["output_dir"], str(self.home / "wiki"))
         self.assertIn("system_registry", payload["source_refs"])
         self.assertIn("system/current-system-status.md", payload["generated_files"])
+        self.assertIn("environment/spark-environment.md", payload["generated_files"])
 
     def test_wiki_status_reports_missing_vault_without_refresh(self) -> None:
         result = build_llm_wiki_status(config_manager=self.config_manager, state_db=self.state_db)
@@ -239,6 +247,7 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertTrue(payload["project_knowledge_first"])
         self.assertIn("projects/index.md", payload["expected_bootstrap_files"])
         self.assertIn("improvements/index.md", payload["expected_bootstrap_files"])
+        self.assertIn("environment/spark-environment.md", payload["expected_system_compile_files"])
 
     def test_wiki_inventory_refreshes_and_lists_pages_with_metadata(self) -> None:
         result = build_llm_wiki_inventory(
@@ -259,6 +268,7 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertIn("projects/index.md", page_paths)
         self.assertIn("improvements/index.md", page_paths)
         self.assertIn("system/current-system-status.md", page_paths)
+        self.assertIn("environment/spark-environment.md", page_paths)
         index_page = next(page for page in result.payload["pages"] if page["path"] == "index.md")
         self.assertEqual(index_page["title"], "Spark LLM Wiki")
         self.assertEqual(index_page["authority"], "supporting_not_authoritative")

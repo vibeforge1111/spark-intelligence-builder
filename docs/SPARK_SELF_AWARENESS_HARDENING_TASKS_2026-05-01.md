@@ -141,7 +141,7 @@ Guardrail:
 | --- | --- | --- | --- | --- |
 | SAH-101 User awareness capsule | builder | planned | Self-awareness payload includes user goal, stable preferences, recent decisions, and consent-safe user context | current user context is labeled `stable`, `recent`, `inferred`, or `unknown` |
 | SAH-102 Project awareness capsule | builder | planned | Spark can name the current project/repo/mission context it is operating in | project facts include source refs and do not override live git/filesystem state |
-| SAH-103 Environment awareness page | builder | planned | Wiki compiler emits an environment page with Spark home, wiki root, repo map, local services, and safe probes | page is source-backed and redacts secrets |
+| SAH-103 Environment awareness page | builder | shipped | Wiki compiler emits an environment page with Spark home, wiki root, repo map, local services, and safe probes | `environment/spark-environment.md` is generated from config/registry, lists safe probes, and redacts `.env` contents |
 | SAH-104 Capability freshness scoring | builder | planned | Capabilities are scored by configured, health-checked, recently invoked, and goal-relevant status | Spark stops saying "I can" without nuance below recent-success confidence |
 | SAH-105 Capability probe registry | builder | planned | Every major system/chip/provider route has a safe probe and access boundary | self-status can recommend exact safe probes |
 
@@ -197,6 +197,7 @@ Shipped in Builder:
 - This slice added a consent-bounded user wiki lane with `wiki promote-user-note`, keeping user/environment context separate from global Spark doctrine.
 - This slice added wiki stale-page health so status can warn about old generated snapshots and old candidates without treating wiki as live truth.
 - This slice added Obsidian-friendly index pages for system, routes, tools, user, projects, and improvements.
+- This slice added a generated environment-awareness page with local path, repo, surface, safe-probe, and secret-redaction boundaries.
 
 Next phase:
 

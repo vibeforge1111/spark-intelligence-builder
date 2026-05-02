@@ -140,6 +140,7 @@ For current health, live registry/state/traces outrank this wiki. For stable con
 
 ## Generated System Pages
 - [[current-system-status]]
+- [[../environment/spark-environment]]
 - [[../diagnostics/self-awareness-gaps]]
 
 ## Boundary
