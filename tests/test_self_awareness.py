@@ -133,6 +133,7 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("memory_cognition", payload)
         self.assertIn("user_awareness", payload)
         self.assertIn("project_awareness", payload)
+        self.assertIn("capability_probe_registry", payload)
         self.assertNotIn("self_status_memory", payload["memory_cognition"])
 
     def test_self_awareness_user_awareness_labels_current_context_without_promoting_doctrine(self) -> None:
@@ -230,6 +231,31 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("live_git_status_outranks_project_awareness_snapshot", project_awareness["boundaries"])
         self.assertIn("Project awareness", capsule.to_text())
         self.assertIn("Known projects: 1", capsule.to_text())
+
+    def test_self_awareness_exposes_safe_capability_probe_registry(self) -> None:
+        chip_root = create_fake_hook_chip(self.home, chip_key="startup-yc")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+        self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
+
+        capsule = build_self_awareness_capsule(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human:test-probe-registry",
+            session_id="session:test-probe-registry",
+            channel_kind="telegram",
+            user_message="how do you prove a capability works?",
+        )
+        payload = capsule.to_payload()
+
+        probes = payload["capability_probe_registry"]
+        self.assertTrue(probes)
+        startup_probe = next(probe for probe in probes if probe["target_key"] == "startup-yc")
+        self.assertEqual(startup_probe["target_kind"], "chip")
+        self.assertIn("spark-intelligence chips why", startup_probe["safe_probe"])
+        self.assertEqual(startup_probe["access_boundary"], "read_only_routing_or_attachment_check")
+        self.assertEqual(startup_probe["claim_boundary"], "configured_or_available_is_not_recent_success")
+        self.assertFalse(startup_probe["records_current_success"])
+        self.assertIn("startup-yc:", "\n".join(payload["recommended_probes"]))
 
     def test_self_awareness_adds_memory_cognition_after_wiki_source_families_are_visible(self) -> None:
         kb_dir = self.home / "artifacts" / "spark-memory-kb" / "wiki" / "current-state"

@@ -143,7 +143,7 @@ Guardrail:
 | SAH-102 Project awareness capsule | builder | shipped | Spark can name the current project/repo/mission context it is operating in | `self status --json` includes `project_awareness` with repo source refs and live git/filesystem override boundaries |
 | SAH-103 Environment awareness page | builder | shipped | Wiki compiler emits an environment page with Spark home, wiki root, repo map, local services, and safe probes | `environment/spark-environment.md` is generated from config/registry, lists safe probes, and redacts `.env` contents |
 | SAH-104 Capability freshness scoring | builder | shipped | Capabilities are scored by configured, health-checked, recently invoked, and goal-relevant status | `capability_evidence` includes confidence, freshness, goal relevance, and `can_claim_confidently` fields |
-| SAH-105 Capability probe registry | builder | planned | Every major system/chip/provider route has a safe probe and access boundary | self-status can recommend exact safe probes |
+| SAH-105 Capability probe registry | builder | shipped | Every major system/chip/provider route has a safe probe and access boundary | `self status --json` includes `capability_probe_registry` with safe probes, access boundaries, and non-success claim boundaries |
 
 ### P1 Wiki Growth And Review
 
@@ -201,6 +201,7 @@ Shipped in Builder:
 - This slice added a scoped user-awareness capsule section with stable/recent/inferred/unknown labels and user-wiki candidate boundaries.
 - This slice added a project-awareness capsule section sourced from the local project index with live git/filesystem boundaries.
 - This slice added capability freshness scoring so self-awareness can separate recent success, recent failure, stale success, and goal relevance.
+- This slice added a capability probe registry so self-status can recommend exact read-only probes without treating configured routes as current success.
 
 Next phase:
 

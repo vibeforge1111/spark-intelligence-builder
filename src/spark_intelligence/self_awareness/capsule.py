@@ -100,6 +100,7 @@ class SelfAwarenessCapsule:
     memory_cognition: dict[str, Any] = field(default_factory=dict)
     user_awareness: dict[str, Any] = field(default_factory=dict)
     project_awareness: dict[str, Any] = field(default_factory=dict)
+    capability_probe_registry: list[dict[str, Any]] = field(default_factory=list)
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -120,6 +121,7 @@ class SelfAwarenessCapsule:
             "memory_cognition": self.memory_cognition,
             "user_awareness": self.user_awareness,
             "project_awareness": self.project_awareness,
+            "capability_probe_registry": self.capability_probe_registry,
         }
 
     def to_json(self) -> str:
@@ -193,7 +195,11 @@ def build_self_awareness_capsule(
     inferred_strengths = _build_strength_claims(registry_payload=registry_payload, context_capsule=context_capsule)
     lacks = _build_lack_claims(records=records, degraded_claims=degraded_or_missing)
     improvement_options = _build_improvement_claims(lacks=lacks, degraded_claims=degraded_or_missing)
-    recommended_probes = _recommended_probes(degraded_claims=degraded_or_missing)
+    capability_probe_registry = _build_capability_probe_registry(records)
+    recommended_probes = _recommended_probes(
+        degraded_claims=degraded_or_missing,
+        probe_registry=capability_probe_registry,
+    )
     memory_cognition = _build_memory_cognition(config_manager)
     user_awareness = _build_user_awareness(
         config_manager=config_manager,
@@ -258,6 +264,13 @@ def build_self_awareness_capsule(
             "claim_boundary": "Project awareness is a registry/config snapshot; live git, filesystem, CI, and tool output outrank it.",
             "project_count": int(project_awareness.get("project_count") or 0),
         },
+        {
+            "source": "capability_probe_registry",
+            "source_kind": "safe_probe_contract",
+            "present": bool(capability_probe_registry),
+            "claim_boundary": "Probe entries describe safe checks; a probe must actually run before Spark claims current success.",
+            "probe_count": len(capability_probe_registry),
+        },
     ]
     return SelfAwarenessCapsule(
         generated_at=generated_at,
@@ -277,6 +290,7 @@ def build_self_awareness_capsule(
         memory_cognition=memory_cognition,
         user_awareness=user_awareness,
         project_awareness=project_awareness,
+        capability_probe_registry=capability_probe_registry,
     )
 
 
@@ -951,6 +965,61 @@ def _build_project_awareness(*, config_manager: ConfigManager, registry_payload:
     }
 
 
+def _build_capability_probe_registry(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    probe_records: list[dict[str, Any]] = []
+    for record in records:
+        kind = str(record.get("kind") or "").strip()
+        key = str(record.get("key") or "").strip()
+        if not key or kind not in {"system", "adapter", "provider", "chip", "path", "repo"}:
+            continue
+        probe_records.append(
+            {
+                "target_kind": kind,
+                "target_key": key,
+                "label": str(record.get("label") or key).strip(),
+                "status": str(record.get("status") or "unknown").strip(),
+                "available": bool(record.get("available")),
+                "active": bool(record.get("active")),
+                "safe_probe": _safe_probe_for_record(kind=kind, key=key),
+                "access_boundary": _probe_access_boundary(kind=kind),
+                "claim_boundary": "configured_or_available_is_not_recent_success",
+                "records_current_success": False,
+            }
+        )
+    probe_records.sort(key=lambda item: (str(item.get("target_kind") or ""), str(item.get("target_key") or "")))
+    return probe_records[:40]
+
+
+def _safe_probe_for_record(*, kind: str, key: str) -> str:
+    if kind == "adapter" and key == "telegram":
+        return "spark-intelligence channel test telegram --json"
+    if kind == "provider":
+        return "spark-intelligence auth status --json"
+    if kind == "chip":
+        return f"spark-intelligence chips why 'test {key} capability' --json"
+    if kind == "path":
+        return "spark-intelligence attachments status --json"
+    if kind == "repo":
+        return f"git -C <repo:{key}> status --short"
+    if kind == "system" and key == "spark_memory":
+        return "spark-intelligence memory status --json"
+    if kind == "system" and key == "spark_browser":
+        return "spark-intelligence browser status --json"
+    if kind == "system" and key == "spark_intelligence_builder":
+        return "spark-intelligence self status --json"
+    return "spark-intelligence status --json"
+
+
+def _probe_access_boundary(*, kind: str) -> str:
+    if kind in {"system", "adapter", "provider"}:
+        return "read_only_health_check"
+    if kind in {"chip", "path"}:
+        return "read_only_routing_or_attachment_check"
+    if kind == "repo":
+        return "read_only_filesystem_or_git_check"
+    return "read_only_probe"
+
+
 def _project_context_entry(record: dict[str, Any]) -> dict[str, Any]:
     metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
     key = str(record.get("key") or "").strip()
@@ -1080,16 +1149,25 @@ def _label_counts(items: list[dict[str, Any]]) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
-def _recommended_probes(*, degraded_claims: list[SelfAwarenessClaim]) -> list[str]:
+def _recommended_probes(
+    *,
+    degraded_claims: list[SelfAwarenessClaim],
+    probe_registry: list[dict[str, Any]] | None = None,
+) -> list[str]:
     probes = [
         "Run `spark-intelligence self status --json` before self-knowledge answers that need provenance.",
         "Run a direct health/invocation check for the exact capability the user wants to rely on.",
         "Record last_success_at, last_failure_reason, and route_latency_ms for each important system path.",
     ]
+    for probe in list(probe_registry or [])[:4]:
+        safe_probe = str(probe.get("safe_probe") or "").strip()
+        target_key = str(probe.get("target_key") or "").strip()
+        if safe_probe and target_key:
+            probes.append(f"{target_key}: {safe_probe}")
     for claim in degraded_claims[:4]:
         if claim.next_probe:
             probes.append(claim.next_probe)
-    return probes
+    return list(dict.fromkeys(probes))
 
 
 def _probe_for_kind(kind: str, key: str) -> str:
