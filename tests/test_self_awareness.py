@@ -208,6 +208,24 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertLess(len(result.reply_text), 2600)
         self.assertIn("wiki_refresh=skipped", result.evidence_summary)
 
+    def test_memory_lack_query_uses_self_awareness_direct_route(self) -> None:
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-memory-lack-self-awareness",
+            agent_id="agent-1",
+            human_id="human:telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+            user_message="Where does your memory still lack right now, and how would we improve it?",
+        )
+
+        self.assertEqual(result.mode, "self_awareness_direct")
+        self.assertEqual(result.routing_decision, "self_awareness_direct")
+        self.assertIn("Spark self-awareness", result.reply_text)
+        self.assertIn("Where I still lack", result.reply_text)
+        self.assertNotIn("Builder memory path", result.reply_text)
+
     def test_self_awareness_query_beats_entity_state_summary_route(self) -> None:
         result = build_researcher_reply(
             config_manager=self.config_manager,

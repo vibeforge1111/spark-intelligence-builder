@@ -3303,6 +3303,30 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertTrue(bridge_events)
         self.assertEqual((bridge_events[0]["facts_json"] or {}).get("read_method"), "get_current_state+retrieve_evidence")
 
+    def test_broad_memory_work_recall_uses_open_recall_not_entity_summary(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider should not run for direct memory recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-memory-work-recall",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-memory-work-recall",
+                channel_kind="telegram",
+                user_message="What do you remember about our memory work today, and what is current versus just supporting context?",
+            )
+
+        self.assertEqual(result.mode, "memory_open_recall")
+        self.assertEqual(result.routing_decision, "memory_open_recall_query")
+        self.assertNotIn("saved entity state", result.reply_text)
+
     def test_build_researcher_reply_uses_identity_evidence_when_current_state_is_empty(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)

@@ -162,8 +162,13 @@ def looks_like_system_registry_query(message: str) -> bool:
         "your surroundings",
         "where do you lack",
         "where you lack",
+        "where does your memory still lack",
+        "where your memory still lacks",
+        "memory still lack",
+        "memory still lacks",
         "where are you weak",
         "what can you improve",
+        "how would we improve it",
     )
     return any(signal in lowered_message for signal in direct_signals)
 
@@ -187,8 +192,13 @@ def _looks_like_self_awareness_report_query(message: str) -> bool:
         "your surroundings",
         "where do you lack",
         "where you lack",
+        "where does your memory still lack",
+        "where your memory still lacks",
+        "memory still lack",
+        "memory still lacks",
         "where are you weak",
         "what can you improve",
+        "how would we improve it",
     )
     return any(signal in lowered_message for signal in signals)
 

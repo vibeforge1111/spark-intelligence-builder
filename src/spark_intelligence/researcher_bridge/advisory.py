@@ -1232,6 +1232,14 @@ def _detect_entity_state_summary_query(user_message: str) -> EntityStateSummaryQ
     normalized = " ".join(str(user_message or "").strip().split())
     if not normalized:
         return None
+    lowered = normalized.casefold()
+    if (
+        "memory work" in lowered
+        or "current versus" in lowered
+        or "supporting context" in lowered
+        or "supporting source" in lowered
+    ):
+        return None
     for pattern in _ENTITY_STATE_SUMMARY_PATTERNS:
         match = pattern.match(normalized)
         if not match:
