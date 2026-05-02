@@ -115,14 +115,15 @@ Guardrail:
 
 | Task | Repo | Status | Outcome | Acceptance |
 | --- | --- | --- | --- | --- |
-| MWI-001 Wiki packet family metadata | builder | planned | Classify retrieved Markdown packets by family, authority, owner, and scope | context packets distinguish Builder LLM wiki, memory KB current state, memory KB evidence, memory KB synthesis, and diagnostics |
-| MWI-002 Memory KB vault discovery | builder | planned | Show whether the older memory KB vault exists and is retrievable | `wiki status` and `self status` report Memory KB presence/freshness without treating it as live truth |
+| MWI-001 Wiki packet family metadata | builder | shipped | Classify retrieved Markdown packets by family, authority, owner, and scope | context packets distinguish Builder LLM wiki, memory KB current state, memory KB evidence, memory KB synthesis, and diagnostics |
+| MWI-002 Memory KB vault discovery | builder | shipped | Show whether the older memory KB vault exists and is retrievable | `wiki status` and `self status` report Memory KB presence/freshness without treating it as live truth |
 | MWI-003 Unified memory/wiki inventory | builder | planned | List memory/wiki page families from one surface | inventory includes authority, owner system, source path count, and stale warnings |
-| MWI-004 Current-state beats wiki test | builder | planned | Prevent wiki packets from overriding mutable user facts | regression proves current-state memory outranks wiki for "what do you know about me?" |
+| MWI-004 Current-state beats wiki test | builder | shipped | Prevent wiki packets from overriding mutable user facts | regression proves current-state memory outranks wiki for "what do you know about me?" |
 | MWI-005 Candidate contradiction scan | builder | planned | Compare wiki candidates against memory/current runtime evidence before promotion | conflicting candidates stay candidate or blocked |
 | MWI-006 Combined memory/wiki live cases | telegram | planned | Test natural-language questions that need both user memory and system wiki | live matrix covers user-vs-system, memory-vs-wiki, and authority-inversion prompts |
-| MWI-007 Rich wiki packet contract | domain-chip-memory | planned | Return parsed frontmatter metadata from packet reader | packet hits expose authority, owner_system, type, status, freshness, and wiki_family |
-| MWI-008 Memory cognition in self-status | builder | planned | Let Spark name its active memory architecture and lanes | self-awareness payload includes runtime architecture, provider, lane map, wiki packet status, graph sidecar status, and memory KB gaps |
+| MWI-007 Rich wiki packet contract | domain-chip-memory | shipped | Return parsed frontmatter metadata from packet reader | packet hits expose authority, owner_system, type, status, freshness, and wiki_family |
+| MWI-008 Memory cognition in self-status | builder | shipped | Let Spark name its active memory architecture and lanes | self-awareness payload includes runtime architecture, provider, lane map, wiki packet status, graph sidecar status, and memory KB gaps |
+| MWI-009 Memory movement status | builder | shipped | Show compact dashboard movement counts without making them truth | self-awareness payload names captured, blocked, promoted, saved, decayed, summarized, and retrieved as observability_non_authoritative |
 
 ### P0 Runtime Health And Live Proof
 
@@ -148,7 +149,7 @@ Guardrail:
 
 | Task | Repo | Status | Outcome | Acceptance |
 | --- | --- | --- | --- | --- |
-| SAH-201 Candidate wiki inbox | builder | planned | Candidate improvement notes can be listed, reviewed, verified, downgraded, or rejected | CLI can show candidate notes by age/status/source |
+| SAH-201 Candidate wiki inbox | builder | next | Candidate improvement notes can be listed, reviewed, verified, downgraded, or rejected | CLI can show candidate notes by age/status/source |
 | SAH-202 Wiki contradiction scan | builder | planned | Detects candidate or verified notes that conflict with live status or newer sources | scan emits keep/rewrite/drop recommendations |
 | SAH-203 Wiki stale page health | builder | planned | Each page class has freshness thresholds and invalidation triggers | `wiki status` warns about stale generated pages and old candidates |
 | SAH-204 Obsidian index polish | builder | planned | Wiki has index pages for system, routes, tools, user, projects, and improvements | inventory shows linked pages and missing expected indexes |
@@ -180,6 +181,23 @@ Guardrail:
 | SAH-502 Capability drift heartbeat | builder | planned | Regular job detects routes whose last-success evidence is stale | report names routes needing probes |
 | SAH-503 Live Telegram regression cadence | telegram | planned | Natural-language live matrix has self-awareness/wiki suites and session logs | every self-awareness release has live Telegram evidence |
 | SAH-504 Handoff auto-update task | builder | planned | Major self-awareness changes update the handoff and wiki architecture docs | continuation prompt stays accurate |
+
+## 2026-05-02 Phase Progress
+
+Shipped in Builder:
+
+- `a81acf2` consumed `domain-chip-memory` wiki packet metadata instead of inferring source families from paths.
+- `3b33942` hardened the self-awareness route so natural answers expose memory cognition boundaries.
+- `a3d7f67` expanded route detection for natural memory-self-awareness phrasing such as "your memory system" and "what outranks wiki".
+- `48e7d90` surfaced memory dashboard movement status as `observability_non_authoritative`.
+- `651d630` added eval traps for KB absence, user-memory/doctrine separation, and non-promotable self-awareness output.
+
+Next phase:
+
+1. Build SAH-201 Candidate wiki inbox for listing candidate improvement notes by age, status, source, and evidence refs.
+2. Build SAH-202 contradiction scan before any candidate note can be treated as verified.
+3. Run SAH-004/SAH-005 live Telegram smoke for `/self`, `/wiki`, natural memory-self-awareness, and wiki promotion.
+4. Keep SAH-205 separate: user/environment wiki lanes must not merge into global Spark doctrine without explicit consent and source metadata.
 
 ## Live Test Suites To Add
 
