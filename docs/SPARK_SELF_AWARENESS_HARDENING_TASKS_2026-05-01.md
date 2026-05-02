@@ -161,7 +161,7 @@ Guardrail:
 | --- | --- | --- | --- | --- |
 | SAH-301 Route explanation surface | builder + telegram | shipped | Spark can answer "why did you answer that way?" from route traces | response includes selected route, sources used, stale evidence ignored, and missing probes |
 | SAH-302 Natural-language route eval matrix | telegram | shipped | Larger tests cover self/wiki/query/promotion/build/memory collisions | tests prove Spark does not steal build prompts or promote memory accidentally |
-| SAH-303 Trace fields for wiki promotion | builder + telegram | planned | Wiki promotion notes include request id, route decision, source packet refs, and probe result refs when available | candidate note has enough lineage to audit |
+| SAH-303 Trace fields for wiki promotion | builder + telegram | shipped | Wiki promotion notes include request id, route decision, source packet refs, and probe result refs when available | candidate note has enough lineage to audit |
 | SAH-304 Deep search trigger policy | builder | planned | Spark knows when local wiki is insufficient and should use Researcher/browser/search | high-stakes or stale questions route to live research/probe first |
 
 ### P2 Self-Improvement Governance
@@ -204,11 +204,12 @@ Shipped in Builder:
 - This slice added a capability probe registry so self-status can recommend exact read-only probes without treating configured routes as current success.
 - This slice added a generic route explanation surface so follow-up questions like "why did you answer that way?" can name the selected route, route sources, stale evidence ignored, and missing probes without promoting debug traces to memory.
 - This slice added `ops/natural-language-live-commands.json` plus a Builder/Telegram route eval test that locks self-awareness, wiki candidate review, build-quality review, governed memory write/read, and source-debug routing against route drift.
+- This slice added typed wiki-promotion trace lineage fields: `request_id`, `route_decision`, `source_packet_refs`, and `probe_refs`, exposed through promotion payloads, frontmatter, candidate inbox, and candidate scan output.
 
 Next phase:
 
 1. Run SAH-004/SAH-005 against a real Telegram bot with `scenario-packs/telegram-live-self-awareness-wiki.txt`, `ops/natural-language-live-commands.json`, and `scripts/run_live_telegram_self_awareness_wiki_probe.ps1`.
-2. Start SAH-303: add request id, route decision, source packet refs, and probe refs to wiki promotion notes.
+2. Start SAH-304: add the deep-search trigger policy so stale, high-stakes, or under-sourced wiki answers route to live research/probes before confident claims.
 3. Keep SAH-205 separate: user/environment wiki lanes must not merge into global Spark doctrine without explicit consent and source metadata.
 
 ## Live Test Suites To Add

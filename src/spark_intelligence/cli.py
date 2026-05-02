@@ -1436,6 +1436,20 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Human, repo, document, or conversation source boundary. Repeat for multiple refs.",
     )
+    wiki_promote_parser.add_argument("--request-id", default="", help="Request id for the route or trace that produced this learning")
+    wiki_promote_parser.add_argument("--route-decision", default="", help="Routing decision associated with this learning")
+    wiki_promote_parser.add_argument(
+        "--source-packet-ref",
+        action="append",
+        default=[],
+        help="Source packet, wiki packet, memory packet, or context packet ref. Repeat for multiple refs.",
+    )
+    wiki_promote_parser.add_argument(
+        "--probe-ref",
+        action="append",
+        default=[],
+        help="Probe, test, smoke run, trace, or status-check ref. Repeat for multiple refs.",
+    )
     wiki_promote_parser.add_argument("--next-probe", default="", help="Probe required before using this as current truth")
     wiki_promote_parser.add_argument("--invalidation-trigger", default="", help="Condition that should downgrade or replace this note")
     wiki_promote_parser.add_argument("--force", action="store_true", help="Overwrite the generated note path if it already exists")
@@ -4278,6 +4292,10 @@ def handle_wiki_promote_improvement(args: argparse.Namespace) -> int:
             promotion_status=str(getattr(args, "status", "") or "candidate"),
             evidence_refs=list(getattr(args, "evidence_ref", []) or []),
             source_refs=list(getattr(args, "source", []) or []),
+            request_id=str(getattr(args, "request_id", "") or ""),
+            route_decision=str(getattr(args, "route_decision", "") or ""),
+            source_packet_refs=list(getattr(args, "source_packet_ref", []) or []),
+            probe_refs=list(getattr(args, "probe_ref", []) or []),
             next_probe=str(getattr(args, "next_probe", "") or ""),
             invalidation_trigger=str(getattr(args, "invalidation_trigger", "") or ""),
             overwrite=bool(getattr(args, "force", False)),

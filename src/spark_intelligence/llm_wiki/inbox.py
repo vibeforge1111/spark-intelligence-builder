@@ -115,6 +115,10 @@ def _note_payload(root: Path, path: Path) -> dict[str, Any]:
     promotion_status = _normalize_note_status(frontmatter.get("promotion_status") or frontmatter.get("status"))
     evidence_refs = _list_value(frontmatter.get("evidence_refs"))
     source_refs = _list_value(frontmatter.get("source_refs"))
+    source_packet_refs = _list_value(frontmatter.get("source_packet_refs"))
+    probe_refs = _list_value(frontmatter.get("probe_refs"))
+    request_id = str(frontmatter.get("request_id") or "").strip()
+    route_decision = str(frontmatter.get("route_decision") or "").strip()
     modified_at = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).replace(microsecond=0)
     created_at = str(frontmatter.get("date_created") or "").strip()
     return {
@@ -130,10 +134,19 @@ def _note_payload(root: Path, path: Path) -> dict[str, Any]:
         "source_class": str(frontmatter.get("source_class") or "").strip(),
         "evidence_refs": evidence_refs,
         "source_refs": source_refs,
+        "request_id": request_id,
+        "route_decision": route_decision,
+        "source_packet_refs": source_packet_refs,
+        "probe_refs": probe_refs,
         "lineage": {
             "evidence_ref_count": len(evidence_refs),
             "source_ref_count": len(source_refs),
+            "source_packet_ref_count": len(source_packet_refs),
+            "probe_ref_count": len(probe_refs),
+            "request_id": request_id,
+            "route_decision": route_decision,
             "has_source_or_evidence": bool(evidence_refs or source_refs),
+            "has_route_trace_lineage": bool(request_id or route_decision or source_packet_refs or probe_refs),
         },
         "next_probe": _section_bullet(content, "Next Probe"),
         "invalidation_trigger": _section_bullet(content, "Invalidation Trigger"),

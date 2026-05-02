@@ -408,6 +408,46 @@ class LlmWikiBootstrapTests(SparkTestCase):
         hit_text = "\n".join(hit["text"] for hit in query.payload["hits"])
         self.assertIn("route is strong after recent success evidence", hit_text)
 
+    def test_wiki_promote_improvement_records_typed_route_lineage(self) -> None:
+        result = promote_llm_wiki_improvement(
+            config_manager=self.config_manager,
+            title="Route lineage fields",
+            summary="Spark should keep wiki promotion trace lineage machine-readable.",
+            evidence_refs=["pytest tests/test_llm_wiki_bootstrap.py::route_lineage"],
+            source_refs=["operator_session:self-awareness-hardening"],
+            request_id="req-route-123",
+            route_decision="self_awareness_direct",
+            source_packet_refs=["wiki_packet:system/spark-self-awareness-contract.md", "memory_packet:current-state:focus"],
+            probe_refs=["pytest tests/test_natural_language_route_eval_matrix.py -q"],
+        )
+
+        note = (self.home / "wiki" / result.relative_path).read_text(encoding="utf-8")
+        self.assertIn('request_id: "req-route-123"', note)
+        self.assertIn('route_decision: "self_awareness_direct"', note)
+        self.assertIn("source_packet_refs:", note)
+        self.assertIn("wiki_packet:system/spark-self-awareness-contract.md", note)
+        self.assertIn("probe_refs:", note)
+        self.assertIn("tests/test_natural_language_route_eval_matrix.py", note)
+        self.assertEqual(result.payload["trace_lineage"]["request_id"], "req-route-123")
+        self.assertEqual(result.payload["trace_lineage"]["route_decision"], "self_awareness_direct")
+        self.assertEqual(result.payload["trace_lineage"]["source_packet_refs"][0], "wiki_packet:system/spark-self-awareness-contract.md")
+        self.assertEqual(result.payload["trace_lineage"]["probe_refs"], ["pytest tests/test_natural_language_route_eval_matrix.py -q"])
+
+        inbox = build_llm_wiki_candidate_inbox(config_manager=self.config_manager)
+        note_payload = inbox.payload["notes"][0]
+        self.assertEqual(note_payload["request_id"], "req-route-123")
+        self.assertEqual(note_payload["route_decision"], "self_awareness_direct")
+        self.assertEqual(note_payload["lineage"]["source_packet_ref_count"], 2)
+        self.assertEqual(note_payload["lineage"]["probe_ref_count"], 1)
+        self.assertTrue(note_payload["lineage"]["has_route_trace_lineage"])
+
+        scan = build_llm_wiki_candidate_scan(config_manager=self.config_manager)
+        finding = scan.payload["findings"][0]
+        self.assertEqual(finding["trace_lineage"]["request_id"], "req-route-123")
+        self.assertEqual(finding["trace_lineage"]["route_decision"], "self_awareness_direct")
+        self.assertEqual(finding["source_packet_refs"][1], "memory_packet:current-state:focus")
+        self.assertEqual(finding["probe_refs"], ["pytest tests/test_natural_language_route_eval_matrix.py -q"])
+
     def test_wiki_promote_improvement_requires_source_or_evidence(self) -> None:
         with self.assertRaises(ValueError):
             promote_llm_wiki_improvement(
@@ -429,6 +469,14 @@ class LlmWikiBootstrapTests(SparkTestCase):
             "pytest tests/test_llm_wiki_bootstrap.py",
             "--source",
             "operator_session:self-awareness-build",
+            "--request-id",
+            "req-cli-route-1",
+            "--route-decision",
+            "llm_wiki_candidate_inbox",
+            "--source-packet-ref",
+            "wiki_packet:improvements/example.md",
+            "--probe-ref",
+            "pytest tests/test_llm_wiki_bootstrap.py::cli_lineage",
             "--json",
         )
 
@@ -436,6 +484,10 @@ class LlmWikiBootstrapTests(SparkTestCase):
         payload = json.loads(stdout)
         self.assertEqual(payload["promotion_status"], "candidate")
         self.assertEqual(payload["authority"], "supporting_not_authoritative")
+        self.assertEqual(payload["trace_lineage"]["request_id"], "req-cli-route-1")
+        self.assertEqual(payload["trace_lineage"]["route_decision"], "llm_wiki_candidate_inbox")
+        self.assertEqual(payload["trace_lineage"]["source_packet_refs"], ["wiki_packet:improvements/example.md"])
+        self.assertEqual(payload["trace_lineage"]["probe_refs"], ["pytest tests/test_llm_wiki_bootstrap.py::cli_lineage"])
         self.assertTrue(payload["relative_path"].startswith("improvements/"))
         self.assertTrue((self.home / "wiki" / payload["relative_path"]).exists())
 
@@ -633,6 +685,24 @@ class LlmWikiBootstrapTests(SparkTestCase):
             result.payload["live_evidence_boundary"]["mutable_user_facts"],
             "current_state_memory_outranks_wiki",
         )
+
+    def test_wiki_candidate_scan_accepts_probe_refs_as_live_health_evidence(self) -> None:
+        promote_llm_wiki_improvement(
+            config_manager=self.config_manager,
+            title="Capability is verified",
+            summary="The route is live after the latest smoke probe.",
+            source_refs=["operator_session:self-awareness-hardening"],
+            request_id="req-live-health",
+            route_decision="self_awareness_direct",
+            probe_refs=["pytest tests/test_natural_language_route_eval_matrix.py -q"],
+        )
+
+        result = build_llm_wiki_candidate_scan(config_manager=self.config_manager)
+
+        finding = result.payload["findings"][0]
+        self.assertEqual(finding["recommendation"], "keep")
+        self.assertEqual(finding["issues"], [])
+        self.assertEqual(finding["probe_refs"], ["pytest tests/test_natural_language_route_eval_matrix.py -q"])
 
     def test_wiki_candidate_scan_cli_emits_keep_rewrite_drop_recommendations(self) -> None:
         promote_llm_wiki_improvement(

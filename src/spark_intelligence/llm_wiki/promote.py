@@ -53,6 +53,10 @@ def promote_llm_wiki_improvement(
     promotion_status: str = "candidate",
     evidence_refs: list[str] | tuple[str, ...] | None = None,
     source_refs: list[str] | tuple[str, ...] | None = None,
+    request_id: str = "",
+    route_decision: str = "",
+    source_packet_refs: list[str] | tuple[str, ...] | None = None,
+    probe_refs: list[str] | tuple[str, ...] | None = None,
     next_probe: str = "",
     invalidation_trigger: str = "",
     overwrite: bool = False,
@@ -63,6 +67,10 @@ def promote_llm_wiki_improvement(
     status = _normalize_status(promotion_status)
     evidence = _clean_list(evidence_refs)
     sources = _clean_list(source_refs)
+    source_packets = _clean_list(source_packet_refs)
+    probes = _clean_list(probe_refs)
+    lineage_request_id = _compact(request_id)
+    lineage_route_decision = _compact(route_decision)
     if not normalized_title:
         raise ValueError("title is required for a wiki improvement note.")
     if not normalized_summary:
@@ -90,6 +98,10 @@ def promote_llm_wiki_improvement(
         generated_at=generated_at,
         evidence_refs=evidence,
         source_refs=sources,
+        request_id=lineage_request_id,
+        route_decision=lineage_route_decision,
+        source_packet_refs=source_packets,
+        probe_refs=probes,
         next_probe=_compact(next_probe) or "Run the relevant live probe, test, or trace check before treating this as current truth.",
         invalidation_trigger=_compact(invalidation_trigger) or "Invalidate or downgrade if a newer live trace, test, or source contradicts this note.",
         warnings=warnings,
@@ -106,6 +118,16 @@ def promote_llm_wiki_improvement(
         "source_class": f"spark_llm_wiki_improvement_{status}",
         "evidence_refs": evidence,
         "source_refs": sources,
+        "request_id": lineage_request_id,
+        "route_decision": lineage_route_decision,
+        "source_packet_refs": source_packets,
+        "probe_refs": probes,
+        "trace_lineage": {
+            "request_id": lineage_request_id,
+            "route_decision": lineage_route_decision,
+            "source_packet_refs": source_packets,
+            "probe_refs": probes,
+        },
         "next_probe": _compact(next_probe) or "Run the relevant live probe, test, or trace check before treating this as current truth.",
         "invalidation_trigger": _compact(invalidation_trigger) or "Invalidate or downgrade if a newer live trace, test, or source contradicts this note.",
         "created_at": generated_at,
@@ -123,6 +145,10 @@ def _render_improvement_note(
     generated_at: str,
     evidence_refs: list[str],
     source_refs: list[str],
+    request_id: str,
+    route_decision: str,
+    source_packet_refs: list[str],
+    probe_refs: list[str],
     next_probe: str,
     invalidation_trigger: str,
     warnings: list[str],
@@ -146,6 +172,14 @@ def _render_improvement_note(
         "",
         "## Source Refs",
         *[f"- {item}" for item in source_refs],
+        "",
+        "## Trace Lineage",
+        f"- request_id: {request_id or 'unknown'}",
+        f"- route_decision: {route_decision or 'unknown'}",
+        "- source_packet_refs:",
+        *[f"  - {item}" for item in source_packet_refs],
+        "- probe_refs:",
+        *[f"  - {item}" for item in probe_refs],
         "",
         "## Next Probe",
         f"- {next_probe}",
@@ -177,6 +211,10 @@ def _render_improvement_note(
             f"source_class: {source_class}",
             f"evidence_refs: [{', '.join(_frontmatter_list(evidence_refs))}]",
             f"source_refs: [{', '.join(_frontmatter_list(source_refs))}]",
+            f'request_id: "{_frontmatter_string(request_id)}"',
+            f'route_decision: "{_frontmatter_string(route_decision)}"',
+            f"source_packet_refs: [{', '.join(_frontmatter_list(source_packet_refs))}]",
+            f"probe_refs: [{', '.join(_frontmatter_list(probe_refs))}]",
             "---",
             "",
             "\n".join(line.rstrip() for line in body),

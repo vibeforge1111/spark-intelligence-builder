@@ -98,6 +98,10 @@ def _scan_note(note: dict[str, Any]) -> dict[str, Any]:
     promotion_status = str(note.get("promotion_status") or "candidate").strip()
     evidence_refs = [str(item).strip() for item in note.get("evidence_refs") or [] if str(item).strip()]
     source_refs = [str(item).strip() for item in note.get("source_refs") or [] if str(item).strip()]
+    source_packet_refs = [str(item).strip() for item in note.get("source_packet_refs") or [] if str(item).strip()]
+    probe_refs = [str(item).strip() for item in note.get("probe_refs") or [] if str(item).strip()]
+    request_id = str(note.get("request_id") or "").strip()
+    route_decision = str(note.get("route_decision") or "").strip()
     title = str(note.get("title") or "").strip()
     summary = str(note.get("summary") or "").strip()
     combined = f"{title}\n{summary}".casefold()
@@ -114,7 +118,7 @@ def _scan_note(note: dict[str, Any]) -> dict[str, Any]:
         issues.append(_issue("conversation_residue_without_evidence", "critical", "Raw conversation source alone is not promotion evidence."))
     if _looks_like_mutable_user_fact(combined):
         issues.append(_issue("mutable_user_fact_requires_user_memory_lane", "critical", "Mutable user facts belong in governed user current-state memory, not global Spark doctrine."))
-    if _looks_like_live_health_claim(combined) and not _has_live_probe_ref(evidence_refs):
+    if _looks_like_live_health_claim(combined) and not _has_live_probe_ref([*evidence_refs, *probe_refs]):
         issues.append(_issue("live_health_claim_needs_probe", "warning", "Live health claims need a current trace, test, status, or command ref."))
     if promotion_status == "candidate" and int(note.get("age_days") or 0) >= 30:
         issues.append(_issue("stale_candidate_needs_review", "warning", "Old candidates should be revalidated, rewritten, or dropped."))
@@ -129,6 +133,16 @@ def _scan_note(note: dict[str, Any]) -> dict[str, Any]:
         "issues": issues,
         "evidence_refs": evidence_refs,
         "source_refs": source_refs,
+        "request_id": request_id,
+        "route_decision": route_decision,
+        "source_packet_refs": source_packet_refs,
+        "probe_refs": probe_refs,
+        "trace_lineage": {
+            "request_id": request_id,
+            "route_decision": route_decision,
+            "source_packet_refs": source_packet_refs,
+            "probe_refs": probe_refs,
+        },
         "age_days": note.get("age_days"),
         "can_override_runtime_truth": False,
     }
