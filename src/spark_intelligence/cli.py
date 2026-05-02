@@ -95,6 +95,7 @@ from spark_intelligence.llm_wiki import (
     build_llm_wiki_answer,
     build_llm_wiki_candidate_inbox,
     build_llm_wiki_candidate_scan,
+    build_llm_wiki_heartbeat,
     build_llm_wiki_inventory,
     build_llm_wiki_query,
     build_llm_wiki_status,
@@ -1347,6 +1348,19 @@ def build_parser() -> argparse.ArgumentParser:
     wiki_status_parser.add_argument("--output-dir", help="Override wiki output directory")
     wiki_status_parser.add_argument("--refresh", action="store_true", help="Bootstrap and regenerate system pages before checking")
     wiki_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    wiki_heartbeat_parser = wiki_subparsers.add_parser(
+        "heartbeat",
+        help="Write a typed LLM wiki health report for stale pages, broken links, and candidate backlog",
+    )
+    wiki_heartbeat_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    wiki_heartbeat_parser.add_argument("--output-dir", help="Override wiki output directory")
+    wiki_heartbeat_parser.add_argument("--refresh", action="store_true", help="Bootstrap and regenerate system pages before checking")
+    wiki_heartbeat_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Check heartbeat health without writing the artifacts/wiki-heartbeat report",
+    )
+    wiki_heartbeat_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     wiki_inventory_parser = wiki_subparsers.add_parser(
         "inventory",
         help="List the local LLM wiki vault pages and their source metadata",
@@ -4224,6 +4238,22 @@ def handle_wiki_status(args: argparse.Namespace) -> int:
     )
     print(result.to_json() if args.json else result.to_text())
     return 0 if result.payload.get("healthy") else 1
+
+
+def handle_wiki_heartbeat(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = build_llm_wiki_heartbeat(
+        config_manager=config_manager,
+        state_db=state_db,
+        output_dir=getattr(args, "output_dir", None),
+        refresh=bool(getattr(args, "refresh", False)),
+        write_report=not bool(getattr(args, "no_write_report", False)),
+    )
+    print(result.to_json() if args.json else result.to_text())
+    return 1 if result.payload.get("status") == "fail" else 0
 
 
 def handle_wiki_inventory(args: argparse.Namespace) -> int:
@@ -7964,6 +7994,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_wiki_compile_system(args)
     if args.command == "wiki" and args.wiki_command == "status":
         return handle_wiki_status(args)
+    if args.command == "wiki" and args.wiki_command == "heartbeat":
+        return handle_wiki_heartbeat(args)
     if args.command == "wiki" and args.wiki_command == "inventory":
         return handle_wiki_inventory(args)
     if args.command == "wiki" and args.wiki_command == "candidates":

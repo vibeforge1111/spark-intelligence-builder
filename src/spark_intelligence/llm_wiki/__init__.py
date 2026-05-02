@@ -10,6 +10,10 @@ from spark_intelligence.llm_wiki.compile_system import (
     LlmWikiSystemCompileResult,
     compile_system_wiki,
 )
+from spark_intelligence.llm_wiki.heartbeat import (
+    LlmWikiHeartbeatResult,
+    build_llm_wiki_heartbeat,
+)
 from spark_intelligence.llm_wiki.inventory import (
     LlmWikiInventoryResult,
     build_llm_wiki_inventory,
@@ -44,6 +48,7 @@ __all__ = [
     "LlmWikiBootstrapResult",
     "LlmWikiCandidateInboxResult",
     "LlmWikiCandidateScanResult",
+    "LlmWikiHeartbeatResult",
     "LlmWikiInventoryResult",
     "LlmWikiImprovementPromotionResult",
     "LlmWikiQueryResult",
@@ -54,6 +59,7 @@ __all__ = [
     "build_llm_wiki_answer",
     "build_llm_wiki_candidate_inbox",
     "build_llm_wiki_candidate_scan",
+    "build_llm_wiki_heartbeat",
     "build_llm_wiki_inventory",
     "build_llm_wiki_query",
     "build_llm_wiki_status",

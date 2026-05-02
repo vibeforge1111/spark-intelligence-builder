@@ -177,7 +177,7 @@ Guardrail:
 
 | Task | Repo | Status | Outcome | Acceptance |
 | --- | --- | --- | --- | --- |
-| SAH-501 Wiki health heartbeat | builder | planned | Regular job checks wiki health, stale pages, broken links, and candidate backlog | heartbeat writes typed report, not chat memory |
+| SAH-501 Wiki health heartbeat | builder | shipped | Regular job checks wiki health, stale pages, broken links, and candidate backlog | `wiki heartbeat --json` writes an observability report under `artifacts/wiki-heartbeat`, not chat memory |
 | SAH-502 Capability drift heartbeat | builder | planned | Regular job detects routes whose last-success evidence is stale | report names routes needing probes |
 | SAH-503 Live Telegram regression cadence | telegram | planned | Natural-language live matrix has self-awareness/wiki suites and session logs | every self-awareness release has live Telegram evidence |
 | SAH-504 Handoff auto-update task | builder | planned | Major self-awareness changes update the handoff and wiki architecture docs | continuation prompt stays accurate |
@@ -210,11 +210,12 @@ Shipped in Builder:
 - This slice added a promotion gate ledger for schema, lineage, complexity, memory hygiene, and autonomy status; scan flags warning/failed gates and verified promotion is blocked while any gate fails.
 - This slice added eval coverage registry fields so capability evidence and wiki improvement notes expose `missing`, `observed`, or `covered` status with source refs.
 - This slice added weak-spot prioritization so recent failures, missing eval coverage, novelty, and user-relevant goals rank above already-covered strong domains.
+- This slice added `wiki heartbeat`, a typed LLM wiki health report for stale pages, broken local links, and candidate backlog. It writes observability artifacts under `artifacts/wiki-heartbeat` and stays outside chat memory/runtime truth.
 
 Next phase:
 
 1. Run SAH-004/SAH-005 against a real Telegram bot with `scenario-packs/telegram-live-self-awareness-wiki.txt`, `ops/natural-language-live-commands.json`, and `scripts/run_live_telegram_self_awareness_wiki_probe.ps1`.
-2. Start SAH-501: add a wiki health heartbeat that checks stale pages, broken links, and candidate backlog as a typed report instead of chat memory.
+2. Start SAH-502: add a capability drift heartbeat that names routes whose last-success evidence is stale and recommends exact probes.
 3. Keep SAH-205 separate: user/environment wiki lanes must not merge into global Spark doctrine without explicit consent and source metadata.
 
 ## Live Test Suites To Add

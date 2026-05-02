@@ -85,7 +85,7 @@ def build_llm_wiki_candidate_inbox(
         warnings.append("improvements_dir_missing")
 
     markdown_files = sorted(
-        (path for path in improvements_dir.glob("*.md") if path.is_file()),
+        (path for path in improvements_dir.glob("*.md") if path.is_file() and path.name != "index.md"),
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     ) if improvements_dir.exists() else []

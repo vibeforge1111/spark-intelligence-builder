@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from spark_intelligence.llm_wiki import (
     bootstrap_llm_wiki,
     build_llm_wiki_answer,
     build_llm_wiki_candidate_inbox,
     build_llm_wiki_candidate_scan,
+    build_llm_wiki_heartbeat,
     build_llm_wiki_inventory,
     build_llm_wiki_query,
     build_llm_wiki_status,
@@ -248,6 +250,86 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertIn("projects/index.md", payload["expected_bootstrap_files"])
         self.assertIn("improvements/index.md", payload["expected_bootstrap_files"])
         self.assertIn("environment/spark-environment.md", payload["expected_system_compile_files"])
+
+    def test_wiki_heartbeat_writes_typed_report_and_summarizes_health(self) -> None:
+        result = build_llm_wiki_heartbeat(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            refresh=True,
+        )
+
+        self.assertEqual(result.payload["kind"], "wiki_health_heartbeat")
+        self.assertEqual(result.payload["authority"], "observability_non_authoritative")
+        self.assertEqual(result.payload["memory_policy"], "typed_report_not_chat_memory")
+        self.assertEqual(result.payload["status"], "pass")
+        self.assertTrue(result.payload["report_written"])
+        self.assertTrue((self.home / "artifacts" / "wiki-heartbeat" / "latest.json").exists())
+        self.assertTrue(Path(result.payload["report_path"]).exists())
+        self.assertEqual(result.payload["summary"]["stale_page_count"], 0)
+        self.assertEqual(result.payload["broken_links"]["broken_link_count"], 0)
+        self.assertEqual(result.payload["candidate_backlog"]["candidate_backlog_count"], 0)
+        stored_payload = json.loads(Path(result.payload["report_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(stored_payload["report_path"], result.payload["report_path"])
+        self.assertEqual(
+            stored_payload["memory_boundary"],
+            "heartbeat_reports_do_not_promote_chat_memory_or_runtime_truth",
+        )
+
+    def test_wiki_heartbeat_flags_broken_links_and_candidate_backlog(self) -> None:
+        bootstrap_llm_wiki(config_manager=self.config_manager)
+        compile_system_wiki(config_manager=self.config_manager, state_db=self.state_db)
+        broken_page = self.home / "wiki" / "system" / "broken-link.md"
+        broken_page.write_text(
+            "---\n"
+            'title: "Broken link probe"\n'
+            "authority: supporting_not_authoritative\n"
+            "---\n"
+            "# Broken link probe\n\n"
+            "This local link is missing: [[missing/page]].\n",
+            encoding="utf-8",
+        )
+        promote_llm_wiki_improvement(
+            config_manager=self.config_manager,
+            title="Candidate backlog probe",
+            summary="Spark should review this proposed maintenance note before reuse.",
+            evidence_refs=["pytest tests/test_llm_wiki_bootstrap.py::wiki_heartbeat"],
+            source_refs=["operator_session:self-awareness-hardening"],
+        )
+
+        result = build_llm_wiki_heartbeat(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            write_report=False,
+        )
+
+        self.assertEqual(result.payload["status"], "warn")
+        self.assertFalse(result.payload["report_written"])
+        self.assertGreaterEqual(result.payload["broken_links"]["broken_link_count"], 1)
+        self.assertGreaterEqual(result.payload["candidate_backlog"]["candidate_backlog_count"], 1)
+        self.assertIn("wiki_broken_links_detected", result.payload["warnings"])
+        self.assertIn("wiki_candidate_backlog_present", result.payload["warnings"])
+        self.assertEqual(
+            result.payload["memory_boundary"],
+            "heartbeat_reports_do_not_promote_chat_memory_or_runtime_truth",
+        )
+
+    def test_wiki_heartbeat_cli_refreshes_and_writes_machine_readable_report(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "wiki",
+            "heartbeat",
+            "--home",
+            str(self.home),
+            "--refresh",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["kind"], "wiki_health_heartbeat")
+        self.assertEqual(payload["status"], "pass")
+        self.assertTrue(payload["report_written"])
+        self.assertTrue(Path(payload["report_path"]).exists())
+        self.assertEqual(payload["memory_policy"], "typed_report_not_chat_memory")
 
     def test_wiki_inventory_refreshes_and_lists_pages_with_metadata(self) -> None:
         result = build_llm_wiki_inventory(
