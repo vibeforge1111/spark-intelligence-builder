@@ -129,7 +129,7 @@ Guardrail:
 
 | Task | Repo | Status | Outcome | Acceptance |
 | --- | --- | --- | --- | --- |
-| SAH-001 Fix live Builder degraded status | builder | planned | Builder self-status no longer reports gateway/provider/channel readiness as degraded unless there is a real current failure | `self status --refresh-wiki --json` shows Builder ready or includes a precise current blocker |
+| SAH-001 Fix live Builder degraded status | builder | shipped | Builder self-status treats generic gateway/provider/channel readiness as an aggregate warning and points to concrete provider/channel blockers | `self status --refresh-wiki --json` includes `aggregate_readiness_warning` for Builder while keeping provider/channel rows as precise blockers |
 | SAH-002 Resolve duplicate chip key | builder/local env | planned | Attachment inventory no longer reports duplicate `domain-chip-crypto-trading` | attachment health check is clean or the duplicate is intentionally ignored with provenance |
 | SAH-003 Provider auth health pass | builder/local env | planned | Provider-backed routes stop surfacing stale 401 failures as current capability confidence | auth/provider status has a current probe and redacted repair hint |
 | SAH-004 Live Telegram self-awareness smoke | telegram | in_progress | Actual Telegram chat validates `/self` and natural self-awareness prompts | runtime command and verifier pack exist; real bot trace run still required |

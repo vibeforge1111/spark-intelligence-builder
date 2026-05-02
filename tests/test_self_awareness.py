@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from spark_intelligence.observability.store import record_event
 from spark_intelligence.adapters.telegram.runtime import simulate_telegram_update
@@ -190,6 +192,69 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("project_awareness", payload)
         self.assertIn("capability_probe_registry", payload)
         self.assertNotIn("self_status_memory", payload["memory_cognition"])
+
+    def test_builder_aggregate_readiness_points_to_concrete_provider_records(self) -> None:
+        registry_payload = {
+            "workspace_id": "default",
+            "record_count": 2,
+            "summary": {"current_capabilities": []},
+            "records": [
+                {
+                    "kind": "system",
+                    "key": "spark_intelligence_builder",
+                    "record_id": "system:spark_intelligence_builder",
+                    "label": "Spark Intelligence Builder",
+                    "status": "degraded",
+                    "available": True,
+                    "degraded": True,
+                    "limitations": ["Gateway/provider/channel readiness is not fully green yet."],
+                },
+                {
+                    "kind": "provider",
+                    "key": "custom",
+                    "record_id": "provider:custom",
+                    "label": "custom",
+                    "status": "degraded",
+                    "available": False,
+                    "degraded": True,
+                    "limitations": ["Provider secret or token is not currently available."],
+                },
+            ],
+        }
+
+        with patch(
+            "spark_intelligence.self_awareness.capsule.build_system_registry",
+            return_value=SimpleNamespace(to_payload=lambda: registry_payload),
+        ):
+            capsule = build_self_awareness_capsule(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test-builder-aggregate",
+                session_id="session:test-builder-aggregate",
+                channel_kind="telegram",
+                user_message="what is broken in builder right now?",
+            )
+
+        payload = capsule.to_payload()
+        builder_claim = next(
+            claim
+            for claim in payload["degraded_or_missing"]
+            if claim.get("capability_key") == "spark_intelligence_builder"
+        )
+        provider_claim = next(
+            claim
+            for claim in payload["degraded_or_missing"]
+            if claim.get("capability_key") == "custom"
+        )
+
+        self.assertEqual(builder_claim["verification_status"], "aggregate_readiness_warning")
+        self.assertEqual(builder_claim["confidence"], "medium")
+        self.assertIn("provider/channel records", builder_claim["claim"])
+        self.assertIn("gateway status --json", builder_claim["next_probe"])
+        self.assertIn("concrete provider/channel blocker", builder_claim["improvement_action"])
+        self.assertEqual(provider_claim["verification_status"], "degraded_or_missing")
+        self.assertEqual(provider_claim["confidence"], "high")
+        self.assertIn("Provider secret or token", provider_claim["claim"])
 
     def test_self_awareness_user_awareness_labels_current_context_without_promoting_doctrine(self) -> None:
         run_memory_sdk_smoke_test(

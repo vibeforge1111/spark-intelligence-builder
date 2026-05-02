@@ -764,6 +764,30 @@ def _build_available_unverified_claims(records: list[dict[str, Any]]) -> list[Se
     return claims[:12]
 
 
+def _is_builder_aggregate_readiness_warning(record: dict[str, Any], limitations: list[str]) -> bool:
+    key = str(record.get("key") or "")
+    record_id = str(record.get("record_id") or "")
+    label = str(record.get("label") or "")
+    if key != "spark_intelligence_builder" and record_id != "system:spark_intelligence_builder":
+        if label != "Spark Intelligence Builder":
+            return False
+    joined_limitations = " ".join(limitations).lower()
+    return "gateway/provider/channel readiness" in joined_limitations
+
+
+def _builder_aggregate_readiness_claim(record: dict[str, Any]) -> SelfAwarenessClaim:
+    return SelfAwarenessClaim(
+        claim="Builder aggregate warning: inspect provider/channel records for concrete blockers.",
+        source=f"registry:{record.get('record_id') or record.get('key')}",
+        source_kind="system_registry",
+        confidence="medium",
+        verification_status="aggregate_readiness_warning",
+        capability_key=str(record.get("key") or "") or None,
+        next_probe="Run spark-intelligence gateway status --json and inspect provider/channel rows.",
+        improvement_action="Repair the concrete provider/channel blocker, then rerun self status and a live probe.",
+    )
+
+
 def _build_degraded_claims(records: list[dict[str, Any]]) -> list[SelfAwarenessClaim]:
     claims: list[SelfAwarenessClaim] = []
     for record in records:
@@ -772,6 +796,9 @@ def _build_degraded_claims(records: list[dict[str, Any]]) -> list[SelfAwarenessC
             continue
         label = str(record.get("label") or record.get("key") or "unknown").strip()
         limitations = [str(item).strip() for item in (record.get("limitations") or []) if str(item).strip()]
+        if _is_builder_aggregate_readiness_warning(record, limitations):
+            claims.append(_builder_aggregate_readiness_claim(record))
+            continue
         limitation = f" Main limit: {limitations[0]}" if limitations else ""
         claims.append(
             SelfAwarenessClaim(

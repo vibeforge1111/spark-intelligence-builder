@@ -31,6 +31,7 @@ The self-awareness/wiki work now includes typed maintenance surfaces that keep S
 - `self heartbeat --json` writes a capability drift report for stale successes, recent failures, observed-without-success routes, and configured capabilities missing last-success evidence.
 - `self live-telegram-cadence --json` names the live Telegram prompt pack, route matrix, verifier command, artifact directory, and real-trace evidence boundary.
 - `self handoff-check --json` checks whether major self-awareness/wiki source changes moved this handoff, the architecture plan, and the hardening task list together.
+- Builder self-status now distinguishes aggregate Builder readiness warnings from concrete provider/channel blockers. Generic gateway/provider/channel readiness no longer tells the operator to repair Builder directly; it tells Spark to inspect the provider/channel rows and only treat those concrete rows as precise blockers.
 
 All four reports are `observability_non_authoritative` and use the same boundary: reports can recommend probes or documentation updates, but they do not promote runtime truth, durable memory, or verified release claims by themselves.
 
