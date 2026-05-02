@@ -14,6 +14,7 @@ from spark_intelligence.memory import (
     build_sdk_maintenance_payload,
     build_shadow_replay_payload,
     export_shadow_replay_batch,
+    export_memory_dashboard_movement_in_memory,
     hybrid_memory_retrieve,
     inspect_human_memory_in_memory,
     lookup_current_state_in_memory,
@@ -3661,6 +3662,52 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertTrue(result.read_result.records)
         self.assertEqual(result.read_result.records[0]["predicate"], "system.memory.persisted")
         self.assertEqual(result.read_result.records[0]["value"], "ok")
+
+    def test_domain_chip_persistence_rehydrates_dashboard_movement_events_after_cache_clear(self) -> None:
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+        client = memory_orchestrator._load_sdk_client_for_module(
+            module_name="domain_chip_memory",
+            home_path=self.config_manager.paths.home,
+        )
+        self.assertIsNotNone(client)
+
+        client.write_observation(
+            operation="create",
+            subject="human:movement:test",
+            predicate="task.note",
+            value="movement trail should survive restart",
+            text="The memory dashboard movement trail should survive restart.",
+            session_id="session:movement:test",
+            turn_id="turn:movement:test:write",
+            timestamp="2026-05-02T09:00:00+00:00",
+            metadata={
+                "memory_role": "structured_evidence",
+                "source_surface": "test",
+                "salience_score": 0.8,
+            },
+        )
+        client.retrieve_evidence(
+            query="movement trail",
+            subject="human:movement:test",
+            predicate="task.note",
+            limit=2,
+        )
+
+        before = export_memory_dashboard_movement_in_memory(config_manager=self.config_manager, sdk_module="domain_chip_memory")
+        memory_orchestrator._SDK_CLIENT_CACHE.clear()
+        after = export_memory_dashboard_movement_in_memory(config_manager=self.config_manager, sdk_module="domain_chip_memory")
+
+        self.assertEqual(after["status"], "supported")
+        self.assertGreaterEqual(after["movement_counts"].get("captured", 0), before["movement_counts"].get("captured", 0))
+        self.assertGreaterEqual(after["movement_counts"].get("saved", 0), before["movement_counts"].get("saved", 0))
+        self.assertGreaterEqual(after["movement_counts"].get("retrieved", 0), 1)
+        self.assertTrue(
+            any(
+                row.get("movement_state") == "retrieved"
+                and (row.get("trace") or {}).get("operation") == "retrieve_evidence"
+                for row in after["rows"]
+            )
+        )
 
     def test_domain_chip_persistence_merges_concurrent_client_writes(self) -> None:
         memory_orchestrator._SDK_CLIENT_CACHE.clear()

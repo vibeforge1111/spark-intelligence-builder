@@ -964,6 +964,7 @@ class _DomainChipMemoryClientAdapter:
             limit=int(payload.get("limit") or 5),
         )
         result = self._sdk.retrieve_evidence(request)
+        self._persist_manual_state()
         return _normalize_domain_retrieval_result(result=result, method="retrieve_evidence")
 
     def retrieve_events(self, **payload: Any) -> dict[str, Any]:
@@ -974,6 +975,7 @@ class _DomainChipMemoryClientAdapter:
             limit=int(payload.get("limit") or 5),
         )
         result = self._sdk.retrieve_events(request)
+        self._persist_manual_state()
         return _normalize_domain_retrieval_result(result=result, method="retrieve_events")
 
     def recover_task_context(self, **payload: Any) -> dict[str, Any]:
@@ -987,6 +989,7 @@ class _DomainChipMemoryClientAdapter:
             limit=int(payload.get("limit") or 5),
         )
         result = recover(request)
+        self._persist_manual_state()
         return _normalize_domain_task_recovery_result(result=result)
 
     def recall_episodic_context(self, **payload: Any) -> dict[str, Any]:
@@ -1002,6 +1005,7 @@ class _DomainChipMemoryClientAdapter:
             limit=int(payload.get("limit") or 5),
         )
         result = recall(request)
+        self._persist_manual_state()
         return _normalize_domain_episodic_recall_result(result=result)
 
     def export_knowledge_base_snapshot(self, **payload: Any) -> dict[str, Any]:
@@ -1028,6 +1032,7 @@ class _DomainChipMemoryClientAdapter:
             event_limit=int(payload.get("event_limit") or 3),
         )
         result = self._sdk.explain_answer(request)
+        self._persist_manual_state()
         raw_memory_role = result.memory_role
         memory_role = normalize_memory_role(raw_memory_role, allow_unknown=not bool(result.answer))
         retrieval_trace = dict(result.trace or {})
@@ -1119,6 +1124,10 @@ class _DomainChipMemoryClientAdapter:
         lock_path = self._persistence_path.with_name(f"{self._persistence_path.name}.lock")
         with _exclusive_path_lock(lock_path):
             existing_payload = _load_domain_chip_memory_payload(self._persistence_path)
+            merged_movement_events = _merge_domain_movement_rows(
+                existing_payload.get("dashboard_movement_events"),
+                list(getattr(self._sdk, "_dashboard_movement_events", []) or []),
+            )
             merged_observation_payloads = _merge_domain_entry_payloads(
                 existing_payload.get("manual_observations"),
                 [asdict(entry) for entry in list(getattr(self._sdk, "_manual_observations", []) or [])],
@@ -1146,10 +1155,17 @@ class _DomainChipMemoryClientAdapter:
             self._sdk._manual_observations = merged_observations
             self._sdk._manual_events = merged_events
             self._sdk._manual_current_state_snapshot = current_snapshot
+            self._sdk._dashboard_movement_events = merged_movement_events
+            self._sdk._dashboard_movement_counter = _domain_movement_counter(
+                merged_movement_events,
+                existing_payload.get("dashboard_movement_counter"),
+            )
             payload = {
                 "manual_observations": [asdict(entry) for entry in merged_observations],
                 "manual_events": [asdict(entry) for entry in merged_events],
                 "manual_current_state_snapshot": [asdict(entry) for entry in current_snapshot],
+                "dashboard_movement_events": merged_movement_events,
+                "dashboard_movement_counter": int(getattr(self._sdk, "_dashboard_movement_counter", 0) or 0),
             }
             temp_path = self._persistence_path.with_name(f"{self._persistence_path.name}.{os.getpid()}.tmp")
             temp_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -4848,6 +4864,44 @@ def _domain_entry_payload_key(entry: dict[str, Any]) -> str:
     return json.dumps(entry, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
+def _merge_domain_movement_rows(existing_rows: Any, new_rows: Any) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for raw_row in list(existing_rows or []) + list(new_rows or []):
+        if not isinstance(raw_row, dict):
+            continue
+        row = dict(raw_row)
+        merged[_domain_movement_row_key(row)] = row
+    return sorted(
+        merged.values(),
+        key=lambda row: (
+            str(row.get("timestamp") or ""),
+            str(row.get("id") or ""),
+        ),
+    )[-5000:]
+
+
+def _domain_movement_row_key(row: dict[str, Any]) -> str:
+    row_id = _optional_string(row.get("id"))
+    if row_id:
+        return row_id
+    return json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _domain_movement_counter(rows: list[dict[str, Any]], existing_counter: Any) -> int:
+    counter = 0
+    try:
+        counter = max(counter, int(existing_counter or 0))
+    except (TypeError, ValueError):
+        counter = 0
+    for row in rows:
+        row_id = _optional_string(row.get("id")) or ""
+        match = re.fullmatch(r"sdk-movement-(\d+)", row_id)
+        if not match:
+            continue
+        counter = max(counter, int(match.group(1)))
+    return counter
+
+
 def _hydrate_domain_chip_memory_sdk(*, client: Any, module: ModuleType, persistence_path: Path) -> None:
     if not persistence_path.exists():
         return
@@ -4867,6 +4921,12 @@ def _hydrate_domain_chip_memory_sdk(*, client: Any, module: ModuleType, persiste
     client._manual_current_state_snapshot = _hydrate_domain_entries(
         payload.get("manual_current_state_snapshot"),
         observation_cls,
+    )
+    movement_rows = _merge_domain_movement_rows(payload.get("dashboard_movement_events"), [])
+    client._dashboard_movement_events = movement_rows
+    client._dashboard_movement_counter = _domain_movement_counter(
+        movement_rows,
+        payload.get("dashboard_movement_counter"),
     )
 
 
