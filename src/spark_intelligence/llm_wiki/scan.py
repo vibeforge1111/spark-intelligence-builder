@@ -109,6 +109,7 @@ def _scan_note(note: dict[str, Any]) -> dict[str, Any]:
     proposal_gate = note.get("proposal_gate") if isinstance(note.get("proposal_gate"), dict) else {}
     proposal_kind = str(note.get("proposal_kind") or "none").strip()
     gate_ledger = note.get("gate_ledger") if isinstance(note.get("gate_ledger"), dict) else {}
+    eval_coverage = note.get("eval_coverage") if isinstance(note.get("eval_coverage"), dict) else {}
 
     if authority != "supporting_not_authoritative":
         issues.append(_issue("authority_boundary_violation", "critical", "Wiki improvement notes must remain supporting_not_authoritative."))
@@ -152,6 +153,8 @@ def _scan_note(note: dict[str, Any]) -> dict[str, Any]:
                 "Promotion gate needs review before broad reuse.",
             )
         )
+    if str(eval_coverage.get("status") or "missing") == "missing":
+        issues.append(_issue("eval_coverage_missing", "warning", "Improvement notes should name eval, test, or observed evidence coverage."))
 
     recommendation = _recommendation(issues)
     return {
@@ -171,6 +174,8 @@ def _scan_note(note: dict[str, Any]) -> dict[str, Any]:
         "proposal": proposal,
         "proposal_gate": proposal_gate,
         "gate_ledger": gate_ledger,
+        "eval_coverage": eval_coverage,
+        "eval_coverage_status": str(eval_coverage.get("status") or "missing"),
         "trace_lineage": {
             "request_id": request_id,
             "route_decision": route_decision,

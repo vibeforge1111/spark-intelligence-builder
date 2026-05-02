@@ -170,7 +170,7 @@ Guardrail:
 | --- | --- | --- | --- | --- |
 | SAH-401 Improvement proposal packet | builder | shipped | Self-improvement plans emit hypothesis, weak spot, evidence, probe, rollback, and expected eval | `wiki promote-improvement --proposal` writes `proposal_gate`; verified proposals fail if the falsifiable fields are missing |
 | SAH-402 Promotion gate ledger | builder | shipped | Candidate improvements record whether schema, lineage, complexity, memory hygiene, and autonomy gates pass | `wiki promote-improvement` records `gate_ledger`; verified promotion fails when any gate is `fail` |
-| SAH-403 Eval coverage registry | builder | planned | Every capability/improvement can show eval coverage status | self-status includes `eval=missing`, `observed`, or `covered` with source |
+| SAH-403 Eval coverage registry | builder | shipped | Every capability/improvement can show eval coverage status | self-status and wiki improvement notes include `eval=missing`, `observed`, or `covered` with source refs |
 | SAH-404 Surprise/weak-spot prioritizer | builder | planned | Spark ranks improvement work by recency, failures, novelty, and user relevance | strongest domains do not starve high-surprise weak spots |
 
 ### P3 Scheduling And Maintenance
@@ -208,11 +208,12 @@ Shipped in Builder:
 - This slice added `deep_search_policy` to wiki answers so under-sourced, external, high-stakes, current, or revalidatable/static wiki-backed questions can request Researcher/browser/search and live probes before confident claims.
 - This slice added self-improvement proposal packets to `wiki promote-improvement --proposal`, including weak spot, hypothesis, evidence, probe, rollback, expected eval, and a `proposal_gate` surfaced through candidate inbox and scan.
 - This slice added a promotion gate ledger for schema, lineage, complexity, memory hygiene, and autonomy status; scan flags warning/failed gates and verified promotion is blocked while any gate fails.
+- This slice added eval coverage registry fields so capability evidence and wiki improvement notes expose `missing`, `observed`, or `covered` status with source refs.
 
 Next phase:
 
 1. Run SAH-004/SAH-005 against a real Telegram bot with `scenario-packs/telegram-live-self-awareness-wiki.txt`, `ops/natural-language-live-commands.json`, and `scripts/run_live_telegram_self_awareness_wiki_probe.ps1`.
-2. Start SAH-403: add eval coverage registry status so each capability/improvement can show `eval=missing`, `observed`, or `covered` with source.
+2. Start SAH-404: rank weak spots by surprise, recency, failure evidence, novelty, and user relevance so improvement work does not overfit the strongest domains.
 3. Keep SAH-205 separate: user/environment wiki lanes must not merge into global Spark doctrine without explicit consent and source metadata.
 
 ## Live Test Suites To Add

@@ -52,7 +52,8 @@ class CapabilityEvidence:
     last_failure_at: str | None = None
     last_failure_reason: str | None = None
     route_latency_ms: int | None = None
-    eval_coverage_status: str = "unknown"
+    eval_coverage_status: str = "missing"
+    eval_coverage_sources: list[str] = field(default_factory=list)
     evidence_count: int = 0
     confidence_level: str = "unknown"
     freshness_status: str = "unknown"
@@ -64,6 +65,7 @@ class CapabilityEvidence:
             "capability_key": self.capability_key,
             "source": self.source,
             "eval_coverage_status": self.eval_coverage_status,
+            "eval_coverage_sources": list(self.eval_coverage_sources),
             "evidence_count": self.evidence_count,
             "confidence_level": self.confidence_level,
             "freshness_status": self.freshness_status,
@@ -410,7 +412,8 @@ def _build_capability_evidence(state_db: StateDB, *, user_message: str = "") -> 
                 "last_failure_at": None,
                 "last_failure_reason": None,
                 "route_latency_ms": None,
-                "eval_coverage_status": "unknown",
+                "eval_coverage_status": "missing",
+                "eval_coverage_sources": [],
                 "evidence_count": 0,
             },
         )
@@ -423,8 +426,12 @@ def _build_capability_evidence(state_db: StateDB, *, user_message: str = "") -> 
         latency = _latency_ms(facts)
         if latency is not None and row.get("route_latency_ms") is None:
             row["route_latency_ms"] = latency
-        if _event_has_eval_coverage(event):
-            row["eval_coverage_status"] = "observed"
+        eval_status, eval_sources = _event_eval_coverage(event)
+        if eval_status == "covered" or (eval_status == "observed" and row.get("eval_coverage_status") == "missing"):
+            row["eval_coverage_status"] = eval_status
+        row["eval_coverage_sources"] = list(
+            dict.fromkeys([*list(row.get("eval_coverage_sources") or []), *eval_sources])
+        )[:8]
         if str(event.get("event_type") or "") == "tool_result_received" and row.get("last_success_at") is None:
             row["last_success_at"] = created_at
         if str(event.get("event_type") or "") == "dispatch_failed" and row.get("last_failure_at") is None:
@@ -448,7 +455,8 @@ def _build_capability_evidence(state_db: StateDB, *, user_message: str = "") -> 
                 last_failure_at=row.get("last_failure_at"),
                 last_failure_reason=row.get("last_failure_reason"),
                 route_latency_ms=row.get("route_latency_ms"),
-                eval_coverage_status=str(row.get("eval_coverage_status") or "unknown"),
+                eval_coverage_status=str(row.get("eval_coverage_status") or "missing"),
+                eval_coverage_sources=[str(item) for item in row.get("eval_coverage_sources") or [] if str(item).strip()],
                 evidence_count=int(row.get("evidence_count") or 0),
                 confidence_level=confidence,
                 freshness_status=freshness,
@@ -491,20 +499,28 @@ def _latency_ms(facts: dict[str, Any]) -> int | None:
     return None
 
 
-def _event_has_eval_coverage(event: dict[str, Any]) -> bool:
+def _event_eval_coverage(event: dict[str, Any]) -> tuple[str, list[str]]:
     facts = event.get("facts_json") if isinstance(event.get("facts_json"), dict) else {}
-    haystack = " ".join(
-        str(value)
+    explicit_status = str(facts.get("eval_coverage_status") or "").strip().casefold()
+    source_candidates = [
+        str(value).strip()
         for value in (
-            facts.get("eval_coverage_status"),
+            facts.get("eval_ref"),
             facts.get("eval_suite"),
             facts.get("test_name"),
             facts.get("coverage"),
             event.get("summary"),
         )
-        if value is not None
-    ).casefold()
-    return any(token in haystack for token in ("eval", "test", "coverage", "regression"))
+        if str(value or "").strip()
+    ]
+    if explicit_status in {"missing", "observed", "covered"}:
+        return explicit_status, source_candidates[:8]
+    haystack = " ".join(source_candidates).casefold()
+    if any(token in haystack for token in ("eval", "test", "coverage", "regression", "pytest", "smoke")):
+        return "covered", source_candidates[:8]
+    if source_candidates:
+        return "observed", source_candidates[:4]
+    return "missing", []
 
 
 def _failure_reason(event: dict[str, Any]) -> str:
@@ -1233,7 +1249,7 @@ def _extend_capability_evidence_lines(
         extras: list[str] = []
         if evidence.route_latency_ms is not None:
             extras.append(f"{evidence.route_latency_ms}ms")
-        if evidence.eval_coverage_status != "unknown":
+        if evidence.eval_coverage_status:
             extras.append(f"eval={evidence.eval_coverage_status}")
         if evidence.confidence_level != "unknown":
             extras.append(f"confidence={evidence.confidence_level}")

@@ -622,6 +622,49 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertIn("promotion_gate_autonomy_gate_failed", issue_codes)
         self.assertEqual(finding["gate_ledger"]["failed_gates"], ["autonomy_gate"])
 
+    def test_wiki_promote_improvement_records_eval_coverage_registry(self) -> None:
+        result = promote_llm_wiki_improvement(
+            config_manager=self.config_manager,
+            title="Eval coverage candidate",
+            summary="Spark should know whether an improvement has repeatable eval coverage.",
+            evidence_refs=["trace:route-confidence-observed"],
+            source_refs=["operator_session:self-awareness-hardening"],
+            eval_refs=["pytest tests/test_natural_language_route_eval_matrix.py -q"],
+        )
+
+        note = (self.home / "wiki" / result.relative_path).read_text(encoding="utf-8")
+        self.assertIn("## Eval Coverage", note)
+        self.assertIn("eval_coverage_status: covered", note)
+        self.assertEqual(result.payload["eval_coverage_status"], "covered")
+        self.assertEqual(result.payload["eval_refs"], ["pytest tests/test_natural_language_route_eval_matrix.py -q"])
+
+        inbox = build_llm_wiki_candidate_inbox(config_manager=self.config_manager)
+        note_payload = inbox.payload["notes"][0]
+        self.assertEqual(note_payload["eval_coverage_status"], "covered")
+        self.assertEqual(note_payload["eval_coverage"]["source_refs"], ["pytest tests/test_natural_language_route_eval_matrix.py -q"])
+
+        scan = build_llm_wiki_candidate_scan(config_manager=self.config_manager)
+        self.assertNotIn(
+            "eval_coverage_missing",
+            [issue["code"] for issue in scan.payload["findings"][0]["issues"]],
+        )
+
+    def test_wiki_candidate_scan_flags_missing_eval_coverage(self) -> None:
+        promote_llm_wiki_improvement(
+            config_manager=self.config_manager,
+            title="Missing eval coverage candidate",
+            summary="Spark should not treat source-only observations as eval coverage.",
+            source_refs=["operator_session:self-awareness-hardening"],
+            eval_coverage_status="missing",
+        )
+
+        result = build_llm_wiki_candidate_scan(config_manager=self.config_manager)
+
+        finding = result.payload["findings"][0]
+        issue_codes = [issue["code"] for issue in finding["issues"]]
+        self.assertEqual(finding["eval_coverage_status"], "missing")
+        self.assertIn("eval_coverage_missing", issue_codes)
+
     def test_wiki_promote_improvement_requires_source_or_evidence(self) -> None:
         with self.assertRaises(ValueError):
             promote_llm_wiki_improvement(
@@ -662,6 +705,8 @@ class LlmWikiBootstrapTests(SparkTestCase):
             "Remove proposal fields if old candidates stop parsing.",
             "--complexity-gate",
             "warn",
+            "--eval-ref",
+            "pytest tests/test_llm_wiki_bootstrap.py::cli_lineage",
             "--json",
         )
 
@@ -676,6 +721,8 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertEqual(payload["proposal_kind"], "self_improvement")
         self.assertTrue(payload["proposal_gate"]["promotion_ready"])
         self.assertEqual(payload["gate_ledger"]["warning_gates"], ["complexity_gate"])
+        self.assertEqual(payload["eval_coverage_status"], "covered")
+        self.assertIn("pytest tests/test_llm_wiki_bootstrap.py::cli_lineage", payload["eval_refs"])
         self.assertTrue(payload["relative_path"].startswith("improvements/"))
         self.assertTrue((self.home / "wiki" / payload["relative_path"]).exists())
 

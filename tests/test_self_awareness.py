@@ -107,8 +107,11 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(startup["confidence_level"], "recent_success")
         self.assertEqual(startup["freshness_status"], "fresh")
         self.assertEqual(startup["goal_relevance"], "direct")
+        self.assertEqual(startup["eval_coverage_status"], "covered")
+        self.assertIn("capability-freshness-regression", startup["eval_coverage_sources"])
         self.assertTrue(startup["can_claim_confidently"])
         self.assertIn("confidence=recent_success", capsule.to_text())
+        self.assertIn("eval=covered", capsule.to_text())
         self.assertIn("goal=direct", capsule.to_text())
 
     def test_self_status_cli_emits_machine_readable_capsule(self) -> None:

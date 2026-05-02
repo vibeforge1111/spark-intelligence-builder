@@ -1466,6 +1466,18 @@ def build_parser() -> argparse.ArgumentParser:
             default="",
             help=f"Promotion ledger status for the {gate_name} gate.",
         )
+    wiki_promote_parser.add_argument(
+        "--eval-coverage-status",
+        choices=("missing", "observed", "covered"),
+        default="",
+        help="Eval coverage status for this improvement note.",
+    )
+    wiki_promote_parser.add_argument(
+        "--eval-ref",
+        action="append",
+        default=[],
+        help="Eval, test, regression, smoke, or coverage source ref. Repeat for multiple refs.",
+    )
     wiki_promote_parser.add_argument("--next-probe", default="", help="Probe required before using this as current truth")
     wiki_promote_parser.add_argument("--invalidation-trigger", default="", help="Condition that should downgrade or replace this note")
     wiki_promote_parser.add_argument("--force", action="store_true", help="Overwrite the generated note path if it already exists")
@@ -4322,6 +4334,8 @@ def handle_wiki_promote_improvement(args: argparse.Namespace) -> int:
             complexity_gate=str(getattr(args, "complexity_gate", "") or ""),
             memory_hygiene_gate=str(getattr(args, "memory_hygiene_gate", "") or ""),
             autonomy_gate=str(getattr(args, "autonomy_gate", "") or ""),
+            eval_coverage_status=str(getattr(args, "eval_coverage_status", "") or ""),
+            eval_refs=list(getattr(args, "eval_ref", []) or []),
             next_probe=str(getattr(args, "next_probe", "") or ""),
             invalidation_trigger=str(getattr(args, "invalidation_trigger", "") or ""),
             overwrite=bool(getattr(args, "force", False)),

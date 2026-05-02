@@ -12,6 +12,7 @@ from spark_intelligence.config.loader import ConfigManager
 
 VALID_PROMOTION_STATUSES = {"candidate", "verified"}
 VALID_GATE_STATUSES = {"pass", "warn", "fail"}
+VALID_EVAL_COVERAGE_STATUSES = {"missing", "observed", "covered"}
 PROMOTION_GATE_NAMES = (
     "schema_gate",
     "lineage_gate",
@@ -47,6 +48,9 @@ class LlmWikiImprovementPromotionResult:
         proposal_gate = self.payload.get("proposal_gate") if isinstance(self.payload.get("proposal_gate"), dict) else {}
         if self.payload.get("proposal_kind") == "self_improvement":
             lines.append(f"- proposal_ready: {'yes' if proposal_gate.get('promotion_ready') else 'no'}")
+        eval_coverage = self.payload.get("eval_coverage") if isinstance(self.payload.get("eval_coverage"), dict) else {}
+        if eval_coverage:
+            lines.append(f"- eval_coverage: {eval_coverage.get('status') or 'missing'}")
         gate_ledger = self.payload.get("gate_ledger") if isinstance(self.payload.get("gate_ledger"), dict) else {}
         failed_gates = [str(item) for item in gate_ledger.get("failed_gates") or [] if str(item).strip()]
         if gate_ledger:
@@ -82,6 +86,8 @@ def promote_llm_wiki_improvement(
     complexity_gate: str = "",
     memory_hygiene_gate: str = "",
     autonomy_gate: str = "",
+    eval_coverage_status: str = "",
+    eval_refs: list[str] | tuple[str, ...] | None = None,
     next_probe: str = "",
     invalidation_trigger: str = "",
     overwrite: bool = False,
@@ -94,6 +100,7 @@ def promote_llm_wiki_improvement(
     sources = _clean_list(source_refs)
     source_packets = _clean_list(source_packet_refs)
     probes = _clean_list(probe_refs)
+    eval_sources = _clean_list(eval_refs)
     lineage_request_id = _compact(request_id)
     lineage_route_decision = _compact(route_decision)
     proposal_packet = _proposal_packet(
@@ -114,6 +121,13 @@ def promote_llm_wiki_improvement(
         complexity_gate=complexity_gate,
         memory_hygiene_gate=memory_hygiene_gate,
         autonomy_gate=autonomy_gate,
+    )
+    eval_coverage = _eval_coverage(
+        requested_status=eval_coverage_status,
+        evidence_refs=evidence,
+        source_refs=sources,
+        probe_refs=probes,
+        eval_refs=eval_sources,
     )
     if not normalized_title:
         raise ValueError("title is required for a wiki improvement note.")
@@ -144,6 +158,8 @@ def promote_llm_wiki_improvement(
         warnings.append("proposal_missing_falsifiable_fields")
     if gate_ledger["failed_gates"]:
         warnings.append("promotion_gate_failure_blocks_verified_status")
+    if eval_coverage["status"] == "missing":
+        warnings.append("eval_coverage_missing")
 
     content = _render_improvement_note(
         title=normalized_title,
@@ -158,6 +174,7 @@ def promote_llm_wiki_improvement(
         probe_refs=probes,
         proposal_packet=proposal_packet,
         gate_ledger=gate_ledger,
+        eval_coverage=eval_coverage,
         next_probe=_compact(next_probe) or "Run the relevant live probe, test, or trace check before treating this as current truth.",
         invalidation_trigger=_compact(invalidation_trigger) or "Invalidate or downgrade if a newer live trace, test, or source contradicts this note.",
         warnings=warnings,
@@ -182,6 +199,9 @@ def promote_llm_wiki_improvement(
         "proposal": proposal_packet,
         "proposal_gate": proposal_packet["gate"],
         "gate_ledger": gate_ledger,
+        "eval_coverage": eval_coverage,
+        "eval_coverage_status": eval_coverage["status"],
+        "eval_refs": eval_coverage["source_refs"],
         "trace_lineage": {
             "request_id": lineage_request_id,
             "route_decision": lineage_route_decision,
@@ -211,6 +231,7 @@ def _render_improvement_note(
     probe_refs: list[str],
     proposal_packet: dict[str, Any],
     gate_ledger: dict[str, Any],
+    eval_coverage: dict[str, Any],
     next_probe: str,
     invalidation_trigger: str,
     warnings: list[str],
@@ -260,6 +281,12 @@ def _render_improvement_note(
         )
     body.extend(
         [
+            "## Eval Coverage",
+            f"- status: {eval_coverage['status']}",
+            "- source_refs:",
+            *[f"  - {item}" for item in eval_coverage["source_refs"]],
+            f"- boundary: {eval_coverage['authority_boundary']}",
+            "",
             "## Promotion Gate Ledger",
             *[
                 f"- {gate_name}: {gate_ledger['gates'][gate_name]['status']} - {gate_ledger['gates'][gate_name]['reason']}"
@@ -320,6 +347,8 @@ def _render_improvement_note(
             f"autonomy_gate: {gate_ledger['gates']['autonomy_gate']['status']}",
             f"failed_gates: [{', '.join(_frontmatter_list(gate_ledger['failed_gates']))}]",
             f"warning_gates: [{', '.join(_frontmatter_list(gate_ledger['warning_gates']))}]",
+            f"eval_coverage_status: {eval_coverage['status']}",
+            f"eval_refs: [{', '.join(_frontmatter_list(eval_coverage['source_refs']))}]",
             "---",
             "",
             "\n".join(line.rstrip() for line in body),
@@ -436,6 +465,50 @@ def _gate_ledger(
         "verified_promotion_allowed": not failed_gates,
         "authority_boundary": "promotion_gate_ledger_is_review_evidence_not_runtime_truth",
     }
+
+
+def _eval_coverage(
+    *,
+    requested_status: str,
+    evidence_refs: list[str],
+    source_refs: list[str],
+    probe_refs: list[str],
+    eval_refs: list[str],
+) -> dict[str, Any]:
+    explicit_status = _normalize_eval_coverage_status(requested_status) if requested_status else ""
+    eval_like_refs = [
+        ref
+        for ref in [*eval_refs, *evidence_refs, *probe_refs]
+        if _looks_like_eval_ref(ref)
+    ]
+    if explicit_status:
+        status = explicit_status
+    elif eval_like_refs:
+        status = "covered"
+    elif evidence_refs or probe_refs or source_refs:
+        status = "observed"
+    else:
+        status = "missing"
+    source_refs_for_status = list(dict.fromkeys([*eval_refs, *eval_like_refs]))
+    if status == "observed" and not source_refs_for_status:
+        source_refs_for_status = list(dict.fromkeys([*evidence_refs, *probe_refs, *source_refs]))[:6]
+    return {
+        "status": status,
+        "source_refs": source_refs_for_status[:10],
+        "authority_boundary": "eval_coverage_is_evidence_status_not_runtime_truth",
+    }
+
+
+def _looks_like_eval_ref(value: str) -> bool:
+    text = str(value or "").casefold()
+    return any(token in text for token in ("pytest", "test", "eval", "coverage", "regression", "smoke"))
+
+
+def _normalize_eval_coverage_status(value: str) -> str:
+    status = str(value or "missing").strip().casefold()
+    if status not in VALID_EVAL_COVERAGE_STATUSES:
+        raise ValueError("eval coverage status must be one of: missing, observed, covered")
+    return status
 
 
 def _gate_payload(value: str, *, default: str, reason: str) -> dict[str, str]:

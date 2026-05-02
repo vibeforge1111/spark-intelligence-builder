@@ -140,6 +140,13 @@ def _note_payload(root: Path, path: Path) -> dict[str, Any]:
         recorded_promotion_ready=frontmatter.get("proposal_promotion_ready"),
     )
     gate_ledger = _gate_ledger_payload(frontmatter=frontmatter)
+    eval_coverage = _eval_coverage_payload(
+        status=frontmatter.get("eval_coverage_status"),
+        eval_refs=_list_value(frontmatter.get("eval_refs")),
+        evidence_refs=evidence_refs,
+        source_refs=source_refs,
+        probe_refs=probe_refs,
+    )
     modified_at = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).replace(microsecond=0)
     created_at = str(frontmatter.get("date_created") or "").strip()
     return {
@@ -163,6 +170,9 @@ def _note_payload(root: Path, path: Path) -> dict[str, Any]:
         "proposal": proposal,
         "proposal_gate": proposal["gate"],
         "gate_ledger": gate_ledger,
+        "eval_coverage": eval_coverage,
+        "eval_coverage_status": eval_coverage["status"],
+        "eval_refs": eval_coverage["source_refs"],
         "lineage": {
             "evidence_ref_count": len(evidence_refs),
             "source_ref_count": len(source_refs),
@@ -295,6 +305,45 @@ def _gate_ledger_payload(*, frontmatter: dict[str, Any]) -> dict[str, Any]:
         "verified_promotion_allowed": not failed_gates,
         "authority_boundary": "promotion_gate_ledger_is_review_evidence_not_runtime_truth",
     }
+
+
+def _eval_coverage_payload(
+    *,
+    status: Any,
+    eval_refs: list[str],
+    evidence_refs: list[str],
+    source_refs: list[str],
+    probe_refs: list[str],
+) -> dict[str, Any]:
+    normalized_status = _normalize_eval_coverage_status(status)
+    eval_like_refs = [
+        ref
+        for ref in [*eval_refs, *evidence_refs, *probe_refs]
+        if _looks_like_eval_ref(ref)
+    ]
+    if not status:
+        if eval_like_refs:
+            normalized_status = "covered"
+        elif evidence_refs or source_refs or probe_refs:
+            normalized_status = "observed"
+    source_refs_for_status = list(dict.fromkeys([*eval_refs, *eval_like_refs]))
+    if normalized_status == "observed" and not source_refs_for_status:
+        source_refs_for_status = list(dict.fromkeys([*evidence_refs, *probe_refs, *source_refs]))[:6]
+    return {
+        "status": normalized_status,
+        "source_refs": source_refs_for_status[:10],
+        "authority_boundary": "eval_coverage_is_evidence_status_not_runtime_truth",
+    }
+
+
+def _looks_like_eval_ref(value: str) -> bool:
+    text = str(value or "").casefold()
+    return any(token in text for token in ("pytest", "test", "eval", "coverage", "regression", "smoke"))
+
+
+def _normalize_eval_coverage_status(value: Any) -> str:
+    status = str(value or "missing").strip().casefold()
+    return status if status in {"missing", "observed", "covered"} else "missing"
 
 
 def _normalize_gate_status(value: Any) -> str:
