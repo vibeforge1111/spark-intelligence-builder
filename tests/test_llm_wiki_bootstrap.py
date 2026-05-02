@@ -356,6 +356,13 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertTrue(result.payload["live_self_awareness"]["observed_now"])
         self.assertTrue(result.payload["live_self_awareness"]["lacks"])
         self.assertEqual(result.payload["authority"], "supporting_not_authoritative")
+        policy = result.payload["deep_search_policy"]
+        self.assertEqual(policy["status"], "live_probe_required")
+        self.assertTrue(policy["should_probe"])
+        self.assertFalse(policy["should_deep_search"])
+        self.assertIn("current_or_mutable_fact", policy["triggers"])
+        self.assertIn("live_verification_needed", policy["triggers"])
+        self.assertIn("deep_search_or_probe_required", result.payload["warnings"])
 
     def test_wiki_answer_cli_can_emit_machine_readable_answer(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
@@ -376,7 +383,47 @@ class LlmWikiBootstrapTests(SparkTestCase):
         self.assertGreater(payload["hit_count"], 0)
         self.assertTrue(payload["sources"])
         self.assertEqual(payload["live_context_status"], "included")
+        self.assertIn("deep_search_policy", payload)
         self.assertIn("answer", payload)
+
+    def test_wiki_answer_flags_deep_search_for_high_stakes_current_operational_claims(self) -> None:
+        result = build_llm_wiki_answer(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            question="Is the Telegram gateway healthy and provider auth ready for production right now?",
+            refresh=True,
+            limit=3,
+        )
+
+        policy = result.payload["deep_search_policy"]
+        self.assertTrue(policy["should_probe"])
+        self.assertTrue(policy["should_deep_search"])
+        self.assertEqual(policy["status"], "live_probe_and_deep_search_required")
+        self.assertIn("high_stakes_or_operational_claim", policy["triggers"])
+        self.assertIn("current_or_mutable_fact", policy["triggers"])
+        self.assertIn("live_verification_needed", policy["triggers"])
+        self.assertIn("deep_search_or_probe_required", result.payload["warnings"])
+        self.assertEqual(result.payload["authority"], "supporting_not_authoritative")
+
+    def test_wiki_answer_flags_under_sourced_questions_for_deep_search(self) -> None:
+        result = build_llm_wiki_answer(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            question="How should Spark operate the zyxqq nonexistent scheduler?",
+            refresh=False,
+            limit=3,
+            include_live_self=False,
+        )
+
+        policy = result.payload["deep_search_policy"]
+        self.assertEqual(result.payload["hit_count"], 0)
+        self.assertTrue(policy["should_deep_search"])
+        self.assertFalse(policy["should_probe"])
+        self.assertEqual(policy["status"], "deep_search_required")
+        self.assertIn("under_sourced_wiki", policy["triggers"])
+        self.assertIn("no_matching_wiki_packets", result.payload["warnings"])
+        self.assertIn("deep_search_or_probe_required", result.payload["warnings"])
+        self.assertIn("supporting_not_authoritative", policy["authority_boundary"])
 
     def test_wiki_promote_improvement_writes_bounded_obsidian_note(self) -> None:
         result = promote_llm_wiki_improvement(
