@@ -103,7 +103,12 @@ from spark_intelligence.llm.direct_provider import (
     DirectProviderRequest,
     execute_direct_provider_prompt,
 )
-from spark_intelligence.llm_wiki import bootstrap_llm_wiki, compile_system_wiki
+from spark_intelligence.llm_wiki import (
+    bootstrap_llm_wiki,
+    build_llm_wiki_candidate_inbox,
+    build_llm_wiki_candidate_scan,
+    compile_system_wiki,
+)
 from spark_intelligence.observability.store import (
     build_text_mutation_facts,
     record_environment_snapshot,
@@ -806,6 +811,36 @@ def _detect_spark_systems_self_knowledge_query(user_message: str) -> bool:
     if not normalized:
         return False
     return any(pattern.match(normalized) for pattern in _SPARK_SYSTEMS_SELF_KNOWLEDGE_PATTERNS)
+
+
+def _detect_llm_wiki_candidate_scan_query(user_message: str) -> bool:
+    lowered = " ".join(str(user_message or "").strip().casefold().split())
+    if not lowered:
+        return False
+    return (
+        "wiki scan-candidates" in lowered
+        or "scan wiki candidates" in lowered
+        or "scan your wiki candidates" in lowered
+        or "candidate contradiction scan" in lowered
+        or "wiki contradiction scan" in lowered
+        or "candidate wiki contradictions" in lowered
+        or ("wiki candidates" in lowered and any(token in lowered for token in ("contradict", "conflict", "hazard")))
+    )
+
+
+def _detect_llm_wiki_candidate_inbox_query(user_message: str) -> bool:
+    lowered = " ".join(str(user_message or "").strip().casefold().split())
+    if not lowered:
+        return False
+    return (
+        "wiki candidates" in lowered
+        or "wiki candidate inbox" in lowered
+        or "candidate wiki learnings" in lowered
+        or "candidate wiki improvements" in lowered
+        or "candidate wiki notes" in lowered
+        or "wiki improvements need review" in lowered
+        or "wiki learnings need verification" in lowered
+    )
 
 
 def _detect_episodic_daily_recall_query(user_message: str) -> EpisodicDailyRecallQuery | None:
@@ -5868,6 +5903,63 @@ def _build_self_knowledge_wiki_appendix(
     return "\n".join(lines), evidence
 
 
+def _build_llm_wiki_candidate_inbox_reply(payload: dict[str, Any]) -> str:
+    notes = [note for note in payload.get("notes") or [] if isinstance(note, dict)]
+    lines = [
+        "LLM wiki candidate inbox",
+        f"- candidates: {payload.get('candidate_count', 0)}",
+        f"- verified_supporting_notes: {payload.get('verified_count', 0)}",
+        f"- returned: {payload.get('returned_count', 0)}",
+        f"- authority: {payload.get('authority') or 'supporting_not_authoritative'}",
+        "- boundary: notes are review candidates, not live runtime truth.",
+    ]
+    if notes:
+        lines.append("Top notes")
+        for note in notes[:5]:
+            evidence_count = len(note.get("evidence_refs") or [])
+            source_count = len(note.get("source_refs") or [])
+            lines.append(
+                f"- {note.get('title') or note.get('path')}: "
+                f"status={note.get('promotion_status') or 'candidate'} "
+                f"evidence={evidence_count} sources={source_count}"
+            )
+    else:
+        lines.append("- no candidate notes found in the local wiki improvements folder.")
+    lines.append("Next probe: run `spark-intelligence wiki scan-candidates --json` before treating any note as verified.")
+    return "\n".join(lines)
+
+
+def _build_llm_wiki_candidate_scan_reply(payload: dict[str, Any]) -> str:
+    findings = [finding for finding in payload.get("findings") or [] if isinstance(finding, dict)]
+    counts = payload.get("recommendation_counts") if isinstance(payload.get("recommendation_counts"), dict) else {}
+    lines = [
+        "LLM wiki candidate scan",
+        f"- scanned: {payload.get('scanned_count', 0)}",
+        f"- keep: {counts.get('keep', 0)}",
+        f"- rewrite: {counts.get('rewrite', 0)}",
+        f"- drop: {counts.get('drop', 0)}",
+        f"- authority: {payload.get('authority') or 'supporting_not_authoritative'}",
+        "- boundary: scan findings guide review; they do not auto-promote notes.",
+    ]
+    if findings:
+        lines.append("Findings")
+        for finding in findings[:5]:
+            issue_codes = [
+                str(issue.get("code") or "").strip()
+                for issue in finding.get("issues") or []
+                if isinstance(issue, dict) and str(issue.get("code") or "").strip()
+            ]
+            lines.append(
+                f"- {finding.get('title') or finding.get('path')}: "
+                f"{finding.get('recommendation') or 'keep'} "
+                f"issues={', '.join(issue_codes) if issue_codes else 'none'}"
+            )
+    else:
+        lines.append("- no candidate or verified improvement notes found to scan.")
+    lines.append("Rule: mutable user facts stay in governed current-state memory, not global wiki doctrine.")
+    return "\n".join(lines)
+
+
 def _bridge_event_facts(
     *,
     routing_decision: str | None,
@@ -8680,6 +8772,87 @@ def build_researcher_reply(
                 output_keepability=output_keepability,
                 promotion_disposition=promotion_disposition,
             )
+
+    if (
+        not explicit_memory_message
+        and not personality_context_extra
+        and (
+            _detect_llm_wiki_candidate_scan_query(user_message)
+            or _detect_llm_wiki_candidate_inbox_query(user_message)
+        )
+    ):
+        scan_query = _detect_llm_wiki_candidate_scan_query(user_message)
+        direct_mode = "llm_wiki_candidate_scan" if scan_query else "llm_wiki_candidate_inbox"
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode=direct_mode,
+            routing_decision=direct_mode,
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        if scan_query:
+            wiki_result = build_llm_wiki_candidate_scan(config_manager=config_manager, status="all", limit=8)
+            reply_text = _build_llm_wiki_candidate_scan_reply(wiki_result.payload)
+            evidence_summary = (
+                f"status={direct_mode} scanned={wiki_result.payload.get('scanned_count', 0)} "
+                f"keep={wiki_result.payload.get('recommendation_counts', {}).get('keep', 0)} "
+                f"rewrite={wiki_result.payload.get('recommendation_counts', {}).get('rewrite', 0)} "
+                f"drop={wiki_result.payload.get('recommendation_counts', {}).get('drop', 0)} "
+                "authority=supporting_not_authoritative"
+            )
+        else:
+            wiki_result = build_llm_wiki_candidate_inbox(config_manager=config_manager, status="candidate", limit=8)
+            reply_text = _build_llm_wiki_candidate_inbox_reply(wiki_result.payload)
+            evidence_summary = (
+                f"status={direct_mode} candidates={wiki_result.payload.get('candidate_count', 0)} "
+                f"verified={wiki_result.payload.get('verified_count', 0)} "
+                "authority=supporting_not_authoritative"
+            )
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered an LLM wiki candidate review query directly.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code=direct_mode,
+            facts=_bridge_event_facts(
+                routing_decision=direct_mode,
+                bridge_mode=direct_mode,
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "query_text": str(user_message or "").strip(),
+                    "authority": "supporting_not_authoritative",
+                    "wiki_result": wiki_result.payload,
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode=direct_mode,
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision=direct_mode,
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
 
     if (
         not explicit_memory_message

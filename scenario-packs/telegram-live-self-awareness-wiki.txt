@@ -1,0 +1,15 @@
+# Live Telegram self-awareness and LLM wiki probe
+# Send these to the real Spark Telegram bot, in order.
+#
+# This pack is intentionally for manual live long-polling checks.
+# It exercises slash-command and natural-language routes without making
+# candidate wiki notes authoritative.
+
+/self
+/wiki
+/wiki candidates
+/wiki scan-candidates
+What systems can you call, where do you lack, and how can you improve?
+What do you know about your memory system and what outranks wiki?
+What candidate wiki learnings need verification?
+Scan your wiki candidates for contradictions.

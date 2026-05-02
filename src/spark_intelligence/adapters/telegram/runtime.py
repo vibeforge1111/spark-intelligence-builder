@@ -38,6 +38,12 @@ from spark_intelligence.identity.service import (
     resolve_inbound_dm,
 )
 from spark_intelligence.observability.store import build_text_mutation_facts, close_run, open_run, record_event
+from spark_intelligence.llm_wiki import (
+    build_llm_wiki_candidate_inbox,
+    build_llm_wiki_candidate_scan,
+    build_llm_wiki_inventory,
+    build_llm_wiki_status,
+)
 from spark_intelligence.personality import (
     agent_has_reonboard_candidate,
     apply_telegram_surface_persona,
@@ -57,6 +63,7 @@ from spark_intelligence.researcher_bridge.advisory import (
     record_researcher_bridge_result,
     try_spark_character_fallback,
 )
+from spark_intelligence.self_awareness import build_self_awareness_capsule
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.state.hygiene import JSON_RICHNESS_MERGE_GUARD
 from spark_intelligence.swarm_bridge import (
@@ -2756,6 +2763,49 @@ def _handle_runtime_command(
             command=style_command["command"],
             payload=style_command.get("payload"),
         )
+    if lowered in {"/self", "/introspect"}:
+        capsule = build_self_awareness_capsule(
+            config_manager=config_manager,
+            state_db=state_db,
+            human_id=human_id or f"human:telegram:{external_user_id}",
+            session_id=session_id or f"session:telegram:{external_user_id}",
+            channel_kind="telegram",
+            request_id=request_id,
+            user_message=normalized,
+        )
+        return {
+            "command": "/self",
+            "reply_text": capsule.to_text(),
+            "respect_voice_reply_state": True,
+        }
+    if lowered in {"/wiki", "/wiki status"}:
+        result = build_llm_wiki_status(config_manager=config_manager, state_db=state_db)
+        return {
+            "command": "/wiki",
+            "reply_text": result.to_text(),
+            "respect_voice_reply_state": True,
+        }
+    if lowered in {"/wiki pages", "/wiki inventory"}:
+        result = build_llm_wiki_inventory(config_manager=config_manager, state_db=state_db, limit=12)
+        return {
+            "command": "/wiki pages",
+            "reply_text": result.to_text(),
+            "respect_voice_reply_state": True,
+        }
+    if lowered in {"/wiki candidates", "/wiki candidate inbox"}:
+        result = build_llm_wiki_candidate_inbox(config_manager=config_manager, status="candidate", limit=8)
+        return {
+            "command": "/wiki candidates",
+            "reply_text": result.to_text(),
+            "respect_voice_reply_state": True,
+        }
+    if lowered in {"/wiki scan-candidates", "/wiki scan candidates"}:
+        result = build_llm_wiki_candidate_scan(config_manager=config_manager, status="all", limit=8)
+        return {
+            "command": "/wiki scan-candidates",
+            "reply_text": result.to_text(),
+            "respect_voice_reply_state": True,
+        }
     if lowered in {"/voice", "/voice status"} or natural_voice_command == ("/voice", None):
         return _run_voice_runtime_command(
             config_manager=config_manager,

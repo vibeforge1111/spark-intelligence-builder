@@ -4,6 +4,7 @@ import json
 
 from spark_intelligence.observability.store import record_event
 from spark_intelligence.adapters.telegram.runtime import simulate_telegram_update
+from spark_intelligence.llm_wiki import promote_llm_wiki_improvement
 from spark_intelligence.memory import run_memory_sdk_smoke_test
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
 from spark_intelligence.self_awareness import build_self_awareness_capsule, build_self_improvement_plan
@@ -324,6 +325,66 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(result.output_keepability, "ephemeral_context")
         self.assertEqual(result.promotion_disposition, "not_promotable")
 
+    def test_natural_wiki_candidate_inbox_query_routes_to_review_surface(self) -> None:
+        promote_llm_wiki_improvement(
+            config_manager=self.config_manager,
+            title="Natural wiki candidate route",
+            summary="Spark should expose candidate wiki notes through natural language without promoting them.",
+            evidence_refs=["pytest tests/test_self_awareness.py::wiki_candidate_route"],
+            source_refs=["operator_session:self-awareness-hardening"],
+        )
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-wiki-candidate-inbox",
+            agent_id="agent-1",
+            human_id="human:telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+            user_message="What candidate wiki learnings need verification?",
+        )
+
+        self.assertEqual(result.mode, "llm_wiki_candidate_inbox")
+        self.assertEqual(result.routing_decision, "llm_wiki_candidate_inbox")
+        self.assertIn("LLM wiki candidate inbox", result.reply_text)
+        self.assertIn("supporting_not_authoritative", result.reply_text)
+        self.assertIn("not live runtime truth", result.reply_text)
+        self.assertIn("Natural wiki candidate route", result.reply_text)
+        self.assertIn("authority=supporting_not_authoritative", result.evidence_summary)
+        self.assertEqual(result.output_keepability, "ephemeral_context")
+        self.assertEqual(result.promotion_disposition, "not_promotable")
+
+    def test_natural_wiki_candidate_scan_query_routes_to_contradiction_surface(self) -> None:
+        promote_llm_wiki_improvement(
+            config_manager=self.config_manager,
+            title="User prefers global doctrine",
+            summary="User prefers global doctrine forever.",
+            evidence_refs=["pytest tests/test_memory_orchestrator.py::current_state"],
+            source_refs=["operator_session:self-awareness-hardening"],
+        )
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-wiki-candidate-scan",
+            agent_id="agent-1",
+            human_id="human:telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+            user_message="Scan your wiki candidates for contradictions",
+        )
+
+        self.assertEqual(result.mode, "llm_wiki_candidate_scan")
+        self.assertEqual(result.routing_decision, "llm_wiki_candidate_scan")
+        self.assertIn("LLM wiki candidate scan", result.reply_text)
+        self.assertIn("rewrite", result.reply_text)
+        self.assertIn("mutable_user_fact_requires_user_memory_lane", result.reply_text)
+        self.assertIn("current-state memory", result.reply_text)
+        self.assertIn("authority=supporting_not_authoritative", result.evidence_summary)
+        self.assertEqual(result.output_keepability, "ephemeral_context")
+        self.assertEqual(result.promotion_disposition, "not_promotable")
+
     def test_memory_self_awareness_without_kb_names_gap_without_overclaiming(self) -> None:
         result = build_researcher_reply(
             config_manager=self.config_manager,
@@ -414,3 +475,44 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("Where I still lack", result.detail["response_text"])
         self.assertNotIn("LLM wiki", result.detail["response_text"])
         self.assertLess(len(result.detail["response_text"]), 3000)
+
+    def test_telegram_self_and_wiki_runtime_commands_are_invocable(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        promote_llm_wiki_improvement(
+            config_manager=self.config_manager,
+            title="Telegram command candidate",
+            summary="The live Telegram runtime should expose wiki candidates without promoting them.",
+            evidence_refs=["pytest tests/test_self_awareness.py::telegram_runtime_commands"],
+            source_refs=["operator_session:self-awareness-hardening"],
+        )
+
+        self_result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=1002,
+                user_id="111",
+                username="alice",
+                text="/self",
+            ),
+        )
+        wiki_result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=1003,
+                user_id="111",
+                username="alice",
+                text="/wiki candidates",
+            ),
+        )
+
+        self.assertTrue(self_result.ok)
+        self.assertEqual(self_result.detail["bridge_mode"], "runtime_command")
+        self.assertEqual(self_result.detail["routing_decision"], "runtime_command")
+        self.assertIn("Spark self-awareness", self_result.detail["response_text"])
+        self.assertTrue(wiki_result.ok)
+        self.assertEqual(wiki_result.detail["bridge_mode"], "runtime_command")
+        self.assertIn("Spark LLM wiki candidate inbox", wiki_result.detail["response_text"])
+        self.assertIn("Telegram command candidate", wiki_result.detail["response_text"])
+        self.assertIn("not live Spark truth", wiki_result.detail["response_text"])

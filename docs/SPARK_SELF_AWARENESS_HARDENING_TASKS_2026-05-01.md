@@ -132,8 +132,8 @@ Guardrail:
 | SAH-001 Fix live Builder degraded status | builder | planned | Builder self-status no longer reports gateway/provider/channel readiness as degraded unless there is a real current failure | `self status --refresh-wiki --json` shows Builder ready or includes a precise current blocker |
 | SAH-002 Resolve duplicate chip key | builder/local env | planned | Attachment inventory no longer reports duplicate `domain-chip-crypto-trading` | attachment health check is clean or the duplicate is intentionally ignored with provenance |
 | SAH-003 Provider auth health pass | builder/local env | planned | Provider-backed routes stop surfacing stale 401 failures as current capability confidence | auth/provider status has a current probe and redacted repair hint |
-| SAH-004 Live Telegram self-awareness smoke | telegram | planned | Actual Telegram chat validates `/self` and natural self-awareness prompts | no mission launch, no canned dump, reply names live evidence and gaps |
-| SAH-005 Live Telegram wiki smoke | telegram | planned | Actual Telegram chat validates `/wiki`, `/wiki pages`, wiki answer, and promotion | wiki replies cite sources and authority boundary |
+| SAH-004 Live Telegram self-awareness smoke | telegram | in_progress | Actual Telegram chat validates `/self` and natural self-awareness prompts | runtime command and verifier pack exist; real bot trace run still required |
+| SAH-005 Live Telegram wiki smoke | telegram | in_progress | Actual Telegram chat validates `/wiki`, `/wiki pages`, candidate inbox, contradiction scan, and promotion | runtime command and verifier pack exist; real bot trace run still required |
 
 ### P1 Awareness Foundation
 
@@ -193,10 +193,11 @@ Shipped in Builder:
 - `651d630` added eval traps for KB absence, user-memory/doctrine separation, and non-promotable self-awareness output.
 - This slice added a candidate wiki inbox so Builder can list source-bounded improvement notes without treating them as runtime truth.
 - This slice added a wiki contradiction scan so candidate and verified improvement notes get keep/rewrite/drop guidance before further promotion.
+- This slice added Telegram `/self`, `/wiki`, `/wiki candidates`, `/wiki scan-candidates`, natural candidate inbox/scan routes, and a live self-awareness/wiki probe pack.
 
 Next phase:
 
-1. Run SAH-004/SAH-005 live Telegram smoke for `/self`, `/wiki`, natural memory-self-awareness, wiki candidate inbox, contradiction scan, and wiki promotion.
+1. Run SAH-004/SAH-005 against a real Telegram bot with `scenario-packs/telegram-live-self-awareness-wiki.txt` and `scripts/run_live_telegram_self_awareness_wiki_probe.ps1`.
 2. Keep SAH-205 separate: user/environment wiki lanes must not merge into global Spark doctrine without explicit consent and source metadata.
 
 ## Live Test Suites To Add
