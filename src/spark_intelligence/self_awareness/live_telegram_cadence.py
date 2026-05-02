@@ -100,9 +100,11 @@ def build_live_telegram_regression_cadence(
             "required_fields": [
                 "ok",
                 "spark_home",
+                "scanned_traces",
                 "scanned_runtime_traces",
                 "matched",
                 "expected",
+                "trace_eligibility",
                 "traces",
             ],
             "trace_requirements": [
@@ -181,10 +183,14 @@ def _prompt_pack(path: Path) -> list[str]:
 
 def _load_json(path: Path) -> dict[str, Any]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _dict_value(value: object) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
 
 
 def _latest_evidence(evidence_dir: Path) -> dict[str, Any]:
@@ -198,10 +204,15 @@ def _latest_evidence(evidence_dir: Path) -> dict[str, Any]:
         "path": str(latest),
         "readable": True,
         "ok": bool(payload.get("ok")),
+        "scanned_traces": int(payload.get("scanned_traces") or 0),
+        "scanned_runtime_traces": int(payload.get("scanned_runtime_traces") or 0),
         "matched": int(payload.get("matched") or 0),
         "expected": int(payload.get("expected") or 0),
+        "missing": str(payload.get("missing") or ""),
         "spark_home": str(payload.get("spark_home") or ""),
         "recorded_at": str(payload.get("recorded_at") or payload.get("checked_at") or ""),
+        "trace_eligibility": _dict_value(payload.get("trace_eligibility")),
+        "next_action": str(payload.get("next_action") or ""),
     }
 
 

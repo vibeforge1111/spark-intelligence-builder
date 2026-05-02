@@ -152,6 +152,65 @@ function Test-ExpectedTrace {
     return $true
 }
 
+function Get-TraceDescriptor {
+    param(
+        $Trace
+    )
+
+    if ($null -eq $Trace) {
+        return $null
+    }
+
+    return [ordered]@{
+        recorded_at = Get-TraceField $Trace "recorded_at"
+        simulation = Get-TraceField $Trace "simulation"
+        origin_surface = Get-TraceField $Trace "origin_surface"
+        request_id = Get-TraceField $Trace "request_id"
+        bridge_mode = Get-TraceField $Trace "bridge_mode"
+        routing_decision = Get-TraceField $Trace "routing_decision"
+        user_message_preview = Get-TraceField $Trace "user_message_preview"
+    }
+}
+
+function Get-TraceEligibilitySummary {
+    param(
+        [Parameter(Mandatory = $true)]$Rows,
+        [Parameter(Mandatory = $true)]$RuntimeRows
+    )
+
+    $allRows = @($Rows)
+    $eligibleRows = @($RuntimeRows)
+    $simulationRows = @($allRows | Where-Object { $_.simulation -eq $true })
+    $nonRuntimeSurfaceRows = @(
+        $allRows | Where-Object {
+            (Get-TraceField $_ "origin_surface") -ne "telegram_runtime"
+        }
+    )
+    $nonTelegramRequestRows = @(
+        $allRows | Where-Object {
+            -not (Get-TraceField $_ "request_id").StartsWith("telegram:")
+        }
+    )
+    $latestTrace = $null
+    if ($allRows.Count -gt 0) {
+        $latestTrace = $allRows[0]
+    }
+    $latestEligibleTrace = $null
+    if ($eligibleRows.Count -gt 0) {
+        $latestEligibleTrace = $eligibleRows[0]
+    }
+
+    return [ordered]@{
+        scanned_traces = $allRows.Count
+        eligible_runtime_traces = $eligibleRows.Count
+        ignored_simulation_traces = $simulationRows.Count
+        ignored_non_runtime_surface_traces = $nonRuntimeSurfaceRows.Count
+        ignored_non_telegram_request_traces = $nonTelegramRequestRows.Count
+        latest_trace = Get-TraceDescriptor $latestTrace
+        latest_eligible_runtime_trace = Get-TraceDescriptor $latestEligibleTrace
+    }
+}
+
 function Write-RegressionArtifact {
     param(
         [Parameter(Mandatory = $true)]$Payload
@@ -189,6 +248,7 @@ $runtimeRows = @(
         (Get-TraceField $_ "request_id").StartsWith("telegram:")
     }
 )
+$traceEligibility = Get-TraceEligibilitySummary -Rows $rows -RuntimeRows $runtimeRows
 
 $matched = New-Object System.Collections.Generic.List[object]
 $searchStart = 0
@@ -205,16 +265,20 @@ foreach ($expected in $ExpectedTraces) {
         $summary = [ordered]@{
             ok = $false
             spark_home = $SparkHome
+            scanned_traces = $rows.Count
             scanned_runtime_traces = $runtimeRows.Count
             matched = $matched.Count
             expected = $ExpectedTraces.Count
             missing = $expected.Name
+            trace_eligibility = $traceEligibility
+            next_action = "Run with -PrintPromptsOnly, send the prompts to the live Spark Telegram bot in order, then rerun this verifier."
         }
         if ($Json) {
             $summary | ConvertTo-Json -Depth 4
         } else {
             Write-Host ("FAIL matched {0}/{1} real Telegram runtime traces." -f $matched.Count, $ExpectedTraces.Count)
             Write-Host ("Missing expected trace: {0}" -f $expected.Name)
+            Write-Host ("Scanned {0} trace(s), {1} eligible live runtime trace(s), ignored {2} simulation trace(s)." -f $rows.Count, $runtimeRows.Count, $traceEligibility.ignored_simulation_traces)
             Write-Host "Tip: run with -PrintPromptsOnly, send the prompts to the live bot, then rerun this verifier."
         }
         Write-RegressionArtifact -Payload $summary
@@ -235,9 +299,11 @@ foreach ($expected in $ExpectedTraces) {
 $result = [ordered]@{
     ok = $true
     spark_home = $SparkHome
+    scanned_traces = $rows.Count
     scanned_runtime_traces = $runtimeRows.Count
     matched = $matched.Count
     expected = $ExpectedTraces.Count
+    trace_eligibility = $traceEligibility
     traces = $matched
 }
 

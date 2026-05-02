@@ -81,10 +81,57 @@ class NaturalLanguageRouteEvalMatrixTests(SparkTestCase):
         self.assertIn("self_awareness", suite_ids)
         self.assertIn("llm_wiki", suite_ids)
         self.assertIn("simulation=false", payload["artifact_contract"]["trace_requirements"])
+        self.assertIn("trace_eligibility", payload["artifact_contract"]["required_fields"])
         self.assertIn("live_telegram_evidence_missing", payload["warnings"])
         self.assertIn("-PrintPromptsOnly", payload["commands"]["print_prompts"])
         self.assertIn("-Json", payload["commands"]["verify_live_traces"])
         self.assertIn("-OutputDir", payload["commands"]["verify_live_traces"])
+
+    def test_live_telegram_cadence_surfaces_failed_trace_eligibility(self) -> None:
+        evidence_dir = self.home / "artifacts" / "live-telegram-regression"
+        evidence_dir.mkdir(parents=True)
+        latest = {
+            "ok": False,
+            "spark_home": str(self.home),
+            "scanned_traces": 5,
+            "scanned_runtime_traces": 0,
+            "matched": 0,
+            "expected": 12,
+            "missing": "slash self",
+            "recorded_at": "2026-05-02T15:46:40Z",
+            "trace_eligibility": {
+                "scanned_traces": 5,
+                "eligible_runtime_traces": 0,
+                "ignored_simulation_traces": 5,
+                "ignored_non_runtime_surface_traces": 5,
+                "ignored_non_telegram_request_traces": 5,
+                "latest_trace": {
+                    "recorded_at": "2026-04-26T17:54:20+00:00",
+                    "simulation": "True",
+                    "origin_surface": "simulation_cli",
+                    "request_id": "sim:1777226044853946",
+                },
+                "latest_eligible_runtime_trace": None,
+            },
+            "next_action": "Run with -PrintPromptsOnly, send the prompts to the live Spark Telegram bot in order, then rerun this verifier.",
+        }
+        (evidence_dir / "latest.json").write_text(json.dumps(latest, indent=2), encoding="utf-8-sig")
+
+        result = build_live_telegram_regression_cadence(config_manager=self.config_manager)
+        payload = result.payload
+
+        self.assertEqual(payload["status"], "needs_live_evidence")
+        self.assertEqual(payload["latest_evidence_status"], "failed_or_incomplete")
+        self.assertIn("live_telegram_evidence_failed_or_incomplete", payload["warnings"])
+        self.assertEqual(payload["latest_evidence"]["missing"], "slash self")
+        self.assertEqual(payload["latest_evidence"]["scanned_traces"], 5)
+        self.assertEqual(payload["latest_evidence"]["scanned_runtime_traces"], 0)
+        self.assertEqual(payload["latest_evidence"]["trace_eligibility"]["ignored_simulation_traces"], 5)
+        self.assertEqual(
+            payload["latest_evidence"]["trace_eligibility"]["latest_trace"]["origin_surface"],
+            "simulation_cli",
+        )
+        self.assertIn("PrintPromptsOnly", payload["latest_evidence"]["next_action"])
 
     def test_self_live_telegram_cadence_cli_emits_machine_readable_contract(self) -> None:
         exit_code, stdout, stderr = self.run_cli(

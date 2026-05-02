@@ -656,6 +656,21 @@ powershell -ExecutionPolicy Bypass -File scripts/run_live_telegram_self_awarenes
 powershell -ExecutionPolicy Bypass -File scripts/run_live_telegram_self_awareness_wiki_probe.ps1 -SparkHome C:\Users\USER\.spark-intelligence -OutputDir C:\Users\USER\.spark-intelligence\artifacts\live-telegram-regression -Json
 ```
 
+## 2026-05-02 Live Evidence Status
+
+The live Telegram self-awareness/wiki verifier has been hardened to write trace-eligibility diagnostics on failed runs. The latest run against `C:\Users\USER\.spark-intelligence` produced:
+
+- `ok=false`
+- `scanned_traces=80`
+- `scanned_runtime_traces=0`
+- `ignored_simulation_traces=80`
+- `ignored_non_runtime_surface_traces=80`
+- `ignored_non_telegram_request_traces=80`
+- `missing=slash self`
+- artifact: `C:\Users\USER\.spark-intelligence\artifacts\live-telegram-regression\latest.json`
+
+Interpretation: the gate is working and refusing simulation/soak evidence. The next operator step is to run `-PrintPromptsOnly`, send the 12 prompts to the real Spark Telegram bot in order, then rerun the verifier with `-OutputDir ... -Json`.
+
 ## Continuation Prompt
 
 Use this prompt in the next coding session:
@@ -701,10 +716,11 @@ Recommended next implementation:
 1. Inspect current diffs and tests in both repos.
 2. Run `self handoff-check --json` before code changes.
 3. Run `self live-telegram-cadence --json` and follow its printed prompt/verifier commands against the real Spark Telegram bot.
-4. If the live verifier fails, repair the exact route, formatting, or trace mismatch and rerun focused Builder/Telegram tests.
-5. If the live verifier passes, save the artifact path in the handoff/hardening docs and only then claim live Telegram evidence.
-6. Keep wiki/supporting reports separate from live runtime truth and governed current-state memory.
-7. Run focused Builder and Telegram tests plus npm build when Telegram repo changes.
+4. If the live verifier fails with `scanned_runtime_traces=0`, collect the real Telegram prompt pack first; do not repair code or claim live health from simulation traces.
+5. If the live verifier fails after live traces exist, repair the exact route, formatting, or trace mismatch and rerun focused Builder/Telegram tests.
+6. If the live verifier passes, save the artifact path in the handoff/hardening docs and only then claim live Telegram evidence.
+7. Keep wiki/supporting reports separate from live runtime truth and governed current-state memory.
+8. Run focused Builder and Telegram tests plus npm build when Telegram repo changes.
 ```
 
 ## Quick Verification Commands

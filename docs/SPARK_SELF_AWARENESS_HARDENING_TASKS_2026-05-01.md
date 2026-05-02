@@ -214,12 +214,14 @@ Shipped in Builder:
 - This slice added `self heartbeat`, a typed capability drift report for stale successes, recent failures, observed-without-success routes, and configured capabilities missing last-success evidence. It writes observability artifacts under `artifacts/capability-drift-heartbeat` and recommends safe probes.
 - This slice added `self live-telegram-cadence`, a release-gate contract for live Telegram self-awareness/wiki regression. It ties the prompt pack, route matrix, verifier script, artifact directory, and real-trace evidence boundary together without treating simulated tests as live proof.
 - This slice added `self handoff-check`, a handoff freshness gate that checks major self-awareness/wiki changes moved this hardening task list, the LLM wiki architecture plan, and the self-awareness handoff together.
+- This slice hardened the live Telegram verifier artifact so failed runs explain trace eligibility. The 2026-05-02 run against `C:\Users\USER\.spark-intelligence` scanned 80 traces, found 0 eligible `simulation=false` Telegram runtime traces, ignored 80 simulation/non-runtime traces, and stopped at the first missing live case: `slash self`.
 
 Next phase:
 
 1. Run SAH-004/SAH-005 against a real Telegram bot with `scenario-packs/telegram-live-self-awareness-wiki.txt`, `ops/natural-language-live-commands.json`, and `scripts/run_live_telegram_self_awareness_wiki_probe.ps1`.
 2. Use `self live-telegram-cadence --json` plus the printed verifier command to collect real Telegram regression evidence.
-3. Keep SAH-205 separate: user/environment wiki lanes must not merge into global Spark doctrine without explicit consent and source metadata.
+3. Send the verifier prompt pack to the live bot before rerunning the gate; soak/simulation traces are explicitly rejected as live proof.
+4. Keep SAH-205 separate: user/environment wiki lanes must not merge into global Spark doctrine without explicit consent and source metadata.
 
 ## Live Test Suites To Add
 
