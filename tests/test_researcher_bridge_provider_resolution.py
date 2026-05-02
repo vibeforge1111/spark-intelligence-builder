@@ -10,9 +10,11 @@ from spark_intelligence.auth.runtime import RuntimeProviderResolution
 from spark_intelligence.memory import write_profile_fact_to_memory
 from spark_intelligence.observability.store import latest_events_by_type, record_event
 from spark_intelligence.researcher_bridge.advisory import (
+    OpenMemoryRecallQuery,
     _build_browser_search_context,
     _browser_reply_denies_browsing,
     _build_contextual_task,
+    _build_open_memory_recall_answer,
     _load_recent_conversation_context,
     _clean_messaging_reply,
     _normalize_browser_search_query,
@@ -3326,6 +3328,37 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual(result.mode, "memory_open_recall")
         self.assertEqual(result.routing_decision, "memory_open_recall_query")
         self.assertNotIn("saved entity state", result.reply_text)
+
+    def test_open_memory_recall_source_boundary_answer_separates_current_and_supporting(self) -> None:
+        reply = _build_open_memory_recall_answer(
+            query=OpenMemoryRecallQuery(
+                topic="our memory work today, and what is current versus just supporting context",
+                query_kind="evidence_recall",
+            ),
+            records=[
+                {
+                    "predicate": "profile.current_focus",
+                    "memory_role": "current_state",
+                    "value": "active goal is improving persistent conversational memory.",
+                },
+                {
+                    "predicate": "raw_turn",
+                    "memory_role": "episodic",
+                    "text": "We wired source-aware episodic recall into Builder.",
+                },
+                {
+                    "predicate": "raw_turn",
+                    "memory_role": "episodic",
+                    "text": "Spark could not reach the Builder memory path right now. Reason: Command failed: runpy.run_module(",
+                },
+            ],
+        )
+
+        self.assertIn("Current: active goal is improving persistent conversational memory.", reply)
+        self.assertIn("Supporting recall: We wired source-aware episodic recall into Builder.", reply)
+        self.assertIn("current-state capsule", reply)
+        self.assertNotIn("Builder memory path", reply)
+        self.assertNotIn("I have saved memory about", reply)
 
     def test_build_researcher_reply_uses_identity_evidence_when_current_state_is_empty(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)

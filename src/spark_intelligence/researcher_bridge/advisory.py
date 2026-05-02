@@ -1387,6 +1387,19 @@ def _memory_record_text(record: dict[str, Any]) -> str:
     return str(record.get("value") or metadata.get("normalized_value") or "").strip()
 
 
+def _recall_snippet_is_operational_failure(snippet: str) -> bool:
+    lowered = str(snippet or "").casefold()
+    return any(
+        marker in lowered
+        for marker in (
+            "spark could not reach the builder memory path",
+            "spark builder failure: builder_or_memory",
+            "command failed:",
+            "runpy.run_module(",
+        )
+    )
+
+
 def _filter_open_memory_recall_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     superseded_ids: set[str] = set()
     deleted_scopes: list[tuple[str, str, str, str]] = []
@@ -1932,7 +1945,7 @@ def _build_open_memory_recall_answer(*, query: OpenMemoryRecallQuery, records: l
     seen: set[str] = set()
     for record in records:
         snippet = _memory_record_text(record)
-        if not snippet:
+        if not snippet or _recall_snippet_is_operational_failure(snippet):
             continue
         normalized = snippet.casefold()
         if normalized in seen:
@@ -1948,9 +1961,41 @@ def _build_open_memory_recall_answer(*, query: OpenMemoryRecallQuery, records: l
             named_answer = _named_object_answer_from_snippet(topic=query.topic, snippet=snippet)
             if named_answer:
                 return named_answer
+    current_records: list[str] = []
+    supporting_records: list[str] = []
+    for record in records:
+        snippet = _memory_record_text(record)
+        if not snippet or _recall_snippet_is_operational_failure(snippet):
+            continue
+        role = _open_memory_recall_record_role(record)
+        predicate = str(record.get("predicate") or "").strip()
+        if role == "current_state" or predicate.startswith("profile.current_"):
+            current_records.append(snippet)
+        else:
+            supporting_records.append(snippet)
+    asks_boundary = any(
+        marker in query.topic.casefold()
+        for marker in (
+            "current versus",
+            "supporting context",
+            "supporting source",
+            "what is current",
+        )
+    )
+    if asks_boundary:
+        lines = ["Here's the clean boundary I can see from memory:"]
+        if current_records:
+            lines.append(f"- Current: {current_records[0]}")
+        else:
+            lines.append("- Current: I don't have a dedicated current-state record for that exact topic in this recall result.")
+        lines.append(f"- Supporting recall: {supporting_records[0] if supporting_records else snippets[0]}")
+        if len(supporting_records) > 1:
+            lines.append(f"- More supporting recall: {supporting_records[1]}")
+        lines.append("- Rule: your newest message and current-state capsule beat these recalled snippets for mutable facts.")
+        return "\n".join(lines)
     if len(snippets) == 1:
-        return f'I have saved memory about {query.topic}: "{snippets[0]}"'
-    return f'I have saved memory about {query.topic}: "{snippets[0]}" Also: "{snippets[1]}"'
+        return f"I found supporting memory about {query.topic}: {snippets[0]}"
+    return f"I found supporting memory about {query.topic}:\n- {snippets[0]}\n- {snippets[1]}"
 
 
 def _filter_belief_recall_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
