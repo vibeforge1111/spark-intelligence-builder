@@ -94,6 +94,7 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("source_ledger", payload)
         self.assertIn("memory_cognition", payload)
         self.assertIn("user_awareness", payload)
+        self.assertIn("project_awareness", payload)
         self.assertNotIn("self_status_memory", payload["memory_cognition"])
 
     def test_self_awareness_user_awareness_labels_current_context_without_promoting_doctrine(self) -> None:
@@ -150,6 +151,47 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         )
         self.assertIn("User awareness", capsule.to_text())
         self.assertIn("User wiki candidates: 1", capsule.to_text())
+
+    def test_self_awareness_project_awareness_names_projects_with_live_state_boundary(self) -> None:
+        project_root = self.home / "project-alpha"
+        project_root.mkdir()
+        self.config_manager.set_path("spark.local_projects.include_known_spark_repos", False)
+        self.config_manager.set_path("spark.local_projects.include_attachment_repos", False)
+        self.config_manager.set_path(
+            "spark.local_projects.records",
+            {
+                "project-alpha": {
+                    "path": str(project_root),
+                    "label": "Project Alpha",
+                    "components": ["builder_hardening"],
+                    "owner_system": "spark_local_work",
+                }
+            },
+        )
+
+        capsule = build_self_awareness_capsule(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human:test-project-awareness",
+            session_id="session:test-project-awareness",
+            channel_kind="telegram",
+            user_message="what project are we working on?",
+        )
+        payload = capsule.to_payload()
+
+        project_awareness = payload["project_awareness"]
+        self.assertTrue(project_awareness["present"])
+        self.assertEqual(project_awareness["project_count"], 1)
+        self.assertEqual(project_awareness["active_project"]["key"], "project-alpha")
+        self.assertEqual(project_awareness["active_project"]["source_ref"], "registry:repo:project-alpha")
+        self.assertEqual(project_awareness["active_project"]["source_kind"], "local_project_index")
+        self.assertEqual(
+            project_awareness["authority"],
+            "observed_configuration_not_live_git_truth",
+        )
+        self.assertIn("live_git_status_outranks_project_awareness_snapshot", project_awareness["boundaries"])
+        self.assertIn("Project awareness", capsule.to_text())
+        self.assertIn("Known projects: 1", capsule.to_text())
 
     def test_self_awareness_adds_memory_cognition_after_wiki_source_families_are_visible(self) -> None:
         kb_dir = self.home / "artifacts" / "spark-memory-kb" / "wiki" / "current-state"

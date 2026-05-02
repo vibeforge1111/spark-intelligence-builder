@@ -91,6 +91,7 @@ class SelfAwarenessCapsule:
     style_lens: dict[str, Any] = field(default_factory=dict)
     memory_cognition: dict[str, Any] = field(default_factory=dict)
     user_awareness: dict[str, Any] = field(default_factory=dict)
+    project_awareness: dict[str, Any] = field(default_factory=dict)
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -110,6 +111,7 @@ class SelfAwarenessCapsule:
             "style_lens": self.style_lens,
             "memory_cognition": self.memory_cognition,
             "user_awareness": self.user_awareness,
+            "project_awareness": self.project_awareness,
         }
 
     def to_json(self) -> str:
@@ -136,6 +138,7 @@ class SelfAwarenessCapsule:
         _extend_style_lens_lines(lines, self.style_lens)
         _extend_memory_cognition_lines(lines, self.memory_cognition)
         _extend_user_awareness_lines(lines, self.user_awareness)
+        _extend_project_awareness_lines(lines, self.project_awareness)
         _extend_claim_lines(lines, "What looks live", self.observed_now, limit=4, compact=True)
         _extend_claim_lines(lines, "What I recently proved", self.recently_verified, limit=2, compact=True)
         _extend_capability_evidence_lines(lines, self.capability_evidence, limit=3)
@@ -192,6 +195,10 @@ def build_self_awareness_capsule(
         channel_kind=channel_kind,
         personality_profile=personality_profile,
     )
+    project_awareness = _build_project_awareness(
+        config_manager=config_manager,
+        registry_payload=registry_payload,
+    )
     natural_language_routes = [
         "Ask: 'Spark, what do you know about your current systems?' to get the grounded registry view.",
         "Ask: 'Spark, test the browser route now' to turn browser availability into last-success evidence.",
@@ -236,6 +243,13 @@ def build_self_awareness_capsule(
             "claim_boundary": "User awareness is scoped to the active human/session; user context is not global Spark doctrine.",
             "label_counts": dict(user_awareness.get("label_counts") or {}),
         },
+        {
+            "source": "project_awareness",
+            "source_kind": "local_project_index_summary",
+            "present": bool(project_awareness.get("present")),
+            "claim_boundary": "Project awareness is a registry/config snapshot; live git, filesystem, CI, and tool output outrank it.",
+            "project_count": int(project_awareness.get("project_count") or 0),
+        },
     ]
     return SelfAwarenessCapsule(
         generated_at=generated_at,
@@ -254,6 +268,7 @@ def build_self_awareness_capsule(
         style_lens=style_lens,
         memory_cognition=memory_cognition,
         user_awareness=user_awareness,
+        project_awareness=project_awareness,
     )
 
 
@@ -830,6 +845,87 @@ def _build_user_awareness(
     return payload
 
 
+def _build_project_awareness(*, config_manager: ConfigManager, registry_payload: dict[str, Any]) -> dict[str, Any]:
+    records = [record for record in (registry_payload.get("records") or []) if isinstance(record, dict)]
+    repo_records = [record for record in records if str(record.get("kind") or "") == "repo"]
+    workspace = config_manager.load().get("workspace") or {}
+    if not isinstance(workspace, dict):
+        workspace = {}
+    workspace_home = str(workspace.get("home") or config_manager.paths.home).strip()
+    projects = [_project_context_entry(record) for record in repo_records]
+    active_project = _active_project(projects=projects, workspace_home=workspace_home)
+    summary = registry_payload.get("summary") if isinstance(registry_payload.get("summary"), dict) else {}
+    return {
+        "present": bool(projects or workspace_home),
+        "workspace_id": str(workspace.get("id") or registry_payload.get("workspace_id") or "default"),
+        "workspace_home": workspace_home,
+        "active_project": active_project,
+        "project_count": len(projects),
+        "known_project_keys": [str(project.get("key") or "") for project in projects if project.get("key")][:20],
+        "projects": projects[:20],
+        "repo_summary": {
+            "repo_count": int(summary.get("repo_count") or len(projects)),
+            "dirty_repo_count": int(summary.get("dirty_repo_count") or 0),
+        },
+        "source_refs": [
+            "system_registry:repo_records",
+            "local_project_index",
+            "config.workspace.home",
+        ],
+        "authority": "observed_configuration_not_live_git_truth",
+        "boundaries": [
+            "live_git_status_outranks_project_awareness_snapshot",
+            "live_filesystem_checks_outrank_project_awareness_snapshot",
+            "project_awareness_does_not_select_write_targets_without_user_intent",
+            "source_refs_required_for_project_claims",
+        ],
+    }
+
+
+def _project_context_entry(record: dict[str, Any]) -> dict[str, Any]:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    key = str(record.get("key") or "").strip()
+    path = str(metadata.get("path") or "").strip()
+    return {
+        "key": key,
+        "label": str(record.get("label") or key or "project").strip(),
+        "status": str(record.get("status") or "unknown").strip(),
+        "path": path,
+        "exists": bool(record.get("available")),
+        "is_git": bool(metadata.get("is_git")),
+        "dirty": metadata.get("dirty"),
+        "branch": metadata.get("branch"),
+        "source": str(metadata.get("source") or "unknown").strip(),
+        "owner_system": str(metadata.get("owner_system") or "spark_local_work").strip(),
+        "components": [str(item).strip() for item in (metadata.get("components") or []) if str(item).strip()][:8],
+        "source_ref": f"registry:repo:{key}" if key else "registry:repo",
+        "source_kind": "local_project_index",
+        "authority": "observed_configuration_not_live_git_truth",
+        "live_state_boundary": "refresh git/filesystem/tool checks before claiming current repo state",
+    }
+
+
+def _active_project(*, projects: list[dict[str, Any]], workspace_home: str) -> dict[str, Any]:
+    normalized_workspace = workspace_home.casefold()
+    for project in projects:
+        path = str(project.get("path") or "").casefold()
+        if path and path == normalized_workspace:
+            return dict(project)
+    for project in projects:
+        key = str(project.get("key") or "")
+        if key == "spark-intelligence-builder":
+            return dict(project)
+    return dict(projects[0]) if projects else {
+        "key": "unknown",
+        "label": "Unknown project",
+        "status": "unknown",
+        "source_ref": "config.workspace.home",
+        "source_kind": "workspace_config",
+        "authority": "observed_configuration_not_live_git_truth",
+        "live_state_boundary": "inspect filesystem/git before claiming project state",
+    }
+
+
 def _context_lines(context_capsule: Any, section: str) -> list[str]:
     sections = getattr(context_capsule, "sections", {}) if context_capsule is not None else {}
     lines = sections.get(section) if isinstance(sections, dict) else []
@@ -1050,6 +1146,24 @@ def _extend_user_awareness_lines(lines: list[str], user_awareness: dict[str, Any
     )
     lines.append(f"- User wiki candidates: {int(user_wiki.get('candidate_note_count') or 0)}")
     lines.append("- Boundary: user context helps personalize, but it is not global Spark doctrine.")
+    lines.append("")
+
+
+def _extend_project_awareness_lines(lines: list[str], project_awareness: dict[str, Any]) -> None:
+    if not project_awareness:
+        return
+    active_project = (
+        project_awareness.get("active_project")
+        if isinstance(project_awareness.get("active_project"), dict)
+        else {}
+    )
+    label = str(active_project.get("label") or active_project.get("key") or "unknown").strip()
+    status = str(active_project.get("status") or "unknown").strip()
+    lines.append("Project awareness")
+    lines.append(f"- Workspace: {project_awareness.get('workspace_id') or 'default'}")
+    lines.append(f"- Active project: {label} ({status})")
+    lines.append(f"- Known projects: {int(project_awareness.get('project_count') or 0)}")
+    lines.append("- Boundary: live git, filesystem, CI, and tool output outrank this project snapshot.")
     lines.append("")
 
 
