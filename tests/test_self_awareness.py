@@ -324,6 +324,55 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(result.output_keepability, "ephemeral_context")
         self.assertEqual(result.promotion_disposition, "not_promotable")
 
+    def test_memory_self_awareness_without_kb_names_gap_without_overclaiming(self) -> None:
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-self-awareness-memory-no-kb",
+            agent_id="agent-1",
+            human_id="human:telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+            user_message="What do you know about your memory system and where do you lack?",
+        )
+
+        self.assertEqual(result.mode, "self_awareness_direct")
+        self.assertIn("Memory cognition", result.reply_text)
+        self.assertIn("families=not visible", result.reply_text)
+        self.assertNotIn("Memory KB: present", result.reply_text)
+        self.assertIn("Where I still lack", result.reply_text)
+        self.assertEqual(result.output_keepability, "ephemeral_context")
+        self.assertEqual(result.promotion_disposition, "not_promotable")
+
+    def test_self_awareness_keeps_user_memory_separate_from_spark_doctrine(self) -> None:
+        run_memory_sdk_smoke_test(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            sdk_module="domain_chip_memory",
+            subject="human:telegram:123",
+            predicate="profile.favorite_color",
+            value="cobalt blue",
+            cleanup=False,
+        )
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-self-awareness-user-memory-separation",
+            agent_id="agent-1",
+            human_id="human:telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+            user_message="What do you know about your memory system and what belongs to Spark doctrine?",
+        )
+
+        self.assertEqual(result.mode, "self_awareness_direct")
+        self.assertIn("user memory stays separate from Spark doctrine", result.reply_text)
+        self.assertNotIn("cobalt blue", result.reply_text)
+        self.assertNotIn("favorite color", result.reply_text.lower())
+        self.assertEqual(result.output_keepability, "ephemeral_context")
+        self.assertEqual(result.promotion_disposition, "not_promotable")
+
     def test_self_awareness_query_beats_entity_state_summary_route(self) -> None:
         result = build_researcher_reply(
             config_manager=self.config_manager,
