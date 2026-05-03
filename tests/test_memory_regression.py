@@ -369,6 +369,22 @@ class MemoryRegressionTests(SparkTestCase):
                 response_text = "Saved. Your current focus is persistent memory quality evaluation."
                 bridge_mode = "memory_current_focus_update"
                 routing_decision = "memory_current_focus_update"
+            elif "what do you understand about our memory architecture" in message:
+                response_text = (
+                    "Spark memory architecture\n\n"
+                    "Current sources: newest message and current-state memory.\n"
+                    "Supporting sources: episodic recall and wiki supporting_not_authoritative."
+                )
+                bridge_mode = "self_awareness_direct"
+                routing_decision = "self_awareness_direct"
+            elif "What exactly did we use Sol" in message:
+                movement_counts["retrieved"] += 1
+                response_text = (
+                    "I found supporting memory about Sol: we used the tiny desk plant named Sol "
+                    "as a low-stakes episodic recall probe.\n\nConfidence: medium-high."
+                )
+                bridge_mode = "memory_open_recall"
+                routing_decision = "memory_open_recall_query"
             elif "Sol" in message:
                 movement_counts["captured"] += 1
                 movement_counts["saved"] += 1
@@ -421,7 +437,7 @@ class MemoryRegressionTests(SparkTestCase):
 
         payload = result.payload
         self.assertEqual(payload["summary"]["status"], "passed")
-        self.assertEqual(payload["summary"]["movement_delta_counts"], {"captured": 2, "retrieved": 2, "saved": 2})
+        self.assertEqual(payload["summary"]["movement_delta_counts"], {"captured": 2, "retrieved": 3, "saved": 2})
         self.assertEqual(payload["summary"]["dashboard_movement_authority"], "observability_non_authoritative")
         self.assertEqual(simulate.call_count, len(DEFAULT_TELEGRAM_MEMORY_GAUNTLET_CASES))
         self.assertTrue((output_dir / "telegram-memory-gauntlet.json").exists())

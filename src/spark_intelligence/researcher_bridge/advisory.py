@@ -453,6 +453,13 @@ _ENTITY_STATE_SUMMARY_PATTERNS: tuple[re.Pattern[str], ...] = (
 
 _OPEN_MEMORY_RECALL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
+        "purpose_recall",
+        re.compile(
+            r"^what(?:\s+exactly)?\s+did\s+we\s+use\s+(.+?)\s+for\s+earlier(?:,\s*and\s+how\s+confident\s+are\s+you)?[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "name_recall",
         re.compile(
             r"^(?:what|which)\s+did\s+i\s+name\s+(.+?)[\?\.\!]*$",
@@ -1238,6 +1245,12 @@ def _detect_memory_authority_policy_query(user_message: str) -> str | None:
     if not lowered:
         return None
     if (
+        "promote" in lowered
+        and any(marker in lowered for marker in ("durable memory", "persistent memory", "saved memory", "memory"))
+        and any(marker in lowered for marker in ("refuse", "reject", "should not", "don't", "do not"))
+    ):
+        return "durable_memory_rejection_policy"
+    if (
         "task recovery" in lowered
         and "current state" in lowered
         and any(marker in lowered for marker in ("older conversation", "old conversation", "points somewhere", "guide"))
@@ -1264,6 +1277,13 @@ def _extract_plan_from_authority_query(user_message: str) -> str:
 
 
 def _build_memory_authority_policy_answer(kind: str, user_message: str) -> str:
+    if kind == "durable_memory_rejection_policy":
+        return (
+            "I should refuse to promote conversational residue into durable memory.\n\n"
+            "That includes guesses, transient mood, abandoned ideas, superseded facts, raw debugging chatter, "
+            "third-party private details, and anything you explicitly tell me not to store.\n\n"
+            "The promotion rule is: durable memory needs to be current, useful later, user-scoped, and backed by evidence."
+        )
     if kind == "task_recovery_current_authority":
         plan = _extract_plan_from_authority_query(user_message)
         return (
@@ -2041,6 +2061,12 @@ def _build_open_memory_recall_answer(*, query: OpenMemoryRecallQuery, records: l
             named_answer = _named_object_answer_from_snippet(topic=query.topic, snippet=snippet)
             if named_answer:
                 return named_answer
+    if query.query_kind == "purpose_recall":
+        return (
+            f"I found supporting memory about {query.topic}: {snippets[0]}\n\n"
+            "Confidence: medium-high for episodic recall, but supporting only. "
+            "Your newest message and current-state memory still win for mutable facts."
+        )
     current_records: list[str] = []
     supporting_records: list[str] = []
     for record in records:

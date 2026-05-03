@@ -6,6 +6,7 @@ from spark_intelligence.memory.generic_observations import (
     assess_telegram_generic_memory_candidate,
     classify_telegram_generic_memory_candidate,
 )
+from spark_intelligence.memory.orchestrator import write_raw_episode_to_memory
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
 from spark_intelligence.observability.store import (
     latest_events_by_type,
@@ -468,6 +469,16 @@ class TelegramGenericMemoryTests(SparkTestCase):
                     "my plan is evaluate open-ended persistent memory recall, what should guide your next answer?"
                 ),
             )
+            rejection_policy = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-memory-authority-rejection-policy",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-memory-authority",
+                channel_kind="telegram",
+                user_message="What should you refuse to promote from this chat into durable memory?",
+            )
 
         self.assertEqual(mutable.routing_decision, "memory_authority_policy")
         self.assertIn("newest explicit message", mutable.reply_text)
@@ -476,6 +487,62 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(task_recovery.routing_decision, "memory_authority_policy")
         self.assertIn("Current state should guide", task_recovery.reply_text)
         self.assertIn("evaluate open-ended persistent memory recall", task_recovery.reply_text)
+        self.assertEqual(rejection_policy.routing_decision, "memory_authority_policy")
+        self.assertIn("conversational residue", rejection_policy.reply_text)
+        self.assertIn("durable memory needs", rejection_policy.reply_text)
+
+    def test_build_researcher_reply_answers_natural_sol_purpose_recall_without_provider(self) -> None:
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+        write_raw_episode_to_memory(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human-1",
+            episode_text=(
+                "For later, in our memory work today, we used the tiny desk plant named Sol "
+                "as a low-stakes episodic recall probe."
+            ),
+            domain_pack="memory_work",
+            session_id="session-sol-purpose",
+            turn_id="req-sol-purpose-seed",
+            channel_kind="telegram",
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for Sol purpose recall"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for Sol purpose recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-sol-purpose-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-sol-purpose",
+                channel_kind="telegram",
+                user_message="What exactly did we use Sol for earlier, and how confident are you?",
+            )
+            boundary_result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-memory-work-boundary-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-sol-purpose",
+                channel_kind="telegram",
+                user_message="What do you remember about our memory work today, and what is current versus supporting context?",
+            )
+
+        self.assertEqual(result.routing_decision, "memory_open_recall_query")
+        self.assertIn("Sol", result.reply_text)
+        self.assertIn("low-stakes episodic recall probe", result.reply_text)
+        self.assertIn("Confidence: medium-high", result.reply_text)
+        self.assertEqual(boundary_result.routing_decision, "memory_open_recall_query")
+        self.assertIn("supporting", boundary_result.reply_text.lower())
+        self.assertIn("Sol", boundary_result.reply_text)
 
     def test_build_researcher_reply_handles_plan_correction_history_and_deletion(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

@@ -280,6 +280,30 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertNotIn("Spark Browser", result.reply_text)
         self.assertNotIn("Builder memory path", result.reply_text)
 
+    def test_memory_architecture_query_uses_self_awareness_direct_route(self) -> None:
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-memory-architecture-self-awareness",
+            agent_id="agent-1",
+            human_id="human:telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+            user_message=(
+                "Without using a checklist, what do you understand about our memory architecture right now, "
+                "and which sources are current versus supporting?"
+            ),
+        )
+
+        self.assertEqual(result.mode, "self_awareness_direct")
+        self.assertEqual(result.routing_decision, "self_awareness_direct")
+        self.assertIn("Spark memory architecture", result.reply_text)
+        self.assertIn("Current sources", result.reply_text)
+        self.assertIn("Supporting sources", result.reply_text)
+        self.assertIn("current-state memory", result.reply_text.lower())
+        self.assertIn("supporting_not_authoritative", result.reply_text)
+        self.assertNotIn("biological memory", result.reply_text.lower())
+
     def test_dashboard_movement_query_uses_memory_self_awareness_route(self) -> None:
         result = build_researcher_reply(
             config_manager=self.config_manager,
@@ -299,6 +323,25 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("retrieved", result.reply_text)
         self.assertIn("saved", result.reply_text)
         self.assertIn("trace evidence only", result.reply_text)
+        self.assertNotIn("Where memory still lacks", result.reply_text)
+
+    def test_dashboard_reveal_query_uses_memory_movement_route(self) -> None:
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-dashboard-reveal-self-awareness",
+            agent_id="agent-1",
+            human_id="human:telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+            user_message="Show me what memory movement the dashboard should reveal after this conversation.",
+        )
+
+        self.assertEqual(result.mode, "self_awareness_direct")
+        self.assertEqual(result.routing_decision, "self_awareness_direct")
+        self.assertIn("Memory movement evidence", result.reply_text)
+        self.assertIn("captured", result.reply_text)
+        self.assertIn("retrieved", result.reply_text)
         self.assertNotIn("Where memory still lacks", result.reply_text)
 
     def test_self_awareness_query_beats_entity_state_summary_route(self) -> None:

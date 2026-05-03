@@ -56,6 +56,7 @@ DEFAULT_TELEGRAM_MEMORY_GAUNTLET_CASES: tuple[TelegramMemoryGauntletCase, ...] =
         case_id="current_vs_supporting_recall",
         category="source_aware_recall",
         message="What do you remember about our memory work today, and what is current versus supporting context?",
+        expected_routing_decision="memory_open_recall_query",
         expected_response_contains=("current", "supporting"),
         expected_response_excludes=("status checklist",),
         expected_movement_states=("retrieved",),
@@ -66,6 +67,25 @@ DEFAULT_TELEGRAM_MEMORY_GAUNTLET_CASES: tuple[TelegramMemoryGauntletCase, ...] =
         message="Where does your memory still lack right now, and how would we improve it?",
         expected_response_contains=("memory", "improve"),
         expected_response_excludes=("Spark Browser", "Spark Voice"),
+        expected_movement_states=("retrieved",),
+    ),
+    TelegramMemoryGauntletCase(
+        case_id="natural_memory_architecture_boundary",
+        category="self_awareness_memory_architecture",
+        message=(
+            "Without using a checklist, what do you understand about our memory architecture right now, "
+            "and which sources are current versus supporting?"
+        ),
+        expected_routing_decision="self_awareness_direct",
+        expected_response_contains=("Spark memory architecture", "Current sources", "Supporting sources"),
+        expected_response_excludes=("biological memory",),
+    ),
+    TelegramMemoryGauntletCase(
+        case_id="natural_sol_purpose_recall",
+        category="episodic_recall",
+        message="What exactly did we use Sol for earlier, and how confident are you?",
+        expected_routing_decision="memory_open_recall_query",
+        expected_response_contains=("Sol", "low-stakes episodic recall probe", "Confidence"),
         expected_movement_states=("retrieved",),
     ),
 )
@@ -158,6 +178,21 @@ LIMIT_TELEGRAM_MEMORY_GAUNTLET_CASES: tuple[TelegramMemoryGauntletCase, ...] = (
         message="When you answer from memory, what movement evidence should the dashboard show?",
         expected_response_contains=("retrieved", "captured", "saved"),
         expected_movement_states=("retrieved",),
+    ),
+    TelegramMemoryGauntletCase(
+        case_id="natural_dashboard_movement_reveal",
+        category="dashboard_traceability",
+        message="Show me what memory movement the dashboard should reveal after this conversation.",
+        expected_routing_decision="self_awareness_direct",
+        expected_response_contains=("Memory movement evidence", "captured", "retrieved"),
+        expected_movement_states=("retrieved",),
+    ),
+    TelegramMemoryGauntletCase(
+        case_id="durable_memory_rejection_policy",
+        category="promotion_policy",
+        message="What should you refuse to promote from this chat into durable memory?",
+        expected_routing_decision="memory_authority_policy",
+        expected_response_contains=("conversational residue", "durable memory needs"),
     ),
     TelegramMemoryGauntletCase(
         case_id="task_recovery_current_authority_probe",

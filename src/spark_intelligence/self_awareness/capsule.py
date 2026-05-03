@@ -115,6 +115,8 @@ class SelfAwarenessCapsule:
         return json.dumps(self.to_payload(), indent=2)
 
     def to_text(self) -> str:
+        if self.render_focus == "memory_architecture":
+            return _memory_architecture_text(self)
         if self.render_focus == "memory_movement":
             return _memory_movement_text(self)
         if self.render_focus == "memory_limits":
@@ -193,7 +195,9 @@ def build_self_awareness_capsule(
     ]
     style_lens = _build_style_lens(personality_profile)
     memory_movement = export_memory_dashboard_movement_in_memory(config_manager=config_manager, limit=6)
-    if _looks_like_memory_movement_query(user_message):
+    if _looks_like_memory_architecture_query(user_message):
+        render_focus = "memory_architecture"
+    elif _looks_like_memory_movement_query(user_message):
         render_focus = "memory_movement"
     elif _looks_like_memory_limits_query(user_message):
         render_focus = "memory_limits"
@@ -271,6 +275,21 @@ def _looks_like_memory_limits_query(user_message: str) -> bool:
     )
 
 
+def _looks_like_memory_architecture_query(user_message: str) -> bool:
+    lowered = str(user_message or "").casefold()
+    if "memory" not in lowered:
+        return False
+    return any(
+        marker in lowered
+        for marker in (
+            "our memory architecture",
+            "your memory architecture",
+            "spark memory architecture",
+            "memory architecture right now",
+        )
+    )
+
+
 def _looks_like_memory_movement_query(user_message: str) -> bool:
     lowered = str(user_message or "").casefold()
     return "memory" in lowered and any(
@@ -278,12 +297,41 @@ def _looks_like_memory_movement_query(user_message: str) -> bool:
         for marker in (
             "dashboard show",
             "dashboard should show",
+            "dashboard should reveal",
+            "dashboard reveal",
+            "memory movement",
             "movement evidence",
             "movement trace",
             "movement rows",
             "what movement",
         )
     )
+
+
+def _memory_architecture_text(capsule: SelfAwarenessCapsule) -> str:
+    movement_counts = capsule.memory_movement.get("movement_counts") if isinstance(capsule.memory_movement, dict) else {}
+    movement_line = _movement_counts_compact(movement_counts)
+    lines = [
+        "Spark memory architecture",
+        "",
+        "Short version: I should answer from layered Spark memory, not from a generic web idea of memory.",
+        "",
+        "Current sources",
+        "- Your newest message wins first for mutable facts.",
+        "- Current-state memory is the trusted layer for saved mutable facts like focus, plan, timezone, name, blockers, and preferences.",
+        "",
+        "Supporting sources",
+        "- Episodic recall and task recovery help reconstruct what happened, but they do not override current state.",
+        "- Wiki packets and LLM wiki context are supporting_not_authoritative unless a governed promotion path says otherwise.",
+        "- Graph sidecars and dashboard movement rows are advisory or trace evidence, not instructions.",
+        "",
+        "What still needs pressure testing",
+        "- Whether open-ended recall pulls the right episode without overclaiming.",
+        "- Whether every memory answer can show why the chosen layer was trusted.",
+    ]
+    if movement_line:
+        lines.append(f"- Whether dashboard movement stays explainable from rows like {movement_line}.")
+    return "\n".join(lines).strip()
 
 
 def _memory_movement_text(capsule: SelfAwarenessCapsule) -> str:
