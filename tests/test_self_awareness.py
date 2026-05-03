@@ -139,8 +139,9 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertTrue(movement_ledger["present"])
         self.assertEqual(movement_ledger["row_count"], 9)
         self.assertEqual(movement_ledger["movement_counts"]["retrieved"], 1)
+        self.assertIn("Memory self-awareness", capsule.to_text())
         self.assertIn("captured=2", capsule.to_text())
-        self.assertIn("observability evidence, not instructions", capsule.to_text())
+        self.assertIn("current-state memory", capsule.to_text())
 
     def test_self_status_cli_can_refresh_wiki_and_include_wiki_context(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
@@ -273,8 +274,10 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
 
         self.assertEqual(result.mode, "self_awareness_direct")
         self.assertEqual(result.routing_decision, "self_awareness_direct")
-        self.assertIn("Spark self-awareness", result.reply_text)
-        self.assertIn("Where I still lack", result.reply_text)
+        self.assertIn("Memory self-awareness", result.reply_text)
+        self.assertIn("Where memory still lacks", result.reply_text)
+        self.assertIn("How we improve it next", result.reply_text)
+        self.assertNotIn("Spark Browser", result.reply_text)
         self.assertNotIn("Builder memory path", result.reply_text)
 
     def test_self_awareness_query_beats_entity_state_summary_route(self) -> None:

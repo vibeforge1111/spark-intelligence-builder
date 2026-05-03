@@ -89,6 +89,7 @@ class SelfAwarenessCapsule:
     source_ledger: list[dict[str, Any]] = field(default_factory=list)
     style_lens: dict[str, Any] = field(default_factory=dict)
     memory_movement: dict[str, Any] = field(default_factory=dict)
+    render_focus: str = ""
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -107,12 +108,15 @@ class SelfAwarenessCapsule:
             "source_ledger": self.source_ledger,
             "style_lens": self.style_lens,
             "memory_movement": self.memory_movement,
+            "render_focus": self.render_focus,
         }
 
     def to_json(self) -> str:
         return json.dumps(self.to_payload(), indent=2)
 
     def to_text(self) -> str:
+        if self.render_focus == "memory_limits":
+            return _memory_limits_text(self)
         short_version = (
             "Short version: I can see the live Spark stack. I should stay grounded and prove a route worked before I sound certain."
         )
@@ -187,6 +191,7 @@ def build_self_awareness_capsule(
     ]
     style_lens = _build_style_lens(personality_profile)
     memory_movement = export_memory_dashboard_movement_in_memory(config_manager=config_manager, limit=6)
+    render_focus = "memory_limits" if _looks_like_memory_limits_query(user_message) else ""
 
     source_ledger = [
         {
@@ -236,7 +241,72 @@ def build_self_awareness_capsule(
         source_ledger=source_ledger,
         style_lens=style_lens,
         memory_movement=memory_movement,
+        render_focus=render_focus,
     )
+
+
+def _looks_like_memory_limits_query(user_message: str) -> bool:
+    lowered = str(user_message or "").casefold()
+    return "memory" in lowered and any(
+        marker in lowered
+        for marker in (
+            "lack",
+            "lacks",
+            "improve",
+            "improvement",
+            "weak",
+            "where does",
+            "where is",
+        )
+    )
+
+
+def _memory_limits_text(capsule: SelfAwarenessCapsule) -> str:
+    movement_counts = capsule.memory_movement.get("movement_counts") if isinstance(capsule.memory_movement, dict) else {}
+    movement_line = _movement_counts_compact(movement_counts)
+    lines = [
+        "Memory self-awareness",
+        "",
+        "Short version: my memory is working, but the weak spot is choosing the right memory layer and showing why I trusted it.",
+        "",
+        "What is current",
+        "- Your newest message and current-state memory outrank older recall, wiki, and graph sidecars for mutable facts.",
+    ]
+    if movement_line:
+        lines.append(f"- Dashboard movement is visible as trace evidence: {movement_line}.")
+    else:
+        lines.append("- I do not see memory movement rows in this capsule, so I should avoid claiming the lifecycle worked this turn.")
+    lines.extend(
+        [
+            "",
+            "Where memory still lacks",
+            "- I can still answer too broadly unless the route keeps memory questions focused on memory evidence.",
+            "- Episodic detail can be thin or truncated, so I should say what is missing instead of filling gaps.",
+            "- Movement needs to stay traceable across captured, blocked, promoted, saved, decayed, summarized, retrieved, selected, and dropped records.",
+            "",
+            "How we improve it next",
+            "- Keep source labels in replies: current-state, episodic, wiki, graph sidecar, and dashboard movement.",
+            "- Add or run gauntlet probes before changing behavior, then fix the smallest proven gap.",
+            "- Keep wiki supporting_not_authoritative; current-state memory and your newest message win for mutable facts.",
+        ]
+    )
+    return "\n".join(lines).strip()
+
+
+def _movement_counts_compact(movement_counts: Any) -> str:
+    if not isinstance(movement_counts, dict):
+        return ""
+    preferred_order = ("captured", "blocked", "promoted", "saved", "decayed", "summarized", "retrieved", "selected", "dropped")
+    parts: list[str] = []
+    for key in preferred_order:
+        value = movement_counts.get(key)
+        try:
+            count = int(value or 0)
+        except (TypeError, ValueError):
+            count = 0
+        if count:
+            parts.append(f"{key}={count}")
+    return ", ".join(parts)
 
 
 def _build_observed_claims(records: list[dict[str, Any]]) -> list[SelfAwarenessClaim]:

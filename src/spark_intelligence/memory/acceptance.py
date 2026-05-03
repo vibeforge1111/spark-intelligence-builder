@@ -47,7 +47,7 @@ DEFAULT_TELEGRAM_MEMORY_GAUNTLET_CASES: tuple[TelegramMemoryGauntletCase, ...] =
     TelegramMemoryGauntletCase(
         case_id="seed_supporting_episode",
         category="episodic_write",
-        message="For later, we used the tiny desk plant named Sol as a low-stakes episodic recall probe.",
+        message="For later, in our memory work today, we used the tiny desk plant named Sol as a low-stakes episodic recall probe.",
         expected_response_contains=("Sol",),
         expected_movement_states=("captured", "saved"),
     ),
@@ -1013,7 +1013,34 @@ def _build_gauntlet_case_result(
         "movement_delta_counts": movement_delta,
         "matched_expectations": not mismatches,
         "mismatches": mismatches,
-        "gateway_payload": payload,
+        "gateway_payload": _compact_gauntlet_gateway_payload(payload),
+    }
+
+
+def _compact_gauntlet_gateway_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    detail = payload.get("detail") if isinstance(payload.get("detail"), dict) else {}
+    compact_detail_keys = (
+        "request_id",
+        "simulation",
+        "origin_surface",
+        "telegram_user_id",
+        "chat_id",
+        "session_id",
+        "human_id",
+        "agent_id",
+        "message_text",
+        "response_text",
+        "trace_ref",
+        "bridge_mode",
+        "routing_decision",
+        "active_chip_key",
+        "active_chip_task_type",
+        "active_chip_evaluate_used",
+    )
+    return {
+        "ok": bool(payload.get("ok")),
+        "decision": str(payload.get("decision") or "").strip(),
+        "detail": {key: detail.get(key) for key in compact_detail_keys if key in detail},
     }
 
 

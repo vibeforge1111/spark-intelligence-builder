@@ -1507,6 +1507,18 @@ def _record_matches_open_memory_topic(*, record: dict[str, Any], topic: str) -> 
         return False
     if normalized_topic in haystack:
         return True
+    if "memory work" in normalized_topic and any(
+        marker in haystack
+        for marker in (
+            "memory",
+            "recall",
+            "episodic",
+            "persistent memory",
+            "source-aware",
+            "dashboard movement",
+        )
+    ):
+        return True
     topic_tokens = [
         token
         for token in re.findall(r"[a-z0-9][a-z0-9_-]*", normalized_topic)

@@ -18,6 +18,7 @@ from spark_intelligence.researcher_bridge.advisory import (
     _load_recent_conversation_context,
     _clean_messaging_reply,
     _normalize_browser_search_query,
+    _record_matches_open_memory_topic,
     _select_search_result_candidate,
     _should_collect_browser_search_context,
     _render_direct_provider_chat_fallback,
@@ -3359,6 +3360,18 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("current-state capsule", reply)
         self.assertNotIn("Builder memory path", reply)
         self.assertNotIn("I have saved memory about", reply)
+
+    def test_memory_work_topic_matches_recall_probe_language_without_exact_phrase(self) -> None:
+        self.assertTrue(
+            _record_matches_open_memory_topic(
+                record={
+                    "predicate": "raw_turn",
+                    "memory_role": "episodic",
+                    "text": "We used the tiny desk plant named Sol as a low-stakes episodic recall probe.",
+                },
+                topic="our memory work today, and what is current versus supporting context",
+            )
+        )
 
     def test_build_researcher_reply_uses_identity_evidence_when_current_state_is_empty(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
