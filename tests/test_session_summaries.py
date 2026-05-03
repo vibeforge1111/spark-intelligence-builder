@@ -377,4 +377,10 @@ class SessionSummaryTests(SparkTestCase):
         destinations = {facts.get("destination") for facts in lifecycle_facts}
         self.assertIn("evidence.telegram.daily_summary", destinations)
         self.assertIn("evidence.telegram.project_summary", destinations)
-        self.assertTrue(all(facts.get("transition_kind") == "compaction" for facts in lifecycle_facts[:2]))
+        summary_lifecycle_facts = [
+            facts
+            for facts in lifecycle_facts
+            if facts.get("destination") in {"evidence.telegram.daily_summary", "evidence.telegram.project_summary"}
+        ]
+        self.assertTrue(summary_lifecycle_facts)
+        self.assertTrue(all(facts.get("transition_kind") == "compaction" for facts in summary_lifecycle_facts))
