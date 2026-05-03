@@ -65,6 +65,7 @@ from spark_intelligence.memory.architecture_soak import (
 from spark_intelligence.memory.acceptance import (
     DEFAULT_TELEGRAM_MEMORY_GAUNTLET_CASES,
     HARD_TELEGRAM_MEMORY_GAUNTLET_CASES,
+    LIMIT_TELEGRAM_MEMORY_GAUNTLET_CASES,
     TelegramMemoryAcceptancePackExportResult,
     TelegramMemoryAcceptanceResult,
     TelegramMemoryGauntletCase,
@@ -129,6 +130,7 @@ __all__ = [
     "TelegramArchitectureSoakResult",
     "DEFAULT_TELEGRAM_MEMORY_GAUNTLET_CASES",
     "HARD_TELEGRAM_MEMORY_GAUNTLET_CASES",
+    "LIMIT_TELEGRAM_MEMORY_GAUNTLET_CASES",
     "TelegramMemoryAcceptancePackExportResult",
     "TelegramMemoryAcceptanceResult",
     "TelegramMemoryGauntletCase",

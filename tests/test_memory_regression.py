@@ -19,6 +19,7 @@ from spark_intelligence.memory.acceptance import (
     DEFAULT_TELEGRAM_MEMORY_ACCEPTANCE_CASES,
     DEFAULT_TELEGRAM_MEMORY_GAUNTLET_CASES,
     HARD_TELEGRAM_MEMORY_GAUNTLET_CASES,
+    LIMIT_TELEGRAM_MEMORY_GAUNTLET_CASES,
     TelegramMemoryAcceptanceCase,
 )
 from spark_intelligence.memory.regression import (
@@ -244,6 +245,46 @@ class MemoryRegressionTests(SparkTestCase):
         self.assertEqual(kwargs["write_path"], str(write_path))
         self.assertEqual(kwargs["origin"], "telegram-runtime")
         self.assertEqual(kwargs["cases"], HARD_TELEGRAM_MEMORY_GAUNTLET_CASES)
+
+    def test_memory_run_telegram_gauntlet_dispatches_limit_probe_pack(self) -> None:
+        output_dir = self.home / "artifacts" / "telegram-memory-gauntlet-limits"
+        payload = {
+            "summary": {
+                "status": "passed",
+                "case_count": len(LIMIT_TELEGRAM_MEMORY_GAUNTLET_CASES),
+                "matched_case_count": len(LIMIT_TELEGRAM_MEMORY_GAUNTLET_CASES),
+                "mismatched_case_count": 0,
+                "selected_user_id": "12345",
+                "selected_chat_id": "12345",
+            }
+        }
+
+        with patch(
+            "spark_intelligence.cli.run_telegram_memory_gauntlet",
+            return_value=TelegramMemoryGauntletResult(output_dir=output_dir, payload=payload),
+        ) as run_gauntlet:
+            exit_code, stdout, stderr = self.run_cli(
+                "memory",
+                "run-telegram-gauntlet",
+                "--home",
+                str(self.home),
+                "--output-dir",
+                str(output_dir),
+                "--user-id",
+                "12345",
+                "--chat-id",
+                "12345",
+                "--origin",
+                "telegram-runtime",
+                "--limit-probes",
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertEqual(json.loads(stdout)["summary"]["status"], "passed")
+        kwargs = run_gauntlet.call_args.kwargs
+        self.assertEqual(kwargs["origin"], "telegram-runtime")
+        self.assertEqual(kwargs["cases"], LIMIT_TELEGRAM_MEMORY_GAUNTLET_CASES)
 
     def test_memory_export_telegram_acceptance_pack_dispatches_exporter(self) -> None:
         output_dir = self.home / "artifacts" / "telegram-memory-acceptance-supervised"

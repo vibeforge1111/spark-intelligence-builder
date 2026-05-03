@@ -54,6 +54,8 @@ _OCCUPATION_PATTERNS = [
     re.compile(r"\bi(?:'m| am)\s+an\s+(entrepreneur)(?:\s+(?:now|today|currently))?(?:[.!?,]|$)", re.I),
 ]
 _NAME_PATTERNS = [
+    re.compile(r"\bset\s+my\s+preferred\s+name\s+to\s+([a-z][a-z\s\-'.`]{0,40})", re.I),
+    re.compile(r"\bmy\s+preferred\s+name\s+is\s+([a-z][a-z\s\-'.`]{0,40})", re.I),
     re.compile(r"\bi(?:'m| am)\s+not\s+[a-z][a-z\s\-'.`]{0,40}\s+(?:by\s+the\s+way\s*,?\s*)?i(?:'m| am)\s+([a-z][a-z\s\-'.`]{0,40})", re.I),
     re.compile(r"\bi(?:'m| am)\s+not\s+[a-z][a-z\s\-'.`]{0,40}\s+(?:by\s+the\s+way\s*,?\s*)?my\s+name\s+is\s+([a-z][a-z\s\-'.`]{0,40})", re.I),
     re.compile(r"\bmy\s+name\s+is\s+([a-z][a-z\-'.`]{0,40})\s*,?\s+not\s+[a-z][a-z\s\-'.`]{0,40}", re.I),
@@ -77,6 +79,7 @@ _COUNTRY_MOVE_PATTERNS = [
     re.compile(r"\bi\s+moved\s+to\s+([a-z][a-z\s\-'`.]{1,40})", re.I),
 ]
 _TIMEZONE_PATTERNS = [
+    re.compile(r"\bset\s+my\s+timezone\s+to\s+([A-Za-z_]+/[A-Za-z_]+(?:/[A-Za-z_]+)?)", re.I),
     re.compile(r"\bmy\s+timezone\s+is\s+([A-Za-z_]+/[A-Za-z_]+(?:/[A-Za-z_]+)?)", re.I),
     re.compile(r"\bi(?:'m| am)\s+in\s+timezone\s+([A-Za-z_]+/[A-Za-z_]+(?:/[A-Za-z_]+)?)", re.I),
     re.compile(r"\bi(?:'m| am)\s+on\s+(utc[+-]\d{1,2}(?::\d{2})?)", re.I),
@@ -1179,6 +1182,9 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
             "which name do you have for me",
             "what's my name",
             "what is my name",
+            "what preferred name should you use",
+            "which preferred name should you use",
+            "what name should you use",
         )
     ):
         return ProfileFactQuery(predicate="profile.preferred_name", fact_name="profile_preferred_name", label="name")
@@ -1565,6 +1571,8 @@ def detect_profile_fact_query(user_message: str) -> ProfileFactQuery | None:
             "which timezone do you have for me",
             "what's my timezone",
             "what is my timezone",
+            "what timezone should you use",
+            "which timezone should you use",
         )
     ):
         return ProfileFactQuery(predicate="profile.timezone", fact_name="profile_timezone", label="timezone")

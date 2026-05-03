@@ -1213,6 +1213,26 @@ def _build_spark_systems_self_knowledge_answer() -> str:
     )
 
 
+def _looks_like_profile_fact_authority_conflict_query(user_message: str) -> bool:
+    lowered = str(user_message or "").casefold()
+    if not lowered:
+        return False
+    return any(
+        marker in lowered
+        for marker in (
+            "old wiki",
+            "older wiki",
+            "old conversation",
+            "older conversation",
+            "old recall",
+            "older recall",
+            "stale",
+            "should not override",
+            "right now",
+        )
+    )
+
+
 def _detect_open_memory_recall_query(user_message: str) -> OpenMemoryRecallQuery | None:
     normalized = " ".join(str(user_message or "").strip().split())
     if not normalized:
@@ -10363,6 +10383,9 @@ def build_researcher_reply(
             value=direct_fact_value,
             stale=stale_current_fact,
         )
+        if direct_fact_value and _looks_like_profile_fact_authority_conflict_query(user_message):
+            label = "preferred name" if detected_profile_fact_query.predicate == "profile.preferred_name" else detected_profile_fact_query.label
+            reply_text = f"Use the current {label}: {direct_fact_value}."
         evidence_summary = (
             "status=memory_profile_fact "
             f"predicate={detected_profile_fact_query.predicate or 'unknown'} "

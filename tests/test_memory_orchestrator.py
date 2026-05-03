@@ -3154,6 +3154,20 @@ class MemoryOrchestratorTests(SparkTestCase):
         self.assertEqual(detected.predicate, "profile.timezone")
         self.assertEqual(detected.value, "Asia/Dubai")
 
+    def test_profile_timezone_detection_handles_set_phrase_and_conflict_query(self) -> None:
+        detected = detect_profile_fact_observation("Set my timezone to Asia/Dubai.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.timezone")
+        self.assertEqual(detected.value, "Asia/Dubai")
+
+        query = detect_profile_fact_query(
+            "If an old wiki note says my timezone is America/Los_Angeles, what timezone should you use right now?"
+        )
+        self.assertIsNotNone(query)
+        assert query is not None
+        self.assertEqual(query.predicate, "profile.timezone")
+
     def test_profile_home_country_detection_normalizes_structured_fact(self) -> None:
         detected = detect_profile_fact_observation("My country is UAE.")
         self.assertIsNotNone(detected)
@@ -3167,6 +3181,24 @@ class MemoryOrchestratorTests(SparkTestCase):
         assert detected is not None
         self.assertEqual(detected.predicate, "profile.preferred_name")
         self.assertEqual(detected.value, "Sarah")
+
+    def test_profile_preferred_name_detection_handles_set_phrase_and_stale_query(self) -> None:
+        detected = detect_profile_fact_observation("Set my preferred name to Cem.")
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.predicate, "profile.preferred_name")
+        self.assertEqual(detected.value, "Cem")
+
+        correction = detect_profile_fact_observation("Actually, my preferred name is Cem.")
+        self.assertIsNotNone(correction)
+        assert correction is not None
+        self.assertEqual(correction.predicate, "profile.preferred_name")
+        self.assertEqual(correction.value, "Cem")
+
+        query = detect_profile_fact_query("What preferred name should you use now, even if older recall says Maya?")
+        self.assertIsNotNone(query)
+        assert query is not None
+        self.assertEqual(query.predicate, "profile.preferred_name")
 
     def test_profile_founder_startup_hack_and_mission_detection_normalize_structured_facts(self) -> None:
         startup = detect_profile_fact_observation("My startup is Seedify.")

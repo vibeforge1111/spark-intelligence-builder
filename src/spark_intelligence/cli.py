@@ -111,6 +111,7 @@ from spark_intelligence.memory import (
     hybrid_memory_retrieve,
     inspect_human_memory_in_memory,
     inspect_memory_sdk_runtime,
+    LIMIT_TELEGRAM_MEMORY_GAUNTLET_CASES,
     lookup_current_state_in_memory,
     run_memory_sdk_smoke_test,
     run_memory_sdk_maintenance,
@@ -2172,6 +2173,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Label generated Builder traces as synthetic simulation or real Telegram runtime bridge traffic",
     )
     memory_gauntlet_parser.add_argument("--hard", action="store_true", help="Run the harder profile/runtime gauntlet pack")
+    memory_gauntlet_parser.add_argument(
+        "--limit-probes",
+        action="store_true",
+        help="Run the hardest memory limit probe pack for correction, wiki conflict, task recovery, and dashboard traceability",
+    )
     memory_gauntlet_parser.add_argument("--write", help="Optional output path for the gauntlet summary JSON payload")
     memory_gauntlet_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_acceptance_export_parser = memory_subparsers.add_parser(
@@ -6246,6 +6252,11 @@ def handle_memory_run_telegram_gauntlet(args: argparse.Namespace) -> int:
     state_db = StateDB(config_manager.paths.state_db)
     config_manager.bootstrap()
     state_db.initialize()
+    gauntlet_cases = None
+    if args.limit_probes:
+        gauntlet_cases = LIMIT_TELEGRAM_MEMORY_GAUNTLET_CASES
+    elif args.hard:
+        gauntlet_cases = HARD_TELEGRAM_MEMORY_GAUNTLET_CASES
     result = run_telegram_memory_gauntlet(
         config_manager=config_manager,
         state_db=state_db,
@@ -6255,7 +6266,7 @@ def handle_memory_run_telegram_gauntlet(args: argparse.Namespace) -> int:
         chat_id=args.chat_id,
         write_path=args.write,
         origin=args.origin,
-        cases=HARD_TELEGRAM_MEMORY_GAUNTLET_CASES if args.hard else None,
+        cases=gauntlet_cases,
     )
     print(result.to_json() if args.json else result.to_text())
     summary = result.payload.get("summary") if isinstance(result.payload, dict) else {}

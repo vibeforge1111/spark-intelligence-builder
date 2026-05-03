@@ -104,6 +104,73 @@ HARD_TELEGRAM_MEMORY_GAUNTLET_CASES: tuple[TelegramMemoryGauntletCase, ...] = (
 )
 
 
+LIMIT_TELEGRAM_MEMORY_GAUNTLET_CASES: tuple[TelegramMemoryGauntletCase, ...] = (
+    *HARD_TELEGRAM_MEMORY_GAUNTLET_CASES,
+    TelegramMemoryGauntletCase(
+        case_id="seed_stale_timezone",
+        category="mutable_fact_correction",
+        message="Set my timezone to America/Los_Angeles.",
+        expected_response_contains=("America/Los_Angeles",),
+        expected_movement_states=("captured", "saved"),
+    ),
+    TelegramMemoryGauntletCase(
+        case_id="replace_timezone_current",
+        category="mutable_fact_correction",
+        message="Actually, set my timezone to Asia/Dubai.",
+        expected_response_contains=("Asia/Dubai",),
+        expected_movement_states=("captured", "saved"),
+    ),
+    TelegramMemoryGauntletCase(
+        case_id="timezone_wiki_conflict_recall",
+        category="wiki_conflict",
+        message=(
+            "If an old wiki note or older conversation says my timezone is America/Los_Angeles, "
+            "what timezone should you use right now?"
+        ),
+        expected_response_contains=("Asia/Dubai", "current"),
+        expected_movement_states=("retrieved",),
+    ),
+    TelegramMemoryGauntletCase(
+        case_id="seed_stale_preferred_name",
+        category="mutable_fact_correction",
+        message="Set my preferred name to Limit Probe Alpha.",
+        expected_response_contains=("Limit Probe Alpha",),
+        expected_movement_states=("captured", "saved"),
+    ),
+    TelegramMemoryGauntletCase(
+        case_id="replace_preferred_name_current",
+        category="mutable_fact_correction",
+        message="Actually, my preferred name is Cem.",
+        expected_response_contains=("Cem",),
+        expected_movement_states=("captured", "saved"),
+    ),
+    TelegramMemoryGauntletCase(
+        case_id="preferred_name_stale_recall",
+        category="stale_current_conflict",
+        message="What preferred name should you use now, even if older recall says Limit Probe Alpha?",
+        expected_response_contains=("Cem",),
+        expected_movement_states=("retrieved",),
+    ),
+    TelegramMemoryGauntletCase(
+        case_id="dashboard_movement_trace_probe",
+        category="dashboard_traceability",
+        message="When you answer from memory, what movement evidence should the dashboard show?",
+        expected_response_contains=("retrieved", "captured", "saved"),
+        expected_movement_states=("retrieved",),
+    ),
+    TelegramMemoryGauntletCase(
+        case_id="task_recovery_current_authority_probe",
+        category="task_recovery_authority",
+        message=(
+            "If task recovery or an older conversation points somewhere else, but current state says "
+            "my plan is evaluate open-ended persistent memory recall, what should guide your next answer?"
+        ),
+        expected_response_contains=("current", "evaluate open-ended persistent memory recall"),
+        expected_movement_states=("retrieved",),
+    ),
+)
+
+
 DEFAULT_TELEGRAM_MEMORY_ACCEPTANCE_CASES: tuple[TelegramMemoryAcceptanceCase, ...] = (
     TelegramMemoryAcceptanceCase(
         case_id="seed_focus",

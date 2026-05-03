@@ -257,6 +257,9 @@ def _looks_like_memory_limits_query(user_message: str) -> bool:
             "weak",
             "where does",
             "where is",
+            "dashboard movement",
+            "movement evidence",
+            "movement trace",
         )
     )
 
