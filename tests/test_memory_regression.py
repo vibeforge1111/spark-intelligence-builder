@@ -521,6 +521,11 @@ class MemoryRegressionTests(SparkTestCase):
                             "bridge_mode": bridge_mode,
                             "routing_decision": routing_decision,
                             "trace_ref": "trace:test",
+                            "attachment_context": {
+                                "attached_chip_records": [
+                                    {"key": "domain-chip-memory", "description": "large runtime-only payload"}
+                                ],
+                            },
                         },
                     },
                 }
@@ -726,6 +731,10 @@ class MemoryRegressionTests(SparkTestCase):
         self.assertEqual(retrieve.call_args.kwargs["subject"], "human:telegram:12345")
         self.assertEqual(retrieve.call_args.kwargs["predicate"], "profile.current_focus")
         self.assertTrue((output_dir / "telegram-memory-acceptance.json").exists())
+        gateway_payload = result.payload["cases"][0]["gateway_payload"]
+        self.assertEqual(gateway_payload["decision"], "allowed")
+        self.assertEqual(gateway_payload["detail"]["trace_ref"], "trace:test")
+        self.assertNotIn("attachment_context", gateway_payload["detail"])
 
     def test_run_telegram_memory_acceptance_blocks_on_promotion_gate_warning(self) -> None:
         output_dir = self.home / "artifacts" / "telegram-memory-acceptance-gate-fail"

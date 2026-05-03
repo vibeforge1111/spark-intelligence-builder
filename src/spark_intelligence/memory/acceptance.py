@@ -1082,7 +1082,7 @@ def _build_acceptance_case_result(*, case: TelegramMemoryAcceptanceCase, payload
         "trace_ref": str(detail.get("trace_ref") or payload.get("trace_ref") or "").strip(),
         "matched_expectations": not mismatches,
         "mismatches": mismatches,
-        "gateway_payload": payload,
+        "gateway_payload": _compact_acceptance_gateway_payload(payload),
     }
 
 
@@ -1191,6 +1191,37 @@ def _compact_gauntlet_gateway_payload(payload: dict[str, Any]) -> dict[str, Any]
     return {
         "ok": bool(payload.get("ok")),
         "decision": str(payload.get("decision") or "").strip(),
+        "detail": {key: detail.get(key) for key in compact_detail_keys if key in detail},
+    }
+
+
+def _compact_acceptance_gateway_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+    detail = result.get("detail") if isinstance(result.get("detail"), dict) else {}
+    compact_detail_keys = (
+        "request_id",
+        "simulation",
+        "origin_surface",
+        "telegram_user_id",
+        "chat_id",
+        "session_id",
+        "human_id",
+        "agent_id",
+        "message_text",
+        "response_text",
+        "trace_ref",
+        "bridge_mode",
+        "routing_decision",
+        "active_chip_key",
+        "active_chip_task_type",
+        "active_chip_evaluate_used",
+    )
+    return {
+        "message": payload.get("message"),
+        "user_id": payload.get("user_id"),
+        "chat_id": payload.get("chat_id"),
+        "ok": bool(result.get("ok") or payload.get("ok")),
+        "decision": str(result.get("decision") or payload.get("decision") or "").strip(),
         "detail": {key: detail.get(key) for key in compact_detail_keys if key in detail},
     }
 
