@@ -111,8 +111,8 @@ class ConfigManager:
                         "long_task_word_count": 40,
                     },
                 },
-                "chips": {"roots": [], "active_keys": [], "pinned_keys": []},
-                "specialization_paths": {"roots": [], "active_path_key": None},
+                "chips": {"roots": [], "ignored_roots": [], "active_keys": [], "pinned_keys": []},
+                "specialization_paths": {"roots": [], "ignored_roots": [], "active_path_key": None},
                 "personality": {
                     "enabled": True,
                     "evolver_state_path": None,

@@ -130,8 +130,8 @@ Guardrail:
 | Task | Repo | Status | Outcome | Acceptance |
 | --- | --- | --- | --- | --- |
 | SAH-001 Fix live Builder degraded status | builder | shipped | Builder self-status treats generic gateway/provider/channel readiness as an aggregate warning and points to concrete provider/channel blockers | `self status --refresh-wiki --json` includes `aggregate_readiness_warning` for Builder while keeping provider/channel rows as precise blockers |
-| SAH-002 Resolve duplicate chip key | builder/local env | planned | Attachment inventory no longer reports duplicate `domain-chip-crypto-trading` | attachment health check is clean or the duplicate is intentionally ignored with provenance |
-| SAH-003 Provider auth health pass | builder/local env | planned | Provider-backed routes stop surfacing stale 401 failures as current capability confidence | auth/provider status has a current probe and redacted repair hint |
+| SAH-002 Resolve duplicate chip key | builder/local env | shipped | Attachment inventory can ignore configured local scratch/compare roots without deleting repos | real home `attachments status --json` reports zero warnings after ignoring duplicate local roots |
+| SAH-003 Provider auth health pass | builder/local env | blocked_current_secret_missing | Provider-backed routes stop surfacing stale 401 failures as current capability confidence | `auth status --json` now gives the current blocker: `ZAI_API_KEY` is not visible in Spark home/process environment |
 | SAH-004 Live Telegram self-awareness smoke | telegram | in_progress | Actual Telegram chat validates `/self` and natural self-awareness prompts | runtime command and verifier pack exist; real bot trace run still required |
 | SAH-005 Live Telegram wiki smoke | telegram | in_progress | Actual Telegram chat validates `/wiki`, `/wiki pages`, candidate inbox, contradiction scan, and promotion | runtime command and verifier pack exist; real bot trace run still required |
 

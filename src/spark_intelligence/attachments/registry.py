@@ -143,6 +143,7 @@ def add_attachment_root(config_manager: ConfigManager, *, target: str, root: str
 
 
 def _resolve_chip_roots(config_manager: ConfigManager) -> tuple[list[Path], str]:
+    ignored_roots = _resolve_ignored_roots(config_manager, "spark.chips.ignored_roots")
     configured = config_manager.get_path("spark.chips.roots", default=[]) or []
     normalized = [
         config_manager.normalize_runtime_path(item) or Path(str(item)).expanduser()
@@ -150,7 +151,7 @@ def _resolve_chip_roots(config_manager: ConfigManager) -> tuple[list[Path], str]
         if str(item).strip()
     ]
     if normalized:
-        return normalized, "configured"
+        return _filter_ignored_roots(normalized, ignored_roots), "configured"
 
     desktop = Path.home() / "Desktop"
     if not desktop.exists():
@@ -165,6 +166,8 @@ def _resolve_chip_roots(config_manager: ConfigManager) -> tuple[list[Path], str]
         if path.is_dir() and (path / "spark-chip.json").exists()
     )
     for candidate in sorted(candidates):
+        if _is_ignored_root(candidate, ignored_roots):
+            continue
         key = str(candidate.resolve())
         if key not in seen:
             seen.add(key)
@@ -173,6 +176,7 @@ def _resolve_chip_roots(config_manager: ConfigManager) -> tuple[list[Path], str]
 
 
 def _resolve_roots(config_manager: ConfigManager, dotted_path: str, default_glob: str) -> tuple[list[Path], str]:
+    ignored_roots = _resolve_ignored_roots(config_manager, dotted_path.replace(".roots", ".ignored_roots"))
     configured = config_manager.get_path(dotted_path, default=[]) or []
     normalized = [
         config_manager.normalize_runtime_path(item) or Path(str(item)).expanduser()
@@ -180,10 +184,37 @@ def _resolve_roots(config_manager: ConfigManager, dotted_path: str, default_glob
         if str(item).strip()
     ]
     if normalized:
-        return normalized, "configured"
+        return _filter_ignored_roots(normalized, ignored_roots), "configured"
     desktop = Path.home() / "Desktop"
-    autodetected = sorted(path for path in desktop.glob(default_glob) if path.is_dir())
+    autodetected = sorted(
+        path for path in desktop.glob(default_glob) if path.is_dir() and not _is_ignored_root(path, ignored_roots)
+    )
     return autodetected, "autodiscovered" if autodetected else "missing"
+
+
+def _resolve_ignored_roots(config_manager: ConfigManager, dotted_path: str) -> set[str]:
+    configured = config_manager.get_path(dotted_path, default=[]) or []
+    ignored: set[str] = set()
+    for item in configured:
+        if not str(item).strip():
+            continue
+        path = config_manager.normalize_runtime_path(item) or Path(str(item)).expanduser()
+        ignored.add(_root_key(path))
+    return ignored
+
+
+def _filter_ignored_roots(roots: list[Path], ignored_roots: set[str]) -> list[Path]:
+    if not ignored_roots:
+        return roots
+    return [root for root in roots if not _is_ignored_root(root, ignored_roots)]
+
+
+def _is_ignored_root(root: Path, ignored_roots: set[str]) -> bool:
+    return _root_key(root) in ignored_roots
+
+
+def _root_key(root: Path) -> str:
+    return str(root.expanduser().resolve(strict=False)).casefold()
 
 
 def _scan_chip_roots(roots: list[Path], source: str, warnings: list[str]) -> list[AttachmentRecord]:

@@ -27,6 +27,32 @@ class AttachmentHookTests(SparkTestCase):
         self.assertEqual(scan.chip_source, "autodiscovered")
         self.assertTrue(any(record.key == "spark-browser" for record in scan.records))
 
+    def test_attachment_status_ignores_configured_duplicate_autodiscovery_roots(self) -> None:
+        desktop_root = self.home / "Desktop"
+        canonical_root = desktop_root / "domain-chip-duplicate"
+        compare_root = desktop_root / "domain-chip-duplicate-compare"
+        canonical_root.mkdir(parents=True, exist_ok=True)
+        compare_root.mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "schema_version": "spark-chip.v1",
+            "io_protocol": "spark-hook-io.v1",
+            "chip_name": "domain-chip-duplicate",
+            "description": "Duplicate test chip",
+            "capabilities": ["evaluate"],
+        }
+        (canonical_root / "spark-chip.json").write_text(json.dumps(manifest), encoding="utf-8")
+        (compare_root / "spark-chip.json").write_text(json.dumps(manifest), encoding="utf-8")
+        self.config_manager.set_path("spark.chips.ignored_roots", [str(compare_root)])
+
+        with patch("spark_intelligence.attachments.registry.Path.home", return_value=self.home):
+            scan = attachment_status(self.config_manager)
+
+        duplicate_records = [record for record in scan.records if record.key == "domain-chip-duplicate"]
+        self.assertEqual(scan.chip_source, "autodiscovered")
+        self.assertEqual(len(duplicate_records), 1)
+        self.assertEqual(Path(duplicate_records[0].repo_root), canonical_root)
+        self.assertFalse(any("duplicate chip key 'domain-chip-duplicate'" in warning for warning in scan.warnings))
+
     def test_build_attachment_context_includes_attached_chip_inventory(self) -> None:
         browser_root = create_fake_hook_chip(self.home, chip_key="spark-browser")
         swarm_root = create_fake_hook_chip(self.home, chip_key="spark-swarm")
