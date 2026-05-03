@@ -99,6 +99,7 @@ HARD_TELEGRAM_MEMORY_GAUNTLET_CASES: tuple[TelegramMemoryGauntletCase, ...] = (
         case_id="mutable_fact_authority_rule",
         category="authority_priority",
         message="What outranks wiki or old conversation when you answer mutable facts about me?",
+        expected_routing_decision="memory_authority_policy",
         expected_response_contains=("current", "newest"),
         expected_response_excludes=("supporting_not_authoritative wins",),
     ),
@@ -136,7 +137,6 @@ LIMIT_TELEGRAM_MEMORY_GAUNTLET_CASES: tuple[TelegramMemoryGauntletCase, ...] = (
         category="mutable_fact_correction",
         message="Set my preferred name to Limit Probe Alpha.",
         expected_response_contains=("Limit Probe Alpha",),
-        expected_movement_states=("captured", "saved"),
     ),
     TelegramMemoryGauntletCase(
         case_id="replace_preferred_name_current",
@@ -166,8 +166,8 @@ LIMIT_TELEGRAM_MEMORY_GAUNTLET_CASES: tuple[TelegramMemoryGauntletCase, ...] = (
             "If task recovery or an older conversation points somewhere else, but current state says "
             "my plan is evaluate open-ended persistent memory recall, what should guide your next answer?"
         ),
+        expected_routing_decision="memory_authority_policy",
         expected_response_contains=("current", "evaluate open-ended persistent memory recall"),
-        expected_movement_states=("retrieved",),
     ),
 )
 

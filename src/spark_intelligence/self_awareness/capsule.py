@@ -115,6 +115,8 @@ class SelfAwarenessCapsule:
         return json.dumps(self.to_payload(), indent=2)
 
     def to_text(self) -> str:
+        if self.render_focus == "memory_movement":
+            return _memory_movement_text(self)
         if self.render_focus == "memory_limits":
             return _memory_limits_text(self)
         short_version = (
@@ -191,7 +193,12 @@ def build_self_awareness_capsule(
     ]
     style_lens = _build_style_lens(personality_profile)
     memory_movement = export_memory_dashboard_movement_in_memory(config_manager=config_manager, limit=6)
-    render_focus = "memory_limits" if _looks_like_memory_limits_query(user_message) else ""
+    if _looks_like_memory_movement_query(user_message):
+        render_focus = "memory_movement"
+    elif _looks_like_memory_limits_query(user_message):
+        render_focus = "memory_limits"
+    else:
+        render_focus = ""
 
     source_ledger = [
         {
@@ -262,6 +269,45 @@ def _looks_like_memory_limits_query(user_message: str) -> bool:
             "movement trace",
         )
     )
+
+
+def _looks_like_memory_movement_query(user_message: str) -> bool:
+    lowered = str(user_message or "").casefold()
+    return "memory" in lowered and any(
+        marker in lowered
+        for marker in (
+            "dashboard show",
+            "dashboard should show",
+            "movement evidence",
+            "movement trace",
+            "movement rows",
+            "what movement",
+        )
+    )
+
+
+def _memory_movement_text(capsule: SelfAwarenessCapsule) -> str:
+    movement_counts = capsule.memory_movement.get("movement_counts") if isinstance(capsule.memory_movement, dict) else {}
+    movement_line = _movement_counts_compact(movement_counts)
+    lines = [
+        "Memory movement evidence",
+        "",
+        "When I answer from memory, the dashboard should show the lifecycle trail, not just the final reply.",
+        "",
+        "What to expect",
+        "- captured and saved when a durable memory-worthy fact is written.",
+        "- retrieved when I use memory to answer.",
+        "- promoted or selected when current-state memory becomes the trusted layer.",
+        "- summarized, decayed, blocked, or dropped when maintenance or gates change what survives.",
+        "",
+        "Authority boundary",
+        "- These rows are trace evidence only. They do not override your newest message or current-state memory.",
+    ]
+    if movement_line:
+        lines.extend(["", f"Current movement counts: {movement_line}."])
+    else:
+        lines.extend(["", "I do not see movement rows in this capsule yet, so I should run a probe before claiming the trace is complete."])
+    return "\n".join(lines).strip()
 
 
 def _memory_limits_text(capsule: SelfAwarenessCapsule) -> str:

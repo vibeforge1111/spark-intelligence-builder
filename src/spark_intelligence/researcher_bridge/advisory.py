@@ -1233,6 +1233,54 @@ def _looks_like_profile_fact_authority_conflict_query(user_message: str) -> bool
     )
 
 
+def _detect_memory_authority_policy_query(user_message: str) -> str | None:
+    lowered = str(user_message or "").casefold()
+    if not lowered:
+        return None
+    if (
+        "task recovery" in lowered
+        and "current state" in lowered
+        and any(marker in lowered for marker in ("older conversation", "old conversation", "points somewhere", "guide"))
+    ):
+        return "task_recovery_current_authority"
+    if (
+        "mutable facts" in lowered
+        and any(marker in lowered for marker in ("outranks", "override", "wins"))
+        and any(marker in lowered for marker in ("wiki", "old conversation", "older conversation", "old recall"))
+    ):
+        return "mutable_fact_authority"
+    return None
+
+
+def _extract_plan_from_authority_query(user_message: str) -> str:
+    match = re.search(
+        r"current state says my plan is\s+(.+?)(?:,\s*what|\?|$)",
+        str(user_message or ""),
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return "the current plan"
+    return match.group(1).strip(" .?!")
+
+
+def _build_memory_authority_policy_answer(kind: str, user_message: str) -> str:
+    if kind == "task_recovery_current_authority":
+        plan = _extract_plan_from_authority_query(user_message)
+        return (
+            "Current state should guide the next answer.\n\n"
+            "Your newest explicit message wins first. Otherwise current-state memory wins. "
+            "Task recovery, old conversation, wiki, and episodic recall stay supporting only.\n\n"
+            f"For this turn, use the current plan: {plan}."
+        )
+    return (
+        "Your newest explicit message wins first.\n\n"
+        "After that, current-state memory wins for mutable facts about you: name, timezone, focus, plan, "
+        "status, blockers, and preferences.\n\n"
+        "Wiki, old conversation, episodic recall, graph sidecars, and task recovery are supporting only. "
+        "They can add context, but they do not override current state."
+    )
+
+
 def _detect_open_memory_recall_query(user_message: str) -> OpenMemoryRecallQuery | None:
     normalized = " ".join(str(user_message or "").strip().split())
     if not normalized:
@@ -8832,6 +8880,67 @@ def build_researcher_reply(
             promotion_disposition=promotion_disposition,
         )
 
+    memory_authority_policy_kind = _detect_memory_authority_policy_query(user_message)
+    if not explicit_memory_message and not personality_context_extra and memory_authority_policy_kind:
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_authority_policy",
+            routing_decision="memory_authority_policy",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        reply_text = _build_memory_authority_policy_answer(memory_authority_policy_kind, user_message)
+        evidence_summary = f"status=memory_authority_policy kind={memory_authority_policy_kind}"
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered a memory authority policy query directly.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_authority_policy",
+            facts=_bridge_event_facts(
+                routing_decision="memory_authority_policy",
+                bridge_mode="memory_authority_policy",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "query_text": str(user_message or "").strip(),
+                    "policy_kind": memory_authority_policy_kind,
+                    "authority_order": [
+                        "newest_user_message",
+                        "current_state_memory",
+                        "supporting_context",
+                    ],
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_authority_policy",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_authority_policy",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+
     if not personality_context_extra and looks_like_system_registry_query(user_message):
         self_awareness_query = looks_like_self_awareness_query(user_message)
         direct_mode = "self_awareness_direct" if self_awareness_query else "system_registry_direct"
@@ -10385,7 +10494,8 @@ def build_researcher_reply(
         )
         if direct_fact_value and _looks_like_profile_fact_authority_conflict_query(user_message):
             label = "preferred name" if detected_profile_fact_query.predicate == "profile.preferred_name" else detected_profile_fact_query.label
-            reply_text = f"Use the current {label}: {direct_fact_value}."
+            prefix = "the " if str(label or "").casefold().startswith("current ") else "the current "
+            reply_text = f"Use {prefix}{label}: {direct_fact_value}."
         evidence_summary = (
             "status=memory_profile_fact "
             f"predicate={detected_profile_fact_query.predicate or 'unknown'} "

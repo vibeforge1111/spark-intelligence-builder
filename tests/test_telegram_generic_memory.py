@@ -345,6 +345,16 @@ class TelegramGenericMemoryTests(SparkTestCase):
                 channel_kind="telegram",
                 user_message="What is my current plan?",
             )
+            authority_query = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-set-current-plan-authority-query",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-set-current-plan",
+                channel_kind="telegram",
+                user_message="What is my current plan, and what older plan should not override it?",
+            )
 
         self.assertEqual(plan_update.mode, "current_plan_transition")
         self.assertEqual(plan_update.routing_decision, "current_plan_transition")
@@ -356,6 +366,10 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(
             plan_query.reply_text,
             "Your current plan is to evaluate open-ended persistent memory recall.",
+        )
+        self.assertEqual(
+            authority_query.reply_text,
+            "Use the current plan: evaluate open-ended persistent memory recall.",
         )
         tool_events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=5)
         plan_event = next(event for event in tool_events if event["reason_code"] == "current_plan_transition")
@@ -418,6 +432,50 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(combined_event["facts_json"]["current_plan"], "evaluate open-ended persistent memory recall")
         self.assertEqual(combined_event["facts_json"]["focus_source_class"], "current_state")
         self.assertEqual(combined_event["facts_json"]["plan_source_class"], "current_state")
+
+    def test_build_researcher_reply_answers_memory_authority_policy_without_provider(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory._resolve_bridge_provider",
+            side_effect=AssertionError("provider resolution should not run for memory authority policy"),
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider execution should not run for memory authority policy"),
+        ):
+            mutable = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-memory-authority-mutable",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-memory-authority",
+                channel_kind="telegram",
+                user_message="What outranks wiki or old conversation when you answer mutable facts about me?",
+            )
+            task_recovery = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-memory-authority-task-recovery",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-memory-authority",
+                channel_kind="telegram",
+                user_message=(
+                    "If task recovery or an older conversation points somewhere else, but current state says "
+                    "my plan is evaluate open-ended persistent memory recall, what should guide your next answer?"
+                ),
+            )
+
+        self.assertEqual(mutable.routing_decision, "memory_authority_policy")
+        self.assertIn("newest explicit message", mutable.reply_text)
+        self.assertIn("current-state memory wins", mutable.reply_text)
+        self.assertIn("supporting only", mutable.reply_text)
+        self.assertEqual(task_recovery.routing_decision, "memory_authority_policy")
+        self.assertIn("Current state should guide", task_recovery.reply_text)
+        self.assertIn("evaluate open-ended persistent memory recall", task_recovery.reply_text)
 
     def test_build_researcher_reply_handles_plan_correction_history_and_deletion(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)

@@ -294,10 +294,12 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
 
         self.assertEqual(result.mode, "self_awareness_direct")
         self.assertEqual(result.routing_decision, "self_awareness_direct")
-        self.assertIn("Memory self-awareness", result.reply_text)
+        self.assertIn("Memory movement evidence", result.reply_text)
         self.assertIn("captured", result.reply_text)
         self.assertIn("retrieved", result.reply_text)
         self.assertIn("saved", result.reply_text)
+        self.assertIn("trace evidence only", result.reply_text)
+        self.assertNotIn("Where memory still lacks", result.reply_text)
 
     def test_self_awareness_query_beats_entity_state_summary_route(self) -> None:
         result = build_researcher_reply(
