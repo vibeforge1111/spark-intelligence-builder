@@ -115,6 +115,7 @@ from spark_intelligence.memory import (
     run_memory_sdk_maintenance,
     run_telegram_memory_architecture_soak,
     run_telegram_memory_acceptance,
+    run_telegram_memory_gauntlet,
     run_telegram_memory_regression,
 )
 from spark_intelligence.personality import (
@@ -2154,6 +2155,17 @@ def build_parser() -> argparse.ArgumentParser:
     memory_acceptance_parser.add_argument("--chat-id", help="Explicit Telegram chat id override")
     memory_acceptance_parser.add_argument("--write", help="Optional output path for the acceptance summary JSON payload")
     memory_acceptance_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    memory_gauntlet_parser = memory_subparsers.add_parser(
+        "run-telegram-gauntlet",
+        help="Run an end-to-end simulated Telegram memory gauntlet with dashboard movement evidence",
+    )
+    memory_gauntlet_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    memory_gauntlet_parser.add_argument("--output-dir", help="Gauntlet artifact output directory")
+    memory_gauntlet_parser.add_argument("--user-id", help="Explicit Telegram user id to simulate")
+    memory_gauntlet_parser.add_argument("--username", help="Telegram username to simulate")
+    memory_gauntlet_parser.add_argument("--chat-id", help="Explicit Telegram chat id override")
+    memory_gauntlet_parser.add_argument("--write", help="Optional output path for the gauntlet summary JSON payload")
+    memory_gauntlet_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_acceptance_export_parser = memory_subparsers.add_parser(
         "export-telegram-acceptance-pack",
         help="Export the supervised Telegram memory-quality acceptance prompt pack",
@@ -6221,6 +6233,25 @@ def handle_memory_run_telegram_acceptance(args: argparse.Namespace) -> int:
     return 0 if isinstance(summary, dict) and summary.get("status") == "passed" else 1
 
 
+def handle_memory_run_telegram_gauntlet(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = run_telegram_memory_gauntlet(
+        config_manager=config_manager,
+        state_db=state_db,
+        output_dir=args.output_dir,
+        user_id=args.user_id,
+        username=args.username,
+        chat_id=args.chat_id,
+        write_path=args.write,
+    )
+    print(result.to_json() if args.json else result.to_text())
+    summary = result.payload.get("summary") if isinstance(result.payload, dict) else {}
+    return 0 if isinstance(summary, dict) and summary.get("status") == "passed" else 1
+
+
 def handle_memory_export_telegram_acceptance_pack(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     config_manager.bootstrap()
@@ -7970,6 +8001,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_memory_run_telegram_regression(args)
     if args.command == "memory" and args.memory_command == "run-telegram-acceptance":
         return handle_memory_run_telegram_acceptance(args)
+    if args.command == "memory" and args.memory_command == "run-telegram-gauntlet":
+        return handle_memory_run_telegram_gauntlet(args)
     if args.command == "memory" and args.memory_command == "export-telegram-acceptance-pack":
         return handle_memory_export_telegram_acceptance_pack(args)
     if args.command == "memory" and args.memory_command == "benchmark-architectures":

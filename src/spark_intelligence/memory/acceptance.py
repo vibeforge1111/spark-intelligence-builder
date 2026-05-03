@@ -8,7 +8,7 @@ from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.identity.service import approve_pairing, consume_pairing_welcome, rename_agent_identity
-from spark_intelligence.memory.orchestrator import hybrid_memory_retrieve
+from spark_intelligence.memory.orchestrator import export_memory_dashboard_movement_in_memory, hybrid_memory_retrieve
 from spark_intelligence.memory.regression import _allocate_regression_identity
 from spark_intelligence.state.db import StateDB
 
@@ -22,6 +22,52 @@ class TelegramMemoryAcceptanceCase:
     expected_routing_decision: str | None = None
     expected_response_contains: tuple[str, ...] = ()
     expected_response_excludes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class TelegramMemoryGauntletCase:
+    case_id: str
+    category: str
+    message: str
+    expected_bridge_mode: str | None = None
+    expected_routing_decision: str | None = None
+    expected_response_contains: tuple[str, ...] = ()
+    expected_response_excludes: tuple[str, ...] = ()
+    expected_movement_states: tuple[str, ...] = ()
+
+
+DEFAULT_TELEGRAM_MEMORY_GAUNTLET_CASES: tuple[TelegramMemoryGauntletCase, ...] = (
+    TelegramMemoryGauntletCase(
+        case_id="seed_current_focus",
+        category="current_state_write",
+        message="Set my current focus to persistent memory quality evaluation.",
+        expected_response_contains=("persistent memory quality evaluation",),
+        expected_movement_states=("captured", "saved"),
+    ),
+    TelegramMemoryGauntletCase(
+        case_id="seed_supporting_episode",
+        category="episodic_write",
+        message="For later, we used the tiny desk plant named Sol as a low-stakes episodic recall probe.",
+        expected_response_contains=("Sol",),
+        expected_movement_states=("captured", "saved"),
+    ),
+    TelegramMemoryGauntletCase(
+        case_id="current_vs_supporting_recall",
+        category="source_aware_recall",
+        message="What do you remember about our memory work today, and what is current versus supporting context?",
+        expected_response_contains=("current", "supporting"),
+        expected_response_excludes=("status checklist",),
+        expected_movement_states=("retrieved",),
+    ),
+    TelegramMemoryGauntletCase(
+        case_id="memory_lack_self_awareness",
+        category="self_awareness_memory_limits",
+        message="Where does your memory still lack right now, and how would we improve it?",
+        expected_response_contains=("memory", "improve"),
+        expected_response_excludes=("Spark Browser", "Spark Voice"),
+        expected_movement_states=("retrieved",),
+    ),
+)
 
 
 DEFAULT_TELEGRAM_MEMORY_ACCEPTANCE_CASES: tuple[TelegramMemoryAcceptanceCase, ...] = (
@@ -484,6 +530,44 @@ class TelegramMemoryAcceptanceResult:
 
 
 @dataclass(frozen=True)
+class TelegramMemoryGauntletResult:
+    output_dir: Path
+    payload: dict[str, Any]
+
+    def to_json(self) -> str:
+        return json.dumps(self.payload, indent=2)
+
+    def to_text(self) -> str:
+        summary = self.payload.get("summary") if isinstance(self.payload, dict) else {}
+        lines = ["Spark Telegram memory gauntlet"]
+        lines.append(f"- output_dir: {self.output_dir}")
+        if isinstance(summary, dict):
+            lines.append(f"- status: {summary.get('status') or 'unknown'}")
+            lines.append(f"- cases: {summary.get('case_count', 0)}")
+            lines.append(f"- matched: {summary.get('matched_case_count', 0)}")
+            lines.append(f"- mismatched: {summary.get('mismatched_case_count', 0)}")
+            lines.append(f"- selected_user_id: {summary.get('selected_user_id') or 'unknown'}")
+            movement_delta = summary.get("movement_delta_counts")
+            if isinstance(movement_delta, dict) and movement_delta:
+                rendered = ", ".join(f"{key}:{value}" for key, value in sorted(movement_delta.items()))
+                lines.append(f"- movement_delta: {rendered}")
+        mismatches = self.payload.get("mismatches") if isinstance(self.payload, dict) else []
+        if mismatches:
+            lines.append("- mismatches:")
+            for mismatch in mismatches[:8]:
+                if not isinstance(mismatch, dict):
+                    continue
+                lines.append(
+                    f"  - {mismatch.get('case_id') or 'unknown'}: "
+                    + ", ".join(str(item) for item in mismatch.get("mismatches", []))
+                )
+        artifact_paths = self.payload.get("artifact_paths") if isinstance(self.payload, dict) else {}
+        if isinstance(artifact_paths, dict) and artifact_paths.get("summary_json"):
+            lines.append(f"- summary_json: {artifact_paths['summary_json']}")
+        return "\n".join(lines)
+
+
+@dataclass(frozen=True)
 class TelegramMemoryAcceptancePackExportResult:
     output_dir: Path
     payload: dict[str, Any]
@@ -639,6 +723,104 @@ def run_telegram_memory_acceptance(
     return TelegramMemoryAcceptanceResult(output_dir=resolved_output_dir, payload=payload)
 
 
+def run_telegram_memory_gauntlet(
+    *,
+    config_manager: ConfigManager,
+    state_db: StateDB,
+    output_dir: str | Path | None = None,
+    user_id: str | None = None,
+    username: str | None = None,
+    chat_id: str | None = None,
+    write_path: str | Path | None = None,
+    cases: tuple[TelegramMemoryGauntletCase, ...] = DEFAULT_TELEGRAM_MEMORY_GAUNTLET_CASES,
+) -> TelegramMemoryGauntletResult:
+    from spark_intelligence.gateway.runtime import gateway_simulate_telegram_update
+
+    resolved_output_dir = Path(output_dir) if output_dir else config_manager.paths.home / "artifacts" / "telegram-memory-gauntlet"
+    resolved_output_dir.mkdir(parents=True, exist_ok=True)
+    update_dir = resolved_output_dir / "telegram-updates"
+    update_dir.mkdir(parents=True, exist_ok=True)
+    resolved_write_path = Path(write_path) if write_path else resolved_output_dir / "telegram-memory-gauntlet.json"
+
+    selected_user_id = str(user_id or "").strip() or None
+    selected_chat_id = str(chat_id or "").strip() or None
+    if selected_user_id is None:
+        selected_user_id, selected_chat_id = _allocate_regression_identity(chat_id=selected_chat_id)
+    elif selected_chat_id is None:
+        selected_chat_id = selected_user_id
+    selected_username = str(username or "memory-gauntlet").strip() or "memory-gauntlet"
+    _prepare_acceptance_identity(
+        state_db=state_db,
+        external_user_id=selected_user_id,
+        username=selected_username,
+    )
+
+    run_movement_before = _movement_snapshot(config_manager=config_manager)
+    case_payloads: list[dict[str, Any]] = []
+    mismatches: list[dict[str, Any]] = []
+    for index, case in enumerate(cases, start=1):
+        print(f"[memory-gauntlet] case:{case.case_id}", file=sys.stderr, flush=True)
+        update_payload = _build_gauntlet_update_payload(
+            index=index,
+            case=case,
+            user_id=selected_user_id,
+            username=selected_username,
+            chat_id=selected_chat_id,
+        )
+        update_path = update_dir / f"{index:02d}-{case.case_id}.json"
+        update_path.write_text(json.dumps(update_payload, indent=2), encoding="utf-8")
+        movement_before = _movement_snapshot(config_manager=config_manager)
+        raw = gateway_simulate_telegram_update(
+            config_manager=config_manager,
+            state_db=state_db,
+            update_path=update_path,
+            as_json=True,
+            simulation=True,
+        )
+        movement_after = _movement_snapshot(config_manager=config_manager)
+        case_result = _build_gauntlet_case_result(
+            case=case,
+            payload=_parse_json_object(raw),
+            update_payload=update_payload,
+            update_path=update_path,
+            movement_before=movement_before,
+            movement_after=movement_after,
+        )
+        case_payloads.append(case_result)
+        if not case_result.get("matched_expectations", True):
+            mismatches.append(case_result)
+
+    run_movement_after = _movement_snapshot(config_manager=config_manager)
+    movement_delta_counts = _movement_counts_delta(
+        run_movement_before.get("movement_counts"),
+        run_movement_after.get("movement_counts"),
+    )
+    status = "passed" if not mismatches else "failed"
+    payload = {
+        "summary": {
+            "status": status,
+            "case_count": len(case_payloads),
+            "matched_case_count": len(case_payloads) - len(mismatches),
+            "mismatched_case_count": len(mismatches),
+            "selected_user_id": selected_user_id,
+            "selected_chat_id": selected_chat_id,
+            "human_id": f"human:telegram:{selected_user_id}",
+            "movement_delta_counts": movement_delta_counts,
+            "dashboard_movement_authority": run_movement_after.get("authority"),
+        },
+        "cases": case_payloads,
+        "mismatches": mismatches,
+        "dashboard_movement_before": run_movement_before,
+        "dashboard_movement_after": run_movement_after,
+        "artifact_paths": {
+            "summary_json": str(resolved_write_path),
+            "telegram_updates_dir": str(update_dir),
+        },
+    }
+    resolved_write_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return TelegramMemoryGauntletResult(output_dir=resolved_output_dir, payload=payload)
+
+
 def _case_to_operator_payload(*, index: int, case: TelegramMemoryAcceptanceCase) -> dict[str, Any]:
     return {
         "index": index,
@@ -756,6 +938,110 @@ def _build_acceptance_case_result(*, case: TelegramMemoryAcceptanceCase, payload
         "mismatches": mismatches,
         "gateway_payload": payload,
     }
+
+
+def _build_gauntlet_update_payload(
+    *,
+    index: int,
+    case: TelegramMemoryGauntletCase,
+    user_id: str,
+    username: str,
+    chat_id: str,
+) -> dict[str, Any]:
+    return {
+        "update_id": 910000 + index,
+        "message": {
+            "message_id": 920000 + index,
+            "chat": {
+                "id": chat_id,
+                "type": "private",
+            },
+            "from": {
+                "id": user_id,
+                "username": username,
+            },
+            "text": case.message,
+        },
+    }
+
+
+def _build_gauntlet_case_result(
+    *,
+    case: TelegramMemoryGauntletCase,
+    payload: dict[str, Any],
+    update_payload: dict[str, Any],
+    update_path: Path,
+    movement_before: dict[str, Any],
+    movement_after: dict[str, Any],
+) -> dict[str, Any]:
+    detail = payload.get("detail") if isinstance(payload.get("detail"), dict) else {}
+    bridge_mode = str(detail.get("bridge_mode") or payload.get("bridge_mode") or "").strip()
+    routing_decision = str(detail.get("routing_decision") or payload.get("routing_decision") or "").strip()
+    response_text = str(detail.get("response_text") or payload.get("response_text") or "").strip()
+    movement_delta = _movement_counts_delta(movement_before.get("movement_counts"), movement_after.get("movement_counts"))
+    mismatches: list[str] = []
+    if str(payload.get("decision") or "").strip() != "allowed":
+        mismatches.append(f"decision:{str(payload.get('decision') or 'missing').strip()}")
+    if case.expected_bridge_mode and bridge_mode != case.expected_bridge_mode:
+        mismatches.append(f"bridge_mode:{bridge_mode or 'missing'}")
+    if case.expected_routing_decision and routing_decision != case.expected_routing_decision:
+        mismatches.append(f"routing_decision:{routing_decision or 'missing'}")
+    lowered_response = response_text.lower()
+    for expected_fragment in case.expected_response_contains:
+        if expected_fragment.lower() not in lowered_response:
+            mismatches.append(f"response_missing:{expected_fragment}")
+    for forbidden_fragment in case.expected_response_excludes:
+        if forbidden_fragment.lower() in lowered_response:
+            mismatches.append(f"response_forbidden:{forbidden_fragment}")
+    for movement_state in case.expected_movement_states:
+        if int(movement_delta.get(movement_state, 0) or 0) < 1:
+            mismatches.append(f"movement_missing:{movement_state}")
+    return {
+        "case_id": case.case_id,
+        "category": case.category,
+        "message": case.message,
+        "telegram_update_path": str(update_path),
+        "telegram_update_payload": update_payload,
+        "expected_response_contains": list(case.expected_response_contains),
+        "expected_response_excludes": list(case.expected_response_excludes),
+        "expected_movement_states": list(case.expected_movement_states),
+        "decision": str(payload.get("decision") or "").strip(),
+        "bridge_mode": bridge_mode,
+        "routing_decision": routing_decision,
+        "response_text": response_text,
+        "trace_ref": str(detail.get("trace_ref") or payload.get("trace_ref") or "").strip(),
+        "movement_delta_counts": movement_delta,
+        "matched_expectations": not mismatches,
+        "mismatches": mismatches,
+        "gateway_payload": payload,
+    }
+
+
+def _movement_snapshot(*, config_manager: ConfigManager) -> dict[str, Any]:
+    snapshot = export_memory_dashboard_movement_in_memory(
+        config_manager=config_manager,
+        sdk_module="domain_chip_memory",
+    )
+    return snapshot if isinstance(snapshot, dict) else {"status": "unavailable", "movement_counts": {}}
+
+
+def _movement_counts_delta(before: Any, after: Any) -> dict[str, int]:
+    before_counts = before if isinstance(before, dict) else {}
+    after_counts = after if isinstance(after, dict) else {}
+    movement_states = sorted({str(key) for key in before_counts} | {str(key) for key in after_counts})
+    delta: dict[str, int] = {}
+    for movement_state in movement_states:
+        try:
+            before_value = int(before_counts.get(movement_state) or 0)
+        except (TypeError, ValueError):
+            before_value = 0
+        try:
+            after_value = int(after_counts.get(movement_state) or 0)
+        except (TypeError, ValueError):
+            after_value = 0
+        if after_value != before_value:
+            delta[movement_state] = after_value - before_value
+    return delta
 
 
 def _build_acceptance_gate_assertions(

@@ -63,10 +63,14 @@ from spark_intelligence.memory.architecture_soak import (
     run_telegram_memory_architecture_soak,
 )
 from spark_intelligence.memory.acceptance import (
+    DEFAULT_TELEGRAM_MEMORY_GAUNTLET_CASES,
     TelegramMemoryAcceptancePackExportResult,
     TelegramMemoryAcceptanceResult,
+    TelegramMemoryGauntletCase,
+    TelegramMemoryGauntletResult,
     export_telegram_memory_acceptance_pack,
     run_telegram_memory_acceptance,
+    run_telegram_memory_gauntlet,
 )
 from spark_intelligence.memory.regression import (
     TelegramMemoryRegressionResult,
@@ -122,8 +126,11 @@ __all__ = [
     "ShadowReplayExportResult",
     "TelegramArchitectureLiveComparisonResult",
     "TelegramArchitectureSoakResult",
+    "DEFAULT_TELEGRAM_MEMORY_GAUNTLET_CASES",
     "TelegramMemoryAcceptancePackExportResult",
     "TelegramMemoryAcceptanceResult",
+    "TelegramMemoryGauntletCase",
+    "TelegramMemoryGauntletResult",
     "TelegramStateKnowledgeBaseResult",
     "TelegramMemoryRegressionResult",
     "benchmark_memory_architectures",
@@ -160,6 +167,7 @@ __all__ = [
     "write_belief_to_memory",
     "run_telegram_memory_architecture_soak",
     "run_telegram_memory_acceptance",
+    "run_telegram_memory_gauntlet",
     "run_telegram_memory_regression",
     "write_profile_fact_to_memory",
     "write_daily_summary_to_memory",

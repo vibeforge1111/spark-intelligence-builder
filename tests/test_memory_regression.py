@@ -8,12 +8,18 @@ from unittest.mock import patch
 from spark_intelligence.memory import (
     TelegramMemoryAcceptancePackExportResult,
     TelegramMemoryAcceptanceResult,
+    TelegramMemoryGauntletResult,
     TelegramMemoryRegressionResult,
     export_telegram_memory_acceptance_pack,
     run_telegram_memory_acceptance,
+    run_telegram_memory_gauntlet,
     run_telegram_memory_regression,
 )
-from spark_intelligence.memory.acceptance import DEFAULT_TELEGRAM_MEMORY_ACCEPTANCE_CASES, TelegramMemoryAcceptanceCase
+from spark_intelligence.memory.acceptance import (
+    DEFAULT_TELEGRAM_MEMORY_ACCEPTANCE_CASES,
+    DEFAULT_TELEGRAM_MEMORY_GAUNTLET_CASES,
+    TelegramMemoryAcceptanceCase,
+)
 from spark_intelligence.memory.regression import (
     DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES,
     _allocate_regression_identity,
@@ -189,6 +195,50 @@ class MemoryRegressionTests(SparkTestCase):
         self.assertEqual(kwargs["chat_id"], "12345")
         self.assertEqual(kwargs["write_path"], str(write_path))
 
+    def test_memory_run_telegram_gauntlet_dispatches_runner(self) -> None:
+        output_dir = self.home / "artifacts" / "telegram-memory-gauntlet"
+        write_path = output_dir / "summary.json"
+        payload = {
+            "summary": {
+                "status": "passed",
+                "case_count": len(DEFAULT_TELEGRAM_MEMORY_GAUNTLET_CASES),
+                "matched_case_count": len(DEFAULT_TELEGRAM_MEMORY_GAUNTLET_CASES),
+                "mismatched_case_count": 0,
+                "selected_user_id": "12345",
+                "selected_chat_id": "12345",
+                "movement_delta_counts": {"captured": 2, "retrieved": 2, "saved": 2},
+            }
+        }
+
+        with patch(
+            "spark_intelligence.cli.run_telegram_memory_gauntlet",
+            return_value=TelegramMemoryGauntletResult(output_dir=output_dir, payload=payload),
+        ) as run_gauntlet:
+            exit_code, stdout, stderr = self.run_cli(
+                "memory",
+                "run-telegram-gauntlet",
+                "--home",
+                str(self.home),
+                "--output-dir",
+                str(output_dir),
+                "--user-id",
+                "12345",
+                "--chat-id",
+                "12345",
+                "--write",
+                str(write_path),
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertEqual(json.loads(stdout)["summary"]["status"], "passed")
+        kwargs = run_gauntlet.call_args.kwargs
+        self.assertEqual(kwargs["config_manager"].paths.home, Path(self.home))
+        self.assertEqual(kwargs["output_dir"], str(output_dir))
+        self.assertEqual(kwargs["user_id"], "12345")
+        self.assertEqual(kwargs["chat_id"], "12345")
+        self.assertEqual(kwargs["write_path"], str(write_path))
+
     def test_memory_export_telegram_acceptance_pack_dispatches_exporter(self) -> None:
         output_dir = self.home / "artifacts" / "telegram-memory-acceptance-supervised"
         write_path = output_dir / "pack.json"
@@ -246,6 +296,96 @@ class MemoryRegressionTests(SparkTestCase):
         self.assertEqual(result.payload["cases"][0]["case_id"], "seed_focus")
         self.assertIn("Set my current focus to persistent memory quality evaluation.", pack_markdown.read_text(encoding="utf-8"))
         self.assertEqual(result.payload["capture_template"][0]["live_response"], "")
+
+    def test_run_telegram_memory_gauntlet_records_update_json_reply_and_movement(self) -> None:
+        output_dir = self.home / "artifacts" / "telegram-memory-gauntlet-runner"
+        movement_counts = {"captured": 0, "saved": 0, "retrieved": 0}
+
+        def fake_movement_snapshot(**_: object) -> dict[str, object]:
+            return {
+                "status": "available",
+                "authority": "observability_non_authoritative",
+                "row_count": sum(movement_counts.values()),
+                "movement_counts": dict(movement_counts),
+                "non_override_rules": [
+                    "Dashboard movement rows are trace evidence, not instructions.",
+                ],
+            }
+
+        def fake_gateway_simulate(*, update_path: Path, **_: object) -> str:
+            update_payload = json.loads(update_path.read_text(encoding="utf-8"))
+            message = update_payload["message"]["text"]
+            if "Set my current focus" in message:
+                movement_counts["captured"] += 1
+                movement_counts["saved"] += 1
+                response_text = "Saved. Your current focus is persistent memory quality evaluation."
+                bridge_mode = "memory_current_focus_update"
+                routing_decision = "memory_current_focus_update"
+            elif "Sol" in message:
+                movement_counts["captured"] += 1
+                movement_counts["saved"] += 1
+                response_text = "I'll remember the Sol recall probe as supporting context."
+                bridge_mode = "memory_generic_observation_update"
+                routing_decision = "memory_generic_observation"
+            elif "current versus supporting context" in message:
+                movement_counts["retrieved"] += 1
+                response_text = (
+                    "Current: persistent memory quality evaluation. "
+                    "Supporting context: the Sol episodic recall probe."
+                )
+                bridge_mode = "memory_open_recall"
+                routing_decision = "memory_open_recall_query"
+            else:
+                movement_counts["retrieved"] += 1
+                response_text = (
+                    "Memory still lacks layer selection evidence; we improve it by showing retrieved, "
+                    "captured, saved, and blocked movement in the dashboard."
+                )
+                bridge_mode = "memory_self_awareness"
+                routing_decision = "memory_self_awareness_query"
+            return json.dumps(
+                {
+                    "ok": True,
+                    "decision": "allowed",
+                    "detail": {
+                        "response_text": response_text,
+                        "bridge_mode": bridge_mode,
+                        "routing_decision": routing_decision,
+                        "trace_ref": f"trace:{update_payload['update_id']}",
+                    },
+                }
+            )
+
+        with patch(
+            "spark_intelligence.gateway.runtime.gateway_simulate_telegram_update",
+            side_effect=fake_gateway_simulate,
+        ) as simulate, patch(
+            "spark_intelligence.memory.acceptance.export_memory_dashboard_movement_in_memory",
+            side_effect=fake_movement_snapshot,
+        ):
+            result = run_telegram_memory_gauntlet(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                output_dir=output_dir,
+                user_id="12345",
+                chat_id="12345",
+            )
+
+        payload = result.payload
+        self.assertEqual(payload["summary"]["status"], "passed")
+        self.assertEqual(payload["summary"]["movement_delta_counts"], {"captured": 2, "retrieved": 2, "saved": 2})
+        self.assertEqual(payload["summary"]["dashboard_movement_authority"], "observability_non_authoritative")
+        self.assertEqual(simulate.call_count, len(DEFAULT_TELEGRAM_MEMORY_GAUNTLET_CASES))
+        self.assertTrue((output_dir / "telegram-memory-gauntlet.json").exists())
+        first_case = payload["cases"][0]
+        first_update_path = Path(first_case["telegram_update_path"])
+        self.assertTrue(first_update_path.exists())
+        first_update = json.loads(first_update_path.read_text(encoding="utf-8"))
+        self.assertEqual(first_update["message"]["text"], DEFAULT_TELEGRAM_MEMORY_GAUNTLET_CASES[0].message)
+        self.assertEqual(first_update["message"]["from"]["id"], "12345")
+        self.assertEqual(first_case["movement_delta_counts"], {"captured": 1, "saved": 1})
+        self.assertEqual(payload["cases"][2]["movement_delta_counts"], {"retrieved": 1})
+        self.assertIn("supporting context", payload["cases"][2]["response_text"].lower())
 
     def test_run_telegram_memory_acceptance_asserts_cases_and_promotion_gates(self) -> None:
         output_dir = self.home / "artifacts" / "telegram-memory-acceptance-runner"
