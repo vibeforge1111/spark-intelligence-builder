@@ -18,6 +18,7 @@ from spark_intelligence.memory import (
 from spark_intelligence.memory.acceptance import (
     DEFAULT_TELEGRAM_MEMORY_ACCEPTANCE_CASES,
     DEFAULT_TELEGRAM_MEMORY_GAUNTLET_CASES,
+    HARD_TELEGRAM_MEMORY_GAUNTLET_CASES,
     TelegramMemoryAcceptanceCase,
 )
 from spark_intelligence.memory.regression import (
@@ -225,6 +226,9 @@ class MemoryRegressionTests(SparkTestCase):
                 "12345",
                 "--chat-id",
                 "12345",
+                "--origin",
+                "telegram-runtime",
+                "--hard",
                 "--write",
                 str(write_path),
                 "--json",
@@ -238,6 +242,8 @@ class MemoryRegressionTests(SparkTestCase):
         self.assertEqual(kwargs["user_id"], "12345")
         self.assertEqual(kwargs["chat_id"], "12345")
         self.assertEqual(kwargs["write_path"], str(write_path))
+        self.assertEqual(kwargs["origin"], "telegram-runtime")
+        self.assertEqual(kwargs["cases"], HARD_TELEGRAM_MEMORY_GAUNTLET_CASES)
 
     def test_memory_export_telegram_acceptance_pack_dispatches_exporter(self) -> None:
         output_dir = self.home / "artifacts" / "telegram-memory-acceptance-supervised"

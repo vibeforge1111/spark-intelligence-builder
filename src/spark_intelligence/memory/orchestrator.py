@@ -926,6 +926,7 @@ class _DomainChipMemoryClientAdapter:
             request_kwargs.pop("entity_key", None)
             request = self._module.CurrentStateRequest(**request_kwargs)
         result = self._sdk.get_current_state(request)
+        self._persist_manual_state()
         return _normalize_domain_lookup_result(
             result=result,
             subject=subject,
@@ -949,6 +950,7 @@ class _DomainChipMemoryClientAdapter:
             request_kwargs.pop("entity_key", None)
             request = self._module.HistoricalStateRequest(**request_kwargs)
         result = self._sdk.get_historical_state(request)
+        self._persist_manual_state()
         return _normalize_domain_lookup_result(
             result=result,
             subject=subject,

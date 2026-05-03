@@ -107,6 +107,7 @@ from spark_intelligence.memory import (
     export_shadow_replay,
     export_shadow_replay_batch,
     export_telegram_memory_acceptance_pack,
+    HARD_TELEGRAM_MEMORY_GAUNTLET_CASES,
     hybrid_memory_retrieve,
     inspect_human_memory_in_memory,
     inspect_memory_sdk_runtime,
@@ -2164,6 +2165,13 @@ def build_parser() -> argparse.ArgumentParser:
     memory_gauntlet_parser.add_argument("--user-id", help="Explicit Telegram user id to simulate")
     memory_gauntlet_parser.add_argument("--username", help="Telegram username to simulate")
     memory_gauntlet_parser.add_argument("--chat-id", help="Explicit Telegram chat id override")
+    memory_gauntlet_parser.add_argument(
+        "--origin",
+        choices=("simulation", "telegram-runtime"),
+        default="simulation",
+        help="Label generated Builder traces as synthetic simulation or real Telegram runtime bridge traffic",
+    )
+    memory_gauntlet_parser.add_argument("--hard", action="store_true", help="Run the harder profile/runtime gauntlet pack")
     memory_gauntlet_parser.add_argument("--write", help="Optional output path for the gauntlet summary JSON payload")
     memory_gauntlet_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     memory_acceptance_export_parser = memory_subparsers.add_parser(
@@ -6246,6 +6254,8 @@ def handle_memory_run_telegram_gauntlet(args: argparse.Namespace) -> int:
         username=args.username,
         chat_id=args.chat_id,
         write_path=args.write,
+        origin=args.origin,
+        cases=HARD_TELEGRAM_MEMORY_GAUNTLET_CASES if args.hard else None,
     )
     print(result.to_json() if args.json else result.to_text())
     summary = result.payload.get("summary") if isinstance(result.payload, dict) else {}

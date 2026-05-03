@@ -3060,6 +3060,8 @@ class MemoryOrchestratorTests(SparkTestCase):
         package_dir = local_root / "src" / "domain_chip_memory"
         package_dir.mkdir(parents=True, exist_ok=True)
         (package_dir / "__init__.py").write_text(
+            "import os\n"
+            "\n"
             "class SparkMemorySDK:\n"
             "    def __init__(self):\n"
             "        self.ready = True\n"
@@ -3067,7 +3069,7 @@ class MemoryOrchestratorTests(SparkTestCase):
             "def build_sdk_contract_summary():\n"
             "    return {\n"
             "        'runtime_class': 'SparkMemorySDK',\n"
-            "        'runtime_memory_architecture': 'dual_store_event_calendar_hybrid',\n"
+            "        'runtime_memory_architecture': os.environ.get('SPARK_MEMORY_RUNTIME_ARCHITECTURE'),\n"
             "        'runtime_memory_provider': 'heuristic_v1',\n"
             "    }\n",
             encoding="utf-8",
@@ -3686,16 +3688,36 @@ class MemoryOrchestratorTests(SparkTestCase):
                 "salience_score": 0.8,
             },
         )
+        client.write_observation(
+            operation="update",
+            subject="human:movement:test",
+            predicate="profile.current_plan",
+            value="trace current-state retrieval movement",
+            text="Current plan is trace current-state retrieval movement.",
+            session_id="session:movement:test",
+            turn_id="turn:movement:test:current",
+            timestamp="2026-05-02T09:01:00+00:00",
+            retention_class="active_state",
+            metadata={
+                "memory_role": "current_state",
+                "source_surface": "test",
+                "salience_score": 0.9,
+            },
+        )
         client.retrieve_evidence(
             query="movement trail",
             subject="human:movement:test",
             predicate="task.note",
             limit=2,
         )
+        client.get_current_state(
+            subject="human:movement:test",
+            predicate="profile.current_plan",
+        )
 
-        before = export_memory_dashboard_movement_in_memory(config_manager=self.config_manager, sdk_module="domain_chip_memory")
+        before = export_memory_dashboard_movement_in_memory(config_manager=self.config_manager, sdk_module="domain_chip_memory", limit=25)
         memory_orchestrator._SDK_CLIENT_CACHE.clear()
-        after = export_memory_dashboard_movement_in_memory(config_manager=self.config_manager, sdk_module="domain_chip_memory")
+        after = export_memory_dashboard_movement_in_memory(config_manager=self.config_manager, sdk_module="domain_chip_memory", limit=25)
 
         self.assertEqual(after["status"], "supported")
         self.assertGreaterEqual(after["movement_counts"].get("captured", 0), before["movement_counts"].get("captured", 0))
@@ -3705,6 +3727,14 @@ class MemoryOrchestratorTests(SparkTestCase):
             any(
                 row.get("movement_state") == "retrieved"
                 and (row.get("trace") or {}).get("operation") == "retrieve_evidence"
+                for row in after["rows"]
+            )
+        )
+        self.assertTrue(
+            any(
+                row.get("movement_state") == "retrieved"
+                and row.get("source_family") == "current_state"
+                and (row.get("trace") or {}).get("operation") == "get_current_state"
                 for row in after["rows"]
             )
         )

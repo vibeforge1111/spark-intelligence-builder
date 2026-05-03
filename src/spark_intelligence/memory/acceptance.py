@@ -70,6 +70,40 @@ DEFAULT_TELEGRAM_MEMORY_GAUNTLET_CASES: tuple[TelegramMemoryGauntletCase, ...] =
 )
 
 
+HARD_TELEGRAM_MEMORY_GAUNTLET_CASES: tuple[TelegramMemoryGauntletCase, ...] = (
+    *DEFAULT_TELEGRAM_MEMORY_GAUNTLET_CASES,
+    TelegramMemoryGauntletCase(
+        case_id="seed_stale_plan",
+        category="stale_current_conflict",
+        message="Set my current plan to verify scheduled memory cleanup.",
+        expected_response_contains=("verify scheduled memory cleanup",),
+        expected_movement_states=("captured", "saved"),
+    ),
+    TelegramMemoryGauntletCase(
+        case_id="replace_current_plan",
+        category="stale_current_conflict",
+        message="Set my current plan to evaluate open-ended persistent memory recall.",
+        expected_response_contains=("evaluate open-ended persistent memory recall",),
+        expected_movement_states=("captured", "saved"),
+    ),
+    TelegramMemoryGauntletCase(
+        case_id="current_plan_staleness_recall",
+        category="stale_current_conflict",
+        message="What is my current plan, and what older plan should not override it?",
+        expected_response_contains=("evaluate open-ended persistent memory recall",),
+        expected_response_excludes=("verify scheduled memory cleanup",),
+        expected_movement_states=("retrieved",),
+    ),
+    TelegramMemoryGauntletCase(
+        case_id="mutable_fact_authority_rule",
+        category="authority_priority",
+        message="What outranks wiki or old conversation when you answer mutable facts about me?",
+        expected_response_contains=("current", "newest"),
+        expected_response_excludes=("supporting_not_authoritative wins",),
+    ),
+)
+
+
 DEFAULT_TELEGRAM_MEMORY_ACCEPTANCE_CASES: tuple[TelegramMemoryAcceptanceCase, ...] = (
     TelegramMemoryAcceptanceCase(
         case_id="seed_focus",
@@ -732,7 +766,8 @@ def run_telegram_memory_gauntlet(
     username: str | None = None,
     chat_id: str | None = None,
     write_path: str | Path | None = None,
-    cases: tuple[TelegramMemoryGauntletCase, ...] = DEFAULT_TELEGRAM_MEMORY_GAUNTLET_CASES,
+    origin: str = "simulation",
+    cases: tuple[TelegramMemoryGauntletCase, ...] | None = DEFAULT_TELEGRAM_MEMORY_GAUNTLET_CASES,
 ) -> TelegramMemoryGauntletResult:
     from spark_intelligence.gateway.runtime import gateway_simulate_telegram_update
 
@@ -754,11 +789,12 @@ def run_telegram_memory_gauntlet(
         external_user_id=selected_user_id,
         username=selected_username,
     )
+    selected_cases = cases or DEFAULT_TELEGRAM_MEMORY_GAUNTLET_CASES
 
     run_movement_before = _movement_snapshot(config_manager=config_manager)
     case_payloads: list[dict[str, Any]] = []
     mismatches: list[dict[str, Any]] = []
-    for index, case in enumerate(cases, start=1):
+    for index, case in enumerate(selected_cases, start=1):
         print(f"[memory-gauntlet] case:{case.case_id}", file=sys.stderr, flush=True)
         update_payload = _build_gauntlet_update_payload(
             index=index,
@@ -775,7 +811,7 @@ def run_telegram_memory_gauntlet(
             state_db=state_db,
             update_path=update_path,
             as_json=True,
-            simulation=True,
+            simulation=origin != "telegram-runtime",
         )
         movement_after = _movement_snapshot(config_manager=config_manager)
         case_result = _build_gauntlet_case_result(
@@ -805,6 +841,7 @@ def run_telegram_memory_gauntlet(
             "selected_user_id": selected_user_id,
             "selected_chat_id": selected_chat_id,
             "human_id": f"human:telegram:{selected_user_id}",
+            "origin": origin,
             "movement_delta_counts": movement_delta_counts,
             "dashboard_movement_authority": run_movement_after.get("authority"),
         },
