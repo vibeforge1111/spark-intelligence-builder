@@ -22,6 +22,7 @@ from spark_intelligence.memory.acceptance import (
     LIMIT_TELEGRAM_MEMORY_GAUNTLET_CASES,
     TelegramMemoryAcceptanceCase,
     TelegramMemoryGauntletCase,
+    _movement_counts_delta,
 )
 from spark_intelligence.memory.regression import (
     DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES,
@@ -503,6 +504,15 @@ class MemoryRegressionTests(SparkTestCase):
         self.assertEqual(result.payload["summary"]["status"], "passed")
         self.assertTrue(write_path.exists())
         self.assertIn("telegram-updates", result.payload["artifact_paths"]["telegram_updates_dir"])
+
+    def test_movement_delta_omits_rolling_snapshot_decreases(self) -> None:
+        self.assertEqual(
+            _movement_counts_delta(
+                {"captured": 5, "retrieved": 12, "saved": 5, "selected": 9},
+                {"captured": 7, "retrieved": 10, "saved": 5, "selected": 11},
+            ),
+            {"captured": 2, "selected": 2},
+        )
 
     def test_run_telegram_memory_acceptance_asserts_cases_and_promotion_gates(self) -> None:
         output_dir = self.home / "artifacts" / "telegram-memory-acceptance-runner"

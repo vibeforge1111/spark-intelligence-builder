@@ -1235,6 +1235,14 @@ def _movement_snapshot(*, config_manager: ConfigManager) -> dict[str, Any]:
 
 
 def _movement_counts_delta(before: Any, after: Any) -> dict[str, int]:
+    """Return positive observed movement from two dashboard snapshots.
+
+    Dashboard movement snapshots can be rolling views: compaction or row-window
+    rotation may reduce a count even while the current probe succeeded. The
+    gauntlet artifact is an operator-facing activity signal, so negative values
+    would be misleading and are intentionally omitted.
+    """
+
     before_counts = before if isinstance(before, dict) else {}
     after_counts = after if isinstance(after, dict) else {}
     movement_states = sorted({str(key) for key in before_counts} | {str(key) for key in after_counts})
@@ -1248,8 +1256,9 @@ def _movement_counts_delta(before: Any, after: Any) -> dict[str, int]:
             after_value = int(after_counts.get(movement_state) or 0)
         except (TypeError, ValueError):
             after_value = 0
-        if after_value != before_value:
-            delta[movement_state] = after_value - before_value
+        observed = after_value - before_value
+        if observed > 0:
+            delta[movement_state] = observed
     return delta
 
 
