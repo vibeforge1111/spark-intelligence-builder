@@ -21,6 +21,7 @@ from spark_intelligence.memory.acceptance import (
     HARD_TELEGRAM_MEMORY_GAUNTLET_CASES,
     LIMIT_TELEGRAM_MEMORY_GAUNTLET_CASES,
     TelegramMemoryAcceptanceCase,
+    TelegramMemoryGauntletCase,
 )
 from spark_intelligence.memory.regression import (
     DEFAULT_TELEGRAM_MEMORY_REGRESSION_CASES,
@@ -433,6 +434,59 @@ class MemoryRegressionTests(SparkTestCase):
         self.assertEqual(first_case["movement_delta_counts"], {"captured": 1, "saved": 1})
         self.assertEqual(payload["cases"][2]["movement_delta_counts"], {"retrieved": 1})
         self.assertIn("supporting context", payload["cases"][2]["response_text"].lower())
+
+    def test_run_telegram_memory_gauntlet_tolerates_idempotent_write_movement(self) -> None:
+        output_dir = self.home / "artifacts" / "telegram-memory-gauntlet-idempotent"
+        write_path = self.home / "nested" / "reports" / "gauntlet.json"
+
+        def fake_gateway_simulate(*, update_path: Path, **_: object) -> str:
+            update_payload = json.loads(update_path.read_text(encoding="utf-8"))
+            return json.dumps(
+                {
+                    "ok": True,
+                    "decision": "allowed",
+                    "detail": {
+                        "response_text": "Got it, Cem. Already updated.",
+                        "bridge_mode": "external_autodiscovered",
+                        "routing_decision": "provider_fallback_chat",
+                        "trace_ref": f"trace:{update_payload['update_id']}",
+                    },
+                }
+            )
+
+        with patch(
+            "spark_intelligence.gateway.runtime.gateway_simulate_telegram_update",
+            side_effect=fake_gateway_simulate,
+        ), patch(
+            "spark_intelligence.memory.acceptance.export_memory_dashboard_movement_in_memory",
+            return_value={
+                "status": "available",
+                "authority": "observability_non_authoritative",
+                "row_count": 0,
+                "movement_counts": {"captured": 4, "saved": 4},
+            },
+        ):
+            result = run_telegram_memory_gauntlet(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                output_dir=output_dir,
+                user_id="12345",
+                chat_id="12345",
+                write_path=write_path,
+                cases=(
+                    TelegramMemoryGauntletCase(
+                        case_id="idempotent_preferred_name",
+                        category="mutable_fact_correction",
+                        message="Actually, my preferred name is Cem.",
+                        expected_response_contains=("Cem",),
+                        expected_movement_states=("captured", "saved"),
+                    ),
+                ),
+            )
+
+        self.assertEqual(result.payload["summary"]["status"], "passed")
+        self.assertTrue(write_path.exists())
+        self.assertIn("telegram-updates", result.payload["artifact_paths"]["telegram_updates_dir"])
 
     def test_run_telegram_memory_acceptance_asserts_cases_and_promotion_gates(self) -> None:
         output_dir = self.home / "artifacts" / "telegram-memory-acceptance-runner"
