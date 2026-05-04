@@ -3745,6 +3745,111 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("Supporting context, not a decision", reply)
         self.assertIn("discussion stays supporting context", reply)
 
+    def test_memory_test_label_recall_prefers_retirement_over_stale_probe_labels(self) -> None:
+        query = _detect_open_memory_recall_query("what is the active memory test label now?")
+        self.assertIsNotNone(query)
+        assert query is not None
+        self.assertEqual(query.query_kind, "memory_test_label_recall")
+
+        reply = _build_open_memory_recall_answer(
+            query=query,
+            records=[
+                {
+                    "predicate": "profile.current_low_stakes_test_fact",
+                    "memory_role": "current_state",
+                    "value": "Sol is the desk plant recall probe.",
+                },
+                {
+                    "predicate": "raw_turn",
+                    "memory_role": "episodic",
+                    "text": "I just corrected a mutable fact: my active memory test label is Blue Lantern, not Sol.",
+                },
+                {
+                    "predicate": "evidence.telegram.decision_memory",
+                    "memory_role": "structured_evidence",
+                    "metadata": {
+                        "evidence_kind": "explicit_decision",
+                        "value": "Decision about memory: memory testing label Blue Lantern is retired.",
+                    },
+                },
+            ],
+        )
+
+        self.assertIn("should not be treated as current", reply)
+        self.assertIn("Selected evidence: memory: memory testing label Blue Lantern is retired.", reply)
+        self.assertIn("Dropped as stale/supporting", reply)
+        self.assertIn("Sol", reply)
+        self.assertIn("explicit retirement decision wins", reply)
+
+    def test_retired_memory_label_recall_routes_to_open_memory(self) -> None:
+        query = _detect_open_memory_recall_query("what did we retire?")
+        self.assertIsNotNone(query)
+        assert query is not None
+        self.assertEqual(query.query_kind, "retired_memory_label_recall")
+        self.assertEqual(query.topic, "memory")
+
+    def test_stale_memory_context_recall_routes_to_open_memory(self) -> None:
+        query = _detect_open_memory_recall_query("what should you not treat as current anymore?")
+        self.assertIsNotNone(query)
+        assert query is not None
+        self.assertEqual(query.query_kind, "stale_memory_context_recall")
+        self.assertEqual(query.topic, "memory test label")
+
+    def test_memory_test_label_recall_uses_structured_retirement_evidence(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        evidence_read = SimpleNamespace(
+            read_result=SimpleNamespace(
+                abstained=False,
+                records=[
+                    {
+                        "predicate": "evidence.telegram.decision_memory",
+                        "memory_role": "structured_evidence",
+                        "metadata": {
+                            "evidence_kind": "explicit_decision",
+                            "value": "Decision about memory: memory testing label Blue Lantern is retired.",
+                        },
+                    },
+                    {
+                        "predicate": "raw_turn",
+                        "memory_role": "episodic",
+                        "text": "I just corrected a mutable fact: my active memory test label is Blue Lantern, not Sol.",
+                    },
+                ],
+            )
+        )
+        empty_read = SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[]))
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.retrieve_memory_evidence_in_memory",
+            return_value=evidence_read,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.inspect_human_memory_in_memory",
+            return_value=empty_read,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider should not run for memory test label recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-memory-test-label-status",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-memory-test-label-status",
+                channel_kind="telegram",
+                user_message="what is the active memory test label now?",
+            )
+
+        self.assertEqual(result.mode, "memory_open_recall")
+        self.assertEqual(result.routing_decision, "memory_open_recall_query")
+        self.assertIn("Blue Lantern is retired", result.reply_text)
+        self.assertIn("older Sol or Blue Lantern probe mentions", result.reply_text)
+        self.assertIn("query_kind=memory_test_label_recall", result.evidence_summary)
+        self.assertIn("record_count=1", result.evidence_summary)
+
     def test_memory_decision_recall_labels_supporting_context_as_not_decision(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)

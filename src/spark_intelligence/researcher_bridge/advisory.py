@@ -1366,6 +1366,13 @@ def _detect_open_memory_recall_query(user_message: str) -> OpenMemoryRecallQuery
     normalized = " ".join(str(user_message or "").strip().split())
     if not normalized:
         return None
+    lowered = normalized.casefold()
+    if re.match(r"^what(?:'s| is)\s+(?:the\s+)?active\s+memory\s+test\s+label\s+now[\?\.\!]*$", normalized, re.IGNORECASE):
+        return OpenMemoryRecallQuery(topic="memory test label", query_kind="memory_test_label_recall")
+    if re.match(r"^what\s+did\s+we\s+retire[\?\.\!]*$", normalized, re.IGNORECASE):
+        return OpenMemoryRecallQuery(topic="memory", query_kind="retired_memory_label_recall")
+    if "not treat as current anymore" in lowered:
+        return OpenMemoryRecallQuery(topic="memory test label", query_kind="stale_memory_context_recall")
     for query_kind, pattern in _OPEN_MEMORY_RECALL_PATTERNS:
         match = pattern.match(normalized)
         if not match:
@@ -1606,6 +1613,13 @@ def _memory_record_is_explicit_decision(record: dict[str, Any]) -> bool:
         or predicate.startswith("evidence.telegram.decision_")
         or _memory_record_text(record).casefold().startswith("decision about ")
     )
+
+
+def _memory_record_is_memory_label_retirement(record: dict[str, Any]) -> bool:
+    if not _memory_record_is_explicit_decision(record):
+        return False
+    text = _render_explicit_decision_memory_text(_memory_record_text(record)).casefold()
+    return "memory testing label" in text and "blue lantern" in text and "retired" in text
 
 
 def _filter_open_memory_recall_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1849,6 +1863,14 @@ def _open_memory_recall_decisive_records(
     query: OpenMemoryRecallQuery,
     records: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    if query.query_kind in {
+        "memory_test_label_recall",
+        "retired_memory_label_recall",
+        "stale_memory_context_recall",
+    }:
+        retirement_records = [record for record in records if _memory_record_is_memory_label_retirement(record)]
+        if retirement_records:
+            return retirement_records
     expected_attribute = _open_memory_recall_entity_attribute(query.query_kind)
     if not expected_attribute:
         return records
@@ -2184,6 +2206,15 @@ def _build_open_memory_recall_answer(*, query: OpenMemoryRecallQuery, records: l
                 f"I don't see a confirmed saved decision about {query.topic}.\n\n"
                 "I should treat any related discussion as supporting context, not as a decision."
             )
+        if query.query_kind in {
+            "memory_test_label_recall",
+            "retired_memory_label_recall",
+            "stale_memory_context_recall",
+        }:
+            return (
+                "I don't have enough source-labeled recall to name the current memory test label.\n\n"
+                "Boundary: older probe labels stay supporting until current-state or explicit decision evidence confirms them."
+            )
         if query.query_kind == "discussion_recall":
             return "I don't have enough source-labeled recall to separate discussion from decisions yet."
         if query.query_kind == "open_recall":
@@ -2222,6 +2253,55 @@ def _build_open_memory_recall_answer(*, query: OpenMemoryRecallQuery, records: l
     rendered_snippets = [
         rendered for rendered in (_render_open_memory_recall_snippet(snippet) for snippet in snippets) if rendered
     ]
+    if query.query_kind in {
+        "memory_test_label_recall",
+        "retired_memory_label_recall",
+        "stale_memory_context_recall",
+    }:
+        retirement_records = [
+            rendered
+            for record in records
+            if _memory_record_is_memory_label_retirement(record)
+            for rendered in (_render_open_memory_recall_snippet(_memory_record_text(record)),)
+            if rendered
+        ]
+        if retirement_records:
+            stale_items = [
+                item
+                for item in (current_records + supporting_records + rendered_snippets)
+                if item not in retirement_records
+                and ("Sol" in item or "Blue Lantern" in item or "memory test label" in item)
+            ]
+            lines = [
+                "The active memory test label should not be treated as current from old probe recall.",
+                "",
+                f"Selected evidence: {retirement_records[0]}",
+            ]
+            if stale_items:
+                lines.extend(["", "Dropped as stale/supporting"])
+                lines.extend(f"- {item}" for item in stale_items[:3])
+            lines.extend(
+                [
+                    "",
+                    "Boundary: the explicit retirement decision wins over older Sol or Blue Lantern probe mentions. "
+                    "Your newest message would still win if you correct it again.",
+                ]
+            )
+            return "\n".join(lines)
+        lines = [f"I found memory-test-label context, but no explicit retirement/current decision for {query.topic}."]
+        if current_records:
+            lines.extend(["", "Current-state candidate"])
+            lines.extend(f"- {item}" for item in current_records[:2])
+        if supporting_records:
+            lines.extend(["", "Supporting recall"])
+            lines.extend(f"- {item}" for item in supporting_records[:3])
+        lines.extend(
+            [
+                "",
+                "Boundary: I should not promote an older probe label to current truth without newer confirmation.",
+            ]
+        )
+        return "\n".join(lines)
     if query.query_kind == "decision_recall":
         confirmed_decisions = [
             rendered
@@ -8732,7 +8812,10 @@ def build_researcher_reply(
         if priority_open_memory_recall_query is not None and priority_open_memory_recall_query.query_kind in {
             "decision_recall",
             "discussion_recall",
+            "memory_test_label_recall",
             "open_recall",
+            "retired_memory_label_recall",
+            "stale_memory_context_recall",
         }:
             detected_open_memory_recall_query = priority_open_memory_recall_query
 
@@ -9564,7 +9647,10 @@ def build_researcher_reply(
             if priority_open_memory_recall_query is not None and priority_open_memory_recall_query.query_kind in {
                 "decision_recall",
                 "discussion_recall",
+                "memory_test_label_recall",
                 "open_recall",
+                "retired_memory_label_recall",
+                "stale_memory_context_recall",
             }:
                 detected_open_memory_recall_query = priority_open_memory_recall_query
             detected_profile_fact_query = (
@@ -12147,7 +12233,10 @@ def build_researcher_reply(
             "decision_recall",
             "discussion_recall",
             "episodic_recall",
+            "memory_test_label_recall",
             "open_recall",
+            "retired_memory_label_recall",
+            "stale_memory_context_recall",
         }:
             try:
                 episodic_context = recall_episodic_context_in_memory(
