@@ -15,6 +15,7 @@ from spark_intelligence.researcher_bridge.advisory import (
     _browser_reply_denies_browsing,
     _build_contextual_task,
     _build_open_memory_recall_answer,
+    _detect_open_memory_recall_query,
     _load_recent_conversation_context,
     _clean_messaging_reply,
     _normalize_browser_search_query,
@@ -3372,6 +3373,43 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                 topic="our memory work today, and what is current versus supporting context",
             )
         )
+
+    def test_open_memory_recall_reconstructs_earlier_work_with_source_boundary(self) -> None:
+        query = _detect_open_memory_recall_query("What did we do earlier for episodic recall?")
+
+        self.assertIsNotNone(query)
+        assert query is not None
+        self.assertEqual(query.query_kind, "episodic_recall")
+        self.assertEqual(query.topic, "episodic recall")
+
+        reply = _build_open_memory_recall_answer(
+            query=query,
+            records=[
+                {
+                    "predicate": "profile.current_focus",
+                    "memory_role": "current_state",
+                    "value": "persistent memory quality evaluation is still open.",
+                },
+                {
+                    "predicate": "raw_turn",
+                    "memory_role": "episodic",
+                    "text": "We wired source-aware episodic recall into Builder.",
+                },
+                {
+                    "predicate": "task.completed",
+                    "memory_role": "event",
+                    "text": "Telegram probes now trace memory authority policy into the dashboard.",
+                },
+            ],
+        )
+
+        self.assertIn("Here's what I can reconstruct about episodic recall:", reply)
+        self.assertIn("Current truth", reply)
+        self.assertIn("persistent memory quality evaluation is still open.", reply)
+        self.assertIn("Supporting episodic recall", reply)
+        self.assertIn("We wired source-aware episodic recall into Builder.", reply)
+        self.assertIn("source-labeled recall, not durable promotion", reply)
+        self.assertIn("current-state memory still win", reply)
 
     def test_build_researcher_reply_uses_identity_evidence_when_current_state_is_empty(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)

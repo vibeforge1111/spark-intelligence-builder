@@ -637,6 +637,13 @@ _OPEN_MEMORY_RECALL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "episodic_recall",
         re.compile(
+            r"^what\s+did\s+we\s+(?:do|work\s+on|build|finish)\s+earlier\s+(?:for|with|on|about)\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "episodic_recall",
+        re.compile(
             r"^(?:what|tell me what)\s+happened\s+(?:during|in|around|at)\s+(.+?)[\?\.\!]*$",
             re.IGNORECASE,
         ),
@@ -2097,6 +2104,25 @@ def _build_open_memory_recall_answer(*, query: OpenMemoryRecallQuery, records: l
             current_records.append(snippet)
         else:
             supporting_records.append(snippet)
+    if query.query_kind == "episodic_recall":
+        lines = [f"Here's what I can reconstruct about {query.topic}:"]
+        if current_records:
+            lines.append("")
+            lines.append("Current truth")
+            lines.extend(f"- {item}" for item in current_records[:2])
+        lines.append("")
+        lines.append("Supporting episodic recall")
+        if supporting_records:
+            lines.extend(f"- {item}" for item in supporting_records[:4])
+        else:
+            lines.append(f"- {snippets[0]}")
+        lines.extend(
+            [
+                "",
+                "Boundary: this is source-labeled recall, not durable promotion. Your newest message and current-state memory still win for mutable facts.",
+            ]
+        )
+        return "\n".join(lines)
     asks_boundary = any(
         marker in query.topic.casefold()
         for marker in (
