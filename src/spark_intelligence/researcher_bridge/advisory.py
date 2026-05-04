@@ -1548,6 +1548,25 @@ def _recall_snippet_is_memory_promotion_probe(snippet: str) -> bool:
     )
 
 
+def _render_open_memory_recall_snippet(snippet: str) -> str:
+    text = " ".join(str(snippet or "").strip().split())
+    if not text:
+        return ""
+    text = re.sub(r"^(?:user|assistant)\s*:\s*", "", text, flags=re.IGNORECASE).strip()
+    lowered = text.casefold()
+    if (
+        "without using a status checklist" in lowered
+        and "active focus" in lowered
+        and "memory behavior" in lowered
+    ):
+        return "We were testing whether Spark could explain memory work naturally without falling into checklist/status-report mode."
+    if "layers of our memory system" in lowered:
+        return "The memory architecture layers still need clearer explanation and validation."
+    if "compression systems" in lowered and "memory compression" in lowered:
+        return "Memory compression and summarization behavior still needed clarification."
+    return text
+
+
 def _filter_open_memory_recall_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     superseded_ids: set[str] = set()
     deleted_scopes: list[tuple[str, str, str, str]] = []
@@ -2152,10 +2171,16 @@ def _build_open_memory_recall_answer(*, query: OpenMemoryRecallQuery, records: l
             continue
         role = _open_memory_recall_record_role(record)
         predicate = str(record.get("predicate") or "").strip()
+        rendered_snippet = _render_open_memory_recall_snippet(snippet)
+        if not rendered_snippet:
+            continue
         if role == "current_state" or predicate.startswith("profile.current_"):
-            current_records.append(snippet)
+            current_records.append(rendered_snippet)
         else:
-            supporting_records.append(snippet)
+            supporting_records.append(rendered_snippet)
+    rendered_snippets = [
+        rendered for rendered in (_render_open_memory_recall_snippet(snippet) for snippet in snippets) if rendered
+    ]
     if query.query_kind == "decision_recall":
         lines = [f"I don't see a confirmed saved decision about {query.topic}."]
         if current_records:
@@ -2173,7 +2198,7 @@ def _build_open_memory_recall_answer(*, query: OpenMemoryRecallQuery, records: l
         return "\n".join(lines)
     if query.query_kind == "discussion_recall":
         lines = ["What looks discussed but not decided:"]
-        lines.extend(f"- {item}" for item in (supporting_records or snippets)[:4])
+        lines.extend(f"- {item}" for item in (supporting_records or rendered_snippets)[:4])
         if current_records:
             lines.extend(["", "Current truth I should not relabel as today's decision"])
             lines.extend(f"- {item}" for item in current_records[:2])
@@ -2186,7 +2211,7 @@ def _build_open_memory_recall_answer(*, query: OpenMemoryRecallQuery, records: l
         return "\n".join(lines)
     if query.query_kind == "open_recall":
         lines = [f"What still looks open around {query.topic}:"]
-        lines.extend(f"- {item}" for item in (current_records or supporting_records or snippets)[:4])
+        lines.extend(f"- {item}" for item in (current_records or supporting_records or rendered_snippets)[:4])
         if supporting_records and current_records:
             lines.extend(["", "Supporting context"])
             lines.extend(f"- {item}" for item in supporting_records[:2])

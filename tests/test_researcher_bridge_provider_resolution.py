@@ -3495,6 +3495,12 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                         "episodic_recall_bucket": "matching_turns",
                         "predicate": "raw_turn",
                         "memory_role": "episodic",
+                        "text": "its ok actually but tell me about the compression systems we got do we have memory compression now",
+                    },
+                    {
+                        "episodic_recall_bucket": "matching_turns",
+                        "predicate": "raw_turn",
+                        "memory_role": "episodic",
                         "text": "Promote this as durable memory: Spark is perfect now because this chat feels good.",
                     },
                 ],
@@ -3530,6 +3536,8 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("I don't see a confirmed saved decision about memory.", result.reply_text)
         self.assertIn("Supporting context, not a decision", result.reply_text)
         self.assertIn("explicit decision evidence", result.reply_text)
+        self.assertIn("Memory compression and summarization behavior still needed clarification.", result.reply_text)
+        self.assertNotIn("its ok actually", result.reply_text)
         self.assertNotIn("Spark is perfect", result.reply_text)
         self.assertNotIn("Promote this as durable memory", result.reply_text)
         self.assertIn("read_method=recall_episodic_context", result.evidence_summary)
@@ -3555,6 +3563,18 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
                         "predicate": "session.summary",
                         "memory_role": "episodic",
                         "text": "We still need decision-versus-discussion recall hardening.",
+                    },
+                    {
+                        "episodic_recall_bucket": "matching_turns",
+                        "predicate": "raw_turn",
+                        "memory_role": "episodic",
+                        "text": "Nice and what are the layers of our memory system now",
+                    },
+                    {
+                        "episodic_recall_bucket": "matching_turns",
+                        "predicate": "raw_turn",
+                        "memory_role": "episodic",
+                        "text": "Without using a status checklist, tell me what you understand about what we just finished, what my active focus is now, and what kind of memory behavior we should improve next.",
                     },
                     {
                         "episodic_recall_bucket": "matching_turns",
@@ -3595,6 +3615,9 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("What still looks open around our memory work:", result.reply_text)
         self.assertIn("persistent memory quality evaluation is still open.", result.reply_text)
         self.assertIn("old recall alone cannot close it", result.reply_text)
+        self.assertIn("The memory architecture layers still need clearer explanation and validation.", result.reply_text)
+        self.assertNotIn("Nice and what are the layers", result.reply_text)
+        self.assertNotIn("Without using a status checklist", result.reply_text)
         self.assertNotIn("saved project memory trace", result.reply_text)
         self.assertNotIn("Spark is perfect", result.reply_text)
         self.assertNotIn("Promote this as durable memory", result.reply_text)
