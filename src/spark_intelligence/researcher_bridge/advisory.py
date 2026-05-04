@@ -575,6 +575,27 @@ _OPEN_MEMORY_RECALL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "decision_recall",
         re.compile(
+            r"^what\s+did\s+we\s+decide\s+(?:today\s+)?(?:about|on|for)\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "discussion_recall",
+        re.compile(
+            r"^what\s+did\s+we\s+only\s+discuss\s+but\s+not\s+decide(?:\s+(?:about|on|for)\s+(.+?))?[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "open_recall",
+        re.compile(
+            r"^what(?:'s| is)\s+still\s+open\s+(?:in|for|on|about)\s+(.+?)[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "decision_recall",
+        re.compile(
             r"^what(?:'s| is)\s+(?:the\s+)?(.+?)\s+(?:onboarding\s+direction|direction)[\?\.\!]*$",
             re.IGNORECASE,
         ),
@@ -1336,6 +1357,8 @@ def _detect_open_memory_recall_query(user_message: str) -> OpenMemoryRecallQuery
         if not match:
             continue
         topic = str(next((group for group in match.groups() if group), "")).strip(" \t\r\n?!.\"'")
+        if not topic and query_kind == "discussion_recall":
+            topic = "recent memory work"
         if not topic or topic in {"me", "my profile"}:
             return None
         return OpenMemoryRecallQuery(topic=topic, query_kind=query_kind)
@@ -2065,7 +2088,7 @@ def _build_open_memory_recall_answer(*, query: OpenMemoryRecallQuery, records: l
         entity_answer = _entity_state_answer_from_record(query=query, record=record)
         if entity_answer:
             return entity_answer
-    if expected_attribute:
+    if expected_attribute and query.query_kind != "decision_recall":
         return f"I don't currently have saved {expected_attribute} for that."
     snippets: list[str] = []
     seen: set[str] = set()
@@ -2081,6 +2104,15 @@ def _build_open_memory_recall_answer(*, query: OpenMemoryRecallQuery, records: l
         if len(snippets) >= 2:
             break
     if not snippets:
+        if query.query_kind == "decision_recall":
+            return (
+                f"I don't see a confirmed saved decision about {query.topic}.\n\n"
+                "I should treat any related discussion as supporting context, not as a decision."
+            )
+        if query.query_kind == "discussion_recall":
+            return "I don't have enough source-labeled recall to separate discussion from decisions yet."
+        if query.query_kind == "open_recall":
+            return f"I don't see a saved open-work trace for {query.topic} yet."
         return "I don't currently have saved memory about that."
     if query.query_kind == "name_recall":
         for snippet in snippets:
@@ -2105,6 +2137,47 @@ def _build_open_memory_recall_answer(*, query: OpenMemoryRecallQuery, records: l
             current_records.append(snippet)
         else:
             supporting_records.append(snippet)
+    if query.query_kind == "decision_recall":
+        lines = [f"I don't see a confirmed saved decision about {query.topic}."]
+        if current_records:
+            lines.extend(["", "Current truth"])
+            lines.extend(f"- {item}" for item in current_records[:2])
+        if supporting_records:
+            lines.extend(["", "Supporting context, not a decision"])
+            lines.extend(f"- {item}" for item in supporting_records[:3])
+        lines.extend(
+            [
+                "",
+                "Boundary: discussion and open work do not become decisions unless there is explicit decision evidence.",
+            ]
+        )
+        return "\n".join(lines)
+    if query.query_kind == "discussion_recall":
+        lines = ["What looks discussed but not decided:"]
+        lines.extend(f"- {item}" for item in (supporting_records or snippets)[:4])
+        if current_records:
+            lines.extend(["", "Current truth I should not relabel as today's decision"])
+            lines.extend(f"- {item}" for item in current_records[:2])
+        lines.extend(
+            [
+                "",
+                "Boundary: these are supporting recall items. I should not promote them into durable decisions.",
+            ]
+        )
+        return "\n".join(lines)
+    if query.query_kind == "open_recall":
+        lines = [f"What still looks open around {query.topic}:"]
+        lines.extend(f"- {item}" for item in (current_records or supporting_records or snippets)[:4])
+        if supporting_records and current_records:
+            lines.extend(["", "Supporting context"])
+            lines.extend(f"- {item}" for item in supporting_records[:2])
+        lines.extend(
+            [
+                "",
+                "Boundary: open status needs current-state or explicit closure evidence; old recall alone cannot close it.",
+            ]
+        )
+        return "\n".join(lines)
     if query.query_kind == "episodic_recall":
         lines = [f"Here's what I can reconstruct about {query.topic}:"]
         if current_records:
@@ -7944,6 +8017,7 @@ def build_researcher_reply(
     detected_entity_state_summary_query = None
     detected_open_memory_recall_query = None
     detected_belief_recall_query = None
+    detected_episodic_session_recall_query = None
     detected_episodic_daily_recall_query = None
     detected_episodic_project_recall_query = None
     detected_generic_memory_candidate = None
@@ -8391,7 +8465,16 @@ def build_researcher_reply(
             promotion_disposition=promotion_disposition,
             )
 
-    if not personality_context_extra:
+    if not personality_context_extra and detected_open_memory_recall_query is None:
+        priority_open_memory_recall_query = _detect_open_memory_recall_query(user_message)
+        if priority_open_memory_recall_query is not None and priority_open_memory_recall_query.query_kind in {
+            "decision_recall",
+            "discussion_recall",
+            "open_recall",
+        }:
+            detected_open_memory_recall_query = priority_open_memory_recall_query
+
+    if not personality_context_extra and detected_open_memory_recall_query is None:
         detected_episodic_session_recall_query = _detect_episodic_session_recall_query(
             user_message,
             session_id=session_id,
@@ -8463,7 +8546,7 @@ def build_researcher_reply(
             promotion_disposition=promotion_disposition,
         )
 
-    if not personality_context_extra:
+    if not personality_context_extra and detected_open_memory_recall_query is None:
         detected_episodic_project_recall_query = _detect_episodic_project_recall_query(user_message)
     if not personality_context_extra and detected_episodic_project_recall_query is not None:
         trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
@@ -8533,7 +8616,7 @@ def build_researcher_reply(
             promotion_disposition=promotion_disposition,
         )
 
-    if not personality_context_extra:
+    if not personality_context_extra and detected_open_memory_recall_query is None:
         detected_episodic_daily_recall_query = _detect_episodic_daily_recall_query(user_message)
     if not personality_context_extra and detected_episodic_daily_recall_query is not None:
         trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
@@ -9098,7 +9181,16 @@ def build_researcher_reply(
 
     if not personality_context_extra and config_manager.get_path("spark.memory.enabled", default=False):
         try:
-            detected_profile_fact_query = detect_profile_fact_query(user_message)
+            priority_open_memory_recall_query = _detect_open_memory_recall_query(user_message)
+            if priority_open_memory_recall_query is not None and priority_open_memory_recall_query.query_kind in {
+                "decision_recall",
+                "discussion_recall",
+                "open_recall",
+            }:
+                detected_open_memory_recall_query = priority_open_memory_recall_query
+            detected_profile_fact_query = (
+                None if detected_open_memory_recall_query is not None else detect_profile_fact_query(user_message)
+            )
             if detected_profile_fact_query is not None:
                 profile_fact_lookup = lookup_current_state_in_memory(
                     config_manager=config_manager,
@@ -11672,7 +11764,12 @@ def build_researcher_reply(
                         ]
                 if recall_records:
                     read_method = "inspect_memory_records"
-        if not recall_records and detected_open_memory_recall_query.query_kind == "episodic_recall":
+        if not recall_records and detected_open_memory_recall_query.query_kind in {
+            "decision_recall",
+            "discussion_recall",
+            "episodic_recall",
+            "open_recall",
+        }:
             try:
                 episodic_context = recall_episodic_context_in_memory(
                     config_manager=config_manager,

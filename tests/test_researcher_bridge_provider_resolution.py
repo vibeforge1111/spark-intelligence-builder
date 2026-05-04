@@ -3469,6 +3469,120 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("read_method=recall_episodic_context", result.evidence_summary)
         self.assertIn("record_count=2", result.evidence_summary)
 
+    def test_memory_decision_recall_labels_supporting_context_as_not_decision(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        empty_read = SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[]))
+        episodic_context = SimpleNamespace(
+            read_result=SimpleNamespace(
+                abstained=False,
+                records=[
+                    {
+                        "episodic_recall_bucket": "current_state",
+                        "predicate": "profile.current_focus",
+                        "memory_role": "current_state",
+                        "value": "persistent memory quality evaluation is still open.",
+                    },
+                    {
+                        "episodic_recall_bucket": "matching_turns",
+                        "predicate": "raw_turn",
+                        "memory_role": "episodic",
+                        "text": "We discussed whether the dashboard should gate route passes by evidence depth.",
+                    },
+                ],
+            )
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.retrieve_memory_evidence_in_memory",
+            return_value=empty_read,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.inspect_human_memory_in_memory",
+            return_value=empty_read,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.recall_episodic_context_in_memory",
+            return_value=episodic_context,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider should not run for direct memory decision recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-memory-decision-recall",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-memory-decision-recall",
+                channel_kind="telegram",
+                user_message="What did we decide today about memory?",
+            )
+
+        self.assertEqual(result.mode, "memory_open_recall")
+        self.assertEqual(result.routing_decision, "memory_open_recall_query")
+        self.assertIn("I don't see a confirmed saved decision about memory.", result.reply_text)
+        self.assertIn("Supporting context, not a decision", result.reply_text)
+        self.assertIn("explicit decision evidence", result.reply_text)
+        self.assertIn("read_method=recall_episodic_context", result.evidence_summary)
+
+    def test_memory_open_work_recall_uses_open_recall_instead_of_project_trace(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        empty_read = SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[]))
+        episodic_context = SimpleNamespace(
+            read_result=SimpleNamespace(
+                abstained=False,
+                records=[
+                    {
+                        "episodic_recall_bucket": "current_state",
+                        "predicate": "profile.current_focus",
+                        "memory_role": "current_state",
+                        "value": "persistent memory quality evaluation is still open.",
+                    },
+                    {
+                        "episodic_recall_bucket": "session_summaries",
+                        "predicate": "session.summary",
+                        "memory_role": "episodic",
+                        "text": "We still need decision-versus-discussion recall hardening.",
+                    },
+                ],
+            )
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.retrieve_memory_evidence_in_memory",
+            return_value=empty_read,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.inspect_human_memory_in_memory",
+            return_value=empty_read,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.recall_episodic_context_in_memory",
+            return_value=episodic_context,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider should not run for direct open memory work recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-memory-open-work",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-memory-open-work",
+                channel_kind="telegram",
+                user_message="What is still open in our memory work?",
+            )
+
+        self.assertEqual(result.mode, "memory_open_recall")
+        self.assertEqual(result.routing_decision, "memory_open_recall_query")
+        self.assertIn("What still looks open around our memory work:", result.reply_text)
+        self.assertIn("persistent memory quality evaluation is still open.", result.reply_text)
+        self.assertIn("old recall alone cannot close it", result.reply_text)
+        self.assertNotIn("saved project memory trace", result.reply_text)
+
     def test_build_researcher_reply_uses_identity_evidence_when_current_state_is_empty(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)
