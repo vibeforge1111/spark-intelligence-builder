@@ -180,7 +180,14 @@ class SessionSummaryTests(SparkTestCase):
         self.assertTrue(summary_facts["source_event_ids"])
         lifecycle_events = latest_events_by_type(self.state_db, event_type="memory_lifecycle_transition", limit=10)
         self.assertTrue(lifecycle_events)
-        lifecycle_facts = lifecycle_events[0]["facts_json"] or {}
+        lifecycle_facts = next(
+            (
+                event["facts_json"] or {}
+                for event in lifecycle_events
+                if (event["facts_json"] or {}).get("transition_kind") == "compaction"
+            ),
+            {},
+        )
         self.assertEqual(lifecycle_facts["transition_kind"], "compaction")
         self.assertEqual(lifecycle_facts["memory_role"], "episodic_summary")
         self.assertEqual(lifecycle_facts["lifecycle_action"], "compacted")

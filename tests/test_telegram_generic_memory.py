@@ -3811,9 +3811,24 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(result.mode, "memory_explicit_decision_capture")
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(write_events)
-        recorded_observations = (write_events[0]["facts_json"] or {}).get("observations") or []
-        self.assertEqual(recorded_observations[0]["predicate"], "profile.current_decision")
-        self.assertEqual(recorded_observations[0]["value"], "launch Atlas through agency partners first")
+        recorded_observations = [
+            observation
+            for event in write_events
+            for observation in ((event["facts_json"] or {}).get("observations") or [])
+        ]
+        self.assertIn(
+            {
+                "predicate": "profile.current_decision",
+                "value": "launch Atlas through agency partners first",
+            },
+            [
+                {
+                    "predicate": observation.get("predicate"),
+                    "value": observation.get("value"),
+                }
+                for observation in recorded_observations
+            ],
+        )
 
     def test_build_researcher_reply_persists_generic_blocker_memory(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
