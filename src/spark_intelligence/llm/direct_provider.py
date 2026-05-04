@@ -5,8 +5,10 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
 
 from spark_intelligence.observability.policy import screen_model_visible_text
+from spark_intelligence.observability.store import record_event
 from spark_intelligence.state.db import StateDB
 
 _REQUEST_TIMEOUT_SECONDS = 60
@@ -46,6 +48,7 @@ def execute_direct_provider_prompt(
     governance: DirectProviderGovernance | None = None,
     tools: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
+    state_db: StateDB | None = None
     if governance and governance.state_db_path:
         state_db = StateDB(Path(governance.state_db_path))
         screening = screen_model_visible_text(
@@ -64,18 +67,114 @@ def execute_direct_provider_prompt(
         )
         if not screening["allowed"]:
             raise RuntimeError("Direct provider execution blocked by the pre-model secret boundary.")
-    if not provider.model:
-        raise RuntimeError(f"Provider '{provider.provider_id}' has no default model configured.")
-    if not provider.base_url:
-        raise RuntimeError(f"Provider '{provider.provider_id}' has no base URL configured.")
 
-    if provider.api_mode == "chat_completions":
-        return _execute_chat_completions(provider=provider, system_prompt=system_prompt, user_prompt=user_prompt, tools=tools)
-    if provider.api_mode == "anthropic_messages":
-        return _execute_anthropic_messages(provider=provider, system_prompt=system_prompt, user_prompt=user_prompt, tools=tools)
-    raise RuntimeError(
-        f"Provider '{provider.provider_id}' uses unsupported direct execution mode '{provider.api_mode}'."
+    started = perf_counter()
+    try:
+        if not provider.model:
+            raise RuntimeError(f"Provider '{provider.provider_id}' has no default model configured.")
+        if not provider.base_url:
+            raise RuntimeError(f"Provider '{provider.provider_id}' has no base URL configured.")
+
+        if provider.api_mode == "chat_completions":
+            payload = _execute_chat_completions(
+                provider=provider,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                tools=tools,
+            )
+        elif provider.api_mode == "anthropic_messages":
+            payload = _execute_anthropic_messages(
+                provider=provider,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                tools=tools,
+            )
+        else:
+            raise RuntimeError(
+                f"Provider '{provider.provider_id}' uses unsupported direct execution mode '{provider.api_mode}'."
+            )
+    except Exception as exc:
+        _record_provider_execution_event(
+            state_db=state_db,
+            provider=provider,
+            governance=governance,
+            event_type="dispatch_failed",
+            summary=f"Direct provider {provider.provider_id} failed.",
+            route_latency_ms=_elapsed_ms(started),
+            failure_reason=_redact_provider_error(exc, provider),
+        )
+        raise
+    _record_provider_execution_event(
+        state_db=state_db,
+        provider=provider,
+        governance=governance,
+        event_type="tool_result_received",
+        summary=f"Direct provider {provider.provider_id} produced a response.",
+        route_latency_ms=_elapsed_ms(started),
+        failure_reason=None,
     )
+    return payload
+
+
+def _record_provider_execution_event(
+    *,
+    state_db: StateDB | None,
+    provider: DirectProviderRequest,
+    governance: DirectProviderGovernance | None,
+    event_type: str,
+    summary: str,
+    route_latency_ms: int,
+    failure_reason: str | None,
+) -> None:
+    if state_db is None or governance is None:
+        return
+    facts: dict[str, object] = {
+        "capability_key": provider.provider_id,
+        "provider_id": provider.provider_id,
+        "provider_kind": provider.provider_kind,
+        "api_mode": provider.api_mode,
+        "auth_method": provider.auth_method,
+        "route_latency_ms": route_latency_ms,
+        "eval_coverage_status": "observed",
+        "eval_ref": "direct_provider_execution",
+    }
+    if provider.model:
+        facts["model"] = provider.model
+    if failure_reason:
+        facts["failure_reason"] = failure_reason
+    record_event(
+        state_db,
+        event_type=event_type,
+        component="direct_provider",
+        summary=summary,
+        run_id=governance.run_id,
+        request_id=governance.request_id,
+        trace_ref=governance.trace_ref,
+        reason_code="direct_provider_execution",
+        provenance={
+            "source_kind": governance.source_kind,
+            "source_ref": governance.source_ref,
+            "provider_id": provider.provider_id,
+            "provider_kind": provider.provider_kind,
+            "api_mode": provider.api_mode,
+            **(governance.provenance or {}),
+        },
+        facts=facts,
+        status="failed" if event_type == "dispatch_failed" else "recorded",
+        severity="high" if event_type == "dispatch_failed" else "medium",
+    )
+
+
+def _elapsed_ms(started: float) -> int:
+    return max(0, int((perf_counter() - started) * 1000))
+
+
+def _redact_provider_error(exc: Exception, provider: DirectProviderRequest) -> str:
+    message = str(exc)
+    if provider.secret_value:
+        message = message.replace(provider.secret_value, "[REDACTED]")
+    return message[:240]
+
 
 def _execute_chat_completions(
     *,

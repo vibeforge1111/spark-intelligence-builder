@@ -93,11 +93,15 @@ from spark_intelligence.jobs.service import jobs_list, jobs_tick
 from spark_intelligence.llm_wiki import (
     bootstrap_llm_wiki,
     build_llm_wiki_answer,
+    build_llm_wiki_candidate_inbox,
+    build_llm_wiki_candidate_scan,
+    build_llm_wiki_heartbeat,
     build_llm_wiki_inventory,
     build_llm_wiki_query,
     build_llm_wiki_status,
     compile_system_wiki,
     promote_llm_wiki_improvement,
+    promote_llm_wiki_user_note,
 )
 from spark_intelligence.memory import (
     benchmark_memory_architectures,
@@ -155,7 +159,13 @@ from spark_intelligence.ops import (
 )
 from spark_intelligence.researcher_bridge import discover_researcher_runtime_root, resolve_researcher_config_path
 from spark_intelligence.researcher_bridge import researcher_bridge_status
-from spark_intelligence.self_awareness import build_self_awareness_capsule, build_self_improvement_plan
+from spark_intelligence.self_awareness import (
+    build_capability_drift_heartbeat,
+    build_handoff_freshness_check,
+    build_live_telegram_regression_cadence,
+    build_self_awareness_capsule,
+    build_self_improvement_plan,
+)
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_doctor, swarm_status, sync_swarm_collective
 from spark_intelligence.harness_registry import (
@@ -1308,6 +1318,43 @@ def build_parser() -> argparse.ArgumentParser:
     self_status_parser.add_argument("--user-message", default="", help="Optional user message for goal-specific context")
     self_status_parser.add_argument("--refresh-wiki", action="store_true", help="Refresh generated LLM wiki system pages and include wiki retrieval context")
     self_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_heartbeat_parser = self_subparsers.add_parser(
+        "heartbeat",
+        help="Write a typed capability drift report with stale/missing last-success probes",
+    )
+    self_heartbeat_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_heartbeat_parser.add_argument("--human-id", default="", help="Optional human id for context-aware drift report")
+    self_heartbeat_parser.add_argument("--session-id", default="", help="Optional session id for recent-turn context")
+    self_heartbeat_parser.add_argument("--channel-kind", default="", help="Optional channel kind, for example telegram")
+    self_heartbeat_parser.add_argument("--user-message", default="", help="Optional user goal for probe relevance")
+    self_heartbeat_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Check capability drift without writing the artifacts/capability-drift-heartbeat report",
+    )
+    self_heartbeat_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_live_cadence_parser = self_subparsers.add_parser(
+        "live-telegram-cadence",
+        help="Show the live Telegram self-awareness/wiki regression cadence and evidence contract",
+    )
+    self_live_cadence_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_live_cadence_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Print the cadence contract without writing artifacts/live-telegram-regression",
+    )
+    self_live_cadence_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_handoff_check_parser = self_subparsers.add_parser(
+        "handoff-check",
+        help="Check whether self-awareness/wiki changes updated handoff and architecture docs",
+    )
+    self_handoff_check_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_handoff_check_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Check handoff freshness without writing artifacts/handoff-freshness",
+    )
+    self_handoff_check_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     self_improve_parser = self_subparsers.add_parser(
         "improve",
         help="Plan probe-first improvements for Spark weak spots and capability gaps",
@@ -1348,6 +1395,19 @@ def build_parser() -> argparse.ArgumentParser:
     wiki_status_parser.add_argument("--output-dir", help="Override wiki output directory")
     wiki_status_parser.add_argument("--refresh", action="store_true", help="Bootstrap and regenerate system pages before checking")
     wiki_status_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    wiki_heartbeat_parser = wiki_subparsers.add_parser(
+        "heartbeat",
+        help="Write a typed LLM wiki health report for stale pages, broken links, and candidate backlog",
+    )
+    wiki_heartbeat_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    wiki_heartbeat_parser.add_argument("--output-dir", help="Override wiki output directory")
+    wiki_heartbeat_parser.add_argument("--refresh", action="store_true", help="Bootstrap and regenerate system pages before checking")
+    wiki_heartbeat_parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Check heartbeat health without writing the artifacts/wiki-heartbeat report",
+    )
+    wiki_heartbeat_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     wiki_inventory_parser = wiki_subparsers.add_parser(
         "inventory",
         help="List the local LLM wiki vault pages and their source metadata",
@@ -1357,6 +1417,34 @@ def build_parser() -> argparse.ArgumentParser:
     wiki_inventory_parser.add_argument("--refresh", action="store_true", help="Bootstrap and regenerate system pages before listing")
     wiki_inventory_parser.add_argument("--limit", type=int, default=40, help="Maximum page records to emit")
     wiki_inventory_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    wiki_inbox_parser = wiki_subparsers.add_parser(
+        "candidates",
+        help="List source-bounded LLM wiki improvement notes awaiting review",
+    )
+    wiki_inbox_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    wiki_inbox_parser.add_argument("--output-dir", help="Override wiki output directory")
+    wiki_inbox_parser.add_argument(
+        "--status",
+        choices=("candidate", "verified", "all"),
+        default="candidate",
+        help="Which improvement notes to show",
+    )
+    wiki_inbox_parser.add_argument("--limit", type=int, default=40, help="Maximum candidate records to emit")
+    wiki_inbox_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    wiki_scan_candidates_parser = wiki_subparsers.add_parser(
+        "scan-candidates",
+        help="Scan LLM wiki improvement notes for authority, lineage, and memory-boundary hazards",
+    )
+    wiki_scan_candidates_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    wiki_scan_candidates_parser.add_argument("--output-dir", help="Override wiki output directory")
+    wiki_scan_candidates_parser.add_argument(
+        "--status",
+        choices=("candidate", "verified", "all"),
+        default="all",
+        help="Which improvement notes to scan",
+    )
+    wiki_scan_candidates_parser.add_argument("--limit", type=int, default=80, help="Maximum note records to scan")
+    wiki_scan_candidates_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     wiki_query_parser = wiki_subparsers.add_parser(
         "query",
         help="Retrieve relevant supporting packets from the local LLM wiki",
@@ -1409,10 +1497,84 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Human, repo, document, or conversation source boundary. Repeat for multiple refs.",
     )
+    wiki_promote_parser.add_argument("--request-id", default="", help="Request id for the route or trace that produced this learning")
+    wiki_promote_parser.add_argument("--route-decision", default="", help="Routing decision associated with this learning")
+    wiki_promote_parser.add_argument(
+        "--source-packet-ref",
+        action="append",
+        default=[],
+        help="Source packet, wiki packet, memory packet, or context packet ref. Repeat for multiple refs.",
+    )
+    wiki_promote_parser.add_argument(
+        "--probe-ref",
+        action="append",
+        default=[],
+        help="Probe, test, smoke run, trace, or status-check ref. Repeat for multiple refs.",
+    )
+    wiki_promote_parser.add_argument(
+        "--proposal",
+        action="store_true",
+        help="Treat this note as a self-improvement proposal with falsifiable governance fields.",
+    )
+    wiki_promote_parser.add_argument("--weak-spot", default="", help="Weak spot or failure class this proposal targets")
+    wiki_promote_parser.add_argument("--hypothesis", default="", help="Expected mechanism for why this improvement should work")
+    wiki_promote_parser.add_argument("--expected-eval", default="", help="Eval, test, or replay that should prove the proposal worked")
+    wiki_promote_parser.add_argument("--rollback-condition", default="", help="Condition that should revert or downgrade the proposal")
+    for gate_name in ("schema", "lineage", "complexity", "memory-hygiene", "autonomy"):
+        wiki_promote_parser.add_argument(
+            f"--{gate_name}-gate",
+            choices=("pass", "warn", "fail"),
+            default="",
+            help=f"Promotion ledger status for the {gate_name} gate.",
+        )
+    wiki_promote_parser.add_argument(
+        "--eval-coverage-status",
+        choices=("missing", "observed", "covered"),
+        default="",
+        help="Eval coverage status for this improvement note.",
+    )
+    wiki_promote_parser.add_argument(
+        "--eval-ref",
+        action="append",
+        default=[],
+        help="Eval, test, regression, smoke, or coverage source ref. Repeat for multiple refs.",
+    )
     wiki_promote_parser.add_argument("--next-probe", default="", help="Probe required before using this as current truth")
     wiki_promote_parser.add_argument("--invalidation-trigger", default="", help="Condition that should downgrade or replace this note")
     wiki_promote_parser.add_argument("--force", action="store_true", help="Overwrite the generated note path if it already exists")
     wiki_promote_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    wiki_user_note_parser = wiki_subparsers.add_parser(
+        "promote-user-note",
+        help="Write a consent-bounded user-specific context note into the local LLM wiki",
+    )
+    wiki_user_note_parser.add_argument("title", nargs="?", default="", help="Short title for the user-context note")
+    wiki_user_note_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    wiki_user_note_parser.add_argument("--output-dir", help="Override wiki output directory")
+    wiki_user_note_parser.add_argument("--human-id", required=True, help="Scoped Spark human id for this user-context note")
+    wiki_user_note_parser.add_argument("--summary", default="", help="User-specific context to store in the wiki")
+    wiki_user_note_parser.add_argument("--consent-ref", required=True, help="Explicit consent or configured-policy reference")
+    wiki_user_note_parser.add_argument(
+        "--status",
+        choices=("candidate", "verified"),
+        default="candidate",
+        help="Promotion status. Verified still remains user-scoped and supporting only.",
+    )
+    wiki_user_note_parser.add_argument(
+        "--evidence-ref",
+        action="append",
+        default=[],
+        help="Trace, test, user correction, or run evidence ref. Repeat for multiple refs.",
+    )
+    wiki_user_note_parser.add_argument(
+        "--source",
+        action="append",
+        default=[],
+        help="Human, document, or conversation source boundary. Repeat for multiple refs.",
+    )
+    wiki_user_note_parser.add_argument("--next-probe", default="", help="Probe required before reusing this user context")
+    wiki_user_note_parser.add_argument("--invalidation-trigger", default="", help="Condition that should downgrade or replace this note")
+    wiki_user_note_parser.add_argument("--force", action="store_true", help="Overwrite the generated note path if it already exists")
+    wiki_user_note_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     mission_parser = subparsers.add_parser("mission", help="Inspect mission control and task-specific operator plans")
     mission_subparsers = mission_parser.add_subparsers(dest="mission_command", required=True)
@@ -4053,6 +4215,46 @@ def handle_self_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_self_heartbeat(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = build_capability_drift_heartbeat(
+        config_manager=config_manager,
+        state_db=state_db,
+        human_id=str(getattr(args, "human_id", "") or ""),
+        session_id=str(getattr(args, "session_id", "") or ""),
+        channel_kind=str(getattr(args, "channel_kind", "") or ""),
+        user_message=str(getattr(args, "user_message", "") or ""),
+        write_report=not bool(getattr(args, "no_write_report", False)),
+    )
+    print(result.to_json() if args.json else result.to_text())
+    return 0
+
+
+def handle_self_live_telegram_cadence(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    result = build_live_telegram_regression_cadence(
+        config_manager=config_manager,
+        write_report=not bool(getattr(args, "no_write_report", False)),
+    )
+    print(result.to_json() if args.json else result.to_text())
+    return 1 if result.payload.get("status") == "blocked" else 0
+
+
+def handle_self_handoff_check(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    result = build_handoff_freshness_check(
+        config_manager=config_manager,
+        write_report=not bool(getattr(args, "no_write_report", False)),
+    )
+    print(result.to_json() if args.json else result.to_text())
+    return 1 if result.payload.get("status") == "blocked" else 0
+
+
 def handle_self_improve(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -4148,6 +4350,22 @@ def handle_wiki_status(args: argparse.Namespace) -> int:
     return 0 if result.payload.get("healthy") else 1
 
 
+def handle_wiki_heartbeat(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    state_db = StateDB(config_manager.paths.state_db)
+    config_manager.bootstrap()
+    state_db.initialize()
+    result = build_llm_wiki_heartbeat(
+        config_manager=config_manager,
+        state_db=state_db,
+        output_dir=getattr(args, "output_dir", None),
+        refresh=bool(getattr(args, "refresh", False)),
+        write_report=not bool(getattr(args, "no_write_report", False)),
+    )
+    print(result.to_json() if args.json else result.to_text())
+    return 1 if result.payload.get("status") == "fail" else 0
+
+
 def handle_wiki_inventory(args: argparse.Namespace) -> int:
     config_manager = ConfigManager.from_home(args.home)
     state_db = StateDB(config_manager.paths.state_db)
@@ -4159,6 +4377,32 @@ def handle_wiki_inventory(args: argparse.Namespace) -> int:
         output_dir=getattr(args, "output_dir", None),
         refresh=bool(getattr(args, "refresh", False)),
         limit=int(getattr(args, "limit", 40) or 40),
+    )
+    print(result.to_json() if args.json else result.to_text())
+    return 0 if result.payload.get("exists") else 1
+
+
+def handle_wiki_candidate_inbox(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    result = build_llm_wiki_candidate_inbox(
+        config_manager=config_manager,
+        output_dir=getattr(args, "output_dir", None),
+        status=str(getattr(args, "status", "") or "candidate"),
+        limit=int(getattr(args, "limit", 40) or 40),
+    )
+    print(result.to_json() if args.json else result.to_text())
+    return 0 if result.payload.get("exists") else 1
+
+
+def handle_wiki_candidate_scan(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    result = build_llm_wiki_candidate_scan(
+        config_manager=config_manager,
+        output_dir=getattr(args, "output_dir", None),
+        status=str(getattr(args, "status", "") or "all"),
+        limit=int(getattr(args, "limit", 80) or 80),
     )
     print(result.to_json() if args.json else result.to_text())
     return 0 if result.payload.get("exists") else 1
@@ -4212,6 +4456,47 @@ def handle_wiki_promote_improvement(args: argparse.Namespace) -> int:
             config_manager=config_manager,
             title=str(getattr(args, "title", "") or ""),
             summary=str(getattr(args, "summary", "") or ""),
+            output_dir=getattr(args, "output_dir", None),
+            promotion_status=str(getattr(args, "status", "") or "candidate"),
+            evidence_refs=list(getattr(args, "evidence_ref", []) or []),
+            source_refs=list(getattr(args, "source", []) or []),
+            request_id=str(getattr(args, "request_id", "") or ""),
+            route_decision=str(getattr(args, "route_decision", "") or ""),
+            source_packet_refs=list(getattr(args, "source_packet_ref", []) or []),
+            probe_refs=list(getattr(args, "probe_ref", []) or []),
+            proposal=bool(getattr(args, "proposal", False)),
+            weak_spot=str(getattr(args, "weak_spot", "") or ""),
+            hypothesis=str(getattr(args, "hypothesis", "") or ""),
+            expected_eval=str(getattr(args, "expected_eval", "") or ""),
+            rollback_condition=str(getattr(args, "rollback_condition", "") or ""),
+            schema_gate=str(getattr(args, "schema_gate", "") or ""),
+            lineage_gate=str(getattr(args, "lineage_gate", "") or ""),
+            complexity_gate=str(getattr(args, "complexity_gate", "") or ""),
+            memory_hygiene_gate=str(getattr(args, "memory_hygiene_gate", "") or ""),
+            autonomy_gate=str(getattr(args, "autonomy_gate", "") or ""),
+            eval_coverage_status=str(getattr(args, "eval_coverage_status", "") or ""),
+            eval_refs=list(getattr(args, "eval_ref", []) or []),
+            next_probe=str(getattr(args, "next_probe", "") or ""),
+            invalidation_trigger=str(getattr(args, "invalidation_trigger", "") or ""),
+            overwrite=bool(getattr(args, "force", False)),
+        )
+    except (OSError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print(result.to_json() if args.json else result.to_text())
+    return 0
+
+
+def handle_wiki_promote_user_note(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    try:
+        result = promote_llm_wiki_user_note(
+            config_manager=config_manager,
+            human_id=str(getattr(args, "human_id", "") or ""),
+            title=str(getattr(args, "title", "") or ""),
+            summary=str(getattr(args, "summary", "") or ""),
+            consent_ref=str(getattr(args, "consent_ref", "") or ""),
             output_dir=getattr(args, "output_dir", None),
             promotion_status=str(getattr(args, "status", "") or "candidate"),
             evidence_refs=list(getattr(args, "evidence_ref", []) or []),
@@ -7842,6 +8127,12 @@ def main(argv: list[str] | None = None) -> int:
         return handle_status(args)
     if args.command == "self" and args.self_command == "status":
         return handle_self_status(args)
+    if args.command == "self" and args.self_command == "heartbeat":
+        return handle_self_heartbeat(args)
+    if args.command == "self" and args.self_command == "live-telegram-cadence":
+        return handle_self_live_telegram_cadence(args)
+    if args.command == "self" and args.self_command == "handoff-check":
+        return handle_self_handoff_check(args)
     if args.command == "self" and args.self_command == "improve":
         return handle_self_improve(args)
     if args.command == "wiki" and args.wiki_command == "bootstrap":
@@ -7850,14 +8141,22 @@ def main(argv: list[str] | None = None) -> int:
         return handle_wiki_compile_system(args)
     if args.command == "wiki" and args.wiki_command == "status":
         return handle_wiki_status(args)
+    if args.command == "wiki" and args.wiki_command == "heartbeat":
+        return handle_wiki_heartbeat(args)
     if args.command == "wiki" and args.wiki_command == "inventory":
         return handle_wiki_inventory(args)
+    if args.command == "wiki" and args.wiki_command == "candidates":
+        return handle_wiki_candidate_inbox(args)
+    if args.command == "wiki" and args.wiki_command == "scan-candidates":
+        return handle_wiki_candidate_scan(args)
     if args.command == "wiki" and args.wiki_command == "query":
         return handle_wiki_query(args)
     if args.command == "wiki" and args.wiki_command == "answer":
         return handle_wiki_answer(args)
     if args.command == "wiki" and args.wiki_command == "promote-improvement":
         return handle_wiki_promote_improvement(args)
+    if args.command == "wiki" and args.wiki_command == "promote-user-note":
+        return handle_wiki_promote_user_note(args)
     if args.command == "mission" and args.mission_command == "status":
         return handle_mission_status(args)
     if args.command == "mission" and args.mission_command == "plan":

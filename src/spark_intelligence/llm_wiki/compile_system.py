@@ -72,6 +72,12 @@ def compile_system_wiki(
             registry=registry,
             memory_runtime=memory_runtime,
         ),
+        "environment/spark-environment.md": _environment_awareness_page(
+            generated_at=generated_at,
+            config_manager=config_manager,
+            wiki_root=root,
+            registry=registry,
+        ),
         "tools/capability-index.md": _capability_index_page(generated_at=generated_at, records=records),
         "routes/live-route-index.md": _route_index_page(generated_at=generated_at, self_capsule=self_capsule),
         "diagnostics/self-awareness-gaps.md": _self_awareness_gaps_page(
@@ -136,6 +142,101 @@ def _current_system_status_page(*, generated_at: str, registry: dict[str, Any], 
         title="Current System Status",
         summary="Generated Spark system snapshot for LLM wiki retrieval.",
         tags=("spark-wiki", "generated", "system-status"),
+        generated_at=generated_at,
+        body="\n".join(body),
+    )
+
+
+def _environment_awareness_page(
+    *,
+    generated_at: str,
+    config_manager: ConfigManager,
+    wiki_root: Path,
+    registry: dict[str, Any],
+) -> str:
+    records = [record for record in registry.get("records") or [] if isinstance(record, dict)]
+    repos = [record for record in records if str(record.get("kind") or "") == "repo"]
+    surfaces = [
+        record
+        for record in records
+        if str(record.get("kind") or "") in {"system", "adapter", "provider", "chip", "path"}
+    ]
+    workspace = config_manager.load().get("workspace") or {}
+    if not isinstance(workspace, dict):
+        workspace = {}
+    path_rows = [
+        ("spark_home", config_manager.paths.home),
+        ("wiki_root", wiki_root),
+        ("config_yaml", config_manager.paths.config_yaml),
+        ("env_file", config_manager.paths.env_file),
+        ("state_db", config_manager.paths.state_db),
+        ("logs_dir", config_manager.paths.logs_dir),
+        ("adapters_dir", config_manager.paths.adapters_dir),
+    ]
+    body = [
+        "## Snapshot",
+        f"- generated_at: `{generated_at}`",
+        f"- workspace_id: `{workspace.get('id') or registry.get('workspace_id') or 'default'}`",
+        f"- workspace_home: `{workspace.get('home') or config_manager.paths.home}`",
+        "",
+        "## Local Paths",
+    ]
+    for label, path in path_rows:
+        body.append(f"- {label}: `{path}` exists=`{path.exists()}`")
+    body.extend(
+        [
+            "- secret_values: `redacted`",
+            "- env_file_contents: `not_read_by_environment_page`",
+            "",
+            "## Local Repo Map",
+        ]
+    )
+    if repos:
+        for record in repos[:40]:
+            metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+            body.extend(
+                [
+                    f"### {record.get('label') or record.get('key')}",
+                    f"- key: `{record.get('key')}`",
+                    f"- status: `{record.get('status')}`",
+                    f"- path: `{metadata.get('path') or 'unknown'}`",
+                    f"- branch: `{metadata.get('branch') or 'unknown'}`",
+                    f"- dirty: `{metadata.get('dirty')}`",
+                    f"- source: `{metadata.get('source') or 'unknown'}`",
+                    "",
+                ]
+            )
+    else:
+        body.append("- No repo records were visible in this snapshot.")
+    body.extend(["", "## System Surfaces"])
+    if surfaces:
+        for record in surfaces[:60]:
+            body.append(
+                f"- {record.get('kind')} `{record.get('key')}` status=`{record.get('status')}` "
+                f"available=`{bool(record.get('available'))}` active=`{bool(record.get('active'))}`"
+            )
+    else:
+        body.append("- No system surface records were visible in this snapshot.")
+    body.extend(
+        [
+            "",
+            "## Safe Probes",
+            "- `spark-intelligence status --json`",
+            "- `spark-intelligence wiki status --json`",
+            "- `spark-intelligence attachments status --json`",
+            "- `spark-intelligence auth status --json`",
+            "- `spark-intelligence channel test telegram --json` when Telegram is configured",
+            "",
+            "## Authority Boundary",
+            "- This page is a generated environment snapshot.",
+            "- It redacts secret values and does not read `.env` contents.",
+            "- Live filesystem, git status, channel probes, provider probes, and route traces outrank this page when newer.",
+        ]
+    )
+    return _render_page(
+        title="Spark Environment",
+        summary="Generated local environment, repo map, safe probes, and redaction boundary for Spark.",
+        tags=("spark-wiki", "generated", "environment", "local"),
         generated_at=generated_at,
         body="\n".join(body),
     )

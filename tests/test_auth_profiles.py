@@ -101,6 +101,29 @@ class AuthProfileTests(SparkTestCase):
         self.assertEqual(payload["providers"][0]["status"], "pending_secret")
         self.assertIsNone(payload["fallback_provider"])
 
+    def test_auth_status_marks_pending_static_profile_active_after_env_secret_appears(self) -> None:
+        connect_exit, _, connect_stderr = self.run_cli(
+            "auth",
+            "connect",
+            "openrouter",
+            "--home",
+            str(self.home),
+            "--api-key-env",
+            "WORK_OPENROUTER_KEY",
+            "--model",
+            "anthropic/claude-3.7-sonnet",
+        )
+        self.assertEqual(connect_exit, 0, connect_stderr)
+
+        self.config_manager.upsert_env_secret("WORK_OPENROUTER_KEY", "openrouter-secret")
+        payload = json.loads(
+            build_auth_status_report(config_manager=self.config_manager, state_db=self.state_db).to_json()
+        )
+
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["providers"][0]["secret_present"])
+        self.assertEqual(payload["providers"][0]["status"], "active")
+
     def test_auth_status_reports_fallback_provider_marker(self) -> None:
         connect_primary_exit, _, connect_primary_stderr = self.run_cli(
             "auth",

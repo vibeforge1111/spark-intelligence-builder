@@ -1,0 +1,146 @@
+{
+  "matrix_id": "spark_self_awareness_natural_language_routes_v1",
+  "purpose": "Golden route matrix for self-awareness, wiki, memory, build-quality, and Telegram command collisions.",
+  "guardrails": [
+    "wiki remains supporting_not_authoritative",
+    "self-awareness answers are not durable memory",
+    "debug explanations are operator_debug_only",
+    "explicit user memory writes may update governed memory while bridge replies remain not_promotable",
+    "plain route tests must not call the provider"
+  ],
+  "release_cadence": {
+    "required_for": [
+      "self-awareness release",
+      "LLM wiki route change",
+      "Telegram routing change",
+      "memory cognition boundary change"
+    ],
+    "evidence_dir": "artifacts/live-telegram-regression",
+    "verifier": "scripts/run_live_telegram_self_awareness_wiki_probe.ps1 -OutputDir artifacts/live-telegram-regression -Json",
+    "evidence_boundary": "Only real Telegram runtime traces with simulation=false count as live evidence."
+  },
+  "cases": [
+    {
+      "id": "telegram_slash_self",
+      "suite": "telegram_commands",
+      "surface": "telegram_runtime",
+      "prompt": "/self",
+      "expected_mode": "runtime_command",
+      "expected_routing_decision": "runtime_command",
+      "expected_promotion_disposition": "not_promotable",
+      "response_contains": ["Spark self-awareness"]
+    },
+    {
+      "id": "telegram_slash_wiki_status",
+      "suite": "telegram_commands",
+      "surface": "telegram_runtime",
+      "prompt": "/wiki",
+      "expected_mode": "runtime_command",
+      "expected_routing_decision": "runtime_command",
+      "expected_promotion_disposition": "not_promotable",
+      "response_contains": ["Spark LLM wiki status", "supporting_not_authoritative"]
+    },
+    {
+      "id": "telegram_slash_wiki_candidates",
+      "suite": "telegram_commands",
+      "surface": "telegram_runtime",
+      "prompt": "/wiki candidates",
+      "expected_mode": "runtime_command",
+      "expected_routing_decision": "runtime_command",
+      "expected_promotion_disposition": "not_promotable",
+      "response_contains": ["Spark LLM wiki candidate inbox", "not live Spark truth"]
+    },
+    {
+      "id": "telegram_slash_wiki_scan",
+      "suite": "telegram_commands",
+      "surface": "telegram_runtime",
+      "prompt": "/wiki scan-candidates",
+      "expected_mode": "runtime_command",
+      "expected_routing_decision": "runtime_command",
+      "expected_promotion_disposition": "not_promotable",
+      "response_contains": ["Spark LLM wiki candidate contradiction scan", "not automatic promotion"]
+    },
+    {
+      "id": "self_awareness_lacks",
+      "suite": "self_awareness",
+      "surface": "builder_bridge",
+      "prompt": "Where do you lack and how can you improve those parts?",
+      "expected_mode": "self_awareness_direct",
+      "expected_routing_decision": "self_awareness_direct",
+      "expected_promotion_disposition": "not_promotable",
+      "response_contains": ["Spark self-awareness", "Where I still lack", "What I should improve next"],
+      "response_not_contains": ["saved entity state"]
+    },
+    {
+      "id": "memory_cognition_boundary",
+      "suite": "self_awareness",
+      "surface": "builder_bridge",
+      "prompt": "What do you know about your memory system and what outranks wiki?",
+      "expected_mode": "self_awareness_direct",
+      "expected_routing_decision": "self_awareness_direct",
+      "expected_promotion_disposition": "not_promotable",
+      "response_contains": ["Memory cognition", "current-state memory wins over wiki", "supporting_not_authoritative"]
+    },
+    {
+      "id": "wiki_candidate_inbox",
+      "suite": "llm_wiki",
+      "surface": "builder_bridge",
+      "prompt": "What candidate wiki learnings need verification?",
+      "expected_mode": "llm_wiki_candidate_inbox",
+      "expected_routing_decision": "llm_wiki_candidate_inbox",
+      "expected_promotion_disposition": "not_promotable",
+      "response_contains": ["LLM wiki candidate inbox", "supporting_not_authoritative", "not live runtime truth"]
+    },
+    {
+      "id": "wiki_candidate_scan",
+      "suite": "llm_wiki",
+      "surface": "builder_bridge",
+      "prompt": "Scan your wiki candidates for contradictions",
+      "expected_mode": "llm_wiki_candidate_scan",
+      "expected_routing_decision": "llm_wiki_candidate_scan",
+      "expected_promotion_disposition": "not_promotable",
+      "response_contains": ["LLM wiki candidate scan", "scan findings guide review"]
+    },
+    {
+      "id": "build_quality_review",
+      "suite": "build_quality",
+      "surface": "builder_bridge",
+      "prompt": "Review the quality of the /memory-quality build in spawner-ui.",
+      "expected_mode": "build_quality_review_direct",
+      "expected_routing_decision": "build_quality_review_direct",
+      "expected_promotion_disposition": "not_promotable",
+      "response_contains": ["Target repo: spawner-ui", "Tests:"]
+    },
+    {
+      "id": "memory_current_state_write",
+      "suite": "governed_memory",
+      "surface": "builder_bridge",
+      "prompt": "For later, Omar owns the launch checklist.",
+      "expected_mode": "memory_generic_observation_update",
+      "expected_routing_decision": "memory_generic_observation",
+      "expected_promotion_disposition": "not_promotable",
+      "response_contains": ["I'll remember", "owned by Omar"]
+    },
+    {
+      "id": "memory_current_state_recall",
+      "suite": "governed_memory",
+      "surface": "builder_bridge",
+      "prompt": "Who owns the launch checklist?",
+      "expected_mode": "memory_open_recall",
+      "expected_routing_decision": "memory_open_recall_query",
+      "expected_promotion_disposition": "not_promotable",
+      "response_contains": ["Omar"]
+    },
+    {
+      "id": "route_explanation_debug",
+      "suite": "route_explanation",
+      "surface": "builder_bridge",
+      "prompt": "Why did you answer that way?",
+      "expected_mode": "context_source_debug",
+      "expected_routing_decision": "context_source_debug",
+      "expected_promotion_disposition": "not_promotable",
+      "expected_output_keepability": "operator_debug_only",
+      "response_contains": ["Route:", "source: entity_state current records", "read_method: get_current_state"]
+    }
+  ]
+}

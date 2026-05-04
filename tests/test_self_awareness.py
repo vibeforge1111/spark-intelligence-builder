@@ -1,12 +1,22 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from spark_intelligence.observability.store import record_event
 from spark_intelligence.adapters.telegram.runtime import simulate_telegram_update
+from spark_intelligence.llm_wiki import promote_llm_wiki_improvement, promote_llm_wiki_user_note
+from spark_intelligence.memory import run_memory_sdk_smoke_test
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
-from spark_intelligence.self_awareness import build_self_awareness_capsule, build_self_improvement_plan
+from spark_intelligence.self_awareness import (
+    build_capability_drift_heartbeat,
+    build_handoff_freshness_check,
+    build_self_awareness_capsule,
+    build_self_improvement_plan,
+)
 
 from tests.test_support import SparkTestCase, create_fake_hook_chip, make_telegram_update
 
@@ -71,6 +81,92 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("last_failure_at", evidence_text)
         self.assertIn("route_latency_ms", evidence_text)
         self.assertIn("eval_coverage_status", evidence_text)
+        self.assertIn("confidence_level", evidence_text)
+        self.assertIn("freshness_status", evidence_text)
+        self.assertIn("goal_relevance", evidence_text)
+        self.assertIn("can_claim_confidently", evidence_text)
+
+    def test_self_awareness_capability_freshness_scores_recent_goal_relevant_success(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Startup YC route succeeded",
+            status="succeeded",
+            facts={
+                "routing_decision": "researcher_advisory",
+                "active_chip_key": "startup-yc",
+                "route_latency_ms": 321,
+                "eval_suite": "capability-freshness-regression",
+            },
+            provenance={"source_kind": "chip_hook", "source_ref": "startup-yc"},
+        )
+
+        capsule = build_self_awareness_capsule(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human:test-capability-freshness",
+            session_id="session:test-capability-freshness",
+            channel_kind="telegram",
+            user_message="can you use startup yc for this?",
+        )
+        payload = capsule.to_payload()
+
+        startup = next(row for row in payload["capability_evidence"] if row["capability_key"] == "startup-yc")
+        self.assertEqual(startup["confidence_level"], "recent_success")
+        self.assertEqual(startup["freshness_status"], "fresh")
+        self.assertEqual(startup["goal_relevance"], "direct")
+        self.assertEqual(startup["eval_coverage_status"], "covered")
+        self.assertIn("capability-freshness-regression", startup["eval_coverage_sources"])
+        self.assertTrue(startup["can_claim_confidently"])
+        self.assertIn("confidence=recent_success", capsule.to_text())
+        self.assertIn("eval=covered", capsule.to_text())
+        self.assertIn("goal=direct", capsule.to_text())
+
+    def test_self_awareness_prioritizes_high_surprise_user_relevant_weak_spots(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Startup YC route succeeded with eval coverage",
+            status="succeeded",
+            facts={
+                "active_chip_key": "startup-yc",
+                "route_latency_ms": 321,
+                "eval_suite": "capability-freshness-regression",
+            },
+            provenance={"source_kind": "chip_hook", "source_ref": "startup-yc"},
+        )
+        record_event(
+            self.state_db,
+            event_type="dispatch_failed",
+            component="researcher_bridge",
+            summary="Browser search route timed out",
+            status="failed",
+            facts={
+                "routing_decision": "browser_search",
+                "failure_reason": "timeout",
+            },
+            provenance={"source_kind": "route", "source_ref": "browser_search"},
+        )
+
+        capsule = build_self_awareness_capsule(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human:test-surprise-priority",
+            session_id="session:test-surprise-priority",
+            channel_kind="telegram",
+            user_message="please improve the browser route weak spot",
+        )
+        payload = capsule.to_payload()
+
+        top = payload["weak_spot_priorities"][0]
+        self.assertEqual(top["priority_key"], "capability:browser-search")
+        self.assertGreater(top["surprise_score"], 10)
+        self.assertEqual(top["score_components"]["failure_evidence"], 6)
+        self.assertEqual(top["score_components"]["user_relevance"], 3)
+        self.assertIn("failure_evidence", top["priority_reasons"])
+        self.assertIn("Weak spot priorities", capsule.to_text())
 
     def test_self_status_cli_emits_machine_readable_capsule(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
@@ -91,6 +187,364 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("lacks", payload)
         self.assertIn("improvement_options", payload)
         self.assertIn("source_ledger", payload)
+        self.assertIn("memory_cognition", payload)
+        self.assertIn("user_awareness", payload)
+        self.assertIn("project_awareness", payload)
+        self.assertIn("capability_probe_registry", payload)
+        self.assertNotIn("self_status_memory", payload["memory_cognition"])
+
+    def test_builder_aggregate_readiness_points_to_concrete_provider_records(self) -> None:
+        registry_payload = {
+            "workspace_id": "default",
+            "record_count": 2,
+            "summary": {"current_capabilities": []},
+            "records": [
+                {
+                    "kind": "system",
+                    "key": "spark_intelligence_builder",
+                    "record_id": "system:spark_intelligence_builder",
+                    "label": "Spark Intelligence Builder",
+                    "status": "degraded",
+                    "available": True,
+                    "degraded": True,
+                    "limitations": ["Gateway/provider/channel readiness is not fully green yet."],
+                },
+                {
+                    "kind": "provider",
+                    "key": "custom",
+                    "record_id": "provider:custom",
+                    "label": "custom",
+                    "status": "degraded",
+                    "available": False,
+                    "degraded": True,
+                    "limitations": ["Provider secret or token is not currently available."],
+                },
+            ],
+        }
+
+        with patch(
+            "spark_intelligence.self_awareness.capsule.build_system_registry",
+            return_value=SimpleNamespace(to_payload=lambda: registry_payload),
+        ):
+            capsule = build_self_awareness_capsule(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                human_id="human:test-builder-aggregate",
+                session_id="session:test-builder-aggregate",
+                channel_kind="telegram",
+                user_message="what is broken in builder right now?",
+            )
+
+        payload = capsule.to_payload()
+        builder_claim = next(
+            claim
+            for claim in payload["degraded_or_missing"]
+            if claim.get("capability_key") == "spark_intelligence_builder"
+        )
+        provider_claim = next(
+            claim
+            for claim in payload["degraded_or_missing"]
+            if claim.get("capability_key") == "custom"
+        )
+
+        self.assertEqual(builder_claim["verification_status"], "aggregate_readiness_warning")
+        self.assertEqual(builder_claim["confidence"], "medium")
+        self.assertIn("provider/channel records", builder_claim["claim"])
+        self.assertIn("gateway status --json", builder_claim["next_probe"])
+        self.assertIn("concrete provider/channel blocker", builder_claim["improvement_action"])
+        self.assertEqual(provider_claim["verification_status"], "degraded_or_missing")
+        self.assertEqual(provider_claim["confidence"], "high")
+        self.assertIn("Provider secret or token", provider_claim["claim"])
+
+    def test_self_awareness_user_awareness_labels_current_context_without_promoting_doctrine(self) -> None:
+        run_memory_sdk_smoke_test(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            sdk_module="domain_chip_memory",
+            subject="human:test-user-awareness",
+            predicate="profile.current_focus",
+            value="hardening Spark self-awareness",
+            cleanup=False,
+        )
+        run_memory_sdk_smoke_test(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            sdk_module="domain_chip_memory",
+            subject="human:test-user-awareness",
+            predicate="profile.current_decision",
+            value="keep user context separate from Spark doctrine",
+            cleanup=False,
+        )
+        promote_llm_wiki_user_note(
+            config_manager=self.config_manager,
+            human_id="human:test-user-awareness",
+            title="User hardening cadence",
+            summary="The user wants self-awareness hardening work committed in small checkpoints.",
+            consent_ref="consent:test:self-awareness",
+            evidence_refs=["pytest tests/test_self_awareness.py::user_awareness"],
+        )
+
+        capsule = build_self_awareness_capsule(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human:test-user-awareness",
+            session_id="session:test-user-awareness",
+            channel_kind="telegram",
+            user_message="what do you know about me and this project?",
+            personality_profile={"user_deltas_applied": True},
+        )
+        payload = capsule.to_payload()
+
+        user_awareness = payload["user_awareness"]
+        self.assertEqual(user_awareness["scope_kind"], "user_specific")
+        self.assertEqual(user_awareness["current_goal"]["label"], "recent")
+        self.assertEqual(user_awareness["current_goal"]["value"], "hardening Spark self-awareness")
+        self.assertEqual(user_awareness["stable_preferences"][0]["label"], "stable")
+        self.assertEqual(user_awareness["recent_decisions"][0]["label"], "recent")
+        self.assertEqual(user_awareness["user_wiki_context"]["candidate_note_count"], 1)
+        self.assertFalse(user_awareness["user_wiki_context"]["can_override_current_state_memory"])
+        self.assertIn("candidate", user_awareness["label_counts"])
+        self.assertIn(
+            "user_memory_stays_separate_from_global_spark_doctrine",
+            user_awareness["boundaries"],
+        )
+        self.assertIn("User awareness", capsule.to_text())
+        self.assertIn("User wiki candidates: 1", capsule.to_text())
+
+    def test_self_awareness_project_awareness_names_projects_with_live_state_boundary(self) -> None:
+        project_root = self.home / "project-alpha"
+        project_root.mkdir()
+        self.config_manager.set_path("spark.local_projects.include_known_spark_repos", False)
+        self.config_manager.set_path("spark.local_projects.include_attachment_repos", False)
+        self.config_manager.set_path(
+            "spark.local_projects.records",
+            {
+                "project-alpha": {
+                    "path": str(project_root),
+                    "label": "Project Alpha",
+                    "components": ["builder_hardening"],
+                    "owner_system": "spark_local_work",
+                }
+            },
+        )
+
+        capsule = build_self_awareness_capsule(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human:test-project-awareness",
+            session_id="session:test-project-awareness",
+            channel_kind="telegram",
+            user_message="what project are we working on?",
+        )
+        payload = capsule.to_payload()
+
+        project_awareness = payload["project_awareness"]
+        self.assertTrue(project_awareness["present"])
+        self.assertEqual(project_awareness["project_count"], 1)
+        self.assertEqual(project_awareness["active_project"]["key"], "project-alpha")
+        self.assertEqual(project_awareness["active_project"]["source_ref"], "registry:repo:project-alpha")
+        self.assertEqual(project_awareness["active_project"]["source_kind"], "local_project_index")
+        self.assertEqual(
+            project_awareness["authority"],
+            "observed_configuration_not_live_git_truth",
+        )
+        self.assertIn("live_git_status_outranks_project_awareness_snapshot", project_awareness["boundaries"])
+        self.assertIn("Project awareness", capsule.to_text())
+        self.assertIn("Known projects: 1", capsule.to_text())
+
+    def test_self_awareness_exposes_safe_capability_probe_registry(self) -> None:
+        chip_root = create_fake_hook_chip(self.home, chip_key="startup-yc")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+        self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
+
+        capsule = build_self_awareness_capsule(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="human:test-probe-registry",
+            session_id="session:test-probe-registry",
+            channel_kind="telegram",
+            user_message="how do you prove a capability works?",
+        )
+        payload = capsule.to_payload()
+
+        probes = payload["capability_probe_registry"]
+        self.assertTrue(probes)
+        startup_probe = next(probe for probe in probes if probe["target_key"] == "startup-yc")
+        self.assertEqual(startup_probe["target_kind"], "chip")
+        self.assertIn("spark-intelligence chips why", startup_probe["safe_probe"])
+        self.assertEqual(startup_probe["access_boundary"], "read_only_routing_or_attachment_check")
+        self.assertEqual(startup_probe["claim_boundary"], "configured_or_available_is_not_recent_success")
+        self.assertFalse(startup_probe["records_current_success"])
+        self.assertIn("startup-yc:", "\n".join(payload["recommended_probes"]))
+
+    def test_capability_drift_heartbeat_names_stale_and_failed_routes_with_safe_probes(self) -> None:
+        chip_root = create_fake_hook_chip(self.home, chip_key="startup-yc")
+        self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
+        self.config_manager.set_path("spark.chips.active_keys", ["startup-yc"])
+        stale_event_id = record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Startup YC route succeeded in an old probe",
+            status="succeeded",
+            facts={
+                "active_chip_key": "startup-yc",
+                "route_latency_ms": 321,
+                "eval_suite": "capability-drift-regression",
+            },
+            provenance={"source_kind": "chip_hook", "source_ref": "startup-yc"},
+        )
+        old_timestamp = (datetime.now(UTC) - timedelta(days=45)).replace(microsecond=0).isoformat()
+        with self.state_db.connect() as conn:
+            conn.execute("UPDATE builder_events SET created_at = ? WHERE event_id = ?", (old_timestamp, stale_event_id))
+            conn.commit()
+        record_event(
+            self.state_db,
+            event_type="dispatch_failed",
+            component="researcher_bridge",
+            summary="Browser search route timed out",
+            status="failed",
+            facts={
+                "routing_decision": "browser_search",
+                "failure_reason": "timeout",
+            },
+            provenance={"source_kind": "route", "source_ref": "browser_search"},
+        )
+
+        result = build_capability_drift_heartbeat(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            user_message="probe startup yc and browser drift",
+        )
+        payload = result.payload
+
+        self.assertEqual(payload["kind"], "capability_drift_heartbeat")
+        self.assertEqual(payload["authority"], "observability_non_authoritative")
+        self.assertEqual(payload["memory_policy"], "typed_report_not_chat_memory")
+        self.assertEqual(payload["status"], "warn")
+        self.assertTrue(payload["report_written"])
+        self.assertTrue((self.home / "artifacts" / "capability-drift-heartbeat" / "latest.json").exists())
+        self.assertTrue(Path(payload["report_path"]).exists())
+        self.assertEqual(payload["summary"]["stale_success_count"], 1)
+        self.assertEqual(payload["summary"]["recent_failure_count"], 1)
+        drift_by_key = {row["capability_key"]: row for row in payload["capabilities_needing_probe"]}
+        self.assertEqual(drift_by_key["startup-yc"]["drift_kind"], "stale_success")
+        self.assertGreaterEqual(drift_by_key["startup-yc"]["last_success_age_days"], 45)
+        self.assertIn("spark-intelligence chips why", drift_by_key["startup-yc"]["safe_probe"])
+        self.assertEqual(drift_by_key["browser_search"]["drift_kind"], "recent_failure")
+        self.assertIn("capability_last_success_stale", payload["warnings"])
+        self.assertIn("capability_recent_failure_needs_probe", payload["warnings"])
+        self.assertEqual(
+            payload["truth_boundary"],
+            "capability_drift_reports_do_not_promote_runtime_success_or_failure",
+        )
+
+    def test_self_heartbeat_cli_emits_machine_readable_drift_report(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "heartbeat",
+            "--home",
+            str(self.home),
+            "--user-message",
+            "what capabilities need probes?",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["kind"], "capability_drift_heartbeat")
+        self.assertEqual(payload["authority"], "observability_non_authoritative")
+        self.assertTrue(payload["report_written"])
+        self.assertTrue(Path(payload["report_path"]).exists())
+        self.assertIn("probe_plan", payload)
+        self.assertEqual(payload["memory_policy"], "typed_report_not_chat_memory")
+
+    def test_handoff_freshness_blocks_self_awareness_changes_without_doc_updates(self) -> None:
+        result = build_handoff_freshness_check(
+            config_manager=self.config_manager,
+            changed_paths=["src/spark_intelligence/self_awareness/capsule.py"],
+            write_report=False,
+        )
+        payload = result.payload
+
+        self.assertEqual(payload["kind"], "self_awareness_handoff_freshness_check")
+        self.assertEqual(payload["status"], "blocked")
+        self.assertTrue(payload["doc_update_required"])
+        self.assertFalse(payload["doc_update_present"])
+        self.assertIn("handoff_docs_not_updated_with_self_awareness_change", payload["warnings"])
+
+    def test_handoff_freshness_passes_when_required_docs_move_with_source_change(self) -> None:
+        result = build_handoff_freshness_check(
+            config_manager=self.config_manager,
+            changed_paths=[
+                "src/spark_intelligence/self_awareness/capsule.py",
+                "docs/SPARK_SELF_AWARENESS_HARDENING_TASKS_2026-05-01.md",
+                "docs/SPARK_SELF_AWARENESS_LLM_WIKI_HANDOFF_2026-05-01.md",
+                "docs/SPARK_LLM_WIKI_ARCHITECTURE_PLAN_2026-05-01.md",
+            ],
+        )
+        payload = result.payload
+
+        self.assertEqual(payload["status"], "pass")
+        self.assertTrue(payload["report_written"])
+        self.assertTrue((self.home / "artifacts" / "handoff-freshness" / "latest.json").exists())
+        self.assertTrue(payload["doc_update_present"])
+        self.assertEqual(payload["memory_policy"], "typed_report_not_chat_memory")
+        self.assertIn("self handoff-check", payload["continuation_prompt"])
+        for row in payload["doc_status"]:
+            self.assertEqual(row["missing_tokens"], [])
+
+    def test_self_handoff_check_cli_emits_machine_readable_report(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "handoff-check",
+            "--home",
+            str(self.home),
+            "--json",
+        )
+
+        self.assertIn(exit_code, {0, 1}, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["kind"], "self_awareness_handoff_freshness_check")
+        self.assertIn(payload["status"], {"pass", "blocked"})
+        self.assertTrue(payload["report_written"])
+        self.assertIn("continuation_prompt", payload)
+        self.assertEqual(payload["authority"], "observability_non_authoritative")
+
+    def test_self_awareness_adds_memory_cognition_after_wiki_source_families_are_visible(self) -> None:
+        kb_dir = self.home / "artifacts" / "spark-memory-kb" / "wiki" / "current-state"
+        kb_dir.mkdir(parents=True)
+        (kb_dir / "runtime.md").write_text(
+            "---\n"
+            "title: Runtime Memory KB\n"
+            "authority: supporting_not_authoritative\n"
+            "owner_system: domain-chip-memory\n"
+            "wiki_family: memory_kb_current_state\n"
+            "scope_kind: governed_memory\n"
+            "source_of_truth: SparkMemorySDK\n"
+            "freshness: snapshot_generated\n"
+            "---\n"
+            "# Runtime Memory KB\n\nCurrent-state memory snapshots are downstream of governed memory.",
+            encoding="utf-8",
+        )
+
+        capsule = build_self_awareness_capsule(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            human_id="telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+            user_message="how does your memory cognition work?",
+        )
+        payload = capsule.to_payload()
+
+        cognition = payload["memory_cognition"]
+        self.assertTrue(cognition["wiki_packets"]["source_families_visible"])
+        self.assertTrue(cognition["wiki_packets"]["memory_kb"]["present"])
+        self.assertEqual(cognition["wiki_packets"]["memory_kb"]["authority"], "supporting_not_authoritative")
+        self.assertEqual(cognition["self_status_memory"]["current_state_for_mutable_user_facts"], "authoritative")
+        self.assertIn("current_state_memory_outranks_wiki", cognition["authority_boundary"])
+        self.assertIn("Memory cognition", capsule.to_text())
 
     def test_self_awareness_capsule_includes_memory_movement_trace(self) -> None:
         movement_payload = {
@@ -182,6 +636,8 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("probe", payload["guardrail"].lower())
         action_text = json.dumps(payload["priority_actions"])
         self.assertIn("evidence_to_collect", action_text)
+        self.assertIn("surprise_score", action_text)
+        self.assertTrue(payload["live_self_awareness"]["weak_spot_priorities"])
         self.assertIn("Natural-language invocability", action_text)
 
     def test_self_improve_cli_emits_machine_readable_plan(self) -> None:
@@ -254,11 +710,235 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(result.mode, "self_awareness_direct")
         self.assertEqual(result.routing_decision, "self_awareness_direct")
         self.assertIn("Spark self-awareness", result.reply_text)
+        self.assertIn("Memory cognition", result.reply_text)
+        self.assertIn("supporting_not_authoritative", result.reply_text)
+        self.assertIn("current-state memory wins over wiki", result.reply_text)
         self.assertIn("Where I still lack", result.reply_text)
         self.assertIn("What I should improve next", result.reply_text)
         self.assertNotIn("LLM wiki", result.reply_text)
-        self.assertLess(len(result.reply_text), 2600)
+        self.assertLess(len(result.reply_text), 3000)
         self.assertIn("wiki_refresh=skipped", result.evidence_summary)
+        self.assertEqual(result.output_keepability, "ephemeral_context")
+        self.assertEqual(result.promotion_disposition, "not_promotable")
+
+    def test_route_explanation_for_self_awareness_names_route_sources_stale_and_missing_probes(self) -> None:
+        build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-self-awareness-to-explain",
+            agent_id="agent-1",
+            human_id="human:telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+            user_message="Where do you lack and how can you improve those parts?",
+        )
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-self-awareness-explanation",
+            agent_id="agent-1",
+            human_id="human:telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+            user_message="Why did you answer that way?",
+        )
+
+        self.assertEqual(result.mode, "context_source_debug")
+        self.assertEqual(result.routing_decision, "context_source_debug")
+        self.assertIn("Route explanation", result.reply_text)
+        self.assertIn("routing_decision: self_awareness_direct", result.reply_text)
+        self.assertIn("Sources used", result.reply_text)
+        self.assertIn("source=self_awareness_capsule", result.reply_text)
+        self.assertIn("Stale evidence ignored", result.reply_text)
+        self.assertIn("none recorded for this route", result.reply_text)
+        self.assertIn("Missing probes", result.reply_text)
+        self.assertIn("run the exact safe probe", result.reply_text)
+        self.assertIn("explained_request_id=req-self-awareness-to-explain", result.evidence_summary)
+        self.assertEqual(result.output_keepability, "operator_debug_only")
+        self.assertEqual(result.promotion_disposition, "not_promotable")
+
+    def test_natural_self_awareness_query_exposes_memory_kb_families_without_promoting_wiki(self) -> None:
+        kb_dir = self.home / "artifacts" / "spark-memory-kb" / "wiki" / "current-state"
+        kb_dir.mkdir(parents=True)
+        (kb_dir / "focus.md").write_text(
+            "---\n"
+            "title: Current Focus Snapshot\n"
+            "authority: supporting_not_authoritative\n"
+            "owner_system: domain-chip-memory\n"
+            "wiki_family: memory_kb_current_state\n"
+            "scope_kind: governed_memory\n"
+            "source_of_truth: SparkMemorySDK\n"
+            "freshness: snapshot_generated\n"
+            "---\n"
+            "# Current Focus Snapshot\n\nA downstream memory KB snapshot for source-family discovery.",
+            encoding="utf-8",
+        )
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-self-awareness-memory-kb",
+            agent_id="agent-1",
+            human_id="human:telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+            user_message=(
+                "What systems can you call, what do you know about your memory system, "
+                "what outranks wiki, and where do you lack?"
+            ),
+        )
+
+        self.assertEqual(result.mode, "self_awareness_direct")
+        self.assertIn("Memory KB: present", result.reply_text)
+        self.assertIn("memory_kb_current_state", result.reply_text)
+        self.assertIn("supporting_not_authoritative", result.reply_text)
+        self.assertIn("current-state memory wins over wiki", result.reply_text)
+        self.assertIn("Graph sidecar: advisory until evals pass", result.reply_text)
+        self.assertIn("user memory stays separate from Spark doctrine", result.reply_text)
+        self.assertNotIn("LLM wiki", result.reply_text)
+        self.assertEqual(result.output_keepability, "ephemeral_context")
+        self.assertEqual(result.promotion_disposition, "not_promotable")
+
+    def test_memory_self_awareness_phrase_routes_without_systems_magic_words(self) -> None:
+        run_memory_sdk_smoke_test(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            sdk_module="domain_chip_memory",
+            subject="human:self-awareness:movement",
+            predicate="system.memory.route_detection",
+            value="ok",
+            cleanup=False,
+        )
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-self-awareness-memory-phrase",
+            agent_id="agent-1",
+            human_id="human:telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+            user_message="What do you know about your memory system and what outranks wiki?",
+        )
+
+        self.assertEqual(result.mode, "self_awareness_direct")
+        self.assertEqual(result.routing_decision, "self_awareness_direct")
+        self.assertIn("Memory cognition", result.reply_text)
+        self.assertIn("Memory movement", result.reply_text)
+        self.assertIn("captured=", result.reply_text)
+        self.assertIn("current-state memory wins over wiki", result.reply_text)
+        self.assertIn("supporting_not_authoritative", result.reply_text)
+        self.assertEqual(result.output_keepability, "ephemeral_context")
+        self.assertEqual(result.promotion_disposition, "not_promotable")
+
+    def test_natural_wiki_candidate_inbox_query_routes_to_review_surface(self) -> None:
+        promote_llm_wiki_improvement(
+            config_manager=self.config_manager,
+            title="Natural wiki candidate route",
+            summary="Spark should expose candidate wiki notes through natural language without promoting them.",
+            evidence_refs=["pytest tests/test_self_awareness.py::wiki_candidate_route"],
+            source_refs=["operator_session:self-awareness-hardening"],
+        )
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-wiki-candidate-inbox",
+            agent_id="agent-1",
+            human_id="human:telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+            user_message="What candidate wiki learnings need verification?",
+        )
+
+        self.assertEqual(result.mode, "llm_wiki_candidate_inbox")
+        self.assertEqual(result.routing_decision, "llm_wiki_candidate_inbox")
+        self.assertIn("LLM wiki candidate inbox", result.reply_text)
+        self.assertIn("supporting_not_authoritative", result.reply_text)
+        self.assertIn("not live runtime truth", result.reply_text)
+        self.assertIn("Natural wiki candidate route", result.reply_text)
+        self.assertIn("authority=supporting_not_authoritative", result.evidence_summary)
+        self.assertEqual(result.output_keepability, "ephemeral_context")
+        self.assertEqual(result.promotion_disposition, "not_promotable")
+
+    def test_natural_wiki_candidate_scan_query_routes_to_contradiction_surface(self) -> None:
+        promote_llm_wiki_improvement(
+            config_manager=self.config_manager,
+            title="User prefers global doctrine",
+            summary="User prefers global doctrine forever.",
+            evidence_refs=["pytest tests/test_memory_orchestrator.py::current_state"],
+            source_refs=["operator_session:self-awareness-hardening"],
+        )
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-wiki-candidate-scan",
+            agent_id="agent-1",
+            human_id="human:telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+            user_message="Scan your wiki candidates for contradictions",
+        )
+
+        self.assertEqual(result.mode, "llm_wiki_candidate_scan")
+        self.assertEqual(result.routing_decision, "llm_wiki_candidate_scan")
+        self.assertIn("LLM wiki candidate scan", result.reply_text)
+        self.assertIn("rewrite", result.reply_text)
+        self.assertIn("mutable_user_fact_requires_user_memory_lane", result.reply_text)
+        self.assertIn("current-state memory", result.reply_text)
+        self.assertIn("authority=supporting_not_authoritative", result.evidence_summary)
+        self.assertEqual(result.output_keepability, "ephemeral_context")
+        self.assertEqual(result.promotion_disposition, "not_promotable")
+
+    def test_memory_self_awareness_without_kb_names_gap_without_overclaiming(self) -> None:
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-self-awareness-memory-no-kb",
+            agent_id="agent-1",
+            human_id="human:telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+            user_message="What do you know about your memory system and where do you lack?",
+        )
+
+        self.assertEqual(result.mode, "self_awareness_direct")
+        self.assertIn("Memory cognition", result.reply_text)
+        self.assertIn("families=not visible", result.reply_text)
+        self.assertNotIn("Memory KB: present", result.reply_text)
+        self.assertIn("Where I still lack", result.reply_text)
+        self.assertEqual(result.output_keepability, "ephemeral_context")
+        self.assertEqual(result.promotion_disposition, "not_promotable")
+
+    def test_self_awareness_keeps_user_memory_separate_from_spark_doctrine(self) -> None:
+        run_memory_sdk_smoke_test(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            sdk_module="domain_chip_memory",
+            subject="human:telegram:123",
+            predicate="profile.favorite_color",
+            value="cobalt blue",
+            cleanup=False,
+        )
+
+        result = build_researcher_reply(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            request_id="req-self-awareness-user-memory-separation",
+            agent_id="agent-1",
+            human_id="human:telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+            user_message="What do you know about your memory system and what belongs to Spark doctrine?",
+        )
+
+        self.assertEqual(result.mode, "self_awareness_direct")
+        self.assertIn("user memory stays separate from Spark doctrine", result.reply_text)
+        self.assertNotIn("cobalt blue", result.reply_text)
+        self.assertNotIn("favorite color", result.reply_text.lower())
+        self.assertEqual(result.output_keepability, "ephemeral_context")
+        self.assertEqual(result.promotion_disposition, "not_promotable")
 
     def test_memory_lack_query_uses_self_awareness_direct_route(self) -> None:
         result = build_researcher_reply(
@@ -380,6 +1060,49 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(result.detail["bridge_mode"], "self_awareness_direct")
         self.assertEqual(result.detail["routing_decision"], "self_awareness_direct")
         self.assertIn("Spark self-awareness", result.detail["response_text"])
+        self.assertIn("Memory cognition", result.detail["response_text"])
+        self.assertIn("current-state memory wins over wiki", result.detail["response_text"])
         self.assertIn("Where I still lack", result.detail["response_text"])
         self.assertNotIn("LLM wiki", result.detail["response_text"])
-        self.assertLess(len(result.detail["response_text"]), 2600)
+        self.assertLess(len(result.detail["response_text"]), 3000)
+
+    def test_telegram_self_and_wiki_runtime_commands_are_invocable(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        promote_llm_wiki_improvement(
+            config_manager=self.config_manager,
+            title="Telegram command candidate",
+            summary="The live Telegram runtime should expose wiki candidates without promoting them.",
+            evidence_refs=["pytest tests/test_self_awareness.py::telegram_runtime_commands"],
+            source_refs=["operator_session:self-awareness-hardening"],
+        )
+
+        self_result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=1002,
+                user_id="111",
+                username="alice",
+                text="/self",
+            ),
+        )
+        wiki_result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=1003,
+                user_id="111",
+                username="alice",
+                text="/wiki candidates",
+            ),
+        )
+
+        self.assertTrue(self_result.ok)
+        self.assertEqual(self_result.detail["bridge_mode"], "runtime_command")
+        self.assertEqual(self_result.detail["routing_decision"], "runtime_command")
+        self.assertIn("Spark self-awareness", self_result.detail["response_text"])
+        self.assertTrue(wiki_result.ok)
+        self.assertEqual(wiki_result.detail["bridge_mode"], "runtime_command")
+        self.assertIn("Spark LLM wiki candidate inbox", wiki_result.detail["response_text"])
+        self.assertIn("Telegram command candidate", wiki_result.detail["response_text"])
+        self.assertIn("not live Spark truth", wiki_result.detail["response_text"])

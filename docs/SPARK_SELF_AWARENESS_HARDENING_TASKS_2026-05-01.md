@@ -115,71 +115,116 @@ Guardrail:
 
 | Task | Repo | Status | Outcome | Acceptance |
 | --- | --- | --- | --- | --- |
-| MWI-001 Wiki packet family metadata | builder | planned | Classify retrieved Markdown packets by family, authority, owner, and scope | context packets distinguish Builder LLM wiki, memory KB current state, memory KB evidence, memory KB synthesis, and diagnostics |
-| MWI-002 Memory KB vault discovery | builder | planned | Show whether the older memory KB vault exists and is retrievable | `wiki status` and `self status` report Memory KB presence/freshness without treating it as live truth |
+| MWI-001 Wiki packet family metadata | builder | shipped | Classify retrieved Markdown packets by family, authority, owner, and scope | context packets distinguish Builder LLM wiki, memory KB current state, memory KB evidence, memory KB synthesis, and diagnostics |
+| MWI-002 Memory KB vault discovery | builder | shipped | Show whether the older memory KB vault exists and is retrievable | `wiki status` and `self status` report Memory KB presence/freshness without treating it as live truth |
 | MWI-003 Unified memory/wiki inventory | builder | planned | List memory/wiki page families from one surface | inventory includes authority, owner system, source path count, and stale warnings |
-| MWI-004 Current-state beats wiki test | builder | planned | Prevent wiki packets from overriding mutable user facts | regression proves current-state memory outranks wiki for "what do you know about me?" |
-| MWI-005 Candidate contradiction scan | builder | planned | Compare wiki candidates against memory/current runtime evidence before promotion | conflicting candidates stay candidate or blocked |
+| MWI-004 Current-state beats wiki test | builder | shipped | Prevent wiki packets from overriding mutable user facts | regression proves current-state memory outranks wiki for "what do you know about me?" |
+| MWI-005 Candidate contradiction scan | builder | shipped | Compare wiki candidates against authority, lineage, residue, live-health, and mutable-user-fact hazards before promotion | scan emits keep/rewrite/drop recommendations and blocks authority inversions |
 | MWI-006 Combined memory/wiki live cases | telegram | planned | Test natural-language questions that need both user memory and system wiki | live matrix covers user-vs-system, memory-vs-wiki, and authority-inversion prompts |
-| MWI-007 Rich wiki packet contract | domain-chip-memory | planned | Return parsed frontmatter metadata from packet reader | packet hits expose authority, owner_system, type, status, freshness, and wiki_family |
-| MWI-008 Memory cognition in self-status | builder | planned | Let Spark name its active memory architecture and lanes | self-awareness payload includes runtime architecture, provider, lane map, wiki packet status, graph sidecar status, and memory KB gaps |
+| MWI-007 Rich wiki packet contract | domain-chip-memory | shipped | Return parsed frontmatter metadata from packet reader | packet hits expose authority, owner_system, type, status, freshness, and wiki_family |
+| MWI-008 Memory cognition in self-status | builder | shipped | Let Spark name its active memory architecture and lanes | self-awareness payload includes runtime architecture, provider, lane map, wiki packet status, graph sidecar status, and memory KB gaps |
+| MWI-009 Memory movement status | builder | shipped | Show compact dashboard movement counts without making them truth | self-awareness payload names captured, blocked, promoted, saved, decayed, summarized, and retrieved as observability_non_authoritative |
 
 ### P0 Runtime Health And Live Proof
 
 | Task | Repo | Status | Outcome | Acceptance |
 | --- | --- | --- | --- | --- |
-| SAH-001 Fix live Builder degraded status | builder | planned | Builder self-status no longer reports gateway/provider/channel readiness as degraded unless there is a real current failure | `self status --refresh-wiki --json` shows Builder ready or includes a precise current blocker |
-| SAH-002 Resolve duplicate chip key | builder/local env | planned | Attachment inventory no longer reports duplicate `domain-chip-crypto-trading` | attachment health check is clean or the duplicate is intentionally ignored with provenance |
-| SAH-003 Provider auth health pass | builder/local env | planned | Provider-backed routes stop surfacing stale 401 failures as current capability confidence | auth/provider status has a current probe and redacted repair hint |
-| SAH-004 Live Telegram self-awareness smoke | telegram | planned | Actual Telegram chat validates `/self` and natural self-awareness prompts | no mission launch, no canned dump, reply names live evidence and gaps |
-| SAH-005 Live Telegram wiki smoke | telegram | planned | Actual Telegram chat validates `/wiki`, `/wiki pages`, wiki answer, and promotion | wiki replies cite sources and authority boundary |
+| SAH-001 Fix live Builder degraded status | builder | shipped | Builder self-status treats generic gateway/provider/channel readiness as an aggregate warning and points to concrete provider/channel blockers | `self status --refresh-wiki --json` includes `aggregate_readiness_warning` for Builder while keeping provider/channel rows as precise blockers |
+| SAH-002 Resolve duplicate chip key | builder/local env | shipped | Attachment inventory can ignore configured local scratch/compare roots without deleting repos | real home `attachments status --json` reports zero warnings after ignoring duplicate local roots |
+| SAH-003 Provider auth health pass | builder/local env | blocked_current_secret_missing | Provider-backed routes stop surfacing stale 401 failures as current capability confidence | `auth status --json` now gives the current blocker: `ZAI_API_KEY` is not visible in Spark home/process environment |
+| SAH-004 Live Telegram self-awareness smoke | telegram | in_progress | Actual Telegram chat validates `/self` and natural self-awareness prompts | runtime command and verifier pack exist; real bot trace run still required |
+| SAH-005 Live Telegram wiki smoke | telegram | in_progress | Actual Telegram chat validates `/wiki`, `/wiki pages`, candidate inbox, contradiction scan, and promotion | runtime command and verifier pack exist; real bot trace run still required |
 
 ### P1 Awareness Foundation
 
 | Task | Repo | Status | Outcome | Acceptance |
 | --- | --- | --- | --- | --- |
-| SAH-101 User awareness capsule | builder | planned | Self-awareness payload includes user goal, stable preferences, recent decisions, and consent-safe user context | current user context is labeled `stable`, `recent`, `inferred`, or `unknown` |
-| SAH-102 Project awareness capsule | builder | planned | Spark can name the current project/repo/mission context it is operating in | project facts include source refs and do not override live git/filesystem state |
-| SAH-103 Environment awareness page | builder | planned | Wiki compiler emits an environment page with Spark home, wiki root, repo map, local services, and safe probes | page is source-backed and redacts secrets |
-| SAH-104 Capability freshness scoring | builder | planned | Capabilities are scored by configured, health-checked, recently invoked, and goal-relevant status | Spark stops saying "I can" without nuance below recent-success confidence |
-| SAH-105 Capability probe registry | builder | planned | Every major system/chip/provider route has a safe probe and access boundary | self-status can recommend exact safe probes |
+| SAH-101 User awareness capsule | builder | shipped | Self-awareness payload includes user goal, stable preferences, recent decisions, and consent-safe user context | `self status --json` includes `user_awareness` with `stable`, `recent`, `inferred`, `unknown`, and user-wiki `candidate` labels plus doctrine/memory boundaries |
+| SAH-102 Project awareness capsule | builder | shipped | Spark can name the current project/repo/mission context it is operating in | `self status --json` includes `project_awareness` with repo source refs and live git/filesystem override boundaries |
+| SAH-103 Environment awareness page | builder | shipped | Wiki compiler emits an environment page with Spark home, wiki root, repo map, local services, and safe probes | `environment/spark-environment.md` is generated from config/registry, lists safe probes, and redacts `.env` contents |
+| SAH-104 Capability freshness scoring | builder | shipped | Capabilities are scored by configured, health-checked, recently invoked, and goal-relevant status | `capability_evidence` includes confidence, freshness, goal relevance, and `can_claim_confidently` fields |
+| SAH-105 Capability probe registry | builder | shipped | Every major system/chip/provider route has a safe probe and access boundary | `self status --json` includes `capability_probe_registry` with safe probes, access boundaries, and non-success claim boundaries |
 
 ### P1 Wiki Growth And Review
 
 | Task | Repo | Status | Outcome | Acceptance |
 | --- | --- | --- | --- | --- |
-| SAH-201 Candidate wiki inbox | builder | planned | Candidate improvement notes can be listed, reviewed, verified, downgraded, or rejected | CLI can show candidate notes by age/status/source |
-| SAH-202 Wiki contradiction scan | builder | planned | Detects candidate or verified notes that conflict with live status or newer sources | scan emits keep/rewrite/drop recommendations |
-| SAH-203 Wiki stale page health | builder | planned | Each page class has freshness thresholds and invalidation triggers | `wiki status` warns about stale generated pages and old candidates |
-| SAH-204 Obsidian index polish | builder | planned | Wiki has index pages for system, routes, tools, user, projects, and improvements | inventory shows linked pages and missing expected indexes |
-| SAH-205 User-specific wiki consent lane | builder | planned | User/environment notes are stored separately from Spark system doctrine | user notes require explicit promotion intent or configured policy |
+| SAH-201 Candidate wiki inbox | builder | shipped | Candidate improvement notes can be listed by status, source, evidence, age, and review boundary | `wiki candidates --json` shows candidate notes by age/status/source and repeats non-override rules |
+| SAH-202 Wiki contradiction scan | builder | shipped | Detects candidate or verified notes that conflict with live status boundaries, source lineage, residue rules, or user-memory scoping | `wiki scan-candidates --json` emits keep/rewrite/drop recommendations |
+| SAH-203 Wiki stale page health | builder | shipped | Each page class has freshness thresholds and invalidation triggers | `wiki status` reports `freshness_health`, warns about stale generated pages and old candidates, and preserves the live-state outranks wiki boundary |
+| SAH-204 Obsidian index polish | builder | shipped | Wiki has index pages for system, routes, tools, user, projects, and improvements | bootstrap creates linked index pages and status/inventory treat them as expected vault pages |
+| SAH-205 User-specific wiki consent lane | builder | shipped | User/environment notes are stored separately from Spark system doctrine | `wiki promote-user-note` requires human id, consent ref, and evidence/source, writes under `wiki/users/...`, and stays out of the global candidate inbox |
 
 ### P2 Route Intelligence And Explanation
 
 | Task | Repo | Status | Outcome | Acceptance |
 | --- | --- | --- | --- | --- |
-| SAH-301 Route explanation surface | builder + telegram | planned | Spark can answer "why did you answer that way?" from route traces | response includes selected route, sources used, stale evidence ignored, and missing probes |
-| SAH-302 Natural-language route eval matrix | telegram | planned | Larger tests cover self/wiki/query/promotion/build/memory collisions | tests prove Spark does not steal build prompts or promote memory accidentally |
-| SAH-303 Trace fields for wiki promotion | builder + telegram | planned | Wiki promotion notes include request id, route decision, source packet refs, and probe result refs when available | candidate note has enough lineage to audit |
-| SAH-304 Deep search trigger policy | builder | planned | Spark knows when local wiki is insufficient and should use Researcher/browser/search | high-stakes or stale questions route to live research/probe first |
+| SAH-301 Route explanation surface | builder + telegram | shipped | Spark can answer "why did you answer that way?" from route traces | response includes selected route, sources used, stale evidence ignored, and missing probes |
+| SAH-302 Natural-language route eval matrix | telegram | shipped | Larger tests cover self/wiki/query/promotion/build/memory collisions | tests prove Spark does not steal build prompts or promote memory accidentally |
+| SAH-303 Trace fields for wiki promotion | builder + telegram | shipped | Wiki promotion notes include request id, route decision, source packet refs, and probe result refs when available | candidate note has enough lineage to audit |
+| SAH-304 Deep search trigger policy | builder | shipped | Spark knows when local wiki is insufficient and should use Researcher/browser/search | `wiki answer --json` emits `deep_search_policy`; high-stakes, current, stale/static, external, or under-sourced questions route to live research/probe first |
 
 ### P2 Self-Improvement Governance
 
 | Task | Repo | Status | Outcome | Acceptance |
 | --- | --- | --- | --- | --- |
-| SAH-401 Improvement proposal packet | builder | planned | Self-improvement plans emit hypothesis, weak spot, evidence, probe, rollback, and expected eval | no plan can be promoted without a falsifiable check |
-| SAH-402 Promotion gate ledger | builder | planned | Candidate improvements record whether schema, lineage, complexity, memory hygiene, and autonomy gates pass | unresolved critical gate blocks verified promotion |
-| SAH-403 Eval coverage registry | builder | planned | Every capability/improvement can show eval coverage status | self-status includes `eval=missing`, `observed`, or `covered` with source |
-| SAH-404 Surprise/weak-spot prioritizer | builder | planned | Spark ranks improvement work by recency, failures, novelty, and user relevance | strongest domains do not starve high-surprise weak spots |
+| SAH-401 Improvement proposal packet | builder | shipped | Self-improvement plans emit hypothesis, weak spot, evidence, probe, rollback, and expected eval | `wiki promote-improvement --proposal` writes `proposal_gate`; verified proposals fail if the falsifiable fields are missing |
+| SAH-402 Promotion gate ledger | builder | shipped | Candidate improvements record whether schema, lineage, complexity, memory hygiene, and autonomy gates pass | `wiki promote-improvement` records `gate_ledger`; verified promotion fails when any gate is `fail` |
+| SAH-403 Eval coverage registry | builder | shipped | Every capability/improvement can show eval coverage status | self-status and wiki improvement notes include `eval=missing`, `observed`, or `covered` with source refs |
+| SAH-404 Surprise/weak-spot prioritizer | builder | shipped | Spark ranks improvement work by recency, failures, novelty, and user relevance | `self status` and `self improve` expose `weak_spot_priorities` with `surprise_score`, score components, and reasons |
 
 ### P3 Scheduling And Maintenance
 
 | Task | Repo | Status | Outcome | Acceptance |
 | --- | --- | --- | --- | --- |
-| SAH-501 Wiki health heartbeat | builder | planned | Regular job checks wiki health, stale pages, broken links, and candidate backlog | heartbeat writes typed report, not chat memory |
-| SAH-502 Capability drift heartbeat | builder | planned | Regular job detects routes whose last-success evidence is stale | report names routes needing probes |
-| SAH-503 Live Telegram regression cadence | telegram | planned | Natural-language live matrix has self-awareness/wiki suites and session logs | every self-awareness release has live Telegram evidence |
-| SAH-504 Handoff auto-update task | builder | planned | Major self-awareness changes update the handoff and wiki architecture docs | continuation prompt stays accurate |
+| SAH-501 Wiki health heartbeat | builder | shipped | Regular job checks wiki health, stale pages, broken links, and candidate backlog | `wiki heartbeat --json` writes an observability report under `artifacts/wiki-heartbeat`, not chat memory |
+| SAH-502 Capability drift heartbeat | builder | shipped | Regular job detects routes whose last-success evidence is stale, failed, or missing | `self heartbeat --json` writes an observability report with safe probes, not runtime truth |
+| SAH-503 Live Telegram regression cadence | telegram | shipped | Natural-language live matrix has self-awareness/wiki suites, release cadence, and session-log artifact contract | `self live-telegram-cadence --json` names prompts, verifier, artifacts, and live evidence gate |
+| SAH-504 Handoff auto-update task | builder | shipped | Major self-awareness changes update the handoff and wiki architecture docs | `self handoff-check --json` checks source/doc drift and emits the continuation prompt |
+
+## 2026-05-02 Phase Progress
+
+Shipped in Builder:
+
+- `a81acf2` consumed `domain-chip-memory` wiki packet metadata instead of inferring source families from paths.
+- `3b33942` hardened the self-awareness route so natural answers expose memory cognition boundaries.
+- `a3d7f67` expanded route detection for natural memory-self-awareness phrasing such as "your memory system" and "what outranks wiki".
+- `48e7d90` surfaced memory dashboard movement status as `observability_non_authoritative`.
+- `651d630` added eval traps for KB absence, user-memory/doctrine separation, and non-promotable self-awareness output.
+- This slice added a candidate wiki inbox so Builder can list source-bounded improvement notes without treating them as runtime truth.
+- This slice added a wiki contradiction scan so candidate and verified improvement notes get keep/rewrite/drop guidance before further promotion.
+- This slice added Telegram `/self`, `/wiki`, `/wiki candidates`, `/wiki scan-candidates`, natural candidate inbox/scan routes, and a live self-awareness/wiki probe pack.
+- This slice added a consent-bounded user wiki lane with `wiki promote-user-note`, keeping user/environment context separate from global Spark doctrine.
+- This slice added wiki stale-page health so status can warn about old generated snapshots and old candidates without treating wiki as live truth.
+- This slice added Obsidian-friendly index pages for system, routes, tools, user, projects, and improvements.
+- This slice added a generated environment-awareness page with local path, repo, surface, safe-probe, and secret-redaction boundaries.
+- This slice added a scoped user-awareness capsule section with stable/recent/inferred/unknown labels and user-wiki candidate boundaries.
+- This slice added a project-awareness capsule section sourced from the local project index with live git/filesystem boundaries.
+- This slice added capability freshness scoring so self-awareness can separate recent success, recent failure, stale success, and goal relevance.
+- This slice added a capability probe registry so self-status can recommend exact read-only probes without treating configured routes as current success.
+- This slice added a generic route explanation surface so follow-up questions like "why did you answer that way?" can name the selected route, route sources, stale evidence ignored, and missing probes without promoting debug traces to memory.
+- This slice added `ops/natural-language-live-commands.json` plus a Builder/Telegram route eval test that locks self-awareness, wiki candidate review, build-quality review, governed memory write/read, and source-debug routing against route drift.
+- This slice added typed wiki-promotion trace lineage fields: `request_id`, `route_decision`, `source_packet_refs`, and `probe_refs`, exposed through promotion payloads, frontmatter, candidate inbox, and candidate scan output.
+- This slice added `deep_search_policy` to wiki answers so under-sourced, external, high-stakes, current, or revalidatable/static wiki-backed questions can request Researcher/browser/search and live probes before confident claims.
+- This slice added self-improvement proposal packets to `wiki promote-improvement --proposal`, including weak spot, hypothesis, evidence, probe, rollback, expected eval, and a `proposal_gate` surfaced through candidate inbox and scan.
+- This slice added a promotion gate ledger for schema, lineage, complexity, memory hygiene, and autonomy status; scan flags warning/failed gates and verified promotion is blocked while any gate fails.
+- This slice added eval coverage registry fields so capability evidence and wiki improvement notes expose `missing`, `observed`, or `covered` status with source refs.
+- This slice added weak-spot prioritization so recent failures, missing eval coverage, novelty, and user-relevant goals rank above already-covered strong domains.
+- This slice added `wiki heartbeat`, a typed LLM wiki health report for stale pages, broken local links, and candidate backlog. It writes observability artifacts under `artifacts/wiki-heartbeat` and stays outside chat memory/runtime truth.
+- This slice added `self heartbeat`, a typed capability drift report for stale successes, recent failures, observed-without-success routes, and configured capabilities missing last-success evidence. It writes observability artifacts under `artifacts/capability-drift-heartbeat` and recommends safe probes.
+- This slice added `self live-telegram-cadence`, a release-gate contract for live Telegram self-awareness/wiki regression. It ties the prompt pack, route matrix, verifier script, artifact directory, and real-trace evidence boundary together without treating simulated tests as live proof.
+- This slice added `self handoff-check`, a handoff freshness gate that checks major self-awareness/wiki changes moved this hardening task list, the LLM wiki architecture plan, and the self-awareness handoff together.
+- This slice hardened the live Telegram verifier artifact so failed runs explain trace eligibility. The 2026-05-02 run against `C:\Users\USER\.spark-intelligence` scanned 80 traces, found 0 eligible `simulation=false` Telegram runtime traces, ignored 80 simulation/non-runtime traces, and stopped at the first missing live case: `slash self`.
+- This slice added an operator prompt runbook artifact for the live Telegram regression cadence. `self live-telegram-cadence --json` now writes `C:\Users\USER\.spark-intelligence\artifacts\live-telegram-regression\prompt-pack-latest.txt` with numbered prompts, live-evidence guardrails, and the verifier command.
+- This slice polished the non-JSON cadence output so it names the prompt runbook, latest missing live case, eligible runtime trace count, and next action without requiring raw JSON inspection.
+- This slice added a `SinceUtc` cutoff to the live Telegram verifier command generated by `self live-telegram-cadence`, so fresh live runs cannot accidentally pass from older Telegram traces.
+
+Next phase:
+
+1. Run SAH-004/SAH-005 against a real Telegram bot with `scenario-packs/telegram-live-self-awareness-wiki.txt`, `ops/natural-language-live-commands.json`, and `scripts/run_live_telegram_self_awareness_wiki_probe.ps1`.
+2. Use `self live-telegram-cadence --json` plus the printed verifier command to collect real Telegram regression evidence.
+3. Send the verifier prompt pack to the live bot before rerunning the gate; soak/simulation traces are explicitly rejected as live proof.
+4. Keep SAH-205 separate: user/environment wiki lanes must not merge into global Spark doctrine without explicit consent and source metadata.
 
 ## Live Test Suites To Add
 
@@ -226,13 +271,13 @@ Guardrail:
 Recommended next implementation order:
 
 1. Add the Telegram live-test cases in `ops/natural-language-live-commands.json`.
-2. Build Builder candidate wiki inbox commands:
-   - `wiki candidates`
-   - `wiki review-candidate`
-   - `wiki invalidate`
+   - `/self`
+   - `/wiki`
+   - natural candidate inbox and contradiction scan prompts
+   - wiki promotion with source/evidence refs
 3. Add user/project awareness sections to `SelfAwarenessCapsule`.
 4. Add `wiki compile-system` pages for environment, projects, and improvement candidates.
-5. Add route explanation fields to Telegram wiki/self-awareness bridge calls.
+5. Extend route explanation coverage from self-awareness traces into the broader Telegram wiki/build/promotion bridge paths.
 6. Run live Telegram smoke for `/self`, `/wiki`, natural self-awareness, and wiki promotion.
 
 ## Stop-Ship Gates

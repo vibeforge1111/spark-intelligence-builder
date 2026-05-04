@@ -10,13 +10,25 @@ from spark_intelligence.llm_wiki.compile_system import (
     LlmWikiSystemCompileResult,
     compile_system_wiki,
 )
+from spark_intelligence.llm_wiki.heartbeat import (
+    LlmWikiHeartbeatResult,
+    build_llm_wiki_heartbeat,
+)
 from spark_intelligence.llm_wiki.inventory import (
     LlmWikiInventoryResult,
     build_llm_wiki_inventory,
 )
+from spark_intelligence.llm_wiki.inbox import (
+    LlmWikiCandidateInboxResult,
+    build_llm_wiki_candidate_inbox,
+)
 from spark_intelligence.llm_wiki.query import (
     LlmWikiQueryResult,
     build_llm_wiki_query,
+)
+from spark_intelligence.llm_wiki.scan import (
+    LlmWikiCandidateScanResult,
+    build_llm_wiki_candidate_scan,
 )
 from spark_intelligence.llm_wiki.promote import (
     LlmWikiImprovementPromotionResult,
@@ -26,20 +38,32 @@ from spark_intelligence.llm_wiki.status import (
     LlmWikiStatusResult,
     build_llm_wiki_status,
 )
+from spark_intelligence.llm_wiki.user_notes import (
+    LlmWikiUserNotePromotionResult,
+    promote_llm_wiki_user_note,
+)
 
 __all__ = [
     "LlmWikiAnswerResult",
     "LlmWikiBootstrapResult",
+    "LlmWikiCandidateInboxResult",
+    "LlmWikiCandidateScanResult",
+    "LlmWikiHeartbeatResult",
     "LlmWikiInventoryResult",
     "LlmWikiImprovementPromotionResult",
     "LlmWikiQueryResult",
     "LlmWikiSystemCompileResult",
     "LlmWikiStatusResult",
+    "LlmWikiUserNotePromotionResult",
     "bootstrap_llm_wiki",
     "build_llm_wiki_answer",
+    "build_llm_wiki_candidate_inbox",
+    "build_llm_wiki_candidate_scan",
+    "build_llm_wiki_heartbeat",
     "build_llm_wiki_inventory",
     "build_llm_wiki_query",
     "build_llm_wiki_status",
     "compile_system_wiki",
     "promote_llm_wiki_improvement",
+    "promote_llm_wiki_user_note",
 ]

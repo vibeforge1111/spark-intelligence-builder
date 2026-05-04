@@ -11,6 +11,79 @@ from spark_intelligence.llm_wiki.query import build_llm_wiki_query
 from spark_intelligence.self_awareness import build_self_awareness_capsule
 from spark_intelligence.state.db import StateDB
 
+WIKI_SOURCE_METADATA_FIELDS: tuple[str, ...] = (
+    "wiki_family",
+    "owner_system",
+    "scope_kind",
+    "source_of_truth",
+    "freshness",
+    "status",
+    "generated_at",
+    "last_verified_at",
+)
+
+CURRENT_FACT_MARKERS: tuple[str, ...] = (
+    "current",
+    "now",
+    "today",
+    "active",
+    "healthy",
+    "working",
+    "live",
+    "available",
+    "latest",
+    "recent",
+)
+
+RESEARCH_FACT_MARKERS: tuple[str, ...] = (
+    "web",
+    "internet",
+    "external",
+    "market",
+    "price",
+    "law",
+    "legal",
+    "medical",
+    "financial",
+    "regulation",
+    "news",
+    "competitor",
+    "benchmark",
+    "sota",
+    "research",
+)
+
+HIGH_STAKES_MARKERS: tuple[str, ...] = (
+    "architecture",
+    "money",
+    "safety",
+    "infra",
+    "infrastructure",
+    "production",
+    "deploy",
+    "secret",
+    "secrets",
+    "credential",
+    "token",
+    "auth",
+    "provider",
+    "gateway",
+    "telegram",
+    "bot",
+    "channel",
+    "delete",
+    "data loss",
+    "commitment",
+    "promise",
+)
+
+REVALIDATABLE_FRESHNESS: tuple[str, ...] = (
+    "",
+    "unknown",
+    "bootstrap_static",
+    "revalidatable_improvement_note",
+)
+
 
 @dataclass(frozen=True)
 class LlmWikiAnswerResult:
@@ -40,6 +113,12 @@ class LlmWikiAnswerResult:
         if missing:
             lines.extend(["", "Still needs live verification"])
             lines.extend(f"- {item}" for item in missing[:6])
+        policy = self.payload.get("deep_search_policy") if isinstance(self.payload.get("deep_search_policy"), dict) else {}
+        if policy and policy.get("status") != "wiki_sufficient_supporting_context":
+            lines.extend(["", "Deep search / probe policy"])
+            lines.append(f"- status: {policy.get('status') or 'unknown'}")
+            for action in [str(item) for item in policy.get("recommended_actions") or [] if str(item).strip()][:6]:
+                lines.append(f"- {action}")
         warnings = [str(item) for item in self.payload.get("warnings") or [] if str(item).strip()]
         if warnings:
             lines.extend(["", "Warnings"])
@@ -76,6 +155,16 @@ def build_llm_wiki_answer(
     sources = [_source_payload(hit) for hit in hits]
     missing_live_verification = _missing_live_verification(normalized_question)
     warnings = [str(item) for item in query_payload.get("warnings") or [] if str(item).strip()]
+    deep_search_policy = _deep_search_policy(
+        question=normalized_question,
+        hits=hits,
+        sources=sources,
+        missing_live_verification=missing_live_verification,
+        warnings=warnings,
+    )
+    if deep_search_policy["status"] != "wiki_sufficient_supporting_context":
+        warnings.append("deep_search_or_probe_required")
+    warnings = list(dict.fromkeys(warnings))
     should_attach_live_self = _should_include_live_self(normalized_question) if include_live_self is None else include_live_self
     live_self_awareness = (
         _build_live_self_context(
@@ -107,6 +196,7 @@ def build_llm_wiki_answer(
         "hit_count": len(hits),
         "sources": sources,
         "missing_live_verification": missing_live_verification,
+        "deep_search_policy": deep_search_policy,
         "project_knowledge_first": bool(query_payload.get("project_knowledge_first")),
         "source_mix": dict(query_payload.get("source_mix") or {}),
         "context_sections": list(query_payload.get("context_sections") or []),
@@ -188,6 +278,7 @@ def _build_live_self_context(
     return {
         "generated_at": capsule.get("generated_at"),
         "workspace_id": capsule.get("workspace_id"),
+        "memory_cognition": capsule.get("memory_cognition") or {},
         "observed_now": _claim_summaries(capsule.get("observed_now"), limit=4),
         "recently_verified": _claim_summaries(capsule.get("recently_verified"), limit=3),
         "degraded_or_missing": _claim_summaries(capsule.get("degraded_or_missing"), limit=4),
@@ -311,13 +402,112 @@ def _first_useful_sentence(text: str) -> str:
 
 
 def _source_payload(hit: dict[str, Any]) -> dict[str, Any]:
-    return {
+    payload = {
         "title": str(hit.get("title") or "").strip(),
         "source_path": str(hit.get("source_path") or "").strip(),
         "authority": str(hit.get("authority") or "supporting_not_authoritative").strip(),
         "score": hit.get("score"),
         "selected": bool(hit.get("selected")),
     }
+    for field in WIKI_SOURCE_METADATA_FIELDS:
+        value = hit.get(field)
+        if value is not None and str(value).strip():
+            payload[field] = str(value).strip()
+    return payload
+
+
+def _deep_search_policy(
+    *,
+    question: str,
+    hits: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+    missing_live_verification: list[str],
+    warnings: list[str],
+) -> dict[str, Any]:
+    lowered = question.casefold()
+    is_current_fact = _has_any_marker(lowered, CURRENT_FACT_MARKERS)
+    needs_external_research = _has_any_marker(lowered, RESEARCH_FACT_MARKERS)
+    high_stakes = _has_any_marker(lowered, HIGH_STAKES_MARKERS)
+    revalidatable_sources = _revalidatable_source_paths(sources)
+    triggers: list[str] = []
+    recommended_actions: list[str] = []
+
+    if not hits or "no_matching_wiki_packets" in warnings:
+        triggers.append("under_sourced_wiki")
+        recommended_actions.append(
+            "Use Researcher/browser/search or a narrower source-backed wiki query before answering confidently."
+        )
+    if missing_live_verification:
+        triggers.append("live_verification_needed")
+        recommended_actions.extend(missing_live_verification)
+    if is_current_fact:
+        triggers.append("current_or_mutable_fact")
+    if needs_external_research:
+        triggers.append("external_or_research_fact")
+        recommended_actions.append(
+            "Use a live research route for external, SOTA, legal, medical, financial, market, or news claims."
+        )
+    if high_stakes:
+        triggers.append("high_stakes_or_operational_claim")
+        recommended_actions.append(
+            "Run the relevant live diagnostic/probe before making architecture, infra, auth, provider, channel, safety, money, or commitment claims."
+        )
+    if revalidatable_sources and (is_current_fact or high_stakes or needs_external_research):
+        triggers.append("revalidatable_or_static_sources")
+        recommended_actions.append(
+            "Treat stale/static wiki pages as orientation only until newer traces, tests, or live status confirm them."
+        )
+
+    should_probe = bool(missing_live_verification or (is_current_fact and (high_stakes or revalidatable_sources)))
+    should_deep_search = bool(
+        needs_external_research or high_stakes or not hits or ("no_matching_wiki_packets" in warnings)
+    )
+
+    if should_probe and should_deep_search:
+        status = "live_probe_and_deep_search_required"
+    elif should_probe:
+        status = "live_probe_required"
+    elif should_deep_search:
+        status = "deep_search_required"
+    else:
+        status = "wiki_sufficient_supporting_context"
+
+    return {
+        "status": status,
+        "should_probe": should_probe,
+        "should_deep_search": should_deep_search,
+        "triggers": list(dict.fromkeys(triggers)),
+        "recommended_actions": list(dict.fromkeys(recommended_actions)),
+        "revalidatable_source_paths": revalidatable_sources,
+        "authority_boundary": (
+            "wiki_is_supporting_not_authoritative; live traces, tests, governed memory, "
+            "and current probes outrank wiki for mutable facts"
+        ),
+    }
+
+
+def _has_any_marker(text: str, markers: tuple[str, ...]) -> bool:
+    for marker in markers:
+        if " " in marker:
+            if marker in text:
+                return True
+            continue
+        if re.search(rf"(?<![a-z0-9_]){re.escape(marker)}(?![a-z0-9_])", text):
+            return True
+    return False
+
+
+def _revalidatable_source_paths(sources: list[dict[str, Any]]) -> list[str]:
+    paths: list[str] = []
+    for source in sources:
+        freshness = str(source.get("freshness") or "").strip().casefold()
+        last_verified_at = str(source.get("last_verified_at") or "").strip()
+        generated_at = str(source.get("generated_at") or "").strip()
+        if freshness in REVALIDATABLE_FRESHNESS or (not last_verified_at and not generated_at):
+            path = str(source.get("source_path") or source.get("title") or "").strip()
+            if path:
+                paths.append(path)
+    return paths[:6]
 
 
 def _missing_live_verification(question: str) -> list[str]:

@@ -920,6 +920,7 @@ def _external_execution_governance_issue() -> StopShipIssue:
         "src/spark_intelligence/config/loader.py",
         "src/spark_intelligence/execution/governed.py",
         "src/spark_intelligence/local_project_index.py",
+        "src/spark_intelligence/self_awareness/handoff_check.py",
     }
     allowed_direct_provider_paths = {
         "src/spark_intelligence/chip_create/pipeline.py",

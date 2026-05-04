@@ -359,6 +359,8 @@ def _derive_profile_status(*, profile_row: object, secret_present: bool, oauth_r
             return "expiring_soon"
         if not secret_present and str(profile_row["status"]) == "active":
             return "pending_secret"
+        if secret_present and str(profile_row["status"]) == "pending_secret":
+            return "active"
         return str(profile_row["status"])
     if oauth_row and secret_present and _oauth_token_expiring_soon(oauth_row):
         return "expiring_soon"

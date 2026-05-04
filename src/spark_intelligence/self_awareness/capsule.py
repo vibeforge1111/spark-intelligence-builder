@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -8,6 +9,7 @@ from typing import Any
 from spark_intelligence.config.loader import ConfigManager
 from spark_intelligence.context.capsule import build_spark_context_capsule
 from spark_intelligence.memory.orchestrator import export_memory_dashboard_movement_in_memory
+from spark_intelligence.memory import inspect_memory_movement_status, inspect_memory_sdk_runtime, inspect_wiki_packet_metadata
 from spark_intelligence.observability.store import latest_events_by_type
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.system_registry import build_system_registry
@@ -51,15 +53,25 @@ class CapabilityEvidence:
     last_failure_at: str | None = None
     last_failure_reason: str | None = None
     route_latency_ms: int | None = None
-    eval_coverage_status: str = "unknown"
+    eval_coverage_status: str = "missing"
+    eval_coverage_sources: list[str] = field(default_factory=list)
     evidence_count: int = 0
+    confidence_level: str = "unknown"
+    freshness_status: str = "unknown"
+    goal_relevance: str = "unknown"
+    can_claim_confidently: bool = False
 
     def to_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "capability_key": self.capability_key,
             "source": self.source,
             "eval_coverage_status": self.eval_coverage_status,
+            "eval_coverage_sources": list(self.eval_coverage_sources),
             "evidence_count": self.evidence_count,
+            "confidence_level": self.confidence_level,
+            "freshness_status": self.freshness_status,
+            "goal_relevance": self.goal_relevance,
+            "can_claim_confidently": self.can_claim_confidently,
         }
         if self.last_success_at:
             payload["last_success_at"] = self.last_success_at
@@ -84,12 +96,17 @@ class SelfAwarenessCapsule:
     lacks: list[SelfAwarenessClaim] = field(default_factory=list)
     improvement_options: list[SelfAwarenessClaim] = field(default_factory=list)
     capability_evidence: list[CapabilityEvidence] = field(default_factory=list)
+    weak_spot_priorities: list[dict[str, Any]] = field(default_factory=list)
     recommended_probes: list[str] = field(default_factory=list)
     natural_language_routes: list[str] = field(default_factory=list)
     source_ledger: list[dict[str, Any]] = field(default_factory=list)
     style_lens: dict[str, Any] = field(default_factory=dict)
     memory_movement: dict[str, Any] = field(default_factory=dict)
     render_focus: str = ""
+    memory_cognition: dict[str, Any] = field(default_factory=dict)
+    user_awareness: dict[str, Any] = field(default_factory=dict)
+    project_awareness: dict[str, Any] = field(default_factory=dict)
+    capability_probe_registry: list[dict[str, Any]] = field(default_factory=list)
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -103,12 +120,17 @@ class SelfAwarenessCapsule:
             "lacks": _claims_payload(self.lacks),
             "improvement_options": _claims_payload(self.improvement_options),
             "capability_evidence": _capability_evidence_payload(self.capability_evidence),
+            "weak_spot_priorities": self.weak_spot_priorities,
             "recommended_probes": self.recommended_probes,
             "natural_language_routes": self.natural_language_routes,
             "source_ledger": self.source_ledger,
             "style_lens": self.style_lens,
             "memory_movement": self.memory_movement,
             "render_focus": self.render_focus,
+            "memory_cognition": self.memory_cognition,
+            "user_awareness": self.user_awareness,
+            "project_awareness": self.project_awareness,
+            "capability_probe_registry": self.capability_probe_registry,
         }
 
     def to_json(self) -> str:
@@ -139,10 +161,14 @@ class SelfAwarenessCapsule:
             "",
         ]
         _extend_style_lens_lines(lines, self.style_lens)
+        _extend_memory_cognition_lines(lines, self.memory_cognition)
+        _extend_user_awareness_lines(lines, self.user_awareness)
+        _extend_project_awareness_lines(lines, self.project_awareness)
         _extend_claim_lines(lines, "What looks live", self.observed_now, limit=4, compact=True)
         _extend_claim_lines(lines, "What I recently proved", self.recently_verified, limit=2, compact=True)
         _extend_capability_evidence_lines(lines, self.capability_evidence, limit=3)
         _extend_memory_movement_lines(lines, self.memory_movement)
+        _extend_weak_spot_priority_lines(lines, self.weak_spot_priorities, limit=1)
         _extend_claim_lines(lines, "Where I am useful", self.inferred_strengths, limit=2, compact=True)
         _extend_claim_lines(lines, "Where I still lack", self.lacks, limit=3, compact=True)
         _extend_claim_lines(lines, "What I should improve next", self.improvement_options, limit=3, compact=True)
@@ -179,14 +205,36 @@ def build_self_awareness_capsule(
     workspace_id = str(registry_payload.get("workspace_id") or "default")
 
     observed_now = _build_observed_claims(records)
-    capability_evidence = _build_capability_evidence(state_db)
+    capability_evidence = _build_capability_evidence(state_db, user_message=user_message)
     recently_verified = _build_recent_invocation_claims(state_db, capability_evidence=capability_evidence)
     available_unverified = _build_available_unverified_claims(records)
     degraded_or_missing = _build_degraded_claims(records)
     inferred_strengths = _build_strength_claims(registry_payload=registry_payload, context_capsule=context_capsule)
     lacks = _build_lack_claims(records=records, degraded_claims=degraded_or_missing)
     improvement_options = _build_improvement_claims(lacks=lacks, degraded_claims=degraded_or_missing)
-    recommended_probes = _recommended_probes(degraded_claims=degraded_or_missing)
+    weak_spot_priorities = _build_weak_spot_priorities(
+        lacks=lacks,
+        capability_evidence=capability_evidence,
+        user_message=user_message,
+    )
+    capability_probe_registry = _build_capability_probe_registry(records)
+    recommended_probes = _recommended_probes(
+        degraded_claims=degraded_or_missing,
+        probe_registry=capability_probe_registry,
+    )
+    memory_cognition = _build_memory_cognition(config_manager)
+    user_awareness = _build_user_awareness(
+        config_manager=config_manager,
+        context_capsule=context_capsule,
+        human_id=human_id,
+        session_id=session_id,
+        channel_kind=channel_kind,
+        personality_profile=personality_profile,
+    )
+    project_awareness = _build_project_awareness(
+        config_manager=config_manager,
+        registry_payload=registry_payload,
+    )
     natural_language_routes = [
         "Ask: 'Spark, what do you know about your current systems?' to get the grounded registry view.",
         "Ask: 'Spark, test the browser route now' to turn browser availability into last-success evidence.",
@@ -235,6 +283,41 @@ def build_self_awareness_capsule(
             "row_count": int(memory_movement.get("row_count") or 0),
             "movement_counts": dict(memory_movement.get("movement_counts") or {}),
         },
+        {
+            "source": "weak_spot_priorities",
+            "source_kind": "self_improvement_prioritizer",
+            "present": bool(weak_spot_priorities),
+            "claim_boundary": "Priority scores rank where to collect evidence next; they do not authorize autonomous mutation.",
+            "priority_count": len(weak_spot_priorities),
+        },
+        {
+            "source": "memory_cognition",
+            "source_kind": "memory_runtime_and_wiki_metadata",
+            "present": bool(memory_cognition),
+            "claim_boundary": "Memory KB wiki pages are supporting context; current-state memory remains authoritative for mutable user facts.",
+            "source_families_visible": bool((memory_cognition.get("wiki_packets") or {}).get("source_families_visible")),
+        },
+        {
+            "source": "user_awareness",
+            "source_kind": "scoped_user_context_summary",
+            "present": bool(user_awareness.get("present")),
+            "claim_boundary": "User awareness is scoped to the active human/session; user context is not global Spark doctrine.",
+            "label_counts": dict(user_awareness.get("label_counts") or {}),
+        },
+        {
+            "source": "project_awareness",
+            "source_kind": "local_project_index_summary",
+            "present": bool(project_awareness.get("present")),
+            "claim_boundary": "Project awareness is a registry/config snapshot; live git, filesystem, CI, and tool output outrank it.",
+            "project_count": int(project_awareness.get("project_count") or 0),
+        },
+        {
+            "source": "capability_probe_registry",
+            "source_kind": "safe_probe_contract",
+            "present": bool(capability_probe_registry),
+            "claim_boundary": "Probe entries describe safe checks; a probe must actually run before Spark claims current success.",
+            "probe_count": len(capability_probe_registry),
+        },
     ]
     return SelfAwarenessCapsule(
         generated_at=generated_at,
@@ -247,12 +330,17 @@ def build_self_awareness_capsule(
         lacks=lacks,
         improvement_options=improvement_options,
         capability_evidence=capability_evidence,
+        weak_spot_priorities=weak_spot_priorities,
         recommended_probes=recommended_probes,
         natural_language_routes=natural_language_routes,
         source_ledger=source_ledger,
         style_lens=style_lens,
         memory_movement=memory_movement,
         render_focus=render_focus,
+        memory_cognition=memory_cognition,
+        user_awareness=user_awareness,
+        project_awareness=project_awareness,
+        capability_probe_registry=capability_probe_registry,
     )
 
 
@@ -366,9 +454,12 @@ def _memory_limits_text(capsule: SelfAwarenessCapsule) -> str:
         "",
         "Short version: my memory is working, but the weak spot is choosing the right memory layer and showing why I trusted it.",
         "",
+    ]
+    _extend_memory_cognition_lines(lines, capsule.memory_cognition)
+    lines.extend([
         "What is current",
         "- Your newest message and current-state memory outrank older recall, wiki, and graph sidecars for mutable facts.",
-    ]
+    ])
     if movement_line:
         lines.append(f"- Dashboard movement is visible as trace evidence: {movement_line}.")
     else:
@@ -376,8 +467,8 @@ def _memory_limits_text(capsule: SelfAwarenessCapsule) -> str:
     lines.extend(
         [
             "",
-            "Where memory still lacks",
-            "- I can still answer too broadly unless the route keeps memory questions focused on memory evidence.",
+            "Where I still lack",
+            "- Where memory still lacks: I can still answer too broadly unless the route keeps memory questions focused on memory evidence.",
             "- Episodic detail can be thin or truncated, so I should say what is missing instead of filling gaps.",
             "- Movement needs to stay traceable across captured, blocked, promoted, saved, decayed, summarized, retrieved, selected, and dropped records.",
             "",
@@ -500,7 +591,7 @@ def _build_recent_invocation_claims(
     return claims[:8]
 
 
-def _build_capability_evidence(state_db: StateDB) -> list[CapabilityEvidence]:
+def _build_capability_evidence(state_db: StateDB, *, user_message: str = "") -> list[CapabilityEvidence]:
     rows: dict[str, dict[str, Any]] = {}
     events: list[dict[str, Any]] = []
     for event_type in ("tool_result_received", "dispatch_failed"):
@@ -522,7 +613,8 @@ def _build_capability_evidence(state_db: StateDB) -> list[CapabilityEvidence]:
                 "last_failure_at": None,
                 "last_failure_reason": None,
                 "route_latency_ms": None,
-                "eval_coverage_status": "unknown",
+                "eval_coverage_status": "missing",
+                "eval_coverage_sources": [],
                 "evidence_count": 0,
             },
         )
@@ -535,30 +627,45 @@ def _build_capability_evidence(state_db: StateDB) -> list[CapabilityEvidence]:
         latency = _latency_ms(facts)
         if latency is not None and row.get("route_latency_ms") is None:
             row["route_latency_ms"] = latency
-        if _event_has_eval_coverage(event):
-            row["eval_coverage_status"] = "observed"
+        eval_status, eval_sources = _event_eval_coverage(event)
+        if eval_status == "covered" or (eval_status == "observed" and row.get("eval_coverage_status") == "missing"):
+            row["eval_coverage_status"] = eval_status
+        row["eval_coverage_sources"] = list(
+            dict.fromkeys([*list(row.get("eval_coverage_sources") or []), *eval_sources])
+        )[:8]
         if str(event.get("event_type") or "") == "tool_result_received" and row.get("last_success_at") is None:
             row["last_success_at"] = created_at
         if str(event.get("event_type") or "") == "dispatch_failed" and row.get("last_failure_at") is None:
             row["last_failure_at"] = created_at
             row["last_failure_reason"] = _failure_reason(event)
-    return [
-        CapabilityEvidence(
-            capability_key=str(row["capability_key"]),
-            source=str(row.get("source") or "observability_events"),
-            last_success_at=row.get("last_success_at"),
-            last_failure_at=row.get("last_failure_at"),
-            last_failure_reason=row.get("last_failure_reason"),
-            route_latency_ms=row.get("route_latency_ms"),
-            eval_coverage_status=str(row.get("eval_coverage_status") or "unknown"),
-            evidence_count=int(row.get("evidence_count") or 0),
+    query_tokens = _tokens(user_message)
+    evidence_rows: list[CapabilityEvidence] = []
+    for row in sorted(
+        rows.values(),
+        key=lambda item: str(item.get("last_success_at") or item.get("last_failure_at") or ""),
+        reverse=True,
+    ):
+        confidence = _capability_confidence(row)
+        freshness = _capability_freshness(row)
+        goal_relevance = _capability_goal_relevance(str(row["capability_key"]), query_tokens)
+        evidence_rows.append(
+            CapabilityEvidence(
+                capability_key=str(row["capability_key"]),
+                source=str(row.get("source") or "observability_events"),
+                last_success_at=row.get("last_success_at"),
+                last_failure_at=row.get("last_failure_at"),
+                last_failure_reason=row.get("last_failure_reason"),
+                route_latency_ms=row.get("route_latency_ms"),
+                eval_coverage_status=str(row.get("eval_coverage_status") or "missing"),
+                eval_coverage_sources=[str(item) for item in row.get("eval_coverage_sources") or [] if str(item).strip()],
+                evidence_count=int(row.get("evidence_count") or 0),
+                confidence_level=confidence,
+                freshness_status=freshness,
+                goal_relevance=goal_relevance,
+                can_claim_confidently=confidence == "recent_success" and freshness == "fresh",
+            )
         )
-        for row in sorted(
-            rows.values(),
-            key=lambda item: str(item.get("last_success_at") or item.get("last_failure_at") or ""),
-            reverse=True,
-        )
-    ][:12]
+    return evidence_rows[:12]
 
 
 def _capability_key_for_event(event: dict[str, Any]) -> str:
@@ -593,20 +700,28 @@ def _latency_ms(facts: dict[str, Any]) -> int | None:
     return None
 
 
-def _event_has_eval_coverage(event: dict[str, Any]) -> bool:
+def _event_eval_coverage(event: dict[str, Any]) -> tuple[str, list[str]]:
     facts = event.get("facts_json") if isinstance(event.get("facts_json"), dict) else {}
-    haystack = " ".join(
-        str(value)
+    explicit_status = str(facts.get("eval_coverage_status") or "").strip().casefold()
+    source_candidates = [
+        str(value).strip()
         for value in (
-            facts.get("eval_coverage_status"),
+            facts.get("eval_ref"),
             facts.get("eval_suite"),
             facts.get("test_name"),
             facts.get("coverage"),
             event.get("summary"),
         )
-        if value is not None
-    ).casefold()
-    return any(token in haystack for token in ("eval", "test", "coverage", "regression"))
+        if str(value or "").strip()
+    ]
+    if explicit_status in {"missing", "observed", "covered"}:
+        return explicit_status, source_candidates[:8]
+    haystack = " ".join(source_candidates).casefold()
+    if any(token in haystack for token in ("eval", "test", "coverage", "regression", "pytest", "smoke")):
+        return "covered", source_candidates[:8]
+    if source_candidates:
+        return "observed", source_candidates[:4]
+    return "missing", []
 
 
 def _failure_reason(event: dict[str, Any]) -> str:
@@ -616,6 +731,195 @@ def _failure_reason(event: dict[str, Any]) -> str:
         if value:
             return value[:240]
     return str(event.get("summary") or event.get("status") or "dispatch_failed").strip()[:240]
+
+
+def _capability_confidence(row: dict[str, Any]) -> str:
+    last_success = _parse_iso(row.get("last_success_at"))
+    last_failure = _parse_iso(row.get("last_failure_at"))
+    if last_failure and (last_success is None or last_failure >= last_success):
+        return "recent_failure"
+    if last_success is None:
+        return "observed_without_success"
+    age_days = max(0, (datetime.now(UTC) - last_success).days)
+    if age_days <= 7:
+        return "recent_success"
+    return "stale_success"
+
+
+def _capability_freshness(row: dict[str, Any]) -> str:
+    latest = _parse_iso(row.get("last_success_at")) or _parse_iso(row.get("last_failure_at"))
+    if latest is None:
+        return "unknown"
+    age_days = max(0, (datetime.now(UTC) - latest).days)
+    if age_days <= 7:
+        return "fresh"
+    if age_days <= 30:
+        return "aging"
+    return "stale"
+
+
+def _capability_goal_relevance(capability_key: str, query_tokens: set[str]) -> str:
+    if not query_tokens:
+        return "unknown"
+    capability_tokens = _tokens(capability_key.replace("_", " "))
+    if capability_tokens & query_tokens:
+        return "direct"
+    return "not_detected"
+
+
+def _parse_iso(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _tokens(value: str) -> set[str]:
+    return {token for token in re.findall(r"[a-z0-9]{3,}", str(value or "").casefold())}
+
+
+def _build_weak_spot_priorities(
+    *,
+    lacks: list[SelfAwarenessClaim],
+    capability_evidence: list[CapabilityEvidence],
+    user_message: str,
+) -> list[dict[str, Any]]:
+    user_tokens = _tokens(user_message)
+    rows: list[dict[str, Any]] = []
+    for claim in lacks:
+        text = " ".join([claim.claim, claim.improvement_action, claim.next_probe])
+        components = {
+            "failure_evidence": _lack_failure_score(claim),
+            "recency": 2,
+            "novelty": _novelty_score(text),
+            "user_relevance": _text_relevance_score(user_tokens, text),
+            "eval_gap": 2 if "eval" in text.casefold() or "coverage" in text.casefold() else 1,
+        }
+        rows.append(
+            {
+                "priority_key": f"lack:{_priority_slug(claim.source or claim.claim)}",
+                "kind": "lack",
+                "weak_spot": claim.claim,
+                "improvement_action": claim.improvement_action,
+                "next_probe": claim.next_probe,
+                "source": claim.source,
+                "surprise_score": sum(components.values()),
+                "score_components": components,
+                "priority_reasons": _priority_reasons(components),
+                "execution_boundary": "collect_evidence_before_change",
+            }
+        )
+    for evidence in capability_evidence:
+        components = {
+            "failure_evidence": _capability_failure_score(evidence),
+            "recency": _capability_recency_score(evidence),
+            "novelty": 3 if evidence.eval_coverage_status == "missing" else 1 if evidence.eval_coverage_status == "observed" else 0,
+            "user_relevance": 3 if evidence.goal_relevance == "direct" else 0,
+            "eval_gap": 2 if evidence.eval_coverage_status == "missing" else 1 if evidence.eval_coverage_status == "observed" else 0,
+        }
+        if sum(components.values()) <= 1:
+            continue
+        rows.append(
+            {
+                "priority_key": f"capability:{_priority_slug(evidence.capability_key)}",
+                "kind": "capability",
+                "weak_spot": _capability_weak_spot(evidence),
+                "improvement_action": _capability_improvement_action(evidence),
+                "next_probe": _capability_next_probe(evidence),
+                "source": evidence.source,
+                "surprise_score": sum(components.values()),
+                "score_components": components,
+                "priority_reasons": _priority_reasons(components),
+                "execution_boundary": "probe_before_confident_claim",
+            }
+        )
+    rows.sort(key=lambda row: (-int(row.get("surprise_score") or 0), str(row.get("priority_key") or "")))
+    return rows[:8]
+
+
+def _lack_failure_score(claim: SelfAwarenessClaim) -> int:
+    status = claim.verification_status.casefold()
+    text = f"{claim.claim} {claim.improvement_action}".casefold()
+    if "missing" in status or "degraded" in status:
+        return 5
+    if "failure" in text or "unavailable" in text:
+        return 4
+    if "known_boundary" in status:
+        return 3
+    return 2
+
+
+def _capability_failure_score(evidence: CapabilityEvidence) -> int:
+    if evidence.confidence_level == "recent_failure":
+        return 6
+    if evidence.confidence_level == "observed_without_success":
+        return 4
+    if evidence.confidence_level == "stale_success":
+        return 2
+    return 0
+
+
+def _capability_recency_score(evidence: CapabilityEvidence) -> int:
+    if evidence.freshness_status == "fresh":
+        return 4
+    if evidence.freshness_status == "aging":
+        return 2
+    if evidence.freshness_status == "stale":
+        return 1
+    return 0
+
+
+def _novelty_score(text: str) -> int:
+    lowered = text.casefold()
+    if any(token in lowered for token in ("natural-language", "natural language", "eval", "coverage", "provider", "secret")):
+        return 3
+    return 1
+
+
+def _text_relevance_score(user_tokens: set[str], text: str) -> int:
+    if not user_tokens:
+        return 0
+    overlap = user_tokens & _tokens(text)
+    if len(overlap) >= 2:
+        return 3
+    if overlap:
+        return 1
+    return 0
+
+
+def _priority_reasons(components: dict[str, int]) -> list[str]:
+    return [key for key, value in components.items() if int(value or 0) > 0]
+
+
+def _priority_slug(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", str(value or "").casefold()).strip("-")
+    return (slug or "unknown")[:80]
+
+
+def _capability_weak_spot(evidence: CapabilityEvidence) -> str:
+    if evidence.confidence_level == "recent_failure":
+        return f"Capability {evidence.capability_key} has a recent failure: {evidence.last_failure_reason or 'unknown reason'}."
+    if evidence.confidence_level == "observed_without_success":
+        return f"Capability {evidence.capability_key} has observations but no successful invocation evidence."
+    if evidence.eval_coverage_status == "missing":
+        return f"Capability {evidence.capability_key} lacks repeatable eval coverage."
+    return f"Capability {evidence.capability_key} needs fresher confidence evidence."
+
+
+def _capability_improvement_action(evidence: CapabilityEvidence) -> str:
+    if evidence.eval_coverage_status == "missing":
+        return f"Add or run eval coverage for {evidence.capability_key} before raising confidence."
+    return f"Run a fresh probe for {evidence.capability_key} and update capability confidence from the result."
+
+
+def _capability_next_probe(evidence: CapabilityEvidence) -> str:
+    return f"Run the safest status/eval probe for {evidence.capability_key} and record success, failure, latency, and eval source."
 
 
 
@@ -645,6 +949,30 @@ def _build_available_unverified_claims(records: list[dict[str, Any]]) -> list[Se
     return claims[:12]
 
 
+def _is_builder_aggregate_readiness_warning(record: dict[str, Any], limitations: list[str]) -> bool:
+    key = str(record.get("key") or "")
+    record_id = str(record.get("record_id") or "")
+    label = str(record.get("label") or "")
+    if key != "spark_intelligence_builder" and record_id != "system:spark_intelligence_builder":
+        if label != "Spark Intelligence Builder":
+            return False
+    joined_limitations = " ".join(limitations).lower()
+    return "gateway/provider/channel readiness" in joined_limitations
+
+
+def _builder_aggregate_readiness_claim(record: dict[str, Any]) -> SelfAwarenessClaim:
+    return SelfAwarenessClaim(
+        claim="Builder aggregate warning: inspect provider/channel records for concrete blockers.",
+        source=f"registry:{record.get('record_id') or record.get('key')}",
+        source_kind="system_registry",
+        confidence="medium",
+        verification_status="aggregate_readiness_warning",
+        capability_key=str(record.get("key") or "") or None,
+        next_probe="Run spark-intelligence gateway status --json and inspect provider/channel rows.",
+        improvement_action="Repair the concrete provider/channel blocker, then rerun self status and a live probe.",
+    )
+
+
 def _build_degraded_claims(records: list[dict[str, Any]]) -> list[SelfAwarenessClaim]:
     claims: list[SelfAwarenessClaim] = []
     for record in records:
@@ -653,6 +981,9 @@ def _build_degraded_claims(records: list[dict[str, Any]]) -> list[SelfAwarenessC
             continue
         label = str(record.get("label") or record.get("key") or "unknown").strip()
         limitations = [str(item).strip() for item in (record.get("limitations") or []) if str(item).strip()]
+        if _is_builder_aggregate_readiness_warning(record, limitations):
+            claims.append(_builder_aggregate_readiness_claim(record))
+            continue
         limitation = f" Main limit: {limitations[0]}" if limitations else ""
         claims.append(
             SelfAwarenessClaim(
@@ -797,16 +1128,428 @@ def _build_improvement_claims(
     return claims[:10]
 
 
-def _recommended_probes(*, degraded_claims: list[SelfAwarenessClaim]) -> list[str]:
+def _build_memory_cognition(config_manager: ConfigManager) -> dict[str, Any]:
+    try:
+        runtime = inspect_memory_sdk_runtime(config_manager=config_manager)
+    except Exception as exc:
+        runtime = {"ready": False, "reason": f"runtime_inspection_failed:{exc.__class__.__name__}"}
+    try:
+        wiki_metadata = inspect_wiki_packet_metadata(config_manager=config_manager)
+    except Exception as exc:
+        wiki_metadata = {
+            "status": "error",
+            "reason": f"wiki_metadata_inspection_failed:{exc.__class__.__name__}",
+            "source_families_visible": False,
+            "memory_kb": {"present": False, "packet_count": 0, "family_counts": {}},
+        }
+    try:
+        movement_status = inspect_memory_movement_status(config_manager=config_manager)
+    except Exception as exc:
+        movement_status = {
+            "status": "error",
+            "reason": f"movement_inspection_failed:{exc.__class__.__name__}",
+            "movement_counts": {},
+            "authority": "observability_non_authoritative",
+        }
+
+    wiki_packets = {
+        "status": wiki_metadata.get("status"),
+        "packet_count": int(wiki_metadata.get("packet_count") or 0),
+        "wiki_family_counts": dict(wiki_metadata.get("wiki_family_counts") or {}),
+        "owner_system_counts": dict(wiki_metadata.get("owner_system_counts") or {}),
+        "source_of_truth_counts": dict(wiki_metadata.get("source_of_truth_counts") or {}),
+        "authority_counts": dict(wiki_metadata.get("authority_counts") or {}),
+        "source_families_visible": bool(wiki_metadata.get("source_families_visible")),
+        "memory_kb": dict(wiki_metadata.get("memory_kb") or {}),
+    }
+    payload: dict[str, Any] = {
+        "runtime": {
+            "ready": bool(runtime.get("ready")),
+            "client_kind": runtime.get("client_kind"),
+            "runtime_memory_architecture": runtime.get("runtime_memory_architecture"),
+            "runtime_memory_provider": runtime.get("runtime_memory_provider"),
+            "reason": runtime.get("reason"),
+        },
+        "wiki_packets": wiki_packets,
+        "movement": {
+            "status": movement_status.get("status"),
+            "authority": movement_status.get("authority") or "observability_non_authoritative",
+            "movement_counts": dict(movement_status.get("movement_counts") or {}),
+            "row_count": int(movement_status.get("row_count") or 0),
+            "non_override_rules": list(movement_status.get("non_override_rules") or [])[:4],
+        },
+        "authority_boundary": "current_state_memory_outranks_wiki_for_mutable_user_facts",
+    }
+    if wiki_packets["source_families_visible"]:
+        payload["self_status_memory"] = {
+            "can_name_source_families": True,
+            "can_detect_memory_kb": bool((wiki_packets.get("memory_kb") or {}).get("present")),
+            "wiki_authority": "supporting_not_authoritative",
+            "current_state_for_mutable_user_facts": "authoritative",
+            "graphiti_status": "advisory_until_evals_pass",
+            "residue_promotion": "blocked",
+        }
+    return payload
+
+
+def _build_user_awareness(
+    *,
+    config_manager: ConfigManager,
+    context_capsule: Any,
+    human_id: str,
+    session_id: str,
+    channel_kind: str,
+    personality_profile: dict[str, Any] | None,
+) -> dict[str, Any]:
+    normalized_human_id = str(human_id or "").strip()
+    current_state_lines = _context_lines(context_capsule, "current_state")
+    pending_task_lines = _context_lines(context_capsule, "pending_tasks")
+    recent_conversation_lines = _context_lines(context_capsule, "recent_conversation")
+    current_state_items = [_parse_context_line(line) for line in current_state_lines]
+    current_state_items = [item for item in current_state_items if item]
+    stable_context = [
+        _user_context_entry(
+            kind=f"user_{item['label']}",
+            label="stable",
+            value=item["value"],
+            source="context_capsule.current_state",
+            source_kind="governed_current_state_memory",
+        )
+        for item in current_state_items
+        if item["label"] in {"preferred_name", "startup", "founder_of", "occupation", "city", "country", "timezone"}
+    ]
+    current_goal = _first_entry_for_labels(
+        current_state_items,
+        labels=("current_focus", "current_plan", "current_milestone"),
+        kind="current_goal",
+        label="recent",
+    )
+    recent_decisions = [
+        _user_context_entry(
+            kind=item["label"],
+            label="recent",
+            value=item["value"],
+            source="context_capsule.current_state",
+            source_kind="governed_current_state_memory",
+        )
+        for item in current_state_items
+        if item["label"] in {"current_decision", "current_constraint", "current_blocker", "current_status"}
+    ][:6]
+    stable_preferences: list[dict[str, Any]] = []
+    if isinstance(personality_profile, dict) and personality_profile.get("user_deltas_applied"):
+        stable_preferences.append(
+            _user_context_entry(
+                kind="style_preference_overlay",
+                label="stable",
+                value="active",
+                source="personality_profile.user_deltas_applied",
+                source_kind="personality_preference_overlay",
+            )
+        )
+    stable_preferences.extend(stable_context[:6])
+    if not current_goal and recent_conversation_lines:
+        current_goal = _user_context_entry(
+            kind="current_goal",
+            label="inferred",
+            value="recent conversation is available, but no governed current focus/plan was found",
+            source="context_capsule.recent_conversation",
+            source_kind="recent_turn_context",
+        )
+
+    user_wiki = _user_wiki_context(config_manager=config_manager, human_id=normalized_human_id)
+    label_counts = _label_counts(
+        [
+            *(stable_preferences or []),
+            *([current_goal] if current_goal else []),
+            *recent_decisions,
+            *(
+                [
+                    {
+                        "label": "candidate",
+                    }
+                ]
+                if user_wiki.get("candidate_note_count")
+                else []
+            ),
+        ]
+    )
+    payload: dict[str, Any] = {
+        "present": bool(normalized_human_id or stable_preferences or current_goal or recent_decisions or user_wiki.get("candidate_note_count")),
+        "human_id": normalized_human_id or None,
+        "session_id": str(session_id or "").strip() or None,
+        "channel_kind": str(channel_kind or "").strip() or None,
+        "scope_kind": "user_specific" if normalized_human_id else "unknown_user",
+        "current_goal": current_goal
+        or _user_context_entry(
+            kind="current_goal",
+            label="unknown",
+            value="no governed current focus or plan found",
+            source="context_capsule.current_state",
+            source_kind="governed_current_state_memory",
+        ),
+        "stable_preferences": stable_preferences[:8],
+        "recent_decisions": recent_decisions[:6],
+        "pending_task_count": len(pending_task_lines),
+        "recent_conversation_turn_count": len(recent_conversation_lines),
+        "user_wiki_context": user_wiki,
+        "label_counts": label_counts,
+        "source_labels": {
+            "stable": "durable governed memory or explicit personality preference overlay",
+            "recent": "current-state memory or open task context",
+            "inferred": "derived from recent context and must be confirmed",
+            "unknown": "not visible in this capsule",
+            "candidate": "consent-bounded wiki note that cannot override current-state memory",
+        },
+        "boundaries": [
+            "user_memory_stays_separate_from_global_spark_doctrine",
+            "governed_current_state_memory_outranks_user_wiki_notes_for_mutable_facts",
+            "recent_conversation_is_continuity_context_not_promotion_evidence",
+            "candidate_user_wiki_notes_require_consent_and_revalidation_before_reuse",
+        ],
+    }
+    return payload
+
+
+def _build_project_awareness(*, config_manager: ConfigManager, registry_payload: dict[str, Any]) -> dict[str, Any]:
+    records = [record for record in (registry_payload.get("records") or []) if isinstance(record, dict)]
+    repo_records = [record for record in records if str(record.get("kind") or "") == "repo"]
+    workspace = config_manager.load().get("workspace") or {}
+    if not isinstance(workspace, dict):
+        workspace = {}
+    workspace_home = str(workspace.get("home") or config_manager.paths.home).strip()
+    projects = [_project_context_entry(record) for record in repo_records]
+    active_project = _active_project(projects=projects, workspace_home=workspace_home)
+    summary = registry_payload.get("summary") if isinstance(registry_payload.get("summary"), dict) else {}
+    return {
+        "present": bool(projects or workspace_home),
+        "workspace_id": str(workspace.get("id") or registry_payload.get("workspace_id") or "default"),
+        "workspace_home": workspace_home,
+        "active_project": active_project,
+        "project_count": len(projects),
+        "known_project_keys": [str(project.get("key") or "") for project in projects if project.get("key")][:20],
+        "projects": projects[:20],
+        "repo_summary": {
+            "repo_count": int(summary.get("repo_count") or len(projects)),
+            "dirty_repo_count": int(summary.get("dirty_repo_count") or 0),
+        },
+        "source_refs": [
+            "system_registry:repo_records",
+            "local_project_index",
+            "config.workspace.home",
+        ],
+        "authority": "observed_configuration_not_live_git_truth",
+        "boundaries": [
+            "live_git_status_outranks_project_awareness_snapshot",
+            "live_filesystem_checks_outrank_project_awareness_snapshot",
+            "project_awareness_does_not_select_write_targets_without_user_intent",
+            "source_refs_required_for_project_claims",
+        ],
+    }
+
+
+def _build_capability_probe_registry(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    probe_records: list[dict[str, Any]] = []
+    for record in records:
+        kind = str(record.get("kind") or "").strip()
+        key = str(record.get("key") or "").strip()
+        if not key or kind not in {"system", "adapter", "provider", "chip", "path", "repo"}:
+            continue
+        probe_records.append(
+            {
+                "target_kind": kind,
+                "target_key": key,
+                "label": str(record.get("label") or key).strip(),
+                "status": str(record.get("status") or "unknown").strip(),
+                "available": bool(record.get("available")),
+                "active": bool(record.get("active")),
+                "safe_probe": _safe_probe_for_record(kind=kind, key=key),
+                "access_boundary": _probe_access_boundary(kind=kind),
+                "claim_boundary": "configured_or_available_is_not_recent_success",
+                "records_current_success": False,
+            }
+        )
+    probe_records.sort(key=lambda item: (str(item.get("target_kind") or ""), str(item.get("target_key") or "")))
+    return probe_records[:40]
+
+
+def _safe_probe_for_record(*, kind: str, key: str) -> str:
+    if kind == "adapter" and key == "telegram":
+        return "spark-intelligence channel test telegram --json"
+    if kind == "provider":
+        return "spark-intelligence auth status --json"
+    if kind == "chip":
+        return f"spark-intelligence chips why 'test {key} capability' --json"
+    if kind == "path":
+        return "spark-intelligence attachments status --json"
+    if kind == "repo":
+        return f"git -C <repo:{key}> status --short"
+    if kind == "system" and key == "spark_memory":
+        return "spark-intelligence memory status --json"
+    if kind == "system" and key == "spark_browser":
+        return "spark-intelligence browser status --json"
+    if kind == "system" and key == "spark_intelligence_builder":
+        return "spark-intelligence self status --json"
+    return "spark-intelligence status --json"
+
+
+def _probe_access_boundary(*, kind: str) -> str:
+    if kind in {"system", "adapter", "provider"}:
+        return "read_only_health_check"
+    if kind in {"chip", "path"}:
+        return "read_only_routing_or_attachment_check"
+    if kind == "repo":
+        return "read_only_filesystem_or_git_check"
+    return "read_only_probe"
+
+
+def _project_context_entry(record: dict[str, Any]) -> dict[str, Any]:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    key = str(record.get("key") or "").strip()
+    path = str(metadata.get("path") or "").strip()
+    return {
+        "key": key,
+        "label": str(record.get("label") or key or "project").strip(),
+        "status": str(record.get("status") or "unknown").strip(),
+        "path": path,
+        "exists": bool(record.get("available")),
+        "is_git": bool(metadata.get("is_git")),
+        "dirty": metadata.get("dirty"),
+        "branch": metadata.get("branch"),
+        "source": str(metadata.get("source") or "unknown").strip(),
+        "owner_system": str(metadata.get("owner_system") or "spark_local_work").strip(),
+        "components": [str(item).strip() for item in (metadata.get("components") or []) if str(item).strip()][:8],
+        "source_ref": f"registry:repo:{key}" if key else "registry:repo",
+        "source_kind": "local_project_index",
+        "authority": "observed_configuration_not_live_git_truth",
+        "live_state_boundary": "refresh git/filesystem/tool checks before claiming current repo state",
+    }
+
+
+def _active_project(*, projects: list[dict[str, Any]], workspace_home: str) -> dict[str, Any]:
+    normalized_workspace = workspace_home.casefold()
+    for project in projects:
+        path = str(project.get("path") or "").casefold()
+        if path and path == normalized_workspace:
+            return dict(project)
+    for project in projects:
+        key = str(project.get("key") or "")
+        if key == "spark-intelligence-builder":
+            return dict(project)
+    return dict(projects[0]) if projects else {
+        "key": "unknown",
+        "label": "Unknown project",
+        "status": "unknown",
+        "source_ref": "config.workspace.home",
+        "source_kind": "workspace_config",
+        "authority": "observed_configuration_not_live_git_truth",
+        "live_state_boundary": "inspect filesystem/git before claiming project state",
+    }
+
+
+def _context_lines(context_capsule: Any, section: str) -> list[str]:
+    sections = getattr(context_capsule, "sections", {}) if context_capsule is not None else {}
+    lines = sections.get(section) if isinstance(sections, dict) else []
+    return [str(line).strip() for line in (lines or []) if str(line).strip()]
+
+
+def _parse_context_line(line: str) -> dict[str, str]:
+    text = str(line or "").strip()
+    if text.startswith("- "):
+        text = text[2:].strip()
+    if ":" not in text:
+        return {}
+    label, value = text.split(":", 1)
+    value = value.strip()
+    if " (as_of=" in value:
+        value = value.split(" (as_of=", 1)[0].strip()
+    return {"label": label.strip(), "value": value}
+
+
+def _first_entry_for_labels(
+    items: list[dict[str, str]],
+    *,
+    labels: tuple[str, ...],
+    kind: str,
+    label: str,
+) -> dict[str, Any] | None:
+    for item_label in labels:
+        for item in items:
+            if item.get("label") != item_label:
+                continue
+            return _user_context_entry(
+                kind=kind,
+                label=label,
+                value=item.get("value") or "",
+                source="context_capsule.current_state",
+                source_kind="governed_current_state_memory",
+            )
+    return None
+
+
+def _user_context_entry(*, kind: str, label: str, value: str, source: str, source_kind: str) -> dict[str, Any]:
+    return {
+        "kind": kind,
+        "label": label,
+        "value": str(value or "").strip()[:260],
+        "source": source,
+        "source_kind": source_kind,
+    }
+
+
+def _user_wiki_context(*, config_manager: ConfigManager, human_id: str) -> dict[str, Any]:
+    if not human_id:
+        return {
+            "status": "unknown_user",
+            "candidate_note_count": 0,
+            "authority": "supporting_not_authoritative",
+            "scope_kind": "user_specific",
+        }
+    wiki_root = config_manager.paths.home / "wiki"
+    note_dir = wiki_root / "users" / _human_slug(human_id) / "candidate-notes"
+    note_paths = sorted(note_dir.glob("*.md")) if note_dir.exists() else []
+    return {
+        "status": "present" if note_paths else "empty",
+        "candidate_note_count": len(note_paths),
+        "relative_dir": note_dir.relative_to(wiki_root).as_posix() if note_dir.exists() else f"users/{_human_slug(human_id)}/candidate-notes",
+        "authority": "supporting_not_authoritative",
+        "scope_kind": "user_specific",
+        "can_override_current_state_memory": False,
+    }
+
+
+def _human_slug(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
+    slug = re.sub(r"-{2,}", "-", slug)
+    return (slug or "human")[:72].strip("-") or "human"
+
+
+def _label_counts(items: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        label = str(item.get("label") or "unknown").strip() or "unknown"
+        counts[label] = counts.get(label, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _recommended_probes(
+    *,
+    degraded_claims: list[SelfAwarenessClaim],
+    probe_registry: list[dict[str, Any]] | None = None,
+) -> list[str]:
     probes = [
         "Run `spark-intelligence self status --json` before self-knowledge answers that need provenance.",
         "Run a direct health/invocation check for the exact capability the user wants to rely on.",
         "Record last_success_at, last_failure_reason, and route_latency_ms for each important system path.",
     ]
+    for probe in list(probe_registry or [])[:4]:
+        safe_probe = str(probe.get("safe_probe") or "").strip()
+        target_key = str(probe.get("target_key") or "").strip()
+        if safe_probe and target_key:
+            probes.append(f"{target_key}: {safe_probe}")
     for claim in degraded_claims[:4]:
         if claim.next_probe:
             probes.append(claim.next_probe)
-    return probes
+    return list(dict.fromkeys(probes))
 
 
 def _probe_for_kind(kind: str, key: str) -> str:
@@ -872,8 +1615,12 @@ def _extend_capability_evidence_lines(
         extras: list[str] = []
         if evidence.route_latency_ms is not None:
             extras.append(f"{evidence.route_latency_ms}ms")
-        if evidence.eval_coverage_status != "unknown":
+        if evidence.eval_coverage_status:
             extras.append(f"eval={evidence.eval_coverage_status}")
+        if evidence.confidence_level != "unknown":
+            extras.append(f"confidence={evidence.confidence_level}")
+        if evidence.goal_relevance not in {"unknown", "not_detected"}:
+            extras.append(f"goal={evidence.goal_relevance}")
         if evidence.last_failure_reason and not evidence.last_success_at:
             extras.append(evidence.last_failure_reason)
         suffix = f" ({'; '.join(extras)})" if extras else ""
@@ -914,6 +1661,99 @@ def _positive_count(value: Any) -> int:
         return max(0, int(value or 0))
     except (TypeError, ValueError):
         return 0
+
+
+def _extend_weak_spot_priority_lines(
+    lines: list[str],
+    priorities: list[dict[str, Any]],
+    *,
+    limit: int,
+) -> None:
+    selected = [item for item in priorities[:limit] if isinstance(item, dict)]
+    if not selected:
+        return
+    lines.append("Weak spot priorities")
+    for item in selected:
+        weak_spot = str(item.get("weak_spot") or item.get("priority_key") or "unknown").strip()
+        if len(weak_spot) > 140:
+            weak_spot = f"{weak_spot[:137].rstrip()}..."
+        score = int(item.get("surprise_score") or 0)
+        reasons = ", ".join(str(reason) for reason in (item.get("priority_reasons") or [])[:2] if str(reason).strip())
+        suffix = f" reasons={reasons}" if reasons else ""
+        lines.append(f"- score={score}: {weak_spot}{suffix}")
+    lines.append("")
+
+
+def _extend_memory_cognition_lines(lines: list[str], memory_cognition: dict[str, Any]) -> None:
+    if not memory_cognition:
+        return
+    runtime = memory_cognition.get("runtime") if isinstance(memory_cognition.get("runtime"), dict) else {}
+    wiki_packets = (
+        memory_cognition.get("wiki_packets") if isinstance(memory_cognition.get("wiki_packets"), dict) else {}
+    )
+    memory_kb = wiki_packets.get("memory_kb") if isinstance(wiki_packets.get("memory_kb"), dict) else {}
+    movement = memory_cognition.get("movement") if isinstance(memory_cognition.get("movement"), dict) else {}
+    lines.append("Memory cognition")
+    runtime_label = str(runtime.get("runtime_memory_architecture") or runtime.get("client_kind") or "unknown").strip()
+    lines.append(f"- Runtime: {'ready' if runtime.get('ready') else 'not ready'} ({runtime_label})")
+    lines.append(
+        f"- Wiki packets: {wiki_packets.get('status') or 'unknown'}; "
+        f"families={'visible' if wiki_packets.get('source_families_visible') else 'not visible'}"
+    )
+    if memory_kb.get("present"):
+        families = memory_kb.get("family_counts") if isinstance(memory_kb.get("family_counts"), dict) else {}
+        family_text = ", ".join(f"{key}={value}" for key, value in sorted(families.items())[:4])
+        lines.append(f"- Memory KB: present ({family_text or memory_kb.get('packet_count', 0)})")
+    movement_counts = movement.get("movement_counts") if isinstance(movement.get("movement_counts"), dict) else {}
+    if movement.get("status") == "supported" and movement_counts:
+        movement_text = ", ".join(
+            f"{state}={int(movement_counts.get(state) or 0)}"
+            for state in ("captured", "blocked", "promoted", "saved", "decayed", "summarized", "retrieved")
+        )
+        lines.append(f"- Memory movement: {movement_text}")
+    lines.append("- Wiki authority: supporting_not_authoritative; it helps me orient, but it is not mutable user truth.")
+    lines.append("- Boundary: current-state memory wins over wiki for mutable user facts; user memory stays separate from Spark doctrine.")
+    lines.append("- Graph sidecar: advisory until evals pass; conversational residue is not promotion evidence.")
+    lines.append("")
+
+
+def _extend_user_awareness_lines(lines: list[str], user_awareness: dict[str, Any]) -> None:
+    if not user_awareness:
+        return
+    label_counts = user_awareness.get("label_counts") if isinstance(user_awareness.get("label_counts"), dict) else {}
+    user_wiki = user_awareness.get("user_wiki_context") if isinstance(user_awareness.get("user_wiki_context"), dict) else {}
+    current_goal = user_awareness.get("current_goal") if isinstance(user_awareness.get("current_goal"), dict) else {}
+    goal_label = str(current_goal.get("label") or "unknown")
+    lines.append("User awareness")
+    lines.append(f"- Scope: {user_awareness.get('scope_kind') or 'unknown_user'}")
+    lines.append(f"- Current goal: {goal_label}")
+    lines.append(
+        "- Context labels: "
+        + ", ".join(f"{key}={value}" for key, value in sorted(label_counts.items()))
+        if label_counts
+        else "- Context labels: none visible"
+    )
+    lines.append(f"- User wiki candidates: {int(user_wiki.get('candidate_note_count') or 0)}")
+    lines.append("- Boundary: user context helps personalize, but it is not global Spark doctrine.")
+    lines.append("")
+
+
+def _extend_project_awareness_lines(lines: list[str], project_awareness: dict[str, Any]) -> None:
+    if not project_awareness:
+        return
+    active_project = (
+        project_awareness.get("active_project")
+        if isinstance(project_awareness.get("active_project"), dict)
+        else {}
+    )
+    label = str(active_project.get("label") or active_project.get("key") or "unknown").strip()
+    status = str(active_project.get("status") or "unknown").strip()
+    lines.append("Project awareness")
+    lines.append(f"- Workspace: {project_awareness.get('workspace_id') or 'default'}")
+    lines.append(f"- Active project: {label} ({status})")
+    lines.append(f"- Known projects: {int(project_awareness.get('project_count') or 0)}")
+    lines.append("- Boundary: live git, filesystem, CI, and tool output outrank this project snapshot.")
+    lines.append("")
 
 
 def _compact_claim_text(claim: SelfAwarenessClaim) -> str:
