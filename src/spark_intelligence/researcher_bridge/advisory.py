@@ -55,6 +55,7 @@ from spark_intelligence.memory import (
     lookup_current_state_in_memory,
     lookup_historical_state_in_memory,
     read_memory_kernel,
+    recall_episodic_context_in_memory,
     retrieve_memory_evidence_in_memory,
     retrieve_memory_events_in_memory,
     write_belief_to_memory,
@@ -11671,6 +11672,29 @@ def build_researcher_reply(
                         ]
                 if recall_records:
                     read_method = "inspect_memory_records"
+        if not recall_records and detected_open_memory_recall_query.query_kind == "episodic_recall":
+            try:
+                episodic_context = recall_episodic_context_in_memory(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    human_id=human_id,
+                    query=str(user_message or "").strip() or detected_open_memory_recall_query.topic,
+                    actor_id="researcher_bridge",
+                    limit=6,
+                )
+            except Exception:
+                episodic_context = None
+            episodic_read_result = getattr(episodic_context, "read_result", None)
+            if episodic_read_result is not None and not getattr(episodic_read_result, "abstained", True):
+                episodic_records = [
+                    record
+                    for record in list(getattr(episodic_read_result, "records", []) or [])
+                    if _memory_record_text(record).strip()
+                    and not _recall_snippet_is_operational_failure(_memory_record_text(record))
+                ]
+                if episodic_records:
+                    recall_records = episodic_records[:6]
+                    read_method = "recall_episodic_context"
         output_keepability, promotion_disposition = _bridge_output_classification(
             mode="memory_open_recall",
             routing_decision="memory_open_recall_query",

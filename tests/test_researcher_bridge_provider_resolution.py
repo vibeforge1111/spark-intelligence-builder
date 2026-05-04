@@ -3411,6 +3411,64 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("source-labeled recall, not durable promotion", reply)
         self.assertIn("current-state memory still win", reply)
 
+    def test_earlier_episodic_work_recall_uses_episodic_context_when_evidence_is_thin(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        empty_read = SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[]))
+        episodic_context = SimpleNamespace(
+            read_result=SimpleNamespace(
+                abstained=False,
+                records=[
+                    {
+                        "episodic_recall_bucket": "current_state",
+                        "predicate": "profile.current_focus",
+                        "memory_role": "current_state",
+                        "value": "persistent memory quality evaluation is still open.",
+                    },
+                    {
+                        "episodic_recall_bucket": "session_summaries",
+                        "predicate": "session.summary",
+                        "memory_role": "episodic",
+                        "text": "We added source-aware episodic recall and tested it through Telegram.",
+                    },
+                ],
+            )
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.retrieve_memory_evidence_in_memory",
+            return_value=empty_read,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.inspect_human_memory_in_memory",
+            return_value=empty_read,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.recall_episodic_context_in_memory",
+            return_value=episodic_context,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider should not run for direct episodic memory recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-earlier-episodic-recall",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-earlier-episodic-recall",
+                channel_kind="telegram",
+                user_message="What did we do earlier for episodic recall?",
+            )
+
+        self.assertEqual(result.mode, "memory_open_recall")
+        self.assertEqual(result.routing_decision, "memory_open_recall_query")
+        self.assertIn("Here's what I can reconstruct about episodic recall:", result.reply_text)
+        self.assertIn("persistent memory quality evaluation is still open.", result.reply_text)
+        self.assertIn("We added source-aware episodic recall", result.reply_text)
+        self.assertIn("read_method=recall_episodic_context", result.evidence_summary)
+        self.assertIn("record_count=2", result.evidence_summary)
+
     def test_build_researcher_reply_uses_identity_evidence_when_current_state_is_empty(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)
