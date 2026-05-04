@@ -7,7 +7,7 @@ from unittest.mock import ANY, patch
 
 from spark_intelligence.attachments.snapshot import build_attachment_context
 from spark_intelligence.auth.runtime import RuntimeProviderResolution
-from spark_intelligence.memory import write_profile_fact_to_memory
+from spark_intelligence.memory import MemoryWriteResult, write_profile_fact_to_memory
 from spark_intelligence.observability.store import latest_events_by_type, record_event
 from spark_intelligence.researcher_bridge.advisory import (
     OpenMemoryRecallQuery,
@@ -16,6 +16,7 @@ from spark_intelligence.researcher_bridge.advisory import (
     _build_contextual_task,
     _build_open_memory_recall_answer,
     _detect_open_memory_recall_query,
+    _detect_explicit_decision_statement,
     _load_recent_conversation_context,
     _clean_messaging_reply,
     _normalize_browser_search_query,
@@ -3643,6 +3644,102 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("Blue Lantern", result.reply_text)
         self.assertIn("read_method=recall_episodic_context", result.evidence_summary)
         self.assertIn("record_count=2", result.evidence_summary)
+
+    def test_detect_explicit_memory_decision_statement(self) -> None:
+        statement = _detect_explicit_decision_statement(
+            "We decided today that memory testing label Blue Lantern is retired. This is a real decision."
+        )
+
+        self.assertIsNotNone(statement)
+        assert statement is not None
+        self.assertEqual(statement.topic, "memory")
+        self.assertEqual(statement.decision_text, "memory testing label Blue Lantern is retired")
+        self.assertEqual(
+            statement.evidence_text,
+            "Decision about memory: memory testing label Blue Lantern is retired.",
+        )
+
+    def test_explicit_memory_decision_capture_writes_structured_evidence(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        write_result = MemoryWriteResult(
+            status="ok",
+            operation="write",
+            method="test",
+            memory_role="structured_evidence",
+            accepted_count=1,
+            rejected_count=0,
+            skipped_count=0,
+            abstained=False,
+            retrieval_trace=None,
+            provenance=[],
+            reason=None,
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.write_structured_evidence_to_memory",
+            return_value=write_result,
+        ) as write_mock, patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider should not run for explicit decision capture"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-explicit-memory-decision",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-explicit-memory-decision",
+                channel_kind="telegram",
+                user_message=(
+                    "We decided today that memory testing label Blue Lantern is retired. "
+                    "This is a real decision."
+                ),
+            )
+
+        self.assertEqual(result.mode, "memory_explicit_decision_capture")
+        self.assertEqual(result.routing_decision, "memory_explicit_decision_capture")
+        self.assertIn("Saved as a decision about memory", result.reply_text)
+        self.assertIn("Blue Lantern is retired", result.reply_text)
+        self.assertIn("accepted_count=1", result.evidence_summary)
+        write_mock.assert_called_once()
+        self.assertEqual(write_mock.call_args.kwargs["domain_pack"], "decision_memory")
+        self.assertEqual(write_mock.call_args.kwargs["evidence_kind"], "explicit_decision")
+        self.assertEqual(
+            write_mock.call_args.kwargs["evidence_text"],
+            "Decision about memory: memory testing label Blue Lantern is retired.",
+        )
+        events = latest_events_by_type(self.state_db, event_type="tool_result_received", limit=1)
+        self.assertEqual(events[0]["reason_code"], "memory_explicit_decision_capture")
+        self.assertEqual(events[0]["facts_json"]["accepted_count"], 1)
+        self.assertEqual(events[0]["facts_json"]["reply_class"], "memory_explicit_decision_capture")
+
+    def test_memory_decision_recall_surfaces_explicit_decision_evidence(self) -> None:
+        reply = _build_open_memory_recall_answer(
+            query=OpenMemoryRecallQuery(topic="memory", query_kind="decision_recall"),
+            records=[
+                {
+                    "predicate": "evidence.telegram.decision_memory",
+                    "memory_role": "structured_evidence",
+                    "metadata": {
+                        "evidence_kind": "explicit_decision",
+                        "value": "Decision about memory: memory testing label Blue Lantern is retired.",
+                    },
+                },
+                {
+                    "predicate": "raw_turn",
+                    "memory_role": "episodic",
+                    "text": "We discussed whether the dashboard should gate route passes by evidence depth.",
+                },
+            ],
+        )
+
+        self.assertIn("Confirmed decision(s) about memory:", reply)
+        self.assertIn("memory: memory testing label Blue Lantern is retired.", reply)
+        self.assertIn("Supporting context, not a decision", reply)
+        self.assertIn("discussion stays supporting context", reply)
 
     def test_memory_decision_recall_labels_supporting_context_as_not_decision(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)

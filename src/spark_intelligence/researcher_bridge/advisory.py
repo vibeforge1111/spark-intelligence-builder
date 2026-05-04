@@ -378,6 +378,13 @@ class OpenMemoryRecallQuery:
 
 
 @dataclass(frozen=True)
+class ExplicitDecisionStatement:
+    topic: str
+    decision_text: str
+    evidence_text: str
+
+
+@dataclass(frozen=True)
 class EntityStateHistoryQuery:
     topic: str
     attribute: str
@@ -1555,12 +1562,28 @@ def _recall_snippet_is_memory_promotion_probe(snippet: str) -> bool:
     )
 
 
+def _render_explicit_decision_memory_text(text: str) -> str:
+    cleaned = " ".join(str(text or "").strip().split())
+    if not cleaned:
+        return ""
+    match = re.match(r"^Decision about\s+(.+?)\s*:\s*(.+)$", cleaned, flags=re.IGNORECASE)
+    if not match:
+        return cleaned
+    topic = str(match.group(1) or "").strip()
+    decision = str(match.group(2) or "").strip()
+    if not topic or not decision:
+        return cleaned
+    return f"{topic}: {decision}"
+
+
 def _render_open_memory_recall_snippet(snippet: str) -> str:
     text = " ".join(str(snippet or "").strip().split())
     if not text:
         return ""
     text = re.sub(r"^(?:user|assistant)\s*:\s*", "", text, flags=re.IGNORECASE).strip()
     lowered = text.casefold()
+    if lowered.startswith("decision about "):
+        return _render_explicit_decision_memory_text(text)
     if (
         "without using a status checklist" in lowered
         and "active focus" in lowered
@@ -1572,6 +1595,17 @@ def _render_open_memory_recall_snippet(snippet: str) -> str:
     if "compression systems" in lowered and "memory compression" in lowered:
         return "Memory compression and summarization behavior still needed clarification."
     return text
+
+
+def _memory_record_is_explicit_decision(record: dict[str, Any]) -> bool:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    predicate = str(record.get("predicate") or "").strip()
+    evidence_kind = str(metadata.get("evidence_kind") or "").strip()
+    return (
+        evidence_kind == "explicit_decision"
+        or predicate.startswith("evidence.telegram.decision_")
+        or _memory_record_text(record).casefold().startswith("decision about ")
+    )
 
 
 def _filter_open_memory_recall_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -2189,6 +2223,31 @@ def _build_open_memory_recall_answer(*, query: OpenMemoryRecallQuery, records: l
         rendered for rendered in (_render_open_memory_recall_snippet(snippet) for snippet in snippets) if rendered
     ]
     if query.query_kind == "decision_recall":
+        confirmed_decisions = [
+            rendered
+            for record in records
+            if _memory_record_is_explicit_decision(record)
+            for rendered in (_render_open_memory_recall_snippet(_memory_record_text(record)),)
+            if rendered
+        ]
+        if confirmed_decisions:
+            lines = [f"Confirmed decision(s) about {query.topic}:"]
+            lines.extend(f"- {item}" for item in confirmed_decisions[:3])
+            remaining_support = [item for item in supporting_records if item not in confirmed_decisions]
+            if current_records:
+                lines.extend(["", "Current truth"])
+                lines.extend(f"- {item}" for item in current_records[:2])
+            if remaining_support:
+                lines.extend(["", "Supporting context, not a decision"])
+                lines.extend(f"- {item}" for item in remaining_support[:3])
+            lines.extend(
+                [
+                    "",
+                    "Boundary: these decision records came from explicit user decision language; discussion stays supporting context.",
+                ]
+            )
+            return "\n".join(lines)
+
         lines = [f"I don't see a confirmed saved decision about {query.topic}."]
         if current_records:
             lines.extend(["", "Current truth"])
@@ -8006,6 +8065,58 @@ def _should_direct_acknowledge_current_state_memory(user_message: str) -> bool:
     return bool(_EXPLICIT_CURRENT_STATE_MEMORY_PATTERN.search(text))
 
 
+_EXPLICIT_DECISION_TRAILING_MARKER_PATTERN = re.compile(
+    r"(?:^|\s+)(?:this\s+is\s+(?:a\s+)?real\s+decision|mark\s+this\s+as\s+decided)\.?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _infer_explicit_decision_topic(decision_text: str) -> str:
+    lowered = str(decision_text or "").casefold()
+    if re.search(r"\b(memory|recall|episodic|dashboard|wiki|blue lantern|sol)\b", lowered):
+        return "memory"
+    if re.search(r"\b(builder|spark intelligence builder)\b", lowered):
+        return "builder"
+    if re.search(r"\b(telegram|bot|gateway)\b", lowered):
+        return "telegram"
+    if re.search(r"\b(dashboard|trace|movement)\b", lowered):
+        return "memory dashboard"
+    return "general"
+
+
+def _clean_explicit_decision_text(text: str) -> str:
+    cleaned = " ".join(str(text or "").strip().split())
+    cleaned = _EXPLICIT_DECISION_TRAILING_MARKER_PATTERN.sub("", cleaned).strip(" \t\r\n.?!")
+    cleaned = re.sub(r"^(?:that|to)\s+", "", cleaned, flags=re.IGNORECASE).strip(" \t\r\n.?!")
+    return cleaned
+
+
+def _detect_explicit_decision_statement(user_message: str) -> ExplicitDecisionStatement | None:
+    text = " ".join(str(user_message or "").strip().split())
+    if not text or text.endswith("?"):
+        return None
+
+    decision_text = ""
+    match = re.match(r"^we\s+decided(?:\s+today)?\s+(?:that\s+)?(.+)$", text, flags=re.IGNORECASE)
+    if match:
+        decision_text = str(match.group(1) or "")
+    else:
+        match = re.match(r"^(?:decision|decided)\s*:?\s+(.+)$", text, flags=re.IGNORECASE)
+        if match:
+            decision_text = str(match.group(1) or "")
+        else:
+            match = re.match(r"^mark\s+this\s+as\s+(?:a\s+)?decision\s*:?\s+(.+)$", text, flags=re.IGNORECASE)
+            if match:
+                decision_text = str(match.group(1) or "")
+
+    decision_text = _clean_explicit_decision_text(decision_text)
+    if not decision_text:
+        return None
+    topic = _infer_explicit_decision_topic(decision_text)
+    evidence_text = f"Decision about {topic}: {decision_text}."
+    return ExplicitDecisionStatement(topic=topic, decision_text=decision_text, evidence_text=evidence_text)
+
+
 def _build_direct_preference_update_answer(*, user_message: str) -> str:
     if re.search(r"\b(?:reply|response|style|tone|voice|concise|warm|direct)\b", user_message, flags=re.I):
         return "Saved that reply style preference."
@@ -8150,6 +8261,7 @@ def build_researcher_reply(
         if explicit_memory_message
         else None
     ) or memory_user_message
+    explicit_decision_statement = _detect_explicit_decision_statement(memory_user_message)
 
     # ── Personality integration ──
     personality_profile = None
@@ -9242,6 +9354,122 @@ def build_researcher_reply(
             config_path=None,
             attachment_context=attachment_context,
             routing_decision="memory_authority_policy",
+            active_chip_key=None,
+            active_chip_task_type=None,
+            active_chip_evaluate_used=False,
+            output_keepability=output_keepability,
+            promotion_disposition=promotion_disposition,
+        )
+
+    if not personality_context_extra and explicit_decision_statement is not None:
+        accepted_count = 0
+        rejected_count = 0
+        skipped_count = 0
+        write_reason = ""
+        domain_pack = "decision_" + re.sub(
+            r"[^a-z0-9]+",
+            "_",
+            explicit_decision_statement.topic.casefold(),
+        ).strip("_")
+        if config_manager.get_path("spark.memory.enabled", default=False):
+            try:
+                write_result = write_structured_evidence_to_memory(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    human_id=human_id,
+                    evidence_text=explicit_decision_statement.evidence_text,
+                    domain_pack=domain_pack or "decision_general",
+                    evidence_kind="explicit_decision",
+                    session_id=session_id,
+                    turn_id=request_id,
+                    channel_kind=channel_kind,
+                    actor_id="telegram_explicit_decision_loader",
+                )
+                accepted_count = int(getattr(write_result, "accepted_count", 0) or 0)
+                rejected_count = int(getattr(write_result, "rejected_count", 0) or 0)
+                skipped_count = int(getattr(write_result, "skipped_count", 0) or 0)
+                write_reason = str(getattr(write_result, "reason", "") or "").strip()
+            except Exception as exc:
+                rejected_count = 1
+                write_reason = exc.__class__.__name__
+        else:
+            skipped_count = 1
+            write_reason = "memory_disabled"
+
+        output_keepability, promotion_disposition = _bridge_output_classification(
+            mode="memory_explicit_decision_capture",
+            routing_decision="memory_explicit_decision_capture",
+        )
+        trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
+        if accepted_count > 0:
+            reply_text = (
+                f"Saved as a decision about {explicit_decision_statement.topic}: "
+                f"{explicit_decision_statement.decision_text}.\n\n"
+                "I will treat older discussion as supporting context unless current state says otherwise."
+            )
+        else:
+            reply_text = (
+                f"I heard the decision about {explicit_decision_statement.topic}: "
+                f"{explicit_decision_statement.decision_text}.\n\n"
+                "I could not save it as durable decision evidence this turn, so I should not rely on it later without fresh context."
+            )
+        evidence_summary = (
+            "status=memory_explicit_decision_capture "
+            f"topic={explicit_decision_statement.topic} "
+            "evidence_kind=explicit_decision "
+            f"accepted_count={accepted_count} "
+            f"rejected_count={rejected_count} "
+            f"skipped_count={skipped_count}"
+        )
+        if write_reason:
+            evidence_summary = f"{evidence_summary} reason={write_reason}"
+        record_event(
+            state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge captured an explicit user decision as structured memory evidence.",
+            run_id=run_id,
+            request_id=request_id,
+            trace_ref=trace_ref,
+            channel_id=channel_kind,
+            session_id=session_id,
+            human_id=human_id,
+            agent_id=agent_id,
+            actor_id="researcher_bridge",
+            reason_code="memory_explicit_decision_capture",
+            facts=_bridge_event_facts(
+                routing_decision="memory_explicit_decision_capture",
+                bridge_mode="memory_explicit_decision_capture",
+                evidence_summary=evidence_summary,
+                active_chip_key=None,
+                active_chip_task_type=None,
+                active_chip_evaluate_used=False,
+                keepability=output_keepability,
+                promotion_disposition=promotion_disposition,
+                extra={
+                    "topic": explicit_decision_statement.topic,
+                    "decision_text": explicit_decision_statement.decision_text,
+                    "evidence_kind": "explicit_decision",
+                    "domain_pack": domain_pack or "decision_general",
+                    "accepted_count": accepted_count,
+                    "rejected_count": rejected_count,
+                    "skipped_count": skipped_count,
+                    "write_reason": write_reason,
+                    "reply_class": "memory_explicit_decision_capture",
+                },
+            ),
+        )
+        return ResearcherBridgeResult(
+            request_id=request_id,
+            reply_text=reply_text,
+            evidence_summary=evidence_summary,
+            escalation_hint=None,
+            trace_ref=trace_ref,
+            mode="memory_explicit_decision_capture",
+            runtime_root=None,
+            config_path=None,
+            attachment_context=attachment_context,
+            routing_decision="memory_explicit_decision_capture",
             active_chip_key=None,
             active_chip_task_type=None,
             active_chip_evaluate_used=False,
