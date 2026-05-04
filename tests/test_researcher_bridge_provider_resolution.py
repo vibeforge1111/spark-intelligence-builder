@@ -3715,6 +3715,10 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertEqual(events[0]["reason_code"], "memory_explicit_decision_capture")
         self.assertEqual(events[0]["facts_json"]["accepted_count"], 1)
         self.assertEqual(events[0]["facts_json"]["reply_class"], "memory_explicit_decision_capture")
+        self.assertEqual(
+            events[0]["facts_json"]["query_text"],
+            "We decided today that memory testing label Blue Lantern is retired. This is a real decision.",
+        )
 
     def test_memory_decision_recall_surfaces_explicit_decision_evidence(self) -> None:
         reply = _build_open_memory_recall_answer(

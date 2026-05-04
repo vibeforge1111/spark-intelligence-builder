@@ -9447,6 +9447,7 @@ def build_researcher_reply(
                 keepability=output_keepability,
                 promotion_disposition=promotion_disposition,
                 extra={
+                    "query_text": str(user_message or "").strip(),
                     "topic": explicit_decision_statement.topic,
                     "decision_text": explicit_decision_statement.decision_text,
                     "evidence_kind": "explicit_decision",
