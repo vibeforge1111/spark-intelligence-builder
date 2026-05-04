@@ -6261,6 +6261,23 @@ def _detect_context_source_debug_query(user_message: str) -> bool:
     return any(marker in text for marker in source_markers)
 
 
+def _detect_context_source_boundary_query(user_message: str) -> bool:
+    text = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
+    if not text:
+        return False
+    return any(
+        marker in text
+        for marker in (
+            "current truth versus support",
+            "current truth versus supporting recall",
+            "current truth vs support",
+            "current truth vs supporting recall",
+            "which parts were current truth",
+            "what parts were current truth",
+        )
+    )
+
+
 def _format_context_source_ledger_reply(
     *,
     ledger: list[dict[str, Any]],
@@ -6573,6 +6590,77 @@ def _format_memory_route_source_reply(*, route_facts: dict[str, Any]) -> str | N
     return "\n".join(lines)
 
 
+def _format_memory_route_boundary_reply(*, route_facts: dict[str, Any]) -> str | None:
+    routing_decision = str(route_facts.get("routing_decision") or "").strip()
+    bridge_mode = str(route_facts.get("bridge_mode") or "").strip()
+    if routing_decision != "memory_open_recall_query" and bridge_mode != "memory_open_recall":
+        return None
+
+    query_kind = str(route_facts.get("query_kind") or "").strip()
+    topic = str(route_facts.get("topic") or "").strip() or "the requested topic"
+    read_method = str(route_facts.get("read_method") or "").strip()
+    evidence_summary = str(route_facts.get("evidence_summary") or "").strip()
+    try:
+        record_count = int(route_facts.get("record_count") or 0)
+    except (TypeError, ValueError):
+        record_count = 0
+
+    roles = route_facts.get("retrieved_memory_roles")
+    if not isinstance(roles, list):
+        roles = []
+    if not roles and evidence_summary:
+        match = re.search(r"\bretrieved_roles=([^\s]+)", evidence_summary)
+        if match:
+            roles = [role.strip() for role in match.group(1).split(",") if role.strip()]
+    role_text = ", ".join(str(role) for role in roles if str(role).strip()) or "retrieved memory evidence"
+
+    if query_kind == "decision_recall":
+        current_line = "I found no confirmed saved decision in that recall result."
+        support_line = (
+            f"The {record_count} retrieved {role_text} record(s) were supporting context about memory work, "
+            "not proof that a decision was made."
+        )
+        boundary_line = "Discussion snippets can explain the trail, but they do not become decisions without explicit decision evidence."
+    elif query_kind == "discussion_recall":
+        current_line = "The current truth was the boundary itself: discussed-only material stays non-decisional."
+        support_line = (
+            f"The {record_count} retrieved {role_text} record(s) were examples of discussion around {topic}, "
+            "not durable decisions."
+        )
+        boundary_line = "They can guide the next step, but they should not be promoted as settled memory."
+    elif query_kind == "open_recall":
+        current_line = "Open status still needs current-state or explicit closure evidence."
+        support_line = (
+            f"The {record_count} retrieved {role_text} record(s) were supporting recall about {topic}, "
+            "not closure evidence by themselves."
+        )
+        boundary_line = "Old recall can show what remains unresolved, but it cannot close the work."
+    else:
+        current_line = "Current-state or entity-state records are the trusted layer when present."
+        support_line = (
+            f"The {record_count} retrieved {role_text} record(s) were support for the answer, "
+            "not a higher authority than current state."
+        )
+        boundary_line = "Your newest message and current-state memory win for mutable facts."
+
+    lines = [
+        "Current truth versus supporting recall:",
+        f"- Current truth: {current_line}",
+        f"- Supporting recall: {support_line}",
+        f"- Boundary: {boundary_line}",
+        "",
+        "Trace:",
+        f"- route: {routing_decision or bridge_mode or 'unknown'}",
+        f"- bridge_mode: {bridge_mode or 'unknown'}",
+        f"- topic: {topic}",
+        f"- query_kind: {query_kind or 'unknown'}",
+        f"- record_count: {record_count}",
+    ]
+    if read_method:
+        lines.append(f"- read_method: {read_method}")
+    return "\n".join(lines)
+
+
 def _build_context_source_debug_reply(
     *,
     state_db: StateDB,
@@ -6581,6 +6669,7 @@ def _build_context_source_debug_reply(
     human_id: str,
     agent_id: str,
     request_id: str,
+    user_message: str = "",
 ) -> tuple[str, dict[str, Any]] | None:
     try:
         with state_db.connect() as conn:
@@ -6670,7 +6759,11 @@ def _build_context_source_debug_reply(
             },
         )
     if previous_route_facts is not None:
-        route_reply = _format_memory_route_source_reply(route_facts=previous_route_facts)
+        route_reply = (
+            _format_memory_route_boundary_reply(route_facts=previous_route_facts)
+            if _detect_context_source_boundary_query(user_message)
+            else _format_memory_route_source_reply(route_facts=previous_route_facts)
+        )
         if route_reply:
             return (
                 route_reply,
@@ -8136,6 +8229,7 @@ def build_researcher_reply(
             human_id=human_id,
             agent_id=agent_id,
             request_id=request_id,
+            user_message=user_message,
         )
         if context_source_debug is not None:
             reply_text, debug_facts = context_source_debug

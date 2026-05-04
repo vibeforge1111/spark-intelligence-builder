@@ -612,6 +612,59 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("record_count: 3", result.reply_text)
         self.assertIn("discussion-only records stayed out", result.reply_text)
 
+    def test_context_source_debug_boundary_query_explains_current_truth_vs_support(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="tool_result_received",
+            component="researcher_bridge",
+            summary="Researcher bridge answered an open memory recall query directly from memory.",
+            request_id="req-memory-decision-recall",
+            channel_id="telegram",
+            session_id="session:telegram:dm:111",
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            actor_id="researcher_bridge",
+            reason_code="memory_open_recall_query",
+            facts={
+                "routing_decision": "memory_open_recall_query",
+                "bridge_mode": "memory_open_recall",
+                "topic": "memory",
+                "query_kind": "decision_recall",
+                "record_count": 3,
+                "candidate_record_count": 3,
+                "read_method": "retrieve_evidence+inspect_memory_records",
+                "evidence_summary": (
+                    "status=memory_open_recall topic=memory query_kind=decision_recall "
+                    "record_count=3 candidate_record_count=3 "
+                    "read_method=retrieve_evidence+inspect_memory_records "
+                    "retrieved_roles=episodic,structured_evidence"
+                ),
+            },
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider should not run for source debug"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-source-debug",
+                agent_id="agent:human:telegram:111",
+                human_id="human:telegram:111",
+                session_id="session:telegram:dm:111",
+                channel_kind="telegram",
+                user_message="which parts were current truth versus supporting recall?",
+            )
+
+        self.assertEqual(result.routing_decision, "context_source_debug")
+        self.assertIn("Current truth versus supporting recall", result.reply_text)
+        self.assertIn("Current truth: I found no confirmed saved decision", result.reply_text)
+        self.assertIn("Supporting recall: The 3 retrieved episodic, structured_evidence record", result.reply_text)
+        self.assertIn("not proof that a decision was made", result.reply_text)
+        self.assertIn("route: memory_open_recall_query", result.reply_text)
+        self.assertNotIn("evidence_summary:", result.reply_text)
+
     def test_normalize_browser_search_query_extracts_domain_from_browse_request(self) -> None:
         query = _normalize_browser_search_query(
             "Go to vibeship.co and tell me what you think."
