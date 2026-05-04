@@ -665,6 +665,15 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("route: memory_open_recall_query", result.reply_text)
         self.assertNotIn("evidence_summary:", result.reply_text)
 
+        events = latest_events_by_type(
+            self.state_db,
+            event_type="tool_result_received",
+            limit=5,
+        )
+        debug_event = next(event for event in events if event["reason_code"] == "context_source_debug")
+        self.assertEqual(debug_event["facts_json"]["source_debug_reply_shape"], "truth_support_boundary")
+        self.assertEqual(debug_event["facts_json"]["explained_request_id"], "req-memory-decision-recall")
+
     def test_normalize_browser_search_query_extracts_domain_from_browse_request(self) -> None:
         query = _normalize_browser_search_query(
             "Go to vibeship.co and tell me what you think."

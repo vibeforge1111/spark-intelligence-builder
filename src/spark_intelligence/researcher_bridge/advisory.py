@@ -6759,11 +6759,14 @@ def _build_context_source_debug_reply(
             },
         )
     if previous_route_facts is not None:
-        route_reply = (
-            _format_memory_route_boundary_reply(route_facts=previous_route_facts)
-            if _detect_context_source_boundary_query(user_message)
-            else _format_memory_route_source_reply(route_facts=previous_route_facts)
-        )
+        source_debug_reply_shape = "route_source"
+        route_reply = None
+        if _detect_context_source_boundary_query(user_message):
+            route_reply = _format_memory_route_boundary_reply(route_facts=previous_route_facts)
+            if route_reply:
+                source_debug_reply_shape = "truth_support_boundary"
+        if route_reply is None:
+            route_reply = _format_memory_route_source_reply(route_facts=previous_route_facts)
         if route_reply:
             return (
                 route_reply,
@@ -6777,6 +6780,7 @@ def _build_context_source_debug_reply(
                     "explained_query_kind": previous_route_facts.get("query_kind"),
                     "explained_record_count": previous_route_facts.get("record_count"),
                     "explained_read_method": previous_route_facts.get("read_method"),
+                    "source_debug_reply_shape": source_debug_reply_shape,
                     "source_ledger": [],
                     "source_counts": {},
                 },
