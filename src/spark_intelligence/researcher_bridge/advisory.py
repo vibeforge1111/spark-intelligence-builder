@@ -1537,6 +1537,17 @@ def _recall_snippet_is_operational_failure(snippet: str) -> bool:
     )
 
 
+def _recall_snippet_is_memory_promotion_probe(snippet: str) -> bool:
+    lowered = str(snippet or "").casefold()
+    return any(
+        marker in lowered
+        for marker in (
+            "promote this as durable memory",
+            "spark is perfect now because this chat feels good",
+        )
+    )
+
+
 def _filter_open_memory_recall_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     superseded_ids: set[str] = set()
     deleted_scopes: list[tuple[str, str, str, str]] = []
@@ -2094,7 +2105,11 @@ def _build_open_memory_recall_answer(*, query: OpenMemoryRecallQuery, records: l
     seen: set[str] = set()
     for record in records:
         snippet = _memory_record_text(record)
-        if not snippet or _recall_snippet_is_operational_failure(snippet):
+        if (
+            not snippet
+            or _recall_snippet_is_operational_failure(snippet)
+            or _recall_snippet_is_memory_promotion_probe(snippet)
+        ):
             continue
         normalized = snippet.casefold()
         if normalized in seen:
@@ -2129,7 +2144,11 @@ def _build_open_memory_recall_answer(*, query: OpenMemoryRecallQuery, records: l
     supporting_records: list[str] = []
     for record in records:
         snippet = _memory_record_text(record)
-        if not snippet or _recall_snippet_is_operational_failure(snippet):
+        if (
+            not snippet
+            or _recall_snippet_is_operational_failure(snippet)
+            or _recall_snippet_is_memory_promotion_probe(snippet)
+        ):
             continue
         role = _open_memory_recall_record_role(record)
         predicate = str(record.get("predicate") or "").strip()
@@ -11788,6 +11807,7 @@ def build_researcher_reply(
                     for record in list(getattr(episodic_read_result, "records", []) or [])
                     if _memory_record_text(record).strip()
                     and not _recall_snippet_is_operational_failure(_memory_record_text(record))
+                    and not _recall_snippet_is_memory_promotion_probe(_memory_record_text(record))
                 ]
                 if episodic_records:
                     recall_records = episodic_records[:6]
