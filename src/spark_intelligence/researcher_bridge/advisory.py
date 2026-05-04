@@ -666,6 +666,13 @@ _OPEN_MEMORY_RECALL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "episodic_recall",
         re.compile(
+            r"^what\s+was\s+(?:the\s+)?(?:little\s+)?(.+?)\s+we\s+were\s+using\s+earlier[\?\.\!]*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "episodic_recall",
+        re.compile(
             r"^(?:what|tell me what)\s+happened\s+(?:during|in|around|at)\s+(.+?)[\?\.\!]*$",
             re.IGNORECASE,
         ),

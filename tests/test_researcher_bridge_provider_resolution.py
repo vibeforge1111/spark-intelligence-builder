@@ -3580,6 +3580,70 @@ class ResearcherBridgeProviderResolutionTests(SparkTestCase):
         self.assertIn("read_method=recall_episodic_context", result.evidence_summary)
         self.assertIn("record_count=2", result.evidence_summary)
 
+    def test_indirect_memory_probe_recall_uses_episodic_context(self) -> None:
+        self.config_manager.set_path("spark.researcher.enabled", True)
+        self.config_manager.set_path("spark.memory.enabled", True)
+        self.config_manager.set_path("spark.memory.shadow_mode", False)
+
+        query = _detect_open_memory_recall_query("what was the little memory probe we were using earlier?")
+        self.assertIsNotNone(query)
+        assert query is not None
+        self.assertEqual(query.query_kind, "episodic_recall")
+        self.assertEqual(query.topic, "memory probe")
+
+        empty_read = SimpleNamespace(read_result=SimpleNamespace(abstained=False, records=[]))
+        episodic_context = SimpleNamespace(
+            read_result=SimpleNamespace(
+                abstained=False,
+                records=[
+                    {
+                        "episodic_recall_bucket": "matching_turns",
+                        "predicate": "raw_turn",
+                        "memory_role": "episodic",
+                        "text": "We used the tiny desk plant named Sol as a low-stakes episodic recall probe.",
+                    },
+                    {
+                        "episodic_recall_bucket": "matching_turns",
+                        "predicate": "raw_turn",
+                        "memory_role": "episodic",
+                        "text": "Blue Lantern later appeared as a mutable memory test label correction.",
+                    },
+                ],
+            )
+        )
+
+        with patch(
+            "spark_intelligence.researcher_bridge.advisory.retrieve_memory_evidence_in_memory",
+            return_value=empty_read,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.inspect_human_memory_in_memory",
+            return_value=empty_read,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.recall_episodic_context_in_memory",
+            return_value=episodic_context,
+        ), patch(
+            "spark_intelligence.researcher_bridge.advisory.execute_direct_provider_prompt",
+            side_effect=AssertionError("provider should not run for indirect memory probe recall"),
+        ):
+            result = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-indirect-probe-recall",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-indirect-probe-recall",
+                channel_kind="telegram",
+                user_message="what was the little memory probe we were using earlier?",
+            )
+
+        self.assertEqual(result.mode, "memory_open_recall")
+        self.assertEqual(result.routing_decision, "memory_open_recall_query")
+        self.assertIn("Here's what I can reconstruct about memory probe:", result.reply_text)
+        self.assertIn("Sol", result.reply_text)
+        self.assertIn("Blue Lantern", result.reply_text)
+        self.assertIn("read_method=recall_episodic_context", result.evidence_summary)
+        self.assertIn("record_count=2", result.evidence_summary)
+
     def test_memory_decision_recall_labels_supporting_context_as_not_decision(self) -> None:
         self.config_manager.set_path("spark.researcher.enabled", True)
         self.config_manager.set_path("spark.memory.enabled", True)
