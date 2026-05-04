@@ -310,6 +310,9 @@ class SwarmSyncTests(SparkTestCase):
                 "warning_count": 0,
                 "snapshot_path": "attachments.snapshot.json",
             },
+        ), patch(
+            "spark_intelligence.swarm_bridge.sync.discover_researcher_runtime_root",
+            return_value=(None, "not_configured"),
         ):
             status = swarm_status(self.config_manager, self.state_db)
 

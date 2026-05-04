@@ -4830,6 +4830,12 @@ class OperatorPairingFlowTests(SparkTestCase):
 
     def test_style_before_after_command_returns_preview_delta_without_persisting(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+        before_profile = load_personality_profile(
+            human_id="human:telegram:111",
+            agent_id="agent:human:telegram:111",
+            state_db=self.state_db,
+            config_manager=self.config_manager,
+        )
 
         result = simulate_telegram_update(
             config_manager=self.config_manager,
@@ -4853,7 +4859,7 @@ class OperatorPairingFlowTests(SparkTestCase):
             state_db=self.state_db,
             config_manager=self.config_manager,
         )
-        self.assertNotEqual(profile["style_labels"]["directness"], "very direct")
+        self.assertEqual(profile["style_labels"]["directness"], before_profile["style_labels"]["directness"])
 
     def test_natural_language_style_before_after_command_returns_preview_delta(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])

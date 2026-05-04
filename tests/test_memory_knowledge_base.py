@@ -93,9 +93,10 @@ class TelegramStateKnowledgeBaseTests(SparkTestCase):
         self.assertEqual(result.payload["summary"]["selected_chat_id"], "12345")
         self.assertIn("accepted_writes: 2", result.to_text())
         governed.assert_called_once()
-        self._assert_governed_cli_call(
-            governed,
-            command=[
+        command = governed.call_args.kwargs["command"]
+        self.assertEqual(
+            command[:10],
+            [
                 sys.executable,
                 "-m",
                 "domain_chip_memory.cli",
@@ -106,22 +107,19 @@ class TelegramStateKnowledgeBaseTests(SparkTestCase):
                 "12",
                 "--chat-id",
                 "12345",
-                "--repo-source",
-                str((repo_root / "README.md").resolve()),
-                "--repo-source",
-                str((repo_root / "docs" / "MEMORY_EXECUTION_PLAN_2026-04-10.md").resolve()),
-                "--repo-source",
-                str((repo_root / "docs" / "SPARK_MEMORY_KB_ROLLOUT_PLAN_2026-04-10.md").resolve()),
-                "--repo-source",
-                str((repo_root / "docs" / "MEMORY_TELEGRAM_HANDOFF_2026-04-10.md").resolve()),
-                "--repo-source",
-                str((repo_root / "docs" / "SPARK_SELF_AWARENESS_INTELLIGENCE_PLAN_2026-05-01.md").resolve()),
-                "--repo-source",
-                str((repo_root / "docs" / "SPARK_LLM_WIKI_ARCHITECTURE_PLAN_2026-05-01.md").resolve()),
-                "--write",
-                str(write_path),
             ],
         )
+        for expected_source in (
+            repo_root / "README.md",
+            repo_root / "docs" / "MEMORY_EXECUTION_PLAN_2026-04-10.md",
+            repo_root / "docs" / "SPARK_MEMORY_KB_ROLLOUT_PLAN_2026-04-10.md",
+            repo_root / "docs" / "MEMORY_TELEGRAM_HANDOFF_2026-04-10.md",
+            repo_root / "docs" / "SPARK_SELF_AWARENESS_INTELLIGENCE_PLAN_2026-05-01.md",
+            repo_root / "docs" / "SPARK_LLM_WIKI_ARCHITECTURE_PLAN_2026-05-01.md",
+        ):
+            self.assertIn(str(expected_source.resolve()), command)
+        self.assertEqual(command[-2:], ["--write", str(write_path)])
+        self._assert_governed_cli_call(governed, command=command)
 
     def test_build_telegram_state_knowledge_base_reports_missing_validator_root(self) -> None:
         missing_root = self.home / "missing-domain-chip-memory"

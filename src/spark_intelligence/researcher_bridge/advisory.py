@@ -9446,6 +9446,7 @@ def build_researcher_reply(
 
     if not personality_context_extra and explicit_decision_statement is not None:
         accepted_count = 0
+        current_state_accepted_count = 0
         rejected_count = 0
         skipped_count = 0
         write_reason = ""
@@ -9472,6 +9473,22 @@ def build_researcher_reply(
                 rejected_count = int(getattr(write_result, "rejected_count", 0) or 0)
                 skipped_count = int(getattr(write_result, "skipped_count", 0) or 0)
                 write_reason = str(getattr(write_result, "reason", "") or "").strip()
+                current_state_result = write_profile_fact_to_memory(
+                    config_manager=config_manager,
+                    state_db=state_db,
+                    human_id=human_id,
+                    predicate="profile.current_decision",
+                    value=explicit_decision_statement.decision_text,
+                    evidence_text=explicit_decision_statement.evidence_text,
+                    fact_name="profile_current_decision",
+                    session_id=session_id,
+                    turn_id=request_id,
+                    channel_kind=channel_kind,
+                    actor_id="telegram_explicit_decision_loader",
+                )
+                current_state_accepted_count = int(
+                    getattr(current_state_result, "accepted_count", 0) or 0
+                )
             except Exception as exc:
                 rejected_count = 1
                 write_reason = exc.__class__.__name__
@@ -9484,7 +9501,7 @@ def build_researcher_reply(
             routing_decision="memory_explicit_decision_capture",
         )
         trace_ref = f"trace:{agent_id}:{human_id}:{request_id}"
-        if accepted_count > 0:
+        if accepted_count > 0 or current_state_accepted_count > 0:
             reply_text = (
                 f"Saved as a decision about {explicit_decision_statement.topic}: "
                 f"{explicit_decision_statement.decision_text}.\n\n"
@@ -9501,6 +9518,7 @@ def build_researcher_reply(
             f"topic={explicit_decision_statement.topic} "
             "evidence_kind=explicit_decision "
             f"accepted_count={accepted_count} "
+            f"current_state_accepted_count={current_state_accepted_count} "
             f"rejected_count={rejected_count} "
             f"skipped_count={skipped_count}"
         )
@@ -9536,6 +9554,7 @@ def build_researcher_reply(
                     "evidence_kind": "explicit_decision",
                     "domain_pack": domain_pack or "decision_general",
                     "accepted_count": accepted_count,
+                    "current_state_accepted_count": current_state_accepted_count,
                     "rejected_count": rejected_count,
                     "skipped_count": skipped_count,
                     "write_reason": write_reason,

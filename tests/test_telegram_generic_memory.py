@@ -3805,9 +3805,10 @@ class TelegramGenericMemoryTests(SparkTestCase):
 
         self.assertEqual(
             result.reply_text,
-            "I'll remember that your current decision is launch Atlas through agency partners first.",
+            "Saved as a decision about general: launch Atlas through agency partners first.\n\n"
+            "I will treat older discussion as supporting context unless current state says otherwise.",
         )
-        self.assertEqual(result.mode, "memory_generic_observation_update")
+        self.assertEqual(result.mode, "memory_explicit_decision_capture")
         write_events = latest_events_by_type(self.state_db, event_type="memory_write_requested", limit=10)
         self.assertTrue(write_events)
         recorded_observations = (write_events[0]["facts_json"] or {}).get("observations") or []
