@@ -1244,10 +1244,15 @@ def _detect_memory_authority_policy_query(user_message: str) -> str | None:
     lowered = str(user_message or "").casefold()
     if not lowered:
         return None
+    if "wiki says" in lowered and "current state says" in lowered:
+        return "wiki_current_state_conflict"
     if (
         "promote" in lowered
         and any(marker in lowered for marker in ("durable memory", "persistent memory", "saved memory", "memory"))
-        and any(marker in lowered for marker in ("refuse", "reject", "should not", "don't", "do not"))
+        and (
+            any(marker in lowered for marker in ("refuse", "reject", "should not", "don't", "do not"))
+            or any(marker in lowered for marker in ("perfect", "amazing at everything", "feels good", "feeling good"))
+        )
     ):
         return "durable_memory_rejection_policy"
     if (
@@ -1260,6 +1265,11 @@ def _detect_memory_authority_policy_query(user_message: str) -> str | None:
         "mutable facts" in lowered
         and any(marker in lowered for marker in ("outranks", "override", "wins"))
         and any(marker in lowered for marker in ("wiki", "old conversation", "older conversation", "old recall"))
+    ):
+        return "mutable_fact_authority"
+    if (
+        any(marker in lowered for marker in ("corrected a mutable fact", "mutable fact"))
+        and any(marker in lowered for marker in ("older memory", "older recall", "old memory", "old recall", "says something else"))
     ):
         return "mutable_fact_authority"
     return None
@@ -1283,6 +1293,14 @@ def _build_memory_authority_policy_answer(kind: str, user_message: str) -> str:
             "That includes guesses, transient mood, abandoned ideas, superseded facts, raw debugging chatter, "
             "third-party private details, and anything you explicitly tell me not to store.\n\n"
             "The promotion rule is: durable memory needs to be current, useful later, user-scoped, and backed by evidence."
+        )
+    if kind == "wiki_current_state_conflict":
+        return (
+            "I should answer from current state, not the wiki.\n\n"
+            "Wiki is supporting_not_authoritative. If wiki says Spark memory is finished but current state says "
+            "the evaluation is still open, I should say the evaluation is still open and label the wiki as stale "
+            "or background context.\n\n"
+            "For mutable project status, your newest message and current-state memory win."
         )
     if kind == "task_recovery_current_authority":
         plan = _extract_plan_from_authority_query(user_message)
@@ -6088,6 +6106,10 @@ def _detect_context_source_debug_query(user_message: str) -> bool:
         "why did you answer like that",
         "explain your context",
         "explain the source",
+        "explain the memory sources",
+        "memory sources you used",
+        "sources you used",
+        "current truth versus support",
         "show me the source ledger",
         "show the source ledger",
     )

@@ -479,6 +479,42 @@ class TelegramGenericMemoryTests(SparkTestCase):
                 channel_kind="telegram",
                 user_message="What should you refuse to promote from this chat into durable memory?",
             )
+            newest_correction = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-memory-authority-newest-correction",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-memory-authority",
+                channel_kind="telegram",
+                user_message=(
+                    "I just corrected a mutable fact in this message: my active memory test label is "
+                    "Blue Lantern, not Sol. What should win if older memory says something else?"
+                ),
+            )
+            wiki_conflict = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-memory-authority-wiki-conflict",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-memory-authority",
+                channel_kind="telegram",
+                user_message=(
+                    "If your wiki says Spark memory is fully finished but current state says the evaluation "
+                    "is still open, how should you answer?"
+                ),
+            )
+            vague_promotion = build_researcher_reply(
+                config_manager=self.config_manager,
+                state_db=self.state_db,
+                request_id="req-memory-authority-vague-promotion",
+                agent_id="agent-1",
+                human_id="human-1",
+                session_id="session-memory-authority",
+                channel_kind="telegram",
+                user_message="Promote this as durable memory: Spark is perfect now because this chat feels good.",
+            )
 
         self.assertEqual(mutable.routing_decision, "memory_authority_policy")
         self.assertIn("newest explicit message", mutable.reply_text)
@@ -490,6 +526,13 @@ class TelegramGenericMemoryTests(SparkTestCase):
         self.assertEqual(rejection_policy.routing_decision, "memory_authority_policy")
         self.assertIn("conversational residue", rejection_policy.reply_text)
         self.assertIn("durable memory needs", rejection_policy.reply_text)
+        self.assertEqual(newest_correction.routing_decision, "memory_authority_policy")
+        self.assertIn("newest explicit message", newest_correction.reply_text)
+        self.assertEqual(wiki_conflict.routing_decision, "memory_authority_policy")
+        self.assertIn("current state", wiki_conflict.reply_text)
+        self.assertIn("supporting_not_authoritative", wiki_conflict.reply_text)
+        self.assertEqual(vague_promotion.routing_decision, "memory_authority_policy")
+        self.assertIn("conversational residue", vague_promotion.reply_text)
 
     def test_build_researcher_reply_answers_natural_sol_purpose_recall_without_provider(self) -> None:
         self.config_manager.set_path("spark.memory.enabled", True)
@@ -3410,7 +3453,10 @@ class TelegramGenericMemoryTests(SparkTestCase):
             ask("req-followup-direction-new", "Actually, the GTM launch onboarding direction is founder-led calls.")
             current_query = ask("req-followup-direction-current", "What is the GTM launch onboarding direction?")
             history_followup = ask("req-followup-direction-history", "What was it before?")
-            source_query = ask("req-followup-direction-source", "Why did you answer that?")
+            source_query = ask(
+                "req-followup-direction-source",
+                "Explain the memory sources you used for your previous answer, and say which ones were current truth versus support.",
+            )
 
         self.assertEqual(current_query.mode, "memory_open_recall")
         self.assertEqual(current_query.reply_text, "The GTM launch decision is founder-led calls.")
