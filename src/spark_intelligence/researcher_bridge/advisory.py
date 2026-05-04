@@ -6245,6 +6245,7 @@ def _detect_context_source_debug_query(user_message: str) -> bool:
         return True
     source_markers = (
         "what sources did you use",
+        "what memory sources",
         "what context did you use",
         "where did that answer come from",
         "why did you answer like that",
@@ -6447,7 +6448,7 @@ def _format_memory_route_source_reply(*, route_facts: dict[str, Any]) -> str | N
                 "came from entity-state records rather than diagnostics or workflow residue."
             )
     elif routing_decision == "memory_open_recall_query" or bridge_mode == "memory_open_recall":
-        if open_recall_attribute:
+        if open_recall_attribute and query_kind != "decision_recall":
             route_label = "entity-state current recall route"
             source_line = "entity_state current records"
             reason = (
@@ -6457,11 +6458,11 @@ def _format_memory_route_source_reply(*, route_facts: dict[str, Any]) -> str | N
             )
         else:
             route_label = "open memory recall route"
-            source_line = "entity_state/current_state records plus relevant evidence"
+            source_line = "current_state/entity_state records plus relevant evidence"
             reason = (
                 "The previous answer was an open memory recall. "
-                "It selected records matching the question topic and requested attribute, while stale or wrong-attribute "
-                "records stayed out of the final answer."
+                "It selected records matching the question topic and requested boundary, while stale, wrong-attribute, "
+                "or discussion-only records stayed out of the final answer."
             )
     elif routing_decision == "build_quality_review_direct" or bridge_mode == "build_quality_review_direct":
         route_label = "build-quality review route"
