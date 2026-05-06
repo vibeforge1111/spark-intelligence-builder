@@ -422,8 +422,8 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
             "records": [
                 {
                     "kind": "system",
-                    "key": "spark_researcher",
-                    "label": "Spark Researcher",
+                    "key": "spark_local_work",
+                    "label": "Spark Local Work",
                     "status": "ready",
                     "available": True,
                     "degraded": False,
@@ -438,13 +438,34 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
             result = run_route_probe_and_record(
                 self.config_manager,
                 self.state_db,
-                capability_key="spark_researcher",
+                capability_key="spark_local_work",
                 actor_id="operator:test",
             )
 
         self.assertEqual(result.status, "success")
-        self.assertEqual(result.capability_key, "spark_researcher")
+        self.assertEqual(result.capability_key, "spark_local_work")
         self.assertIn("registry status=ready", result.probe_summary)
+
+    def test_run_route_probe_uses_memory_smoke_for_memory_route(self) -> None:
+        smoke_result = SimpleNamespace(
+            write_result=SimpleNamespace(status="succeeded", accepted_count=1, reason=None),
+            read_result=SimpleNamespace(abstained=False, records=[{"value": "ok"}], reason=None),
+            cleanup_result=SimpleNamespace(accepted_count=1),
+        )
+        with patch(
+            "spark_intelligence.memory.run_memory_sdk_smoke_test",
+            return_value=smoke_result,
+        ) as smoke:
+            result = run_route_probe_and_record(
+                self.config_manager,
+                self.state_db,
+                capability_key="spark_memory",
+                actor_id="operator:test",
+            )
+
+        self.assertEqual(result.status, "success")
+        self.assertIn("memory smoke", result.probe_summary)
+        smoke.assert_called_once()
 
     def test_run_route_probe_records_registry_backed_failure(self) -> None:
         registry_payload = {
@@ -497,7 +518,7 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         probe_payload = json.loads(stdout)
         self.assertEqual(probe_payload["capability_key"], "spark_memory")
         self.assertEqual(probe_payload["status"], "success")
-        self.assertIn("registry status=ready", probe_payload["probe_summary"])
+        self.assertIn("memory smoke", probe_payload["probe_summary"])
 
     def test_self_context_cli_emits_machine_readable_preflight(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
