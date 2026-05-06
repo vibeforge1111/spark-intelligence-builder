@@ -5,7 +5,7 @@ from time import perf_counter
 from typing import Any, Literal
 
 from spark_intelligence.config.loader import ConfigManager
-from spark_intelligence.observability.store import record_event
+from spark_intelligence.observability.store import record_event, utc_now_iso
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.system_registry import build_system_registry
 
@@ -148,6 +148,7 @@ def record_route_probe_evidence(
         "capability_key": normalized_key,
         "routing_decision": normalized_key,
         "eval_coverage_status": "covered" if normalized_eval_ref else "observed",
+        "route_probe_recorded_at": utc_now_iso(),
     }
     if normalized_latency is not None:
         facts["route_latency_ms"] = normalized_latency
