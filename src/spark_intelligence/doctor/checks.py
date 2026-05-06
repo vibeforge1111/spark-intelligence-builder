@@ -396,10 +396,13 @@ def _watchtower_health_checks(*, config_manager: ConfigManager, state_db: StateD
         dimension = dimensions.get(dimension_key) or {}
         state = str(dimension.get("state") or "unknown")
         detail = str(dimension.get("detail") or "No detail recorded.")
+        ok = state not in failing_states
+        if check_name == "watchtower-freshness" and state == "degraded":
+            ok = True
         checks.append(
             DoctorCheck(
                 check_name,
-                state not in failing_states,
+                ok,
                 f"state={state} {detail}",
             )
         )

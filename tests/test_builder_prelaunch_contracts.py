@@ -2403,6 +2403,41 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("watchtower-contradictions", checks)
         self.assertFalse(checks["watchtower-contradictions"].ok)
 
+    def test_doctor_treats_background_freshness_degraded_as_advisory(self) -> None:
+        watchtower_snapshot = {
+            "health_dimensions": {
+                "ingress_health": {"state": "unknown", "detail": "No ingress intent has been recorded yet."},
+                "execution_health": {"state": "healthy", "detail": "ok"},
+                "delivery_health": {"state": "healthy", "detail": "ok"},
+                "scheduler_freshness": {
+                    "state": "degraded",
+                    "detail": "Background freshness lag is 3600s, above the 900s threshold.",
+                },
+                "environment_parity": {"state": "healthy", "detail": "ok"},
+            },
+            "contradictions": {"counts": {"open": 0, "resolved": 0}},
+            "panels": {
+                "memory_shadow": {"counts": {"read_requests": 0, "read_hits": 0, "shadow_only_reads": 0}},
+                "observer_incidents": {"counts": {"total": 0, "actionable_total": 0, "distinct_classes": 0}},
+                "observer_packets": {"counts": {"total": 0, "distinct_kinds": 0}, "counts_by_kind": {}},
+                "observer_handoffs": {"counts": {"total": 0, "completed": 0, "failed": 0, "blocked": 0, "stalled": 0, "problematic": 0}},
+                "personality": {
+                    "counts": {"mirror_drift": 0, "trait_profiles": 0, "observation_rows": 0, "evolution_rows": 0},
+                    "personality_import": {"ready": False, "available_chip_keys": [], "active_chip_keys": []},
+                },
+                "agent_identity": {
+                    "counts": {"canonical_agents": 0, "builder_local": 0, "spark_swarm": 0, "aliases": 0, "identity_conflicts": 0},
+                    "identity_import": {"ready": False, "available_chip_keys": [], "active_chip_keys": []},
+                },
+            },
+        }
+        with patch("spark_intelligence.doctor.checks.build_watchtower_snapshot", return_value=watchtower_snapshot):
+            report = run_doctor(self.config_manager, self.state_db)
+
+        checks = {check.name: check for check in report.checks}
+        self.assertTrue(checks["watchtower-freshness"].ok)
+        self.assertIn("state=degraded", checks["watchtower-freshness"].detail)
+
     def test_doctor_repairs_missing_chip_hook_promotion_disposition_before_stop_ship(self) -> None:
         record_event(
             self.state_db,
