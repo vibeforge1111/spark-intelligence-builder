@@ -240,6 +240,8 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("operator_supplied_access", ledger_sources)
         self.assertIn("runner_preflight", ledger_sources)
         self.assertIn("system_registry", ledger_sources)
+        self.assertIn("memory_context", ledger_sources)
+        self.assertIn("wiki_context", ledger_sources)
 
     def test_self_context_cli_emits_machine_readable_preflight(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
