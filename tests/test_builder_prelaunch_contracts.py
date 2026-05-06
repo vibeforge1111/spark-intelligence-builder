@@ -1152,6 +1152,68 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertIn("watchtower-memory-contract", checks)
         self.assertTrue(checks["watchtower-memory-contract"].ok)
 
+    def test_stop_ship_ignores_empty_unknown_context_read_abstentions(self) -> None:
+        for method in ("recover_task_context", "recall_episodic_context"):
+            record_event(
+                self.state_db,
+                event_type="memory_read_abstained",
+                component="memory_orchestrator",
+                summary="empty context read",
+                request_id=f"req-empty-{method}",
+                session_id="session:test",
+                human_id="human:test",
+                actor_id="memory_orchestrator",
+                facts={
+                    "method": method,
+                    "memory_role": "unknown",
+                    "record_count": 0,
+                    "reason": "invalid_memory_role",
+                },
+                provenance={"memory_role": "unknown", "sdk_provenance": []},
+            )
+
+        snapshot = build_watchtower_snapshot(self.state_db)
+        memory_panel = snapshot["panels"]["memory_shadow"]
+        observer_panel = snapshot["panels"]["observer_incidents"]
+        issues = {
+            issue.name: issue
+            for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)
+        }
+
+        self.assertEqual(memory_panel["counts"]["contract_violations"], 0)
+        self.assertEqual(memory_panel["counts"]["invalid_role_events"], 0)
+        self.assertNotIn("memory_contract_drift", observer_panel["counts_by_class"])
+        self.assertTrue(issues["stop_ship_memory_contract"].ok)
+
+    def test_stop_ship_accepts_legacy_hybrid_role_as_aggregate_read(self) -> None:
+        record_event(
+            self.state_db,
+            event_type="memory_read_succeeded",
+            component="memory_orchestrator",
+            summary="legacy hybrid aggregate read",
+            request_id="req-hybrid-aggregate",
+            session_id="session:test",
+            human_id="human:test",
+            actor_id="memory_orchestrator",
+            facts={
+                "method": "hybrid_memory_retrieve",
+                "memory_role": "hybrid",
+                "record_count": 2,
+                "reason": "invalid_memory_role",
+            },
+            provenance={"memory_role": "hybrid", "sdk_provenance": []},
+        )
+
+        snapshot = build_watchtower_snapshot(self.state_db)
+        memory_panel = snapshot["panels"]["memory_shadow"]
+        issues = {
+            issue.name: issue
+            for issue in evaluate_stop_ship_issues(config_manager=self.config_manager, state_db=self.state_db)
+        }
+
+        self.assertEqual(memory_panel["counts"]["contract_violations"], 0)
+        self.assertTrue(issues["stop_ship_memory_contract"].ok)
+
     def test_build_researcher_reply_records_chip_influence_provenance(self) -> None:
         chip_root = create_fake_hook_chip(self.home, chip_key="startup-yc")
         self.config_manager.set_path("spark.chips.roots", [str(chip_root)])
