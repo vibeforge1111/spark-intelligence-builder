@@ -387,12 +387,40 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
     def test_recent_route_probe_failure_downgrades_aoc_route_status(self) -> None:
         record_route_probe_evidence(
             self.state_db,
+            capability_key="spark_memory",
+            status="failure",
+            route_latency_ms=77,
+            eval_ref="pytest:memory-route-probe",
+            source_ref="test:memory-health",
+            failure_reason="memory smoke failed",
+            actor_id="operator:test",
+            probe_summary="memory smoke write=failed read_records=0 cleanup=ok",
+        )
+
+        context = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+        )
+        memory = next(route for route in context.to_payload()["routes"] if route["key"] == "spark_memory")
+        self.assertEqual(memory["status"], "degraded")
+        self.assertEqual(memory["evidence_status"], "last_failure_recorded")
+        self.assertIn("- Spark Memory: memory smoke write=failed", context.to_text())
+        repairs = context.to_payload()["route_repairs"]
+        memory_repair = next(repair for repair in repairs if repair["route_key"] == "spark_memory")
+        self.assertIn("memory smoke", memory_repair["next_action"])
+        self.assertIn("fresh route probe succeeds", memory_repair["claim_boundary"])
+        self.assertIn("Route Repairs", context.to_text())
+        self.assertIn("- Spark Memory: Run a memory smoke", context.to_text())
+
+    def test_swarm_payload_not_ready_is_planned_rollout_not_repair(self) -> None:
+        record_route_probe_evidence(
+            self.state_db,
             capability_key="spark_swarm",
             status="failure",
             route_latency_ms=77,
             eval_ref="pytest:swarm-route-probe",
             source_ref="test:swarm-health",
-            failure_reason="swarm_payload_not_ready",
+            failure_reason="Spark Swarm cannot be recommended because the local payload path is not ready.",
             actor_id="operator:test",
             probe_summary="swarm payload_ready=False api_ready=False auth_state=missing",
         )
@@ -401,16 +429,14 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
             config_manager=self.config_manager,
             state_db=self.state_db,
         )
-        swarm = next(route for route in context.to_payload()["routes"] if route["key"] == "spark_swarm")
-        self.assertEqual(swarm["status"], "degraded")
-        self.assertEqual(swarm["evidence_status"], "last_failure_recorded")
-        self.assertIn("- Spark Swarm: swarm payload_ready=False", context.to_text())
-        repairs = context.to_payload()["route_repairs"]
-        swarm_repair = next(repair for repair in repairs if repair["route_key"] == "spark_swarm")
-        self.assertIn("local payload readiness", swarm_repair["next_action"])
-        self.assertIn("fresh route probe succeeds", swarm_repair["claim_boundary"])
-        self.assertIn("Route Repairs", context.to_text())
-        self.assertIn("- Spark Swarm: Run swarm status/doctor", context.to_text())
+
+        payload = context.to_payload()
+        swarm = next(route for route in payload["routes"] if route["key"] == "spark_swarm")
+        self.assertEqual(swarm["status"], "planned")
+        self.assertFalse(swarm["degraded"])
+        self.assertEqual(swarm["planned_reason"], "swarm payload/API rollout pending")
+        self.assertNotIn("spark_swarm", {repair["route_key"] for repair in payload["route_repairs"]})
+        self.assertIn("Spark Swarm: planned, swarm payload/API rollout pending", context.to_text())
 
     def test_agent_operating_context_text_prefers_recent_success_over_stale_failure(self) -> None:
         record_route_probe_evidence(

@@ -244,13 +244,15 @@ def _route_from_record(record: dict[str, Any], *, evidence: dict[str, Any]) -> d
     available = bool(record.get("available"))
     registry_status = str(record.get("status") or "")
     browser_use_pending = _browser_use_adapter_pending(record, evidence=evidence)
+    swarm_rollout_pending = _swarm_rollout_pending(record, evidence=evidence)
+    route_planned = browser_use_pending or swarm_rollout_pending
     ecosystem_degraded = bool(record.get("degraded")) or registry_status in {"missing", "unavailable", "error"}
     command_path_available_with_warnings = key == "spark_intelligence_builder" and available and ecosystem_degraded
-    recent_probe_failure = str(evidence.get("confidence_level") or "") == "recent_failure" and not browser_use_pending
-    degraded = False if browser_use_pending else (ecosystem_degraded and not command_path_available_with_warnings) or recent_probe_failure
+    recent_probe_failure = str(evidence.get("confidence_level") or "") == "recent_failure" and not route_planned
+    degraded = False if route_planned else (ecosystem_degraded and not command_path_available_with_warnings) or recent_probe_failure
     status = (
         "planned"
-        if browser_use_pending
+        if route_planned
         else (
         "available_with_warnings"
         if command_path_available_with_warnings
@@ -258,6 +260,11 @@ def _route_from_record(record: dict[str, Any], *, evidence: dict[str, Any]) -> d
         )
     )
     label = "Spark Browser" if key == "spark_browser" and browser_use_pending else str(record.get("label") or record.get("key") or "")
+    planned_reason = None
+    if browser_use_pending:
+        planned_reason = "browser-use adapter migration pending"
+    elif swarm_rollout_pending:
+        planned_reason = "swarm payload/API rollout pending"
     return {
         "key": key,
         "label": label,
@@ -268,7 +275,7 @@ def _route_from_record(record: dict[str, Any], *, evidence: dict[str, Any]) -> d
         "ecosystem_degraded": ecosystem_degraded,
         "active": bool(record.get("active")),
         "attached": bool(record.get("attached")),
-        "planned_reason": "browser-use adapter migration pending" if browser_use_pending else None,
+        "planned_reason": planned_reason,
         "last_success_at": evidence.get("last_success_at"),
         "last_failure_at": evidence.get("last_failure_at"),
         "last_failure_reason": evidence.get("last_failure_reason"),
@@ -283,9 +290,13 @@ def _route_from_record(record: dict[str, Any], *, evidence: dict[str, Any]) -> d
             "Browser access is intentionally moving to a browser-use adapter; legacy spark-browser absence is planning state, not proof current browser-use work failed."
             if browser_use_pending
             else (
+            "Spark Swarm is attached as a planned rollout, but payload/API readiness is not live yet."
+            if swarm_rollout_pending
+            else (
             "This Builder command path is responding, but broader provider/channel readiness warnings may still exist."
             if command_path_available_with_warnings
             else "Registry visibility is route availability context, not proof the route succeeded for the current task."
+            )
             )
         ),
     }
@@ -580,6 +591,28 @@ def _browser_use_adapter_known(record: dict[str, Any], *, evidence: dict[str, An
     summary = str(evidence.get("latest_probe_summary") or "").casefold()
     failure = str(evidence.get("last_failure_reason") or "").casefold()
     return "browser-use adapter" in summary or "browser-use adapter" in failure
+
+
+def _swarm_rollout_pending(record: dict[str, Any], *, evidence: dict[str, Any]) -> bool:
+    if str(record.get("key") or "") != "spark_swarm":
+        return False
+    if evidence.get("last_success_at") and str(evidence.get("confidence_level") or "") != "recent_failure":
+        return False
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    failure = str(evidence.get("last_failure_reason") or "").casefold()
+    summary = str(evidence.get("latest_probe_summary") or "").casefold()
+    rollout_markers = (
+        "local payload path is not ready",
+        "swarm_payload_not_ready",
+        "payload_ready=false",
+        "api_ready=false",
+        "auth_state=missing",
+    )
+    if any(marker in failure or marker in summary for marker in rollout_markers):
+        return True
+    payload_ready = bool(metadata.get("payload_ready"))
+    api_ready = bool(metadata.get("api_ready"))
+    return not payload_ready and not api_ready and str(record.get("status") or "") in {"available", "missing"}
 
 
 def _contradiction_flag_summary(row: dict[str, Any]) -> str:
