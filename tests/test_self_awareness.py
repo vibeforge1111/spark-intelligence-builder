@@ -1165,6 +1165,16 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
                 text="/wiki candidates",
             ),
         )
+        context_result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=1004,
+                user_id="111",
+                username="alice",
+                text="/context",
+            ),
+        )
 
         self.assertTrue(self_result.ok)
         self.assertEqual(self_result.detail["bridge_mode"], "runtime_command")
@@ -1175,3 +1185,8 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("Spark LLM wiki candidate inbox", wiki_result.detail["response_text"])
         self.assertIn("Telegram command candidate", wiki_result.detail["response_text"])
         self.assertIn("not live Spark truth", wiki_result.detail["response_text"])
+        self.assertTrue(context_result.ok)
+        self.assertEqual(context_result.detail["bridge_mode"], "runtime_command")
+        self.assertIn("Agent Operating Context", context_result.detail["response_text"])
+        self.assertIn("Best route:", context_result.detail["response_text"])
+        self.assertIn("Guardrails", context_result.detail["response_text"])
