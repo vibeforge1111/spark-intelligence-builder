@@ -20,19 +20,40 @@ class SelfImprovementPlanResult:
         return json.dumps(self.payload, indent=2)
 
     def to_text(self) -> str:
+        proposal = self.payload.get("capability_proposal_packet") if isinstance(self.payload.get("capability_proposal_packet"), dict) else {}
         lines = [
             "Spark self-improvement plan",
             "",
             f"Goal: {self.payload.get('goal') or 'Improve Spark self-awareness and capability confidence.'}",
             f"Mode: {self.payload.get('mode') or 'plan_only'}",
             f"Evidence: {self.payload.get('evidence_level') or 'unknown'}",
-            "",
-            str(self.payload.get("summary") or "").strip(),
         ]
+        if proposal:
+            lines.extend(["", "Capability proposal"])
+            lines.append(f"- requested capability: {proposal.get('capability_goal') or self.payload.get('goal') or 'unknown'}")
+            lines.append(f"- status: {proposal.get('status') or 'proposal_plan_only'} (not installed yet)")
+            lines.append(f"- route: {proposal.get('implementation_route') or 'unknown'}")
+            lines.append(f"- owner: {proposal.get('owner_system') or 'unknown'}")
+            lines.append(f"- ledger: {proposal.get('capability_ledger_key') or 'unknown'}")
+            lines.append(f"- safe probe: {proposal.get('safe_probe') or 'unknown'}")
+            harness = proposal.get("connector_harness") if isinstance(proposal.get("connector_harness"), dict) else {}
+            if harness:
+                lines.append(f"- connector: {harness.get('connector_key') or 'unknown'}")
+                lines.append(f"- harness: {harness.get('authority_stage') or 'unknown'}")
+                lines.append(f"- live access blocked until: {harness.get('live_access_blocked_until') or 'approval_and_probe_evidence'}")
+            claim_boundary = str(proposal.get("claim_boundary") or "").strip()
+            if claim_boundary:
+                lines.append(f"- boundary: {claim_boundary}")
+
+        summary = str(self.payload.get("summary") or "").strip()
+        if summary:
+            lines.extend(["", summary])
         actions = [item for item in self.payload.get("priority_actions") or [] if isinstance(item, dict)]
         if actions:
-            lines.extend(["", "Priority actions"])
-            for index, action in enumerate(actions[:5], start=1):
+            action_limit = 2 if proposal else 5
+            heading = "Related hardening probes" if proposal else "Priority actions"
+            lines.extend(["", heading])
+            for index, action in enumerate(actions[:action_limit], start=1):
                 title = str(action.get("title") or f"Action {index}").strip()
                 score = action.get("surprise_score")
                 score_text = f" score={score}" if score is not None else ""
@@ -42,17 +63,6 @@ class SelfImprovementPlanResult:
                     if value:
                         label = key.replace("_", " ")
                         lines.append(f"   - {label}: {value}")
-        proposal = self.payload.get("capability_proposal_packet") if isinstance(self.payload.get("capability_proposal_packet"), dict) else {}
-        if proposal:
-            lines.extend(["", "Capability proposal"])
-            lines.append(f"- route: {proposal.get('implementation_route') or 'unknown'}")
-            lines.append(f"- owner: {proposal.get('owner_system') or 'unknown'}")
-            lines.append(f"- ledger: {proposal.get('capability_ledger_key') or 'unknown'}")
-            lines.append(f"- probe: {proposal.get('safe_probe') or 'unknown'}")
-            harness = proposal.get("connector_harness") if isinstance(proposal.get("connector_harness"), dict) else {}
-            if harness:
-                lines.append(f"- connector: {harness.get('connector_key') or 'unknown'}")
-                lines.append(f"- harness: {harness.get('authority_stage') or 'unknown'}")
         invocations = [str(item) for item in self.payload.get("natural_language_invocations") or [] if str(item).strip()]
         if invocations:
             lines.extend(["", "Natural language invocations"])

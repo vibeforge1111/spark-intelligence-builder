@@ -672,6 +672,28 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(payload["mode"], "plan_only_probe_first")
         self.assertEqual(payload["capability_proposal_packet"]["schema_version"], "spark.capability_proposal.v1")
 
+    def test_self_improvement_text_leads_with_requested_capability_proposal(self) -> None:
+        result = build_self_improvement_plan(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            goal="can you actually install a voice to yourself?",
+            human_id="human:telegram:123",
+            session_id="session:telegram:123",
+            channel_kind="telegram",
+        )
+
+        text = result.to_text()
+        capability_index = text.index("Capability proposal")
+        hardening_index = text.index("Related hardening probes")
+        self.assertLess(capability_index, hardening_index)
+        first_block = text[:hardening_index]
+        self.assertIn("requested capability: can you actually install a voice to yourself", first_block)
+        self.assertIn("status: proposal_plan_only (not installed yet)", first_block)
+        self.assertIn("connector: voice", first_block)
+        self.assertIn("safe probe: Run voice.status", first_block)
+        self.assertIn("not proof of a live capability", first_block)
+        self.assertNotIn("swarm_decision_unavailable", first_block)
+
     def test_capability_proposal_packet_classifies_connector_and_workflow_routes(self) -> None:
         email_packet = build_capability_proposal_packet(
             goal="Build this for you, Spark: read my emails and summarize my inbox.",
