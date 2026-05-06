@@ -702,6 +702,45 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertNotIn("spark_browser", {repair["route_key"] for repair in payload["route_repairs"]})
         self.assertIn("Spark Browser: planned, browser-use adapter migration pending", context.to_text())
 
+    def test_agent_operating_context_marks_inactive_legacy_browser_as_planned_migration(self) -> None:
+        registry_payload = {
+            "workspace_id": "default",
+            "records": [
+                {
+                    "kind": "system",
+                    "key": "spark_browser",
+                    "label": "Spark Browser",
+                    "status": "available",
+                    "available": True,
+                    "degraded": False,
+                    "active": False,
+                    "attached": True,
+                    "limitations": [],
+                    "metadata": {"chip_key": "spark-browser"},
+                }
+            ],
+        }
+        capsule_payload = {
+            "capability_evidence": [],
+            "user_awareness": {},
+            "memory_cognition": {},
+        }
+        with patch(
+            "spark_intelligence.self_awareness.operating_context.build_system_registry",
+            return_value=SimpleNamespace(to_payload=lambda: registry_payload),
+        ), patch(
+            "spark_intelligence.self_awareness.operating_context.build_self_awareness_capsule",
+            return_value=SimpleNamespace(to_payload=lambda: capsule_payload),
+        ):
+            context = build_agent_operating_context(config_manager=self.config_manager, state_db=self.state_db)
+
+        payload = context.to_payload()
+        browser = next(route for route in payload["routes"] if route["key"] == "spark_browser")
+        self.assertEqual(browser["status"], "planned")
+        self.assertFalse(browser["degraded"])
+        self.assertEqual(browser["planned_reason"], "browser-use adapter migration pending")
+        self.assertNotIn("spark_browser", {repair["route_key"] for repair in payload["route_repairs"]})
+
     def test_agent_operating_context_does_not_hide_browser_use_adapter_warnings_as_planned(self) -> None:
         registry_payload = {
             "workspace_id": "default",
