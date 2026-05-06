@@ -307,6 +307,22 @@ def _build_task_fit(
             "blocked_here_by": ["current_runner_read_only"],
             "why": why,
         }
+    if needs_local and local_allowed and runner_writable is None and spawner_available:
+        why.extend(
+            [
+                "The request appears to need local code, files, build, install, or capability work.",
+                "Spark access allows local work, but the current runner capability is unknown.",
+                "Run a runner preflight or route the work through a governed Spawner/Codex mission.",
+            ]
+        )
+        return {
+            "recommended_route": "probe_runner_or_spawner_codex_mission",
+            "recommended_route_label": "probe runner or Spawner/Codex mission",
+            "needs_local_workspace": True,
+            "needs_write": needs_write,
+            "blocked_here_by": ["current_runner_unknown"],
+            "why": why,
+        }
     if needs_local and local_allowed and runner_writable is True:
         why.extend(["The request needs local code or file work.", "The current runner reports writable capability."])
         return {
