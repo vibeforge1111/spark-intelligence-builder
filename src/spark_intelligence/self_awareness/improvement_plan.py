@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from spark_intelligence.config.loader import ConfigManager
+from spark_intelligence.self_awareness.capability_proposal import build_capability_proposal_packet
 from spark_intelligence.self_awareness.capsule import build_self_awareness_capsule
 from spark_intelligence.state.db import StateDB
 
@@ -40,6 +41,13 @@ class SelfImprovementPlanResult:
                     if value:
                         label = key.replace("_", " ")
                         lines.append(f"   - {label}: {value}")
+        proposal = self.payload.get("capability_proposal_packet") if isinstance(self.payload.get("capability_proposal_packet"), dict) else {}
+        if proposal:
+            lines.extend(["", "Capability proposal"])
+            lines.append(f"- route: {proposal.get('implementation_route') or 'unknown'}")
+            lines.append(f"- owner: {proposal.get('owner_system') or 'unknown'}")
+            lines.append(f"- ledger: {proposal.get('capability_ledger_key') or 'unknown'}")
+            lines.append(f"- probe: {proposal.get('safe_probe') or 'unknown'}")
         invocations = [str(item) for item in self.payload.get("natural_language_invocations") or [] if str(item).strip()]
         if invocations:
             lines.extend(["", "Natural language invocations"])
@@ -89,9 +97,11 @@ def build_self_improvement_plan(
     )
     wiki_hits = [hit for hit in wiki_result.payload.get("hits") or [] if isinstance(hit, dict)]
     actions = _priority_actions(capsule=capsule, goal=normalized_goal)
+    capability_proposal = build_capability_proposal_packet(goal=normalized_goal, user_message=user_message)
     payload = {
         "goal": normalized_goal,
         "mode": "plan_only_probe_first",
+        "capability_proposal_packet": capability_proposal.to_payload(),
         "summary": _summary(actions, wiki_hits),
         "evidence_level": _evidence_level(actions=actions, wiki_hits=wiki_hits),
         "priority_actions": actions,

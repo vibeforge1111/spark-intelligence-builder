@@ -3761,6 +3761,23 @@ def _match_natural_voice_command(inbound_text: str) -> tuple[str, str | None] | 
         "enable voice replies",
         "reply with voice",
         "reply in voice",
+        "install voice",
+        "install a voice",
+        "install voice to yourself",
+        "install a voice to yourself",
+        "install voice to youself",
+        "install a voice to youself",
+        "can you install voice to yourself right now",
+        "can you install a voice to yourself right now",
+        "can you install voice to youself right now",
+        "can you install a voice to youself right now",
+        "give yourself a voice",
+        "give youself a voice",
+        "give you a voice",
+        "add voice to yourself",
+        "add a voice to yourself",
+        "add voice to youself",
+        "add a voice to youself",
     }:
         return ("/voice reply on", None)
     if simplified in {

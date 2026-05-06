@@ -13,6 +13,7 @@ from spark_intelligence.memory import run_memory_sdk_smoke_test
 from spark_intelligence.researcher_bridge.advisory import build_researcher_reply
 from spark_intelligence.self_awareness import (
     build_capability_drift_heartbeat,
+    build_capability_proposal_packet,
     build_handoff_freshness_check,
     build_self_awareness_capsule,
     build_self_improvement_plan,
@@ -639,6 +640,12 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertIn("surprise_score", action_text)
         self.assertTrue(payload["live_self_awareness"]["weak_spot_priorities"])
         self.assertIn("Natural-language invocability", action_text)
+        proposal = payload["capability_proposal_packet"]
+        self.assertEqual(proposal["schema_version"], "spark.capability_proposal.v1")
+        self.assertEqual(proposal["status"], "proposal_plan_only")
+        self.assertIn("capability_ledger_key", proposal)
+        self.assertIn("safe_probe", proposal)
+        self.assertIn("claim_boundary", proposal)
 
     def test_self_improve_cli_emits_machine_readable_plan(self) -> None:
         exit_code, stdout, stderr = self.run_cli(
@@ -657,6 +664,35 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertTrue(payload["priority_actions"])
         self.assertTrue(payload["natural_language_invocations"])
         self.assertEqual(payload["mode"], "plan_only_probe_first")
+        self.assertEqual(payload["capability_proposal_packet"]["schema_version"], "spark.capability_proposal.v1")
+
+    def test_capability_proposal_packet_classifies_connector_and_workflow_routes(self) -> None:
+        email_packet = build_capability_proposal_packet(
+            goal="Build this for you, Spark: read my emails and summarize my inbox.",
+            user_message="Build this for you, Spark: read my emails and summarize my inbox.",
+        ).to_payload()
+        self.assertEqual(email_packet["implementation_route"], "capability_connector")
+        self.assertIn("email_account_access", email_packet["permissions_required"])
+        self.assertIn("redacted", email_packet["safe_probe"])
+        self.assertIn("capability_connector:", email_packet["capability_ledger_key"])
+
+        report_packet = build_capability_proposal_packet(
+            goal="Set up daily reports of my memories so I know what changed.",
+            user_message="Set up daily reports of my memories so I know what changed.",
+        ).to_payload()
+        self.assertEqual(report_packet["implementation_route"], "workflow_automation")
+        self.assertIn("scheduler_write_scope", report_packet["permissions_required"])
+        self.assertIn("dry-run", report_packet["safe_probe"])
+
+    def test_capability_proposal_packet_keeps_mission_artifacts_distinct(self) -> None:
+        packet = build_capability_proposal_packet(
+            goal="Build a Spark memory dashboard.",
+            user_message="Build a Spark memory dashboard.",
+        ).to_payload()
+
+        self.assertEqual(packet["implementation_route"], "mission_artifact")
+        self.assertEqual(packet["owner_system"], "Spark Spawner / Mission Control")
+        self.assertIn("not proof of a live capability", packet["claim_boundary"])
 
     def test_self_awareness_capsule_uses_personality_style_lens_without_raw_trait_dump(self) -> None:
         capsule = build_self_awareness_capsule(

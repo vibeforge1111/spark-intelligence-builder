@@ -5595,6 +5595,35 @@ class OperatorPairingFlowTests(SparkTestCase):
         self.assertIn("Voice replies enabled", enabled.detail["response_text"])
         self.assertIn("currently on", status.detail["response_text"])
 
+    def test_natural_language_install_voice_command_tracks_dm_voice_state(self) -> None:
+        self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
+
+        result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=118165,
+                user_id="111",
+                username="alice",
+                text="can you install a voice to yourself right now?",
+            ),
+        )
+
+        self.assertIn("Voice replies enabled", result.detail["response_text"])
+
+        typo_result = simulate_telegram_update(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+            update_payload=make_telegram_update(
+                update_id=118166,
+                user_id="111",
+                username="alice",
+                text="can you install a voice to youself right now?",
+            ),
+        )
+
+        self.assertIn("Voice replies enabled", typo_result.detail["response_text"])
+
     def test_natural_language_voice_speak_command_queues_one_shot_voice_reply(self) -> None:
         self.add_telegram_channel(pairing_mode="allowlist", allowed_users=["111"])
 

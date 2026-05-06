@@ -4,6 +4,10 @@ from spark_intelligence.self_awareness.capsule import (
     SelfAwarenessClaim,
     build_self_awareness_capsule,
 )
+from spark_intelligence.self_awareness.capability_proposal import (
+    CapabilityProposalPacket,
+    build_capability_proposal_packet,
+)
 from spark_intelligence.self_awareness.heartbeat import (
     CapabilityDriftHeartbeatResult,
     build_capability_drift_heartbeat,
@@ -22,11 +26,13 @@ __all__ = [
     "SelfAwarenessCapsule",
     "SelfAwarenessClaim",
     "CapabilityEvidence",
+    "CapabilityProposalPacket",
     "CapabilityDriftHeartbeatResult",
     "HandoffFreshnessCheckResult",
     "LiveTelegramRegressionCadenceResult",
     "SelfImprovementPlanResult",
     "build_capability_drift_heartbeat",
+    "build_capability_proposal_packet",
     "build_handoff_freshness_check",
     "build_live_telegram_regression_cadence",
     "build_self_awareness_capsule",
