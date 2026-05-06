@@ -8,6 +8,14 @@ from spark_intelligence.self_awareness.capability_proposal import (
     CapabilityProposalPacket,
     build_capability_proposal_packet,
 )
+from spark_intelligence.self_awareness.capability_ledger import (
+    CAPABILITY_LEDGER_STATES,
+    CapabilityLedgerResult,
+    capability_is_active,
+    load_capability_ledger,
+    record_capability_ledger_event,
+    record_capability_proposal,
+)
 from spark_intelligence.self_awareness.heartbeat import (
     CapabilityDriftHeartbeatResult,
     build_capability_drift_heartbeat,
@@ -27,6 +35,8 @@ __all__ = [
     "SelfAwarenessClaim",
     "CapabilityEvidence",
     "CapabilityProposalPacket",
+    "CapabilityLedgerResult",
+    "CAPABILITY_LEDGER_STATES",
     "CapabilityDriftHeartbeatResult",
     "HandoffFreshnessCheckResult",
     "LiveTelegramRegressionCadenceResult",
@@ -37,4 +47,8 @@ __all__ = [
     "build_live_telegram_regression_cadence",
     "build_self_awareness_capsule",
     "build_self_improvement_plan",
+    "capability_is_active",
+    "load_capability_ledger",
+    "record_capability_ledger_event",
+    "record_capability_proposal",
 ]

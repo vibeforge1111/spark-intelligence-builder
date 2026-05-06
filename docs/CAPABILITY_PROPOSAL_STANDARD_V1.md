@@ -96,6 +96,41 @@ Canonical JSON shape:
 
 The initial packet is always `proposal_plan_only`. Later systems may add activation/evidence records, but they must not rewrite this packet into proof.
 
+## Capability Ledger
+
+Capability activation state lives in the Builder-owned capability ledger, not inside the proposal packet.
+
+Ledger path:
+
+```text
+artifacts/capability-ledger/capability-ledger.json
+```
+
+Ledger entries are keyed by `capability_ledger_key` and may move through these lifecycle states:
+
+```text
+proposed -> scaffolded -> probed -> approved -> activated -> disabled / rolled_back
+```
+
+Allowed records:
+
+- `proposal_packet`: the original plan packet, preserved with unknown future fields for upgrade compatibility.
+- `status`: the ledger-owned lifecycle state.
+- `activation_evidence`: probe, eval, smoke, approval, and rollback evidence stored separately from the proposal packet.
+- `events`: append-only lifecycle events with actor/source references.
+- `current_activation`: present only when the ledger state is `activated` and activation evidence exists.
+
+CLI helpers:
+
+```bash
+spark-intelligence self improve "Give Spark a voice" --record-ledger --json
+spark-intelligence self ledger --json
+spark-intelligence self ledger-event capability_connector:give-spark-a-voice probed --evidence-json "{\"probe_ref\":\"voice.status:ok\"}" --json
+spark-intelligence self ledger-event capability_connector:give-spark-a-voice activated --evidence-json "{\"approval_ref\":\"operator:approved\",\"eval_ref\":\"voice-smoke:passed\"}" --json
+```
+
+Activation requires separate approval plus probe/eval/smoke evidence. A `spark.capability_proposal.v1` packet cannot mark itself active.
+
 ## Build Flow
 
 Capability proposals may still use Spawner UI and Mission Control.

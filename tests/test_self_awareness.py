@@ -17,6 +17,10 @@ from spark_intelligence.self_awareness import (
     build_handoff_freshness_check,
     build_self_awareness_capsule,
     build_self_improvement_plan,
+    capability_is_active,
+    load_capability_ledger,
+    record_capability_ledger_event,
+    record_capability_proposal,
 )
 
 from tests.test_support import SparkTestCase, create_fake_hook_chip, make_telegram_update
@@ -693,6 +697,132 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(packet["implementation_route"], "mission_artifact")
         self.assertEqual(packet["owner_system"], "Spark Spawner / Mission Control")
         self.assertIn("not proof of a live capability", packet["claim_boundary"])
+
+    def test_capability_ledger_records_proposal_without_activation(self) -> None:
+        packet = build_capability_proposal_packet(
+            goal="Build this for you, Spark: read my emails and summarize my inbox.",
+            user_message="Build this for you, Spark: read my emails and summarize my inbox.",
+        ).to_payload()
+
+        result = record_capability_proposal(
+            config_manager=self.config_manager,
+            proposal_packet=packet,
+            actor_id="human:test-ledger",
+            source_ref="pytest:proposal-only",
+        )
+        entry = result.payload
+
+        self.assertEqual(entry["status"], "proposed")
+        self.assertEqual(entry["proposal_packet"]["status"], "proposal_plan_only")
+        self.assertEqual(entry["activation_evidence"], [])
+        self.assertFalse(capability_is_active(entry))
+        ledger = load_capability_ledger(self.config_manager).payload
+        self.assertIn(packet["capability_ledger_key"], ledger["entries"])
+
+    def test_capability_ledger_rejects_packet_status_as_activation(self) -> None:
+        packet = build_capability_proposal_packet(
+            goal="Give Spark a voice so it can reply with audio.",
+            user_message="Give Spark a voice so it can reply with audio.",
+        ).to_payload()
+        packet["status"] = "activated"
+
+        with self.assertRaises(ValueError):
+            record_capability_proposal(
+                config_manager=self.config_manager,
+                proposal_packet=packet,
+                actor_id="human:test-ledger",
+                source_ref="pytest:tampered-status",
+            )
+
+    def test_capability_ledger_requires_separate_activation_evidence(self) -> None:
+        packet = build_capability_proposal_packet(
+            goal="Give Spark a voice so it can reply with audio.",
+            user_message="Give Spark a voice so it can reply with audio.",
+        ).to_payload()
+        record_capability_proposal(
+            config_manager=self.config_manager,
+            proposal_packet=packet,
+            actor_id="human:test-ledger",
+            source_ref="pytest:activation-evidence",
+        )
+        key = packet["capability_ledger_key"]
+
+        with self.assertRaises(ValueError):
+            record_capability_ledger_event(
+                config_manager=self.config_manager,
+                capability_ledger_key=key,
+                lifecycle_state="activated",
+                actor_id="human:test-ledger",
+            )
+
+        record_capability_ledger_event(
+            config_manager=self.config_manager,
+            capability_ledger_key=key,
+            lifecycle_state="probed",
+            actor_id="human:test-ledger",
+            source_ref="pytest:probe",
+            evidence={"probe_ref": "voice.status:ok"},
+        )
+        record_capability_ledger_event(
+            config_manager=self.config_manager,
+            capability_ledger_key=key,
+            lifecycle_state="approved",
+            actor_id="human:test-ledger",
+            source_ref="pytest:approval",
+            evidence={"approval_ref": "operator:approved"},
+        )
+        activated = record_capability_ledger_event(
+            config_manager=self.config_manager,
+            capability_ledger_key=key,
+            lifecycle_state="activated",
+            actor_id="human:test-ledger",
+            source_ref="pytest:voice-smoke",
+            evidence={"approval_ref": "operator:approved", "eval_ref": "voice-smoke:passed"},
+        ).payload
+
+        self.assertTrue(capability_is_active(activated))
+        self.assertEqual(activated["proposal_packet"]["status"], "proposal_plan_only")
+        self.assertNotIn("eval_ref", activated["proposal_packet"])
+        self.assertEqual(activated["current_activation"]["evidence"]["eval_ref"], "voice-smoke:passed")
+
+    def test_capability_ledger_preserves_unknown_future_packet_fields(self) -> None:
+        packet = build_capability_proposal_packet(
+            goal="Create a daily memory report for Spark.",
+            user_message="Create a daily memory report for Spark.",
+        ).to_payload()
+        packet["future_upgrade_field"] = {"kept": True, "ignored_by_v1": True}
+
+        result = record_capability_proposal(
+            config_manager=self.config_manager,
+            proposal_packet=packet,
+            actor_id="human:test-ledger",
+            source_ref="pytest:future-field",
+        )
+
+        self.assertEqual(result.payload["proposal_packet"]["future_upgrade_field"]["kept"], True)
+        ledger = load_capability_ledger(self.config_manager).payload
+        saved = ledger["entries"][packet["capability_ledger_key"]]
+        self.assertEqual(saved["proposal_packet"]["future_upgrade_field"]["ignored_by_v1"], True)
+        self.assertEqual(saved["status"], "proposed")
+
+    def test_self_improve_cli_can_record_capability_ledger_entry(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "improve",
+            "Give Spark a voice so it can reply with audio.",
+            "--home",
+            str(self.home),
+            "--record-ledger",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        payload = json.loads(stdout)
+        entry = payload["capability_ledger_entry"]
+        self.assertEqual(entry["status"], "proposed")
+        self.assertEqual(entry["proposal_packet"]["status"], "proposal_plan_only")
+        ledger = load_capability_ledger(self.config_manager).payload
+        self.assertIn(entry["capability_ledger_key"], ledger["entries"])
 
     def test_self_awareness_capsule_uses_personality_style_lens_without_raw_trait_dump(self) -> None:
         capsule = build_self_awareness_capsule(

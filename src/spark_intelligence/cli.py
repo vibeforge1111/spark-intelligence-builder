@@ -165,6 +165,8 @@ from spark_intelligence.self_awareness import (
     build_live_telegram_regression_cadence,
     build_self_awareness_capsule,
     build_self_improvement_plan,
+    load_capability_ledger,
+    record_capability_ledger_event,
 )
 from spark_intelligence.state.db import StateDB
 from spark_intelligence.swarm_bridge import evaluate_swarm_escalation, swarm_doctor, swarm_status, sync_swarm_collective
@@ -1368,7 +1370,29 @@ def build_parser() -> argparse.ArgumentParser:
     self_improve_parser.add_argument("--user-message", default="", help="Optional current user message for goal-specific planning")
     self_improve_parser.add_argument("--refresh-wiki", action="store_true", help="Refresh generated LLM wiki system pages and include wiki retrieval context")
     self_improve_parser.add_argument("--limit", type=int, default=5, help="Maximum wiki hits to use")
+    self_improve_parser.add_argument("--record-ledger", action="store_true", help="Record the capability proposal in the durable proposal/activation ledger")
     self_improve_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_ledger_parser = self_subparsers.add_parser(
+        "ledger",
+        help="Show durable capability proposal and activation records",
+    )
+    self_ledger_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_ledger_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
+    self_ledger_event_parser = self_subparsers.add_parser(
+        "ledger-event",
+        help="Record a capability lifecycle state with optional separate evidence",
+    )
+    self_ledger_event_parser.add_argument("capability_ledger_key", help="Stable capability ledger key")
+    self_ledger_event_parser.add_argument(
+        "lifecycle_state",
+        choices=["proposed", "scaffolded", "probed", "approved", "activated", "disabled", "rolled_back"],
+        help="Lifecycle state to record",
+    )
+    self_ledger_event_parser.add_argument("--home", help="Override Spark Intelligence home directory")
+    self_ledger_event_parser.add_argument("--actor-id", default="operator", help="Actor recording the lifecycle event")
+    self_ledger_event_parser.add_argument("--source-ref", default="", help="Trace, PR, probe, or approval reference")
+    self_ledger_event_parser.add_argument("--evidence-json", default="", help="JSON object with probe/eval/approval evidence")
+    self_ledger_event_parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
 
     wiki_parser = subparsers.add_parser("wiki", help="Bootstrap and inspect Spark's local LLM wiki")
     wiki_subparsers = wiki_parser.add_subparsers(dest="wiki_command", required=True)
@@ -4271,9 +4295,45 @@ def handle_self_improve(args: argparse.Namespace) -> int:
         user_message=str(getattr(args, "user_message", "") or ""),
         refresh_wiki=bool(getattr(args, "refresh_wiki", False)),
         limit=int(getattr(args, "limit", 5) or 5),
+        record_ledger=bool(getattr(args, "record_ledger", False)),
     )
     print(result.to_json() if args.json else result.to_text())
     return 0 if result.payload.get("priority_actions") else 1
+
+
+def handle_self_ledger(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    result = load_capability_ledger(config_manager)
+    print(result.to_json() if args.json else result.to_text())
+    return 0
+
+
+def handle_self_ledger_event(args: argparse.Namespace) -> int:
+    config_manager = ConfigManager.from_home(args.home)
+    config_manager.bootstrap()
+    result = record_capability_ledger_event(
+        config_manager=config_manager,
+        capability_ledger_key=str(getattr(args, "capability_ledger_key", "") or ""),
+        lifecycle_state=str(getattr(args, "lifecycle_state", "") or ""),
+        actor_id=str(getattr(args, "actor_id", "") or "operator"),
+        source_ref=str(getattr(args, "source_ref", "") or ""),
+        evidence=_json_object_arg(str(getattr(args, "evidence_json", "") or ""), "--evidence-json"),
+    )
+    print(result.to_json() if args.json else result.to_text())
+    return 0
+
+
+def _json_object_arg(raw: str, arg_name: str) -> dict[str, object]:
+    if not raw.strip():
+        return {}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{arg_name} must be valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"{arg_name} must be a JSON object")
+    return payload
 
 
 def _self_status_wiki_context_payload(wiki_context: object) -> dict[str, object]:
@@ -8135,6 +8195,10 @@ def main(argv: list[str] | None = None) -> int:
         return handle_self_handoff_check(args)
     if args.command == "self" and args.self_command == "improve":
         return handle_self_improve(args)
+    if args.command == "self" and args.self_command == "ledger":
+        return handle_self_ledger(args)
+    if args.command == "self" and args.self_command == "ledger-event":
+        return handle_self_ledger_event(args)
     if args.command == "wiki" and args.wiki_command == "bootstrap":
         return handle_wiki_bootstrap(args)
     if args.command == "wiki" and args.wiki_command == "compile-system":
