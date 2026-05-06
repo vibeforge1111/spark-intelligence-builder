@@ -1213,6 +1213,30 @@ def recent_personality_evolution_events(
     return [_row_to_dict(row) for row in rows]
 
 
+def personality_typed_human_sets(state_db: StateDB) -> dict[str, set[str]]:
+    with state_db.connect() as conn:
+        profile_rows = conn.execute(
+            "SELECT DISTINCT human_id FROM personality_trait_profiles"
+        ).fetchall()
+        observation_rows = conn.execute(
+            "SELECT DISTINCT human_id FROM personality_observations"
+        ).fetchall()
+        evolution_rows = conn.execute(
+            "SELECT DISTINCT human_id FROM personality_evolution_events"
+        ).fetchall()
+    return {
+        "trait_profiles": {
+            str(row["human_id"] or "") for row in profile_rows if str(row["human_id"] or "")
+        },
+        "observations": {
+            str(row["human_id"] or "") for row in observation_rows if str(row["human_id"] or "")
+        },
+        "evolution_events": {
+            str(row["human_id"] or "") for row in evolution_rows if str(row["human_id"] or "")
+        },
+    }
+
+
 def recent_observer_packet_records(
     state_db: StateDB,
     *,
@@ -3252,6 +3276,7 @@ def _build_personality_panel(state_db: StateDB) -> dict[str, Any]:
     profiles = recent_personality_trait_profiles(state_db, limit=50)
     observations = recent_personality_observations(state_db, limit=100)
     evolutions = recent_personality_evolution_events(state_db, limit=50)
+    typed_human_sets = personality_typed_human_sets(state_db)
 
     with state_db.connect() as conn:
         runtime_rows = conn.execute(
@@ -3287,9 +3312,9 @@ def _build_personality_panel(state_db: StateDB) -> dict[str, Any]:
         elif suffix == "evolution_log":
             evolution_mirror_humans.add(human_id)
 
-    typed_profile_humans = {str(row.get("human_id") or "") for row in profiles if str(row.get("human_id") or "")}
-    typed_observation_humans = {str(row.get("human_id") or "") for row in observations if str(row.get("human_id") or "")}
-    typed_evolution_humans = {str(row.get("human_id") or "") for row in evolutions if str(row.get("human_id") or "")}
+    typed_profile_humans = typed_human_sets["trait_profiles"]
+    typed_observation_humans = typed_human_sets["observations"]
+    typed_evolution_humans = typed_human_sets["evolution_events"]
 
     profile_drift = {
         "missing_runtime_mirrors": sorted(typed_profile_humans - profile_mirror_humans),

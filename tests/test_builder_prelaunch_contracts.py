@@ -1711,6 +1711,43 @@ class BuilderPrelaunchContractTests(SparkTestCase):
         self.assertFalse(checks["watchtower-personality-mirrors"].ok)
         self.assertIn("mirror_drift=1", checks["watchtower-personality-mirrors"].detail)
 
+    def test_personality_mirror_drift_uses_full_typed_human_sets(self) -> None:
+        with self.state_db.connect() as conn:
+            for index in range(120):
+                human_id = f"human:telegram:{index}"
+                conn.execute(
+                    """
+                    INSERT INTO personality_observations(
+                        observation_id, human_id, observed_at, user_state, confidence, traits_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        f"obs-{index}",
+                        human_id,
+                        f"2026-05-06T12:{index % 60:02d}:00Z",
+                        "neutral",
+                        0.4,
+                        json.dumps({"directness": 0.5}, sort_keys=True),
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO runtime_state(state_key, value, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                    """,
+                    (
+                        f"personality:{human_id}:observations",
+                        json.dumps({"observations": [{"ts": "2026-05-06T12:00:00Z"}]}, sort_keys=True),
+                    ),
+                )
+            conn.commit()
+
+        snapshot = build_watchtower_snapshot(self.state_db)
+        personality_panel = snapshot["panels"]["personality"]
+        self.assertEqual(personality_panel["counts"]["observation_rows"], 100)
+        self.assertEqual(personality_panel["counts"]["mirror_drift"], 0)
+
     def test_watchtower_personality_import_check_flags_inactive_personality_hook(self) -> None:
         resolve_canonical_agent_identity(
             state_db=self.state_db,
