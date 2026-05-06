@@ -204,15 +204,24 @@ def _config_audit_issue(state_db: StateDB) -> StopShipIssue:
 
 def _intent_execution_issue(state_db: StateDB) -> StopShipIssue:
     terminal_run_events = {"run_closed", "run_failed", "run_stalled"}
+    proof_event_types = {"tool_result_received", "dispatch_failed", *terminal_run_events}
     intents = latest_events_by_type(state_db, event_type="intent_committed", limit=200)
     incomplete: list[str] = []
     for intent in intents:
         run_id = intent.get("run_id")
         if not run_id:
+            request_id = intent.get("request_id")
+            if request_id and _request_has_execution_proof(
+                state_db,
+                request_id=str(request_id),
+                intent_event_id=str(intent.get("event_id") or ""),
+                proof_event_types=proof_event_types,
+            ):
+                continue
             incomplete.append(str(intent.get("event_id")))
             continue
         events = {event.get("event_type") for event in events_for_run(state_db, run_id=str(run_id))}
-        if "tool_result_received" not in events and "dispatch_failed" not in events and terminal_run_events.isdisjoint(events):
+        if proof_event_types.isdisjoint(events):
             incomplete.append(str(run_id))
     if incomplete:
         return StopShipIssue(
@@ -227,6 +236,30 @@ def _intent_execution_issue(state_db: StateDB) -> StopShipIssue:
         detail="Intent packets have matching dispatch or result proof.",
         severity="critical",
     )
+
+
+def _request_has_execution_proof(
+    state_db: StateDB,
+    *,
+    request_id: str,
+    intent_event_id: str,
+    proof_event_types: set[str],
+) -> bool:
+    placeholders = ", ".join("?" for _ in proof_event_types)
+    params = [request_id, intent_event_id, *sorted(proof_event_types)]
+    with state_db.connect() as conn:
+        row = conn.execute(
+            f"""
+            SELECT event_id
+            FROM builder_events
+            WHERE request_id = ?
+              AND event_id != ?
+              AND event_type IN ({placeholders})
+            LIMIT 1
+            """,
+            params,
+        ).fetchone()
+    return row is not None
 
 
 def _background_closure_issue(state_db: StateDB) -> StopShipIssue:
