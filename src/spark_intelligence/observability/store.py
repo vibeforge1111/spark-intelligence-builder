@@ -17,6 +17,7 @@ from spark_intelligence.memory_contracts import (
     is_memory_contract_reason,
     memory_contract_reason,
     normalize_memory_role,
+    persisted_memory_contract_reason,
 )
 from spark_intelligence.state.db import StateDB
 
@@ -3617,36 +3618,32 @@ def _recent_memory_contract_events(state_db: StateDB) -> list[dict[str, Any]]:
             reason = str(facts.get("reason") or "")
             if "operation" in facts:
                 allow_unknown = int(facts.get("accepted_count") or 0) == 0
-                normalized_role = normalize_memory_role(facts.get("memory_role"), allow_unknown=allow_unknown)
                 effective_role = effective_memory_role(
                     facts.get("memory_role"),
                     allow_unknown=allow_unknown,
                     provenance=row.get("provenance_json"),
                 )
-                if is_memory_contract_reason(reason) and effective_role == normalized_role:
-                    violation_reason = reason
-                else:
-                    violation_reason = memory_contract_reason(
-                        memory_role=effective_role,
-                        operation=str(facts.get("operation") or ""),
-                        allow_unknown=allow_unknown,
-                    )
+                violation_reason = persisted_memory_contract_reason(
+                    reason=reason,
+                    raw_memory_role=facts.get("memory_role"),
+                    effective_role=effective_role,
+                    operation=str(facts.get("operation") or ""),
+                    allow_unknown=allow_unknown,
+                )
             elif "method" in facts:
                 allow_unknown = int(facts.get("record_count") or 0) == 0
-                normalized_role = normalize_memory_role(facts.get("memory_role"), allow_unknown=allow_unknown)
                 effective_role = effective_memory_role(
                     facts.get("memory_role"),
                     allow_unknown=allow_unknown,
                     provenance=row.get("provenance_json"),
                 )
-                if is_memory_contract_reason(reason) and effective_role == normalized_role:
-                    violation_reason = reason
-                else:
-                    violation_reason = memory_contract_reason(
-                        memory_role=effective_role,
-                        method=str(facts.get("method") or ""),
-                        allow_unknown=allow_unknown,
-                    )
+                violation_reason = persisted_memory_contract_reason(
+                    reason=reason,
+                    raw_memory_role=facts.get("memory_role"),
+                    effective_role=effective_role,
+                    method=str(facts.get("method") or ""),
+                    allow_unknown=allow_unknown,
+                )
             elif is_memory_contract_reason(reason):
                 violation_reason = reason
         if not violation_reason:
@@ -4395,26 +4392,22 @@ def _build_memory_shadow_panel(state_db: StateDB) -> dict[str, Any]:
         violation = None
         if str(facts.get("operation") or ""):
             allow_unknown = int(facts.get("accepted_count") or 0) == 0
-            normalized_role = normalize_memory_role(facts.get("memory_role"), allow_unknown=allow_unknown)
-            if is_memory_contract_reason(reason) and raw_role == normalized_role:
-                violation = reason
-            else:
-                violation = memory_contract_reason(
-                    memory_role=raw_role,
-                    operation=str(facts.get("operation") or ""),
-                    allow_unknown=allow_unknown,
-                )
+            violation = persisted_memory_contract_reason(
+                reason=reason,
+                raw_memory_role=facts.get("memory_role"),
+                effective_role=raw_role,
+                operation=str(facts.get("operation") or ""),
+                allow_unknown=allow_unknown,
+            )
         elif str(facts.get("method") or ""):
             allow_unknown = int(facts.get("record_count") or 0) == 0
-            normalized_role = normalize_memory_role(facts.get("memory_role"), allow_unknown=allow_unknown)
-            if is_memory_contract_reason(reason) and raw_role == normalized_role:
-                violation = reason
-            else:
-                violation = memory_contract_reason(
-                    memory_role=raw_role,
-                    method=str(facts.get("method") or ""),
-                    allow_unknown=allow_unknown,
-                )
+            violation = persisted_memory_contract_reason(
+                reason=reason,
+                raw_memory_role=facts.get("memory_role"),
+                effective_role=raw_role,
+                method=str(facts.get("method") or ""),
+                allow_unknown=allow_unknown,
+            )
         elif is_memory_contract_reason(reason):
             violation = reason
         if violation:
