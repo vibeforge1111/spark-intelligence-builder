@@ -24,6 +24,7 @@ from spark_intelligence.self_awareness import (
     record_capability_ledger_event,
     record_capability_proposal,
     record_route_probe_evidence,
+    run_route_probe_and_record,
     redact_connector_probe_sample,
 )
 
@@ -414,6 +415,89 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(memory["evidence_status"], "last_success_recorded")
         self.assertEqual(memory["route_latency_ms"], 45)
         self.assertEqual(memory["eval_coverage_status"], "covered")
+
+    def test_run_route_probe_records_registry_backed_success(self) -> None:
+        registry_payload = {
+            "workspace_id": "default",
+            "records": [
+                {
+                    "kind": "system",
+                    "key": "spark_researcher",
+                    "label": "Spark Researcher",
+                    "status": "ready",
+                    "available": True,
+                    "degraded": False,
+                    "limitations": [],
+                }
+            ],
+        }
+        with patch(
+            "spark_intelligence.self_awareness.route_probe.build_system_registry",
+            return_value=SimpleNamespace(to_payload=lambda: registry_payload),
+        ):
+            result = run_route_probe_and_record(
+                self.config_manager,
+                self.state_db,
+                capability_key="spark_researcher",
+                actor_id="operator:test",
+            )
+
+        self.assertEqual(result.status, "success")
+        self.assertEqual(result.capability_key, "spark_researcher")
+        self.assertIn("registry status=ready", result.probe_summary)
+
+    def test_run_route_probe_records_registry_backed_failure(self) -> None:
+        registry_payload = {
+            "workspace_id": "default",
+            "records": [
+                {
+                    "kind": "system",
+                    "key": "spark_browser",
+                    "label": "Spark Browser",
+                    "status": "degraded",
+                    "available": True,
+                    "degraded": True,
+                    "limitations": ["Browser hook failed."],
+                }
+            ],
+        }
+        with patch(
+            "spark_intelligence.self_awareness.route_probe.build_system_registry",
+            return_value=SimpleNamespace(to_payload=lambda: registry_payload),
+        ):
+            result = run_route_probe_and_record(
+                self.config_manager,
+                self.state_db,
+                capability_key="spark_browser",
+                actor_id="operator:test",
+            )
+
+        self.assertEqual(result.status, "failure")
+        self.assertEqual(result.failure_reason, "Browser hook failed.")
+        context = build_agent_operating_context(
+            config_manager=self.config_manager,
+            state_db=self.state_db,
+        )
+        browser = next(route for route in context.to_payload()["routes"] if route["key"] == "spark_browser")
+        self.assertEqual(browser["evidence_status"], "last_failure_recorded")
+        self.assertEqual(browser["last_failure_reason"], "Browser hook failed.")
+
+    def test_self_route_probe_cli_can_run_builtin_probe(self) -> None:
+        exit_code, stdout, stderr = self.run_cli(
+            "self",
+            "route-probe",
+            "spark_memory",
+            "--home",
+            str(self.home),
+            "--run",
+            "--json",
+        )
+
+        self.assertEqual(exit_code, 0, stderr)
+        probe_payload = json.loads(stdout)
+        self.assertEqual(probe_payload["capability_key"], "spark_memory")
+        self.assertEqual(probe_payload["status"], "success")
+        self.assertIn("registry status=ready", probe_payload["probe_summary"])
 
     def test_self_context_cli_emits_machine_readable_preflight(self) -> None:
         exit_code, stdout, stderr = self.run_cli(

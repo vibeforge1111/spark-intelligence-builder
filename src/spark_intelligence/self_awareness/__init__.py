@@ -38,7 +38,11 @@ from spark_intelligence.self_awareness.operating_context import (
     AgentOperatingContextResult,
     build_agent_operating_context,
 )
-from spark_intelligence.self_awareness.route_probe import RouteProbeEvidenceResult, record_route_probe_evidence
+from spark_intelligence.self_awareness.route_probe import (
+    RouteProbeEvidenceResult,
+    record_route_probe_evidence,
+    run_route_probe_and_record,
+)
 
 __all__ = [
     "SelfAwarenessCapsule",
@@ -67,5 +71,6 @@ __all__ = [
     "record_capability_ledger_event",
     "record_capability_proposal",
     "record_route_probe_evidence",
+    "run_route_probe_and_record",
     "redact_connector_probe_sample",
 ]
