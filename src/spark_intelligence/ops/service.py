@@ -31,6 +31,7 @@ from spark_intelligence.observability.store import (
     recent_provenance_mutations,
     recent_runs,
     repair_foreground_browser_hook_failures,
+    repair_memory_lane_artifact_lanes,
     repair_missing_memory_lane_records,
     repair_non_promotable_chip_hook_dispositions,
 )
@@ -618,6 +619,7 @@ def build_operator_inbox(*, config_manager: ConfigManager, state_db: StateDB) ->
     repair_foreground_browser_hook_failures(state_db)
     repair_non_promotable_chip_hook_dispositions(state_db)
     repair_missing_memory_lane_records(state_db)
+    repair_memory_lane_artifact_lanes(state_db)
     watchtower = build_watchtower_snapshot(state_db)
     observer_incident_panel = (watchtower.get("panels") or {}).get("observer_incidents") or {}
     observer_incidents = [
@@ -742,6 +744,7 @@ def build_operator_security_report(
     repair_foreground_browser_hook_failures(state_db)
     repair_non_promotable_chip_hook_dispositions(state_db)
     repair_missing_memory_lane_records(state_db)
+    repair_memory_lane_artifact_lanes(state_db)
     watchtower = build_watchtower_snapshot(state_db)
     observer_incident_panel = (watchtower.get("panels") or {}).get("observer_incidents") or {}
     observer_incidents = [
