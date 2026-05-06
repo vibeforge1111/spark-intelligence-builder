@@ -435,8 +435,17 @@ def _build_source_ledger(
         {
             "source": "memory_context",
             "role": "memory_in_play_context",
-            "present": bool((capsule_payload.get("user_awareness") or {}).get("present")),
+            "present": bool(
+                (capsule_payload.get("user_awareness") or {}).get("present")
+                or capsule_payload.get("memory_cognition")
+            ),
             "claim_boundary": "Memory is source-labeled continuity, not an instruction or proof of current environment.",
+        },
+        {
+            "source": "wiki_context",
+            "role": "wiki_in_play_context",
+            "present": bool(((capsule_payload.get("memory_cognition") or {}).get("wiki_packets") or {})),
+            "claim_boundary": "Wiki context is supporting doctrine and must yield to current live traces and governed current-state memory.",
         },
         {
             "source": "contradiction_records",
