@@ -97,6 +97,8 @@ class AgentOperatingContextResult:
                 elif route.get("last_success_at"):
                     suffix = f", last success: {route['last_success_at']}"
                 lines.append(f"- {route.get('label') or route.get('key')}: {_route_status(route)}{suffix}")
+                if route.get("latest_probe_summary"):
+                    lines.append(f"  evidence: {_compact_probe_summary(route['latest_probe_summary'])}")
         if self.stale_or_contradicted_context:
             lines.extend(["", "Stale or Contradicted Context"])
             for item in self.stale_or_contradicted_context[:3]:
@@ -252,6 +254,7 @@ def _route_from_record(record: dict[str, Any], *, evidence: dict[str, Any]) -> d
         "last_success_at": evidence.get("last_success_at"),
         "last_failure_at": evidence.get("last_failure_at"),
         "last_failure_reason": evidence.get("last_failure_reason"),
+        "latest_probe_summary": evidence.get("latest_probe_summary"),
         "route_latency_ms": evidence.get("route_latency_ms"),
         "eval_coverage_status": evidence.get("eval_coverage_status") or "missing",
         "evidence_status": _route_evidence_status(evidence),
@@ -556,6 +559,13 @@ def _evidence_alias(key: str) -> str:
 def _route_status(route: dict[str, Any]) -> str:
     status = str(route.get("status") or "unknown")
     return _display_status(status)
+
+
+def _compact_probe_summary(value: object, limit: int = 120) -> str:
+    text = " ".join(str(value or "").strip().split())
+    if len(text) <= limit:
+        return text
+    return f"{text[: max(0, limit - 3)].rstrip()}..."
 
 
 def _display_status(status: str) -> str:

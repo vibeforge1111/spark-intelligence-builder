@@ -52,6 +52,7 @@ class CapabilityEvidence:
     last_success_at: str | None = None
     last_failure_at: str | None = None
     last_failure_reason: str | None = None
+    latest_probe_summary: str | None = None
     route_latency_ms: int | None = None
     eval_coverage_status: str = "missing"
     eval_coverage_sources: list[str] = field(default_factory=list)
@@ -79,6 +80,8 @@ class CapabilityEvidence:
             payload["last_failure_at"] = self.last_failure_at
         if self.last_failure_reason:
             payload["last_failure_reason"] = self.last_failure_reason
+        if self.latest_probe_summary:
+            payload["latest_probe_summary"] = self.latest_probe_summary
         if self.route_latency_ms is not None:
             payload["route_latency_ms"] = self.route_latency_ms
         return payload
@@ -612,6 +615,7 @@ def _build_capability_evidence(state_db: StateDB, *, user_message: str = "") -> 
                 "last_success_at": None,
                 "last_failure_at": None,
                 "last_failure_reason": None,
+                "latest_probe_summary": None,
                 "route_latency_ms": None,
                 "eval_coverage_status": "missing",
                 "eval_coverage_sources": [],
@@ -624,6 +628,8 @@ def _build_capability_evidence(state_db: StateDB, *, user_message: str = "") -> 
         event_id = str(event.get("event_id") or "").strip()
         if not row.get("source") and event_id:
             row["source"] = f"event:{event_id}"
+        if row.get("latest_probe_summary") is None:
+            row["latest_probe_summary"] = _probe_summary(event)
         latency = _latency_ms(facts)
         if latency is not None and row.get("route_latency_ms") is None:
             row["route_latency_ms"] = latency
@@ -655,6 +661,7 @@ def _build_capability_evidence(state_db: StateDB, *, user_message: str = "") -> 
                 last_success_at=row.get("last_success_at"),
                 last_failure_at=row.get("last_failure_at"),
                 last_failure_reason=row.get("last_failure_reason"),
+                latest_probe_summary=row.get("latest_probe_summary"),
                 route_latency_ms=row.get("route_latency_ms"),
                 eval_coverage_status=str(row.get("eval_coverage_status") or "missing"),
                 eval_coverage_sources=[str(item) for item in row.get("eval_coverage_sources") or [] if str(item).strip()],
@@ -731,6 +738,12 @@ def _failure_reason(event: dict[str, Any]) -> str:
         if value:
             return value[:240]
     return str(event.get("summary") or event.get("status") or "dispatch_failed").strip()[:240]
+
+
+def _probe_summary(event: dict[str, Any]) -> str | None:
+    facts = event.get("facts_json") if isinstance(event.get("facts_json"), dict) else {}
+    value = str(facts.get("probe_summary") or "").strip()
+    return value[:240] if value else None
 
 
 def _capability_confidence(row: dict[str, Any]) -> str:

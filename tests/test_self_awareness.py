@@ -351,6 +351,7 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
             eval_ref="pytest:aoc-route-probe",
             source_ref="test:spawner-health",
             actor_id="operator:test",
+            probe_summary="mission status=attention drift=ok active_systems=6",
         )
 
         self.assertEqual(result.status, "success")
@@ -367,7 +368,9 @@ class SelfAwarenessCapsuleTests(SparkTestCase):
         self.assertEqual(spawner["evidence_status"], "last_success_recorded")
         self.assertEqual(spawner["route_latency_ms"], 123)
         self.assertEqual(spawner["eval_coverage_status"], "covered")
+        self.assertEqual(spawner["latest_probe_summary"], "mission status=attention drift=ok active_systems=6")
         self.assertIsNotNone(spawner["last_success_at"])
+        self.assertIn("evidence: mission status=attention drift=ok", context.to_text())
         ledger = {item["source"]: item for item in payload["source_ledger"]}
         self.assertTrue(ledger["capability_evidence"]["present"])
 
